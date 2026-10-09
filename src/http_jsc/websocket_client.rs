@@ -876,7 +876,21 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.send_close_with_body(1000, Some(1005), &[]);
     }
 
+    /// Sends an encoded frame behind the frames that `send_buffer` still holds.
     fn enqueue_encoded_bytes(&self, bytes: &[u8]) -> bool {
+        let tunnel = self.tunnel();
+        // A close that completes before the tunnel attaches this client loses the tunnel's bytes.
+        let wait_for_attach = tunnel.is_some_and(|t| !t.is_attached() && t.has_backpressure());
+        if self.send_buffer.borrow().readable_length() == 0 && !wait_for_attach {
+            return self.write_unqueued(bytes);
+        }
+        // A tunnel writes the queue out from `handle_tunnel_writable`: on a drain or at attach.
+        self.copy_to_send_buffer(bytes, tunnel.is_none())
+    }
+
+    /// For a caller that found `send_buffer` empty: a frame written past the queue overtakes it.
+    fn write_unqueued(&self, bytes: &[u8]) -> bool {
+        debug_assert_eq!(self.send_buffer.borrow().readable_length(), 0);
         // For tunnel mode, write through the tunnel instead of direct socket
         if let Some(tunnel) = self.tunnel() {
             let wrote = match WebSocketProxyTunnel::write(tunnel, bytes) {
@@ -893,26 +907,21 @@ impl<const SSL: bool> WebSocket<SSL> {
             return true;
         }
 
-        // fast path: no backpressure, no queue, just send the bytes.
-        if !self.has_backpressure() {
-            // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
-            let wrote = self.tcp.get().write(bytes);
-            let expected = c_int::try_from(bytes.len()).expect("int cast");
-            if wrote == expected {
-                return true;
-            }
-
-            if wrote < 0 {
-                self.terminate(ErrorCode::FailedToWrite);
-                return false;
-            }
-
-            let _ = self
-                .copy_to_send_buffer(&bytes[usize::try_from(wrote).expect("int cast")..], false);
+        // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
+        let wrote = self.tcp.get().write(bytes);
+        let expected = c_int::try_from(bytes.len()).expect("int cast");
+        if wrote == expected {
             return true;
         }
 
-        self.copy_to_send_buffer(bytes, true)
+        if wrote < 0 {
+            self.terminate(ErrorCode::FailedToWrite);
+            return false;
+        }
+
+        let _ =
+            self.copy_to_send_buffer(&bytes[usize::try_from(wrote).expect("int cast")..], false);
+        true
     }
 
     fn copy_to_send_buffer(&self, bytes: &[u8], do_write: bool) -> bool {
@@ -1027,11 +1036,12 @@ impl<const SSL: bool> WebSocket<SSL> {
         let mut buf = self
             .send_buffer
             .replace(LinearFifo::<u8, DynamicBuffer<u8>>::init());
-        // Do not use MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
-        let wrote: Result<usize, bool> = {
+        let wrote: Result<usize, bool> = loop {
             let out_buf = buf.readable_slice(0);
             debug_assert!(!out_buf.is_empty());
-            if let Some(tunnel) = self.tunnel() {
+            let slice_len = out_buf.len();
+            // Do not use MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
+            let wrote: Result<usize, bool> = if let Some(tunnel) = self.tunnel() {
                 // In tunnel mode, route through the tunnel's TLS layer
                 // instead of the detached raw socket.
                 match WebSocketProxyTunnel::write(tunnel, out_buf) {
@@ -1047,6 +1057,13 @@ impl<const SSL: bool> WebSocket<SSL> {
                 } else {
                     Ok(usize::try_from(w).expect("int cast"))
                 }
+            };
+            // A wrapped queue continues at offset 0. A writable handler gets no second event.
+            match wrote {
+                Ok(wrote) if wrote == slice_len && wrote < buf.readable_length() => {
+                    buf.discard(wrote);
+                }
+                _ => break wrote,
             }
         };
         match wrote {
@@ -1154,10 +1171,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 self.clear_data();
                 self.dispatch_close(dispatch_code, reason);
             } else {
-                // The close frame was only partially written; the remainder is
-                // in send_buffer. clear_data() would discard it (and the
-                // proxy_tunnel needed to flush it), so defer teardown until
-                // handle_writable drains the buffer or the socket dies.
+                // The Close frame is still queued: a writable handler finishes the close.
                 self.close_dispatch_pending
                     .replace(Some((dispatch_code, reason)));
             }
@@ -1186,13 +1200,13 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     /// Shared tail of the writable handlers (direct socket and proxy tunnel):
-    /// flush whatever is queued and, once the buffer is empty, dispatch a
+    /// flush whatever is queued and, once the buffer and the tunnel are empty, dispatch a
     /// close that was deferred behind it.
     fn drain_send_buffer_and_finish_close(&self) {
         if self.send_buffer.borrow().readable_length() != 0 {
             let _ = self.send_buffer_out();
         }
-        if self.send_buffer.borrow().readable_length() == 0 {
+        if !self.has_backpressure() {
             self.finish_pending_close();
         }
     }
@@ -1273,7 +1287,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub(crate) fn write_binary_data(this: ThisPtr<Self>, slice: &[u8], op: u8) {
         // In tunnel mode, SSLWrapper.writeData() can synchronously fire
         // onClose → ws.fail() → cancel() → clear_data() and free `this`
-        // before the catch block in enqueue_encoded_bytes/send_buffer runs.
+        // before the catch block in write_unqueued/send_buffer runs.
         let _guard = RefPtr::from_this(this);
 
         if !this.has_tcp() || op > 0xF {
@@ -1301,7 +1315,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             content_len,
             opcode,
         );
-        let _ = self.enqueue_encoded_bytes(&inline_buf[..frame_size]);
+        let _ = self.write_unqueued(&inline_buf[..frame_size]);
     }
 
     fn has_tcp(&self) -> bool {
@@ -1551,7 +1565,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         Self::handle_data(this, data);
     }
 
-    /// Called by the WebSocketProxyTunnel when the underlying socket drains.
+    /// Called by the WebSocketProxyTunnel when it holds no socket bytes: on a drain and at attach.
     /// Flushes any buffered plaintext data through the tunnel.
     pub(crate) fn handle_tunnel_writable(this: ThisPtr<Self>) {
         if this.close_received.get() && !this.has_pending_close_dispatch() {
@@ -1559,7 +1573,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
         // send_buffer → tunnel.write() can re-enter fail() synchronously
         // (see write_binary_data). The tunnel ref-guards itself in
-        // on_writable() but not this struct.
+        // both callers but not this struct.
         let _guard = RefPtr::from_this(this);
 
         this.drain_send_buffer_and_finish_close();

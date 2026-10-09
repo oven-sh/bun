@@ -506,6 +506,11 @@ impl WebSocketProxyTunnel {
         self.write_buffer.get().is_not_empty()
     }
 
+    /// Whether `on_writable` has a connected WebSocket to tell that the tunnel drained.
+    pub(crate) fn is_attached(&self) -> bool {
+        self.connected_websocket.get().is_some()
+    }
+
     pub(crate) fn buffered_amount(&self) -> usize {
         self.write_buffer.get().size()
     }
@@ -529,11 +534,23 @@ impl WebSocketProxyTunnel {
 
 // HOST_EXPORT(WebSocketProxyTunnel__setConnectedWebSocket, c)
 pub fn set_connected_web_socket(
-    tunnel: &crate::websocket_client::websocket_proxy_tunnel::WebSocketProxyTunnel,
+    tunnel: bun_ptr::ThisPtr<crate::websocket_client::websocket_proxy_tunnel::WebSocketProxyTunnel>,
     ws: Option<bun_ptr::ThisPtr<crate::websocket_client::WebSocketClient>>,
 ) {
     bun_core::scoped_log!(WebSocketProxyTunnel, "setConnectedWebSocket");
+    // The calls below can close the WebSocket, which drops its ref on the tunnel.
+    let _guard = RefPtr::from_this(tunnel);
+    // The upgrade client owns the proxy socket and lets go of the tunnel when that socket closes.
+    let socket_closed = tunnel.upgrade_client.get().is_none();
     tunnel.connected_websocket.set(ws.map(BackRef::from));
     // Clear the upgrade client reference since we're now in connected phase
     tunnel.upgrade_client.set(None);
+    let Some(ws) = ws else { return };
+    // The open handlers ran with no client attached: replay the close or the drain they hid.
+    if socket_closed {
+        let _ws_guard = RefPtr::from_this(ws);
+        ws.fail(ErrorCode::Ended);
+    } else if !tunnel.has_backpressure() {
+        WebSocketClient::handle_tunnel_writable(ws);
+    }
 }

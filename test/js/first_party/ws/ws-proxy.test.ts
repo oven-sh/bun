@@ -8,6 +8,7 @@ import {
   echoed,
   failed,
   startEchoServer,
+  startFrameLogOrigin,
   startRecordingProxy,
 } from "../../web/websocket/proxy-test-utils";
 
@@ -205,6 +206,37 @@ describe("ws package wss:// through HTTP proxy (TLS tunnel)", () => {
       requests: [connectRequest(wssPort)],
     });
     gc();
+  });
+
+  // The usual way to send a batch and then close: close() from the callback of
+  // the last send(). That callback runs on the next tick, while the batch is
+  // still queued behind the tunnel, and the Close frame used to overtake it.
+  test.each(["http", "https"])("close() in the callback of the last send() (%s proxy)", async scheme => {
+    using origin = await startFrameLogOrigin();
+    using recorded = await startRecordingProxy({ tls: scheme === "https" });
+    const ws = new WebSocket(`wss://127.0.0.1:${origin.port}`, {
+      proxy: `${scheme}://127.0.0.1:${recorded.port}`,
+      tls: { rejectUnauthorized: false },
+      perMessageDeflate: false,
+    });
+    const body = Buffer.alloc(256 * 1024, "a");
+    let bodies = 0;
+    ws.on("open", () => {
+      // The proxy runs on this thread and reads nothing here, so the tunnel ends up holding bytes.
+      while (ws.bufferedAmount === 0 && bodies < 256) {
+        ws.send(body);
+        bodies++;
+      }
+      ws.send("last", () => ws.close(1000, "bye"));
+    });
+
+    const events = await wsEvents(ws);
+    await origin.ended;
+    expect({ frames: origin.frames.length, lastFrames: origin.frames.slice(-2), events }).toEqual({
+      frames: bodies + 2,
+      lastFrames: ["text", "close"],
+      events: [{ code: 1000, reason: "bye", wasClean: true }],
+    });
   });
 });
 

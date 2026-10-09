@@ -8,6 +8,7 @@ import type { AddressInfo } from "node:net";
 import tls from "node:tls";
 import {
   type ClientEvent,
+  type ClientFrame,
   clientEvents,
   connectRequest,
   createConnectProxy,
@@ -16,6 +17,7 @@ import {
   failed,
   failingSession,
   startEchoServer,
+  startFrameLogOrigin,
   startProxy,
   startRecordingProxy,
 } from "./proxy-test-utils";
@@ -688,6 +690,301 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
     });
   });
 });
+
+// With a wss:// target behind a proxy the client has two send queues. The
+// tunnel holds the TLS records that the proxy socket did not take yet, and the
+// client holds the frames it was given while the tunnel was in that state. A
+// Close frame or the automatic Pong made at that moment was encrypted at once,
+// ahead of the client's queue: the origin read it before frames that were sent
+// earlier, and after a Close it never processed those.
+//
+// The proxy and the origin run on this thread. They read nothing while a
+// handler of the client runs, so the client's sends fill the socket buffers of
+// the kernel and the tunnel has to hold the rest.
+describe.each(["http", "https"])("frames queued behind a TLS tunnel with backpressure (%s proxy)", scheme => {
+  const clientOptions = (proxyPort: number) => ({
+    proxy: `${scheme}://127.0.0.1:${proxyPort}`,
+    tls: { rejectUnauthorized: false },
+    // Keep every frame at its full size on the wire.
+    perMessageDeflate: false,
+  });
+
+  // Sends `filler` until the tunnel holds bytes, then `behind`: the frames the
+  // client has to queue. Returns every frame in the order it was sent.
+  function sendUntilQueued(
+    ws: WebSocket,
+    filler = Buffer.alloc(256 * 1024, "a"),
+    behind: (string | Buffer)[] = ["queued"],
+  ) {
+    const sent: ClientFrame[] = [];
+    while (ws.bufferedAmount === 0 && sent.length * filler.length < 64 * 1024 * 1024) {
+      ws.send(filler);
+      sent.push("binary");
+    }
+    const queued = ws.bufferedAmount > 0;
+    for (const frame of behind) {
+      ws.send(frame);
+      sent.push(typeof frame === "string" ? "text" : "binary");
+    }
+    return { queued, sent };
+  }
+
+  // ["binary", "binary", "text"] becomes ["binary x2", "text x1"].
+  function runs(frames: ClientFrame[]) {
+    const counted: { frame: ClientFrame; count: number }[] = [];
+    for (const frame of frames) {
+      if (counted.at(-1)?.frame === frame) counted.at(-1)!.count++;
+      else counted.push({ frame, count: 1 });
+    }
+    return counted.map(({ frame, count }) => `${frame} x${count}`);
+  }
+
+  const closedByClient: ClientEvent[] = [{ code: 1000, reason: "bye", wasClean: true }];
+
+  test("the Close frame of close() goes out behind them", async () => {
+    using origin = await startFrameLogOrigin();
+    using proxy = await startRecordingProxy({ tls: scheme === "https" });
+    const ws = new WebSocket(`wss://127.0.0.1:${origin.port}`, clientOptions(proxy.port));
+    let client: ReturnType<typeof sendUntilQueued> | undefined;
+    ws.addEventListener("open", () => {
+      client = sendUntilQueued(ws);
+      ws.close(1000, "bye");
+    });
+
+    const events = await clientEvents(ws);
+    await origin.ended;
+    expect({ queued: client?.queued, frames: runs(origin.frames), events }).toEqual({
+      queued: true,
+      frames: runs([...client!.sent, "close"]),
+      events: closedByClient,
+    });
+  });
+
+  // The tunnel learns of the client only after the open handlers return. A
+  // close that completed before that took the proxy socket down, and the
+  // records the tunnel still held went with it.
+  test("close() in an open handler waits for the bytes that only the tunnel holds", async () => {
+    using origin = await startFrameLogOrigin();
+    using proxy = await startRecordingProxy({ tls: scheme === "https" });
+    const ws = new WebSocket(`wss://127.0.0.1:${origin.port}`, clientOptions(proxy.port));
+    let client: ReturnType<typeof sendUntilQueued> | undefined;
+    ws.addEventListener("open", () => {
+      client = sendUntilQueued(ws, undefined, []);
+      ws.close(1000, "bye");
+    });
+
+    const events = await clientEvents(ws);
+    await origin.ended;
+    expect({ queued: client?.queued, frames: runs(origin.frames), events }).toEqual({
+      queued: true,
+      frames: runs([...client!.sent, "close"]),
+      events: closedByClient,
+    });
+  });
+
+  test("close() after open delivers the bytes that only the tunnel holds", async () => {
+    using origin = await startFrameLogOrigin();
+    using proxy = await startRecordingProxy({ tls: scheme === "https" });
+    const ws = new WebSocket(`wss://127.0.0.1:${origin.port}`, clientOptions(proxy.port));
+    const closed = clientEvents(ws);
+    // One loop turn after the open handlers: the tunnel has its client by then.
+    await new Promise<void>(resolve => ws.addEventListener("open", () => setImmediate(resolve)));
+    const client = sendUntilQueued(ws, undefined, []);
+    ws.close(1000, "bye");
+
+    const events = await closed;
+    await origin.ended;
+    expect({ queued: client.queued, frames: runs(origin.frames), events }).toEqual({
+      queued: true,
+      frames: runs([...client.sent, "close"]),
+      events: closedByClient,
+    });
+  });
+
+  test("the reply to a Close frame from the server goes out behind them", async () => {
+    using origin = await startFrameLogOrigin({ greeting: "close" });
+    using proxy = await startRecordingProxy({ tls: scheme === "https" });
+    const ws = new WebSocket(`wss://127.0.0.1:${origin.port}`, clientOptions(proxy.port));
+    let client: ReturnType<typeof sendUntilQueued> | undefined;
+    ws.addEventListener("open", () => {
+      client = sendUntilQueued(ws);
+    });
+
+    const events = await clientEvents(ws);
+    await origin.ended;
+    expect({ queued: client?.queued, frames: runs(origin.frames), events }).toEqual({
+      queued: true,
+      frames: runs([...client!.sent, "close"]),
+      events: [{ code: 4001, reason: "bye", wasClean: true }],
+    });
+  });
+
+  test("the Pong for a Ping from the server joins the queue and goes out behind them", async () => {
+    using origin = await startFrameLogOrigin({ greeting: "ping" });
+    using proxy = await startRecordingProxy({ tls: scheme === "https" });
+    const ws = new WebSocket(`wss://127.0.0.1:${origin.port}`, clientOptions(proxy.port));
+    let client: ReturnType<typeof sendUntilQueued> | undefined;
+    let bufferedAtPing = -1;
+    let bufferedForPong = -1;
+    ws.addEventListener("open", () => {
+      client = sendUntilQueued(ws);
+    });
+    ws.addEventListener("ping", () => {
+      bufferedAtPing = ws.bufferedAmount;
+    });
+    // The text frame behind the Ping: the client has made the Pong by now.
+    ws.addEventListener("message", () => {
+      bufferedForPong = ws.bufferedAmount - bufferedAtPing;
+      ws.close(1000, "bye");
+    });
+
+    const events = await clientEvents(ws);
+    await origin.ended;
+    expect({ queued: client?.queued, frames: runs(origin.frames), bufferedForPong, events }).toEqual({
+      queued: true,
+      frames: runs([...client!.sent, "pong", "close"]),
+      // The 6 bytes of the Pong frame. A Pong written to the tunnel adds 22 more for its TLS record.
+      bufferedForPong: 6,
+      events: ["after ping", ...closedByClient],
+    });
+  });
+
+  // If the tunnel writes out all it holds while an open handler turns the event
+  // loop, it has no client to tell yet, and nothing else sends the queue.
+  test("they go out when an open handler returns after the tunnel emptied", async () => {
+    using origin = await startFrameLogOrigin();
+    using proxy = await startRecordingProxy({ tls: scheme === "https" });
+    const ws = new WebSocket(`wss://127.0.0.1:${origin.port}`, clientOptions(proxy.port));
+    let client: ReturnType<typeof sendUntilQueued> | undefined;
+    let bufferedWhenOpenReturns = -1;
+    ws.addEventListener("open", () => {
+      client = sendUntilQueued(ws);
+      ws.close(1000, "bye");
+      const tunnelEmpty = Promise.withResolvers<void>();
+      const poll = () => (ws.bufferedAmount <= 12 + 11 ? tunnelEmpty.resolve() : setImmediate(poll));
+      setImmediate(poll);
+      // expect().resolves turns the event loop until the promise settles.
+      expect(tunnelEmpty.promise).resolves.toBeUndefined();
+      bufferedWhenOpenReturns = ws.bufferedAmount;
+    });
+
+    const events = await clientEvents(ws);
+    await origin.ended;
+    expect({ queued: client?.queued, bufferedWhenOpenReturns, frames: runs(origin.frames), events }).toEqual({
+      queued: true,
+      // The tunnel emptied inside the handler: the "queued" frame (12 bytes) and the Close frame (11) are left.
+      bufferedWhenOpenReturns: 12 + 11,
+      frames: runs([...client!.sent, "close"]),
+      events: closedByClient,
+    });
+  });
+
+  // The tunnel also has no client to tell when the proxy connection ends in
+  // that time. The client was left OPEN or CLOSING with no close event.
+  test("the end of the connection while an open handler turns the event loop closes the client", async () => {
+    const proxySockets: import("node:net").Socket[] = [];
+    const proxy = createConnectProxy({ tls: scheme === "https" });
+    proxy.on("connection", socket => proxySockets.push(socket));
+    const proxyPort = await startProxy(proxy);
+    using origin = await startFrameLogOrigin();
+    const ws = new WebSocket(`wss://127.0.0.1:${origin.port}`, clientOptions(proxyPort));
+    let client: ReturnType<typeof sendUntilQueued> | undefined;
+    let endedInsideOpen = false;
+    try {
+      ws.addEventListener("open", () => {
+        client = sendUntilQueued(ws);
+        const proxyGone = Promise.withResolvers<void>();
+        // Two more loop turns after the proxy let go: the client has read the end of its socket.
+        proxySockets[0].on("close", () => setImmediate(() => setImmediate(proxyGone.resolve)));
+        proxySockets[0].destroy();
+        // expect().resolves turns the event loop until the promise settles.
+        expect(proxyGone.promise.then(() => (endedInsideOpen = true))).resolves.toBe(true);
+        ws.close(1000, "bye");
+      });
+
+      const events = await clientEvents(ws);
+      expect({ queued: client?.queued, endedInsideOpen, events }).toEqual({
+        queued: true,
+        endedInsideOpen: true,
+        events: [{ code: 1006, reason: "Connection ended", wasClean: false }],
+      });
+    } finally {
+      proxy.close();
+    }
+  });
+
+  // The client's queue is a ring of 2048 bytes at first. Frames behind one that
+  // ends at the end of the ring start at its beginning.
+  test("they go out whole when the queue wraps around its buffer", async () => {
+    using origin = await startFrameLogOrigin();
+    using proxy = await startRecordingProxy({ tls: scheme === "https" });
+    const ws = new WebSocket(`wss://127.0.0.1:${origin.port}`, clientOptions(proxy.port));
+    let client: ReturnType<typeof sendUntilQueued> | undefined;
+    ws.addEventListener("open", () => {
+      // A frame of 1536 bytes passes through the queue to the tunnel and leaves
+      // the queue empty at offset 1536. The frame of 512 bytes is queued from
+      // there to the end of the ring, "queued" and the Close frame at its start.
+      client = sendUntilQueued(ws, Buffer.alloc(1528, "a"), [Buffer.alloc(504, "b"), "queued"]);
+      ws.close(1000, "bye");
+    });
+
+    const events = await clientEvents(ws);
+    await origin.ended;
+    expect({ queued: client?.queued, frames: runs(origin.frames), events }).toEqual({
+      queued: true,
+      frames: runs([...client!.sent, "close"]),
+      events: closedByClient,
+    });
+  });
+});
+
+// This client exits in its close handler. The origin gets the queued frame and
+// the Close frame only if both left the tunnel before `close` fired. A debug
+// build needs about 2 seconds to load bun:internal-for-testing in the client.
+test.skipIf(!harness.isASAN || harness.isDebug || harness.isWindows)(
+  "'close' fires after the frames queued behind a TLS tunnel left the tunnel",
+  async () => {
+    using origin = await startFrameLogOrigin();
+    using proxy = await startRecordingProxy();
+    await using client = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+        const ws = new WebSocket("wss://127.0.0.1:${origin.port}", {
+          proxy: "http://127.0.0.1:${proxy.port}",
+          tls: { rejectUnauthorized: false },
+        });
+        // The proxy socket takes 1 byte of "a" and the tunnel holds the rest,
+        // so the client queues "b" and the Close frame.
+        ws.onopen = () => {
+          fault.set({ syscall: "send", action: "short", bytes: 1, repeat: -1 });
+          ws.send("a");
+          ws.send("b");
+          ws.close(1000, "bye");
+        };
+        ws.onclose = event => {
+          console.log("close:", event.code);
+          process.exit(0);
+        };
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([client.stdout.text(), client.stderr.text(), client.exited]);
+
+    await origin.ended;
+    expect({ frames: origin.frames, stdout, stderr, exitCode }).toEqual({
+      frames: ["text", "text", "close"],
+      stdout: "close: 1000\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
 
 describe("WebSocket through HTTPS proxy (TLS proxy)", () => {
   // These tests verify WebSocket connections through HTTPS (TLS) proxy servers

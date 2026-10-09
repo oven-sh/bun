@@ -1,5 +1,6 @@
 //! The arguments of a call. Prettier's `printCallArguments`.
 
+use super::{FormatArgumentsOnOneLine, is_template_on_its_own_line_only_argument};
 use crate::js::format::{ExprOptions, FormatExpr};
 use crate::js::print::array_element_list::can_concisely_print_array_list;
 use crate::js::print::arrow_function_expression::{
@@ -114,6 +115,13 @@ impl<'a> Format<'a> for FormatArguments<'a> {
                     ")"
                 ]
             );
+        }
+
+        if has & (kind(ExprTag::Template) | kind(ExprTag::TaggedTemplate)) != 0
+            && hugs_lone_template_in_member_chain(f)
+            && is_template_on_its_own_line_only_argument(self.args, f)
+        {
+            return write!(f, FormatArgumentsOnOneLine(self.args));
         }
 
         if has_empty_line
@@ -766,6 +774,21 @@ fn remove_soft_lines_of_cached_element(key: Span, f: &mut Formatter<'_>) -> bool
     }
     f.context_mut().cache_element(&key, interned);
     true
+}
+
+/// ```js
+/// a                 a
+///   .b(`              .b(
+/// c                     `
+/// `)                c
+///   .d();           `,
+///                     )
+///                     .d();
+/// ```
+///
+/// oxfmt on the left, Prettier on the right, which only looks at the last call of a chain.
+fn hugs_lone_template_in_member_chain(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// oxfmt, like Prettier 3.8, keeps the type parameters of `a(<T>() => {})` on one line while it is

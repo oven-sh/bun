@@ -347,6 +347,16 @@ struct YarnRc {
     registry: Option<Box<[u8]>>,
     /// `npmScopes.<scope>.npmRegistryServer`, keyed without the `@`
     scope_registries: StringArrayHashMap<Box<[u8]>>,
+    /// `packageExtensions.<name>@<range>.dependencies`. Yarn adds them to the
+    /// packages they match when it installs; yarn.lock has entries for what they
+    /// name, but not the edges.
+    extensions: Vec<PackageExtension>,
+}
+
+struct PackageExtension {
+    /// `name@range`, as written
+    key: Box<[u8]>,
+    dependencies: Vec<(Box<[u8]>, Box<[u8]>)>,
 }
 
 /// Yarn's settings come from `YARN_*` environment variables, then the rc file
@@ -461,6 +471,34 @@ fn read_yarnrc_file(
             .filter(|url| !url.is_empty())
             .map(Box::from)
     };
+    if let Some(ExprData::EObject(extensions)) = root.get(b"packageExtensions").map(|e| e.data) {
+        for p in extensions.properties.slice() {
+            let (Some(key), Some(value)) =
+                (p.key.as_ref().and_then(|k| scalar_text(&data, k)), &p.value)
+            else {
+                continue;
+            };
+            if out.extensions.iter().any(|e| &*e.key == key) {
+                continue;
+            }
+            let mut dependencies = Vec::new();
+            if let Some(ExprData::EObject(deps)) = value.get(b"dependencies").map(|e| e.data) {
+                for dep in deps.properties.slice() {
+                    if let (Some(name), Some(range)) = (
+                        dep.key.as_ref().and_then(|k| scalar_text(&data, k)),
+                        dep.value.as_ref().and_then(|v| scalar_text(&data, v)),
+                    ) {
+                        dependencies.push((Box::from(name), Box::from(range)));
+                    }
+                }
+            }
+            out.extensions.push(PackageExtension {
+                key: Box::from(key),
+                dependencies,
+            });
+        }
+    }
+
     if out.registry.is_none() {
         out.registry = registry_of(&root);
     }
@@ -614,7 +652,14 @@ struct ManifestRewrite {
 
 /// The yarn descriptor range of a rewritten manifest dependency, which is what
 /// the lockfile keys it by.
-type OriginalSpecs = bun_collections::HashMap<DependencyID, Box<[u8]>>;
+#[derive(Default)]
+struct OriginalSpecs {
+    by_dependency: bun_collections::HashMap<DependencyID, Box<[u8]>>,
+    /// Dependencies a manifest lists in `dependencies` and in `devDependencies`.
+    /// Yarn installs the devDependencies range for a workspace and bun the
+    /// dependencies one, so yarn.lock is keyed by a range bun does not read.
+    from_dev_dependencies: Vec<DependencyID>,
+}
 
 struct Workspace {
     /// relative to the project root, posix separators
@@ -817,8 +862,17 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             reference,
             package_id: INVALID_PACKAGE_ID,
         });
-        for desc in strings::split(key, b",") {
-            let desc = strings::trim(desc, b" ");
+        // Yarn splits a key on `,` and the spaces around it, so a range that ends in
+        // a space (`"p-limit@npm:^3.1.0 "`) keeps it at the end of the key.
+        let descriptors: Vec<&[u8]> = strings::split(key, b",").collect();
+        for (n, desc) in descriptors.iter().enumerate() {
+            let mut desc: &[u8] = desc;
+            while let (true, Some(rest)) = (n > 0, desc.strip_prefix(b" ")) {
+                desc = rest;
+            }
+            while let (true, Some(rest)) = (n + 1 < descriptors.len(), desc.strip_suffix(b" ")) {
+                desc = rest;
+            }
             if desc.is_empty() {
                 continue;
             }
@@ -1160,7 +1214,8 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             resolution,
             ..Default::default()
         };
-        let (off, len) = append_entry_dependencies(this, log, data, name, &entry_expr)?;
+        let extended = extension_dependencies(this, log, &yarnrc, data, name, &entry_expr)?;
+        let (off, len) = append_entry_dependencies(this, log, data, name, &entry_expr, &extended)?;
         pkg.dependencies = ExternalSlice::new(off, len);
         pkg.resolutions = ExternalSlice::new(off, len);
         if let Some(bin) = entry_expr.get(b"bin") {
@@ -1353,7 +1408,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                 } else {
                     None
                 };
-            let literal: &[u8] = match original_specs.get(&dep_id) {
+            let literal: &[u8] = match original_specs.by_dependency.get(&dep_id) {
                 Some(spec) => spec,
                 None => catalog_range.as_deref().unwrap_or(original_literal),
             };
@@ -1449,6 +1504,49 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
 
             match found.map(|i| entries[i].package_id) {
                 Some(pid) if pid != INVALID_PACKAGE_ID => {
+                    let bound = this.packages.items_resolution()[pid as usize];
+                    let owner_name = owner.as_ref().map_or(&b""[..], |(n, _)| n);
+                    // Bun links every workspace into the root's node_modules under its
+                    // name, so the root cannot hold another package under that name.
+                    if pkg_id == 0
+                        && !dep.behavior.is_workspace()
+                        && !dep.behavior.is_peer()
+                        && bound.tag != crate::resolution::Tag::Workspace
+                        && this.workspace_paths.get(&dep.name_hash).is_some()
+                    {
+                        return Err(invalid_lockfile(
+                            log,
+                            format_args!(
+                                "\"{}\" is a workspace, and yarn.lock pins the root package's \"{}@{}\" to a package that is not that workspace; bun installs the workspace in its place",
+                                bstr::BStr::new(name),
+                                bstr::BStr::new(name),
+                                bstr::BStr::new(original_literal),
+                            ),
+                        ));
+                    }
+                    if original_specs.from_dev_dependencies.contains(&dep_id) {
+                        // what yarn locked for the devDependencies range has to be
+                        // something the dependencies range, which bun reads, accepts
+                        let accepted = dep.version.tag == dependency::VersionTag::Npm
+                            && bound.tag == crate::resolution::Tag::Npm
+                            && dep.version.npm().version.satisfies(
+                                bound.npm().version,
+                                string_bytes!(this),
+                                string_bytes!(this),
+                            );
+                        if !accepted {
+                            return Err(invalid_lockfile(
+                                log,
+                                format_args!(
+                                    "\"{}\" is in dependencies (\"{}\") and devDependencies (\"{}\") of \"{}\"; yarn installs the devDependencies range and bun the dependencies one, which what yarn.lock pins does not match",
+                                    bstr::BStr::new(name),
+                                    bstr::BStr::new(original_literal),
+                                    bstr::BStr::new(literal),
+                                    bstr::BStr::new(owner_name),
+                                ),
+                            ));
+                        }
+                    }
                     this.buffers.resolutions[dep_id as usize] = pid;
                 }
                 // a peer is bound at install time, to a package another edge brought in
@@ -1901,6 +1999,7 @@ fn append_entry_dependencies(
     source: &[u8],
     entry_name: &[u8],
     entry: &Expr,
+    extended: &[(&[u8], &[u8])],
 ) -> Result<(u32, u32), Error> {
     let off = this.buffers.dependencies.len();
     let optional_deps = optional_names(source, entry, b"dependenciesMeta");
@@ -1952,9 +2051,79 @@ fn append_entry_dependencies(
             append_dependency(this, log, name, b"*", Behavior::PEER | Behavior::OPTIONAL)?;
         }
     }
+    // an extension adds a dependency the package does not declare itself
+    for (name, range) in extended {
+        if entry
+            .get(b"dependencies")
+            .is_none_or(|deps| deps.get(name).is_none())
+        {
+            append_dependency(this, log, name, range, Behavior::PROD)?;
+        }
+    }
     let end = this.buffers.dependencies.len();
     sort_dependencies(this, off);
     Ok((off as u32, (end - off) as u32))
+}
+
+/// The dependencies `.yarnrc.yml` `packageExtensions` add to this entry: those
+/// of every `name@range` whose range holds the entry's version, prereleases
+/// included, as yarn matches them.
+fn extension_dependencies<'a>(
+    this: &mut Lockfile,
+    log: &mut bun_ast::Log,
+    yarnrc: &'a YarnRc,
+    source: &[u8],
+    name: &[u8],
+    entry: &Expr,
+) -> Result<Vec<(&'a [u8], &'a [u8])>, Error> {
+    let mut extended = Vec::new();
+    for extension in &yarnrc.extensions {
+        let Some((extension_name, range)) = split_locator(&extension.key) else {
+            continue;
+        };
+        if extension_name != name || extension.dependencies.is_empty() {
+            continue;
+        }
+        let Some(version) = entry.get(b"version").and_then(|v| scalar_text(source, &v)) else {
+            continue;
+        };
+        let version = sbuf!(this).append(version)?;
+        let version = semver::Version::parse(version.sliced(string_bytes!(this)));
+        let range_str = sbuf!(this).append(range)?;
+        let sliced = range_str.sliced(string_bytes!(this));
+        let name_hash = semver::string::Builder::string_hash(name);
+        let parsed = Dependency::parse(
+            String::default(),
+            name_hash,
+            sliced.slice,
+            &sliced,
+            Some(&mut *log),
+            None,
+        );
+        let matches = match &parsed {
+            Some(parsed) if version.valid && parsed.tag == dependency::VersionTag::Npm => {
+                parsed.npm().version.satisfies_including_prerelease(
+                    version.version.min(),
+                    string_bytes!(this),
+                    string_bytes!(this),
+                )
+            }
+            _ => {
+                return Err(invalid_lockfile(
+                    log,
+                    format_args!(
+                        "packageExtensions \"{}\" in .yarnrc.yml cannot be matched against \"{}\"",
+                        bstr::BStr::new(&extension.key),
+                        bstr::BStr::new(name),
+                    ),
+                ));
+            }
+        };
+        if matches {
+            extended.extend(extension.dependencies.iter().map(|(n, r)| (&**n, &**r)));
+        }
+    }
+    Ok(extended)
 }
 
 /// Root / workspace dependencies from package.json, with the same groups and
@@ -1974,6 +2143,8 @@ fn append_manifest_dependencies(
     let mut seen: StringArrayHashMap<usize> = StringArrayHashMap::new();
     // name -> yarn's spelling of a rewritten range (bound to dependency ids after the sort below)
     let mut originals: StringArrayHashMap<&'static [u8]> = StringArrayHashMap::new();
+    // name -> the devDependencies range of a name `dependencies` also lists
+    let mut dev_ranges: StringArrayHashMap<&'static [u8]> = StringArrayHashMap::new();
     for (group, behavior) in [
         (b"dependencies".as_slice(), Behavior::PROD),
         (b"devDependencies".as_slice(), Behavior::DEV),
@@ -2007,6 +2178,7 @@ fn append_manifest_dependencies(
                     // an optionalDependencies entry replaces the dependencies one (as in
                     // `Package::parse`); a dev duplicate is dropped
                     if !behavior.is_optional() {
+                        dev_ranges.put(name, spec)?;
                         continue;
                     }
                     replaces = Some(*e.value_ptr);
@@ -2072,14 +2244,19 @@ fn append_manifest_dependencies(
     }
     let end = this.buffers.dependencies.len();
     sort_dependencies(this, off);
-    if originals.count() > 0 {
+    if originals.count() > 0 || dev_ranges.count() > 0 {
         let bytes = this.buffers.string_bytes.as_slice();
         for (i, dep) in this.buffers.dependencies[off..end].iter().enumerate() {
             if dep.behavior.is_peer() || dep.behavior.is_workspace() {
                 continue;
             }
-            if let Some(spec) = originals.get(dep.name.slice(bytes)) {
-                original_specs.insert((off + i) as DependencyID, Box::from(*spec));
+            let id = (off + i) as DependencyID;
+            let name = dep.name.slice(bytes);
+            if let Some(spec) = dev_ranges.get(name) {
+                original_specs.by_dependency.insert(id, Box::from(*spec));
+                original_specs.from_dev_dependencies.push(id);
+            } else if let Some(spec) = originals.get(name) {
+                original_specs.by_dependency.insert(id, Box::from(*spec));
             }
         }
     }

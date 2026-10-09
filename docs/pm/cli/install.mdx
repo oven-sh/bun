@@ -636,7 +636,8 @@ For Yarn Berry lockfiles the migration handles:
 
 Limitations:
 
-- `libc` conditions are ignored, and Yarn settings such as `nodeLinker`, `packageExtensions`, and `supportedArchitectures` are not migrated
+- the `dependencies` that `packageExtensions` in `.yarnrc.yml` add to a package; the extensions built into Yarn are not applied
+- `libc` conditions are ignored, and Yarn settings such as `nodeLinker` and `supportedArchitectures` are not migrated
 - integrity hashes come from the registry manifest; Yarn's `checksum` is not checked
 
 The lockfile is not migrated when it has:
@@ -646,6 +647,8 @@ The lockfile is not migrated when it has:
 - a package whose integrity the registry manifest does not give, for example an `__archiveUrl` on another host
 - a patch that `patchedDependencies` cannot express: several patch files for one package, a patch on a `file:` / `portal:` / `link:` folder, or a patch file outside the project
 - an entry with a protocol Bun does not have (for example `exec:`), or a git dependency on a package inside a repository (`#workspace=`)
+- a dependency of the root `package.json` that has the name of a workspace and that Yarn installed from somewhere else (`enableTransparentWorkspaces: false`); Bun links the workspace under that name
+- a name in both `dependencies` and `devDependencies` when the version Yarn installed for the `devDependencies` range is not in the `dependencies` range, which is the one Bun reads
 - a `__metadata.version` outside 4 to 10, a key written twice, or a YAML merge key (`<<`)
 
 The edits to `package.json` (rewritten ranges, `patchedDependencies`, catalogs) are written when `bun.lock` is saved. A command that does not write `package.json` (`--dry-run`, `--no-save`) does not migrate a lockfile that needs them.

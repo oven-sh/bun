@@ -1208,6 +1208,27 @@ catalogs:
       lock: () => yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }),
       error: () => /error: could not read .*\.yarnrc\.yml/,
     },
+    {
+      name: "a workspace with the name of a package yarn.lock pins for the root",
+      manifest: { workspaces: ["packages/*"], devDependencies: { "no-deps": "^1.0.0" } },
+      files: () => ({ "packages/no-deps/package.json": JSON.stringify({ name: "no-deps", version: "1.0.0" }) }),
+      // with yarn's `enableTransparentWorkspaces: false` the root gets no-deps from the registry
+      lock: () =>
+        yarnLock({
+          "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]),
+          ...noDeps100,
+          "no-deps@workspace:packages/no-deps": [`resolution: "no-deps@workspace:packages/no-deps"`],
+        }),
+      error: () =>
+        `error: "no-deps" is a workspace, and yarn.lock pins the root package's "no-deps@^1.0.0" to a package that is not that workspace; bun installs the workspace in its place`,
+    },
+    {
+      name: "a devDependencies range (yarn installs it) the dependencies range (bun installs it) does not accept",
+      manifest: { dependencies: { "no-deps": "^2.0.0" }, devDependencies: { "no-deps": "^1.0.0" } },
+      lock: () => yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }),
+      error: () =>
+        `error: "no-deps" is in dependencies ("^2.0.0") and devDependencies ("^1.0.0") of "berry-reject"; yarn installs the devDependencies range and bun the dependencies one, which what yarn.lock pins does not match`,
+    },
   ];
   for (const { name, manifest, files, lock, error } of rejected) {
     test.concurrent(`not migrated: ${name}`, async () => {
@@ -1490,6 +1511,66 @@ catalogs:
       ["one-range-dep/no-deps", "no-deps@1.0.1"],
     ]);
   });
+
+  test.concurrent(
+    "what real lockfiles hold: a range that ends in a space, dev over prod, packageExtensions",
+    async () => {
+      const { packageDir: dir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "berry-real",
+            // yarn installs the devDependencies range of a name both groups list; bun reads `dependencies`
+            dependencies: { "a-dep": "^1.0.1 || ^2.0.0", "one-range-dep": "^1.0.0" },
+            devDependencies: { "a-dep": "~1.0.2" },
+          }),
+          // yarn adds `one-fixed-dep` to `one-range-dep` when it installs; yarn.lock has the entry, not the edge
+          ".yarnrc.yml": `packageExtensions:\n  one-range-dep@1:\n    dependencies:\n      one-fixed-dep: 1.0.0\n  one-range-dep@^2.0.0:\n    dependencies:\n      a-dep: 1.0.1\n`,
+          "yarn.lock": yarnLock({
+            "a-dep@npm:~1.0.2": [`version: 1.0.3`, `resolution: "a-dep@npm:1.0.3"`],
+            "berry-real@workspace:.": [
+              `resolution: "berry-real@workspace:."`,
+              `dependencies:`,
+              `  a-dep: "npm:~1.0.2"`,
+              `  one-range-dep: "npm:^1.0.0"`,
+            ],
+            // the package.json of one-range-dep spells its range with a space at the end
+            "no-deps@npm:1.0.0, no-deps@npm:^1.0.0 ": [`version: 1.0.0`, `resolution: "no-deps@npm:1.0.0"`],
+            "one-fixed-dep@npm:1.0.0": [
+              `version: 1.0.0`,
+              `resolution: "one-fixed-dep@npm:1.0.0"`,
+              `dependencies:`,
+              `  no-deps: "npm:1.0.0"`,
+            ],
+            "one-range-dep@npm:^1.0.0": [
+              `version: 1.0.0`,
+              `resolution: "one-range-dep@npm:1.0.0"`,
+              `dependencies:`,
+              `  no-deps: "npm:^1.0.0 "`,
+            ],
+          }),
+        },
+      });
+
+      const { stderr, exitCode } = await run(dir, "pm", "migrate");
+      expect(stderr).toContain("migrated lockfile from yarn.lock");
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(dir);
+      expect(lockedVersions(bunLock)).toEqual([
+        "a-dep@1.0.3",
+        "no-deps@1.0.0",
+        "one-fixed-dep@1.0.0",
+        "one-range-dep@1.0.0",
+      ]);
+      expect(bunLock).toContain(`"a-dep": "^1.0.1 || ^2.0.0",`);
+      expect(bunLock).toContain(
+        `"one-range-dep@1.0.0", "http://localhost:1234/one-range-dep/-/one-range-dep-1.0.0.tgz", { "dependencies": { "no-deps": "^1.0.0 ", "one-fixed-dep": "1.0.0" } }`,
+      );
+      await expectFrozenInstall(dir);
+    },
+  );
 
   test.concurrent("a berry lockfile that holds the yarn v1 marker below its first lines", async () => {
     const { packageDir: dir } = await verdaccio.createTestDir({

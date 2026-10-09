@@ -1,5 +1,6 @@
 import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
+import { Worker } from "node:worker_threads";
 import { join } from "path";
 const assert = require("assert");
 const os = require("os");
@@ -544,6 +545,23 @@ describe("fs.promises functions with a FileHandle argument", () => {
       await closed;
       expect(fs.readFileSync(file, "utf8")).toBe("from the string");
     }
+  });
+
+  it("a FileHandle is not transferable while readFile(handle) is pending", async () => {
+    await using dir = tempDir("handle-argument-transfer", { "x.txt": "hello", "worker.js": "" });
+    const fh = await fsPromises.open(join(dir, "x.txt"), "r");
+    const pending = fsPromises.readFile(fh, "utf8");
+    let worker, thrown;
+    try {
+      worker = new Worker(join(dir, "worker.js"), { transferList: [fh], workerData: { fh } });
+    } catch (err) {
+      thrown = err;
+    }
+    // a worker exists only if the transfer was not refused
+    await worker?.terminate();
+    expect(thrown).toMatchObject({ name: "DataCloneError" });
+    expect(await pending).toBe("hello");
+    await fh.close();
   });
 });
 

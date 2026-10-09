@@ -55,6 +55,26 @@ for (const [tool, config] of Object.entries(tools)) {
   });
 }
 
+// hosts.json: scripts in Vue files, in HTML, in HTML in templates and in blocks of code, with what the tools print. The plugins
+// sort the first `<script>` and the first `<script setup>` at the top of a Vue file, and every script anywhere else. oxfmt
+// sorts imports and rewrites JSDoc comments in the scripts of a Vue file only.
+describe.concurrent("in HTML and Vue", () => {
+  type Hosts = Record<string, { config: [string, object]; files: Record<string, [input: string, output: string]> }>;
+  const hosts: Hosts = JSON.parse(readFileSync(join(import.meta.dir, "hosts.json"), "utf8"));
+  for (const [tool, { config, files }] of Object.entries(hosts)) {
+    test(tool, async () => {
+      const names = Object.keys(files);
+      const inputs = Object.fromEntries(names.map(name => [name, files[name][0]]));
+      const result = await format({ [config[0]]: JSON.stringify(config[1]), ...inputs }, names);
+      expect(result.stderr).toBe("");
+      expect(Object.fromEntries(names.map((name, index) => [name, result.files[index]]))).toEqual(
+        Object.fromEntries(names.map(name => [name, files[name][1]])),
+      );
+      expect(result.exitCode).toBe(0);
+    });
+  }
+});
+
 describe.concurrent("when imports are sorted", () => {
   const unsorted = `import b from "b";\nimport a from "a";\n`;
   const sorted = `import a from "a";\nimport b from "b";\n`;

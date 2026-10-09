@@ -33,6 +33,7 @@ use crate::css::normalize_end_of_line;
 use crate::cursor::Region;
 use crate::ir::formatter::Formatter;
 use crate::js::context::JsFormatContext;
+use crate::js::sort_imports::SortImports;
 use crate::options::{HtmlRoot, InHtml, JavaScriptParser};
 use crate::range::{Offsets, normalized_len, write_with_line_ending};
 use crate::text::{self, BOM, trim_end};
@@ -167,7 +168,15 @@ fn prepared_text<'t>(text: &'t [u8], options: &FormatOptions) -> Option<(Cow<'t,
     )
 }
 
-/// Whether `after`, which `before` has been formatted to with `options`, has all that is in `before` and nothing else. See
+/// Whether `after`, which `before` has been formatted to with `options`, has all that is in `before` and nothing else.
+fn keeps_content(before: &[u8], after: &[u8], parser: Parser, options: &FormatOptions) -> bool {
+    let after = normalize_end_of_line(after.strip_prefix(BOM).unwrap_or(after));
+    prepared_text(before, options).is_none_or(|(before, _)| {
+        text::trim(&before).is_empty() || verify::has_same_content(&before, &after, parser)
+    })
+}
+
+/// The same, whatever has become of imports and JSDoc comments if `options` has something to say about them. See
 /// `verify.rs`.
 pub fn has_same_content(
     before: &[u8],
@@ -175,12 +184,78 @@ pub fn has_same_content(
     parser: Parser,
     options: &FormatOptions,
 ) -> bool {
-    if matches!(parser, Parser::AngularExpression(_)) {
+    if matches!(parser, Parser::AngularExpression(_))
+        || keeps_content(before, after, parser, options)
+    {
         return true;
     }
-    let after = normalize_end_of_line(after.strip_prefix(BOM).unwrap_or(after));
-    prepared_text(before, options).is_none_or(|(before, _)| {
-        text::trim(&before).is_empty() || verify::has_same_content(&before, &after, parser)
+    if options.sort_imports.is_none() && options.jsdoc.is_none() {
+        return false;
+    }
+    // Two imports of a module can become one, and words of a JSDoc comment others. The rest is compared without that.
+    let plain = FormatOptions {
+        sort_imports: None,
+        jsdoc: None,
+        ..options.clone()
+    };
+    let (mut scratch, mut formatted) = (Scratch::default(), Vec::new());
+    format(b"", before, parser, &plain, &mut scratch, &mut formatted).is_ok()
+        && keeps_content(before, &formatted, parser, &plain)
+}
+
+/// `options` for a text that `parser` parses.
+pub(crate) fn options_of_host(options: &FormatOptions, parser: Parser) -> FormatOptions {
+    // oxfmt formats the scripts of a Vue file by itself, and leaves all other code in HTML to Prettier.
+    let is_vue_file = parser == Parser::Vue && !options.is_in_markdown;
+    // The plugins of Prettier have sorted the imports of a Vue file when it is parsed: `with_sorted_scripts`.
+    let sort_imports = options.sort_imports.clone();
+    FormatOptions {
+        sort_imports: sort_imports.filter(|how| match how.is_applied_by_format() {
+            true => is_vue_file,
+            false => parser != Parser::Vue && how.applies_to_embedded_code(),
+        }),
+        jsdoc: options.jsdoc.filter(|_| is_vue_file),
+        ..options.clone()
+    }
+}
+
+/// What `@trivago/prettier-plugin-sort-imports` and `@ianvs/prettier-plugin-sort-imports` make of the text of a Vue file
+/// before it is parsed: the imports of the first `<script>` and of the first `<script setup>` at the top are sorted.
+/// `None`: it is the same.
+fn with_sorted_scripts(text: &[u8], how: &SortImports, parse: js::Parse<'_>) -> Option<Vec<u8>> {
+    let (content, front_matter_len) = without_front_matter(text);
+    let mut tree = ast::Tree::default();
+    parse::parse(&content, front_matter_len, Parser::Vue, &mut tree).ok()?;
+    let (mut sorted_text, mut from) = (Vec::new(), 0);
+    // `descriptor.script`, `descriptor.scriptSetup`
+    let mut is_found = [false; 2];
+    for id in tree.children(tree.root) {
+        let node = &tree[id];
+        if node.kind != ast::Kind::Element || !node.is_full_name(b"script") {
+            continue;
+        }
+        let (start, end) = (node.start_span.end as usize, node.end_span.start as usize);
+        let Some(code) = text.get(start..end).filter(|_| node.end_span().is_some()) else {
+            continue;
+        };
+        if text::trim(code).is_empty() && tree.attribute(id, b"src").is_none() {
+            continue;
+        }
+        let is_setup = tree.attribute(id, b"setup").is_some();
+        if std::mem::replace(&mut is_found[usize::from(is_setup)], true) {
+            continue;
+        }
+        if let Some(sorted) = js::sorted_script(parse, code, how) {
+            sorted_text.extend_from_slice(text.get(from..start)?);
+            sorted_text.push(b'\n');
+            sorted_text.extend_from_slice(&sorted);
+            sorted_text.push(b'\n');
+            from = end;
+        }
+    }
+    (from > 0).then(|| {
+        sorted_text.extend_from_slice(text.get(from..).unwrap_or_default());
+        sorted_text
     })
 }
 
@@ -408,6 +483,13 @@ pub fn format_with(
                 .map(|cursor| cursor + u32::from(has_bom)),
         );
     }
+    let sorts_text = (options.sort_imports.as_deref())
+        .filter(|how| parser == Parser::Vue && !how.is_applied_by_format())
+        .filter(|how| how.applies_to_embedded_code());
+    let text = match sorts_text.zip(js::Parse::new(parse_javascript, options)) {
+        Some((how, parse)) => with_sorted_scripts(&text, how, parse).map_or(text, Cow::Owned),
+        None => text,
+    };
     // In `text`, which has one byte for every line break and no byte order mark.
     let cursor_offset = crate::cursor::cursor_offset_in_bytes(original, options).map(|offset| {
         let before = original.get(..offset as usize).unwrap_or(original);
@@ -419,7 +501,7 @@ pub fn format_with(
     let options = FormatOptions {
         line_ending: options.line_ending.resolve(original),
         is_in_html_file: path.ends_with(b".html") || path.ends_with(b".htm"),
-        ..options.clone()
+        ..options_of_host(options, parser)
     };
     let path = Some(path).filter(|path| !path.is_empty());
     let mut result = Ok(None);

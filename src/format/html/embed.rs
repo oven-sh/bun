@@ -194,6 +194,9 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             line_width: LineWidth(width.clamp(1, usize::from(u16::MAX)) as u16),
             line_ending: LineEnding::Lf,
             is_in_markdown: true,
+            // For the blocks of code in Markdown.
+            sort_imports: self.options.format.sort_imports.clone(),
+            jsdoc: self.options.format.jsdoc,
             ..js::options_in_html(self.options.format, InHtml::default())
         })
     }

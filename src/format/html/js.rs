@@ -7,6 +7,7 @@ use super::map_strings::{MapString, write_mapped};
 use crate::ir::element::{Interned, TextWidth};
 use crate::js::context::JsFormatContext;
 use crate::js::print::program::{FormatStatements, write_hashbang};
+use crate::js::sort_imports::{SortImports, sorted_text};
 use crate::options::{HtmlRoot, InHtml, JavaScriptParser, ParseJavaScript};
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -88,24 +89,33 @@ pub(crate) fn options_in_html(options: &FormatOptions, in_html: InHtml) -> Forma
         is_mdx_jsx: false,
         is_mdx_es_syntax: false,
         sort_imports: None,
+        jsdoc: None,
         ..options.clone()
     }
 }
 
 /// What parses code.
 #[derive(Copy, Clone)]
-enum Parse<'p> {
+pub(crate) enum Parse<'p> {
     Function(ParseJavaScript),
     Closure(JavaScriptParser<'p>),
 }
 
 impl<'p> Parse<'p> {
+    /// `parse`, or else what `options` has.
+    pub(crate) fn new(
+        parse: Option<JavaScriptParser<'p>>,
+        options: &FormatOptions,
+    ) -> Option<Parse<'p>> {
+        match parse {
+            Some(parse) => Some(Parse::Closure(parse)),
+            None => options.parse_javascript.map(Parse::Function),
+        }
+    }
+
     /// For the code in the HTML that `f` writes.
     fn of(f: &Formatter<'p>) -> Option<Parse<'p>> {
-        match f.context().parse_javascript {
-            Some(parse) => Some(Parse::Closure(parse)),
-            None => f.options().parse_javascript.map(Parse::Function),
-        }
+        Parse::new(f.context().parse_javascript, f.options())
     }
 
     fn call(
@@ -124,6 +134,24 @@ impl<'p> Parse<'p> {
 
 type Write<'w> = &'w mut dyn for<'b> FnMut(&'b File<'b>, &mut Formatter<'b>) -> bool;
 
+/// What code is.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Piece {
+    /// All that is in a `<script>`. What sorts imports and rewrites JSDoc comments takes it for a file.
+    Script,
+    Other,
+}
+
+/// What has become of code that has been parsed one way.
+enum Attempt {
+    /// It cannot be parsed that way.
+    Refused,
+    /// Nothing has been written: this is to be parsed in its place.
+    Sorted(Vec<u8>),
+    /// What `write` has returned.
+    Written(bool),
+}
+
 /// Parses `code` as the file at each of `paths`, until it is one without errors, and calls `write` with that file and
 /// a formatter that goes on with the document of `f`. Returns what `write` returns, and `false` if `code` cannot be
 /// parsed: nothing has been written then.
@@ -133,12 +161,22 @@ fn with_file(
     paths: &[&[u8]],
     source_type: SourceType,
     in_html: InHtml,
+    piece: Piece,
     write: Write<'_>,
 ) -> bool {
     let Some(parse) = Parse::of(f) else {
         return false;
     };
-    let options = options_in_html(f.options(), in_html);
+    let mut options = options_in_html(f.options(), in_html);
+    // A plugin of Prettier sorts the imports of the text before it is parsed.
+    let mut sorts_text = None;
+    if piece == Piece::Script {
+        options.jsdoc = f.options().jsdoc;
+        match f.options().sort_imports.clone() {
+            Some(how) if how.is_applied_by_format() => options.sort_imports = Some(how),
+            how => sorts_text = how,
+        }
+    }
     let kinds: &[bool] = match source_type {
         SourceType::Script => &[true],
         SourceType::Module => &[false],
@@ -146,38 +184,66 @@ fn with_file(
     };
     for path in paths {
         for &is_script in kinds {
-            let mut result = None;
-            parse.call(path, code, is_script, &mut |file| {
-                if file.has_parse_errors()
-                    || refused_by_prettier_with(file, TypesInJavaScript::Refused)
-                {
-                    return;
-                }
-                let comments = file.extension(|| {
-                    let mut comments = Vec::new();
-                    crate::js::comments::collect(file, options.flavor, &mut comments);
-                    comments
+            let mut attempt = |code: &[u8], sorts_text: Option<&SortImports>| {
+                let mut result = Attempt::Refused;
+                parse.call(path, code, is_script, &mut |file| {
+                    if file.has_parse_errors()
+                        || refused_by_prettier_with(file, TypesInJavaScript::Refused)
+                    {
+                        return;
+                    }
+                    let comments = file.extension(|| {
+                        let mut comments = Vec::new();
+                        crate::js::comments::collect(file, options.flavor, &mut comments);
+                        comments
+                    });
+                    let comments = comments.map_or(&[][..], |comments: &Vec<Comment>| comments);
+                    // Only in what is known to be a script are `<!--` and `-->` comments to Babel.
+                    let is_html_like = |comment: &Comment| {
+                        matches!(
+                            file.text().get(comment.span.start as usize),
+                            Some(b'<' | b'-')
+                        )
+                    };
+                    if source_type != SourceType::Script && comments.iter().any(is_html_like) {
+                        return;
+                    }
+                    if let Some(sorted) = sorts_text.and_then(|how| sorted_text(file, how)) {
+                        result = Attempt::Sorted(sorted);
+                        return;
+                    }
+                    let context = JsFormatContext::new(file, options.clone(), comments);
+                    let is_written = f.write_embedded(context, file.text(), |f| write(file, f));
+                    result = Attempt::Written(is_written);
                 });
-                let comments = comments.map_or(&[][..], |comments: &Vec<Comment>| comments);
-                // Only in what is known to be a script are `<!--` and `-->` comments to Babel.
-                let is_html_like = |comment: &Comment| {
-                    matches!(
-                        file.text().get(comment.span.start as usize),
-                        Some(b'<' | b'-')
-                    )
-                };
-                if source_type != SourceType::Script && comments.iter().any(is_html_like) {
-                    return;
-                }
-                let context = JsFormatContext::new(file, options.clone(), comments);
-                result = Some(f.write_embedded(context, file.text(), |f| write(file, f)));
-            });
-            if let Some(result) = result {
-                return result;
+                result
+            };
+            let result = match attempt(code, sorts_text.as_deref()) {
+                Attempt::Sorted(sorted) => attempt(&sorted, None),
+                result => result,
+            };
+            if let Attempt::Written(is_written) = result {
+                return is_written;
             }
         }
     }
     false
+}
+
+/// `code`, which is all that is in a `<script>`, with its imports sorted. `None`: it is the same, or cannot be parsed.
+pub(crate) fn sorted_script(parse: Parse<'_>, code: &[u8], how: &SortImports) -> Option<Vec<u8>> {
+    for path in [&b"dummy.tsx"[..], b"dummy.ts", b"dummy.jsx"] {
+        let mut sorted = None;
+        parse.call(path, code, false, &mut |file| {
+            if !file.has_parse_errors() {
+                sorted = Some(sorted_text(file, how));
+            }
+        });
+        if let Some(sorted) = sorted {
+            return sorted;
+        }
+    }
+    None
 }
 
 fn paths_of(syntax: Syntax, code: &[u8]) -> &'static [&'static [u8]] {
@@ -227,6 +293,7 @@ pub(crate) fn write_program(
         paths_of(syntax, code),
         source_type,
         in_html,
+        Piece::Script,
         &mut |file, f| {
             write_statements(file, f);
             true
@@ -432,6 +499,7 @@ pub(crate) fn write_expression(
         &[path],
         SourceType::Module,
         in_html,
+        Piece::Other,
         &mut |file, f| {
             let Some(e) = expression_of(file) else {
                 return false;
@@ -533,6 +601,7 @@ pub(crate) fn write_program_in_attribute(
         paths_of(syntax, code),
         SourceType::Unknown,
         in_html,
+        Piece::Other,
         &mut |file, f| {
             let content = format_with(|f| write_statements(file, f));
             write_hugged(hug.of_other_kinds(), &content, f);
@@ -576,6 +645,7 @@ pub(crate) fn write_binding(
         paths_of(syntax, &program),
         SourceType::Unknown,
         in_html,
+        Piece::Other,
         &mut |file, f| {
             let Some(statement) = file.body().iter().next() else {
                 return false;

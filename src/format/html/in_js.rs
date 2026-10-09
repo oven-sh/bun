@@ -326,7 +326,7 @@ pub(crate) fn write_template<'a>(
         range_start: None,
         range_end: None,
         cursor_offset: None,
-        ..f.options().clone()
+        ..super::options_of_host(f.options(), parser)
     };
     let line = line_around(&text, &options);
     // Where the lines start is up to the printer. What is printed by itself (JSON, YAML, ..) has to be told how much room

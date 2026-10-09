@@ -1056,84 +1056,57 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     // `&mut P` — avoids the aliased-`&mut` that arises when a transposer
     // *field* holds `&mut self` while a `&mut P` is materialised inside the
     // visitor (PORTING.md §Forbidden).
-    pub(crate) fn maybe_transpose_if_import(&mut self, arg: Expr, state: &TransposeState) -> Expr {
-        match arg.data {
-            js_ast::ExprData::EIf(ex) => Expr::init(
-                E::If {
-                    yes: self.maybe_transpose_if_import(ex.yes, state),
-                    no: self.maybe_transpose_if_import(ex.no, state),
-                    test: ex.test,
-                },
-                arg.loc,
-            ),
-            _ => self.transpose_import(arg, state),
+    /// `None`: a stack overflow is in the log. `no` is a loop, so only `yes` takes stack.
+    fn transpose_each_branch(
+        &mut self,
+        arg: Expr,
+        leaf: &mut impl FnMut(&mut Self, Expr) -> Expr,
+    ) -> Option<Expr> {
+        let js_ast::ExprData::EIf(first) = arg.data else {
+            return Some(leaf(self, arg));
+        };
+        if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+            self.report_stack_overflow(arg.loc);
+            return None;
+        }
+        let root = Expr::init(E::If { ..*first }, arg.loc);
+        let mut link = root.data.e_if().expect("infallible: variant checked");
+        loop {
+            link.yes = self.transpose_each_branch(link.yes, leaf)?;
+            let no = link.no;
+            let js_ast::ExprData::EIf(next) = no.data else {
+                link.no = leaf(self, no);
+                return Some(root);
+            };
+            link.no = Expr::init(E::If { ..*next }, no.loc);
+            link = link.no.data.e_if().expect("infallible: variant checked");
         }
     }
 
-    pub(crate) fn maybe_transpose_if_require(&mut self, arg: Expr, state: &TransposeState) -> Expr {
-        match arg.data {
-            js_ast::ExprData::EIf(ex) => Expr::init(
-                E::If {
-                    yes: self.maybe_transpose_if_require(ex.yes, state),
-                    no: self.maybe_transpose_if_require(ex.no, state),
-                    test: ex.test,
-                },
-                arg.loc,
-            ),
-            _ => self.transpose_require(arg, state),
-        }
-    }
-
-    pub(crate) fn transpose_known_to_be_if_require(
+    pub(crate) fn maybe_transpose_if_import(
         &mut self,
         arg: Expr,
         state: &TransposeState,
-    ) -> Expr {
-        // Caller guarantees `arg.data` is `EIf`.
-        let js_ast::ExprData::EIf(ex) = arg.data else {
-            unreachable!()
-        };
-        Expr::init(
-            E::If {
-                yes: self.maybe_transpose_if_require(ex.yes, state),
-                no: self.maybe_transpose_if_require(ex.no, state),
-                test: ex.test,
-            },
-            arg.loc,
-        )
+    ) -> Option<Expr> {
+        self.transpose_each_branch(arg, &mut |p, branch| p.transpose_import(branch, state))
     }
 
-    pub(crate) fn maybe_transpose_if_require_resolve(&mut self, arg: Expr, state: Expr) -> Expr {
-        match arg.data {
-            js_ast::ExprData::EIf(ex) => Expr::init(
-                E::If {
-                    yes: self.maybe_transpose_if_require_resolve(ex.yes, state),
-                    no: self.maybe_transpose_if_require_resolve(ex.no, state),
-                    test: ex.test,
-                },
-                arg.loc,
-            ),
-            _ => self.transpose_require_resolve(arg, state),
-        }
+    pub(crate) fn maybe_transpose_if_require(
+        &mut self,
+        arg: Expr,
+        state: &TransposeState,
+    ) -> Option<Expr> {
+        self.transpose_each_branch(arg, &mut |p, branch| p.transpose_require(branch, state))
     }
 
-    pub(crate) fn transpose_known_to_be_if_require_resolve(
+    pub(crate) fn maybe_transpose_if_require_resolve(
         &mut self,
         arg: Expr,
         state: Expr,
-    ) -> Expr {
-        // Caller guarantees `arg.data` is `EIf`.
-        let js_ast::ExprData::EIf(ex) = arg.data else {
-            unreachable!()
-        };
-        Expr::init(
-            E::If {
-                yes: self.maybe_transpose_if_require_resolve(ex.yes, state),
-                no: self.maybe_transpose_if_require_resolve(ex.no, state),
-                test: ex.test,
-            },
-            arg.loc,
-        )
+    ) -> Option<Expr> {
+        self.transpose_each_branch(arg, &mut |p, branch| {
+            p.transpose_require_resolve(branch, state)
+        })
     }
 
     /// Record the destructured property names of an `await import()` /
@@ -1355,14 +1328,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     /// something else.
     pub(crate) fn conditional_namespace_records(
         &mut self,
-        expr: Expr,
+        mut expr: Expr,
         out: &mut Vec<u32>,
     ) -> Option<()> {
-        match expr.data {
-            js_ast::ExprData::EIf(e) => {
-                self.conditional_namespace_records(e.yes, out)?;
-                self.conditional_namespace_records(e.no, out)
+        while let js_ast::ExprData::EIf(e) = expr.data {
+            if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+                self.report_stack_overflow(expr.loc);
+                return None;
             }
+            self.conditional_namespace_records(e.yes, out)?;
+            expr = e.no;
+        }
+        match expr.data {
             js_ast::ExprData::ERequireString(req)
                 if self.options.bundle && req.unwrapped_id.get().is_none() =>
             {
@@ -7339,40 +7316,40 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     // `parts` is `&[Box<[u8]>]` to match the active `DotDefine.parts:
     // Vec<Box<[u8]>>` shape (auto-derefs at call sites). The full draft uses
     // `StoreSlice<StoreStr>`; both index to a `[u8]` so the body is unchanged.
-    pub(crate) fn is_dot_define_match(&mut self, expr: Expr, parts: &[Box<[u8]>]) -> bool {
-        match expr.data {
-            js_ast::ExprData::EDot(ex) => {
-                if parts.len() > 1 {
-                    if ex.optional_chain.is_some() {
-                        return false;
-                    }
-                    // Intermediates must be dot expressions
-                    let last = parts.len() - 1;
-                    let is_tail_match = strings::eql(&parts[last], &ex.name);
-                    return is_tail_match && self.is_dot_define_match(ex.target, &parts[..last]);
+    pub(crate) fn is_dot_define_match(&mut self, mut expr: Expr, mut parts: &[Box<[u8]>]) -> bool {
+        while parts.len() > 1 {
+            let last = parts.len() - 1;
+            // Intermediates must be dot expressions
+            if let js_ast::ExprData::EDot(ex) = expr.data {
+                if ex.optional_chain.is_some() || !strings::eql(&parts[last], &ex.name) {
+                    return false;
                 }
-            }
-            js_ast::ExprData::EImportMeta(_) => {
-                return parts.len() == 2 && &*parts[0] == b"import" && &*parts[1] == b"meta";
+                expr = ex.target;
+                parts = &parts[..last];
+                continue;
             }
             // Note: this behavior differs from esbuild
             // esbuild does not try to match index accessors
             // we do, but only if it's a UTF8 string
             // the intent is to handle people using this form instead of E.Dot. So we really only want to do this if the accessor can also be an identifier
-            js_ast::ExprData::EIndex(index) => {
-                if parts.len() > 1 {
-                    if let js_ast::ExprData::EString(mut s) = index.index.data {
-                        if s.is_utf8() {
-                            if index.optional_chain.is_some() {
-                                return false;
-                            }
-                            let last = parts.len() - 1;
-                            let is_tail_match = strings::eql(&parts[last], s.slice(self.arena));
-                            return is_tail_match
-                                && self.is_dot_define_match(index.target, &parts[..last]);
-                        }
-                    }
+            if let js_ast::ExprData::EIndex(index) = expr.data
+                && let js_ast::ExprData::EString(mut s) = index.index.data
+                && s.is_utf8()
+            {
+                if index.optional_chain.is_some()
+                    || !strings::eql(&parts[last], s.slice(self.arena))
+                {
+                    return false;
                 }
+                expr = index.target;
+                parts = &parts[..last];
+                continue;
+            }
+            break;
+        }
+        match expr.data {
+            js_ast::ExprData::EImportMeta(_) => {
+                return parts.len() == 2 && &*parts[0] == b"import" && &*parts[1] == b"meta";
             }
             js_ast::ExprData::EIdentifier(ex) => {
                 // The last expression must be an identifier

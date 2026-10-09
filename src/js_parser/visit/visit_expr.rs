@@ -1865,7 +1865,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
             p.should_fold_typescript_constant_expressions =
                 prev_should_fold_typescript_constant_expressions;
-            *e = p.maybe_transpose_if_import(e_.expr, &state);
+            if let Some(transposed) = p.maybe_transpose_if_import(e_.expr, &state) {
+                *e = transposed;
+            }
             return;
         }
         p.should_fold_typescript_constant_expressions =
@@ -2184,7 +2186,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     Data::EIf(..) => {
                         // require(FOO  ? '123' : '456') => FOO ? require('123') : require('456')
                         // This makes static analysis later easier
-                        *e = p.transpose_known_to_be_if_require(first, &state);
+                        if let Some(transposed) = p.maybe_transpose_if_require(first, &state) {
+                            *e = transposed;
+                        }
                         return;
                     }
                     _ => {}
@@ -2242,7 +2246,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         //  =>
                         // FOO ? require.resolve('123') : require.resolve('456')
                         // This makes static analysis later easier
-                        *e = p.transpose_known_to_be_if_require_resolve(first, e_.target);
+                        if let Some(transposed) =
+                            p.maybe_transpose_if_require_resolve(first, e_.target)
+                        {
+                            *e = transposed;
+                        }
                         return;
                     }
                     _ => {}

@@ -832,6 +832,8 @@ pub struct HTTPClient<'a> {
     /// the body hasn't been compressed yet.
     pub(crate) compressed_body_len: usize,
     pub(crate) pool: PoolOptions,
+    /// A `Sendfile` body read into memory for a TLS hop, borrowed by `state.original_request_body`.
+    pub(crate) buffered_sendfile_body: Vec<u8>,
 }
 
 impl<'a> HTTPClient<'a> {
@@ -2190,9 +2192,7 @@ impl<'a> HTTPClient<'a> {
         if in_progress
             && self.allow_retry
             && self.method.is_idempotent()
-            // Only a Bytes body can be rebuilt from `original_request_body`.
-            // Stream/Sendfile bodies are consumed as they are written, so a
-            // retry would silently replay a truncated request.
+            // Only an in-memory body is retried; a Stream body is consumed as it is written.
             && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
             && self.state.response_stage != ResponseStage::Body
             && self.state.response_stage != ResponseStage::BodyChunk
@@ -2646,17 +2646,7 @@ impl<'a> HTTPClient<'a> {
             self.flags.is_streaming_request_body = false;
         }
 
-        // TODO: what we do with stream body?
-        let request_body: &[u8] = if self.state.flags.resend_request_body_on_redirect
-            && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
-        {
-            match &self.state.original_request_body {
-                HTTPRequestBody::Bytes(b) => b,
-                _ => unreachable!(),
-            }
-        } else {
-            b""
-        };
+        let request_body = self.request_body_for_redirect();
 
         self.state.response_message_buffer = MutableString::default();
 
@@ -2719,7 +2709,19 @@ impl<'a> HTTPClient<'a> {
         self.flags.protocol = Protocol::Http1_1;
         self.reevaluate_proxy_for_redirect();
 
-        self.start(HTTPRequestBody::Bytes(request_body));
+        self.start(request_body);
+    }
+
+    /// The body for the next hop; a `Stream` only reaches this on a 303, already a bodiless GET.
+    fn request_body_for_redirect(&self) -> HTTPRequestBody<'a> {
+        if !self.state.flags.resend_request_body_on_redirect {
+            return HTTPRequestBody::Bytes(b"");
+        }
+        match self.state.original_request_body {
+            HTTPRequestBody::Bytes(bytes) => HTTPRequestBody::Bytes(bytes),
+            HTTPRequestBody::Sendfile(sendfile) => HTTPRequestBody::Sendfile(sendfile),
+            HTTPRequestBody::Stream(_) => HTTPRequestBody::Bytes(b""),
+        }
     }
 
     /// Re-resolve `http_proxy` against the post-redirect `self.url`. The
@@ -2793,6 +2795,12 @@ impl<'a> HTTPClient<'a> {
         // Aborted before connecting
         if self.signals.get(signals::Field::Aborted) {
             self.fail(crate::Error::AbortedBeforeConnecting);
+            self.complete_connecting_process();
+            return;
+        }
+
+        if let Err(err) = self.buffer_sendfile_body_for_tls::<IS_SSL>() {
+            self.fail(err);
             self.complete_connecting_process();
             return;
         }
@@ -2933,6 +2941,25 @@ impl<'a> HTTPClient<'a> {
             self.register_abort_tracker::<IS_SSL>(socket);
         }
         self.complete_connecting_process();
+    }
+
+    /// A redirect or env `https://` proxy can put a `Sendfile` body on TLS; send it as `Bytes` there.
+    fn buffer_sendfile_body_for_tls<const IS_SSL: bool>(&mut self) -> crate::Result<()> {
+        let HTTPRequestBody::Sendfile(sendfile) = self.state.original_request_body else {
+            return Ok(());
+        };
+        let tunnels_through_proxy = self.http_proxy.is_some() && self.url.is_https();
+        if !IS_SSL && !tunnels_through_proxy {
+            return Ok(());
+        }
+        debug_assert!(self.buffered_sendfile_body.is_empty());
+        self.buffered_sendfile_body = sendfile.read_to_vec()?;
+        // SAFETY: the Vec is assigned only here, once per request (the body is
+        // `Bytes` from now on), and lives on `self`, which outlives every
+        // `InternalState` that borrows it.
+        let bytes: &'a [u8] = unsafe { bun_ptr::detach_lifetime(&self.buffered_sendfile_body) };
+        self.state = InternalState::init(HTTPRequestBody::Bytes(bytes));
+        Ok(())
     }
 
     /// Body length for `Content-Length` — the compressed length once
@@ -3432,7 +3459,7 @@ impl<'a> HTTPClient<'a> {
                     self.set_timeout(&socket);
                 }
 
-                match &mut self.state.original_request_body {
+                match self.state.original_request_body {
                     HTTPRequestBody::Bytes(_) => {
                         let to_send = self.request_body();
                         if !to_send.is_empty() {
@@ -3458,13 +3485,18 @@ impl<'a> HTTPClient<'a> {
                         // flush without adding any new data
                         self.flush_stream::<IS_SSL>(socket);
                     }
-                    HTTPRequestBody::Sendfile(sendfile) => {
+                    HTTPRequestBody::Sendfile(_) => {
                         if IS_SSL {
                             panic!(
                                 "sendfile is only supported without SSL. This code should never have been reached!"
                             );
                         }
 
+                        let sendfile = self
+                            .state
+                            .sendfile
+                            .as_mut()
+                            .expect("InternalState::init seats the cursor for a Sendfile body");
                         // sendfile.write() takes the raw fd, not the socket handle.
                         match sendfile.write(socket.fd()) {
                             #[cfg(not(windows))]
@@ -4434,16 +4466,7 @@ impl<'a> HTTPClient<'a> {
             self.flags.is_streaming_request_body = false;
         }
         self.unix_socket_path = b"";
-        let request_body: &[u8] = if self.state.flags.resend_request_body_on_redirect
-            && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
-        {
-            match &self.state.original_request_body {
-                HTTPRequestBody::Bytes(b) => b,
-                _ => unreachable!(),
-            }
-        } else {
-            b""
-        };
+        let request_body = self.request_body_for_redirect();
         self.state.response_message_buffer = MutableString::default();
         self.remaining_redirect_count = self.remaining_redirect_count.saturating_sub(1);
         self.flags.redirected = true;
@@ -4459,7 +4482,7 @@ impl<'a> HTTPClient<'a> {
         self.flags.proxy_tunneling = false;
         self.flags.protocol = Protocol::Http1_1;
         self.reevaluate_proxy_for_redirect();
-        self.start(HTTPRequestBody::Bytes(request_body));
+        self.start(request_body);
     }
 
     pub(crate) fn progress_update_h3(&mut self) {

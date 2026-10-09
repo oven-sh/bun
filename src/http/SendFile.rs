@@ -5,6 +5,7 @@ use bun_core::feature_flags;
 use bun_sys::{self, Fd};
 use bun_url::URL;
 
+/// A body sent with `sendfile(2)`; the JS-side `FetchTasklet` owns the fd for the whole request.
 #[derive(Copy, Clone)]
 pub struct SendFile {
     pub fd: Fd,
@@ -20,6 +21,20 @@ impl SendFile {
             return false;
         }
         url.is_http() && url.href.len() > 0
+    }
+
+    /// Reads the advertised `content_size` bytes (fewer if the file shrank) for a non-sendfile hop.
+    pub(crate) fn read_to_vec(&self) -> crate::Result<Vec<u8>> {
+        let mut bytes: Vec<u8> = Vec::new();
+        bytes
+            .try_reserve_exact(self.content_size)
+            .map_err(|_| bun_alloc::AllocError)?;
+        bytes.resize(self.content_size, 0);
+        let read = bun_sys::File::borrow(&self.fd)
+            .pread_all(&mut bytes, self.offset as u64)
+            .map_err(bun_errno::SystemErrno::from)?;
+        bytes.truncate(read);
+        Ok(bytes)
     }
 
     // Takes the resolved fd directly rather than the socket; callers pass

@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test"
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
 import { closeSync, openSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
+import { connect } from "node:net";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -1882,6 +1883,69 @@ test.skipIf(!isLinux)(
   },
   90_000,
 );
+
+// RFC 9110 §9.3.8: the response to TRACE has content. By method, only a
+// response to HEAD ends at its header block (RFC 9112 §6.3). Read the wire
+// directly so the result does not depend on bun's own HTTP client.
+describe("a Bun.file() body in response to TRACE", () => {
+  const content = "0123456789ABCDEF";
+  const wire = (port: number, method: string) =>
+    new Promise<{ status: string; contentLength: string | undefined; body: string }>((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      const socket = connect(port, "127.0.0.1", () => {
+        socket.write(`${method} / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`);
+      });
+      socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+      socket.on("error", reject);
+      socket.on("close", () => {
+        const raw = Buffer.concat(chunks).toString("latin1");
+        const headEnd = raw.indexOf("\r\n\r\n");
+        resolve({
+          status: raw.slice("HTTP/1.1 ".length, "HTTP/1.1 200".length),
+          contentLength: /^content-length: *(\d+)\r$/im.exec(raw.slice(0, headEnd + 2))?.[1],
+          body: raw.slice(headEnd + 4),
+        });
+      });
+    });
+
+  describe.each([
+    ["the whole file", (path: string) => Bun.file(path), content],
+    ["a slice of the file", (path: string) => Bun.file(path).slice(4, 10), content.slice(4, 10)],
+  ] as const)("%s", (_body, file, expected) => {
+    test.each([
+      ["a fetch handler", (respond: () => Response) => ({ fetch: respond })],
+      [
+        "a routes handler",
+        (respond: () => Response) => ({
+          routes: { "/": { GET: respond, HEAD: respond, TRACE: respond } },
+          fetch: () => new Response("unreachable", { status: 500 }),
+        }),
+      ],
+      [
+        "a static route",
+        (respond: () => Response) => ({
+          routes: { "/": respond() },
+          fetch: () => new Response("unreachable", { status: 500 }),
+        }),
+      ],
+    ] as const)("served by %s", async (_handler, handlers) => {
+      using dir = tempDir("serve-file-trace", { "payload.txt": content });
+      await using server = Bun.serve({
+        port: 0,
+        ...handlers(() => new Response(file(join(String(dir), "payload.txt")))),
+      });
+
+      const [get, trace, head] = await Promise.all(["GET", "TRACE", "HEAD"].map(method => wire(server.port!, method)));
+      expect({ get: get.body, trace, head: { contentLength: head.contentLength, body: head.body } }).toEqual({
+        get: expected,
+        // TRACE is answered as GET is.
+        trace: get,
+        // HEAD is the one method whose response ends at the header block.
+        head: { contentLength: String(expected.length), body: "" },
+      });
+    });
+  });
+});
 
 // Unix-socket listeners reach the same Linux sendfile path as TCP (the
 // response handle is transport-agnostic), so pin body integrity for a >=1MB

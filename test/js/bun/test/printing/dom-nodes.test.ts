@@ -55,6 +55,12 @@ class Node {
   hasAttribute(name: string) {
     return this[impl].attributes.some((attribute: Attr) => attribute.name === name);
   }
+  get nodeName() {
+    return this[impl].tagName ?? "#node";
+  }
+  isEqualNode(other: Node) {
+    return utils.stringify(this) === utils.stringify(other);
+  }
 }
 class Text extends Node {}
 class Comment extends Node {}
@@ -839,5 +845,160 @@ describe("objects that misbehave", () => {
       h("u"),
     );
     expect(utils.stringify(node)).toBe("<div><i /><b /><u /></div>");
+  });
+});
+
+describe("equality", () => {
+  test("isEqualNode() decides", () => {
+    expect(button()).toEqual(button());
+    expect(button()).toStrictEqual(button());
+    expect(button()).not.toEqual(h("button", { id: "x", class: "b a" }, "stop"));
+    expect(button()).not.toStrictEqual(h("button", { id: "y", class: "b a" }, "go"));
+    expect(Object.assign(button(), { own: 1 })).toEqual(Object.assign(button(), { own: 2 }));
+    expect(messageOf(() => expect(h("i", { a: "1" })).toEqual(h("i", { a: "2" })))).toContain('-   a="2"\n+   a="1"\n');
+  });
+
+  test("what it returns counts as a boolean", () => {
+    const returning = (returned: unknown) => Object.assign(h("i"), { isEqualNode: () => returned });
+    for (const truthy of [1, "yes", {}]) expect(returning(truthy)).toEqual(h("b"));
+    for (const falsy of [0, "", null, undefined]) expect(returning(falsy)).not.toEqual(h("i"));
+  });
+
+  test("toMatchObject compares two nodes the same way, and a node with a pattern by its properties", () => {
+    expect({ n: h("i", { a: "1" }), x: 1 }).toMatchObject({ n: h("i", { a: "1" }) });
+    expect({ n: h("i", { a: "1" }), x: 1 }).not.toMatchObject({ n: h("i", { a: "2" }) });
+    expect(h("i", { a: "1" })).not.toMatchObject(h("i", { a: "2" }));
+    expect({ l: [h("i")] }).not.toMatchObject({ l: [h("b")] });
+    expect(h("i")).toMatchObject({ tagName: "I", nodeType: 1 });
+    expect(h("i")).not.toMatchObject({ tagName: "B" });
+  });
+
+  test("toStrictEqual wants the same class", () => {
+    const sameName = () => elementOf(class HTMLElement extends Element {}, "I");
+    expect(sameName()).toEqual(sameName());
+    expect(sameName()).not.toStrictEqual(sameName());
+  });
+
+  test("a node behind a Proxy", () => {
+    const seen: unknown[] = [];
+    const node = Object.assign(h("form"), {
+      isEqualNode(this: unknown, other: unknown) {
+        seen.push(this, other);
+        return true;
+      },
+    });
+    const [proxy, other] = [new Proxy(new Proxy(node, {}), {}), new Proxy(h("select"), {})];
+    expect(proxy).toEqual(other);
+    expect(seen).toEqual([expect.anything(), expect.anything()]);
+    expect(seen[0]).toBe(proxy);
+    expect(seen[1]).toBe(other);
+  });
+
+  test("a node and something that is not a node", () => {
+    class Tagged extends HTMLElement {
+      get [Symbol.toStringTag]() {
+        return "HTMLElement";
+      }
+    }
+    const tagged = () => new Tagged({ nodeType: 1, tagName: "I", attributes: [], childNodes: [] });
+    // Another Object.prototype.toString(): different.
+    expect(tagged()).not.toEqual({ ownerDocument });
+    expect({ ownerDocument }).not.toEqual(tagged());
+    expect(tagged()).not.toEqual(h("i"));
+    // The same: by their properties.
+    expect(h("i")).toEqual({ ownerDocument });
+    expect({ ownerDocument }).toEqual(h("i"));
+    expect(h("i")).not.toEqual({ ownerDocument: 1 });
+  });
+
+  test.each([
+    ["no isEqualNode", { isEqualNode: undefined }],
+    ["an isEqualNode that is not a function", { isEqualNode: 1 }],
+    ["a nodeType that is not a number", { nodeType: "1" }],
+    ["a nodeName that is not a string", { nodeName: 1 }],
+  ])("%s: not a node", (_, properties) => {
+    const define = (node: Node) => {
+      for (const [key, value] of Object.entries(properties)) Object.defineProperty(node, key, { value });
+      return node;
+    };
+    expect(define(h("i"))).toEqual(define(h("b")));
+  });
+
+  test.each(["nodeType", "nodeName", "isEqualNode"])("a %s that throws", key => {
+    const node = Object.defineProperty(h("i"), key, {
+      get() {
+        throw new Error(`${key} was read`);
+      },
+    });
+    expect(() => expect(node).toEqual(h("i"))).toThrow(`${key} was read`);
+    expect(() => expect(h("i")).toEqual(node)).toThrow(`${key} was read`);
+    expect(() => expect({ n: node }).toMatchObject({ n: h("i") })).toThrow(`${key} was read`);
+  });
+
+  test("values that are not nodes are not asked anything", () => {
+    const asked: string[] = [];
+    const traps = new Proxy(
+      {},
+      {
+        get: (_, trap: string) =>
+          function (target: object, key: unknown) {
+            asked.push(key === undefined ? trap : `${trap} ${String(key)}`);
+            return Reflect[trap](...arguments);
+          },
+      },
+    );
+    class Instance {
+      a = 1;
+      get nodeType() {
+        asked.push("nodeType");
+        return 1;
+      }
+      get nodeName() {
+        asked.push("nodeName");
+        return "X";
+      }
+      get [Symbol.toStringTag]() {
+        asked.push("toStringTag");
+        return "X";
+      }
+    }
+    Object.defineProperty(Instance.prototype, "constructor", {
+      get() {
+        asked.push("constructor");
+        return Instance;
+      },
+    });
+    const values = () => ({
+      plain: { a: 1 },
+      array: [{ a: 1 }],
+      instance: new Instance(),
+      nothing: Object.create(null),
+      proxy: new Proxy({ a: 1 }, traps),
+      proxyOfInstance: new Proxy(new Instance(), traps),
+    });
+    expect(values()).toEqual(values());
+    expect(values()).toMatchObject(values());
+    expect([...new Set(asked)].sort()).toEqual([
+      "get a",
+      "getOwnPropertyDescriptor a",
+      "getPrototypeOf",
+      "has a",
+      "ownKeys",
+    ]);
+  });
+
+  test("a revoked Proxy", () => {
+    const { proxy, revoke } = Proxy.revocable(h("i"), {});
+    revoke();
+    expect(() => expect(proxy).toEqual(h("i"))).toThrow(TypeError);
+  });
+
+  test("Bun.deepEquals() compares properties", () => {
+    const node = Object.assign(h("i"), {
+      isEqualNode() {
+        throw new Error("isEqualNode() was called");
+      },
+    });
+    expect(Bun.deepEquals(node, Object.assign(h("b"), { isEqualNode: node.isEqualNode }))).toBe(true);
   });
 });

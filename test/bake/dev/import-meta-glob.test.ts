@@ -38,6 +38,14 @@ devTest("import.meta.glob follows files that appear and disappear", {
       await dev.write("modules/d.ts", `export default "d";`);
     });
     await c.expectMessage(`{"./modules/a.ts":"a","./modules/c.ts":"c","./modules/d.ts":"d"} a,c,d`);
+
+    await c.expectReload(async () => {
+      await dev.write("index.ts", `console.log("no glob");`);
+    });
+    await c.expectMessage("no glob");
+    await c.expectNoWebSocketActivity(async () => {
+      await dev.write("modules/e.ts", `export default "e";`);
+    });
   },
 });
 

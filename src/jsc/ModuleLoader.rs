@@ -247,8 +247,8 @@ extern "C" fn Bun__getDefaultLoader(
 /// C++ entry point: what `IsolatedModuleCache` knows the contents a plugin supplied, and their loader, by. Never 0.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__hashPluginContents(contents: &bun_core::EncodedSlice, loader: u8) -> u64 {
-    let encoding = u64::from(contents.is_16bit()) << 1 | u64::from(contents.is_utf8());
-    bun_wyhash::hash_with_seed(u64::from(loader) << 2 | encoding, contents.byte_slice()) | 1
+    let encoding = (u64::from(contents.is_16bit()) << 1) | u64::from(contents.is_utf8());
+    bun_wyhash::hash_with_seed((u64::from(loader) << 2) | encoding, contents.byte_slice()) | 1
 }
 
 /// The namespace of `specifier` (`b""` if it has none) and the path after it.

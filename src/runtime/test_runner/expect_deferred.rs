@@ -68,7 +68,7 @@ impl RunningEntry {
             Some(sequence) => unsafe { sequence.as_ref() }.remaining_retry_count,
             None => Self::group_running(&buntest, &entry).map(|_| 0)?,
         };
-        Some(RunningEntry { buntest: parent.buntest_weak.clone(), entry, remaining_retry_count })
+        Some(RunningEntry { buntest: std::rc::Weak::clone(&parent.buntest_weak), entry, remaining_retry_count })
     }
 
     fn group_running(buntest: &BunTestPtr, entry: &RefDataValue) -> Option<NonNull<ConcurrentGroup>> {
@@ -168,7 +168,7 @@ struct RunningAgain<'a> {
 impl<'a> RunningAgain<'a> {
     fn enter(global: &'a JSGlobalObject, deferred: JSValue) -> Self {
         let utils = ExpectMatcherUtils::singleton(global);
-        let outer = utils_js::deferred_get_cached(utils).unwrap_or(JSValue::ZERO);
+        let outer = utils_js::deferred_get_cached(utils).unwrap_or_default();
         utils_js::deferred_set_cached(utils, global, deferred);
         Self { global, outer }
     }

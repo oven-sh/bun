@@ -1389,8 +1389,13 @@ fn advance(global: &JSGlobalObject, ms: f64) -> JsResult<JSValue> {
 
 /// The next test file shares `global`. No script is on the stack.
 pub(crate) fn on_test_file_end(global: &JSGlobalObject) {
-    // SAFETY: per-thread `timer::All`; field read only.
-    if unsafe { (*timer_all()).fake_timers.from_preload } {
+    // SAFETY: per-thread `timer::All`; field reads only.
+    let (active, from_preload) = unsafe {
+        let this = &(*timer_all()).fake_timers;
+        (this.active, this.from_preload)
+    };
+    let mocked = active || !bun_jsc::cpp::Bun__FakeTimers__overriddenDateNow(global).is_nan();
+    if !mocked || from_preload {
         return;
     }
     // What waits for an `…Async` call goes on while this is still the file it belongs to.

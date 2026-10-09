@@ -7728,7 +7728,7 @@ pub mod bv2_impl {
                     }
 
                     if let Some(dev) = this.dev_server
-                        && !result.import_meta_globs.is_empty()
+                        && result.loader.is_javascript_like()
                     {
                         dev.track_import_meta_globs(
                             source_path_text,

@@ -28,7 +28,7 @@
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/JSMapInlines.h>
 #include <JavaScriptCore/ArrayConstructor.h>
-#include <JavaScriptCore/ObjectPrototype.h>
+#include <JavaScriptCore/ObjectPrototypeInlines.h>
 #include <JavaScriptCore/RegExpPrototype.h>
 #include <JavaScriptCore/PropertyNameArray.h>
 #include "BunPlugin.h"

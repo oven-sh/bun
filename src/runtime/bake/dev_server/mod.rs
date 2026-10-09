@@ -461,7 +461,15 @@ impl HotReloadEvent {
                                 bun_ast::ImportKind::Stmt,
                             )
                             .is_ok(),
-                            directory_watch_store::Check::GlobChanged(scan) => scan.has_changed(),
+                            // It stays until `track_import_meta_globs` replaces it.
+                            directory_watch_store::Check::GlobChanged(scan) => {
+                                if scan.has_changed() {
+                                    bun_core::handle_oom(
+                                        self.files.get_or_put(source_file_path.slice()),
+                                    );
+                                }
+                                false
+                            }
                         };
 
                         if resolved {
@@ -1280,8 +1288,8 @@ impl DirectoryWatchStore {
         )
     }
 
-    /// Bundles `import_source` again once one of its `import.meta.glob()` calls matches other
-    /// files than it did.
+    /// Bundles `import_source` again once one of its `import.meta.glob()` calls, which are
+    /// `scans`, matches other files than it did.
     pub(crate) fn track_import_meta_globs(
         &mut self,
         import_source: &[u8],
@@ -1289,17 +1297,24 @@ impl DirectoryWatchStore {
         scans: Vec<bun_js_parser::ImportMetaGlobScan>,
     ) -> Result<(), bun_alloc::AllocError> {
         use directory_watch_store::Check;
-        let owned_file_path = self.graph_key(import_source, renderer)?;
-        self.remove_dependencies_for_file_if(owned_file_path.slice(), |check| {
-            matches!(check, Check::GlobChanged(_))
-        });
-        for scan in scans {
-            let scan = std::rc::Rc::new(scan);
-            for dir in scan.directories() {
-                let check = Check::GlobChanged(std::rc::Rc::clone(&scan));
-                self.insert_or_ignore(dir, owned_file_path, check)?;
+        use std::rc::Rc;
+        let scans: Vec<_> = scans.into_iter().map(Rc::new).collect();
+        if !scans.is_empty() {
+            let owned_file_path = self.graph_key(import_source, renderer)?;
+            for scan in &scans {
+                for dir in scan.directories() {
+                    let check = Check::GlobChanged(Rc::clone(scan));
+                    self.insert_or_ignore(dir, owned_file_path, check)?;
+                }
             }
         }
+        // After the new ones are in: a watch that is removed and added again at once is lost.
+        self.remove_dependencies_if(|dep| {
+            matches!(
+                &dep.check,
+                Check::GlobChanged(old) if !scans.iter().any(|scan| Rc::ptr_eq(scan, old))
+            ) && dep.source_file_path.slice() == import_source
+        });
         Ok(())
     }
 
@@ -1510,24 +1525,20 @@ impl DirectoryWatchStore {
     /// with `IncrementalGraph.bundled_files`. Called before IncrementalGraph
     /// frees a file's key string so no `Dep` is left holding a dangling pointer.
     pub(crate) fn remove_dependencies_for_file(&mut self, file_path: &[u8]) {
-        self.remove_dependencies_for_file_if(file_path, |_| true);
-    }
-
-    fn remove_dependencies_for_file_if(
-        &mut self,
-        file_path: &[u8],
-        should_remove: impl Fn(&directory_watch_store::Check) -> bool,
-    ) {
-        if self.watches.count() == 0 {
-            return;
-        }
-
         bun_core::scoped_log!(
             DevServer,
             "DirectoryWatchStore.removeDependenciesForFile({:?})",
             bstr::BStr::new(file_path),
         );
+        self.remove_dependencies_if(|dep| {
+            dep.source_file_path.slice().as_ptr() == file_path.as_ptr()
+        });
+    }
 
+    fn remove_dependencies_if(
+        &mut self,
+        should_remove: impl Fn(&directory_watch_store::Dep) -> bool,
+    ) {
         // Iterate in reverse since `free_entry` uses `swap_remove_at`.
         let mut watch_index = self.watches.count();
         while watch_index > 0 {
@@ -1537,13 +1548,8 @@ impl DirectoryWatchStore {
             let mut new_chain: Option<u32> = None;
             let mut it: Option<u32> = Some(self.watches.values()[watch_index].first_dep);
             while let Some(index) = it {
-                let dep_next = self.dependencies[index as usize].next;
-                let dep_path = self.dependencies[index as usize].source_file_path;
-                it = dep_next;
-                // Pointer-identity comparison.
-                if dep_path.slice().as_ptr() == file_path.as_ptr()
-                    && should_remove(&self.dependencies[index as usize].check)
-                {
+                it = self.dependencies[index as usize].next;
+                if should_remove(&self.dependencies[index as usize]) {
                     self.free_dependency_index(index);
                 } else {
                     self.dependencies[index as usize].next = new_chain;

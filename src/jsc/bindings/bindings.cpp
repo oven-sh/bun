@@ -751,11 +751,17 @@ enum class DOMNodeComparison : uint8_t {
 static NEVER_INLINE std::optional<bool> domNodesDequal(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* o1, JSObject* o2, DOMNodeComparison comparison)
 {
     VM& vm = globalObject->vm();
-    const Identifier isEqualNodeName = Identifier::fromString(vm, "isEqualNode"_s);
+    // Where no code has said `isEqualNode` yet, no object has one.
+    RefPtr<AtomStringImpl> isEqualNodeAtom = AtomStringImpl::lookUp("isEqualNode"_span);
+    if (!isEqualNodeAtom)
+        return std::nullopt;
+    const Identifier isEqualNodeName = Identifier::fromString(vm, isEqualNodeAtom.get());
     JSValue isEqualNode;
     JSValue isEqualNodeOfOther;
     bool isNode1 = isDOMNode(globalObject, scope, o1, isEqualNodeName, isEqualNode);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (!isNode1 && o1->structureID() == o2->structureID() && o1->type() == FinalObjectType && !o1->structure()->hasPolyProto())
+        return std::nullopt;
     bool isNode2 = isDOMNode(globalObject, scope, o2, isEqualNodeName, isEqualNodeOfOther);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
     if (comparison == DOMNodeComparison::Match ? !(isNode1 && isNode2) : !(isNode1 || isNode2))

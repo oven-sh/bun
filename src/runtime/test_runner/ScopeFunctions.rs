@@ -649,7 +649,7 @@ impl ScopeFunctions {
                     };
                     match error {
                         Some(error) => callback = Some(test_context::rejecting(global, error)?),
-                        None => bun_test.set_context_parameter(function, Rc::clone(&parameter)),
+                        None => bun_test.set_context_parameter(function, Rc::clone(parameter)),
                     }
                     if TestFixtures::has_scope_beyond_test(self.fixtures) {
                         bun_test.expect_file_scoped_fixtures();

@@ -555,7 +555,10 @@ describe.concurrent("bun format", () => {
 
   test("half a million quoted scalars on a line of YAML do not take quadratic time", async () => {
     const result = await format(
-      { "a.yaml": Buffer.alloc(1_000_000, '""').toString(), "b.yaml": `[${Buffer.alloc(300_000, '"a", ').toString()}"a"]\n` },
+      {
+        "a.yaml": Buffer.alloc(1_000_000, '""').toString(),
+        "b.yaml": `[${Buffer.alloc(300_000, '"a", ').toString()}"a"]\n`,
+      },
       [],
       { reads: ["b.yaml"] },
     );

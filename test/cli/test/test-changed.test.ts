@@ -50,11 +50,12 @@ async function runTestChanged(
   cwd: string,
   extra: string[] = [],
   flag = "--changed",
+  env: Record<string, string | undefined> = gitEnv,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", flag, ...extra],
     cwd,
-    env: gitEnv,
+    env,
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
@@ -456,6 +457,17 @@ describe.concurrent("bun test --changed", () => {
       ],
     ],
     [
+      "a workspace package behind a linked scope directory",
+      {
+        "package.json": JSON.stringify({ name: "root", private: true }),
+        "packages/lib/package.json": JSON.stringify({ name: "@org/lib", type: "module", main: "index.ts" }),
+        "packages/lib/index.ts": `export const one = 1;\n`,
+        "a.test.ts": importsOne("@org/lib"),
+      },
+      ["packages", "lib", "index.ts"],
+      [["packages"], ["node_modules", "@org"]],
+    ],
+    [
       // git names the file under the real directory.
       "a tsconfig paths alias through a linked directory",
       {
@@ -646,11 +658,16 @@ describe.concurrent("bun test --changed", () => {
       ...installed(store, "linked"),
       // A file in node_modules itself.
       "node_modules/single.js": `module.exports = { one: 1 };\n`,
+      // A package that only NODE_PATH names. The test run does not read NODE_PATH.
+      ...installed("global/node_modules/global", "global"),
+      // git on Windows reads the link as a directory, and then reports the store file twice.
+      ".gitignore": "/node_modules/linked\n",
       "local.test.ts": importsOne("#util"),
       "plain.test.ts": importsOne("dep"),
       "alias.test.ts": importsOne("#dep"),
       "linked.test.ts": importsOne("linked"),
       "single.test.ts": importsOne("single"),
+      "global.test.ts": importsOne("global"),
       // The script of a page resolves for the browser, in a transpiler of its own.
       "page.html": `<!doctype html><html><body><script type="module" src="./client.ts"></script></body></html>\n`,
       "client.ts": `import { one } from "dep";\nconsole.log(one);\n`,
@@ -658,8 +675,10 @@ describe.concurrent("bun test --changed", () => {
     });
     linkDirectory(join(String(dir), store), join(String(dir), "node_modules", "linked"));
     initRepo(String(dir));
+    const env = { ...gitEnv, NODE_PATH: join(String(dir), "global", "node_modules") };
     const testNames = [
       "alias.test.ts",
+      "global.test.ts",
       "linked.test.ts",
       "local.test.ts",
       "page.test.ts",
@@ -669,7 +688,7 @@ describe.concurrent("bun test --changed", () => {
 
     writeFileSync(join(String(dir), "src", "util.ts"), `export const one = 2;\n`);
     {
-      const { stderr, exitCode } = await runTestChanged(String(dir));
+      const { stderr, exitCode } = await runTestChanged(String(dir), [], "--changed", env);
       expect(ranFiles(stderr, testNames)).toEqual(["local.test.ts"]);
       expect(exitCode).toBe(1);
     }
@@ -678,10 +697,11 @@ describe.concurrent("bun test --changed", () => {
     appendFileSync(join(String(dir), "node_modules", "dep", "index.js"), "// touched\n");
     appendFileSync(join(String(dir), store, "index.js"), "// touched\n");
     appendFileSync(join(String(dir), "node_modules", "single.js"), "// touched\n");
+    appendFileSync(join(String(dir), "global", "node_modules", "global", "index.js"), "// touched\n");
     {
-      const { stderr, exitCode } = await runTestChanged(String(dir));
+      const { stderr, exitCode } = await runTestChanged(String(dir), [], "--changed", env);
       expect(ranFiles(stderr, testNames)).toEqual([]);
-      expect(stderr).toContain("3 changed files, but no test files are affected");
+      expect(stderr).toContain("4 changed files, but no test files are affected");
       expect(exitCode).toBe(0);
     }
   });

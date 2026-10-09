@@ -573,10 +573,7 @@ pub struct Resolver<'a> {
     ///
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
-    /// `bun test --changed`: a bare specifier that names a package installed
-    /// under `node_modules` is external, and the package is not read. A link
-    /// whose real path is outside `node_modules` (a workspace package) is not
-    /// an installed package.
+    /// `bun test --changed`: a package under `node_modules` is external and is not opened, unless a link leads out.
     pub installed_packages_are_external: bool,
 }
 
@@ -1020,8 +1017,7 @@ impl<'a> Resolver<'a> {
         self.match_tsconfig_paths(&tsconfig, import_path, kind, out)
     }
 
-    /// `out` for a package path that stays as it is written. The path is
-    /// empty: the caller of `load_node_modules` names it (`name_external`).
+    /// An external match without a path: `name_external` gives it the specifier that the caller holds.
     fn external_match(out: &mut MatchResult) -> MatchStatus {
         *out = MatchResult {
             is_external: true,
@@ -1030,33 +1026,35 @@ impl<'a> Resolver<'a> {
         MatchStatus::Success
     }
 
-    /// An external match that `load_node_modules` left without a path is the
-    /// specifier as the caller holds it.
     fn name_external(out: &mut MatchResult, import_path: &'static [u8]) {
         if out.is_external && out.path_pair.primary.text.is_empty() {
             out.path_pair.primary = Fs::Path::init(import_path);
         }
     }
 
-    /// `installed_packages_are_external`: the `<dir>/node_modules/<package_name>`
-    /// entry, read from the listing of the directory that holds it, so the
-    /// package is not opened. `None`: there is no such entry. `Some(false)`: a
-    /// link whose real path is outside `node_modules`.
+    /// Is `<dir>/node_modules/<package_name>` installed? `None`: no such entry. `Some(false)`: a link leads out.
     #[cold]
     #[inline(never)]
     fn is_node_modules_entry_installed(&mut self, dir: &[u8], package_name: &[u8]) -> Option<bool> {
-        // `@scope/name` is the entry `name` of `node_modules/@scope`.
-        let (scope, base) = match strings::last_index_of_char(package_name, b'/') {
+        let (scope, name) = match strings::last_index_of_char(package_name, b'/') {
             Some(slash) => (&package_name[..slash], &package_name[slash + 1..]),
             None => (&b""[..], package_name),
         };
         let parts: [&[u8]; 3] = [dir, b"node_modules", scope];
-        let listing_path = self.fs_ref().abs_buf_checked(
-            &parts[..if scope.is_empty() { 2 } else { 3 }],
-            bufs!(node_modules_check),
-        )?;
+        // `node_modules/@scope` can be a link too.
+        if !scope.is_empty() && !self.is_entry_installed(&parts[..2], scope)? {
+            return Some(false);
+        }
+        self.is_entry_installed(&parts[..if scope.is_empty() { 2 } else { 3 }], name)
+    }
+
+    /// The entry `name` of the directory `parts`, from the listing of that directory, so the entry is not opened.
+    fn is_entry_installed(&mut self, parts: &[&[u8]], name: &[u8]) -> Option<bool> {
+        let listing_path = self
+            .fs_ref()
+            .abs_buf_checked(parts, bufs!(node_modules_check))?;
         let listing = self.dir_info_cached(listing_path).ok().flatten()?;
-        let lookup = listing.get_entry(self.generation, base)?;
+        let lookup = listing.get_entry(self.generation, name)?;
         // SAFETY: `rfs_ptr` points at the process-global RealFS; the lazy-stat
         // rewrite inside `symlink()` is serialized on `Entry.mutex`.
         let real_path = unsafe { lookup.entry().symlink(self.rfs_ptr(), self.store_fd) };
@@ -2904,8 +2902,7 @@ impl<'a> Resolver<'a> {
                         if let Some(d) = self.debug_logs.as_mut() {
                             d.decrease_indent();
                         }
-                        // No `node_modules/<name>` entry: the probe found a file that
-                        // lives in `node_modules` itself.
+                        // No entry has the name: the probe found a file of `node_modules` itself.
                         if skips_installed_packages
                             && self
                                 .is_node_modules_entry_installed(dir_info.abs_path, package_name)
@@ -5176,14 +5173,12 @@ impl<'a> Resolver<'a> {
                 out,
             );
             if status.is_success() && out.is_external && out.path_pair.primary.text.is_empty() {
-                let Ok(package_path) = self
-                    .fs_ref()
-                    .dirname_store
-                    .append_slice(&esm_resolution.path)
-                else {
-                    return MatchStatus::NotFound;
-                };
-                out.path_pair.primary = Fs::Path::init(package_path);
+                out.path_pair.primary = Fs::Path::init(
+                    self.fs_ref()
+                        .dirname_store
+                        .append_slice(&esm_resolution.path)
+                        .expect("unreachable"),
+                );
             }
             return status;
         }

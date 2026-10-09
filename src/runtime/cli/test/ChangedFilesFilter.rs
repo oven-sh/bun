@@ -2,10 +2,9 @@
 //!
 //! 1. Ask git for the set of changed files relative to HEAD (uncommitted,
 //!    staged, and untracked) or relative to a user-supplied ref.
-//! 2. Run the bundler over every discovered test file. The scan resolves an
-//!    import as the test run does, and does not enter a package that is
-//!    installed under node_modules. This produces the full parse graph
-//!    (transitive imports) without linking or emitting code.
+//! 2. Run the bundler over every discovered test file with installed packages marked
+//!    external so node_modules are not entered. This produces the full parse
+//!    graph (transitive imports) without linking or emitting code.
 //! 3. Starting from each changed file that appears in the graph, walk the
 //!    reverse import edges to find every test entry point that can reach it.
 //!
@@ -136,9 +135,7 @@ pub(crate) fn filter<'a>(
     // A preload can create a file that the scan looked for, so the run must not read what the scan cached.
     let _scan_directory_cache = vm.transpiler.resolver.scoped_directory_cache();
 
-    // The scan must resolve an import to the file that the run loads, so it
-    // takes the run's target and the run's resolver settings. It does not take
-    // `preserve_symlinks`: git names a file by its real path.
+    // The scan resolves as the run does, except `preserve_symlinks`: git names a file by its real path.
     let mut args = ctx.args.clone();
     args.target = Some(api::Target::Bun);
     let scan_transpiler: &'static mut Transpiler<'static> = arena.alloc(
@@ -154,8 +151,7 @@ pub(crate) fn filter<'a>(
         },
     );
     scan_transpiler.options.rewrite_jest_for_tests = vm.transpiler.options.rewrite_jest_for_tests;
-    // The run reads `process.env` when the code runs. A scan that inlines it
-    // drops a `require()` in a branch that is dead now and live in a test.
+    // The run does not inline `process.env`, so a `require()` in a branch on it stays an edge.
     scan_transpiler.options.env.behavior = vm.transpiler.options.env.behavior;
     // The module graph scan is best-effort. A test file that imports
     // something unresolved should still be considered, not abort --changed.
@@ -168,10 +164,9 @@ pub(crate) fn filter<'a>(
     // fields we changed above.
     scan_transpiler.resolver.opts.output_dir = Box::default();
     scan_transpiler.resolver.prefer_module_field = vm.transpiler.resolver.prefer_module_field;
-    // A change to an installed package is not a local edit, so the scan does
-    // not enter one. Every other bare specifier names a local file.
+    scan_transpiler.resolver.env_loader = vm.transpiler.resolver.env_loader;
+    // A change to an installed package is not a local edit.
     scan_transpiler.resolver.installed_packages_are_external = true;
-    scan_transpiler.resolver.env_loader = core::ptr::NonNull::new(scan_transpiler.env);
 
     // Stack-owned Mini loop so its tasks/concurrent_tasks queues drop at
     // scope exit; the arena bulk-free skips Drop.

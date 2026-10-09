@@ -4,7 +4,7 @@ sidebarTitle: "SvelteKit with Bun"
 mode: center
 ---
 
-[SvelteKit](https://svelte.dev/docs/kit) is a framework for building full-stack web applications with [Svelte](https://svelte.dev/). It supports server-side rendering, static site generation, and API routes, and can also be compiled into standalone executables with the Bun adapter.
+[SvelteKit](https://svelte.dev/docs/kit) is a framework for building full-stack web applications with [Svelte](https://svelte.dev/). It supports server-side rendering (SSR), static site generation (SSG), client-side rendering (CSR), and API routes, and can also be compiled into standalone executables with the Bun adapter.
 
 ---
 
@@ -183,40 +183,13 @@ Starting with **SvelteKit 3**, the framework includes an **official Bun adapter*
 
     ### Environment Variables
 
-    Bun loads `.env` files automatically. `@sveltejs/adapter-bun` provides configurable environment variables at runtime:
+    Bun loads `.env` files automatically. Configure the host and port using `HOST` and `PORT`:
 
-    - **`PORT` and `HOST`**: Sets the TCP listener address (defaults to port `3000` and host `0.0.0.0` or `127.0.0.1`):
-      ```sh terminal icon="terminal"
-      HOST=0.0.0.0 PORT=8080 bun ./build/index.js
-      ```
-    - **`SOCKET_PATH`**: Configures the server to listen on a Unix domain socket instead of TCP (e.g. `SOCKET_PATH=/tmp/sveltekit.sock`).
-    - **`BODY_SIZE_LIMIT`**: Configures the maximum request body size handled by `Bun.serve` (defaults to `512K`, accepts values like `10M` or `Infinity`).
-    - **`CONNECTION_IDLE_TIMEOUT`**: Sets Bun's per-request inactivity timeout in seconds (0 to 255).
-    - **Reverse Proxy Headers**: Configure these only when a trusted proxy replaces client-supplied values for these headers and direct client access to Bun is blocked. Otherwise, clients can spoof the request origin and `getClientAddress()`:
-      ```sh terminal icon="terminal"
-      PROTOCOL_HEADER=x-forwarded-proto \
-      HOST_HEADER=x-forwarded-host \
-      PORT_HEADER=x-forwarded-port \
-      ADDRESS_HEADER=true-client-ip \
-      bun ./build/index.js
-      ```
-
-    ### Platform API
-
-    In server endpoints and server hooks (`+server.ts`, `hooks.server.ts`), the `event.platform` property grants direct access to the active `Bun.Server` instance:
-
-    ```ts src/routes/api/stats/+server.ts icon="/icons/typescript.svg"
-    import { json, type RequestHandler } from "@sveltejs/kit";
-
-    export const GET: RequestHandler = ({ getClientAddress, platform }) => {
-      return json({
-        clientIp: getClientAddress(),
-        serverId: platform?.server?.id,
-        pendingRequests: platform?.server?.pendingRequests,
-        pendingWebSockets: platform?.server?.pendingWebSockets,
-      });
-    };
+    ```sh terminal icon="terminal"
+    HOST=0.0.0.0 PORT=8080 bun ./build/index.js
     ```
+
+    For advanced runtime options (such as Unix domain sockets, payload body limits, and idle timeouts), refer to the [official `@sveltejs/adapter-bun` documentation](https://svelte.dev/docs/kit/adapter-bun#Environment-variables).
 
   </Tab>
 
@@ -265,33 +238,6 @@ Starting with **SvelteKit 3**, the framework includes an **official Bun adapter*
 
   </Tab>
 </Tabs>
-
----
-
-## Deployment
-
-Deploy your SvelteKit application on Bun across major cloud providers:
-
-<Columns cols={3}>
-  <Card title="Vercel" href="/guides/deployment/vercel" icon="/icons/ecosystem/vercel.svg">
-    Deploy on Vercel
-  </Card>
-  <Card title="Render" href="/guides/deployment/render" icon="/icons/ecosystem/render.svg">
-    Deploy on Render
-  </Card>
-  <Card title="Railway" href="/guides/deployment/railway" icon="/icons/ecosystem/railway.svg">
-    Deploy on Railway
-  </Card>
-  <Card title="DigitalOcean" href="/guides/deployment/digital-ocean" icon="/icons/ecosystem/digitalocean.svg">
-    Deploy on DigitalOcean
-  </Card>
-  <Card title="AWS Lambda" href="/guides/deployment/aws-lambda" icon="/icons/ecosystem/aws.svg">
-    Deploy on AWS Lambda
-  </Card>
-  <Card title="Google Cloud Run" href="/guides/deployment/google-cloud-run" icon="/icons/ecosystem/gcp.svg">
-    Deploy on Google Cloud Run
-  </Card>
-</Columns>
 
 ---
 

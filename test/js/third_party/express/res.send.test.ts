@@ -195,7 +195,7 @@ describe("res", function () {
   });
 
   describe("when .statusCode is 204", function () {
-    it.todo("should strip Content-* fields, Transfer-Encoding field, and body", function (done) {
+    it("should strip Content-* fields, Transfer-Encoding field, and body", function (done) {
       var app = express();
 
       app.use(function (req, res) {
@@ -228,7 +228,7 @@ describe("res", function () {
   });
 
   describe("when .statusCode is 304", function () {
-    it.todo("should strip Content-* fields, Transfer-Encoding field, and body", function (done) {
+    it("should strip Content-* fields, Transfer-Encoding field, and body", function (done) {
       var app = express();
 
       app.use(function (req, res) {

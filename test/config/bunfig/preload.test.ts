@@ -119,7 +119,7 @@ describe.concurrent("Given a `bunfig.toml` with a list of preloads", () => {
 describe.concurrent("Given a `bunfig.toml` with a plugin preload", () => {
   const dir = fixturePath("plugin");
 
-  it.todo("When `bun run` is run, preloads are run", async () => {
+  it("When `bun run` is run, preloads are run", async () => {
     const [out, err, code] = await run("index.ts", { cwd: dir });
     expect(err).toBeEmpty();
     expect(out).toBeEmpty();

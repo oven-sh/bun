@@ -37,7 +37,7 @@ describe("res", function () {
         .expect(500, /TypeError: path must be absolute/, done);
     });
 
-    it.todo("should transfer a file", function (done) {
+    it("should transfer a file", function (done) {
       var app = createApp(path.resolve(fixtures, "name.txt"));
 
       request(app).get("/").expect(200, "tobi", done);
@@ -49,7 +49,7 @@ describe("res", function () {
       request(app).get("/").expect(200, "20%", done);
     });
 
-    it.todo("should include ETag", function (done) {
+    it("should include ETag", function (done) {
       var app = createApp(path.resolve(fixtures, "name.txt"));
 
       request(app)
@@ -58,7 +58,7 @@ describe("res", function () {
         .expect(200, "tobi", done);
     });
 
-    it.todo("should 304 when ETag matches", function (done) {
+    it("should 304 when ETag matches", function (done) {
       var app = createApp(path.resolve(fixtures, "name.txt"));
 
       request(app)
@@ -121,7 +121,7 @@ describe("res", function () {
       request(app).get("/").expect("Content-Type", "application/x-bogus").end(done);
     });
 
-    it.todo("should not error if the client aborts", function (done) {
+    it("should not error if the client aborts", function (done) {
       var app = express();
       var cb = after(2, done);
       var error = null;
@@ -158,7 +158,7 @@ describe("res", function () {
       request(app).get("/").expect(200, cb);
     });
 
-    it.todo("should invoke the callback when client aborts", function (done) {
+    it("should invoke the callback when client aborts", function (done) {
       var cb = after(2, done);
       var app = express();
 
@@ -216,7 +216,7 @@ describe("res", function () {
       request(app).head("/").expect(200, cb);
     });
 
-    it.todo("should invoke the callback without error when 304", function (done) {
+    it("should invoke the callback without error when 304", function (done) {
       var app = express();
       var cb = after(3, done);
 
@@ -246,8 +246,8 @@ describe("res", function () {
       request(app).get("/").expect(200, "got 404 error", done);
     });
 
-    describe.todo("async local storage", function () {
-      it("should presist store", function (done) {
+    describe("async local storage", function () {
+      it.todo("should presist store", function (done) {
         var app = express();
         var cb = after(2, done);
         var store = { foo: "bar" };
@@ -621,7 +621,7 @@ describe("res", function () {
         request(app).get("/").expect(200).expect("Cache-Control", "public, max-age=31536000").end(done);
       });
 
-      it.todo("should min cache-control max-age to 0", function (done) {
+      it("should min cache-control max-age to 0", function (done) {
         var app = express();
 
         app.use(function (req, res) {
@@ -633,7 +633,7 @@ describe("res", function () {
         request(app).get("/").expect(200).expect("Cache-Control", "public, max-age=0").end(done);
       });
 
-      it.todo("should floor cache-control max-age", function (done) {
+      it("should floor cache-control max-age", function (done) {
         var app = express();
 
         app.use(function (req, res) {
@@ -711,7 +711,7 @@ describe("res", function () {
       });
     });
 
-    describe.todo('with "root" option', function () {
+    describe('with "root" option', function () {
       it("should allow relative path", function (done) {
         var app = express();
 
@@ -736,7 +736,7 @@ describe("res", function () {
         request(app).get("/").expect(200, "tobi", done);
       });
 
-      it.todo("should reject up outside root", function (done) {
+      it("should reject up outside root", function (done) {
         var app = express();
 
         app.use(function (req, res) {

@@ -282,7 +282,7 @@ describe("verify", function () {
     });
   });
 
-  describe.todo("when verifying a token with an unsupported public key type", function () {
+  describe("when verifying a token with an unsupported public key type", function () {
     it("should throw an error", function () {
       const token =
         "eyJhbGciOiJSUzI1NiJ9.eyJpYXQiOjE2Njk5OTAwMDN9.YdjFWJtPg_9nccMnTfQyesWQ0UX-GsWrfCGit_HqjeIkNjoV6dkAJ8AtbnVEhA4oxwqSXx6ilMOfHEjmMlPtyyyVKkWKQHcIWYnqPbNSEv8a7Men8KhJTIWb4sf5YbhgSCpNvU_VIZjLO1Z0PzzgmEikp0vYbxZFAbCAlZCvUlcIc-kdjIRCnDJe0BBrYRxNLEJtYsf7D1yFIFIqw8-VP87yZdExA4eHsTaE84SgnL24ZK5h5UooDx-IRNd_rrMyio8kNy63grVxCWOtkXZ26iZk6v-HMsnBqxvUwR6-8wfaWrcpADkyUO1q3SNsoTdwtflbvfwgjo3uve0IvIzHMw";

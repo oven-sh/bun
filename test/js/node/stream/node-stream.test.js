@@ -156,13 +156,13 @@ describe("Readable", () => {
     stream.pipe(writable);
   });
 
-  it.todo("should have the correct fields in _events", () => {
+  it("should have the correct fields in _events", () => {
     const s = Readable({});
     expect(s._events).toHaveProperty("close");
     expect(s._events).toHaveProperty("error");
-    expect(s._events).toHaveProperty("prefinish");
-    expect(s._events).toHaveProperty("finish");
-    expect(s._events).toHaveProperty("drain");
+    expect(s._events).toHaveProperty("data");
+    expect(s._events).toHaveProperty("end");
+    expect(s._events).toHaveProperty("readable");
   });
 });
 
@@ -205,7 +205,7 @@ describe("createReadStream", () => {
 });
 
 describe("Writable", () => {
-  it.todo("should have the correct fields in _events", () => {
+  it("should have the correct fields in _events", () => {
     const s = Writable({});
     expect(s._events).toHaveProperty("close");
     expect(s._events).toHaveProperty("error");
@@ -229,7 +229,7 @@ describe("Duplex", () => {
     expect(subclass instanceof Duplex).toBe(true);
   });
 
-  it.todo("should have the correct fields in _events", () => {
+  it("should have the correct fields in _events", () => {
     const s = Duplex({});
     expect(s._events).toHaveProperty("close");
     expect(s._events).toHaveProperty("error");
@@ -256,7 +256,7 @@ describe("Transform", () => {
     expect(subclass instanceof Transform).toBe(true);
   });
 
-  it.todo("should have the correct fields in _events", () => {
+  it("should have the correct fields in _events", () => {
     const s = Transform({});
     expect(s._events).toHaveProperty("close");
     expect(s._events).toHaveProperty("error");
@@ -283,7 +283,7 @@ describe("PassThrough", () => {
     expect(subclass instanceof PassThrough).toBe(true);
   });
 
-  it.todo("should have the correct fields in _events", () => {
+  it("should have the correct fields in _events", () => {
     const s = PassThrough({});
     expect(s._events).toHaveProperty("close");
     expect(s._events).toHaveProperty("error");

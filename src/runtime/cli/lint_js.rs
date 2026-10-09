@@ -351,12 +351,16 @@ impl Start {
     }
 }
 
-/// What the thread of an engine does.
+/// What the thread of an engine does. Nobody joins it: once its VM is freed it waits for a turn that never comes, until the
+/// process exits.
 fn run_engine(number: usize, start: &Start, desk: &Desk) -> ! {
-    let name = format!("Bun Lint JS {number}\0");
-    bun_core::Output::Source::configure_named_thread(bun_core::ZStr::from_slice_with_nul(
-        name.as_bytes(),
-    ));
+    // What is still owned where the loop begins is never freed.
+    {
+        let name = format!("Bun Lint JS {number}\0");
+        bun_core::Output::Source::configure_named_thread(bun_core::ZStr::from_slice_with_nul(
+            name.as_bytes(),
+        ));
+    }
     let started = start.start_vm();
     loop {
         let Turn::Call { kind, content } =

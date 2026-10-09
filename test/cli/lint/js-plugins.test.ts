@@ -1265,7 +1265,8 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
           "eslint.config.mjs": `
           import local from "./local.cjs";
           import other from "./other.mjs";
-          local.RULES_DIR = new URL("./rules", import.meta.url).pathname;
+          import { fileURLToPath } from "node:url";
+          local.RULES_DIR = fileURLToPath(new URL("./rules", import.meta.url));
           export default [
             { files: ["a.js"], plugins: { other }, rules: { "other/last": "error" } },
             { files: ["a.js"], plugins: { local }, rules: { "local/one": "error", "local/two": "error" } },

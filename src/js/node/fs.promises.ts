@@ -242,14 +242,13 @@ const _readFile = fs.readFile.bind(fs);
 const _writeFile = fs.writeFile.bind(fs);
 const _appendFile = fs.appendFile.bind(fs);
 
-// readFile, writeFile and appendFile of this module run on the descriptor number of a
-// FileHandle argument, and each native call is one task on that number. The ref keeps
-// close(), an autoClose teardown and a transfer away from the number until the call settles,
-// and the `finally` keeps a handle that the caller dropped reachable until then.
-// Node v26.3.0 takes no ref here. Its close() closes at once, it allows the transfer, and its
-// pending call then rejects with ERR_OUT_OF_RANGE because it reads handle.fd for each request.
-// A closed handle takes no ref: the native call rejects with ERR_OUT_OF_RANGE as in node, and
-// [kUnref] does not reach its last-ref arm a second time.
+// readFile, writeFile and appendFile of this module take a FileHandle and run as one native
+// task on its descriptor number. The ref keeps close(), an autoClose teardown and a transfer
+// away from that number until the call settles, and the `finally` keeps a handle that the
+// caller dropped reachable until then. Node v26.3.0 takes no ref here: its close() closes at
+// once, it allows the transfer, and its pending call rejects with ERR_OUT_OF_RANGE because it
+// reads handle.fd for each request. A closed handle takes no ref, so the native call rejects
+// with ERR_OUT_OF_RANGE as in node and [kUnref] does not reach its last-ref arm again.
 async function readFileOfHandle(handle, fd, options) {
   if (fd === -1) return _readFile(fd, options);
   try {
@@ -1677,8 +1676,10 @@ function flagTruncates(flag): boolean {
   return flag === "w" || flag === "w+" || flag === "wx" || flag === "wx+" || flag === "xw" || flag === "xw+";
 }
 
-async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, flag?, mode?) {
+async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding) {
   let encoding;
+  let flag;
+  let mode;
   let signal: AbortSignal | null = null;
   if (typeof optionsOrEncoding === "object") {
     encoding = optionsOrEncoding?.encoding ?? (encoding || "utf8");

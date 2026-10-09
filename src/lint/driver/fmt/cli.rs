@@ -91,6 +91,9 @@ pub const PARAMS: &[Param] = &[
     clap::param!(
         "--threads <n>                   Number of threads <d>(default: one per CPU core)<r>"
     ),
+    clap::param!(
+        "--allow-unsupported             Only warn about files in a language that is not supported"
+    ),
     clap::param!("--timing                        Print how long each phase took"),
     clap::param!("--cwd <path>                    Set the working directory"),
     clap::param!("-h, --help                      Print this help menu"),
@@ -169,6 +172,8 @@ pub struct Options {
     pub error_on_unmatched_pattern: bool,
     /// Nothing is said about a file that there is no parser for.
     pub ignore_unknown: bool,
+    /// Files that Prettier or oxfmt would format and this formatter cannot are no error.
+    pub allow_unsupported: bool,
     pub find_config_path: Option<Vec<u8>>,
     pub log_level: LogLevel,
     /// The options of Prettier, by the names that they have in a configuration file, and their
@@ -208,6 +213,7 @@ impl Default for Options {
             with_node_modules: false,
             error_on_unmatched_pattern: true,
             ignore_unknown: false,
+            allow_unsupported: false,
             find_config_path: None,
             log_level: LogLevel::default(),
             format: Vec::new(),
@@ -306,6 +312,7 @@ impl Options {
             b"with-node-modules" => self.with_node_modules = is_on,
             b"error-on-unmatched-pattern" => self.error_on_unmatched_pattern = is_on,
             b"ignore-unknown" => self.ignore_unknown = is_on,
+            b"allow-unsupported" => self.allow_unsupported = is_on,
             b"find-config-path" => self.find_config_path = owned(),
             b"log-level" => {
                 self.log_level = match text {

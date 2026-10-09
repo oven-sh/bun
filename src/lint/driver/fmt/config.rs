@@ -844,6 +844,15 @@ impl<'c> Configs<'c> {
         }
     }
 
+    /// Whether the configuration of oxfmt has `svelte`, which turns on the formatting of `.svelte` files.
+    pub(crate) fn formats_svelte(&self, scope: &Scope) -> bool {
+        let is_on = |it: &(Vec<u8>, Vec<u8>)| it.0 == b"svelte" && it.1 != b"false";
+        self.config_of(scope)
+            .ok()
+            .flatten()
+            .is_some_and(|config| config.is_oxfmt && config.settings.iter().any(is_on))
+    }
+
     /// The option `parser` for the file at `path`, which has `scope`, if it is set.
     pub(crate) fn parser_for(&self, scope: &Scope, path: &[u8]) -> Option<Box<[u8]>> {
         let is_about_parser = |it: &(Vec<u8>, Vec<u8>)| it.0 == b"parser";

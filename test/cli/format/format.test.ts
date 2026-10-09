@@ -441,17 +441,39 @@ describe.concurrent("bun format", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("other languages are left alone, with a warning", async () => {
-    const result = await format({ "a.mdx": "#   a\n", "b.wxs": "var a   = 1\n", "c.js": ugly }, [], {
-      reads: ["a.mdx", "b.wxs", "c.js"],
-    });
-    expect(result.files).toEqual({
-      "a.mdx": "#   a\n",
-      "b.wxs": "var a   = 1\n",
-      "c.js": formatted,
-    });
-    expect(result.stderr).toContain("2 files are in a language that bun format does not support yet");
-    expect(result.exitCode).toBe(0);
+  test("other languages are left alone, which is an error at the end, or a warning with --allow-unsupported", async () => {
+    const files = { "a.mdx": "#   a\n", "b.wxs": "var a   = 1\n", "c.js": ugly };
+    const reads = Object.keys(files);
+    const text = "2 files are in a language that bun format does not support yet, and left as they are: 1 .mdx, 1 .wxs";
+    const result = await format(files, [], { reads });
+    expect(result.files).toEqual({ ...files, "c.js": formatted });
+    expect(result.stderr.trimEnd().split("\n").at(-1)).toBe(
+      `[error] ${text}. With --allow-unsupported this is a warning.`,
+    );
+    expect(result.exitCode).toBe(2);
+    const checked = await format({ ...files, "c.js": formatted }, ["--check"], { reads });
+    expect(checked.stderr).toContain(`[error] ${text}`);
+    expect(checked.exitCode).toBe(2);
+    const allowed = await format(files, ["--allow-unsupported"], { reads });
+    expect(allowed.files).toEqual({ ...files, "c.js": formatted });
+    expect(allowed.stderr.split("\n")).toContain(`[warn] ${text}`);
+    expect(allowed.exitCode).toBe(0);
+  });
+
+  test("what oxfmt formats and bun format cannot is named: TOML, and Svelte if the configuration has svelte", async () => {
+    const files = { "a.svelte": "<p   >a</p>\n", "b.toml": "a   = 1\n", "Cargo.lock": "a   = 1\n", "c.js": ugly };
+    const reads = Object.keys(files);
+    const result = await format({ ...files, ".oxfmtrc.json": '{ "svelte": {} }\n' }, [], { reads });
+    expect(result.files).toEqual({ ...files, "c.js": formatted });
+    expect(result.stderr).toContain(
+      "[error] 2 files are in a language that bun format does not support yet, and left as they are: 1 .svelte, 1 .toml",
+    );
+    expect(result.exitCode).toBe(2);
+    const without = await format({ ...files, ".oxfmtrc.json": "{}\n" }, ["--check", "--allow-unsupported"], { reads });
+    expect(without.stderr.split("\n")).toContain(
+      "[warn] 1 file is in a language that bun format does not support yet, and left as they are: 1 .toml",
+    );
+    expect(without.exitCode).toBe(1);
   });
 
   test(".prettierignore and .gitignore make no difference between upper and lower case, as for Prettier", async () => {
@@ -559,20 +581,20 @@ describe.concurrent("bun format", () => {
       expect(result.stderr).toContain(
         "3 files are in a language that bun format does not support yet, and left as they are: 1 .foo, 1 .js, 1 .svelte",
       );
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).toBe(2);
       const checked = await format({ ...files, ".prettierrc": config, "d.js": "d;\n" }, ["--check", ...reads], {
         reads,
       });
       expect(checked.files).toEqual({ ...files, "d.js": "d;\n" });
       expect(checked.stderr).toContain("3 files are in a language that bun format does not support yet");
-      expect(checked.exitCode).toBe(0);
+      expect(checked.exitCode).toBe(2);
     });
 
     test("at the top of a .prettierrc: every file is left as it is", async () => {
       const result = await format({ ...files, ".prettierrc": '{ "parser": "nonsense" }\n' }, [], { reads });
       expect(result.files).toEqual(files);
       expect(result.stderr).toContain("files are in a language that bun format does not support yet");
-      expect(result.exitCode).toBe(0);
+      expect(result.exitCode).toBe(2);
     });
 
     test("on standard input: what is read is printed", async () => {

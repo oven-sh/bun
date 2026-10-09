@@ -775,6 +775,9 @@ impl Run<'_> {
             let language = match configs.parser_for(&target.scope, &target.path) {
                 Some(parser) if Kind::of_parser(&parser).is_none() => Language::Other,
                 Some(_) => Language::Supported,
+                None if configs.flavor == Flavor::Oxfmt => {
+                    files::language_for_oxfmt(&target.path, configs.formats_svelte(&target.scope))
+                }
                 None => files::language_of(&target.path),
             };
             match language {
@@ -903,19 +906,6 @@ impl Run<'_> {
         for warning in std::mem::take(&mut *configs.warnings.lock()) {
             self.warn(&warning);
         }
-        if !others.is_empty() {
-            others.sort_by_key(|it| (std::cmp::Reverse(it.1), it.0));
-            let count: usize = others.iter().map(|it| it.1).sum();
-            let noun = if count == 1 { "file is" } else { "files are" };
-            let kinds: Vec<Vec<u8>> = others
-                .iter()
-                .map(|it| format!("{} {}", it.1, BStr::new(it.0)).into_bytes())
-                .collect();
-            let text = format!(
-                "{count} {noun} in a language that bun format does not support yet, and left as they are: "
-            );
-            self.warn(&[text.as_bytes(), &kinds.join(&b", "[..])].concat());
-        }
         let count = |n: usize| {
             if n == 1 {
                 "the above file".to_owned()
@@ -975,6 +965,28 @@ impl Run<'_> {
                 self.began.elapsed().as_secs_f64() * 1e3,
                 pool.threads(),
             );
+        }
+        // The tool that this stands in for would have formatted or checked them, so this comes last and is an error.
+        if !others.is_empty() {
+            others.sort_by_key(|it| (std::cmp::Reverse(it.1), it.0));
+            let count: usize = others.iter().map(|it| it.1).sum();
+            let noun = if count == 1 { "file is" } else { "files are" };
+            let kinds: Vec<Vec<u8>> = others
+                .iter()
+                .map(|it| format!("{} {}", it.1, BStr::new(it.0)).into_bytes())
+                .collect();
+            let text = format!(
+                "{count} {noun} in a language that bun format does not support yet, and left as they are: "
+            );
+            let text = [text.as_bytes(), &kinds.join(&b", "[..])].concat();
+            match options.allow_unsupported {
+                true => self.warn(&text),
+                false => {
+                    self.error(
+                        &[&text[..], b". With --allow-unsupported this is a warning."].concat(),
+                    );
+                }
+            }
         }
         self.out
     }

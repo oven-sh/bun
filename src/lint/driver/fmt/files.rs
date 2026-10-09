@@ -159,6 +159,22 @@ pub(crate) fn language_of(path: &[u8]) -> Language {
     }
 }
 
+/// The same for oxfmt, which also has TOML and, if `formats_svelte`, Svelte.
+pub(crate) fn language_for_oxfmt(path: &[u8], formats_svelte: bool) -> Language {
+    let name = paths::basename(path);
+    match language_of(path) {
+        Language::Unknown
+            if name.ends_with(b".toml")
+                || name.ends_with(b".toml.example")
+                || matches!(name, b"Pipfile" | b"Cargo.toml.orig")
+                || (formats_svelte && name.ends_with(b".svelte")) =>
+        {
+            Language::Other
+        }
+        language => language,
+    }
+}
+
 /// What each byte weighs in `a.localeCompare(b)`, for what is ASCII: punctuation, then digits, then
 /// letters, whether capital or not. Above zero.
 const WEIGHTS: [u16; 256] = {
@@ -319,7 +335,7 @@ fn search(
         },
         is_ignored_by_configuration: gitignore::is_directory_ignored_anywhere(
             configs.ignores_of(&above),
-            &paths::join(base, b"."),
+            base,
         ),
         above,
     }];
@@ -636,7 +652,8 @@ pub(crate) fn expand_as_oxfmt(
     }
     // Nothing is said about a file that there is no parser for, and it does not count.
     found.retain(|it| {
-        language_of(&it.path) != Language::Unknown && !is_left_alone_by_oxfmt(&it.path)
+        language_for_oxfmt(&it.path, configs.formats_svelte(&it.scope)) != Language::Unknown
+            && !is_left_alone_by_oxfmt(&it.path)
     });
     found.sort_unstable_by(|a, b| a.path.cmp(&b.path));
     found.dedup_by(|a, b| a.path == b.path);

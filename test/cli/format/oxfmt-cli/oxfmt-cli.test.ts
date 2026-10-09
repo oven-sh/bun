@@ -8,7 +8,8 @@ import { join } from "node:path";
 import { cases, fixtures } from "./cases.json";
 
 type Files = Record<string, string | { link: string }>;
-const command = [bunExe(), "format"];
+// Some fixtures have TOML in them, which `bun format` leaves alone. That it says so is tested elsewhere.
+const command = [bunExe(), "format", "--allow-unsupported"];
 const env = { ...bunEnv, NO_COLOR: "1", AGENT: "0", CLAUDECODE: undefined };
 
 describe.concurrent("bun format does what oxfmt does", () => {

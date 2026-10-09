@@ -436,4 +436,17 @@ describe("bundler", () => {
     outfile: "/out.js",
     run: { stdout: "entry A" },
   });
+
+  // t.js reads s through index.js, which it is in a cycle with. s.js comes first, so the wrapper of index.js has to call it
+  // ahead of the await for t.js.
+  itBundled("bundler/sync export star before an async one", {
+    files: {
+      "/entry.js": `import { t } from "./index.js"; console.log("entry", t); globalThis.later = () => import("./index.js");`,
+      "/index.js": `export * from "./s.js"; export * from "./t.js";`,
+      "/s.js": `export const s = String("s");`,
+      "/t.js": `import { s } from "./index.js"; await 0; export const t = "t+" + s;`,
+    },
+    outfile: "/out.js",
+    run: { stdout: "entry t+s" },
+  });
 });

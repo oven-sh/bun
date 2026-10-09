@@ -2332,23 +2332,12 @@ impl<'a> LinkerContext<'a> {
                 }
 
                 // Replace the statement with a call to "init()"
-                let init_call = Expr::init(
-                    E::Call {
-                        target: Expr::init_identifier(wrapper_ref, loc),
-                        ..Default::default()
-                    },
+                stmts.inside_wrapper_prefix.append_init_call(
+                    wrapper_ref,
                     loc,
-                );
-
-                if other_flags.is_async_or_has_async_dependency {
-                    stmts
-                        .inside_wrapper_prefix
-                        .append_async_dependency(init_call, self.promise_all_runtime_ref)?;
-                } else {
-                    stmts
-                        .inside_wrapper_prefix
-                        .append_sync_dependency(init_call)?;
-                }
+                    other_flags.is_async_or_has_async_dependency,
+                    self.promise_all_runtime_ref,
+                )?;
             }
         }
 
@@ -5339,6 +5328,28 @@ impl InsideWrapperPrefix {
         Ok(())
     }
 
+    /// `init_x()` of a wrapped ES module. The sync calls go ahead of the awaited ones: a sync file depends on no async one.
+    pub(crate) fn append_init_call(
+        &mut self,
+        wrapper_ref: Ref,
+        loc: Loc,
+        is_async: bool,
+        promise_all_ref: Ref,
+    ) -> Result<(), AllocError> {
+        let init_call = Expr::init(
+            E::Call {
+                target: Expr::init_identifier(wrapper_ref, loc),
+                ..Default::default()
+            },
+            loc,
+        );
+        if is_async {
+            self.append_async_dependency(init_call, promise_all_ref)
+        } else {
+            self.append_sync_dependency(init_call)
+        }
+    }
+
     fn append_sync_dependency(&mut self, call_expr: Expr) -> Result<(), AllocError> {
         self.stmts.insert(
             self.sync_dependencies_end,
@@ -5354,7 +5365,7 @@ impl InsideWrapperPrefix {
         Ok(())
     }
 
-    pub(crate) fn append_async_dependency(
+    fn append_async_dependency(
         &mut self,
         call_expr: Expr,
         promise_all_ref: Ref,

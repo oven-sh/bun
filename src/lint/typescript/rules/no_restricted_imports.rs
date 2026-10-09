@@ -62,8 +62,14 @@ impl Rule for NoRestrictedImports {
         rule
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
         if self.base.is_empty() {
+            return;
+        }
+        // In oxlint `allowTypeImports` is about the restriction that it is set for, as in ESLint's rule.
+        if file.language().is_oxlint {
+            on.stmts(STATEMENTS, |rule, statement, cx| rule.base.check(cx, statement, Dialect::TypeScript));
+            on.exprs([ExprTag::ImportCall], |rule, call, cx| rule.base.check_import_call(cx, call));
             return;
         }
         on.stmts(STATEMENTS, |rule, statement, cx| {

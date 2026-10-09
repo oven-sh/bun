@@ -520,18 +520,25 @@ impl EvaluationOrder {
             let importer = if runs { source_index } else { importer };
 
             let mark = stack.len();
+            let mut is_listed = !runs || !is_tracked[source_index as usize];
             for_each_edge(c, source_index, runs, |_, edge| match edge {
                 Edge::Import(source_index) => stack.push(Frame::Enter {
                     source_index,
                     importer,
                 }),
-                Edge::LoadNow(source_index) => stack.push(Frame::Enter {
-                    source_index,
-                    importer: source_index,
-                }),
+                Edge::LoadNow(other) => {
+                    // The file has started by the time it calls `require()`.
+                    if !core::mem::replace(&mut is_listed, true) {
+                        stack.push(Frame::Leave(source_index));
+                    }
+                    stack.push(Frame::Enter {
+                        source_index: other,
+                        importer: other,
+                    });
+                }
                 Edge::LoadLater(_) => {}
             });
-            if runs && is_tracked[source_index as usize] {
+            if !is_listed {
                 stack.push(Frame::Leave(source_index));
             }
             stack[mark..].reverse();

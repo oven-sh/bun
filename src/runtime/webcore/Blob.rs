@@ -59,6 +59,13 @@ impl SourceBytes<'_> {
             SourceBytes::Store(view) => view,
         }
     }
+
+    fn as_mut_ptr(&mut self) -> *mut [u8] {
+        match self {
+            SourceBytes::Temporary(owned) => &raw mut **owned,
+            SourceBytes::Store(view) => &raw mut **view,
+        }
+    }
 }
 
 /// Deallocator for `ArrayBuffer`s backed by a `Blob::Store` ref. Passed as a C
@@ -303,8 +310,7 @@ pub(crate) trait BlobExt {
     fn to_string(&self, cx: &bun_jsc::JsThread<'_>, lifetime: Lifetime) -> JsResult<JSValue>;
     fn to_json(&self, cx: &bun_jsc::JsThread<'_>, lifetime: Lifetime) -> JsResult<JSValue>;
     /// # Safety
-    /// `raw_bytes` must be valid for reads for the duration of the call; when
-    /// `LIFETIME == Temporary` it must be a leaked default-allocator `Box<[u8]>`.
+    /// `raw_bytes` must be valid for reads for the duration of the call.
     unsafe fn to_json_with_bytes<const LIFETIME: Lifetime>(
         &self,
         global: &JSGlobalObject,
@@ -2595,8 +2601,7 @@ impl BlobExt for Blob {
         }
 
         // `shared_view_raw` yields a `*mut [u8]` with mutable provenance (via
-        // `RefPtr<Store>::as_ptr`). `to_json_with_bytes` only reads through it for the
-        // non-`Temporary` lifetimes below.
+        // `RefPtr<Store>::as_ptr`). `to_json_with_bytes` only reads through it.
         let view_ptr = self.shared_view_raw();
         match lifetime {
             // SAFETY: `view_ptr` is the store-backed view from `shared_view_raw`;
@@ -2612,34 +2617,25 @@ impl BlobExt for Blob {
             Lifetime::Share => unsafe {
                 self.to_json_with_bytes::<{ Lifetime::Share }>(cx.global(), view_ptr)
             },
-            // UB guard: `Temporary` would `heap::take(view_ptr)`, but
-            // `view_ptr` points at a store-owned interior slice (not a leaked
-            // `Box<[u8]>`). No caller passes `Temporary` to `to_json`; the
-            // leaked-buffer path calls `to_json_with_bytes` directly.
+            // No caller passes `Temporary` to `to_json`: JSON only reads the bytes.
             Lifetime::Temporary => {
                 unreachable!("Blob::to_json: store-owned bytes are never Temporary")
             }
         }
     }
 
-    /// See [`to_string_with_bytes`] for why `raw_bytes` is `*mut [u8]`.
+    /// `raw_bytes` is a raw pointer because the `Transfer` arm detaches the store that owns it.
     ///
     /// # Safety
-    /// `raw_bytes` must be valid for reads for the duration of the call; when
-    /// `LIFETIME == Temporary` it must be a leaked default-allocator `Box<[u8]>`.
+    /// `raw_bytes` must be valid for reads for the duration of the call.
     unsafe fn to_json_with_bytes<const LIFETIME: Lifetime>(
         &self,
         global: &JSGlobalObject,
         raw_bytes: *mut [u8],
     ) -> JsResult<JSValue> {
-        // SAFETY: `raw_bytes` is valid for reads for the duration of this call
-        // (either a leaked Box for `Temporary` or a store-backed view otherwise).
+        // SAFETY: `raw_bytes` is valid for reads for the duration of this call.
         let (bom, buf) = strings::BOM::detect_and_split(unsafe { &*raw_bytes });
         if buf.is_empty() {
-            if LIFETIME == Lifetime::Temporary {
-                // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`; reclaim it.
-                unsafe { drop(bun_core::heap::take(raw_bytes)) };
-            }
             return Err(global.throw_value(
                 global.create_syntax_error_instance(format_args!("Unexpected end of JSON input")),
             ));
@@ -2664,10 +2660,6 @@ impl BlobExt for Blob {
             // result first, then perform the deferred work explicitly — capturing
             // `&mut self` in a scopeguard closure conflicts with later uses below.
             let result = out.to_js_by_parse_json(global);
-            if LIFETIME == Lifetime::Temporary {
-                // SAFETY: `Temporary` ⇒ caller passed a leaked `Box<[u8]>`.
-                unsafe { drop(bun_core::heap::take(raw_bytes)) };
-            }
             if LIFETIME == Lifetime::Transfer {
                 self.detach();
             }
@@ -2678,25 +2670,18 @@ impl BlobExt for Blob {
         let could_be_all_ascii = self
             .is_all_ascii()
             .or_else(|| self.store().and_then(|s| s.is_all_ascii.get()));
-        // When a BOM is present `buf` is an interior slice of `raw_bytes`; we must
-        // free the original allocation, not the offset pointer.
-        let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
 
         if could_be_all_ascii.is_none() || !could_be_all_ascii.unwrap() {
             if let Some(external) = strings::to_utf16_alloc(buf, false, false)
                 .map_err(|_| bun_string_jsc::throw_utf16_transcode_failure(global, buf))?
             {
-                if LIFETIME != Lifetime::Temporary {
-                    self.set_is_ascii_flag(false);
-                }
+                self.set_is_ascii_flag(false);
                 let result = EncodedSlice::utf16(&external).to_json_object(global);
                 drop(external);
                 return result;
             }
 
-            if LIFETIME != Lifetime::Temporary {
-                self.set_is_ascii_flag(true);
-            }
+            self.set_is_ascii_flag(true);
         }
 
         EncodedSlice::latin1(buf).to_json_object(global)
@@ -5906,17 +5891,9 @@ impl read_file::ReadFileToJs for ToStringWithBytesFn {
     }
 }
 impl read_file::ReadFileToJs for ToJsonWithBytesFn {
-    fn call(b: &Blob, g: &JSGlobalObject, bytes: SourceBytes<'_>) -> JsResult<JSValue> {
-        // SAFETY: see `ToStringWithBytesFn::call`.
-        unsafe {
-            match bytes {
-                SourceBytes::Temporary(owned) => b.to_json_with_bytes::<{ Lifetime::Temporary }>(
-                    g,
-                    bun_core::heap::into_raw(owned),
-                ),
-                SourceBytes::Store(view) => b.to_json_with_bytes::<{ Lifetime::Clone }>(g, view),
-            }
-        }
+    fn call(b: &Blob, g: &JSGlobalObject, mut bytes: SourceBytes<'_>) -> JsResult<JSValue> {
+        // SAFETY: `bytes` outlives the call, which only reads it.
+        unsafe { b.to_json_with_bytes::<{ Lifetime::Clone }>(g, bytes.as_mut_ptr()) }
     }
 }
 impl read_file::ReadFileToJs for ToArrayBufferWithBytesFn {

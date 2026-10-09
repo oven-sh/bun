@@ -1,6 +1,5 @@
 #![warn(unused_must_use)]
 use crate::p::P;
-use bun_alloc::Arena as Bump;
 use bun_ast::e::CallUnwrap;
 use bun_ast::symbol;
 use bun_ast::{self, Binding, E, Expr, ExprData, G, Op, Stmt, StmtData, StoreRef};
@@ -570,9 +569,23 @@ impl SideEffects {
         }
     }
 
-    fn should_keep_stmts_in_dead_control_flow(stmts: bun_ast::StmtNodeList, bump: &Bump) -> bool {
+    fn should_keep_stmts_in_dead_control_flow<
+        'a,
+        const TS: bool,
+        const SCAN: bool,
+        const SEMA: bool,
+    >(
+        p: &mut P<'a, TS, SCAN, SEMA>,
+        stmts: bun_ast::StmtNodeList,
+    ) -> bool {
         for child in stmts.slice() {
-            if Self::should_keep_stmt_in_dead_control_flow(*child, bump) {
+            // A kept block-level function goes with its dead statement, as the `let` it would have been.
+            if let StmtData::SFunction(data) = child.data
+                && p.note_dead_block_level_function(&data.func)
+            {
+                continue;
+            }
+            if Self::should_keep_stmt_in_dead_control_flow(p, *child) {
                 return true;
             }
         }
@@ -592,7 +605,15 @@ impl SideEffects {
     /// assign to a global variable instead.
     ///
     /// Caller is expected to first check `p.options.dead_code_elimination` so we only check it once.
-    pub(crate) fn should_keep_stmt_in_dead_control_flow(stmt: Stmt, bump: &Bump) -> bool {
+    pub(crate) fn should_keep_stmt_in_dead_control_flow<
+        'a,
+        const TS: bool,
+        const SCAN: bool,
+        const SEMA: bool,
+    >(
+        p: &mut P<'a, TS, SCAN, SEMA>,
+        stmt: Stmt,
+    ) -> bool {
         match stmt.data {
             // Omit these statements entirely
             StmtData::SEmpty(_)
@@ -644,21 +665,19 @@ impl SideEffects {
                 true
             }
 
-            StmtData::SBlock(block) => {
-                Self::should_keep_stmts_in_dead_control_flow(block.stmts, bump)
-            }
+            StmtData::SBlock(block) => Self::should_keep_stmts_in_dead_control_flow(p, block.stmts),
 
             StmtData::STry(try_stmt) => {
-                if Self::should_keep_stmts_in_dead_control_flow(try_stmt.body, bump) {
+                if Self::should_keep_stmts_in_dead_control_flow(p, try_stmt.body) {
                     return true;
                 }
                 if let Some(catch_stmt) = &try_stmt.catch {
-                    if Self::should_keep_stmts_in_dead_control_flow(catch_stmt.body, bump) {
+                    if Self::should_keep_stmts_in_dead_control_flow(p, catch_stmt.body) {
                         return true;
                     }
                 }
                 if let Some(finally_stmt) = &try_stmt.finally {
-                    if Self::should_keep_stmts_in_dead_control_flow(finally_stmt.stmts, bump) {
+                    if Self::should_keep_stmts_in_dead_control_flow(p, finally_stmt.stmts) {
                         return true;
                     }
                 }
@@ -666,45 +685,41 @@ impl SideEffects {
             }
 
             StmtData::SIf(if_) => {
-                if Self::should_keep_stmt_in_dead_control_flow(if_.yes, bump) {
+                if Self::should_keep_stmt_in_dead_control_flow(p, if_.yes) {
                     return true;
                 }
                 match if_.no {
-                    Some(no) => Self::should_keep_stmt_in_dead_control_flow(no, bump),
+                    Some(no) => Self::should_keep_stmt_in_dead_control_flow(p, no),
                     None => false,
                 }
             }
 
-            StmtData::SWhile(while_) => {
-                Self::should_keep_stmt_in_dead_control_flow(while_.body, bump)
-            }
+            StmtData::SWhile(while_) => Self::should_keep_stmt_in_dead_control_flow(p, while_.body),
 
             StmtData::SDoWhile(do_while) => {
-                Self::should_keep_stmt_in_dead_control_flow(do_while.body, bump)
+                Self::should_keep_stmt_in_dead_control_flow(p, do_while.body)
             }
 
             StmtData::SFor(for_) => {
                 if let Some(init_) = for_.init {
-                    if Self::should_keep_stmt_in_dead_control_flow(init_, bump) {
+                    if Self::should_keep_stmt_in_dead_control_flow(p, init_) {
                         return true;
                     }
                 }
-                Self::should_keep_stmt_in_dead_control_flow(for_.body, bump)
+                Self::should_keep_stmt_in_dead_control_flow(p, for_.body)
             }
 
             StmtData::SForIn(for_) => {
-                Self::should_keep_stmt_in_dead_control_flow(for_.init, bump)
-                    || Self::should_keep_stmt_in_dead_control_flow(for_.body, bump)
+                Self::should_keep_stmt_in_dead_control_flow(p, for_.init)
+                    || Self::should_keep_stmt_in_dead_control_flow(p, for_.body)
             }
 
             StmtData::SForOf(for_) => {
-                Self::should_keep_stmt_in_dead_control_flow(for_.init, bump)
-                    || Self::should_keep_stmt_in_dead_control_flow(for_.body, bump)
+                Self::should_keep_stmt_in_dead_control_flow(p, for_.init)
+                    || Self::should_keep_stmt_in_dead_control_flow(p, for_.body)
             }
 
-            StmtData::SLabel(label) => {
-                Self::should_keep_stmt_in_dead_control_flow(label.stmt, bump)
-            }
+            StmtData::SLabel(label) => Self::should_keep_stmt_in_dead_control_flow(p, label.stmt),
 
             _ => true,
         }

@@ -11,6 +11,25 @@ test.concurrent(`sloppy mode by default in CJS`, async () => {
 });
 
 describe("block-level function declarations in CommonJS", () => {
+  // What node prints for dead.cjs below.
+  const deadCode = {
+    branch: "undefined",
+    constant: "undefined",
+    elseBranch: "undefined",
+    behindReturn: "undefined",
+    behindBreak: "undefined",
+    nested: "undefined",
+    two: "undefinedundefined",
+    directEval: "undefined",
+    assign: "undefined",
+    shadow: "undefined",
+    functionLevel: "kept",
+    letOfFunction: "let",
+    parameter: "parameter",
+    arguments: "[object Arguments]",
+    strict: "outer",
+  };
+
   // Annex B: in sloppy code the name is also a `var` of the enclosing function,
   // assigned when the declaration is evaluated. Every expected value is what node prints.
   test.concurrent("sloppy code sees the function after its block", async () => {
@@ -228,10 +247,142 @@ module.exports = g;
     expect(await bunRun(path.join(String(dir), "nested.cjs"))).toSpawn("1");
   });
 
-  // A file with no CommonJS marker runs as a module, where this text is a SyntaxError.
-  test.concurrent("a function in statically dead code does not reach the engine", async () => {
+  // The transpiler removes these statements. The name is still a `var`, as it is when nothing is removed.
+  test.concurrent("dead code keeps the var, with and without dead code elimination", async () => {
     using dir = tempDir("block-level-function", {
-      "dead.js": `if (false) { function o() { var static = 1; } }\nif (false) { function eval() {} }\nconsole.log("loaded");\n`,
+      "dead.cjs": `
+const attempt = fn => {
+  try {
+    return fn();
+  } catch (e) {
+    return e.name;
+  }
+};
+const out = {};
+
+out.branch = attempt(function () {
+  if (false) { function f() {} }
+  return String(f);
+});
+
+out.constant = attempt(function () {
+  const DEV = false;
+  if (DEV) { function f() {} }
+  return String(f);
+});
+
+out.elseBranch = attempt(function () {
+  if (true) {} else { function f() {} }
+  return String(f);
+});
+
+out.behindReturn = attempt(function () {
+  return String(f);
+  { function f() {} }
+});
+
+out.behindBreak = attempt(function () {
+  for (;;) {
+    break;
+    { function f() {} }
+  }
+  return String(f);
+});
+
+out.nested = attempt(function () {
+  if (false) { try { function f() {} } finally {} }
+  return String(f);
+});
+
+out.two = attempt(function () {
+  if (false) { function f() {} }
+  if (false) { function f() {} function g() {} }
+  return String(f) + String(g);
+});
+
+out.directEval = attempt(function () {
+  if (false) { function f() {} eval(""); }
+  return String(f);
+});
+
+out.assign = attempt(function () {
+  (function () {
+    if (false) { function deadBlockFunctionLeak() {} }
+    deadBlockFunctionLeak = 1;
+  })();
+  return typeof globalThis.deadBlockFunctionLeak;
+});
+
+// As in node, the name hides a binding of an outer function.
+out.shadow = attempt(function () {
+  function f() { return "outer"; }
+  return (function () {
+    if (false) { function f() {} }
+    return String(f);
+  })();
+});
+
+out.functionLevel = attempt(function () {
+  function f() { return "kept"; }
+  if (false) { function f() {} }
+  return f();
+});
+
+out.letOfFunction = attempt(function () {
+  if (false) { function f() {} }
+  let f = "let";
+  return f;
+});
+
+out.parameter = attempt(function (f) {
+  if (false) { function f() {} }
+  return f;
+}.bind(null, "parameter"));
+
+out.arguments = attempt(function () {
+  if (false) { function arguments() {} }
+  return Object.prototype.toString.call(arguments);
+});
+
+out.strict = attempt(function () {
+  "use strict";
+  function f() { return "outer"; }
+  return (function () {
+    if (false) { function f() {} }
+    return f();
+  })();
+});
+
+module.exports = JSON.stringify(out);
+if (require.main === module) console.log(module.exports);
+`,
+    });
+    const file = path.join(String(dir), "dead.cjs");
+    // `bun -p` turns dead code elimination off.
+    const [run, print] = await Promise.all([bunRun(file), bunRun(["-p", `require(${JSON.stringify(file)})`])]);
+    expect(run).toSpawn();
+    expect(print).toSpawn();
+    expect({ run: JSON.parse(run.stdout), print: JSON.parse(print.stdout) }).toEqual({
+      run: deadCode,
+      print: deadCode,
+    });
+  });
+
+  // Main drops each of these dead statements whole. A file with no CommonJS marker runs as a module,
+  // so text that is left behind must be strict.
+  test.concurrent("a dead statement with a function in it does not reach the engine", async () => {
+    using dir = tempDir("block-level-function", {
+      "dead.js": `
+if (false) { function o() { var static = 1; } }
+if (false) { function eval() {} }
+function behindReturn() { return 1; { function o() { var static = 1; } } }
+function header(x) { if (false) { while (delete x) { function o() {} } } return 0; }
+function sibling(x) { return 0; { delete x; function o() {} } }
+function hiddenJump(x) { if (true) { return 0; } else { function o() {} } delete x; }
+function emptiedIf(x) { if (x === function () { var static = 1; }) { if (false) { function o() {} } } return 0; }
+function twoOfAName() { if (false) { function o() {} } if (false) { function o() {} } }
+console.log("loaded");
+`,
     });
     expect(await bunRun(path.join(String(dir), "dead.js"))).toSpawn("loaded");
   });

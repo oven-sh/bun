@@ -59,7 +59,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         // p.temp_refs_to_declare.deinit(p.arena); + reset to empty
         self.temp_refs_to_declare = BumpVec::new_in(self.arena);
 
+        let mark = self.dead_block_level_fns.len();
         self.visit_stmts(stmts, opts.kind)?;
+        if self.dead_block_level_fns.len() > mark {
+            self.push_annex_b_stub(stmts, mark);
+        }
         Ok(())
     }
 
@@ -1732,7 +1736,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 let mut end: usize = 0;
                 for idx in 0..visited.len() {
                     let item = visited[idx];
-                    if !SideEffects::should_keep_stmt_in_dead_control_flow(item, p.arena) {
+                    if !SideEffects::should_keep_stmt_in_dead_control_flow(p, item) {
                         continue;
                     }
 
@@ -1883,7 +1887,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         for stmt in stmts.iter().copied() {
             if is_control_flow_dead
                 && dead_code_elimination
-                && !SideEffects::should_keep_stmt_in_dead_control_flow(stmt, p.arena)
+                && !SideEffects::should_keep_stmt_in_dead_control_flow(p, stmt)
             {
                 // Strip unnecessary statements if the control flow is dead here
                 continue;

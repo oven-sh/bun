@@ -1792,10 +1792,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             if let Some(effects) = effects {
                 if effects.value {
                     if data.no.is_none()
-                        || !SideEffects::should_keep_stmt_in_dead_control_flow(
-                            data.no.unwrap(),
-                            p.arena,
-                        )
+                        || !SideEffects::should_keep_stmt_in_dead_control_flow(p, data.no.unwrap())
                     {
                         if effects.side_effects == SideEffects::CouldHaveSideEffects {
                             // Keep the condition if it could have side effects (but is still known to be truthy)
@@ -1816,7 +1813,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     }
                 } else {
                     // The test is falsy
-                    if !SideEffects::should_keep_stmt_in_dead_control_flow(data.yes, p.arena) {
+                    if !SideEffects::should_keep_stmt_in_dead_control_flow(p, data.yes) {
                         if effects.side_effects == SideEffects::CouldHaveSideEffects {
                             // Keep the condition if it could have side effects (but is still known to be truthy)
                             if let Some(test) = SideEffects::simplify_unused_expr(p, data.test) {

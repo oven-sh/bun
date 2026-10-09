@@ -5753,11 +5753,81 @@ describe("block-level function declarations", () => {
     expect(print(code)).toBe(expected);
   });
 
-  // Dead code elimination removes a `let` with its branch. A declaration would stay in the output.
-  it("a function in a statically dead branch is still lowered to let", () => {
-    expect(print("if (false) {\n  function f() {}\n}\nmodule.exports = 1;\n")).toBe(
-      "if (false) {\n  let f = function() {};\n}\nmodule.exports = 1;\n",
-    );
+  // The options of `bun run`. A dead statement is dropped whole, as when the function was a `let`.
+  // The name moves to the end of the enclosing body: sloppy code makes it a `var`, strict code makes nothing.
+  describe("in dead code", () => {
+    const run = code => print(code, { deadCodeElimination: true, minify: { syntax: true } });
+    const stub = "  if (!1) {\n    function f() {}\n  }\n";
+
+    it.each([
+      [
+        "a branch that is never taken",
+        "function o() {\n  if (false) {\n    function f(a) {\n      g(a);\n    }\n  }\n  return f;\n}\n",
+      ],
+      [
+        "a block behind a return",
+        "function o() {\n  return f;\n  {\n    function f(a) {\n      g(a);\n    }\n  }\n}\n",
+      ],
+      [
+        "two blocks with one name",
+        "function o() {\n  if (false) {\n    function f() {}\n  }\n  return f;\n  {\n    function f() {}\n  }\n}\n",
+      ],
+    ])("the name of a function in %s is printed once at the end of the body", (_, code) => {
+      expect(run(code)).toBe("function o() {\n  return f;\n" + stub + "}\n");
+    });
+
+    it.each([
+      [
+        "the header of a loop",
+        "function o(x) {\n  if (false) {\n    while (delete x) {\n      function f() {}\n    }\n  }\n  return 0;\n}\n",
+        "return 0;",
+      ],
+      [
+        "a statement next to the function",
+        "function o(x) {\n  return 0;\n  {\n    delete x;\n    function f() {}\n  }\n}\n",
+        "return 0;",
+      ],
+      [
+        "a statement behind a return that only shows when the else is gone",
+        "function o(x) {\n  if (true) {\n    return 0;\n  } else {\n    function f() {}\n  }\n  delete x;\n}\n",
+        "return 0;",
+      ],
+      [
+        "a live if that the drop leaves empty",
+        "function o(x) {\n  if (x === function() {}) {\n    if (false) {\n      function f() {}\n    }\n  }\n  return 0;\n}\n",
+        "return 0;",
+      ],
+    ])("%s goes with it", (_, code, left) => {
+      expect(run(code)).toBe("function o(x) {\n  " + left + "\n" + stub + "}\n");
+    });
+
+    it("a name that strict code cannot declare is not printed", () => {
+      expect(
+        run(
+          "function o() {\n  if (false) {\n    function eval() {}\n    function arguments() {}\n    function static() {}\n    function await() {}\n  }\n  return 0;\n}\n",
+        ),
+      ).toBe("function o() {\n  return 0;\n}\n");
+    });
+
+    it("strict code prints nothing", () => {
+      expect(
+        run('function o() {\n  "use strict";\n  if (false) {\n    function f() {}\n  }\n  return 0;\n}\n').replace(
+          /^ *"use strict";\n/m,
+          "",
+        ),
+      ).toBe("function o() {\n  return 0;\n}\n");
+    });
+
+    it("the function stays where it is when its block stays", () => {
+      expect(run("function o() {\n  if (false) {\n    var v;\n    function f() {}\n  }\n  return f;\n}\n")).toBe(
+        "function o() {\n  if (!1) {\n    var v;\n    function f() {}\n  }\n  return f;\n}\n",
+      );
+    });
+
+    it("without dead code elimination nothing moves", () => {
+      const code = "function o() {\n  if (false) {\n    function f() {}\n  }\n  return f;\n}\n";
+      expect(print(code, { deadCodeElimination: false })).toBe(code);
+    });
   });
 
   // A strict scope has no `var` to lose, and its "use strict" may not be printed.

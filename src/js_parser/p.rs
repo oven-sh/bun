@@ -331,6 +331,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool
     pub(crate) hoisted_ref_for_sloppy_mode_block_fn: RefRefMap,
     /// Sloppy block-level functions with no Annex B `var`: a lexical binding of the same name is in its way.
     pub(crate) sloppy_mode_block_fn_without_var: RefMap,
+    /// Kept block-level functions that went with dead code. `push_annex_b_stub` prints their names at the end of the body.
+    pub(crate) dead_block_level_fns: List<'a, LocRef>,
 
     // Used for forcing CommonJS
     pub(crate) has_with_scope: bool,
@@ -3616,9 +3618,76 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             || self.is_strict_mode()
             // The REPL wraps each input in a function, which would own the `var` of a top-level block.
             || (self.options.repl_mode && self.fn_or_arrow_data_visit.is_outside_fn_or_arrow)
-            // Dead code elimination removes a `let` with its branch. A declaration survives it.
-            || (self.is_control_flow_dead && self.options.features.dead_code_elimination)
             || self.sloppy_mode_block_fn_without_var.contains_key(&name)
+    }
+
+    /// Whether `func`, a child of a dead block, stayed a declaration. Notes its name for `push_annex_b_stub`.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn note_dead_block_level_function(&mut self, func: &G::Fn) -> bool {
+        let Some(name) = func.name else {
+            return false;
+        };
+        if self.symbols[name.ref_.inner_index() as usize].kind
+            != js_ast::symbol::Kind::HoistedFunction
+            || self.lowers_block_level_function(name.ref_)
+        {
+            return false;
+        }
+        let text = self.load_name_from_ref(name.ref_);
+        // Strict code cannot declare these names, and a file with no CommonJS marker runs as a module.
+        if !is_eval_or_arguments(text)
+            && text != b"await"
+            && !bun_ast::lexer_tables::is_strict_mode_reserved_word(text)
+        {
+            self.dead_block_level_fns.push(name);
+        }
+        true
+    }
+
+    /// Appends `if (false) { function f() {} }` for the names noted since `mark`. Sloppy code gets the Annex B `var`, strict code gets nothing.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn push_annex_b_stub(&mut self, stmts: &mut ListManaged<'a, Stmt>, mark: usize) {
+        let mut fns = BumpVec::with_capacity_in(self.dead_block_level_fns.len() - mark, self.arena);
+        for i in mark..self.dead_block_level_fns.len() {
+            let name = self.dead_block_level_fns[i];
+            let text = self.load_name_from_ref(name.ref_);
+            if self.dead_block_level_fns[mark..i]
+                .iter()
+                .any(|seen| self.load_name_from_ref(seen.ref_) == text)
+            {
+                continue;
+            }
+            let func = G::Fn {
+                name: Some(name),
+                open_parens_loc: name.loc,
+                body: G::FnBody {
+                    loc: name.loc,
+                    stmts: StmtNodeList::EMPTY,
+                },
+                ..Default::default()
+            };
+            fns.push(self.s(S::Function { func }, name.loc));
+        }
+        let loc = self.dead_block_level_fns[mark].loc;
+        self.dead_block_level_fns.truncate(mark);
+        let yes = self.s(
+            S::Block {
+                stmts: js_ast::StoreSlice::new_mut(fns.into_bump_slice_mut()),
+                ..Default::default()
+            },
+            loc,
+        );
+        let test = self.new_expr(E::Boolean { value: false }, loc);
+        stmts.push(self.s(
+            S::If {
+                test,
+                yes,
+                no: None,
+            },
+            loc,
+        ));
     }
 
     fn hoist_symbols(&mut self, mut scope: js_ast::StoreRef<js_ast::Scope>) {
@@ -9998,6 +10067,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             macro_call_count: 0,
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),
             sloppy_mode_block_fn_without_var: Default::default(),
+            dead_block_level_fns: BumpVec::new_in(arena),
             has_with_scope: false,
             has_top_level_function_merged_with_var: false,
             is_file_considered_to_have_esm_exports: false,

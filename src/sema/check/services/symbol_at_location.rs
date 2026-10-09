@@ -460,6 +460,10 @@ impl<'p> SymbolFinder<'_, 'p, '_> {
     /// it, resolved with the namespace meaning. An alias matches regardless of its target.
     fn get_symbol_of_name_in_class_extends(&self, e: ExprId) -> Option<Found<'p>> {
         let (hir, bound) = (self.c.hir(self.file), self.c.bound(self.file));
+        // The walk from each link of `a.b.b ..` is as long as what is left of the chain.
+        if !hir.is_in_class_extends(e) {
+            return None;
+        }
         let mut whole = e;
         loop {
             match bound.expr_parent[whole.idx()] {

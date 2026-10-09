@@ -362,6 +362,29 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         tags
     }
 
+    /// `getAllSuperTypeNodes`, which is asked for each member and each type parameter of the class or the interface.
+    fn all_super_type_nodes(&mut self, file: FileId, node: Node) -> &'c [Node] {
+        let container = NodeRef { file, node };
+        if let Some(&known) = self.super_type_nodes.get(&container) {
+            return known;
+        }
+        let hir = self.c.hir(file);
+        let mut super_type_nodes: SmallVec<[Node; 4]> = SmallVec::new();
+        hir.for_each_child(node, &mut |clause| {
+            if hir.kind(clause) == Kind::HeritageClause {
+                hir.for_each_child(clause, &mut |it| {
+                    super_type_nodes.push(it);
+                    false
+                });
+            }
+            // The members come last.
+            matches!(hir.data(clause), NodeData::Member(_))
+        });
+        let super_type_nodes = self.list(&super_type_nodes);
+        self.super_type_nodes.insert(container, super_type_nodes);
+        super_type_nodes
+    }
+
     /// `findBaseOfDeclaration`
     fn js_doc_tags_of_base_of_declaration(
         &mut self,
@@ -383,19 +406,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             return None;
         }
         let is_static = hir.flags(at).contains(Flags::STATIC);
-        // `getAllSuperTypeNodes`
-        let mut super_type_nodes: SmallVec<[Node; 4]> = SmallVec::new();
-        hir.for_each_child(container, &mut |clause| {
-            if hir.kind(clause) == Kind::HeritageClause {
-                hir.for_each_child(clause, &mut |it| {
-                    super_type_nodes.push(it);
-                    false
-                });
-            }
-            // The members come last, and this is asked for each of them.
-            matches!(hir.data(clause), NodeData::Member(_))
-        });
-        for node in super_type_nodes {
+        for &node in self.all_super_type_nodes(file, container) {
             let base_type = self.type_at_location(NodeRef { file, node });
             let ty = match self.symbol_of_type(base_type).filter(|_| is_static) {
                 Some(symbol) => self.type_of_symbol(symbol),

@@ -2674,6 +2674,11 @@ impl<R: std::ops::Deref<Target = [TextRange]>> Places<R> {
         let after = self.0.partition_point(|range| range.pos <= pos);
         after > 0 && pos < self.0[after - 1].end
     }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
 }
 
 // ───────────────────────────── ast/utilities.go ─────────────────────────────
@@ -3338,6 +3343,27 @@ impl File<'_> {
         })
     }
 
+    /// Whether `e` begins in what a class extends.
+    pub fn is_in_class_extends(&self, e: ExprId) -> bool {
+        let places = self.lazy.class_extends_places.get_or_init(|| {
+            let bases = self.classes.iter().flat_map(|class| {
+                std::iter::once(class.extends).chain(self.ids(class.other_extends))
+            });
+            let bases = bases.filter(|base| base.is_some());
+            // One whose end is unknown extends to the end.
+            Places::new(bases.map(|base| TextRange {
+                pos: self[base].pos,
+                end: if self[base].end == 0 {
+                    u32::MAX
+                } else {
+                    self[base].end
+                },
+            }))
+            .into_arena(self.lazy.session.arena())
+        });
+        places.contain(self[e].pos)
+    }
+
     /// `isInAmbientOrTypeNode`, in one walk up the parents. A node that starts outside every such
     /// range needs no walk.
     pub fn is_in_ambient_or_type_node(&self, mut node: Node) -> bool {
@@ -3398,8 +3424,23 @@ impl File<'_> {
         found.is_some()
     }
 
-    /// `IsInTypeQuery`. The operand of a `typeof` in a type is stored as an expression.
+    /// `IsInTypeQuery`. The operand of a `typeof` in a type is stored as an expression. A node that starts outside every
+    /// `typeof` type needs no walk, which from each link of `a.b.b ..` is as long as what is left of the chain.
     pub fn is_in_type_query(&self, mut node: Node) -> bool {
+        let places = self.lazy.type_query_places.get_or_init(|| {
+            let queries = self.types.iter();
+            let queries = queries.filter(|node| matches!(node.kind, TypeNodeKind::Typeof { .. }));
+            // One whose end is unknown extends to the end.
+            Places::new(queries.map(|node| TextRange {
+                pos: node.pos,
+                end: if node.end == 0 { u32::MAX } else { node.end },
+            }))
+            .into_arena(self.lazy.session.arena())
+        });
+        // Where a name begins is not known without the text. It is in the node that it is the name of.
+        if places.is_empty() || !places.contain(self.start(node.row())) {
+            return false;
+        }
         loop {
             match self.data(node) {
                 NodeData::Expr(e)

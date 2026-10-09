@@ -357,6 +357,10 @@ pub struct Lazy<'s> {
     pub(crate) parents: OnceLock<crate::node::Parents<'s>>,
     /// `File::is_in_ambient_or_type_node`
     pub(crate) ambient_or_type_places: OnceLock<Places<ArenaBox<'s, [TextRange]>>>,
+    /// `File::is_in_type_query`
+    pub(crate) type_query_places: OnceLock<Places<ArenaBox<'s, [TextRange]>>>,
+    /// `File::is_in_class_extends`
+    pub(crate) class_extends_places: OnceLock<Places<ArenaBox<'s, [TextRange]>>>,
     /// `File::keyword_identifiers`
     pub(crate) keyword_identifiers: OnceLock<ArenaBox<'s, [Node]>>,
 }
@@ -2509,6 +2513,8 @@ macro_rules! file_in_arena {
                 arena: $arena,
                 parents: OnceLock::new(),
                 ambient_or_type_places: OnceLock::new(),
+                type_query_places: OnceLock::new(),
+                class_extends_places: OnceLock::new(),
                 keyword_identifiers: OnceLock::new(),
             },
             keyword_identifier_positions: few_to_arena(

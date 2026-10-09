@@ -35,7 +35,10 @@ use visited::VisitedKind;
 /// can be read. The checker does not keep that text.
 pub type ReadLibrary<'r> = &'r (dyn Fn(&[u8], &mut dyn FnMut(&[u8])) + Sync);
 
-/// A child of a node of the file at hand that is a HIR node.
+/// What has more constituents or signatures than that has many: what is found by going through them is kept.
+const MANY: usize = 16;
+
+/// A child of a node of the file at hand that is a HIR node, or is around one.
 #[derive(Copy, Clone)]
 struct ChildSpan {
     start: u32,
@@ -48,7 +51,7 @@ struct ChildSpan {
 /// The children of a node that has many, for [`Services::name_at`].
 #[derive(Copy, Clone)]
 struct ManyChildren<'c> {
-    /// Those that are HIR nodes. From one to the next neither the start nor the end goes down.
+    /// Those that are HIR nodes, or are around one. From one to the next neither the start nor the end goes down.
     spans: &'c [ChildSpan],
     /// The others, each with which of the children it is.
     parts: &'c [(u32, Node)],
@@ -85,9 +88,19 @@ pub struct Services<'c, 'p, 's> {
     /// What `properties_of_type` and `signature_info` have answered.
     properties: FxHashMap<TypeId, &'c [SymbolRef]>,
     signatures: FxHashMap<SigId, SignatureInfo<'c>>,
+    /// What `type_at_location` has answered: many rules ask about the same node, and some about one node from each of its
+    /// many children.
+    types_at: FxHashMap<NodeRef, TypeId>,
+    /// What `type_op` has answered for a union or an intersection of many, which it goes through.
+    ops_on_many: FxHashMap<(TypeOp, TypeId), Option<TypeId>>,
+    /// What `signatures_of_type` has answered for a type that has many: a list of them for each call of a function with
+    /// many overloads takes memory in proportion to the product.
+    many_signatures: FxHashMap<(TypeId, SignatureKind), &'c [SigId]>,
     /// What `node_children` has answered for the nodes that have many: a list of them for each member of a class that asks for
     /// the heritage clauses takes memory in proportion to the square of their number.
     children: FxHashMap<NodeRef, &'c [Node]>,
+    /// `all_super_type_nodes`
+    super_type_nodes: FxHashMap<NodeRef, &'c [Node]>,
     /// For the nodes of `file` with many children that `name_at` has come through. `None`: they are not in order.
     many_children: FxHashMap<Node, Option<ManyChildren<'c>>>,
     /// `Checker::symbols_of_declarations` of `file`.
@@ -125,7 +138,11 @@ impl<'p, 's> Checker<'p, 's> {
             symbol_ids: FxHashMap::default(),
             properties: FxHashMap::default(),
             signatures: FxHashMap::default(),
+            types_at: FxHashMap::default(),
+            ops_on_many: FxHashMap::default(),
+            many_signatures: FxHashMap::default(),
             children: FxHashMap::default(),
+            super_type_nodes: FxHashMap::default(),
             many_children: FxHashMap::default(),
             symbols_of_declarations: OnceCell::new(),
         };
@@ -429,6 +446,15 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         let mut position = 0;
         hir.for_each_child(at, &mut |child| {
             match child.part() {
+                // It is around the node that it belongs to, and there is no name in the rest of it.
+                Some(crate::node::Part::Span | crate::node::Part::JsxExpression) => {
+                    spans.push(ChildSpan {
+                        start: hir.start(child.row()),
+                        end: self.c.end_of_node(self.file, child.row()),
+                        position,
+                        node: child,
+                    })
+                }
                 Some(_) => parts.push((position, child)),
                 None => spans.push(ChildSpan {
                     start: hir.start(child),

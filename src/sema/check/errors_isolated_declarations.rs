@@ -595,7 +595,15 @@ impl<'p, 's> Checker<'p, 's> {
         };
         if let Some(members) = self.members(holder) {
             let source = PropSource::Symbol(self.symbol_of_member(file, m));
-            if let Some(prop) = members.shape().props.iter().find(|it| it.source == source) {
+            let name = match hir[m].key {
+                PropKey::Computed(_) => None,
+                key => self.declared_member_name(file, key),
+            };
+            let prop = name
+                .and_then(|name| members.resolved.prop(name))
+                .filter(|it| it.source == source)
+                .or_else(|| members.shape().props.iter().find(|it| it.source == source));
+            if let Some(prop) = prop {
                 return self.type_of_prop(prop, MapperId::IDENTITY);
             }
         }

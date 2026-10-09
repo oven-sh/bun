@@ -279,6 +279,18 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     }
 
     pub fn type_op(&mut self, op: TypeOp, ty: TypeId) -> Option<TypeId> {
+        if self.constituents(ty).len() <= MANY {
+            return self.type_op_uncached(op, ty);
+        }
+        if let Some(&known) = self.ops_on_many.get(&(op, ty)) {
+            return known;
+        }
+        let found = self.type_op_uncached(op, ty);
+        self.ops_on_many.insert((op, ty), found);
+        found
+    }
+
+    fn type_op_uncached(&mut self, op: TypeOp, ty: TypeId) -> Option<TypeId> {
         let c = &mut *self.c;
         Some(match op {
             TypeOp::Apparent => c.apparent_type(ty),
@@ -439,8 +451,15 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     }
 
     pub fn signatures_of_type(&mut self, ty: TypeId, kind: SignatureKind) -> &'c [SigId] {
+        if let Some(&known) = self.many_signatures.get(&(ty, kind)) {
+            return known;
+        }
         let signatures = self.c.signatures(ty, kind == SignatureKind::Construct);
-        self.list(&signatures)
+        let signatures = self.list(&signatures);
+        if signatures.len() > MANY {
+            self.many_signatures.insert((ty, kind), signatures);
+        }
+        signatures
     }
 
     pub fn union_type(&mut self, types: &[TypeId], reduction: UnionReduction) -> TypeId {

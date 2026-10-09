@@ -749,6 +749,7 @@ impl<'s> Program<'s> {
             conditional_constraint_depth: 0,
             deepest_stack: std::cell::Cell::new(0),
             ran_out_of_stack: std::cell::Cell::new(false),
+            scopes_of_what_is_in: Default::default(),
             times_cut_short: std::cell::Cell::new(0),
             exprs_by_kind: None,
             provisional_shapes: Default::default(),
@@ -1424,6 +1425,8 @@ pub struct Checker<'p, 's> {
     conditional_constraint_depth: u32,
     deepest_stack: std::cell::Cell<usize>,
     ran_out_of_stack: std::cell::Cell<bool>,
+    /// `enclosing_scope_of_expr` of what is in these expressions.
+    scopes_of_what_is_in: std::cell::RefCell<FxHashMap<(FileId, ExprId), crate::bind::ScopeId>>,
     /// How often the native stack ran low, or a result of `relations_cut_short` or `variances_cut_short` was read.
     times_cut_short: std::cell::Cell<u64>,
     /// For the most recently queried file.

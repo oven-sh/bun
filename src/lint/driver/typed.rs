@@ -19,7 +19,7 @@ use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::linter::{
     LintMessage, LintResult, MAX_AUTOFIX_PASSES, ResolvedConfig, RuleId, apply_fixes,
-    grows_too_much, max_fixed_len,
+    grows_too_much, is_parse_error, max_fixed_len,
 };
 use bun_sema::program::FileId;
 use bun_sema::resolve::{inside, to_file_name_lower_case};
@@ -387,7 +387,7 @@ pub(crate) fn lint(
                     .insert(0, grows_too_much(state.original_len));
             }
             // The fixes of the last pass are taken back.
-            if matches!(&result.messages[..], [only] if only.is_fatal)
+            if matches!(&result.messages[..], [only] if is_parse_error(only))
                 && let (Some(before), Some((rules, was_fixed))) =
                     (state.previous.take(), state.last_pass.take())
             {

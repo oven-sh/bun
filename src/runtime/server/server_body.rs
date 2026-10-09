@@ -1799,7 +1799,7 @@ where
         // SAFETY: tagged pointer just matched this monomorphization.
         let upgrader = unsafe { &*upgrader_ptr };
 
-        if upgrader.is_aborted_or_ended() {
+        if !upgrader.can_upgrade() {
             return Ok(JSValue::FALSE);
         }
 
@@ -1966,8 +1966,8 @@ where
 
         // SAFETY: upgrader_ptr is live (ref_() above)
         let upgrader = unsafe { &*upgrader_ptr };
-        // Option getters may have run a re-entrant server.upgrade(req).
-        if upgrader.is_aborted_or_ended() || upgrader.did_upgrade_web_socket() {
+        // Option getters may have run a re-entrant server.upgrade(req) or started a response.
+        if !upgrader.can_upgrade() {
             return Ok(JSValue::FALSE);
         }
 

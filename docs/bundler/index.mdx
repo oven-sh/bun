@@ -562,6 +562,28 @@ Each `import()` of a bundled JavaScript module also becomes its own chunk. Tree 
 
 With `target: "bun"`, a `require()` of a bundled ES module becomes a chunk of its own as well. The call is emitted as `import.meta.require("./chunk-<hash>.js")` and stays synchronous — Bun evaluates the chunk when the call runs — so a `require()` inside a function that never runs keeps its module out of the startup working set entirely. Tree shaking treats these chunks like `import()` chunks. `require()` of a CommonJS module is unaffected and keeps returning `module.exports`. A `require()` cycle between such chunks follows Bun's runtime `require()` of an ES module: a module required again while its chunk is still being loaded sees the partially initialized CommonJS placeholder (`{}`) rather than the live bindings the in-chunk wrapper provides. For other targets — and with `splitRequire: false` (`--no-split-require`) — the required module is inlined into the calling chunk behind a lazy wrapper instead, because the call must return synchronously.
 
+#### Evaluation order of shared modules
+
+Modules that the same entrypoints load go into one shared chunk, and a chunk runs its modules in one order. Each entrypoint is a program of its own, so two entrypoints can import the same modules in different orders:
+
+<CodeGroup>
+
+```ts index.ts icon="/icons/typescript.svg"
+import "./a.ts";
+import "./b.ts";
+```
+
+```ts worker.ts icon="/icons/typescript.svg"
+import "./b.ts";
+import "./a.ts";
+```
+
+</CodeGroup>
+
+When `a.ts` and `b.ts` have side effects, Bun writes them to separate chunks, and each entrypoint imports the chunks in its own order. Modules that every entrypoint runs one after the other, in the same order, still share a chunk. So do modules that only declare, whatever the order of the imports, modules in an import cycle, modules that reach a top-level `await`, and modules that import a CommonJS module.
+
+The same applies to two `import()` targets: the target that loads first decides the order, as it does when the source runs unbundled. When both calls are in flight at once, the host decides which target evaluates first. If the order matters, `await` the first `import()` before you start the second.
+
 #### Tree-shaking `import()` and `require()` results
 
 When the result of a string-literal `import()` or `require()` of an ES module is only ever used to read specific exports, the exports nobody reads are dropped from that module — and whatever only they depended on tree-shakes with them. This applies with and without `splitting`; the module is still loaded lazily, exactly where the call is written.

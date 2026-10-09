@@ -124,6 +124,8 @@ pub mod linker_context {
 
     #[path = "mergeSmallChunks.rs"]
     pub mod merge_small_chunks;
+    #[path = "splitChunksByEvaluationOrder.rs"]
+    pub(crate) mod split_chunks_by_evaluation_order;
 
     #[path = "crossChunkNames.rs"]
     pub mod cross_chunk_names;

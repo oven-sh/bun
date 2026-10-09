@@ -2346,6 +2346,331 @@ describe("bundler", () => {
     run: { file: "/out/entry.js", stdout: "late2 b late1 b" },
   });
 
+  // index.js evaluates p, q (through its import()) and worker.js evaluates q, p. They are two programs,
+  // and either can be the one that loads the two files. A chunk prints its files in one order, so they
+  // do not share one, and each program imports the two chunks in its own order.
+  const evaluationOrderFiles = {
+    "/index.js": `import("./a.js").then(m => console.log("ok", m.a));`,
+    "/worker.js": `import { q } from "./q.js"; import { a } from "./a.js"; console.log("worker", q, a);`,
+    "/a.js": `import "./p.js"; import { q } from "./q.js"; export const a = "a" + q;`,
+    "/p.js": `globalThis.P = { v: "P" };`,
+    "/q.js": `export const q = "q" + (globalThis.P?.v ?? "-noP");`,
+  };
+  const chunkWith = (api: BundlerTestBundleAPI, text: string) =>
+    jsFilesIn(api).filter(file => api.readFile("/out/" + file).includes(text));
+  for (const [name, options] of [
+    ["", {}],
+    ["/ReversedEntryPoints", { entryPoints: ["/worker.js", "/index.js"] }],
+    ["/HashedEntry", { entryNaming: "[name].entry-[hash].[ext]" }],
+    ["/Browser", { target: "browser" }],
+    ["/Minify", { minifyIdentifiers: true, minifySyntax: true, minifyWhitespace: true }],
+    ["/MinChunkSize", { minChunkSize: 1024 * 1024 }],
+  ] as const) {
+    itBundled("splitting/SharedFilesInTwoOrders" + name, {
+      files: evaluationOrderFiles,
+      entryPoints: ["/index.js", "/worker.js"],
+      splitting: true,
+      target: "bun",
+      outdir: "/out",
+      format: "esm",
+      ...options,
+      onAfterBundle(api) {
+        launchHashedEntry(api, "index");
+        launchHashedEntry(api, "worker");
+      },
+      run: [
+        { file: "/out/index.js", stdout: "ok aqP" },
+        { file: "/out/worker.js", stdout: "worker q-noP aq-noP" },
+      ],
+    });
+  }
+
+  // Whichever of x.js and y.js the program imports first loads p.js and q.js.
+  itBundled("splitting/SharedFilesInTwoOrdersOfImportCalls", {
+    files: {
+      "/entry.js": /* js */ `
+        const load = { x: () => import("./x.js"), y: () => import("./y.js") };
+        const [first, second] = process.argv.slice(2);
+        load[first]().then(() => load[second]());
+      `,
+      "/x.js": `import "./p.js"; import "./q.js"; console.log("x");`,
+      "/y.js": `import "./q.js"; import "./p.js"; console.log("y");`,
+      "/p.js": `console.log("p");`,
+      "/q.js": `console.log("q");`,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/entry.js", args: ["x", "y"], stdout: "p\nq\nx\ny" },
+      { file: "/out/entry.js", args: ["y", "x"], stdout: "q\np\ny\nx" },
+    ],
+  });
+
+  // one.js and two.js run back to back in both programs, so they still share a chunk.
+  itBundled("splitting/SharedFilesInTwoOrdersKeepRunsTogether", {
+    files: {
+      "/e1.js": `import "./one.js"; import "./two.js"; import "./three.js"; console.log("e1");`,
+      "/e2.js": `import "./three.js"; import "./one.js"; import "./two.js"; console.log("e2");`,
+      "/one.js": `console.log("one");`,
+      "/two.js": `console.log("two");`,
+      "/three.js": `console.log("three");`,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(chunkWith(api, `"one"`)).toEqual(chunkWith(api, `"two"`));
+      expect(chunkWith(api, `"one"`)).not.toEqual(chunkWith(api, `"three"`));
+      expect(jsFilesIn(api)).toHaveLength(4);
+    },
+    run: [
+      { file: "/out/e1.js", stdout: "one\ntwo\nthree\ne1" },
+      { file: "/out/e2.js", stdout: "three\none\ntwo\ne2" },
+    ],
+  });
+
+  // Both evaluate p, q: one chunk.
+  itBundled("splitting/SharedFilesInOneOrder", {
+    files: {
+      ...evaluationOrderFiles,
+      "/worker.js": /* js */ `
+        import "./p.js";
+        import { q } from "./q.js";
+        import { a } from "./a.js";
+        console.log("worker", q, a);
+      `,
+    },
+    entryPoints: ["/index.js", "/worker.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(chunkWith(api, "globalThis.P =")).toEqual(chunkWith(api, "globalThis.P?.v"));
+    },
+    run: [
+      { file: "/out/index.js", stdout: "ok aqP" },
+      { file: "/out/worker.js", stdout: "worker qP aqP" },
+    ],
+  });
+
+  // The two orders differ only in files that declare. Nothing can tell: one chunk.
+  itBundled("splitting/SharedFilesInTwoOrdersDeclarationsOnly", {
+    files: {
+      "/e1.js": `import { f } from "./f.js"; import { g } from "./g.js"; console.log("e1", f(), g());`,
+      "/e2.js": `import { g } from "./g.js"; import { f } from "./f.js"; console.log("e2", f(), g());`,
+      "/f.js": `export function f() { return "f"; }`,
+      "/g.js": `export function g() { return "g"; }`,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsFilesIn(api)).toHaveLength(3);
+    },
+    run: [
+      { file: "/out/e1.js", stdout: "e1 f g" },
+      { file: "/out/e2.js", stdout: "e2 f g" },
+    ],
+  });
+
+  // a.js enters the cycle at root.js, so member.js runs first. The chunk of member.js would import the chunk of
+  // root.js for cfg, and run it first. The files stay in one chunk.
+  itBundled("splitting/SharedFilesInTwoOrdersImportCycle", {
+    files: {
+      "/a.js": `import "./root.js"; import "./user.js"; console.log("a");`,
+      "/b.js": `import "./user.js"; import "./root.js"; console.log("b");`,
+      "/root.js": `import { helper } from "./member.js"; export const cfg = { ok: 1 }; console.log("root");`,
+      "/member.js": `import { cfg } from "./root.js"; export function helper() { return cfg.ok; } console.log("member");`,
+      "/user.js": `import { helper } from "./member.js"; console.log("user", helper());`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsFilesIn(api)).toHaveLength(3);
+    },
+    run: { file: "/out/a.js", stdout: "member\nroot\nuser 1\na" },
+  });
+
+  // m0.js and m1.js import each other, so they are in the chunk of five.js and six.js, with the runtime. They are
+  // files of that chunk like the others: a cycle, so the chunk stays whole.
+  itBundled("splitting/SharedFilesInTwoOrdersEntryPointsImportEachOther", {
+    files: {
+      "/m0.js": `import * as five from "./five.js"; import * as one from "./m1.js"; console.log("m0", Object.keys(five), Object.keys(one));`,
+      "/m1.js": `import * as six from "./six.js"; import "./m0.js"; export const v1 = 1; console.log("m1", Object.keys(six));`,
+      "/five.js": `console.log("five"); export const v5 = 5;`,
+      "/six.js": `console.log("six"); export const v6 = 6;`,
+    },
+    entryPoints: ["/m0.js", "/m1.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/m0.js", stdout: `five\nsix\nm1 [ "v6" ]\nm0 [ "v5" ] [ "v1" ]` },
+  });
+
+  // No two entry points disagree here, so the chunk of main.js imports its chunks as before: the one with main.js
+  // first. four.js requires its way back to main.js at load, and main.js has to be the file that is entered first.
+  itBundled("splitting/SharedFilesInOneOrderKeepImportsOfEntryPointChunk", {
+    files: {
+      "/main.js": `import { six } from "./six.js"; import "./three.js"; export const main = "main"; console.log("main", six);`,
+      "/other.js": `export const later = () => require("./three.js");`,
+      "/three.js": `import { four } from "./four.js"; export { four };`,
+      "/four.js": `import { six } from "./six.js"; const seven = require("./seven.js"); export const four = typeof seven; console.log("four", six);`,
+      "/six.js": `export const six = ["six"].join();`,
+      "/seven.js": `export * as main from "./main.js";`,
+    },
+    entryPoints: ["/main.js", "/other.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/main.js", stdout: "four six\nmain six" },
+  });
+
+  // m2.js imports m0.js, so m0.js is in a chunk of its own, and the chunk of the entry point only imports chunks.
+  // It imports them in the order of m0.js: four.js and six.js come before the chunk of m0.js.
+  itBundled("splitting/SharedFilesInTwoOrdersEntryPointInAnotherChunk", {
+    files: {
+      "/m0.js": `import "./four.js"; import "./six.js"; export const v0 = "v0"; console.log("m0");`,
+      "/m1.js": `import "./six.js"; import "./four.js"; console.log("m1");`,
+      "/m2.js": `import * as m0 from "./m0.js"; console.log("m2", Object.keys(m0));`,
+      "/four.js": `console.log("four");`,
+      "/six.js": `console.log("six");`,
+    },
+    entryPoints: ["/m0.js", "/m1.js", "/m2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/m0.js", stdout: "four\nsix\nm0" },
+      { file: "/out/m1.js", stdout: "six\nfour\nm1" },
+      { file: "/out/m2.js", stdout: `four\nsix\nm0\nm2 [ "v0" ]` },
+    ],
+  });
+
+  // five.js imports seven.js and uses nothing from it, so a chunk of five.js would not import a chunk of seven.js,
+  // and would not wait for its await. The files stay in one chunk.
+  itBundled("splitting/SharedFilesInTwoOrdersTopLevelAwait", {
+    files: {
+      "/a.js": `import "./six.js"; import "./five.js"; console.log("a");`,
+      "/b.js": `import "./five.js"; import "./six.js"; console.log("b");`,
+      "/five.js": `import "./seven.js"; console.log("five");`,
+      "/six.js": `console.log("six");`,
+      "/seven.js": `await null; console.log("seven");`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(jsFilesIn(api)).toHaveLength(3);
+    },
+    run: { file: "/out/a.js", stdout: "six\nseven\nfive\na" },
+  });
+
+  // m1.js runs five.cjs where it imports it, ahead of six.js. A chunk of m1.js would import a chunk of six.js
+  // ahead of all its code. The files stay in one chunk.
+  itBundled("splitting/SharedFilesInTwoOrdersImportOfWrappedFile", {
+    files: {
+      "/m0.js": `import "./four.js"; import "./m1.js"; console.log("m0");`,
+      "/m1.js": `import five from "./five.cjs"; import "./six.js"; import "./four.js"; console.log("m1", five);`,
+      "/four.js": `console.log("four");`,
+      "/five.cjs": `console.log("five"); module.exports = 5;`,
+      "/six.js": `console.log("six");`,
+    },
+    entryPoints: ["/m0.js", "/m1.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/m0.js", stdout: "four\nfive\nsix\nm1 5\nm0" },
+  });
+
+  // f.js requires d.js at load, which runs t2.js and t1.js ahead of the imports of a.js. The imports of a chunk
+  // are not ranked by that, so the files stay in one chunk.
+  itBundled("splitting/SharedFilesInTwoOrdersRequireAtLoad", {
+    files: {
+      "/a.js": `import "./f.js"; import "./t1.js"; import "./t2.js"; console.log("a");`,
+      "/b.js": `import "./t1.js"; import "./t2.js"; console.log("b");`,
+      "/f.js": `const { d } = require("./d.js"); export const f = d;`,
+      "/d.js": `import "./t2.js"; import "./t1.js"; export const d = 1;`,
+      "/t1.js": `console.log("t1", globalThis.P);`,
+      "/t2.js": `globalThis.P = "P"; console.log("t2");`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/a.js", stdout: "t2\nt1 P\na" },
+  });
+
+  // lazy.js loads after x.js or y.js, so q.js folds into the chunk of p.js. The rule applies to the chunk
+  // that the fold leaves.
+  itBundled("splitting/SharedFilesInTwoOrdersAfterFold", {
+    files: {
+      "/x.js": `import "./p.js"; import "./q.js"; console.log("x"); export const later = () => import("./lazy.js");`,
+      "/y.js": `import "./q.js"; import "./p.js"; console.log("y"); export const later = () => import("./lazy.js");`,
+      "/lazy.js": `import "./q.js"; console.log("lazy");`,
+      "/p.js": `console.log("p");`,
+      "/q.js": `console.log("q");`,
+    },
+    entryPoints: ["/x.js", "/y.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/x.js", stdout: "p\nq\nx" },
+      { file: "/out/y.js", stdout: "q\np\ny" },
+    ],
+  });
+
+  // u.js folds into the chunk of the other files, and e1.js does not import it. It uses t.js, which is split off, so
+  // it does not stay with k.js, which t.js and r.js use: the two chunks would import each other.
+  itBundled("splitting/SharedFilesInTwoOrdersFoldedFile", {
+    files: {
+      "/e1.js": `import "./r.js"; import "./t.js";`,
+      "/e2.js": `import "./t.js"; import { u } from "./u.js"; import "./r.js"; console.log(u().v);`,
+      "/e3.js": `import "./t.js"; import { u } from "./u.js"; import "./r.js"; console.log(u().v);`,
+      "/t.js": `import { k } from "./k.js"; console.log("t", k?.v); export const t = { v: 1 };`,
+      "/k.js": `export const k = { v: 1, pad: "${Buffer.alloc(20000, "x").toString()}" };`,
+      "/r.js": `import { k } from "./k.js"; console.log("r", k?.v);`,
+      "/u.js": `import { t } from "./t.js"; export const u = () => t;`,
+    },
+    entryPoints: ["/e1.js", "/e2.js", "/e3.js"],
+    splitting: true,
+    minChunkSize: 1024,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/e1.js", stdout: "r 1\nt 1" },
+      { file: "/out/e2.js", stdout: "t 1\nr 1\n1" },
+    ],
+  });
+
+  // main.js has run p.js and q.js by the time page.js loads, so the order of page.js does not count: one chunk.
+  itBundled("splitting/SharedFilesInTwoOrdersAlreadyLoaded", {
+    files: {
+      "/main.js": `import "./p.js"; import "./q.js"; import("./page.js");`,
+      "/page.js": `import "./q.js"; import "./p.js"; console.log("page");`,
+      "/p.js": `console.log("p");`,
+      "/q.js": `console.log("q");`,
+    },
+    entryPoints: ["/main.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    onAfterBundle(api) {
+      expect(chunkWith(api, `"p"`)).toEqual(chunkWith(api, `"q"`));
+    },
+    run: { file: "/out/main.js", stdout: "p\nq\npage" },
+  });
+
   // The namespace object of barrel.js names a before b, but b.js runs first: the shared chunk follows late_b.js.
   itBundled("splitting/SharedChunkOwnerIgnoresNamespaceExportOrder", {
     files: {

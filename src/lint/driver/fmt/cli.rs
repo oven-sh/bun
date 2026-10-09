@@ -94,6 +94,12 @@ pub const PARAMS: &[Param] = &[
     clap::param!(
         "--allow-unsupported             Only warn about files in a language that is not supported"
     ),
+    clap::param!(
+        "--flavor <which>                Without a configuration file, format like <b>prettier<r> or like <b>oxfmt<r>"
+    ),
+    clap::param!(
+        "--init                          Write an <b>.oxfmtrc.json<r>, with which files are formatted like oxfmt does"
+    ),
     clap::param!("--timing                        Print how long each phase took"),
     clap::param!("--cwd <path>                    Set the working directory"),
     clap::param!("-h, --help                      Print this help menu"),
@@ -117,7 +123,6 @@ pub const PARAMS: &[Param] = &[
     clap::param!("--color"),
     clap::param!("-v, --version"),
     // oxfmt's.
-    clap::param!("--init"),
     clap::param!("--migrate <source>"),
     clap::param!("--lsp"),
     // Ours.
@@ -174,6 +179,9 @@ pub struct Options {
     pub ignore_unknown: bool,
     /// Files that Prettier or oxfmt would format and this formatter cannot are no error.
     pub allow_unsupported: bool,
+    /// `--flavor oxfmt`, or `false`: `--flavor prettier`.
+    pub is_like_oxfmt: Option<bool>,
+    pub init: bool,
     pub find_config_path: Option<Vec<u8>>,
     pub log_level: LogLevel,
     /// The options of Prettier, by the names that they have in a configuration file, and their
@@ -214,6 +222,8 @@ impl Default for Options {
             error_on_unmatched_pattern: true,
             ignore_unknown: false,
             allow_unsupported: false,
+            is_like_oxfmt: None,
+            init: false,
             find_config_path: None,
             log_level: LogLevel::default(),
             format: Vec::new(),
@@ -290,7 +300,21 @@ impl Options {
             b"config" => self.config = owned(),
             b"disable-nested-config" => self.disable_nested_config = is_on,
             b"list-files" => self.list_files = is_on,
-            b"init" | b"migrate" | b"lsp" => {
+            b"init" => self.init = is_on,
+            b"flavor" => {
+                self.is_like_oxfmt = match text {
+                    b"oxfmt" => Some(true),
+                    b"prettier" => Some(false),
+                    _ => {
+                        return error(&[
+                            b"Invalid --flavor value. Expected \"oxfmt\" or \"prettier\", but received \"",
+                            text,
+                            b"\".",
+                        ]);
+                    }
+                };
+            }
+            b"migrate" | b"lsp" => {
                 return error(&[b"bun format does not support --", name, b"."]);
             }
             b"editorconfig" => self.editorconfig = is_on,

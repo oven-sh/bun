@@ -423,7 +423,15 @@ impl PreferConst {
             let Some(name) = name else {
                 continue;
             };
-            let report = cx.report(utils::estree_span(node), USE_CONST).data("name", name);
+            // oxlint points at the declaration, also of what is assigned later.
+            let declared = match node {
+                Node::Expr(e) if cx.language().is_oxlint => {
+                    e.symbol().and_then(|it| it.declarations().next()?.name_span())
+                }
+                _ => None,
+            };
+            let place = declared.unwrap_or_else(|| utils::estree_span(node));
+            let report = cx.report(place, USE_CONST).data("name", name);
             if should_fix && let Some((statement, _)) = parent {
                 report.fix(|fixer| {
                     let range = statement.span_without_export();

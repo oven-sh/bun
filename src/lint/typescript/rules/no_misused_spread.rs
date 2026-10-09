@@ -10,6 +10,7 @@ use bun_lint::types::utils::{
 };
 use bun_lint::types::{ObjectFlags, SyntaxKind, Type, TypeFlags};
 use bun_lint::utils::ts_utils::{WrappingFixerParams, get_wrapping_fixer};
+use rustc_hash::FxHashMap;
 
 /// Disallow using the spread operator when it might cause unexpected behavior.
 pub struct NoMisusedSpread {
@@ -57,6 +58,28 @@ const REPLACE_MAP_SPREAD_IN_OBJECT: Message = Message::new(
     "replaceMapSpreadInObject",
     "Replace map spread in object with `Object.fromEntries()`",
 );
+
+/// What is wrong with a spread of a type in an object.
+#[derive(Copy, Clone)]
+enum Misuse {
+    Promise,
+    Function,
+    /// Whether every constituent is a `Map` or a `ReadonlyMap`.
+    Map(bool),
+    Array,
+    Iterable,
+    ClassInstance,
+    ClassDeclaration,
+}
+
+/// What has been found out about types: each constituent of a union is looked at, several times, and many spreads have
+/// the same type.
+#[derive(Default)]
+pub struct State<'a> {
+    in_objects: FxHashMap<Type<'a>, Option<Misuse>>,
+    /// Whether a spread in an array or a call is to be reported.
+    in_lists: FxHashMap<Type<'a>, bool>,
+}
 
 fn is_type_recurser<'a>(ty: Type<'a>, predicate: &impl Fn(Type<'a>) -> bool) -> bool {
     if ty.is_union_or_intersection() {
@@ -133,8 +156,32 @@ impl NoMisusedSpread {
             _ => return,
         }
         let ty = get_constrained_type_at_location(argument);
-        if is_string(ty) && !type_matches_some_specifier(ty, &self.allow) {
+        let is_misused = || is_string(ty) && !type_matches_some_specifier(ty, &self.allow);
+        if *cx.state.in_lists.entry(ty).or_insert_with(is_misused) {
             cx.report(node, NO_STRING_SPREAD);
+        }
+    }
+
+    fn misuse_in_object(&self, ty: Type) -> Option<Misuse> {
+        if type_matches_some_specifier(ty, &self.allow) {
+            None
+        } else if is_promise(ty) {
+            Some(Misuse::Promise)
+        } else if is_function_without_props(ty) {
+            Some(Misuse::Function)
+        } else if is_map(ty) {
+            Some(Misuse::Map(union_constituents(ty).iter().all(is_iterable_map)))
+        } else if is_array(ty) {
+            Some(Misuse::Array)
+        } else if is_iterable(ty) && !is_string(ty) {
+            // TypeScript flags a string already.
+            Some(Misuse::Iterable)
+        } else if is_class_instance(ty) {
+            Some(Misuse::ClassInstance)
+        } else if is_class_declaration(ty) {
+            Some(Misuse::ClassDeclaration)
+        } else {
+            None
         }
     }
 
@@ -150,22 +197,29 @@ impl NoMisusedSpread {
             return;
         }
         let ty = get_constrained_type_at_location(argument);
-        if type_matches_some_specifier(ty, &self.allow) {
+        let Some(misuse) = *cx.state.in_objects.entry(ty).or_insert_with(|| self.misuse_in_object(ty)) else {
             return;
-        }
-
-        if is_promise(ty) {
-            cx.report(node, NO_PROMISE_SPREAD_IN_OBJECT).suggest(ADD_AWAIT, |fixer| {
-                match is_higher_precedence_than_await(argument) {
+        };
+        let report = cx.report(
+            node,
+            match misuse {
+                Misuse::Promise => NO_PROMISE_SPREAD_IN_OBJECT,
+                Misuse::Function => NO_FUNCTION_SPREAD_IN_OBJECT,
+                Misuse::Map(_) => NO_MAP_SPREAD_IN_OBJECT,
+                Misuse::Array => NO_ARRAY_SPREAD_IN_OBJECT,
+                Misuse::Iterable => NO_ITERABLE_SPREAD_IN_OBJECT,
+                Misuse::ClassInstance => NO_CLASS_INSTANCE_SPREAD_IN_OBJECT,
+                Misuse::ClassDeclaration => NO_CLASS_DECLARATION_SPREAD_IN_OBJECT,
+            },
+        );
+        match misuse {
+            Misuse::Promise => {
+                report.suggest(ADD_AWAIT, |fixer| match is_higher_precedence_than_await(argument) {
                     true => vec![fixer.insert_before(argument, "await ")],
                     false => vec![fixer.insert_before(argument, "await ("), fixer.insert_after(argument, ")")],
-                }
-            });
-        } else if is_function_without_props(ty) {
-            cx.report(node, NO_FUNCTION_SPREAD_IN_OBJECT);
-        } else if is_map(ty) {
-            let report = cx.report(node, NO_MAP_SPREAD_IN_OBJECT);
-            if union_constituents(ty).iter().all(is_iterable_map) {
+                });
+            }
+            Misuse::Map(true) => {
                 report.suggest(REPLACE_MAP_SPREAD_IN_OBJECT, |fixer| {
                     let inner = [argument];
                     let is_only_property = matches!(parent.kind(), ExprKind::Object(properties) if properties.len() == 1);
@@ -183,15 +237,7 @@ impl NoMisusedSpread {
                     )
                 });
             }
-        } else if is_array(ty) {
-            cx.report(node, NO_ARRAY_SPREAD_IN_OBJECT);
-        } else if is_iterable(ty) && !is_string(ty) {
-            // TypeScript flags a string already.
-            cx.report(node, NO_ITERABLE_SPREAD_IN_OBJECT);
-        } else if is_class_instance(ty) {
-            cx.report(node, NO_CLASS_INSTANCE_SPREAD_IN_OBJECT);
-        } else if is_class_declaration(ty) {
-            cx.report(node, NO_CLASS_DECLARATION_SPREAD_IN_OBJECT);
+            _ => {}
         }
     }
 }
@@ -201,7 +247,7 @@ impl Rule for NoMisusedSpread {
         .has_suggestions()
         .presets(Presets::STRICT_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         NoMisusedSpread {
@@ -209,8 +255,9 @@ impl Rule for NoMisusedSpread {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
         on.exprs([ExprTag::Spread], Self::check_array_or_call_spread);
         on.props(Self::check_object_spread);
+        State::default()
     }
 }

@@ -431,6 +431,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool
     /// (found by fuzzing). Kept sorted for binary search; stays empty (no allocation)
     /// until a constraint attempt actually backtracks, which is rare in real code.
     pub(crate) ts_infer_constraint_backtracks: Vec<u32>,
+    /// See `try_skip_type_script_type_arguments_in_chain_with_backtracking`: the position of a "<",
+    /// shifted left by one, and whether it is in an optional chain. Sorted.
+    pub(crate) ts_type_argument_backtracks: Vec<u32>,
 
     /// Outcomes of `is_type_script_arrow_return_type_after_question_and_before_colon`,
     /// keyed by the byte offset of the `:` shifted left by one, with the low bit set
@@ -441,6 +444,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool
     /// once for real, which is exponential in the nesting depth. Kept sorted for
     /// binary search.
     pub(crate) ts_conditional_arrow_attempts: Vec<u32>,
+    /// See `is_unambiguously_start_of_function_type`: the position of a "(", shifted left by one,
+    /// with the answer in the lowest bit. Sorted.
+    pub(crate) function_type_starts: Vec<u32>,
 
     /// When this flag is enabled, we attempt to fold all expressions that
     /// TypeScript would consider to be "constant expressions". This flag is
@@ -8421,6 +8427,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     pub(crate) fn parser_snapshot(&mut self) -> ParserSnapshot<'a> {
         let comments_to_preserve_before =
             core::mem::take(&mut self.lexer.comments_to_preserve_before);
+        self.lexer.trials += 1;
         let log = self.log();
         ParserSnapshot {
             lexer: self.lexer.snapshot(),
@@ -8460,11 +8467,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     #[inline]
     pub(crate) fn release_parser_snapshot(&mut self, snapshot: &ParserSnapshot<'a>) {
         self.release_type_syntax_checkpoint(&snapshot.noted);
+        self.lexer.trials = self.lexer.trials.saturating_sub(1);
+        if self.log().msgs.len() > snapshot.log_msgs_len {
+            self.lexer
+                .stop_after_syntax_error_since(snapshot.log_msgs_len);
+        }
     }
 
     /// Undo every parse-pass mutation made since [`Self::parser_snapshot`].
     pub(crate) fn restore_parser_snapshot(&mut self, snapshot: ParserSnapshot<'a>) {
         self.lexer.restore(&snapshot.lexer);
+        self.lexer.trials = self.lexer.trials.saturating_sub(1);
         self.lexer.comments_to_preserve_before = snapshot.comments_to_preserve_before;
         self.rewind_type_syntax(&snapshot.noted);
 
@@ -9924,7 +9937,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             jsx_children_met_end_of_file: false,
             reported_stack_overflow: core::cell::Cell::new(false),
             ts_infer_constraint_backtracks: Vec::new(),
+            ts_type_argument_backtracks: Vec::new(),
             ts_conditional_arrow_attempts: Vec::new(),
+            function_type_starts: Vec::new(),
             arena,
             then_catch_chain: ThenCatchChain {
                 next_target: null_expr_data(),

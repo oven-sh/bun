@@ -14,6 +14,24 @@ const loaders = {
   "": file => Bun.YAML.parse(read(file)),
 };
 
+// `import { defineConfig } from "oxfmt"` goes on working in a project that has removed the package.
+if (basename(path).startsWith("oxfmt.")) {
+  let isInstalled = true;
+  try {
+    Bun.resolveSync("oxfmt", dirname(path));
+  } catch {
+    isInstalled = false;
+  }
+  if (!isInstalled) {
+    Bun.plugin({
+      name: "oxfmt",
+      setup(build) {
+        build.module("oxfmt", () => ({ exports: { defineConfig: config => config }, loader: "object" }));
+      },
+    });
+  }
+}
+
 let config;
 if (basename(path) === "package.json") config = (await importDefault(path)).prettier;
 else if (basename(path) === "package.yaml") config = Bun.YAML.parse(read(path))?.prettier;

@@ -25,7 +25,7 @@ pub(crate) struct Embedded<'x> {
 
 pub(crate) struct Printer<'a, 'e> {
     pub(crate) text: &'a [u8],
-    /// The same with the front matter in any case: see `block::blank_front_matter`.
+    /// The same with the front matter in any case: see `parse::blank_front_matter`.
     pub(crate) original: &'a [u8],
     pub(crate) tree: &'a Tree,
     pub(crate) options: &'a FormatOptions,

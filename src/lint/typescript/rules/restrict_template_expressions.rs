@@ -4,6 +4,7 @@ use bun_lint::types::utils::{
     parse_type_or_value_specifiers, type_matches_some_specifier,
 };
 use bun_lint::types::{Type, TypeFlags};
+use rustc_hash::FxHashMap;
 
 /// Enforce template literal expressions to be of `string` type.
 pub struct RestrictTemplateExpressions {
@@ -46,7 +47,8 @@ impl Rule for RestrictTemplateExpressions {
     const META: Meta = Meta::typescript("restrict-template-expressions", Kind::Problem)
         .presets(Presets::RECOMMENDED_TYPE_CHECKED.union(Presets::STRICT_TYPE_CHECKED))
         .requires_types();
-    type State<'a> = ();
+    /// Whether a type is allowed. Each constituent of a union is looked at, and many expressions have the same type.
+    type State<'a> = FxHashMap<Type<'a>, bool>;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -75,7 +77,7 @@ impl Rule for RestrictTemplateExpressions {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> FxHashMap<Type<'a>, bool> {
         on.exprs([ExprTag::Template], |rule, node, cx| {
             let ExprKind::Template(template) = node.kind() else {
                 return;
@@ -87,10 +89,12 @@ impl Rule for RestrictTemplateExpressions {
             }
             for expression in template.exprs() {
                 let expression_type = get_constrained_type_at_location(expression);
-                if !rule.recursively_check_type(expression_type, 0) {
+                let is_allowed = || rule.recursively_check_type(expression_type, 0);
+                if !*cx.state.entry(expression_type).or_insert_with(is_allowed) {
                     cx.report(expression, INVALID_TYPE).data("type", expression_type.to_text());
                 }
             }
         });
+        FxHashMap::default()
     }
 }

@@ -22,7 +22,7 @@ pub(crate) fn write_call_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut For
         FormatCallee(call),
         call.is_optional().then_some("?."),
         FormatTypeArguments(e, call),
-        (!call.type_args().is_empty()).then_some(line_suffix_boundary())
+        boundary_behind_callee(f).filter(|_| !call.type_args().is_empty())
     );
 
     if keeps_arguments_on_one_line(e, call, f) {
@@ -82,13 +82,29 @@ fn keeps_arguments_on_one_line<'a>(e: Expr<'a>, call: Call<'a>, f: &Formatter<'a
                 .any(|argument| is_cast_target(argument, f)))
 }
 
+/// ```js
+/// new A( // comment      new A(b); // comment
+///   b
+/// );
+/// ```
+///
+/// For oxfmt it trails `A`, like any comment that ends the line after it.
+fn comment_behind_parenthesis_of_new_trails_class(call: Call<'_>, f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt() && call.type_args().is_empty()
+}
+
 pub(crate) fn write_new_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut Formatter<'a>) {
     let head = format_args!(
         "new",
         space(),
-        FormatCallee(call),
+        format_with(
+            |f| match comment_behind_parenthesis_of_new_trails_class(call, f) {
+                true => write!(f, call.callee()),
+                false => write!(f, FormatCallee(call)),
+            }
+        ),
         FormatTypeArguments(e, call),
-        (!call.type_args().is_empty()).then_some(line_suffix_boundary())
+        boundary_behind_callee(f).filter(|_| !call.type_args().is_empty())
     );
     if is_template_on_its_own_line_only_argument(call.args(), f) {
         return write!(f, [head, FormatArgumentsOnOneLine(call.args())]);

@@ -1,5 +1,9 @@
-//! Where the rules of `bun lint` that are written in JavaScript run: in a VM on the thread that
-//! lints the file. A thread gets its VM the first time it has a file for such a rule.
+//! Where the rules of `bun lint` that are written in JavaScript run: in engines, each a thread of its own with a VM. A thread
+//! that lints borrows one for a file, and answers what the program asks about the file while it waits for the result.
+//!
+//! Nobody waits in a circle. A thread that lints waits for an engine that another one has borrowed, which gives it back without
+//! waiting for a second one. An engine waits for the thread that has borrowed it, which does nothing but answer, and for its
+//! JavaScript: that can need Bun's pool, on which nothing of `bun lint` runs.
 //!
 //! The program is `bun_lint::js_plugin::PROGRAM`: the body of a function that is given [`request`],
 //! [`again`] and [`decode`], and returns the function that [`ThreadVm::call`] calls.
@@ -12,6 +16,9 @@ use bun_jsc::{
     virtual_machine::VirtualMachine,
 };
 use bun_lint_driver::js_plugin::{Engine, PROGRAM, Serve, Vm};
+use bun_threading::{Condition, Guarded};
+use std::sync::Arc;
+use std::thread::ThreadId;
 
 bun_core::declare_scope!(lint_js, hidden);
 
@@ -183,7 +190,7 @@ fn start_vm() -> Result<(), Vec<u8>> {
     .map_err(|error| failed(error.name()))?;
     debug_assert!(core::ptr::eq(vm, VirtualMachine::get_mut_ptr()));
     let vm = VirtualMachine::get().as_mut();
-    // This thread has nothing else to do meanwhile, and the other cores lint.
+    // This thread has nothing else to do meanwhile.
     vm.transpiler_store.enabled = false;
     vm.transpiler.resolver.env_loader = NonNull::new(vm.transpiler.env);
     vm.transpiler.options.env.behavior =
@@ -242,14 +249,6 @@ impl Vm for ThreadVm {
     }
 }
 
-/// One VM for each thread that asks.
-#[derive(Default)]
-pub(crate) struct ThreadVms {
-    initialize: std::sync::Once,
-    /// How many VMs there are going to be at most. 0: nobody knows.
-    expected: core::sync::atomic::AtomicUsize,
-}
-
 /// With no more VMs than this, cores are left to compile and to collect garbage on while the VMs run.
 const FEW_VMS: usize = 4;
 
@@ -275,43 +274,236 @@ fn end_vm() {
     unsafe { VirtualMachine::exit_and_free(VirtualMachine::get_mut_ptr()) };
 }
 
-impl ThreadVms {
-    /// Ends every VM on its thread. Nothing is being linted any more.
-    pub(crate) fn end_all(&self) {
-        if !self.initialize.is_completed() {
-            return;
+/// What an engine and the thread that has borrowed it say to each other, in turns.
+#[derive(Default)]
+enum Turn {
+    /// It has been heard.
+    #[default]
+    Nothing,
+    /// To the engine: [`Vm::call`].
+    Call { kind: u32, content: Vec<u8> },
+    /// From the engine: what the program asks for. The answer is appended to `answer`.
+    Asked {
+        kind: u32,
+        details: Vec<u8>,
+        answer: Vec<u8>,
+    },
+    /// To the engine.
+    Answered(Vec<u8>),
+    /// From the engine: what the call returns.
+    Returned(Result<Vec<u8>, Vec<u8>>),
+    /// To the engine: nothing is going to be asked of it any more. It returns nothing.
+    End,
+}
+
+/// Where the two meet. Only one of them waits at a time.
+#[derive(Default)]
+struct Desk {
+    turn: Guarded<Turn>,
+    is_said: Condition,
+}
+
+impl Desk {
+    fn say(&self, turn: Turn) {
+        *self.turn.lock() = turn;
+        self.is_said.notify_one();
+    }
+
+    /// Waits for what `is_for_me`.
+    fn hear(&self, is_for_me: fn(&Turn) -> bool) -> Turn {
+        let mut turn = self.turn.lock();
+        while !is_for_me(&turn) {
+            self.is_said.wait_guarded(&mut turn);
         }
-        bun_sema_driver::on_each_thread_of_regions(&end_vm);
-        end_vm();
+        core::mem::take(&mut *turn)
     }
 }
 
-impl Engine for ThreadVms {
-    fn with_vm(&self, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
-        if !VirtualMachine::is_loaded() {
-            let mut first = None;
-            self.initialize.call_once(|| {
-                let expected = self.expected.load(core::sync::atomic::Ordering::Relaxed);
-                jsc::initialize(jsc::InitializeOptions {
-                    vm_per_thread: expected == 0 || expected > FEW_VMS,
-                    ..Default::default()
-                });
-                // What a process has one of, like `FileSystem::instance()`, is made when its first VM starts, and not for
-                // several threads at a time.
-                first = Some(start_vm().and_then(|()| {
-                    let vm = VirtualMachine::get();
-                    vm.run_with_api_lock(|| program_of(vm).map(|_| ()))
-                }));
+/// What all engines share.
+#[derive(Default)]
+struct Start {
+    initialize: std::sync::Once,
+    /// How many engines there are going to be at most. 0: nobody knows.
+    expected: core::sync::atomic::AtomicUsize,
+}
+
+impl Start {
+    /// Makes a VM for this thread.
+    fn start_vm(&self) -> Result<(), Vec<u8>> {
+        let mut first = None;
+        self.initialize.call_once(|| {
+            let expected = self.expected.load(core::sync::atomic::Ordering::Relaxed);
+            jsc::initialize(jsc::InitializeOptions {
+                vm_per_thread: expected == 0 || expected > FEW_VMS,
+                ..Default::default()
             });
-            first.unwrap_or_else(start_vm)?;
+            // What a process has one of, like `FileSystem::instance()`, is made when its first VM starts, and not for
+            // several threads at a time.
+            first = Some(start_vm().and_then(|()| {
+                let vm = VirtualMachine::get();
+                vm.run_with_api_lock(|| program_of(vm).map(|_| ()))
+            }));
+        });
+        first.unwrap_or_else(start_vm)
+    }
+}
+
+/// What the thread of an engine does.
+fn run_engine(number: usize, start: &Start, desk: &Desk) -> ! {
+    let name = format!("Bun Lint JS {number}\0");
+    bun_core::Output::Source::configure_named_thread(bun_core::ZStr::from_slice_with_nul(
+        name.as_bytes(),
+    ));
+    let started = start.start_vm();
+    loop {
+        let Turn::Call { kind, content } =
+            desk.hear(|turn| matches!(turn, Turn::Call { .. } | Turn::End))
+        else {
+            end_vm();
+            desk.say(Turn::Returned(Ok(Vec::new())));
+            continue;
+        };
+        let mut ask = |kind: u32, details: &[u8], answer: &mut Vec<u8>| {
+            desk.say(Turn::Asked {
+                kind,
+                details: details.to_vec(),
+                answer: core::mem::take(answer),
+            });
+            if let Turn::Answered(answered) = desk.hear(|turn| matches!(turn, Turn::Answered(_))) {
+                *answer = answered;
+            }
+        };
+        desk.say(Turn::Returned(
+            started
+                .clone()
+                .and_then(|()| ThreadVm.call(kind, &content, &mut ask)),
+        ));
+    }
+}
+
+/// An engine that is borrowed.
+struct Borrowed<'e> {
+    engines: &'e Engines,
+    at: usize,
+    desk: Arc<Desk>,
+    /// A caller further up has borrowed it, and gives it back.
+    is_borrowed_further_up: bool,
+}
+
+impl Vm for Borrowed<'_> {
+    fn call(&mut self, kind: u32, content: &[u8], serve: &mut Serve) -> Result<Vec<u8>, Vec<u8>> {
+        self.desk.say(Turn::Call {
+            kind,
+            content: content.to_vec(),
+        });
+        loop {
+            match self
+                .desk
+                .hear(|turn| matches!(turn, Turn::Asked { .. } | Turn::Returned(_)))
+            {
+                Turn::Asked {
+                    kind,
+                    details,
+                    mut answer,
+                } => {
+                    serve(kind, &details, &mut answer);
+                    self.desk.say(Turn::Answered(answer));
+                }
+                Turn::Returned(returned) => return returned,
+                _ => {}
+            }
         }
-        then(&mut ThreadVm);
+    }
+}
+
+impl Drop for Borrowed<'_> {
+    fn drop(&mut self) {
+        if self.is_borrowed_further_up {
+            return;
+        }
+        let mut state = self.engines.state.lock();
+        state.borrowed.retain(|it| it.1 != self.at);
+        state.idle.push(self.at);
+        drop(state);
+        // Each of those that wait may wait for another one.
+        self.engines.is_idle.notify_all();
+    }
+}
+
+#[derive(Default)]
+struct State {
+    all: Vec<Arc<Desk>>,
+    /// Which of them nobody has borrowed. The last one was given back last.
+    idle: Vec<usize>,
+    /// Who has borrowed which.
+    borrowed: Vec<(ThreadId, usize)>,
+}
+
+/// The engines. None is started before it is needed.
+#[derive(Default)]
+pub(crate) struct Engines {
+    start: Arc<Start>,
+    state: Guarded<State>,
+    is_idle: Condition,
+}
+
+impl Engines {
+    /// Ends every engine. Nothing is being linted any more.
+    pub(crate) fn end_all(&self) {
+        for desk in core::mem::take(&mut self.state.lock().all) {
+            desk.say(Turn::End);
+            desk.hear(|turn| matches!(turn, Turn::Returned(_)));
+        }
+    }
+
+    /// Waits for one of the first `among` engines.
+    fn borrow(&self, among: usize) -> Result<Borrowed<'_>, Vec<u8>> {
+        let me = std::thread::current().id();
+        let mut state = self.state.lock();
+        // Nothing is asked of it at the moment: this thread would be waiting for the answer.
+        if let Some(&(_, at)) = state.borrowed.iter().find(|it| it.0 == me) {
+            return Ok(Borrowed {
+                engines: self,
+                at,
+                desk: Arc::clone(&state.all[at]),
+                is_borrowed_further_up: true,
+            });
+        }
+        let at = loop {
+            if let Some(position) = state.idle.iter().rposition(|&at| at < among) {
+                break state.idle.remove(position);
+            }
+            let expected = (self.start.expected).load(core::sync::atomic::Ordering::Relaxed);
+            if state.all.len() < expected.clamp(1, among.max(1)) {
+                let (at, desk) = (state.all.len(), Arc::<Desk>::default());
+                let (start, for_thread) = (Arc::clone(&self.start), Arc::clone(&desk));
+                std::thread::Builder::new()
+                    .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
+                    .spawn(move || run_engine(at, &start, &for_thread))
+                    .map_err(|_| b"Could not start a thread for the plugins.".to_vec())?;
+                state.all.push(desk);
+                break at;
+            }
+            self.is_idle.wait_guarded(&mut state);
+        };
+        state.borrowed.push((me, at));
+        Ok(Borrowed {
+            engines: self,
+            at,
+            desk: Arc::clone(&state.all[at]),
+            is_borrowed_further_up: false,
+        })
+    }
+}
+
+impl Engine for Engines {
+    fn with_vm(&self, among: usize, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
+        then(&mut self.borrow(among)?);
         Ok(())
     }
 
     fn expect(&self, realms: usize) {
-        self.expected
-            .store(realms, core::sync::atomic::Ordering::Relaxed);
+        (self.start.expected).store(realms, core::sync::atomic::Ordering::Relaxed);
     }
 
     /// Half of the memory is for them.

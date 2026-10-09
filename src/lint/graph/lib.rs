@@ -21,7 +21,8 @@ use bun_core::strings;
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser};
 use bun_lint::modules::{
-    Declaration, Flavor, Import, ModuleId, Modules, Request, RequestKind, Resolved, requests_of,
+    Declaration, Flavor, Import, MakeRecord, ModuleId, Modules, Record, Request, RequestKind,
+    Resolved, requests_of,
 };
 use bun_sema::atom::Interner;
 use bun_sema::bind::{BindOptions, Recycled, bind_for_lint_in};
@@ -104,6 +105,11 @@ pub struct Graph<'h> {
     /// The closest `package.json`, by directory.
     packages: ShardedMap<Vec<u8>, Option<Json>>,
     recorded: Guarded<Vec<Recorded<'h>>>,
+    /// [`Modules::record_exports`]: by the path, with symbolic links followed. `None`: it cannot be parsed.
+    records: ShardedMap<Vec<u8>, Option<Record>>,
+    record_maker: OnceLock<MakeRecord>,
+    /// [`Modules::follow_packages`]
+    follows_packages: AtomicBool,
     /// [`Flavor::Oxlint`]
     follows_oxlint: AtomicBool,
     complete: OnceLock<Complete>,
@@ -160,9 +166,17 @@ fn directory_of(path: &[u8]) -> &[u8] {
     }
 }
 
-/// Whether the imports of the file at `path` are followed.
-fn is_read(path: &[u8]) -> bool {
-    ScriptKind::from_file_name(path).is_some() && !strings::contains(path, b"/node_modules/")
+fn is_in_package(path: &[u8]) -> bool {
+    strings::contains(path, b"/node_modules/")
+}
+
+/// Of any other file oxlint knows as little as of one that does not exist.
+fn is_read_by_oxlint(path: &[u8]) -> bool {
+    let others: [&[u8]; 3] = [b".vue", b".astro", b".svelte"];
+    EXTENSIONS
+        .iter()
+        .chain(&others)
+        .any(|it| path.ends_with(it))
 }
 
 impl<'h> Graph<'h> {
@@ -176,6 +190,9 @@ impl<'h> Graph<'h> {
             real_paths: ShardedMap::default(),
             packages: ShardedMap::default(),
             recorded: Guarded::new(Vec::new()),
+            records: ShardedMap::default(),
+            record_maker: OnceLock::new(),
+            follows_packages: AtomicBool::new(false),
             follows_oxlint: AtomicBool::new(false),
             complete: OnceLock::new(),
         }
@@ -255,6 +272,20 @@ impl<'h> Graph<'h> {
 
     /// The path, and whether it was found in a `node_modules`.
     fn resolve_path(
+        &self,
+        from: &[u8],
+        specifier: &[u8],
+        is_require: bool,
+    ) -> Option<(Cow<'h, [u8]>, bool)> {
+        // No system has a path that long, and what looks for one goes up directory by directory.
+        if specifier.len() > 4096 {
+            return None;
+        }
+        self.resolve_any_path(from, specifier, is_require)
+            .filter(|it| !self.flavor().resolves_as_node() || is_read_by_oxlint(&it.0))
+    }
+
+    fn resolve_any_path(
         &self,
         from: &[u8],
         specifier: &[u8],
@@ -437,13 +468,46 @@ impl<'h> Graph<'h> {
         };
         with_file(path, &text, &language, None, |file| {
             // As eslint-plugin-import: nothing is known of a file that cannot be parsed.
-            let requests = if file.has_parse_errors() {
+            let mut requests = if file.has_parse_errors() {
                 Vec::new()
             } else {
                 requests_of(file, self.flavor())
             };
+            let record = self.keep_record(path.to_vec(), file);
+            // Of a package only what it exports is of interest.
+            if is_in_package(path) && !self.follows_packages.load(Ordering::Relaxed) {
+                let is_exported = |specifier: &[u8]| {
+                    record.is_some_and(|it| {
+                        let mut indirect = it.indirect_export_entries.iter();
+                        it.star_export_entries.iter().any(|it| **it == *specifier)
+                            || indirect.any(|it| *it.module_request == *specifier)
+                    })
+                };
+                requests.retain(|it| is_exported(it.specifier));
+            }
             self.make_record(path.to_vec(), &requests, false, None)
         })
+    }
+
+    /// Makes the [`Record`] of `file`, which is at `path`, if a rule wants them and it is not known.
+    fn keep_record<'a>(&self, path: Vec<u8>, file: &'a File<'a>) -> Option<&Record> {
+        let make = self.record_maker.get()?;
+        let known = match self.records.get_ref(&path[..]) {
+            Some(known) => known,
+            None => {
+                let record = (!file.has_parse_errors()).then(|| make(file));
+                self.records.insert_ref(path, record)
+            }
+        };
+        known.as_ref()
+    }
+
+    /// Whether the file at `path`, which is not linted, is read.
+    fn is_read(&self, path: &[u8]) -> bool {
+        ScriptKind::from_file_name(path).is_some()
+            && (self.record_maker.get().is_some()
+                || self.follows_packages.load(Ordering::Relaxed)
+                || !is_in_package(path))
     }
 
     /// To be called once, when all files are linted. Returns the files to lint again, now that [`Modules::is_complete`], each by the
@@ -500,8 +564,8 @@ impl<'h> Graph<'h> {
                 }
                 linted_as.resize(all.paths.len(), None);
                 let at = module.0 as usize;
-                (is_known[at], is_always_checked[at], linted_as[at]) =
-                    (true, record.is_always_checked, record.linted_as);
+                (is_known[at], linted_as[at]) = (true, record.linted_as);
+                is_always_checked[at] |= record.is_always_checked;
                 all.imports.resize_with(all.paths.len(), Vec::new);
                 all.imports[at] = imports;
             }
@@ -509,7 +573,7 @@ impl<'h> Graph<'h> {
             unknown.dedup();
             unknown.retain(|it| {
                 !std::mem::replace(&mut is_known[it.0 as usize], true)
-                    && is_read(&all.paths[it.0 as usize])
+                    && self.is_read(&all.paths[it.0 as usize])
             });
             let mut read = Guarded::new(Vec::new());
             parallel(unknown.len(), &|at| {
@@ -627,6 +691,20 @@ impl Modules for Graph<'_> {
         let real = self.store.disk().realpath(&from_native(path));
         let record = self.make_record(real, requests, is_always_checked, Some(path.to_vec()));
         self.recorded.lock().push(record);
+    }
+
+    fn record_exports<'a>(&self, file: &'a File<'a>, make: MakeRecord) {
+        let _ = self.record_maker.set(make);
+        let real = self.store.disk().realpath(&from_native(file.path()));
+        self.keep_record(real, file);
+    }
+
+    fn follow_packages(&self) {
+        self.follows_packages.store(true, Ordering::Relaxed);
+    }
+
+    fn record_of(&self, module: ModuleId) -> Option<&Record> {
+        self.records.get_ref(self.path(module))?.as_ref()
     }
 
     fn find(&self, path: &[u8]) -> Option<ModuleId> {

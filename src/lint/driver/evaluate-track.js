@@ -6,6 +6,19 @@ const marker = process.argv.at(-2);
 const { fileURLToPath, pathToFileURL } = require("node:url");
 const { resolve } = require("node:path");
 
+// Who has removed the packages of oxlint and oxfmt still has `import { defineConfig } from "oxlint"` in the file.
+for (const name of ["oxlint", "oxfmt"]) {
+  try {
+    Bun.resolveSync(name, resolve(path, ".."));
+  } catch {
+    const exports = { defineConfig: config => config };
+    Bun.plugin({
+      name: `${name}, which is not installed`,
+      setup: build => void build.module(name, () => ({ exports, loader: "object" })),
+    });
+  }
+}
+
 // ───────────── what the file depends on ─────────────
 
 const touched = new Set();

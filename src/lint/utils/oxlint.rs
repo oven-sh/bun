@@ -1,4 +1,4 @@
-//! Helpers of the rules of oxlint 1.80, under the names that they have there: for what a rule does
+//! Helpers of the rules of oxlint 1.87, under the names that they have there: for what a rule does
 //! with a configuration of oxlint.
 
 use super::ancestor_memo::AncestorMemo;

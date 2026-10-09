@@ -1,7 +1,7 @@
 //! `bun lint`: ESLint's `cli.execute`.
 
 use crate::cli::Options;
-use crate::configs::{Flavor, Loader};
+use crate::configs::{self, Flavor, Loader};
 use crate::discover::{self, Status, Target};
 use crate::format::{self, Format};
 use crate::lint::{Context, elapsed};
@@ -73,6 +73,23 @@ pub struct Outcome {
     pub exit_code: u8,
 }
 
+/// What `oxlint --init` writes.
+const INITIAL_OXLINTRC: &[u8] = br#"{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": [
+    "typescript",
+    "unicorn",
+    "oxc"
+  ],
+  "categories": {
+    "correctness": "error"
+  },
+  "rules": {},
+  "env": {
+    "builtin": true
+  }
+}"#;
+
 const NO_FILES_FOR_OXLINT: &[u8] =
     b"No files found to lint. Please check your paths and ignore patterns.";
 
@@ -83,12 +100,12 @@ pub(crate) struct Fatal(pub(crate) Vec<u8>);
 /// The threads.
 pub(crate) struct Pool {
     caches: bun_sema_driver::ThreadCaches,
-    threads: AtomicUsize,
+    threads: usize,
 }
 
-/// With rules in JavaScript, more threads than this take more time and memory, and are no faster:
-/// the engines of a process share what hands out memory for compiled code.
-const MOST_THREADS_WITH_JS_PLUGINS: usize = 16;
+/// More engines for JavaScript than this take more time and memory, and are no faster: the engines of a process share what
+/// hands out memory for compiled code.
+const MOST_ENGINES: usize = 16;
 
 /// There is one more engine for JavaScript for so many files that need one: to start it and to load the plugins takes as long as
 /// to lint them.
@@ -131,31 +148,19 @@ fn needs(target: &Target) -> Needs {
     }
 }
 
-/// How many threads lint. 0: one for each core.
-pub(crate) fn threads_to_lint_on(options: &Options, js_plugins: &Host) -> usize {
-    match options.threads {
-        0 if js_plugins.has_plugins() => usize::from(bun_core::get_thread_count())
-            .min(MOST_THREADS_WITH_JS_PLUGINS)
-            .min(js_plugins.most_realms()),
-        // A file with types is linted by the thread that has checked it, so each thread can have a realm.
-        threads if js_plugins.has_plugins() => threads.min(js_plugins.most_realms()),
-        threads => threads,
-    }
-}
-
 impl Pool {
     pub(crate) fn new(threads: usize) -> Pool {
         Pool {
             caches: Default::default(),
-            threads: AtomicUsize::new(match threads {
+            threads: match threads {
                 0 => usize::from(bun_core::get_thread_count()),
                 threads => threads,
-            }),
+            },
         }
     }
 
     pub(crate) fn threads(&self) -> usize {
-        self.threads.load(Ordering::Relaxed)
+        self.threads
     }
 
     /// Calls `work` with every index below `count`, `run` consecutive ones at a time.
@@ -247,10 +252,28 @@ impl Run<'_> {
         );
     }
 
-    /// Fails with ESLint's exit code for that.
+    /// Fails with the exit code that ESLint has for that, or oxlint.
     fn fail(mut self, text: &[u8]) -> Outcome {
         self.error(text);
-        self.out.exit_code = 2;
+        self.out.exit_code =
+            match configs::is_for_oxlint(self.options.flavor, &self.environment.cwd) {
+                true => 1,
+                false => 2,
+            };
+        self.out
+    }
+
+    /// oxlint's `--init`, which however writes over a file that is there.
+    fn write_initial_configuration(mut self) -> Outcome {
+        let path = paths::join(&self.environment.cwd, b".oxlintrc.json");
+        if fs::kind(&path).is_some() {
+            return self.fail(&[&path[..], b" exists already."].concat());
+        }
+        if let Err(error) = fs::write_new(&path, INITIAL_OXLINTRC) {
+            return self
+                .fail(&[b"Cannot write ", &path[..], b": ", &fs::describe(&error)].concat());
+        }
+        self.out.stdout = b"Configuration file created\n".to_vec();
         self.out
     }
 
@@ -317,6 +340,18 @@ impl Run<'_> {
                 || options.prune_suppressions)
         {
             b"The --suppress-all, --suppress-rule, and --prune-suppressions options cannot be used with piped-in code."
+        } else if let Some(project) = (options.project.as_ref())
+            .map(|it| paths::resolve(&self.environment.cwd, &paths::from_native(it)))
+            .filter(|it| fs::kind(it).is_none())
+        {
+            return Some(
+                [
+                    b"The tsconfig file \"",
+                    &paths::to_native(project)[..],
+                    b"\" does not exist, Please provide a valid tsconfig file.",
+                ]
+                .concat(),
+            );
         } else {
             let flag = options
                 .without_effect
@@ -396,12 +431,11 @@ impl Run<'_> {
                 listed: None,
             });
         }
+        let has_rules_with_types = (config.rules.iter())
+            .any(|it| it.severity != Severity::Off && it.entry.meta.requires_types);
         let needs_types = name.is_some()
             && loader.wants_types(&loaded, config)
-            && config
-                .rules
-                .iter()
-                .any(|it| it.severity != Severity::Off && it.entry.meta.requires_types);
+            && (has_rules_with_types || context.checks_types);
         if needs_types {
             let file = Typed {
                 path: &path,
@@ -465,21 +499,6 @@ impl Run<'_> {
             self.options.error_on_unmatched_pattern && !is_oxlint,
         )?;
         phases.discovery = started.elapsed().as_secs_f64();
-        // Every configuration is loaded by now.
-        let has_processors = targets.iter().any(Target::has_processor);
-        let threads = match threads_to_lint_on(self.options, context.js_plugins) {
-            0 if has_processors => pool
-                .threads()
-                .min(MOST_THREADS_WITH_JS_PLUGINS)
-                .min(context.js_plugins.most_realms()),
-            threads => threads,
-        };
-        if threads > 0 {
-            pool.threads.store(threads, Ordering::Relaxed);
-        }
-        if has_processors || context.js_plugins.has_plugins() {
-            bun_sema_driver::use_threads_of_their_own("Bun Lint");
-        }
         if is_oxlint
             && self.options.error_on_unmatched_pattern
             && !targets
@@ -573,8 +592,8 @@ impl Run<'_> {
                 .iter()
                 .filter(|it| it.severity != Severity::Off && it.entry.meta.requires_types);
             if loader.wants_types(&target.loaded, config) {
-                match needing.next() {
-                    Some(_) => with_types.push((
+                match needing.next().is_some() || context.checks_types {
+                    true => with_types.push((
                         target,
                         Typed {
                             path: &target.path,
@@ -582,7 +601,7 @@ impl Run<'_> {
                             text: None,
                         },
                     )),
-                    None => without_types.push(target),
+                    false => without_types.push(target),
                 }
                 continue;
             }
@@ -602,16 +621,13 @@ impl Run<'_> {
             };
             loader.warn(&[&count, noun, b" types, which the configuration does not ask for, and did not run. Use --type-aware to run them."]);
         }
-        // A file with types is linted by the thread that has checked it, whichever that is.
-        let with_engine = (without_types.iter()).filter(|it| needs(it) != Needs::Nothing);
-        context.js_plugins.expect(
-            match with_types.iter().any(|it| needs(it.0) != Needs::Nothing) {
-                true => pool.threads(),
-                false => engines_for(with_engine.count())
-                    .min(pool.threads())
-                    .min(context.js_plugins.most_realms()),
-            },
-        );
+        // One engine is enough to run the configuration file.
+        let with_engine = (supported.iter()).filter(|it| needs(it) == Needs::Engine);
+        let engines = engines_for(1 + with_engine.count())
+            .min(pool.threads())
+            .min(MOST_ENGINES)
+            .min(context.js_plugins.most_realms());
+        context.js_plugins.expect(engines);
         if !with_types.is_empty() {
             let (targets, files): (Vec<&Target>, Vec<Typed>) = with_types.into_iter().unzip();
             let linted = typed::lint(context, self.environment, &files, &on_circular_fixes);
@@ -630,12 +646,10 @@ impl Run<'_> {
         without_types.sort_by_cached_key(|target| std::cmp::Reverse((needs(target), target.size)));
         let count = |least: Needs| without_types.partition_point(|target| needs(target) >= least);
         let (with_engine, plain) = without_types.split_at(count(Needs::Engine));
-        // One engine is enough to run the configuration file.
         let (with_configuration, with_engine) = with_engine.split_at(count(Needs::Configuration));
         let units: Vec<&[&Target]> = std::iter::once(with_configuration)
             .chain(with_engine.chunks(1))
             .collect();
-        let engines = engines_for(units.len()).min(context.js_plugins.most_realms());
         let (next_unit, next_plain) = (AtomicUsize::new(0), AtomicUsize::new(0));
         let (mut results, mut failure) = (Guarded::new(results), Guarded::new(None));
         let lint = |target: &Target| match context.lint_file(target, &on_circular_fixes) {
@@ -688,11 +702,18 @@ impl Run<'_> {
         if let Some(refusal) = self.refusal() {
             return self.fail(&refusal);
         }
+        if options.init {
+            return self.write_initial_configuration();
+        }
         let linter = Linter::new(Registry::new(&[
             bun_lint_eslint::RULES,
             bun_lint_typescript::RULES,
             bun_lint_plugins::RULES,
+            bun_lint_unicorn::RULES,
+            bun_lint_react::RULES,
+            bun_lint_jest::RULES,
         ]));
+        bun_sema_driver::use_a_pool_of_their_own("Bun Lint");
         let pool = Pool::new(options.threads);
         // Nothing is started unless a configuration has a plugin in JavaScript.
         let js_plugins = Host::with_engine(
@@ -713,6 +734,13 @@ impl Run<'_> {
             Ok(format) => format,
             Err(error) => return self.fail(&error),
         };
+        let checks_types = options.type_check || of_cwd.as_ref().is_some_and(|it| it.checks_types);
+        let of_file = of_cwd.as_ref().and_then(|it| it.wants_types);
+        if checks_types && options.type_aware.or(of_file) != Some(true) {
+            return self.fail(
+                b"The `--type-check` option requires type-aware linting.\nUse `--type-aware --type-check` or enable `options.typeAware` in your config.",
+            );
+        }
         if options.rules {
             let as_json = matches!(format, Format::Json | Format::OxlintJson);
             format::oxlint::write_rules(&mut self.out.stdout, linter.registry(), as_json);
@@ -733,6 +761,8 @@ impl Run<'_> {
             linter: &linter,
             options,
             cwd: &environment.cwd,
+            of_oxlint: (of_cwd.as_deref()).filter(|it| it.flavor == Flavor::Oxlint),
+            checks_types,
             keeps_text: format.reads_text() && !options.silent,
             reads_fixes: format.reads_fixes() && !options.silent,
             reads_suppressions: format.reads_suppressions() && !options.silent,
@@ -1155,6 +1185,23 @@ fn warn_about_circular_fixes(loader: &Loader, path: &[u8]) {
 }
 
 /// Does what `bun lint` does. `options.help` and `options.cwd` are for the caller to see to.
+/// What there is to say about a command line that cannot be read, which is `message`.
+pub fn refuse_command_line(message: &[u8], environment: &Environment) -> Outcome {
+    let run = Run {
+        options: &Options::default(),
+        environment,
+        out: Outcome::default(),
+        began: Instant::now(),
+    };
+    let mut out = run.fail(message);
+    pretty!(
+        &mut out.stderr,
+        environment.stderr.colors,
+        "<blue>note<r><d>:<r> run 'bun lint --help' for more information\n",
+    );
+    out
+}
+
 pub fn run(options: &Options, environment: &Environment) -> Outcome {
     let run = Run {
         options,

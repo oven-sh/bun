@@ -383,6 +383,24 @@ pub(super) fn first_error<'a>(
     checks.first.map(|it| it.1)
 }
 
+/// Those of the checks of [`first_error`] that OXC makes too, for a file that TypeScript's parser has nothing to say about: see
+/// [`super::oxc`]. OXC takes a file for a module if it has `import` or `export`.
+pub(super) fn first_error_of_oxc<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+    let mut checks = Checks {
+        file,
+        candidates: None,
+        tops: Tops::default(),
+        first: None,
+        noticed: 0,
+        is_all_strict: file.body().iter().any(|it| is_module_syntax(&it)),
+        // Nothing is asked of the scopes, to which a file is a module whatever is in it.
+        is_whole: false,
+        is_babel: false,
+    };
+    checks.early_errors_of_oxc();
+    checks.first.map(|it| it.1)
+}
+
 fn is_identifier_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | 0x80..)
 }

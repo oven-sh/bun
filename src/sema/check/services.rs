@@ -93,9 +93,13 @@ pub struct Services<'c, 'p, 's> {
     types_at: FxHashMap<NodeRef, TypeId>,
     /// What `type_op` has answered for a union or an intersection of many, which it goes through.
     ops_on_many: FxHashMap<(TypeOp, TypeId), Option<TypeId>>,
+    /// What `flags_of_constituents` has answered for a union of many.
+    flags_of_many: FxHashMap<TypeId, TypeFlags>,
     /// What `signatures_of_type` has answered for a type that has many: a list of them for each call of a function with
     /// many overloads takes memory in proportion to the product.
     many_signatures: FxHashMap<(TypeId, SignatureKind), &'c [SigId]>,
+    /// The contextual types of the object and array literals with many properties or elements.
+    expected_of_many: FxHashMap<(FileId, ExprId), TypeId>,
     /// What `node_children` has answered for the nodes that have many: a list of them for each member of a class that asks for
     /// the heritage clauses takes memory in proportion to the square of their number.
     children: FxHashMap<NodeRef, &'c [Node]>,
@@ -140,7 +144,9 @@ impl<'p, 's> Checker<'p, 's> {
             signatures: FxHashMap::default(),
             types_at: FxHashMap::default(),
             ops_on_many: FxHashMap::default(),
+            flags_of_many: FxHashMap::default(),
             many_signatures: FxHashMap::default(),
+            expected_of_many: FxHashMap::default(),
             children: FxHashMap::default(),
             super_type_nodes: FxHashMap::default(),
             many_children: FxHashMap::default(),
@@ -787,9 +793,51 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         };
         let e = self.expr_of(node)?;
         let outer = self.c.begin_recheck();
+        let is_pushed = self.push_contextual_type_of_literal_around(node.file, e);
         let ty = self.c.contextual_type(node.file, e, ContextFlags::empty());
+        if is_pushed {
+            self.c.pop_contextual_type();
+        }
         self.c.end_recheck(outer);
         ty
+    }
+
+    /// `pushCachedContextualType` of the literal that `e` is in, if that has many properties or elements: as while the
+    /// literal is checked, what it is expected to be is found once for all of them. It can take as long as there are many:
+    /// the type that a pattern implies is made of all its properties. Whether something has been pushed.
+    fn push_contextual_type_of_literal_around(&mut self, file: FileId, e: ExprId) -> bool {
+        let (hir, bound) = (self.c.hir(file), self.c.bound(file));
+        let literal = match bound.expr_parent[e.idx()] {
+            crate::bind::Parent::Prop(p) => bound.prop_owner[p.idx()],
+            crate::bind::Parent::Expr(outer) => outer,
+            _ => return false,
+        };
+        let has_many = literal.is_some()
+            && match hir[literal].kind {
+                ExprKind::Object(properties) => properties.len() > MANY,
+                ExprKind::Array(elements) => elements.len() > MANY,
+                _ => false,
+            };
+        // While the control flow analysis is disabled a reference has the error type that had another before.
+        if !has_many || self.c.flow_analysis_disabled {
+            return false;
+        }
+        let known = self.expected_of_many.get(&(file, literal)).copied();
+        let Some(expected) =
+            known.or_else(|| self.c.contextual_type(file, literal, ContextFlags::empty()))
+        else {
+            return false;
+        };
+        // What the checker gave up on it can find when it knows more.
+        if known.is_none() {
+            if self.c.flow_analysis_disabled || self.type_test(TypeTest::Unresolved, expected) {
+                return false;
+            }
+            self.expected_of_many.insert((file, literal), expected);
+        }
+        self.c
+            .push_contextual_type(file, literal, Some(expected), true);
+        true
     }
 
     pub fn apparent_type_of_contextual_type(&mut self, node: NodeRef) -> Option<TypeId> {

@@ -43,7 +43,8 @@ mod space;
 mod syntax;
 
 pub use config::{
-    Config, ConfigError, FileConfig, Glob, LoadLocatedPlugin, LoadPlugin, RcFlavor, oxlint_category,
+    Config, ConfigError, FileConfig, Glob, LegacyFile, LegacyKind, LegacyOptions, LoadLegacy,
+    LoadLocatedPlugin, LoadPlugin, RcFlavor, oxlint_category,
 };
 pub use fixer::{
     FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, grows_too_much, max_fixed_len,
@@ -113,6 +114,8 @@ pub struct LintOptions<'o> {
     /// How much of the path of the file is ESLint's `physicalFilename`, if not all of it: it is a block that a processor has
     /// found in the file there.
     pub physical_path_len: Option<usize>,
+    /// `false`: `options.respectEslintDisableDirectives` of an `.oxlintrc.json` is. Only comments that start with `oxlint` count.
+    pub respects_eslint_comments: bool,
 }
 
 /// See [`LintOptions::again`]. Only the rules with [`Meta::needs_modules`](crate::rule::Meta::needs_modules) run. What the
@@ -136,6 +139,7 @@ impl Default for LintOptions<'_> {
             js_plugins: None,
             again: None,
             physical_path_len: None,
+            respects_eslint_comments: true,
         }
     }
 }
@@ -330,8 +334,12 @@ impl Linter {
         };
         // ESLint takes `oxlint-disable` and the like for ordinary comments.
         let is_understood = |it: &&ConfigComment| {
-            config.understands_oxlint_comments
-                || !it.is_only_of_oxlint && !file.slice(it.label_span).starts_with(b"oxlint")
+            let is_of_oxlint =
+                it.is_only_of_oxlint || file.slice(it.label_span).starts_with(b"oxlint");
+            match config.understands_oxlint_comments {
+                true => is_of_oxlint || options.respects_eslint_comments,
+                false => !is_of_oxlint,
+            }
         };
         let (mut parents, mut disable_directives) = (Vec::new(), Vec::new());
         if config.linter.no_inline_config {
@@ -554,7 +562,7 @@ impl Linter {
                             has_skipped_rules: config.has_skipped_rules,
                             can_tell: &can_tell,
                         },
-                        comments.iter().filter(is_directive),
+                        comments.iter().filter(is_directive).filter(is_understood),
                         messages,
                     );
                     messages.sort_by_key(|it| (it.line, it.column));
@@ -857,6 +865,7 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
     ) {
         match comment.label {
             Label::Rules => {}
+            Label::Env if self.file.language().reads_env_comments => return,
             Label::Env => {
                 return self.fatal(
                     comment,

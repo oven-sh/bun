@@ -123,6 +123,10 @@ impl Parser<'_> {
         let (body, open) = match self.token() {
             T::OpenBrace => self.function_block(signature_context(flags)),
             _ => {
+                // Flow has a function without a body only where it is declared.
+                if self.is_flow && !self.has_context(ctx::AMBIENT) {
+                    self.fail();
+                }
                 self.semicolon();
                 (FnBody::None, 0)
             }

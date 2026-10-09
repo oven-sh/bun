@@ -15,6 +15,9 @@ pub const PARAMS: &[Param] = &[
     ),
     clap::param!("--no-config-lookup              Do not look for a configuration file"),
     clap::param!(
+        "--flavor <tool>                 Whose configuration files count where there are both: <b>eslint<r> or <b>oxlint<r>"
+    ),
+    clap::param!(
         "--no-config-cache               Run <b>eslint.config.js<r> again even if nothing that it depends on has changed"
     ),
     clap::param!(
@@ -125,6 +128,11 @@ pub const PARAMS: &[Param] = &[
     clap::param!("--parser <name>"),
     clap::param!("--plugin <name>..."),
     clap::param!("--inspect-config"),
+    // ESLint 8's.
+    clap::param!("--eslintrc"),
+    clap::param!("--env <name>..."),
+    clap::param!("--rulesdir <path>..."),
+    clap::param!("--resolve-plugins-relative-to <path>"),
     clap::param!("--init"),
     clap::param!("--mcp"),
     // oxlint's.
@@ -156,6 +164,13 @@ pub const PARAMS: &[Param] = &[
     clap::param!("--vue-plugin"),
 ];
 
+/// `--flavor`
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Tool {
+    Eslint,
+    Oxlint,
+}
+
 /// ESLint's `fixTypes`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum FixType {
@@ -172,6 +187,7 @@ pub struct Options {
     pub patterns: Vec<Vec<u8>>,
     pub config: Option<Vec<u8>>,
     pub config_lookup: bool,
+    pub flavor: Option<Tool>,
     /// What a configuration file that is a program evaluates to is kept for the next run.
     pub config_cache: bool,
     pub ext: Option<Vec<Vec<u8>>>,
@@ -215,6 +231,10 @@ pub struct Options {
     pub without_effect: Vec<&'static [u8]>,
     /// oxlint's `--fix-suggestions`: the first suggestion of a problem is applied like a fix.
     pub fix_suggestions: bool,
+    /// oxlint's `--fix-dangerously`.
+    pub fix_dangerously: bool,
+    /// `--fix` itself, and not another flag that sets [`Options::fix`].
+    pub fix_safely: bool,
     /// oxlint's `--rules`: lists the rules, and lints nothing.
     pub rules: bool,
     /// oxlint's `--import-plugin` and `--disable-oxc-plugin`, ..: a plugin by the name that it has
@@ -230,6 +250,10 @@ pub struct Options {
     pub all: bool,
     /// Print the files that would be linted, and lint nothing.
     pub list_files: bool,
+    /// oxlint's `--init`: write an `.oxlintrc.json` with its defaults.
+    pub init: bool,
+    /// oxlint's `--type-check`: report what the type checker reports too.
+    pub type_check: bool,
     pub cwd: Option<Vec<u8>>,
     /// oxlint's `-A`, `-W`, `-D`, in order: a rule or a category.
     pub filters: Vec<(Severity, Vec<u8>)>,
@@ -239,6 +263,14 @@ pub struct Options {
     pub disable_nested_config: bool,
     /// What the configuration asks for and cannot be done is a warning, and not an error at the end.
     pub allow_unsupported: bool,
+    /// Not ESLint 8's `--no-eslintrc`: its configuration files are looked for.
+    pub eslintrc: bool,
+    /// ESLint 8's `--env`.
+    pub env: Vec<Vec<u8>>,
+    /// ESLint 8's `--rulesdir`.
+    pub rulesdir: Vec<Vec<u8>>,
+    /// ESLint 8's `--resolve-plugins-relative-to`.
+    pub resolve_plugins_relative_to: Option<Vec<u8>>,
 }
 
 impl Default for Options {
@@ -247,6 +279,7 @@ impl Default for Options {
             patterns: Vec::new(),
             config: None,
             config_lookup: true,
+            flavor: None,
             config_cache: true,
             ext: None,
             global: Vec::new(),
@@ -286,6 +319,8 @@ impl Default for Options {
             help: false,
             without_effect: Vec::new(),
             fix_suggestions: false,
+            fix_dangerously: false,
+            fix_safely: false,
             rules: false,
             plugins: Vec::new(),
             type_aware: None,
@@ -294,6 +329,8 @@ impl Default for Options {
             timing: false,
             all: false,
             list_files: false,
+            init: false,
+            type_check: false,
             cwd: None,
             filters: Vec::new(),
             deny_warnings: false,
@@ -301,6 +338,10 @@ impl Default for Options {
             ignore_path: None,
             disable_nested_config: false,
             allow_unsupported: false,
+            eslintrc: true,
+            env: Vec::new(),
+            rulesdir: Vec::new(),
+            resolve_plugins_relative_to: None,
         }
     }
 }
@@ -364,12 +405,25 @@ impl Options {
         match name {
             b"config" => self.config = owned(),
             b"config-lookup" => self.config_lookup = is_on,
+            b"flavor" => {
+                self.flavor = Some(match text {
+                    b"eslint" => Tool::Eslint,
+                    b"oxlint" => Tool::Oxlint,
+                    _ => {
+                        return error(&[
+                            b"Option flavor: '",
+                            text,
+                            b"' not one of eslint or oxlint.",
+                        ]);
+                    }
+                })
+            }
             b"config-cache" => self.config_cache = is_on,
             b"rule" => object(name, text, &mut self.rule)?,
             b"global" => self.global.extend(list(text)),
             b"parser-options" => object(name, text, &mut self.parser_options)?,
             b"ext" => self.ext.get_or_insert_default().extend(list(text)),
-            b"fix" => self.fix = is_on,
+            b"fix" => (self.fix, self.fix_safely) = (is_on, is_on),
             b"fix-dry-run" => self.fix_dry_run = is_on,
             b"fix-type" => {
                 for item in list(text) {
@@ -425,7 +479,8 @@ impl Options {
             b"threads" | b"concurrency" => match (name, text) {
                 (b"concurrency", b"auto" | b"off") => {}
                 _ => match bun_core::fmt::parse_decimal::<usize>(text) {
-                    Some(count) if count > 0 => self.threads = count,
+                    // For oxlint 0 is as many as there are cores.
+                    Some(count) if count > 0 || name == b"threads" => self.threads = count,
                     _ if name == b"concurrency" => {
                         return error(&[
                             b"Option concurrency: '",
@@ -434,17 +489,14 @@ impl Options {
                         ]);
                     }
                     _ => {
-                        return error(&[
-                            b"--threads takes a number above zero, not \"",
-                            text,
-                            b"\".",
-                        ]);
+                        return error(&[b"--threads takes a number, not \"", text, b"\"."]);
                     }
                 },
             },
             b"timing" => self.timing = is_on,
             b"all" => self.all = is_on,
             b"list-files" => self.list_files = is_on,
+            b"init" => self.init = is_on,
             b"cwd" => self.cwd = owned(),
             b"help" => self.help = is_on,
             b"version" => self.version = is_on,
@@ -468,11 +520,14 @@ impl Options {
             b"ignore-path" => self.ignore_path = owned(),
             b"disable-nested-config" => self.disable_nested_config = is_on,
             b"allow-unsupported" => self.allow_unsupported = is_on,
-            b"fix-suggestions" => (self.fix, self.fix_suggestions) = (is_on, is_on),
-            // No fix here is marked as dangerous.
-            b"fix-dangerously" => self.fix = is_on,
+            b"eslintrc" => self.eslintrc = is_on,
+            b"env" => self.env.extend(list(text)),
+            b"rulesdir" => self.rulesdir.push(text.to_vec()),
+            b"resolve-plugins-relative-to" => self.resolve_plugins_relative_to = owned(),
+            b"fix-suggestions" => (self.fix, self.fix_suggestions) = (self.fix || is_on, is_on),
+            b"fix-dangerously" => (self.fix, self.fix_dangerously) = (self.fix || is_on, is_on),
             // Type errors are what `bun check` reports.
-            b"type-check" => self.type_aware = Some(is_on),
+            b"type-check" => self.type_check = is_on,
             b"rules" => self.rules = is_on,
             _ if is_on && name.ends_with(b"-plugin") => {
                 let plugin = &name[..name.len() - b"-plugin".len()];
@@ -507,11 +562,26 @@ impl Options {
             match arg {
                 b"-V" => rewritten.push(b"--version"),
                 _ if arg.starts_with(b"--debug=") => {
-                    for option in strings::split(&arg[b"--debug=".len()..], b",") {
-                        rewritten.push(if option == b"files" {
-                            b"--list-files"
-                        } else {
-                            b"--timing"
+                    let written = &arg[b"--debug=".len()..];
+                    let cannot_parse = [b"couldn't parse `", written, b"`: "].concat();
+                    for option in strings::split(written, b",") {
+                        rewritten.push(match option {
+                            b"files" if written == b"files" => b"--list-files",
+                            b"files" => {
+                                return error(&[
+                                    &cannot_parse[..],
+                                    b"debug option 'files' cannot be combined with other debug options",
+                                ]);
+                            }
+                            b"timings" => b"--timing",
+                            _ => {
+                                return error(&[
+                                    &cannot_parse[..],
+                                    b"'",
+                                    option,
+                                    b"' is not a known debug option",
+                                ]);
+                            }
                         });
                     }
                 }

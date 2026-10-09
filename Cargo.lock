@@ -577,6 +577,7 @@ dependencies = [
  "bun_highway",
  "bun_lint",
  "bun_md",
+ "bun_parsers",
  "bun_sema",
  "rustc-hash",
  "smallvec",
@@ -1041,8 +1042,11 @@ dependencies = [
  "bun_lint_conformance",
  "bun_lint_eslint",
  "bun_lint_graph",
+ "bun_lint_jest",
  "bun_lint_plugins",
+ "bun_lint_react",
  "bun_lint_typescript",
+ "bun_lint_unicorn",
  "bun_paths",
  "bun_sema",
  "bun_sema_driver",
@@ -1076,14 +1080,61 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_lint_jest"
+version = "0.0.0"
+dependencies = [
+ "bun_core",
+ "bun_lint",
+ "bun_lint_oxlint",
+ "rustc-hash",
+ "smallvec",
+]
+
+[[package]]
+name = "bun_lint_oxlint"
+version = "0.0.0"
+dependencies = [
+ "bun_core",
+ "bun_glob",
+ "bun_lint",
+ "rustc-hash",
+ "smallvec",
+]
+
+[[package]]
 name = "bun_lint_plugins"
 version = "0.0.0"
 dependencies = [
  "bstr",
  "bun_core",
  "bun_lint",
+ "bun_lint_oxlint",
  "rustc-hash",
  "smallvec",
+]
+
+[[package]]
+name = "bun_lint_react"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_core",
+ "bun_lint",
+ "bun_lint_oxlint",
+ "rustc-hash",
+ "smallvec",
+]
+
+[[package]]
+name = "bun_lint_react_compiler"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_ast",
+ "bun_core",
+ "bun_lint",
+ "bun_react_compiler",
+ "rustc-hash",
 ]
 
 [[package]]
@@ -1101,8 +1152,13 @@ dependencies = [
  "bun_lint_driver",
  "bun_lint_eslint",
  "bun_lint_graph",
+ "bun_lint_jest",
  "bun_lint_plugins",
+ "bun_lint_react",
+ "bun_lint_react_compiler",
  "bun_lint_typescript",
+ "bun_lint_unicorn",
+ "bun_react_compiler",
  "bun_sema",
  "bun_sema_driver",
  "bun_sema_standalone",
@@ -1118,6 +1174,18 @@ dependencies = [
  "bun_core",
  "bun_lint",
  "bun_lint_eslint",
+ "rustc-hash",
+ "smallvec",
+]
+
+[[package]]
+name = "bun_lint_unicorn"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_core",
+ "bun_lint",
+ "bun_lint_oxlint",
  "rustc-hash",
  "smallvec",
 ]

@@ -10,6 +10,26 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         TypeFlags::from_bits_truncate(self.c.flags(ty))
     }
 
+    /// typescript-eslint's `getTypeFlags`: of a union, the flags of all its constituents.
+    pub fn flags_of_constituents(&mut self, ty: TypeId) -> TypeFlags {
+        let flags = self.c.flags(ty);
+        if flags & tf::UNION == 0 {
+            return TypeFlags::from_bits_truncate(flags);
+        }
+        let types = self.constituents(ty);
+        if types.len() > MANY
+            && let Some(&known) = self.flags_of_many.get(&ty)
+        {
+            return known;
+        }
+        let flags = types.iter().fold(0, |flags, &it| flags | self.c.flags(it));
+        let flags = TypeFlags::from_bits_truncate(flags);
+        if types.len() > MANY {
+            self.flags_of_many.insert(ty, flags);
+        }
+        flags
+    }
+
     /// `type.objectFlags`, derived from what the type is made of.
     pub fn object_flags(&mut self, ty: TypeId) -> ObjectFlags {
         let mut flags = ObjectFlags::empty();

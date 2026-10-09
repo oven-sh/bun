@@ -130,7 +130,7 @@ fn convert_binding_kind(kind: symbol::Kind) -> BindingKind {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy)]
-pub(crate) enum FunctionNode<'a> {
+pub enum FunctionNode<'a> {
     Function(&'a G::Fn),
     Arrow(&'a E::Arrow),
 }
@@ -1015,11 +1015,8 @@ impl<'h> HirBuilder<'h> {
             _ => {}
         }
 
-        let module_scope = self.host.module_scope();
-        if let Some(member) = module_scope.members.get(sym.original_name.slice()) {
-            if member.ref_ == ref_ {
-                return Ok(VariableBinding::ModuleLocal { name });
-            }
+        if self.host.is_module_level(ref_) {
+            return Ok(VariableBinding::ModuleLocal { name });
         }
         // Module-scope generated symbols (jsx-runtime `jsx`/`jsxDEV`/`Fragment`,
         // compiler-runtime `c`, etc.) are minted by the parser's visit pass after
@@ -1027,7 +1024,7 @@ impl<'h> HirBuilder<'h> {
         // and `import_bindings`. They are module-level imports, not locals —
         // classify them as Global so inference initializes them as Frozen instead
         // of tripping the "Expected value kind to be initialized" invariant.
-        if module_scope.generated.contains(&ref_) {
+        if self.host.module_scope().generated.contains(&ref_) {
             return Ok(VariableBinding::Global { name });
         }
 
@@ -1043,15 +1040,8 @@ impl<'h> HirBuilder<'h> {
     /// enclosing function scope).
     pub(crate) fn is_context_identifier(&self, ref_: Ref) -> bool {
         let ref_ = self.resolve_ref(ref_);
-        if let Some(member) = self.symbol(ref_).and_then(|sym| {
-            self.host
-                .module_scope()
-                .members
-                .get(sym.original_name.slice())
-        }) {
-            if member.ref_ == ref_ {
-                return false;
-            }
+        if ref_.is_symbol() && self.host.is_module_level(ref_) {
+            return false;
         }
         self.context_identifiers.contains(&ref_)
     }

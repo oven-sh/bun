@@ -163,7 +163,7 @@ impl NamePattern {
     }
 }
 
-/// `group` as oxlint 1.80 reads it: globs that are matched with the whole specifier, where ESLint has the patterns of a
+/// `group` as oxlint 1.87 reads it: globs that are matched with the whole specifier, where ESLint has the patterns of a
 /// `.gitignore`. So `a/*` is not about `a/b/c`, `a` is not about `b/a/c`, and `!a/b/c` takes something out of `a/**`.
 struct Globs {
     /// Whether it starts with `!`, and the rest. One without a slash matches below every directory.

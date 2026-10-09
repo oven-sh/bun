@@ -3,6 +3,7 @@ use bun_lint::types::tsutils::{intersection_constituents, union_constituents};
 use bun_lint::types::utils::{is_builtin_symbol_like, is_symbol_from_default_library};
 use bun_lint::types::{ModifierFlags, NameOf, SyntaxKind, TsNode, TsSymbol, Type};
 use bun_lint::utils::ancestor_memo::AncestorMemo;
+use rustc_hash::FxHashMap;
 
 /// Enforce unbound methods are called with their expected scope.
 pub struct UnboundMethod {
@@ -325,6 +326,15 @@ fn identifier_key<'a>(key: Key<'a>, name_node: impl FnOnce() -> Option<TsNode<'a
     }
 }
 
+#[derive(Default)]
+pub struct State<'a> {
+    /// [`is_safe_use`]
+    safe_uses: AncestorMemo<'a, bool>,
+    /// By a type that has many constituents and the name of a property: what is to be said of an access to it. To look
+    /// the property up in each of them for each access takes long.
+    methods_of_many: FxHashMap<(Type<'a>, Box<[u8]>), Option<Message>>,
+}
+
 /// An `ObjectPattern`.
 #[derive(Copy, Clone)]
 struct ObjectPattern<'a> {
@@ -345,18 +355,28 @@ impl UnboundMethod {
 
     fn check_union_constituents_and_report<'a>(
         &self,
-        cx: &Cx<'a, Self>,
+        cx: &mut Cx<'a, Self>,
         report_node: Span,
         property_name: &[u8],
         ty: Type<'a>,
     ) -> bool {
-        union_constituents(ty).iter().flat_map(intersection_constituents).any(|intersection_part| {
-            self.check_if_method_and_report(cx, report_node, intersection_part.get_property(property_name))
-        })
+        let find_message = || {
+            union_constituents(ty).iter().flat_map(intersection_constituents).find_map(|intersection_part| {
+                check_if_method(intersection_part.get_property(property_name)?, self.ignore_static)
+            })
+        };
+        let message = match ty.types().len() > 16 {
+            true => *cx.state.methods_of_many.entry((ty, property_name.into())).or_insert_with(find_message),
+            false => find_message(),
+        };
+        if let Some(message) = message {
+            cx.report(report_node, message);
+        }
+        message.is_some()
     }
 
     fn check_member_expression<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if is_safe_use(node, &mut cx.state) || node.is_jsx_tag_name() || node.is_in_type_query() {
+        if is_safe_use(node, &mut cx.state.safe_uses) || node.is_jsx_tag_name() || node.is_in_type_query() {
             return;
         }
         match node.kind() {
@@ -409,7 +429,7 @@ impl UnboundMethod {
     }
 
     /// `implements a.b`, and `extends a.b` of an interface: a `MemberExpression` for ESLint, a type here.
-    fn check_heritage<'a>(&self, heritage: TypeNode<'a>, cx: &Cx<'a, Self>) {
+    fn check_heritage<'a>(&self, heritage: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         let TypeKind::Ref { name, .. } = heritage.kind() else {
             return;
         };
@@ -441,7 +461,7 @@ impl UnboundMethod {
 
     fn check_property<'a>(
         &self,
-        cx: &Cx<'a, Self>,
+        cx: &mut Cx<'a, Self>,
         pattern: ObjectPattern<'a>,
         key: Span,
         key_name: Name<'a>,
@@ -492,7 +512,8 @@ impl UnboundMethod {
             if let Some(key) = property.key()
                 && let Some((key_name, key_node)) = identifier_key(key, name_node)
             {
-                self.check_property(cx, pattern, key.inner_span(cx.file()), key_name, key_node);
+                let key = key.inner_span(cx.file());
+                self.check_property(cx, pattern, key, key_name, key_node);
             }
         }
     }
@@ -522,7 +543,8 @@ impl UnboundMethod {
             if let Some(key) = property.key()
                 && let Some((key_name, key_node)) = identifier_key(key, || Some(NameOf(property).ts_node()))
             {
-                self.check_property(cx, pattern, key.inner_span(cx.file()), key_name, key_node);
+                let key = key.inner_span(cx.file());
+                self.check_property(cx, pattern, key, key_name, key_node);
             }
         }
     }
@@ -532,8 +554,7 @@ impl Rule for UnboundMethod {
     const META: Meta = Meta::typescript("unbound-method", Kind::Problem)
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types();
-    /// [`is_safe_use`]
-    type State<'a> = AncestorMemo<'a, bool>;
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         UnboundMethod {
@@ -541,7 +562,7 @@ impl Rule for UnboundMethod {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> AncestorMemo<'a, bool> {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
         on.exprs([ExprTag::Dot, ExprTag::Index], Self::check_member_expression);
         on.pats([PatTag::Object], Self::check_binding_pattern);
         on.exprs([ExprTag::Object], Self::check_assignment_target);
@@ -551,6 +572,6 @@ impl Rule for UnboundMethod {
                 interface.extends().iter().for_each(|it| rule.check_heritage(it, cx));
             }
         });
-        AncestorMemo::default()
+        State::default()
     }
 }

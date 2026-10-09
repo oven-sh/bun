@@ -2,7 +2,7 @@
 // and otherwise does what typescript-eslint does. This compares the two on the inputs of the tests of ESLint, typescript-eslint and
 // oxc, by where they report, and says whether the differences are those that no-unused-vars.differences.json records.
 //
-//   BUN_LINT="<bun-lint> cli" OXLINT_BIN=<oxlint 1.80> OXC_DIR=<oxc at apps_v1.80.0> bun no-unused-vars.ts <conformance fixtures> [--record]
+//   BUN_LINT="<bun-lint> cli" OXLINT_BIN=<oxlint 1.87> OXC_DIR=<oxc at oxlint_v1.87.0> bun no-unused-vars.ts <conformance fixtures> [--record]
 
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";

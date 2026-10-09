@@ -96,6 +96,47 @@ pub struct Resolved {
     pub is_external: bool,
 }
 
+/// What the rules of oxlint read of the module record of another file: what it imports and exports at its top level, without the
+/// places.
+#[derive(Clone, Debug, Default)]
+pub struct Record {
+    /// It has an `import`, an `export` or an `import.meta`.
+    pub has_module_syntax: bool,
+    pub has_export_default: bool,
+    /// The names that it exports itself. Sorted, each once.
+    pub exported_bindings: Box<[Box<[u8]>]>,
+    pub import_entries: Box<[ImportEntry]>,
+    /// `export { a } from "m"`, `export * as a from "m"`, and `export { a }` of what is imported.
+    pub indirect_export_entries: Box<[IndirectExportEntry]>,
+    /// The specifier of each `export * from "m"`.
+    pub star_export_entries: Box<[Box<[u8]>]>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ImportEntry {
+    pub module_request: Box<[u8]>,
+    pub import_name: ImportName,
+    pub local_name: Box<[u8]>,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum ImportName {
+    Name(Box<[u8]>),
+    NamespaceObject,
+    Default,
+}
+
+#[derive(Clone, Debug)]
+pub struct IndirectExportEntry {
+    pub module_request: Box<[u8]>,
+    /// `None`: `export * as a from "m"`.
+    pub import_name: Option<Box<[u8]>>,
+    pub export_name: Box<[u8]>,
+}
+
+/// Makes the [`Record`] of a file.
+pub type MakeRecord = for<'a> fn(&'a File<'a>) -> Record;
+
 pub trait Modules: Sync {
     /// Everything is known. Until then only [`Modules::record`] does something.
     fn is_complete(&self) -> bool;
@@ -103,8 +144,19 @@ pub trait Modules: Sync {
     /// Takes note of what the file at `path` imports. The last time counts.
     ///
     /// `is_always_checked`: it is linted again whatever it imports. Otherwise only if it is in a cycle of modules that import
-    /// values from each other.
+    /// values from each other. Once is enough.
     fn record(&self, path: &[u8], requests: &[Request], is_always_checked: bool, flavor: Flavor);
+
+    /// Takes note of the [`Record`] of `file`, which is linted: `make(file)`, unless it is known. The records of the files that are
+    /// not linted are made by `make` too, also of those in a `node_modules`.
+    fn record_exports<'a>(&self, file: &'a File<'a>, make: MakeRecord);
+
+    /// From now on what the files in a `node_modules` import is followed too, as in oxlint. Otherwise only what they export again.
+    fn follow_packages(&self);
+
+    /// `None` if it is not JavaScript or TypeScript, if it cannot be read or parsed, or if nothing has called
+    /// [`Modules::record_exports`].
+    fn record_of(&self, module: ModuleId) -> Option<&Record>;
 
     /// The file at `path`.
     fn find(&self, path: &[u8]) -> Option<ModuleId>;

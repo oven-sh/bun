@@ -41,6 +41,9 @@ pub(crate) fn linter() -> &'static Linter {
             bun_lint_eslint::RULES,
             bun_lint_typescript::RULES,
             bun_lint_plugins::RULES,
+            bun_lint_unicorn::RULES,
+            bun_lint_react::RULES,
+            bun_lint_jest::RULES,
         ]))
     })
 }

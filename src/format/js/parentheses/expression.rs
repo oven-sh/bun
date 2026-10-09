@@ -597,6 +597,12 @@ pub(crate) fn has_own_line_comment_between(start: u32, end: u32, f: &Formatter<'
         || comments.comments_before_iter(end).any(breaks)
 }
 
+/// `<T>a | 0`: Prettier puts `<T>a` in parentheses next to `|`, `&`, `^` and the shifts. oxfmt only where it has to: before
+/// and after `<<`, and before `**`.
+fn type_assertion_is_like_unary_expression(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// For a `BinaryExpression`, a `LogicalExpression`, `a as T`, `a satisfies T` and `<T>a`.
 /// `operator`: of the first two.
 fn binary_or_cast_needs_parentheses<'a>(
@@ -650,7 +656,10 @@ fn binary_or_cast_needs_parentheses<'a>(
     let parent_precedence = parent_operator.precedence();
     let is_parent_bitwise = parent_precedence.is_bitwise() || parent_precedence.is_shift();
     let Some(operator) = operator else {
-        return is_binary_cast || is_parent_bitwise;
+        return match is_type_assertion && type_assertion_is_like_unary_expression(f) {
+            true => parent_operator == BinOp::Shl || (parent_operator == BinOp::Pow && right != e),
+            false => is_binary_cast || is_parent_bitwise,
+        };
     };
     let precedence = operator.precedence();
 

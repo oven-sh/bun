@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::types::utils::{
     get_constrained_type_at_location, get_type_name, is_symbol_from_default_library, matches_type_or_base_type,
@@ -9,6 +10,8 @@ use smallvec::SmallVec;
 /// Require `.toString()` and `.toLocaleString()` to only be called on objects which provide useful information when stringified.
 pub struct NoBaseToString {
     ignored_type_names: Vec<Vec<u8>>,
+    /// One of them has a `[`.
+    ignores_name_with_bracket: bool,
     check_unknown: bool,
 }
 
@@ -39,7 +42,11 @@ struct Walk<'a> {
     assumed: Option<FxHashSet<Type<'a>>>,
     /// Those of them that are still to be looked into.
     pending: Vec<Type<'a>>,
-    /// Since it was asked, something was not [`Usefulness::Always`].
+    /// The one that is looked into.
+    looked_into: Option<Type<'a>>,
+    /// Each of them that has been come across, with the one in which.
+    come_across: Vec<(Type<'a>, Option<Type<'a>>)>,
+    /// Since that one was begun with, something was not [`Usefulness::Always`].
     found_other: bool,
     /// What has been found for an array or tuple type, if it does not depend on what was in `visited`. Otherwise a `[T, T]` of a
     /// `[U, U]` of .. is looked into two to the power of the depth times.
@@ -175,6 +182,14 @@ impl NoBaseToString {
         self.ignored_type_names.iter().any(|it| it == name)
     }
 
+    /// `ignoredTypeNames.includes(getTypeName(checker, type))`
+    fn has_ignored_name(&self, ty: Type) -> bool {
+        // The text of an array or a tuple type that has no name of its own has a `[`. It has the text of all the types
+        // in it, which is made again for each of them.
+        let has_bracket = || ty.alias_symbol().is_none() && (ty.is_tuple_type() || ty.is_array_type());
+        (self.ignores_name_with_bracket || !has_bracket()) && self.is_ignored(&get_type_name(ty))
+    }
+
     fn collect_tuple_certainty<'a>(&self, ty: Type<'a>, walk: &mut Walk<'a>, depth: u32) -> Usefulness {
         let mut certainty = Usefulness::Always;
         for t in ty.get_type_arguments() {
@@ -226,25 +241,44 @@ impl NoBaseToString {
     /// Upstream looks into the types of a cycle once for every path that leads to them, which does
     /// not end where a dozen of them refer to each other. This looks into every type once and takes
     /// those inside it for `Always`. If nothing else turns up, every path finds the same.
+    ///
+    /// The answer is kept for all the types that it has come across, not to look into what is left of a chain of them
+    /// from each of its links.
     fn is_always_on_every_path<'a>(&self, ty: Type<'a>, walk: &mut Walk<'a>, depth: u32) -> bool {
         let mut assumed = FxHashSet::default();
         assumed.insert(ty);
         walk.assumed = Some(assumed);
         walk.pending.push(ty);
-        walk.found_other = false;
-        while !walk.found_other
-            && let Some(t) = walk.pending.pop()
-        {
+        let mut others = Vec::new();
+        while let Some(t) = walk.pending.pop() {
+            walk.looked_into = Some(t);
+            walk.found_other = false;
             self.collect_elements_certainty(t, walk, depth);
+            if walk.found_other {
+                others.push(t);
+            }
         }
-        walk.pending.clear();
         let assumed = walk.assumed.take().unwrap_or_default();
-        if walk.found_other {
-            walk.is_always.insert(ty, false);
-            return false;
+        let come_across = std::mem::take(&mut walk.come_across);
+        if others.is_empty() {
+            walk.is_always.extend(assumed.into_iter().map(|t| (t, true)));
+            return true;
         }
-        walk.is_always.extend(assumed.into_iter().map(|t| (t, true)));
-        true
+        // All that one of `others` is in, however deep.
+        let mut around: FxHashMap<Type<'a>, SmallVec<[Type<'a>; 1]>> = FxHashMap::default();
+        for (inner, outer) in come_across {
+            around.entry(inner).or_default().extend(outer);
+        }
+        let mut has_other: FxHashSet<Type<'a>> = others.iter().copied().collect();
+        while let Some(t) = others.pop() {
+            for &outer in around.get(&t).map(|it| it.as_slice()).unwrap_or_default() {
+                if has_other.insert(outer) {
+                    others.push(outer);
+                }
+            }
+        }
+        walk.is_always.extend(assumed.into_iter().map(|t| (t, !has_other.contains(&t))));
+        false
     }
 
     fn collect_to_string_certainty<'a>(&self, ty: Type<'a>, walk: &mut Walk<'a>, depth: u32) -> Usefulness {
@@ -295,7 +329,7 @@ impl NoBaseToString {
             {
                 return Usefulness::Always;
             }
-            if matches_type_or_base_type(|t| self.is_ignored(&get_type_name(t)), ty) {
+            if matches_type_or_base_type(|t| self.has_ignored_name(t), ty) {
                 return Usefulness::Always;
             }
         }
@@ -315,9 +349,12 @@ impl NoBaseToString {
             if let Some(assumed) = &mut walk.assumed {
                 if is_always == Some(false) {
                     walk.found_other = true;
-                } else if assumed.insert(ty) {
+                    return Usefulness::Always;
+                }
+                if assumed.insert(ty) {
                     walk.pending.push(ty);
                 }
+                walk.come_across.push((ty, walk.looked_into));
                 return Usefulness::Always;
             }
             if is_always.is_none() && self.is_always_on_every_path(ty, walk, depth) {
@@ -460,11 +497,13 @@ impl Rule for NoBaseToString {
     fn new(options: &Options) -> Self {
         let options = options.object(0);
         let names = |names: &[&str]| names.iter().map(|name| name.as_bytes().to_vec()).collect();
+        let ignored_type_names: Vec<Vec<u8>> = match options.has("ignoredTypeNames") {
+            true => names(&options.strings("ignoredTypeNames")),
+            false => names(&["Error", "RegExp", "URL", "URLSearchParams"]),
+        };
         NoBaseToString {
-            ignored_type_names: match options.has("ignoredTypeNames") {
-                true => names(&options.strings("ignoredTypeNames")),
-                false => names(&["Error", "RegExp", "URL", "URLSearchParams"]),
-            },
+            ignores_name_with_bracket: ignored_type_names.iter().any(|name| strings::contains_char(name, b'[')),
+            ignored_type_names,
             check_unknown: options.bool_or("checkUnknown", false),
         }
     }

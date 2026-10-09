@@ -1,0 +1,6 @@
+parts:
+  app:
+    plugin: "nil"
+      # cd ~ && rm -rf ~/squashfs-root && unsquashfs a.snap
+    stage-packages:
+      - a

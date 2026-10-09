@@ -44,13 +44,13 @@ impl NoMeaninglessVoidOperator {
             return;
         };
         match unwrap_void_argument(argument).kind() {
-            // tsgolint 7.0 goes by the type, whatever the operand is.
+            // `() => void (x = 1)` discards the value of the assignment.
+            ExprKind::Assign { .. } => return,
+            // tsgolint 7.0 goes by the type, whatever else the operand is.
             _ if cx.language().is_oxlint => {}
             ExprKind::Call(_) => {}
             // `void 0` is a common way to write `undefined`.
             ExprKind::Number(0.0) => return,
-            // `() => void (x = 1)` discards the value of the assignment.
-            ExprKind::Assign { .. } => return,
             _ => {
                 let arg_type = argument.ty();
                 // `void promise` is what `no-floating-promises` asks for.

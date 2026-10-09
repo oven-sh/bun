@@ -1,0 +1,222 @@
+{
+ "0-no-lonely-if": {
+  "fix": "if (a) {} else { if (b) {} }\n",
+  "suggestions": "if (a) {} else { if (b) {} }\n",
+  "dangerously": "if (a) {} else { if (b) {} }\n"
+ },
+ "1-no-extra-bind": {
+  "fix": "a = function () {}.bind(b);\n",
+  "suggestions": "a = function () {}.bind(b);\n",
+  "dangerously": "a = function () {}.bind(b);\n"
+ },
+ "2-no-useless-return": {
+  "fix": "function a() { return; }\n",
+  "suggestions": "function a() { return; }\n",
+  "dangerously": "function a() { return; }\n"
+ },
+ "3-logical-assignment-operators": {
+  "fix": "a = a || b;\n",
+  "suggestions": "a = a || b;\n",
+  "dangerously": "a = a || b;\n"
+ },
+ "4-method-signature-style": {
+  "fix": "interface A { b(): void }\n",
+  "suggestions": "interface A { b(): void }\n",
+  "dangerously": "interface A { b(): void }\n"
+ },
+ "5-no-empty-interface": {
+  "fix": "interface A extends B {}\n",
+  "suggestions": "interface A extends B {}\n",
+  "dangerously": "interface A extends B {}\n"
+ },
+ "6-no-inferrable-types": {
+  "fix": "let a: number = 1;\n",
+  "suggestions": "let a = 1;\n",
+  "dangerously": "let a = 1;\n"
+ },
+ "7-no-debugger": {
+  "fix": "debugger;\n",
+  "suggestions": "\n",
+  "dangerously": "\n"
+ },
+ "8-no-console": {
+  "fix": "console.log(1);\n",
+  "suggestions": "\n",
+  "dangerously": "\n"
+ },
+ "10-no-unneeded-ternary": {
+  "fix": "a = b ? true : false;\n",
+  "suggestions": "a = b ? true : false;\n",
+  "dangerously": "a = !!b;\n"
+ },
+ "11-no-unneeded-ternary": {
+  "fix": "a = b ? b : c;\n",
+  "suggestions": "a = b ? b : c;\n",
+  "dangerously": "a = b ? b : c;\n"
+ },
+ "12-require-await": {
+  "fix": "async function a() { b(); }\n",
+  "suggestions": "async function a() { b(); }\n",
+  "dangerously": "function a() { b(); }\n"
+ },
+ "13-radix": {
+  "fix": "parseInt(a);\n",
+  "suggestions": "parseInt(a);\n",
+  "dangerously": "parseInt(a, 10);\n"
+ },
+ "14-no-eq-null": {
+  "fix": "a == null;\n",
+  "suggestions": "a == null;\n",
+  "dangerously": "a === null;\n"
+ },
+ "15-no-extraneous-class": {
+  "fix": "class A {}\n",
+  "suggestions": "\n",
+  "dangerously": "\n"
+ },
+ "16-no-extra-boolean-cast": {
+  "fix": "if (!!a) {}\n",
+  "suggestions": "if (a) {}\n",
+  "dangerously": "if (a) {}\n"
+ },
+ "17-no-extra-boolean-cast": {
+  "fix": "if (a) {}\n",
+  "suggestions": "if (Boolean(a)) {}\n",
+  "dangerously": "if (a) {}\n"
+ },
+ "18-eqeqeq": {
+  "fix": "a == 'b'; typeof a === 'c'; a == b;\n",
+  "suggestions": "a == 'b'; typeof a == 'c'; a == b;\n",
+  "dangerously": "a === 'b'; typeof a === 'c'; a === b;\n"
+ },
+ "19-operator-assignment": {
+  "fix": "a += b;\n",
+  "suggestions": "a = a + b;\n",
+  "dangerously": "a += b;\n"
+ },
+ "20-consistent-type-definitions": {
+  "fix": "interface A { b: 1 }\n",
+  "suggestions": "type A = { b: 1 };\n",
+  "dangerously": "interface A { b: 1 }\n"
+ },
+ "21-no-unused-vars": {
+  "fix": "import a from 'a'; const b = 1; export {};\n",
+  "suggestions": " const b = 1; export {};\n",
+  "dangerously": "  export {};\n"
+ },
+ "22-no-compare-neg-zero": {
+  "fix": "a === -0;\n",
+  "suggestions": "Object.is(a, -0);\n",
+  "dangerously": "Object.is(a, -0);\n"
+ },
+ "23-explicit-member-accessibility": {
+  "fix": "class A { b = 1 }\n",
+  "suggestions": "class A { public b = 1 }\n",
+  "dangerously": "class A { public b = 1 }\n"
+ },
+ "24-prefer-as-const": {
+  "fix": "let a = 'b' as const; let c = 'd' as const;\n",
+  "suggestions": "let a: 'b' = 'b'; let c = 'd' as 'd';\n",
+  "dangerously": "let a = 'b' as const; let c = 'd' as const;\n"
+ },
+ "25-no-div-regex": {
+  "fix": "a = /[=]b/;\n",
+  "suggestions": "a = /=b/;\n",
+  "dangerously": "a = /[=]b/;\n"
+ },
+ "26-no-var": {
+  "fix": "const a = 1; a;\n",
+  "suggestions": "var a = 1; a;\n",
+  "dangerously": "const a = 1; a;\n"
+ },
+ "27-no-var": {
+  "fix": "let a = 1; a = 2;\n",
+  "suggestions": "var a = 1; a = 2;\n",
+  "dangerously": "let a = 1; a = 2;\n"
+ },
+ "28-prefer-const": {
+  "fix": "const a = 1; a;\n",
+  "suggestions": "let a = 1; a;\n",
+  "dangerously": "const a = 1; a;\n"
+ },
+ "29-curly": {
+  "fix": "if (a) {b();}\n",
+  "suggestions": "if (a) b();\n",
+  "dangerously": "if (a) {b();}\n"
+ },
+ "30-no-useless-escape": {
+  "fix": "a = 'd';\n",
+  "suggestions": "a = '\\d';\n",
+  "dangerously": "a = 'd';\n"
+ },
+ "31-valid-typeof": {
+  "fix": "typeof a == \"undefined\";\n",
+  "suggestions": "typeof a == undefined;\n",
+  "dangerously": "typeof a == \"undefined\";\n"
+ },
+ "32-no-implicit-coercion": {
+  "fix": "a = Boolean(b); a = Number(b);\n",
+  "suggestions": "a = !!b; a = +b;\n",
+  "dangerously": "a = Boolean(b); a = Number(b);\n"
+ },
+ "33-func-names": {
+  "fix": "a = function  a() {};\n",
+  "suggestions": "a = function () {};\n",
+  "dangerously": "a = function  a() {};\n"
+ },
+ "34-sort-keys": {
+  "fix": "a = { b: 2, c: 1 };\n",
+  "suggestions": "a = { c: 1, b: 2 };\n",
+  "dangerously": "a = { b: 2, c: 1 };\n"
+ },
+ "35-no-negated-condition": {
+  "fix": "if (a) { c(); } else { b(); }\n",
+  "suggestions": "if (!a) { b(); } else { c(); }\n",
+  "dangerously": "if (a) { c(); } else { b(); }\n"
+ },
+ "9-non-nullable-type-assertion-style": {
+  "fix": "declare const a: string | null; export const b = a as string;\n",
+  "suggestions": "declare const a: string | null; export const b = a!;\n",
+  "dangerously": "declare const a: string | null; export const b = a!;\n"
+ },
+ "36-dot-notation": {
+  "fix": "declare const a: { b: 1 }; a.b;\n",
+  "suggestions": "declare const a: { b: 1 }; a[\"b\"];\n",
+  "dangerously": "declare const a: { b: 1 }; a.b;\n"
+ },
+ "37-prefer-readonly": {
+  "fix": "export class A { private readonly b = 1; c() { return this.b; } }\n",
+  "suggestions": "export class A { private b = 1; c() { return this.b; } }\n",
+  "dangerously": "export class A { private readonly b = 1; c() { return this.b; } }\n"
+ },
+ "38-prefer-string-starts-ends-with": {
+  "fix": "declare const a: string; a.startsWith(\"b\");\n",
+  "suggestions": "declare const a: string; a[0] === \"b\";\n",
+  "dangerously": "declare const a: string; a.startsWith(\"b\");\n"
+ },
+ "39-no-unnecessary-boolean-literal-compare": {
+  "fix": "declare const a: boolean; if (a) {}\n",
+  "suggestions": "declare const a: boolean; if (a === true) {}\n",
+  "dangerously": "declare const a: boolean; if (a) {}\n"
+ },
+ "40-prefer-regexp-exec": {
+  "fix": "/b/.exec(\"a\");\n",
+  "suggestions": "\"a\".match(/b/);\n",
+  "dangerously": "/b/.exec(\"a\");\n"
+ },
+ "41-consistent-type-exports": {
+  "fix": "type A = 1; export type { A };\n",
+  "suggestions": "type A = 1; export { A };\n",
+  "dangerously": "type A = 1; export type { A };\n"
+ },
+ "42-no-unnecessary-qualifier": {
+  "fix": "namespace A { export type B = 1; const c: B = 1; }\n",
+  "suggestions": "namespace A { export type B = 1; const c: A.B = 1; }\n",
+  "dangerously": "namespace A { export type B = 1; const c: B = 1; }\n"
+ },
+ "43-prefer-includes": {
+  "fix": "declare const a: string[]; a.includes(\"b\");\n",
+  "suggestions": "declare const a: string[]; a.indexOf(\"b\") !== -1;\n",
+  "dangerously": "declare const a: string[]; a.includes(\"b\");\n"
+ }
+}

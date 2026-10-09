@@ -264,6 +264,13 @@ impl Meta {
         Meta::new(plugin, name, kind)
     }
 
+    /// A rule of a plugin that is built into oxlint, as oxlint has it: [`Meta::follows_oxlint`].
+    pub const fn oxlint(plugin: Plugin, name: &'static str, kind: Kind) -> Meta {
+        let mut meta = Meta::new(plugin, name, kind);
+        meta.follows_oxlint = true;
+        meta
+    }
+
     pub const fn fixable(mut self, fixable: Fixable) -> Meta {
         self.fixable = fixable;
         self

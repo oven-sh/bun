@@ -22,6 +22,13 @@ fn variables_in(file: &File, comments: &[ConfigComment]) -> CommentVariables {
     for comment in comments {
         let value = file.slice(comment.value);
         match comment.label {
+            Label::Env if file.language().reads_env_comments => {
+                for name in parse_list_config(value) {
+                    let name: &[u8] = if name == b"es6" { b"es2015" } else { name };
+                    let all = super::globals::environment(name).into_iter().flatten();
+                    variables.of_environments.extend(all);
+                }
+            }
             Label::Exported => {
                 for name in parse_list_config(value) {
                     if variables.is_exported.insert(name.into()) {
@@ -96,6 +103,11 @@ impl<'a> File<'a> {
         variables
             .globals
             .get(*variables.global_by_name.get(name)? as usize)
+    }
+
+    /// What `name` is in an environment that an `/* eslint-env */` comment of the file names.
+    pub(crate) fn global_of_environment_in_comments(&'a self, name: &[u8]) -> Option<Global> {
+        self.comment_variables()?.of_environments.get(name).copied()
     }
 
     /// The names in the `/* exported */` comments of the file.

@@ -26,6 +26,17 @@ of oxlint's port of the rule: see `extract-plugins.ts`.
 | `more/oxlint-tsgolint`   | 8728  | the tests that oxlint and tsgolint have for their ports of the rules. What those expect is not used |
 | `more/typescript-parser` | 30880 | the cases of ESLint's core rules again, parsed by `@typescript-eslint/parser`                     |
 
+`oxlint/` has the tests of the rules that are ports of the rules in oxlint's own plugins (`unicorn`, `oxc`, `react`, `jsx-a11y`,
+`nextjs`, `import`, `promise`, ..): the cases in oxlint's sources, each with what the **executable of oxlint 1.80.0** reports for it.
+See `extract-oxlint.ts`. They differ from the others in this:
+
+- A case is linted with an `.oxlintrc.json`: only that rule, the plugins in `plugins`, and what is in `oxlintrc` (`settings`, `env`,
+  `globals`).
+- A message has no id, and is where the first label of oxlint's diagnostic is. `oxlint.labels` and `oxlint.help` are not compared.
+- oxlint does not print its fixes. `output` is the code after `--fix`, `outputWithSuggestions` after `--fix --fix-suggestions`,
+  `outputDangerously` after these and `--fix-dangerously`: each is `null` if it is the same as the one before.
+- `oxlint-import-project/` has the files that the cases of `import/*` are next to.
+
 Versions that were resolved at generation time and can change what is reported:
 
 - eslint checkout (no lockfile upstream): espree 11.2.0, eslint-scope 9.1.2, @eslint-community/regexpp 4.12.2,
@@ -51,7 +62,7 @@ bun-lint conformance /tmp/fixtures [--plugin=eslint] [--rule=no-undef] [--verbos
 The runner is the crate `bun_lint_conformance` (`src/lint/conformance`): it says what is compared.
 
 `expected.txt` is what `bun lint --run-eslint-tests` prints with `--suite=upstream`: the cases that fail, and the totals.
-`expected-more.txt` is the same with `--suite=more --every-typed=10`: there are 22,000 cases with types in `more/`, each of
+`expected-oxlint.txt` is the same with `--suite=oxlint`. `expected-more.txt` is the same with `--suite=more --every-typed=10`: there are 22,000 cases with types in `more/`, each of
 which takes a tenth of a second. Whoever changes what is printed writes the file again, in the same commit.
 
 ## Layout
@@ -79,6 +90,8 @@ bun extract-typescript-eslint.ts     # fixtures/typescript-eslint, fixtures/type
 node extract-plugins.ts              # the other directories: its first lines say which checkouts it needs
 bun summarize.ts --summary report.md # fixtures/index.json, and a report to read
 bun sync.ts                          # bundle.zst, version.json, licenses/
+bun extract-oxlint.ts --oxc <oxc at the tag of the executable> --oxlint <oxlint> --out <directory> <plugin>/<rule>..
+bun sync.ts --oxlint <directory>     # `oxlint/` of bundle.zst
 ```
 
 What is in `more/` is recorded by `extra-cases.ts`, which takes cases as JSON (a fixture is one way to write them), and

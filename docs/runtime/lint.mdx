@@ -76,13 +76,13 @@ Rules in JavaScript are slower than the built-in ones. A file costs nothing extr
 
 Import plugins from a module. For a plugin that is written in `eslint.config.js` itself, Bun has to run that file again, with everything it imports, to get at the rules.
 
-Plugins run inside `bun lint`, on the threads that lint, as they run inside `eslint`:
+Plugins run inside `bun lint`, on threads of their own, as they run inside `eslint`:
 
 - What a plugin prints goes to the terminal, and `process.exit()` ends the run.
 - Its `process.on("exit")` handlers run after the report.
 - A rule that throws ends the run with exit code `2`. With an `.oxlintrc.json` the error is reported for the file, and the run goes on.
 - Each thread that runs rules in JavaScript loads the plugins for itself, so state at the top level of a module is per thread, and so are the handlers.
-- A few files with such rules are linted on one thread. There is one more thread with JavaScript for every 32 of them.
+- The rules in JavaScript of a few files run on one thread. There is one more thread with JavaScript for every 32 files with such rules, 16 at most.
 
 Three things are not there for a rule in JavaScript:
 
@@ -105,17 +105,36 @@ export default [
 
 Only the processor runs in JavaScript. The built-in rules lint the blocks as native code. Rules that need types do not run on a file with a processor.
 
-### `.eslintrc.json`
+### `.eslintrc`
 
-`bun lint` reads `.eslintrc.json` and `.eslintrc`, if they are JSON. What they extend from a package, such as `"next/core-web-vitals"`, and a plugin that is not built in are errors. `.eslintrc.js` and `.eslintrc.yml` are not supported: [migrate to `eslint.config.js`](https://eslint.org/docs/latest/use/configure/migration-guide).
+Where there is no `eslint.config.js`, `bun lint` reads the configuration files of ESLint 8, as ESLint 8 does:
+
+- `.eslintrc.yaml`, `.eslintrc.yml`, `.eslintrc.json`, `.eslintrc`, and `eslintConfig` in `package.json`.
+- The files of the parent directories count too, up to one with `root: true`.
+- `.eslintignore`, and `eslintIgnore` in `package.json`.
+- Of a directory, `.js` files are linted, and what `overrides` or `--ext` name.
+- `/* eslint-env */` comments, `--env`, `--no-eslintrc`, `--ignore-path`, and `ESLINT_USE_FLAT_CONFIG`.
+
+The rules are those of ESLint 10, with the default options of ESLint 8.
+
+A `.eslintrc.js`, what a file extends from a package, such as `"next/core-web-vitals"`, and a plugin that is not built in are errors: [migrate to `eslint.config.js`](https://eslint.org/docs/latest/use/configure/migration-guide).
 
 ## Replace oxlint
 
-`bun lint` reads `.oxlintrc.json`, including `plugins`, `categories`, `env`, `globals`, `overrides`, `ignorePatterns`, `extends`, `options`, and nested configuration files. It takes the flags of `oxlint`.
+`bun lint` reads `.oxlintrc.json` and `oxlint.config.ts`, including `plugins`, `categories`, `env`, `globals`, `overrides`, `ignorePatterns`, `extends`, `options`, and nested configuration files. It takes the flags of `oxlint`.
+
+```bash terminal icon="terminal"
+bun remove oxlint
+bun lint
+```
+
+`import { defineConfig } from "oxlint"` in an `oxlint.config.ts` keeps working without the package.
 
 Where an `.oxlintrc.json` is the configuration, `bun lint` behaves like oxlint:
 
-- It skips what `.gitignore` ignores, and follows symbolic links.
+- It skips what `.gitignore` ignores, and follows symbolic links. `node_modules` is skipped because `.gitignore` has it.
+- A configuration file with a key that oxlint does not know is an error.
+- If the command line or a configuration file cannot be used, the exit code is `1`.
 - The default format is `pretty`, and `-f json` prints oxlint's JSON, so scripts that read `diagnostics` keep working.
 - An argument that matches nothing is not an error, as long as there is a file to lint. If there is none, the exit code is `1`.
 - `--report-unused-disable-directives` warns.
@@ -126,11 +145,13 @@ Where an `.oxlintrc.json` is the configuration, `bun lint` behaves like oxlint:
 | `oxlint`                   | `bun lint`                   |
 | `oxlint -D no-console src` | `bun lint -D no-console src` |
 | `oxlint --type-aware`      | `bun lint --type-aware`      |
+| `oxlint --type-check`      | `bun lint --type-check`      |
 | `oxlint --deny-warnings`   | `bun lint --deny-warnings`   |
 | `oxlint --import-plugin`   | `bun lint --import-plugin`   |
 | `oxlint --fix-suggestions` | `bun lint --fix-suggestions` |
 | `oxlint -f json`           | `bun lint -f json`           |
 | `oxlint --rules`           | `bun lint --rules`           |
+| `oxlint --init`            | `bun lint --init`            |
 
 The plugins in `jsPlugins` are loaded and run. Run `bun lint --rules` to list the rules that are built in. A rule that is not built in [cannot be linted](#what-cannot-be-linted). Where oxlint and ESLint disagree about a rule, `bun lint` does what ESLint does, and the messages are ESLint's.
 
@@ -149,15 +170,25 @@ With `--allow-unsupported` these lines are warnings, and the exit code is that o
 
 ## Which configuration file
 
-For each file, `bun lint` uses the nearest configuration file: it looks in the directory of the file, then in each parent directory. In a directory with several, the first of this list counts:
+No tool reads the configuration files of another. So `bun lint` first decides which tool it stands in for: it looks in the working directory, then in each parent directory, for the first of this list:
 
 1. `eslint.config.js`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts`
 2. `.oxlintrc.json`, `.oxlintrc.jsonc`, `oxlint.config.ts`
-3. `.eslintrc.json`, `.eslintrc`
+3. [The files of ESLint 8](#eslintrc)
 
-No tool reads the configuration files of another. So the file that counts for the working directory decides: if it is an `.oxlintrc.json`, the configuration files of ESLint in the directories further down are not read, and the other way round. In a directory that has a configuration file of ESLint of its own, inside a project with an `.oxlintrc.json`, run `bun lint` from the root of the project, or it takes the file of ESLint.
+Only the files of that tool count, also in the directories further down. For each file, `bun lint` uses the nearest of them: it looks in the directory of the file, then in each parent directory. Apart from the files of ESLint 8, configuration files are not merged.
 
-Configuration files are not merged. Use `-c` to use one file for everything, or `--no-config-lookup` to use none.
+The working directory decides. In a directory that has a configuration file of ESLint of its own, inside a project with an `.oxlintrc.json`, run `bun lint` from the root of the project, or pass `--flavor=oxlint`.
+
+If a directory has an `eslint.config.js` and an `.oxlintrc.json`, `bun lint` says which one it uses. That is the `eslint.config.js`, unless it has no rules for JavaScript, or the command line has a flag that only oxlint has, such as `-D`. Use `--flavor` to choose:
+
+```bash terminal icon="terminal"
+bun lint --flavor=oxlint
+```
+
+Without any configuration file, `bun lint` uses the defaults of oxlint if the command line has a flag that only oxlint has, or if `package.json` depends on `oxlint` and not on `eslint`. Run `bun lint --init` to write these defaults to an `.oxlintrc.json`.
+
+Use `-c` to use one file for everything, or `--no-config-lookup` to use none.
 
 ```bash terminal icon="terminal"
 bun lint -c eslint.ci.config.js
@@ -211,7 +242,11 @@ Or use `--type-aware`, whatever the configuration says. Without a configuration 
 bun lint --type-aware
 ```
 
-Bun checks each file with the `tsconfig.json` your editor uses for it: the nearest one. Use `-p` to name another. `bun lint` does not report type errors. Run `bun check` for those.
+Bun checks each file with the `tsconfig.json` your editor uses for it: the nearest one. Use `-p` to name another. `bun lint` does not report type errors. Run `bun check` for those, or add `--type-check`, as for oxlint:
+
+```bash terminal icon="terminal"
+bun lint --type-aware --type-check
+```
 
 ## Fix problems
 
@@ -367,41 +402,44 @@ These differences are intentional:
 bun lint [flags] [...files, directories or patterns]
 ```
 
-| Flag                                       | Description                                                                         |
-| ------------------------------------------ | ----------------------------------------------------------------------------------- |
-| `-c`, `--config <path>`                    | Use this configuration file instead of looking for one                              |
-| `--no-config-lookup`                       | Do not look for a configuration file                                                |
-| `--no-config-cache`                        | Evaluate `eslint.config.js` again even if nothing changed                           |
-| `--rule <rule>`                            | Configure a rule: `--rule 'eqeqeq: [error, smart]'`                                 |
-| `--global <names>`                         | Define global variables: `--global a,b:true`                                        |
-| `--parser-options <options>`               | Set parser options: `--parser-options projectService:true`                          |
-| `--ext <extensions>`                       | Lint files with these extensions too                                                |
-| `--fix`                                    | Fix what can be fixed, and write the files                                          |
-| `--fix-dry-run`                            | Fix without writing                                                                 |
-| `--fix-type <types>`                       | Only `directive`, `problem`, `suggestion`, or `layout` fixes                        |
-| `--ignore-pattern <pattern>`               | Ignore the files that match                                                         |
-| `--no-ignore`                              | Lint ignored files too                                                              |
-| `--no-warn-ignored`                        | Do not warn about an ignored file that is named as an argument                      |
-| `--stdin`, `--stdin-filename <path>`       | Lint the code on standard input, as that file                                       |
-| `--quiet`                                  | Report errors only                                                                  |
-| `--max-warnings <n>`                       | Exit with `1` if there are more warnings than this                                  |
-| `-f`, `--format <name>`                    | The [output format](#output)                                                        |
-| `--all`                                    | Show every problem. Without it, `pretty` groups them above 50                       |
-| `-o`, `--output-file <path>`               | Write the report to a file                                                          |
-| `--color`, `--no-color`                    | Always or never use colors                                                          |
-| `--no-inline-config`                       | Ignore `eslint-disable` and other configuration comments                            |
-| `--report-unused-disable-directives`       | Report `eslint-disable` comments that disable nothing                               |
-| `--suppress-all`, `--suppress-rule <rule>` | Record the errors that exist in `eslint-suppressions.json`                          |
-| `--prune-suppressions`                     | Remove from that file what no longer occurs                                         |
-| `--no-error-on-unmatched-pattern`          | Do not fail if an argument matches no file                                          |
-| `--pass-on-no-patterns`                    | Exit with `0` if there are no arguments                                             |
-| `--exit-on-fatal-error`                    | Exit with `2` if a file cannot be parsed                                            |
-| `--allow-unsupported`                      | Only warn about [what cannot be linted](#what-cannot-be-linted)                     |
-| `--print-config <path>`                    | Print the configuration of a file, and lint nothing                                 |
-| `--type-aware`, `--no-type-aware`          | Run or skip the rules that need types                                               |
-| `-p`, `--project <path>`                   | The `tsconfig.json` for the rules that need types                                   |
-| `-A`, `-W`, `-D <rule or category>`        | Allow, warn about, or deny a rule, with an `.oxlintrc.json`                         |
-| `--threads <n>`                            | Number of threads. Default: one per CPU core, at most 16 with plugins in JavaScript |
-| `--timing`                                 | Print how long each phase took, and how much JavaScript was loaded                  |
-| `--cwd <path>`                             | Set the working directory                                                           |
-| `-h`, `--help`                             | Print the help menu                                                                 |
+| Flag                                       | Description                                                        |
+| ------------------------------------------ | ------------------------------------------------------------------ |
+| `-c`, `--config <path>`                    | Use this configuration file instead of looking for one             |
+| `--no-config-lookup`                       | Do not look for a configuration file                               |
+| `--flavor <tool>`                          | Whose configuration files count: `eslint` or `oxlint`              |
+| `--no-config-cache`                        | Evaluate `eslint.config.js` again even if nothing changed          |
+| `--rule <rule>`                            | Configure a rule: `--rule 'eqeqeq: [error, smart]'`                |
+| `--global <names>`                         | Define global variables: `--global a,b:true`                       |
+| `--parser-options <options>`               | Set parser options: `--parser-options projectService:true`         |
+| `--ext <extensions>`                       | Lint files with these extensions too                               |
+| `--fix`                                    | Fix what can be fixed, and write the files                         |
+| `--fix-dry-run`                            | Fix without writing                                                |
+| `--fix-type <types>`                       | Only `directive`, `problem`, `suggestion`, or `layout` fixes       |
+| `--fix-suggestions`                        | Apply suggestions, as oxlint does. Without `--fix`, nothing else   |
+| `--fix-dangerously`                        | Apply every fix and suggestion, as oxlint does                     |
+| `--ignore-pattern <pattern>`               | Ignore the files that match                                        |
+| `--no-ignore`                              | Lint ignored files too                                             |
+| `--no-warn-ignored`                        | Do not warn about an ignored file that is named as an argument     |
+| `--stdin`, `--stdin-filename <path>`       | Lint the code on standard input, as that file                      |
+| `--quiet`                                  | Report errors only                                                 |
+| `--max-warnings <n>`                       | Exit with `1` if there are more warnings than this                 |
+| `-f`, `--format <name>`                    | The [output format](#output)                                       |
+| `--all`                                    | Show every problem. Without it, `pretty` groups them above 50      |
+| `-o`, `--output-file <path>`               | Write the report to a file                                         |
+| `--color`, `--no-color`                    | Always or never use colors                                         |
+| `--no-inline-config`                       | Ignore `eslint-disable` and other configuration comments           |
+| `--report-unused-disable-directives`       | Report `eslint-disable` comments that disable nothing              |
+| `--suppress-all`, `--suppress-rule <rule>` | Record the errors that exist in `eslint-suppressions.json`         |
+| `--prune-suppressions`                     | Remove from that file what no longer occurs                        |
+| `--no-error-on-unmatched-pattern`          | Do not fail if an argument matches no file                         |
+| `--pass-on-no-patterns`                    | Exit with `0` if there are no arguments                            |
+| `--exit-on-fatal-error`                    | Exit with `2` if a file cannot be parsed                           |
+| `--allow-unsupported`                      | Only warn about [what cannot be linted](#what-cannot-be-linted)    |
+| `--print-config <path>`                    | Print the configuration of a file, and lint nothing                |
+| `--type-aware`, `--no-type-aware`          | Run or skip the rules that need types                              |
+| `-p`, `--project <path>`                   | The `tsconfig.json` for the rules that need types                  |
+| `-A`, `-W`, `-D <rule or category>`        | Allow, warn about, or deny a rule, with an `.oxlintrc.json`        |
+| `--threads <n>`                            | Number of threads. Default: one per CPU core                       |
+| `--timing`                                 | Print how long each phase took, and how much JavaScript was loaded |
+| `--cwd <path>`                             | Set the working directory                                          |
+| `-h`, `--help`                             | Print the help menu                                                |

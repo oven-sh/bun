@@ -104,7 +104,12 @@ fn width_of_characters(text: &[u8], flavor: Flavor) -> u32 {
     let chars: smallvec::SmallVec<[u32; 64]> =
         bstr::ByteSlice::chars(text).map(u32::from).collect();
     let (mut width, mut i) = (0, 0);
+    // To the crate `unicode-width`, an Arabic lam and the alef after it are one ligature.
+    let mut follows_lam = false;
     while let Some(&c) = chars.get(i) {
+        let is_alef_of_ligature =
+            follows_lam && flavor.is_oxfmt() && matches!(c, 0x622 | 0x623 | 0x625 | 0x627);
+        follows_lam = c == 0x644 || (follows_lam && is_in(OXFMT_ZERO_WIDTH, c));
         match emoji_len(&chars[i..]) {
             0 => {}
             len => {
@@ -122,6 +127,7 @@ fn width_of_characters(text: &[u8], flavor: Flavor) -> u32 {
             0..=0x1F | 0x7F..=0x9F => 0,
             0x20..=0x7E => 1,
             0x300..=0x36F | 0xFE00..=0xFE0F => 0,
+            _ if is_alef_of_ligature => 0,
             _ if flavor.is_oxfmt() && is_in(OXFMT_ZERO_WIDTH, c) => 0,
             _ if is_in(WIDE, c) => 2,
             _ => 1,

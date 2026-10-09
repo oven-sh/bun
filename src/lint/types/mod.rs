@@ -286,6 +286,7 @@ queries! {
 
     // ── types ──
     fn type_flags(ty: TypeId) -> TypeFlags;
+    fn flags_of_constituents(ty: TypeId) -> TypeFlags;
     fn object_flags(ty: TypeId) -> ObjectFlags;
     fn constituents(ty: TypeId) -> &'a [TypeId];
     fn type_arguments(ty: TypeId) -> &'a [TypeId];

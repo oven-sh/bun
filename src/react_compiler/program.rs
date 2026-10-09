@@ -61,6 +61,15 @@ pub trait Host {
     fn symbols(&self) -> &[Symbol];
     fn module_scope(&self) -> &Scope;
     fn import_records(&self) -> &[ImportRecord];
+
+    /// Whether `ref_` is bound outside of the function that is compiled, which for the parser is
+    /// in the scope of the module.
+    fn is_module_level(&self, ref_: Ref) -> bool {
+        self.symbols()
+            .get(ref_.inner_index() as usize)
+            .and_then(|sym| self.module_scope().members.get(sym.original_name.slice()))
+            .is_some_and(|member| member.ref_ == ref_)
+    }
     fn source(&self) -> &[u8];
     fn arena(&self) -> &bun_alloc::Arena;
 

@@ -114,7 +114,7 @@ pub(crate) fn run_and_exit(
         let _turn = turn.lock();
         run_script(script)
     };
-    let js_engine = super::lint_js::ThreadVms::default();
+    let js_engine = super::lint_js::Engines::default();
     let environment = Environment {
         cwd: bun_lint_driver::from_native_path(&working_directory()),
         stdout: Stream {
@@ -156,7 +156,9 @@ impl LintCommand {
         }
         let options = match Options::parse(&args) {
             Ok(options) => options,
-            Err(UsageError(message)) => usage_error("lint", &message),
+            Err(UsageError(message)) => run_and_exit(b"lint", None, |environment| {
+                bun_lint_driver::refuse_command_line(&message, environment)
+            }),
         };
         if options.help {
             crate::cli::command::tag_print_help(crate::cli::command::Tag::LintCommand, true);

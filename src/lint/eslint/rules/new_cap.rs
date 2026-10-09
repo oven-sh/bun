@@ -100,7 +100,12 @@ impl NewCap {
         }
         match callee.kind() {
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
-                self.skips_properties || name == b"UTC" && is_global_built_in(obj, b"Date")
+                // oxlint goes by the names.
+                let is_date = || match callee.file().language().is_oxlint {
+                    true => obj.is_ident("Date"),
+                    false => is_global_built_in(obj, b"Date"),
+                };
+                self.skips_properties || name == b"UTC" && is_date()
             }
             _ => false,
         }
@@ -121,7 +126,9 @@ impl NewCap {
             && let Some(name) = extract_name(call.callee())
             && get_cap(&name) == Cap::Upper
             && !self.is_cap_allowed(&self.cap_is_new_exceptions, call.callee(), &name)
-            && !(CAPS_ALLOWED.iter().any(|it| it.as_bytes() == &*name) && is_global_built_in(call.callee(), &name))
+            // oxlint goes by the name, whatever it refers to.
+            && !(CAPS_ALLOWED.iter().any(|it| it.as_bytes() == &*name)
+                && (cx.language().is_oxlint || is_global_built_in(call.callee(), &name)))
         {
             report(call.callee(), UPPER, cx);
         }

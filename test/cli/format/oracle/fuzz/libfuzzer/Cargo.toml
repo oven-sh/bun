@@ -27,6 +27,18 @@ path = "lint.rs"
 name = "fuzz_parser"
 path = "parser.rs"
 
+[[bin]]
+name = "fuzz_config"
+path = "config.rs"
+
+[[bin]]
+name = "fuzz_regex"
+path = "regex.rs"
+
+[[bin]]
+name = "fuzz_glob"
+path = "glob.rs"
+
 [dependencies]
 libfuzzer-sys = "0.4"
 bun_format = { path = "../../../../../../src/format" }
@@ -35,8 +47,12 @@ bun_lint = { path = "../../../../../../src/lint" }
 bun_lint_eslint = { path = "../../../../../../src/lint/eslint" }
 bun_lint_typescript = { path = "../../../../../../src/lint/typescript" }
 bun_lint_plugins = { path = "../../../../../../src/lint/plugins" }
+bun_lint_unicorn = { path = "../../../../../../src/lint/unicorn" }
+bun_lint_react = { path = "../../../../../../src/lint/react" }
+bun_lint_jest = { path = "../../../../../../src/lint/jest" }
 bun_lint_driver = { path = "../../../../../../src/lint/driver" }
 bun_sema = { path = "../../../../../../src/sema" }
+bun_sema_driver = { path = "../../../../../../src/sema/driver" }
 bun_sema_parser = { path = "../../../../../../src/sema/parser" }
 bun_js_parser = { path = "../../../../../../src/js_parser" }
 bun_threading = { path = "../../../../../../src/threading" }
@@ -81,6 +97,22 @@ rustflags = ["-Cpasses=sancov-module", "-Cllvm-args=-sanitizer-coverage-level=4"
 [profile.fuzz.package.bun_lint_plugins]
 rustflags = ["-Cpasses=sancov-module", "-Cllvm-args=-sanitizer-coverage-level=4", "-Cllvm-args=-sanitizer-coverage-inline-8bit-counters", "-Cllvm-args=-sanitizer-coverage-pc-table", "-Cllvm-args=-sanitizer-coverage-trace-compares", "-Cllvm-args=-simplifycfg-branch-fold-threshold=0"]
 
+# Not bun_parsers, which reads configuration files in YAML, TOML and JSON5: the flags would go to its build script too, which is not linked with libFuzzer.
+[profile.fuzz.package.bun_lint_unicorn]
+rustflags = ["-Cpasses=sancov-module", "-Cllvm-args=-sanitizer-coverage-level=4", "-Cllvm-args=-sanitizer-coverage-inline-8bit-counters", "-Cllvm-args=-sanitizer-coverage-pc-table", "-Cllvm-args=-sanitizer-coverage-trace-compares", "-Cllvm-args=-simplifycfg-branch-fold-threshold=0"]
+
+[profile.fuzz.package.bun_lint_react]
+rustflags = ["-Cpasses=sancov-module", "-Cllvm-args=-sanitizer-coverage-level=4", "-Cllvm-args=-sanitizer-coverage-inline-8bit-counters", "-Cllvm-args=-sanitizer-coverage-pc-table", "-Cllvm-args=-sanitizer-coverage-trace-compares", "-Cllvm-args=-simplifycfg-branch-fold-threshold=0"]
+
+[profile.fuzz.package.bun_lint_jest]
+rustflags = ["-Cpasses=sancov-module", "-Cllvm-args=-sanitizer-coverage-level=4", "-Cllvm-args=-sanitizer-coverage-inline-8bit-counters", "-Cllvm-args=-sanitizer-coverage-pc-table", "-Cllvm-args=-sanitizer-coverage-trace-compares", "-Cllvm-args=-simplifycfg-branch-fold-threshold=0"]
+
+[profile.fuzz.package.bun_lint_oxlint]
+rustflags = ["-Cpasses=sancov-module", "-Cllvm-args=-sanitizer-coverage-level=4", "-Cllvm-args=-sanitizer-coverage-inline-8bit-counters", "-Cllvm-args=-sanitizer-coverage-pc-table", "-Cllvm-args=-sanitizer-coverage-trace-compares", "-Cllvm-args=-simplifycfg-branch-fold-threshold=0"]
+
+[profile.fuzz.package.bun_lint_driver]
+rustflags = ["-Cpasses=sancov-module", "-Cllvm-args=-sanitizer-coverage-level=4", "-Cllvm-args=-sanitizer-coverage-inline-8bit-counters", "-Cllvm-args=-sanitizer-coverage-pc-table", "-Cllvm-args=-sanitizer-coverage-trace-compares", "-Cllvm-args=-simplifycfg-branch-fold-threshold=0"]
+
 [profile.fuzz.package.bun_sema_parser]
 rustflags = ["-Cpasses=sancov-module", "-Cllvm-args=-sanitizer-coverage-level=4", "-Cllvm-args=-sanitizer-coverage-inline-8bit-counters", "-Cllvm-args=-sanitizer-coverage-pc-table", "-Cllvm-args=-sanitizer-coverage-trace-compares", "-Cllvm-args=-simplifycfg-branch-fold-threshold=0"]
 
@@ -111,6 +143,21 @@ rustflags = ["-Cinstrument-coverage"]
 rustflags = ["-Cinstrument-coverage"]
 
 [profile.coverage.package.bun_lint_plugins]
+rustflags = ["-Cinstrument-coverage"]
+
+[profile.coverage.package.bun_lint_unicorn]
+rustflags = ["-Cinstrument-coverage"]
+
+[profile.coverage.package.bun_lint_react]
+rustflags = ["-Cinstrument-coverage"]
+
+[profile.coverage.package.bun_lint_jest]
+rustflags = ["-Cinstrument-coverage"]
+
+[profile.coverage.package.bun_lint_oxlint]
+rustflags = ["-Cinstrument-coverage"]
+
+[profile.coverage.package.bun_lint_driver]
 rustflags = ["-Cinstrument-coverage"]
 
 [profile.coverage.package.bun_sema_parser]

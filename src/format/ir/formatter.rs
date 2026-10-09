@@ -615,6 +615,12 @@ impl<'a> Formatter<'a> {
         }
     }
 
+    /// The width of `text`, which can be anything.
+    fn text_width(&self, text: &[u8]) -> TextWidth {
+        let options = self.options();
+        TextWidth::from_javascript(text, options.flavor, options.indent_width.value())
+    }
+
     /// The number of columns that `text` takes, which has no line break.
     #[inline]
     pub(crate) fn string_width(&self, text: &[u8]) -> u32 {
@@ -673,7 +679,7 @@ impl<'a> Formatter<'a> {
     /// Writes `text`, which can be anything but has no `\r`. It is not copied if it is part of
     /// the source text.
     pub(crate) fn write_text(&mut self, text: &[u8], width: Option<TextWidth>) {
-        let width = width.unwrap_or_else(|| TextWidth::from_text_as(text, self.options().flavor));
+        let width = width.unwrap_or_else(|| self.text_width(text));
         let (source, part) = (self.source.as_ptr_range(), text.as_ptr_range());
         if source.start <= part.start && part.end <= source.end {
             self.write_element(FormatElement::SourceText(Text {
@@ -706,7 +712,7 @@ impl<'a> Formatter<'a> {
     /// Writes what is in `storage.text` from `start` on, as one text.
     fn write_owned_text_from(&mut self, start: usize) {
         let text = self.storage.text.get(start..).unwrap_or_default();
-        let width = TextWidth::from_text_as(text, self.options().flavor);
+        let width = self.text_width(text);
         let len = text.len() as u32;
         self.write_element(FormatElement::OwnedText(Text {
             start: start as u32,

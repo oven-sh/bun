@@ -6,7 +6,7 @@ mod categories;
 
 use super::flat::{ConfigError, Reader, Semantics};
 use super::merge::RuleSetting;
-use super::{Config, ConfigObject, Pattern, path, presets};
+use super::{Config, ConfigObject, Pattern, path, presets, shape};
 use crate::context::Severity;
 use crate::fix::SuggestionKind;
 use crate::js_plugin;
@@ -65,7 +65,7 @@ pub fn oxlint_runs_on(meta: &Meta, is_typescript: bool) -> bool {
 }
 
 /// Fixes of rules for which the lists say nothing, or not enough: the plugin, the rule, the `messageId` of the report or nothing
-/// for all of them, and what `--fix` of oxlint 1.80 makes of the fix. Each was tried.
+/// for all of them, and what `--fix` of oxlint 1.87 makes of the fix. Each was tried.
 const PROBED_FIXES: [(Plugin, &str, &str, SuggestionKind); 3] = [
     // `a ? true : false`, `a ? a : b`
     (
@@ -148,8 +148,8 @@ const LINTED_FILES: &[u8] = b"**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}";
 const LINTED_FILES_OF_OXLINT: &[u8] = b"**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx,vue,svelte,astro}";
 
 /// `convertIgnorePatternToMinimatch` of `@eslint/compat`: a pattern of a `.gitignore` as a pattern
-/// for `ignores`.
-fn ignore_pattern_to_minimatch(pattern: &[u8]) -> Vec<u8> {
+/// for `ignores`. For oxlint `{a,b}` is one of the two.
+pub(super) fn ignore_pattern_to_minimatch(pattern: &[u8], flavor: RcFlavor) -> Vec<u8> {
     let (negation, pattern): (&[u8], _) = match pattern.strip_prefix(b"!") {
         Some(rest) => (b"!", rest),
         None => (b"", pattern),
@@ -179,6 +179,7 @@ fn ignore_pattern_to_minimatch(pattern: &[u8]) -> Vec<u8> {
                 at += 2;
                 continue;
             }
+            b'{' if flavor == RcFlavor::Oxlint => {}
             b'{' | b'(' => escaped.push(b'\\'),
             _ => {}
         }
@@ -193,16 +194,26 @@ fn ignore_pattern_to_minimatch(pattern: &[u8]) -> Vec<u8> {
     [negation, everywhere, &escaped, inside].concat()
 }
 
-/// A pattern of `overrides[].files`: one without a slash matches in every directory.
-fn override_pattern(pattern: &[u8]) -> Pattern {
-    match pattern.strip_prefix(b"./") {
+/// A pattern of `overrides[].files`: one without a slash matches in every directory. oxlint lints a file for what it is called,
+/// not because an override is for it, and has no `?(a|b)`: a parenthesis is a character.
+fn override_pattern(pattern: &[u8], flavor: RcFlavor) -> Pattern {
+    let escaped = match flavor {
+        RcFlavor::Oxlint => strings::replace_owned(pattern, b"(", b"\\("),
+        RcFlavor::Eslint => pattern.to_vec(),
+    };
+    let pattern = &escaped[..];
+    let pattern = match pattern.strip_prefix(b"./") {
         Some(rest) => Pattern::new(rest),
         None if strings::contains_char(pattern, b'/') => Pattern::new(pattern),
         None => Pattern::new(&[b"**/", pattern].concat()),
+    };
+    Pattern {
+        is_universal: pattern.is_universal || flavor == RcFlavor::Oxlint,
+        ..pattern
     }
 }
 
-fn strings_of(json: Option<&Json>) -> Vec<&[u8]> {
+pub(super) fn strings_of(json: Option<&Json>) -> Vec<&[u8]> {
     match json {
         Some(Json::String(one)) => vec![&one[..]],
         Some(Json::Array(items)) => items.iter().filter_map(Json::as_str).collect(),
@@ -253,6 +264,8 @@ struct Rc<'r, 'l> {
     plugins: Vec<Vec<u8>>,
     /// In oxlint the overrides of all files come after the rules of all files.
     overrides: Vec<ConfigObject>,
+    /// [`Config::option_of_oxlint`]
+    options: Vec<(Vec<u8>, Json)>,
 }
 
 impl Rc<'_, '_> {
@@ -346,6 +359,9 @@ impl Rc<'_, '_> {
         if depth > 32 {
             return Err(ConfigError::new(&[b"Too many levels of \"extends\"."]));
         }
+        if is_extended && self.flavor == RcFlavor::Oxlint {
+            shape::check(json)?;
+        }
         // A plugin that an override names is known everywhere.
         self.load_js_plugins(json, directory)?;
         for item in json
@@ -355,7 +371,27 @@ impl Rc<'_, '_> {
         {
             self.load_js_plugins(item, directory)?;
         }
-        for name in strings_of(json.get(b"extends")) {
+        let extends = match json.get(b"extends") {
+            Some(Json::Array(items)) => &items[..],
+            Some(one) => std::slice::from_ref(one),
+            None => &[],
+        };
+        for extended in extends {
+            // What an `oxlint.config.ts` has imported.
+            if extended.as_object().is_some() {
+                self.file(extended, directory, true, depth + 1)?;
+                continue;
+            }
+            let Some(name) = extended.as_str() else {
+                continue;
+            };
+            if self.flavor == RcFlavor::Oxlint && name.starts_with(b"eslint:") {
+                return Err(ConfigError::new(&[
+                    b"Unsupported named config \"",
+                    name,
+                    b"\" in extends. Oxlint does not support ESLint shared configs. If this is a file path, add a file extension (e.g., \".json\").",
+                ]));
+            }
             if let Some(objects) = presets::find(name) {
                 for object in &objects {
                     let object = self.reader.object(object)?;
@@ -431,13 +467,17 @@ impl Rc<'_, '_> {
                 ignores: Some(
                     ignore_patterns
                         .iter()
-                        .map(|it| Pattern::new(&ignore_pattern_to_minimatch(it)))
+                        .map(|it| Pattern::new(&ignore_pattern_to_minimatch(it, self.flavor)))
                         .collect(),
                 ),
                 is_global_ignores: true,
                 ignores_inside_only: self.flavor == RcFlavor::Oxlint,
                 ..ConfigObject::default()
             });
+        }
+        for (name, value) in (json.get(b"options").and_then(Json::as_object)).unwrap_or_default() {
+            self.options.retain(|it| it.0 != *name);
+            self.options.push((name.clone(), value.clone()));
         }
         let mut linter_options = Vec::new();
         for key in [&b"noInlineConfig"[..], b"reportUnusedDisableDirectives"] {
@@ -470,7 +510,7 @@ impl Rc<'_, '_> {
             .unwrap_or_default()
         {
             let files = strings_of(item.get(b"files"));
-            if files.is_empty() {
+            if files.is_empty() && self.flavor == RcFlavor::Eslint {
                 return Err(ConfigError::new(&[
                     b"Key \"overrides\": Key \"files\": Expected value to be a non-empty array.",
                 ]));
@@ -484,9 +524,16 @@ impl Rc<'_, '_> {
             }
             let object = ConfigObject {
                 base_path: base_path.clone(),
-                files: Some(files.iter().map(|it| vec![override_pattern(it)]).collect()),
-                ignores: (!excluded.is_empty())
-                    .then(|| excluded.iter().map(|it| override_pattern(it)).collect()),
+                files: Some(
+                    (files.iter())
+                        .map(|it| vec![override_pattern(it, self.flavor)])
+                        .collect(),
+                ),
+                ignores: (!excluded.is_empty()).then(|| {
+                    (excluded.iter())
+                        .map(|it| override_pattern(it, self.flavor))
+                        .collect()
+                }),
                 language_options: self.language_options(item),
                 settings: item.get(b"settings").cloned().unwrap_or(Json::Null),
                 rules: self.rules(item)?,
@@ -582,6 +629,41 @@ impl Rc<'_, '_> {
         settings
     }
 
+    /// The rules that `categories` turns on, of the plugins that are on, which do not exist here and about which the files say
+    /// nothing: as [`oxlint_rule_key`] writes them.
+    fn lacking_rules(&self) -> Vec<Vec<u8>> {
+        let is_named = |key: &[u8]| {
+            let objects = self.reader.objects.iter().chain(&self.overrides);
+            objects.flat_map(|it| &it.rules).any(|it| *it.id == *key)
+        };
+        let mut lacking = Vec::new();
+        for (category, _) in (self.categories.iter()).filter(|it| it.1 != Severity::Off) {
+            let lists = categories::CATEGORIES.iter();
+            let lists = lists.filter(|it| it.0.as_bytes() == &category[..]);
+            for (plugin, names) in lists.flat_map(|it| it.1) {
+                let plugin = plugin.as_bytes();
+                let is_on = |it: &Vec<u8>| plugin_of_oxlint(it) == plugin;
+                if plugin != b"eslint" && !self.plugins.iter().any(is_on) {
+                    continue;
+                }
+                let exists = |name: &[u8]| {
+                    Plugin::of_oxlint_prefix(plugin).is_some_and(|it| {
+                        self.reader
+                            .registry
+                            .get_preferring(it, name, true)
+                            .is_some()
+                    })
+                };
+                let names = strings::split(names.as_bytes(), b" ").filter(|it| !it.is_empty());
+                let keys = names
+                    .filter(|name| !exists(name))
+                    .map(|name| oxlint_rule_key(&[plugin, b"/", name].concat()));
+                lacking.extend(keys.filter(|key| !is_named(key)));
+            }
+        }
+        lacking
+    }
+
     /// `should_run` of the rules of oxlint, as far as it goes by the kind of file: objects that turn rules off, whatever else is
     /// configured.
     fn rules_by_kind_of_file(&self) -> Vec<ConfigObject> {
@@ -664,6 +746,7 @@ impl Config {
             },
             plugins: Vec::new(),
             overrides: Vec::new(),
+            options: Vec::new(),
         };
         rc.reader.objects.push(ConfigObject {
             files: Some(vec![vec![Pattern::new(match flavor {
@@ -676,11 +759,11 @@ impl Config {
         let ignored: Vec<Vec<u8>> = match flavor {
             RcFlavor::Eslint => [&b".*"[..], b"!.eslintrc.*", b"/**/node_modules/*"]
                 .iter()
-                .map(|it| ignore_pattern_to_minimatch(it))
+                .map(|it| ignore_pattern_to_minimatch(it, flavor))
                 .collect(),
+            // Not `node_modules`: a `.gitignore` has that.
             RcFlavor::Oxlint => [
-                &b"**/node_modules/"[..],
-                b"**/.git/",
+                &b"**/.git/"[..],
                 b"**/.jj/",
                 b"**/*.min.*",
                 b"**/*-min.*",
@@ -700,12 +783,27 @@ impl Config {
         rc.reader.objects.push(ConfigObject::default());
         rc.file(json, &base_path, false, 0)?;
         rc.reader.objects[categories_at].rules = rc.category_rules();
+        let lacking = rc.lacking_rules();
+        if !lacking.is_empty() {
+            rc.reader.note(&[
+                lacking.len().to_string().as_bytes(),
+                b" rules that the categories turn on do not exist here yet and did not run: ",
+                &lacking.join(&b", "[..]),
+            ]);
+        }
         rc.reader.objects.append(&mut rc.overrides);
         if flavor == RcFlavor::Oxlint {
             // What is said about a rule of a plugin that oxlint does not have on has no effect.
             let mut objects = std::mem::take(&mut rc.reader.objects);
             for object in &mut objects {
                 (object.rules).retain(|it| it.written_for.is_none_or(|it| rc.has_plugin(it)));
+            }
+            // Only with `import` does oxlint look at other files, which `oxc/no-barrel-file` has to know.
+            if !rc.has_plugin(Plugin::Import) {
+                objects.push(ConfigObject {
+                    settings: Json::Object(vec![(b"$withoutModules".to_vec(), Json::Bool(true))]),
+                    ..ConfigObject::default()
+                });
             }
             rc.reader.objects = objects;
             let is_off = |id: &[u8]| {
@@ -719,9 +817,19 @@ impl Config {
             let mut by_kind_of_file = rc.rules_by_kind_of_file();
             rc.reader.objects.append(&mut by_kind_of_file);
         }
-        Ok(rc.reader.finish(Semantics {
-            keeps_options: flavor == RcFlavor::Eslint,
-            accepts_all_plugins: true,
-        }))
+        let options_of_oxlint = std::mem::take(&mut rc.options);
+        Ok(Config {
+            options_of_oxlint,
+            ..rc.reader.finish(Semantics {
+                keeps_options: flavor == RcFlavor::Eslint,
+                accepts_all_plugins: true,
+                is_legacy: false,
+            })
+        })
+    }
+
+    /// What oxlint refuses in `json`, which is a whole `.oxlintrc.json`, whatever it says.
+    pub fn check_shape_for_oxlint(json: &Json) -> Result<(), ConfigError> {
+        shape::check(json)
     }
 }

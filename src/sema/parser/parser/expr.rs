@@ -1137,40 +1137,77 @@ impl Parser<'_> {
             return self.flow_type_arguments_in_expression(!allows_calls);
         }
         let less_than = self.pos() as usize;
+        // What follows a `<` that starts no type arguments is parsed again as an expression, with
+        // every `<` in it. An attempt that got far and failed is not made again: otherwise each
+        // level of `a < ({b = a < ({b = ..` takes twice as long as the one in it.
+        let at = (less_than as u32, self.context);
+        if !self.not_type_arguments.is_empty() {
+            // What is before a token that is read for good is not read again.
+            if self.speculations == 0 {
+                let read = self.not_type_arguments.partition_point(|it| it.0 < at.0);
+                self.not_type_arguments.drain(..read);
+            }
+            if self.not_type_arguments.binary_search(&at).is_ok() {
+                return None;
+            }
+        }
+        let mut end = at.0;
         let type_arguments = self.try_parse(|p| {
-            // `ReScanLessThanToken`
-            if p.token() == T::LessThanLessThan {
-                p.lx.token = T::LessThan;
-                p.lx.end = p.lx.start + 1;
-            }
-            p.next();
-            let base = p.s.ids.len();
-            if let Some((at, code)) = p.type_argument_list(less_than as u32) {
-                p.flag(DiagnosticKind::Grammar, code, at, &[]);
-            }
-            // The scanner never joins a `>` with what follows it.
-            if p.token() != T::GreaterThan {
-                return None;
-            }
-            // `ReScanGreaterThanToken`: `>=`, `>>` and so on do not end the list.
-            p.lx.rescan_greater_than();
-            if p.token() != T::GreaterThan {
-                return None;
-            }
-            p.next();
-            // `canFollowTypeArgumentsInExpression`
-            let follows = match p.token() {
-                T::OpenParen | T::NoSubstitutionTemplate | T::TemplateHead => true,
-                T::LessThan | T::GreaterThan | T::Plus | T::Minus => false,
-                _ => p.newline_before() || p.is_binary_operator() || !p.is_start_of_expression(),
-            };
-            follows.then(|| p.take_ids(base))
+            let type_arguments = p.type_arguments_in_expression(at.0);
+            end = p.pos();
+            type_arguments
         });
-        // TypeScript reports an error in a type and goes on. What it goes on with can end with a `>`,
-        // and then these are type arguments with an error in them.
-        if type_arguments.is_none()
-            && let Some((failed_token, failed_at)) = self.was_abandoned_at
-        {
+        if let Some((_, failed_at)) = self.was_abandoned_at {
+            end = failed_at;
+        }
+        if type_arguments.is_none() && !self.has_failed() && end.saturating_sub(at.0) > 64 {
+            let place = self.not_type_arguments.partition_point(|it| *it < at);
+            self.not_type_arguments.insert(place, at);
+        }
+        if type_arguments.is_none() {
+            self.refuse_type_arguments_with_an_error(less_than);
+        }
+        type_arguments
+    }
+
+    /// `parseTypeArgumentsInExpression`, at the `<` at `less_than`.
+    fn type_arguments_in_expression(&mut self, less_than: u32) -> Option<IdList<TypeNodeId>> {
+        // `ReScanLessThanToken`
+        if self.token() == T::LessThanLessThan {
+            self.lx.token = T::LessThan;
+            self.lx.end = self.lx.start + 1;
+        }
+        self.next();
+        let base = self.s.ids.len();
+        if let Some((at, code)) = self.type_argument_list(less_than) {
+            self.flag(DiagnosticKind::Grammar, code, at, &[]);
+        }
+        // The scanner never joins a `>` with what follows it.
+        if self.token() != T::GreaterThan {
+            return None;
+        }
+        // `ReScanGreaterThanToken`: `>=`, `>>` and so on do not end the list.
+        self.lx.rescan_greater_than();
+        if self.token() != T::GreaterThan {
+            return None;
+        }
+        self.next();
+        // `canFollowTypeArgumentsInExpression`
+        let follows = match self.token() {
+            T::OpenParen | T::NoSubstitutionTemplate | T::TemplateHead => true,
+            T::LessThan | T::GreaterThan | T::Plus | T::Minus => false,
+            _ => {
+                self.newline_before() || self.is_binary_operator() || !self.is_start_of_expression()
+            }
+        };
+        follows.then(|| self.take_ids(base))
+    }
+
+    /// After an attempt at the `<` at `less_than` that failed. TypeScript reports an error in a type
+    /// and goes on. What it goes on with can end with a `>`, and then these are type arguments with
+    /// an error in them.
+    fn refuse_type_arguments_with_an_error(&mut self, less_than: usize) {
+        if let Some((failed_token, failed_at)) = self.was_abandoned_at {
             let rest = self.lx.src.get(less_than..).unwrap_or_default();
             let statement = rest.get(..256).unwrap_or(rest);
             let statement = match bun_core::strings::index_of_char_usize(statement, b';') {
@@ -1225,7 +1262,6 @@ impl Parser<'_> {
                 from += found + 1;
             }
         }
-        type_arguments
     }
 
     /// `parsePrimaryExpression`

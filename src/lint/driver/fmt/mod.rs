@@ -264,6 +264,15 @@ fn parse_javascript(
     with_file(&how, code, |file, _, _| then(file));
 }
 
+/// Whether the two texts are the same value. What cannot be read as a value, with a key twice, is not looked at.
+fn is_same_toml(before: &[u8], after: &[u8]) -> bool {
+    use bun_lint::json::{Notation, parse_as};
+    match parse_as(Notation::Toml, before) {
+        Ok(before) => parse_as(Notation::Toml, after).is_ok_and(|after| after == before),
+        Err(_) => true,
+    }
+}
+
 /// The formatted text, and where the cursor is in it, if `cursorOffset` says where it was.
 type Formatted = (Vec<u8>, Option<u32>);
 
@@ -298,7 +307,7 @@ fn format(
         Err(FormatError::InvalidDocument) => Err(Failure::Bug("the formatter failed")),
     };
     let mut out = Vec::new();
-    let kind = Kind::of(name, options.parser.as_deref());
+    let kind = Kind::with_options(name, options);
     if let (None, Some(parser)) = (kind, &options.parser) {
         return Err(Failure::Syntax(cannot_resolve_parser(parser)));
     }
@@ -338,6 +347,15 @@ fn format(
         Some(Kind::GraphQl) => {
             let done = bun_format::graphql::format(text, options, &mut scratch.graphql, &mut out);
             return finish(done, out, "GraphQL");
+        }
+        Some(Kind::Toml) => {
+            let done = bun_format::toml::format(text, options, &mut out);
+            if verifies && done.is_ok() && out != text && !is_same_toml(text, &out) {
+                return Err(Failure::Loss(
+                    "formatting it the way oxfmt does would change what is in it",
+                ));
+            }
+            return finish(done, out, "TOML");
         }
         Some(Kind::Handlebars) => {
             let done =
@@ -395,7 +413,10 @@ fn format(
     // `babel` hands a file of Flow to `babel-flow`, which reads what is in `/*:: */` and `/*: */` as code.
     let is_flow = match options.parser.as_deref() {
         Some(b"flow" | b"babel-flow") => true,
-        Some(b"babel") | None => bun_lint::linter::goes_to_flow(&text, name),
+        // oxfmt does not read Flow.
+        Some(b"babel") | None => {
+            !options.flavor.is_oxfmt() && bun_lint::linter::goes_to_flow(&text, name)
+        }
         Some(_) => false,
     };
     let has_comment_types = is_flow
@@ -577,6 +598,22 @@ struct Run<'r> {
     began: Instant,
 }
 
+/// What the file at `path`, which has `scope`, is to the tool that the run stands in for.
+fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Language {
+    // The `parser` option says what it is. One that Prettier does not have is that of a plugin.
+    match configs.parser_for(scope, path) {
+        Some(parser) if Kind::of_parser(&parser).is_none() => Language::Other,
+        Some(_) => Language::Supported,
+        None if configs.is_oxfmt_for(scope) => {
+            files::language_for_oxfmt(path, configs.formats_svelte(scope))
+        }
+        None => match files::language_of(path) {
+            Language::Unknown if configs.is_read_by_plugin(scope, path) => Language::Other,
+            language => language,
+        },
+    }
+}
+
 impl Run<'_> {
     /// Prettier's `logger.log`
     fn log(&mut self, text: &[u8]) {
@@ -657,15 +694,17 @@ impl Run<'_> {
             }
         };
         let path = paths::resolve(&self.environment.cwd, &paths::from_native(name));
+        // The configuration of a file that is ignored is not even read.
+        if ignored.ignores_file(&path, &None) {
+            self.out.stdout = text;
+            return self.out;
+        }
         let found = configs
             .for_directory(paths::dirname(&path))
             .and_then(|scope| {
                 let of_config = configs.ignores_of(&scope);
                 let options = configs.options_for(&scope, &path)?;
-                let is_another_language = match &options.options.parser {
-                    Some(parser) => Kind::of_parser(parser).is_none(),
-                    None => files::language_of(&path) == Language::Other,
-                };
+                let is_another_language = language_of(configs, &scope, &path) == Language::Other;
                 Ok(
                     (!ignored.ignores_file(&path, of_config) && !is_another_language)
                         .then_some(options),
@@ -679,10 +718,7 @@ impl Run<'_> {
             }
             Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
         };
-        let is_left_alone = configs.flavor == Flavor::Oxfmt && files::is_left_alone_by_oxfmt(&path);
-        if is_left_alone
-            || (files::language_of(&path) == Language::Unknown && options.options.parser.is_none())
-        {
+        if Kind::with_options(&path, &options.options).is_none() {
             let only_looks = self.options.check || self.options.list_different;
             let mut out = self.fail_to_start(
                 configs.flavor,
@@ -760,6 +796,8 @@ impl Run<'_> {
 
         // What is not to be formatted after all.
         let mut others: Vec<(&[u8], usize)> = Vec::new();
+        // How many files are left alone because of plugins that are not there, and which.
+        let mut left_for_plugins: (usize, Vec<&[u8]>) = (0, Vec::new());
         let is_wanted = |target: &Target| {
             let of_config = configs.ignores_of(&target.scope);
             !target.is_named || !ignored.ignores_file(&target.path, of_config)
@@ -771,17 +809,20 @@ impl Run<'_> {
             let Expanded::File(target) = it else {
                 continue;
             };
-            // The `parser` option says what it is. One that Prettier does not have is that of a plugin.
-            let language = match configs.parser_for(&target.scope, &target.path) {
-                Some(parser) if Kind::of_parser(&parser).is_none() => Language::Other,
-                Some(_) => Language::Supported,
-                None if configs.flavor == Flavor::Oxfmt => {
-                    files::language_for_oxfmt(&target.path, configs.formats_svelte(&target.scope))
-                }
-                None => files::language_of(&target.path),
+            let missing_plugins = match options.allow_unsupported {
+                true => &[][..],
+                false => configs.missing_plugins(&target.scope),
             };
-            match language {
+            match language_of(configs, &target.scope, &target.path) {
                 _ if !is_wanted(target) => {}
+                Language::Supported if !missing_plugins.is_empty() => {
+                    left_for_plugins.0 += 1;
+                    for name in missing_plugins {
+                        if !left_for_plugins.1.contains(&&name[..]) {
+                            left_for_plugins.1.push(name);
+                        }
+                    }
+                }
                 Language::Supported => work.push((index, target)),
                 Language::Other => {
                     let name = paths::basename(&target.path);
@@ -843,7 +884,7 @@ impl Run<'_> {
                 // one, which only a file that changes gets.
                 let is_free = || {
                     matches!(
-                        Kind::of(&target.path, options.options.parser.as_deref()),
+                        Kind::with_options(&target.path, &options.options),
                         Some(Kind::Handlebars | Kind::Html(_))
                     )
                 };
@@ -966,6 +1007,36 @@ impl Run<'_> {
                 pool.threads(),
             );
         }
+        let unsupported_options = std::mem::take(&mut *configs.unsupported_options.lock());
+        if !unsupported_options.is_empty() {
+            let text = [
+                &unsupported_options.join(&b", "[..])[..],
+                b" is not supported yet, and has no effect",
+            ]
+            .concat();
+            match options.allow_unsupported {
+                true => self.warn(&[&text[..], b"."].concat()),
+                false => {
+                    self.error(
+                        &[&text[..], b". With --allow-unsupported this is a warning."].concat(),
+                    );
+                }
+            }
+        }
+        if let (count @ 1.., names) = &left_for_plugins {
+            let noun = if *count == 1 { "file is" } else { "files are" };
+            let text = format!(
+                "{count} {noun} left as they are: the configuration names plugins that bun format does not have, and that may print them in another way: "
+            );
+            self.error(
+                &[
+                    text.as_bytes(),
+                    &names.join(&b", "[..]),
+                    b". With --allow-unsupported they are formatted without.",
+                ]
+                .concat(),
+            );
+        }
         // The tool that this stands in for would have formatted or checked them, so this comes last and is an error.
         if !others.is_empty() {
             others.sort_by_key(|it| (std::cmp::Reverse(it.1), it.0));
@@ -991,14 +1062,52 @@ impl Run<'_> {
         self.out
     }
 
+    /// `oxfmt --init`
+    fn init(mut self) -> Outcome {
+        let environment = self.environment;
+        let cwd = &environment.cwd;
+        if config::has_configuration_of_oxfmt(cwd) {
+            let mut out = self.fail(b"A configuration file of oxfmt already exists.");
+            out.exit_code = 1;
+            return out;
+        }
+        match fs::write_new(
+            &paths::join(cwd, b".oxfmtrc.json"),
+            b"{\n  \"ignorePatterns\": []\n}\n",
+        ) {
+            Ok(()) => {
+                self.out.stdout = b"Created `.oxfmtrc.json`.\n".to_vec();
+                self.out
+            }
+            Err(error) => {
+                self.fail(&[&b"Cannot write .oxfmtrc.json: "[..], &fs::describe(&error)].concat())
+            }
+        }
+    }
+
     fn execute(mut self) -> Outcome {
         let (options, environment) = (self.options, self.environment);
         if options.version {
             self.out.stdout = [environment.version, b"\n"].concat();
             return self.out;
         }
+        if let Some(name) = (options.plugins.iter()).find(|it| config::is_missing_plugin(it))
+            && !options.allow_unsupported
+        {
+            return self.fail(
+                &[
+                    b"bun format does not have the plugin ",
+                    &name[..],
+                    b", which may print files in another way. With --allow-unsupported they are formatted without.",
+                ]
+                .concat(),
+            );
+        }
         if !(options.plugins.iter()).all(|it| config::is_built_in_plugin(it)) {
             self.warn(b"Plugins are not supported: --plugin has no effect.");
+        }
+        if options.init {
+            return self.init();
         }
         if options.config.is_some() && !options.config_lookup {
             let mut out = self.fail(b"Cannot use --no-config and --config together.");

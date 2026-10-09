@@ -37,7 +37,14 @@ struct Setup {
 fn setup() -> &'static Setup {
     static SETUP: OnceLock<Setup> = OnceLock::new();
     SETUP.get_or_init(|| {
-        let all = [bun_lint_eslint::RULES, bun_lint_typescript::RULES, bun_lint_plugins::RULES];
+        let all = [
+            bun_lint_eslint::RULES,
+            bun_lint_typescript::RULES,
+            bun_lint_plugins::RULES,
+            bun_lint_unicorn::RULES,
+            bun_lint_react::RULES,
+            bun_lint_jest::RULES,
+        ];
         let rules = (all.iter().flat_map(|it| it.iter()))
             .filter(|it| !it.meta.requires_types && !it.meta.needs_modules)
             .map(|it| (RuleId::Known(it.meta).to_vec(), Json::Number(2.0)))

@@ -3,11 +3,15 @@
 use super::block_statement::is_empty_block;
 use super::class::FormatClassImplements;
 use super::import_declaration::FormatStringLiteral;
+use super::intersection_type::lone_type_of_intersection_is_a_group;
 use super::program::FormatStatements;
 use super::semicolon::OptionalSemicolon;
 use super::ts_types::{FormatModuleSpecifier, entity_name, write_ts_interface_signatures};
 use super::type_parameters::{FormatTSTypeParametersOptions, type_parameters};
-use super::union_type::{union_breaks_one_per_line, write_ts_union_type_in};
+use super::union_type::{
+    type_alias_union_breaks_after_operator, union_breaks_one_per_line, union_prints_itself,
+    write_ts_union_type_in,
+};
 use crate::cursor::around_node;
 use crate::js::format::{format_node, identifier, write_trailing_comments_of};
 use crate::js::trivia::{comments_stay_between_head_and_body, write_head_body_separator};
@@ -241,7 +245,7 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
     }
     let (operator_line_run, has_line_comment_on_operator_line) = operator_line;
 
-    let layout = match type_alias_layout(alias, ty, f) {
+    let layout = match type_alias_layout(statement, alias, ty, f) {
         AssignmentLikeLayout::Fluid | AssignmentLikeLayout::NeverBreakAfterOperator
             if has_line_comment_on_operator_line =>
         {
@@ -273,6 +277,12 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
                     write_ts_union_type_in(ty, types, is_indented, f)
                 });
                 write_trailing_comments_of(ty.as_ast_nodes(), f);
+            }
+            _ if ty != alias.ty()
+                && matches!(alias.ty().kind(), TypeKind::Intersection(_))
+                && lone_type_of_intersection_is_a_group(f) =>
+            {
+                write!(f, group(&ty))
             }
             _ => write!(f, ty),
         }
@@ -375,6 +385,7 @@ fn comments_before_type_alias_operator<'a>(
 
 /// Prettier's `chooseLayout` for the type alias `alias`, whose type is `ty`.
 fn type_alias_layout<'a>(
+    statement: Stmt<'a>,
     alias: Alias<'a>,
     ty: TypeNode<'a>,
     f: &Formatter<'a>,
@@ -385,7 +396,11 @@ fn type_alias_layout<'a>(
         _ => false,
     };
     let should_break_after_operator = match ty.kind() {
-        TypeKind::Union(types) if !should_hug_type(ty, types, f) => !union_breaks_one_per_line(f),
+        TypeKind::Union(types)
+            if !union_breaks_one_per_line(f) && !should_hug_type(ty, types, f) =>
+        {
+            true
+        }
         _ if type_alias_comments_stay_behind_operator(f)
             && !f.is_quiet()
             && f.comments()
@@ -394,7 +409,17 @@ fn type_alias_layout<'a>(
         {
             true
         }
-        TypeKind::Union(_) if type_alias_comments_stay_behind_operator(f) => false,
+        // It is up to the union where it breaks, unless it leaves that to the `=`.
+        TypeKind::Union(_)
+            if type_alias_comments_stay_behind_operator(f) && union_prints_itself(ty, f) =>
+        {
+            !f.is_quiet()
+                && type_alias_union_breaks_after_operator(
+                    statement,
+                    f.comments().comments_before(ty.span().start),
+                    f,
+                )
+        }
         _ if type_alias_comments_stay_behind_operator(f)
             && f.comments().has_leading_own_line_comment(ty.span().start) =>
         {
@@ -427,10 +452,7 @@ fn type_alias_layout<'a>(
         return AssignmentLikeLayout::BreakLeftHandSide;
     }
     // It is up to the union where it breaks, also if it has nowhere to.
-    if matches!(ty.kind(), TypeKind::Union(_))
-        && union_breaks_one_per_line(f)
-        && (f.is_quiet() || !f.comments().has_comment_before(ty.span().start))
-    {
+    if union_breaks_one_per_line(f) && union_prints_itself(ty, f) {
         return AssignmentLikeLayout::NeverBreakAfterOperator;
     }
     AssignmentLikeLayout::Fluid
@@ -635,6 +657,11 @@ pub(crate) fn write_ts_module_declaration<'a>(
     );
 }
 
+/// `require(/* comment */ "a")` is on three lines for oxfmt, whatever the comment is.
+fn require_with_comment_breaks(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// `import a = require("a")`, `import a = b.c`
 pub(crate) fn write_ts_import_equals_declaration<'a>(
     statement: Stmt<'a>,
@@ -672,6 +699,9 @@ pub(crate) fn write_ts_import_equals_declaration<'a>(
                         call_span: require_span,
                     };
                     match f.comments().has_comment_in_span(require_span) {
+                        true if require_with_comment_breaks(f) => {
+                            write!(f, ["require(", block_indent(&expression), ")"])
+                        }
                         true => write!(
                             f,
                             group(&format_args!(

@@ -561,10 +561,12 @@ impl<'p, 's> Checker<'p, 's> {
         e: ExprId,
         is_rechecked: bool,
     ) -> Option<TypeId> {
-        let first = self
-            .stack
-            .iter()
-            .rposition(|&q| q == Query::Expr(file, e))?;
+        let q = Query::Expr(file, e);
+        // FOR SPEED, as in `enter`: the stack is searched only if a query of its class is on it.
+        if self.in_progress[(crate::util::fx_hash(&q) >> 54) as usize] == 0 {
+            return None;
+        }
+        let first = self.stack.iter().rposition(|&it| it == q)?;
         let pushed_at = self.flow_loop_pushed_since(first)?;
         let is_checked_once = !is_rechecked && self.is_rechecking();
         // Hides the first visit from `enter`, which still fails when time, native stack or query
@@ -5210,9 +5212,12 @@ impl<'p, 's> Checker<'p, 's> {
             }
             BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => {
                 // `CheckModeTypeOnly`: while a loop analysis is in progress the operand types may
-                // be narrower than the final ones.
+                // be narrower than the final ones. Not above a resolution, which is computed in the
+                // normal mode, with an empty `flowLoopStack`, and stored: nothing reports later.
                 let (l, r) = self.check_operands(file, left, right);
-                if self.flow_loops.is_empty() {
+                let is_in_flow_loop = (self.flow_loops.last())
+                    .is_some_and(|pushed| self.is_flow_loop_visible(pushed.5));
+                if !is_in_flow_loop {
                     let hir = self.hir(file);
                     let is_equality = matches!(op, BinOp::EqEq | BinOp::EqEqEq);
                     // A JavaScript file reports only `===` and `!==`.

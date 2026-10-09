@@ -308,6 +308,11 @@ impl<'a> Type<'a> {
         self.file.query(|q| q.type_flags(self.id))
     }
 
+    /// [`utils::get_type_flags`](super::utils::get_type_flags)
+    pub(crate) fn flags_of_constituents(self) -> TypeFlags {
+        self.file.query(|q| q.flags_of_constituents(self.id))
+    }
+
     /// `tsutils.isTypeFlagSet(type, flags)`: of the type itself.
     #[inline]
     pub fn has_flags(self, flags: TypeFlags) -> bool {

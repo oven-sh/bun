@@ -3,6 +3,7 @@
 //! builds have.
 
 use crate::cli::Options;
+use crate::embedded::Framework;
 use crate::lint::Context;
 use crate::run::{Environment, Pool, Timing};
 use crate::typed::{self, Typed};
@@ -49,6 +50,8 @@ impl Host for Tester<'_> {
             linter: &self.linter,
             options: &options,
             cwd: directory,
+            of_oxlint: None,
+            checks_types: false,
             keeps_text: true,
             reads_fixes: true,
             reads_suppressions: true,
@@ -60,7 +63,13 @@ impl Host for Tester<'_> {
         };
         let config = Arc::new(case.config.clone());
         match case.place {
-            Place::Nowhere => Some(context.verify(case.path, case.code, &config).messages),
+            Place::Nowhere => Some(match Framework::of(case.path) {
+                Some(framework) if config.language.is_oxlint => {
+                    let linted = context.verify_scripts(framework, case.path, case.code, &config);
+                    linted.messages
+                }
+                _ => context.verify(case.path, case.code, &config).messages,
+            }),
             Place::Project(_) => {
                 let mut result = context.verify_text(
                     case.path.to_vec(),
@@ -114,6 +123,9 @@ pub fn run_eslint_tests(args: &[&[u8]], environment: &Environment) -> bool {
                 bun_lint_eslint::RULES,
                 bun_lint_typescript::RULES,
                 bun_lint_plugins::RULES,
+                bun_lint_unicorn::RULES,
+                bun_lint_react::RULES,
+                bun_lint_jest::RULES,
             ])),
             environment,
             js_plugins: js_plugin::Host::with_engine(

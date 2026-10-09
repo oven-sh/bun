@@ -59,7 +59,11 @@ printed on stderr, the counts, and for each kind of difference (a rule and who r
 - **The judge** is their installed version for ESLint; where the results differ, ESLint 10.12.0, which `bun lint` follows,
   runs too, with their configuration and plugins, to tell what ESLint has changed since from what we get wrong. For Prettier it is 3.9.9, which `bun format` follows, next to their
   version: a repository on Prettier 2 differs for reasons that are in Prettier's changelog. For oxlint and oxfmt it is the
-  version in their lock file, next to oxlint 1.80.0 and oxfmt 0.72.0.
+  version in their lock file, next to the latest releases, oxlint 1.87.0 and oxfmt 0.72.0, which always run too: "the same as
+  the latest release" is a number of its own.
+- **What cannot be done yet**: a configuration that names rules which are not built in, or wants files linted that cannot be
+  read, ends `bun lint` with exit code 2 after the report. The comparison is made with `--allow-unsupported`; the lines are
+  kept with each run (`unsupported`), and say what stops that project from switching.
 - In a package that has a `lint` or a `format` script, `bun lint` runs that script, except in the script itself. So
   `npm_lifecycle_event` is set, as it is in `"lint": "bun lint"`.
 

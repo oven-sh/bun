@@ -352,6 +352,7 @@ fn write_document_with_cursor(
         stack_check: bun_core::StackCheck::init(),
         is_nested_too_deeply: false,
         has_typescript_script: None,
+        has_tsx_script: None,
         cursor,
         css_scratch: Default::default(),
     };
@@ -413,6 +414,7 @@ fn format_angular_expression(
             stack_check: bun_core::StackCheck::init(),
             is_nested_too_deeply: false,
             has_typescript_script: None,
+            has_tsx_script: None,
             cursor: Cursor::Nowhere,
             css_scratch: Default::default(),
         };
@@ -518,6 +520,7 @@ pub fn format_with(
     let options = FormatOptions {
         line_ending: options.line_ending.resolve(original),
         is_in_html_file: path.ends_with(b".html") || path.ends_with(b".htm"),
+        filepath: Some(options.filepath.clone().unwrap_or_else(|| path.into())),
         ..options_of_host(options, parser)
     };
     let path = Some(path).filter(|path| !path.is_empty());

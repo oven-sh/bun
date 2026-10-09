@@ -4,8 +4,12 @@
 //! Each difference is behind a function that is named after what oxlint does, here or in [`bun_lint::modules::Flavor`], and has a
 //! project in `test/cli/lint/oracle/plugins/oxlint`.
 
+pub(crate) mod comments;
 pub(crate) mod exhaustive_deps;
+pub(crate) mod node;
+pub(crate) mod promise;
 pub(crate) mod rules_of_hooks;
+pub(crate) mod vue;
 
 use bun_lint::ast::File;
 use bun_lint::modules::Flavor;

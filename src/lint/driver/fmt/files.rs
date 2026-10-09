@@ -43,7 +43,7 @@ pub(crate) enum Language {
 }
 
 /// `EXCLUDE_FILENAMES` of oxfmt: what a tool has written, and is never formatted.
-pub(crate) fn is_left_alone_by_oxfmt(path: &[u8]) -> bool {
+fn is_left_alone_by_oxfmt(path: &[u8]) -> bool {
     matches!(
         paths::basename(path),
         b"package-lock.json"
@@ -77,6 +77,8 @@ pub(crate) enum Kind {
     Mdx,
     GraphQl,
     Handlebars,
+    /// Only for oxfmt.
+    Toml,
     /// HTML, Vue, Angular templates, Lightning Web Components, MJML.
     Html(bun_format::html::Parser),
 }
@@ -100,8 +102,19 @@ impl Kind {
         json().or_else(css).or_else(html).or_else(other)
     }
 
+    /// Of the file at `path`, as `options` have it.
+    pub(crate) fn with_options(path: &[u8], options: &bun_format::FormatOptions) -> Option<Kind> {
+        if !options.flavor.is_oxfmt() {
+            return Kind::of(path, options.parser.as_deref());
+        }
+        match classify_for_oxfmt(path) {
+            Some(ForOxfmt::Kind(kind)) => Some(kind),
+            _ => None,
+        }
+    }
+
     /// Of the file at `path`. `parser`: Prettier's option of that name, which decides if it is set.
-    pub(crate) fn of(path: &[u8], parser: Option<&[u8]>) -> Option<Kind> {
+    fn of(path: &[u8], parser: Option<&[u8]>) -> Option<Kind> {
         if let Some(parser) = parser {
             return Kind::of_parser(parser);
         }
@@ -112,6 +125,8 @@ impl Kind {
             extension,
             b"js" | b"mjs" | b"cjs" | b"jsx" | b"ts" | b"mts" | b"cts" | b"tsx"
         ) || name.ends_with(b".js.flow")
+            || extension == b"wxs"
+            || is_javascript_by_another_name(name, extension)
         {
             return Some(Kind::Script);
         }
@@ -136,6 +151,156 @@ impl Kind {
     }
 }
 
+/// What else is JavaScript for Prettier and for oxfmt, which have it from GitHub's linguist.
+fn is_javascript_by_another_name(name: &[u8], extension: &[u8]) -> bool {
+    matches!(
+        extension,
+        b"_js"
+            | b"bones"
+            | b"es"
+            | b"es6"
+            | b"gs"
+            | b"jake"
+            | b"javascript"
+            | b"jsb"
+            | b"jscad"
+            | b"jsfl"
+            | b"jslib"
+            | b"jsm"
+            | b"jspre"
+            | b"jss"
+            | b"njs"
+            | b"pac"
+            | b"sjs"
+            | b"ssjs"
+            | b"xsjs"
+            | b"xsjslib"
+    ) || matches!(name, b"Jakefile" | b"start.frag" | b"end.frag")
+        || name.ends_with(b".start.frag")
+        || name.ends_with(b".end.frag")
+}
+
+/// What a name stands for to oxfmt.
+#[derive(Copy, Clone)]
+enum ForOxfmt {
+    Kind(Kind),
+    Mdx,
+    /// Only with `svelte` in the configuration.
+    Svelte,
+}
+
+/// oxfmt's `classify_file_kind`. Unlike Prettier it tells upper case from lower case.
+fn classify_for_oxfmt(path: &[u8]) -> Option<ForOxfmt> {
+    use bun_format::{css, html, json};
+    let name = paths::basename(path);
+    // `Path::extension`: a name that starts with its only dot has none.
+    let extension = match strings::last_index_of_char(name, b'.') {
+        None | Some(0) => &b""[..],
+        Some(dot) => &name[dot + 1..],
+    };
+    let is_script = matches!(
+        extension,
+        b"js" | b"mjs" | b"cjs" | b"jsx" | b"ts" | b"mts" | b"cts" | b"tsx"
+    );
+    if !is_script && is_left_alone_by_oxfmt(path) {
+        return None;
+    }
+    if is_script || is_javascript_by_another_name(name, extension) {
+        return Some(ForOxfmt::Kind(Kind::Script));
+    }
+    if extension == b"toml"
+        || matches!(name, b"Pipfile" | b"Cargo.toml.orig")
+        || name.ends_with(b".toml.example")
+    {
+        return Some(ForOxfmt::Kind(Kind::Toml));
+    }
+    let by_name = match name {
+        b"package.json" | b"composer.json" => Some(Kind::Json(json::Parser::JsonStringify)),
+        b".all-contributorsrc"
+        | b".arcconfig"
+        | b".auto-changelog"
+        | b".c8rc"
+        | b".htmlhintrc"
+        | b".imgbotconfig"
+        | b".nycrc"
+        | b".tern-config"
+        | b".tern-project"
+        | b".watchmanconfig"
+        | b".babelrc"
+        | b".jscsrc"
+        | b".jshintrc"
+        | b".jslintrc"
+        | b".swcrc" => Some(Kind::Json(json::Parser::Json)),
+        b".prettierrc" | b".stylelintrc" | b".lintstagedrc" | b".clang-format" | b".clang-tidy"
+        | b".clangd" | b".gemrc" | b"CITATION.cff" | b"glide.lock" | b"pixi.lock" => {
+            Some(Kind::Yaml)
+        }
+        b"contents.lr" | b"README" => Some(Kind::Markdown),
+        _ => None,
+    };
+    let by_ending = || {
+        [
+            (&b".json.example"[..], Kind::Json(json::Parser::Json)),
+            (b".tfstate.backup", Kind::Json(json::Parser::Json)),
+            (b".component.html", Kind::Html(html::Parser::Angular)),
+        ]
+        .into_iter()
+        .find(|it| name.ends_with(it.0))
+        .map(|it| it.1)
+    };
+    let by_extension = || {
+        Some(match extension {
+            b"importmap" => Kind::Json(json::Parser::JsonStringify),
+            b"json" | b"4DForm" | b"4DProject" | b"avsc" | b"geojson" | b"gltf" | b"har"
+            | b"ice" | b"JSON-tmLanguage" | b"mcmeta" | b"sarif" | b"tact" | b"tfstate"
+            | b"topojson" | b"webapp" | b"webmanifest" | b"yy" | b"yyp" => {
+                Kind::Json(json::Parser::Json)
+            }
+            b"jsonc"
+            | b"code-snippets"
+            | b"code-workspace"
+            | b"sublime-build"
+            | b"sublime-color-scheme"
+            | b"sublime-commands"
+            | b"sublime-completions"
+            | b"sublime-keymap"
+            | b"sublime-macro"
+            | b"sublime-menu"
+            | b"sublime-mousemap"
+            | b"sublime-project"
+            | b"sublime-settings"
+            | b"sublime-theme"
+            | b"sublime-workspace"
+            | b"sublime_metrics"
+            | b"sublime_session" => Kind::Json(json::Parser::Jsonc),
+            b"json5" => Kind::Json(json::Parser::Json5),
+            b"graphql" | b"gql" | b"graphqls" => Kind::GraphQl,
+            b"css" | b"wxss" | b"pcss" | b"postcss" => Kind::Css(css::Parser::Css),
+            b"scss" => Kind::Css(css::Parser::Scss),
+            b"less" => Kind::Css(css::Parser::Less),
+            b"yml" | b"mir" | b"reek" | b"rviz" | b"sublime-syntax" | b"syntax" | b"yaml"
+            | b"yaml-tmlanguage" => Kind::Yaml,
+            b"md" | b"livemd" | b"markdown" | b"mdown" | b"mdwn" | b"mkd" | b"mkdn" | b"mkdown"
+            | b"ronn" | b"scd" | b"workbook" => Kind::Markdown,
+            b"html" | b"hta" | b"htm" | b"inc" | b"xht" | b"xhtml" => {
+                Kind::Html(html::Parser::Html)
+            }
+            b"vue" => Kind::Html(html::Parser::Vue),
+            b"mjml" => Kind::Html(html::Parser::Mjml),
+            b"handlebars" | b"hbs" => Kind::Handlebars,
+            _ => return None,
+        })
+    };
+    match extension {
+        b"svelte" => Some(ForOxfmt::Svelte),
+        b"mdx" => Some(ForOxfmt::Mdx),
+        _ => by_name
+            .or_else(by_ending)
+            .or_else(by_extension)
+            .map(ForOxfmt::Kind),
+    }
+}
+
 pub(crate) fn language_of(path: &[u8]) -> Language {
     match Kind::of(path, None) {
         // Prettier reads MDX 1, and damages what is written today. Only for who asks: `--parser mdx`.
@@ -147,7 +312,7 @@ pub(crate) fn language_of(path: &[u8]) -> Language {
     let extension =
         strings::last_index_of_char(name, b'.').map_or(&b""[..], |dot| &name[dot + 1..]);
     match extension {
-        b"mdx" | b"es6" | b"jsm" | b"wxs" => Language::Other,
+        b"mdx" => Language::Other,
         _ if matches!(
             name,
             b".prettierrc" | b".lintstagedrc" | b".stylelintrc" | b".clang-format"
@@ -161,17 +326,11 @@ pub(crate) fn language_of(path: &[u8]) -> Language {
 
 /// The same for oxfmt, which also has TOML and, if `formats_svelte`, Svelte.
 pub(crate) fn language_for_oxfmt(path: &[u8], formats_svelte: bool) -> Language {
-    let name = paths::basename(path);
-    match language_of(path) {
-        Language::Unknown
-            if name.ends_with(b".toml")
-                || name.ends_with(b".toml.example")
-                || matches!(name, b"Pipfile" | b"Cargo.toml.orig")
-                || (formats_svelte && name.ends_with(b".svelte")) =>
-        {
-            Language::Other
-        }
-        language => language,
+    match classify_for_oxfmt(path) {
+        Some(ForOxfmt::Kind(_)) => Language::Supported,
+        Some(ForOxfmt::Mdx) => Language::Other,
+        Some(ForOxfmt::Svelte) if formats_svelte => Language::Other,
+        Some(ForOxfmt::Svelte) | None => Language::Unknown,
     }
 }
 
@@ -324,15 +483,19 @@ fn search(
     reads_gitignore: bool,
 ) -> Result<Vec<Target>, Fatal> {
     let (mut found, mut failure) = (Guarded::new(Vec::new()), Guarded::new(None::<Fatal>));
+    let git = match reads_gitignore {
+        true => gitignore::above_and_in(base, &[b".gitignore"]),
+        false => None,
+    };
+    // A `.gitignore` above has it, or a directory that it is in.
+    if gitignore::is_directory_ignored_anywhere(&git, base) {
+        return Ok(Vec::new());
+    }
     let above = configs.for_directory(base)?;
     let mut level = vec![Directory {
         path: base.to_vec(),
         is_first: true,
-        git: if reads_gitignore {
-            gitignore::above_and_in(base, &[b".gitignore"])
-        } else {
-            None
-        },
+        git,
         is_ignored_by_configuration: gitignore::is_directory_ignored_anywhere(
             configs.ignores_of(&above),
             base,
@@ -653,7 +816,6 @@ pub(crate) fn expand_as_oxfmt(
     // Nothing is said about a file that there is no parser for, and it does not count.
     found.retain(|it| {
         language_for_oxfmt(&it.path, configs.formats_svelte(&it.scope)) != Language::Unknown
-            && !is_left_alone_by_oxfmt(&it.path)
     });
     found.sort_unstable_by(|a, b| a.path.cmp(&b.path));
     found.dedup_by(|a, b| a.path == b.path);

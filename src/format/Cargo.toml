@@ -12,6 +12,7 @@ bun_sema.workspace = true
 bun_core.workspace = true
 bun_highway.workspace = true
 bun_md.workspace = true
+bun_parsers.workspace = true
 bstr.workspace = true
 bitflags.workspace = true
 smallvec.workspace = true

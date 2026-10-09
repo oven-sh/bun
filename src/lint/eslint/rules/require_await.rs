@@ -101,7 +101,7 @@ impl Rule for RequireAwait {
         RequireAwait
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
         on.funcs(|_, func, cx| {
             if func.is_async()
                 && !func.is_generator()
@@ -117,14 +117,11 @@ impl Rule for RequireAwait {
                 mark_function_around(statement.into(), cx);
             }
         });
-        // oxlint 1.80 does not see that `await using` awaits.
-        if !file.language().is_oxlint {
-            on.var_decls(|_, declaration, cx| {
-                if declaration.var_kind() == VarKind::AwaitUsing {
-                    mark_function_around(declaration.into(), cx);
-                }
-            });
-        }
+        on.var_decls(|_, declaration, cx| {
+            if declaration.var_kind() == VarKind::AwaitUsing {
+                mark_function_around(declaration.into(), cx);
+            }
+        });
         on.finish(|_, cx| {
             for func in std::mem::take(&mut cx.state.candidates) {
                 if !cx.state.with_await.contains(&func) {

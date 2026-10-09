@@ -290,6 +290,11 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         }
         match parser {
             b"babel" => program(Syntax::Babel, self),
+            // oxfmt parses one way, which the file says.
+            b"typescript" if self.options.script_flavor.is_oxfmt() => match self.has_tsx_script() {
+                true => program(Syntax::Tsx, self),
+                false => program(Syntax::Ts, self),
+            },
             b"typescript" => program(Syntax::TypeScript, self),
             b"yaml" => self.write_printed_text(false, |options, out| {
                 crate::yaml::format(code, options, &mut Default::default(), out)
@@ -597,6 +602,16 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                 }
                 b"style" if is_plain => {
                     return self.print_attribute_with(attr, |printer| printer.print_style(value));
+                }
+                // In a Vue file oxfmt takes over the parser `babel`, whatever it is called for: a script like another, and
+                // Prettier, which is not told what is in it, hugs it.
+                name if is_plain
+                    && data::is_event_attribute(name)
+                    && self.options.script_flavor.is_oxfmt() =>
+                {
+                    return self.print_attribute_with(attr, |printer| {
+                        printer.text_to_doc(value, b"babel", SourceType::Unknown)
+                    });
                 }
                 name if is_plain && data::is_event_attribute(name) => {
                     let in_html = InHtml {

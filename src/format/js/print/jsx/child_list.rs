@@ -82,10 +82,25 @@ impl Child<'_> {
     }
 }
 
-/// `word.length === 1`
-fn is_single_code_unit(word: &[u8]) -> bool {
+/// The only character of `word`.
+fn single_character(word: &[u8]) -> Option<char> {
     let mut chars = bstr::ByteSlice::chars(word);
-    chars.next().is_some_and(|c| c.len_utf16() == 1) && chars.next().is_none()
+    chars.next().filter(|_| chars.next().is_none())
+}
+
+/// What oxfmt has for [`Children::push_separator_with_whitespace`] before `text`, which starts with a word: a letter with
+/// more words after it is the start of a sentence, `A dog`, and stays on its line. What follows the text only counts if
+/// the text is that one word.
+fn is_joined_to_what_is_before_it(text: &[u8], is_before_self_closing_element: bool) -> bool {
+    let (word, after_word) = split_first_word(text);
+    let (whitespace, rest) = split_leading_whitespace(after_word);
+    single_character(word).is_some_and(|c| match rest.is_empty() {
+        true => {
+            !(is_before_self_closing_element
+                && (whitespace.is_empty() || has_line_break(whitespace)))
+        }
+        false => !c.is_alphabetic(),
+    })
 }
 
 fn split_leading_whitespace(text: &[u8]) -> (&[u8], &[u8]) {
@@ -132,6 +147,7 @@ struct Children<'a> {
     /// See `FormatOptions::is_mdx_jsx`. For Prettier, the white space is `line` then, the same as what is between
     /// two words. Here both are [`Separator::JsxWhitespace`], which is written as a line.
     is_mdx_block: bool,
+    is_oxfmt: bool,
     meta: ChildrenMeta,
 }
 
@@ -153,13 +169,18 @@ impl<'a> Children<'a> {
         self.parts.push(Part::Content { start: at, end: at });
     }
 
+    /// `word.length === 1` for Prettier, which counts UTF-16. For oxfmt an emoji is one character too.
+    fn is_single_character(&self, word: &[u8]) -> bool {
+        single_character(word).is_some_and(|c| self.is_oxfmt || c.len_utf16() == 1)
+    }
+
     /// Prettier's `separatorNoWhitespace`. `word`: the word next to the place.
     fn push_separator_no_whitespace(&mut self, word: &[u8], is_next_to_self_closing_element: bool) {
         if self.is_facebook_translation_tag {
             return;
         }
         self.push_line(
-            match is_next_to_self_closing_element && !is_single_code_unit(word) {
+            match is_next_to_self_closing_element && !self.is_single_character(word) {
                 true => Separator::HardLine,
                 false => Separator::SoftLine,
             },
@@ -173,7 +194,7 @@ impl<'a> Children<'a> {
         is_next_to_self_closing_element: bool,
     ) {
         let is_soft = !self.is_facebook_translation_tag
-            && is_single_code_unit(word)
+            && self.is_single_character(word)
             && !is_next_to_self_closing_element;
         self.push_line(if is_soft {
             Separator::SoftLine
@@ -196,6 +217,12 @@ impl<'a> Children<'a> {
         let (leading_whitespace, mut rest) = split_leading_whitespace(text);
         if !leading_whitespace.is_empty() {
             match has_line_break(leading_whitespace) {
+                true if self.is_oxfmt && !self.is_facebook_translation_tag => self.push_line(
+                    match is_joined_to_what_is_before_it(rest, is_before_self_closing_element) {
+                        true => Separator::SoftLine,
+                        false => Separator::HardLine,
+                    },
+                ),
                 true => self.push_separator_with_whitespace(
                     split_first_word(rest).0,
                     is_before_self_closing_element,
@@ -241,6 +268,7 @@ impl<'a> Children<'a> {
     fn new(jsx: Jsx<'a>, is_mdx_block: bool, f: &Formatter<'a>) -> Self {
         let mut children = Children {
             is_mdx_block,
+            is_oxfmt: f.options().flavor.is_oxfmt(),
             items: SmallVec::new(),
             parts: SmallVec::new(),
             is_facebook_translation_tag: jsx.tag().is_some_and(|tag| tag.text() == b"fbt"),
@@ -393,8 +421,9 @@ pub(super) fn format_children<'a>(
                         }
                         Item::Node(node) => FormatJsxChild(node),
                     };
-                    let is_suppressed =
-                        is_after_ignore_comment && matches!(node.0.kind(), ExprKind::Jsx(_));
+                    // For Prettier it is about an element or a fragment. For oxfmt about `{e}` too.
+                    let is_suppressed = is_after_ignore_comment
+                        && (matches!(node.0.kind(), ExprKind::Jsx(_)) || children.is_oxfmt);
                     is_after_ignore_comment = matches!(node.0.kind(), ExprKind::Missing)
                         && f.comments().is_suppressed(node.span().end);
                     let format_node = format_with(|f| match is_suppressed {

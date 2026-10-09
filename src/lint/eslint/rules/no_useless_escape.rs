@@ -76,7 +76,7 @@ fn report<'a>(
     }
 }
 
-/// What oxlint 1.80 passes over: in a string a backslash after a backslash, also the third of `\\\"`, and in a template
+/// What oxlint 1.87 passes over: in a string a backslash after a backslash, also the third of `\\\"`, and in a template
 /// `\$` before a substitution or the end.
 fn oxlint_passes_over(raw: &[u8], index: usize, quoted: Quoted) -> bool {
     match quoted {

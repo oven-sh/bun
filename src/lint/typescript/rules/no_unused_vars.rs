@@ -72,7 +72,7 @@ fn oxlint_reports_the_declaration(file: &File) -> bool {
     file.language().is_oxlint
 }
 
-/// What is a use for oxlint 1.80 and not for typescript-eslint: `has_usages` of its rule, as far as values that are read go. It is
+/// What is a use for oxlint 1.87 and not for typescript-eslint: `has_usages` of its rule, as far as values that are read go. It is
 /// asked about the few variables that are about to be reported.
 fn oxlint_counts_as_used(variable: Variable, reports_vars_only_used_as_types: bool) -> bool {
     let is_variable = variable.defs().any(|it| matches!(it, Declaration::Var(_) | Declaration::Param(_)));
@@ -117,7 +117,7 @@ fn oxlint_is_in_what_declares(variable: Variable, reference: Reference) -> bool 
     declaration.is_some_and(|it| it.span().contains(reference.span()))
 }
 
-/// What oxlint 1.80 says nothing about because of how it is declared: `should_skip_symbol`, `is_ignored` and
+/// What oxlint 1.87 says nothing about because of how it is declared: `should_skip_symbol`, `is_ignored` and
 /// `is_allowed_*` of its rule, as far as typescript-eslint reports it. The first declaration counts.
 fn oxlint_leaves_alone(variable: Variable) -> bool {
     let has_declare = |owner: Node| matches!(owner, Node::Stmt(it) if it.flags().contains(Flags::AMBIENT));
@@ -201,6 +201,8 @@ struct OxlintWalks<'a> {
     looked_at: AncestorMemo<'a, Node<'a>>,
     /// `oxlint_outermost_operation`
     operations: AncestorMemo<'a, Node<'a>>,
+    /// The outermost of the `a && b`, `a || b`, `a ?? b` that a node is an operand of without anything else in between.
+    logical: AncestorMemo<'a, Node<'a>>,
     /// The functions and the classes that the variable is, if they are many.
     own_ranges: Option<Ranges>,
 }
@@ -208,8 +210,28 @@ struct OxlintWalks<'a> {
 /// Whether `oxlint_is_self_reassignment` does nothing with `node`.
 fn oxlint_is_passed_over(node: Node) -> bool {
     matches!(node, Node::Expr(e)
-        if !matches!(e.kind(), ExprKind::Call(_) | ExprKind::Unary { .. } | ExprKind::Assign { .. } | ExprKind::Yield { .. })
+        if !matches!(
+            e.kind(),
+            ExprKind::Call(_)
+                | ExprKind::New(_)
+                | ExprKind::Dot { .. }
+                | ExprKind::Index { .. }
+                | ExprKind::Cond { .. }
+                | ExprKind::Unary { .. }
+                | ExprKind::Assign { .. }
+                | ExprKind::Yield { .. }
+        ) && !is_logical(node)
             && e.jsx_container_span().is_none())
+}
+
+fn is_logical(node: Node) -> bool {
+    matches!(node, Node::Expr(e)
+        if matches!(e.kind(), ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, .. }))
+}
+
+/// From the first to the last of the arguments.
+fn arguments_span(call: Call) -> Option<Span> {
+    Some(Span::new(call.args().first()?.outer_span().start, call.args().last()?.outer_span().end))
 }
 
 /// `node`, or the outermost of the `a + b`, `a * b`, .. that it is an operand of without anything else in between. The
@@ -257,10 +279,21 @@ fn oxlint_is_self_reassignment<'a>(variable: Variable<'a>, reference: Reference<
             Node::Param(_) if saw_self_update => return oxlint_is_discarded_read(variable, reference, walks),
             Node::Expr(parent) => {
                 match parent.kind() {
-                    ExprKind::Call(call) => {
-                        if let (Some(first), Some(last)) = (call.args().first(), call.args().last())
-                            && Span::new(first.outer_span().start, last.outer_span().end).contains(at)
-                        {
+                    ExprKind::Call(call) if arguments_span(call).is_some_and(|it| it.contains(at)) => return false,
+                    ExprKind::New(call)
+                        if call.callee().outer_span().contains(at)
+                            || arguments_span(call).is_some_and(|it| it.contains(at)) =>
+                    {
+                        return false;
+                    }
+                    ExprKind::Dot { .. } | ExprKind::Index { .. } => is_used_by_others = true,
+                    ExprKind::Cond { test, .. } if test.span().contains(at) => is_used_by_others = true,
+                    // The ones around it change nothing any more.
+                    ExprKind::Binary { left, .. } if is_logical(node) && left.span().contains(at) => {
+                        is_used_by_others = true;
+                        let outermost = |child: Node<'a>, around: Node<'a>| (!is_logical(around)).then_some(child);
+                        inner = walks.logical.find(node, outermost).unwrap_or(node);
+                        if inner.as_expr().is_some_and(|it| it.jsx_container_span().is_some()) {
                             return false;
                         }
                     }
@@ -299,6 +332,7 @@ fn oxlint_is_self_reassignment<'a>(variable: Variable<'a>, reference: Reference<
                 StmtKind::If { test, .. } | StmtKind::While { test, .. } | StmtKind::DoWhile { test, .. } if test.span().contains(at) => {
                     return false;
                 }
+                StmtKind::Switch { expr, .. } if expr.span().contains(at) => return false,
                 StmtKind::ForIn { .. } | StmtKind::ForOf { .. } | StmtKind::While { .. } => break,
                 StmtKind::Expr(_) => {
                     if oxlint_is_in_loop_body(statement) || oxlint_is_in_return_statement(statement) {
@@ -307,27 +341,46 @@ fn oxlint_is_self_reassignment<'a>(variable: Variable<'a>, reference: Reference<
                     break;
                 }
                 // Whether it is returned by the function that the variable is.
-                StmtKind::Return(_) => {
-                    let mut is_arrow = false;
-                    let function = oxlint_relevant_parents(node).find_map(|it| match it {
-                        Node::Func(func) if func.is_arrow() => {
-                            is_arrow = true;
-                            None
-                        }
-                        Node::Func(func) => Some(func.symbol()),
-                        Node::VarDecl(declarator) if is_arrow => Some(declarator.pat().symbol()),
-                        _ => None,
-                    });
-                    return function.flatten() == Some(variable.symbol());
-                }
+                StmtKind::Return(_) => return oxlint_nearest_function(node, variable) == Some(variable.symbol()),
                 _ => {}
             },
+            Node::Case(case) if case.test().is_some_and(|it| it.span().contains(at)) => return false,
             Node::Func(func) if func.kind() == FnKind::Decl => break,
             Node::Func(func) if func.is_arrow() && matches!(func.body(), FnBody::Expr(_)) => return false,
             _ => {}
         }
     }
     !is_used_by_others
+}
+
+/// oxlint's `get_nearest_function`: the variable that the function around `node` is, or that it is the value of.
+fn oxlint_nearest_function<'a>(node: Node<'a>, variable: Variable<'a>) -> Option<Symbol<'a>> {
+    let (mut is_arrow, mut assigned, mut child) = (false, None, node);
+    for parent in oxlint_relevant_parents(node) {
+        match parent {
+            Node::Func(func) if func.is_arrow() => is_arrow = true,
+            Node::Func(func) => return func.symbol(),
+            Node::VarDecl(declarator) if is_arrow => return declarator.pat().symbol(),
+            Node::Expr(e) if is_arrow => match e.kind() {
+                // What is assigned to the variable itself can go on to somewhere else.
+                ExprKind::Assign { target, .. } if !e.is_assignment_target() => {
+                    if !refers_to(target, variable) {
+                        let name = target.reference().filter(|_| target.tag() == ExprTag::Ident);
+                        return name.and_then(Reference::symbol);
+                    }
+                    assigned = Some(variable.symbol());
+                }
+                // An argument can be called later.
+                ExprKind::Call(call) | ExprKind::New(call) if !call.callee().outer_span().contains(child.span()) => {
+                    return None;
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+        child = parent;
+    }
+    assigned
 }
 
 /// oxlint's `is_discarded_read`: it is in a sequence, and not in its last part.
@@ -365,11 +418,16 @@ fn oxlint_is_discarded_read<'a>(variable: Variable<'a>, reference: Reference<'a>
             ) => break,
             (ExprKind::Assign { target, .. }, _) if !refers_to(target, variable) => break,
             (ExprKind::Cond { test, .. }, _) if test.span().contains(at) => return false,
+            // Whether the right operand is evaluated depends on the left one.
+            (ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, left, .. }, _)
+                if left.span().contains(at) =>
+            {
+                return false;
+            }
+            (ExprKind::Dot { .. } | ExprKind::Index { .. }, _) => return false,
             (ExprKind::Binary { op, left, right }, _)
-                if matches!(
-                    op,
-                    BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::In | BinOp::Instanceof
-                ) && left.span().contains(at)
+                if matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::In | BinOp::Instanceof)
+                    && left.span().contains(at)
                     && is_assignment(right) =>
             {
                 return false;
@@ -407,18 +465,27 @@ fn oxlint_is_self_call<'a>(
     }
     let start = oxlint_outermost_operation(reference.node(), walks);
     let mut parents = oxlint_relevant_parents(start).peekable();
+    let mut is_value_of_variable = false;
     while let Some(parent) = parents.next() {
         let is_function_expression = matches!(parent, Node::Func(func) if matches!(func.kind(), FnKind::Expr | FnKind::Arrow));
-        let is_value_of_variable = match parents.peek() {
-            Some(Node::VarDecl(declarator)) => declarator.pat().symbol() == Some(variable.symbol()),
-            Some(Node::Expr(assignment)) => matches!(assignment.kind(), ExprKind::Assign { target, .. } if refers_to(target, variable)),
-            _ => false,
+        // Whether what is around gives the value to something, and whether that is the variable.
+        let (is_given, is_variable) = match parents.peek() {
+            Some(Node::VarDecl(declarator)) => (true, declarator.pat().symbol() == Some(variable.symbol())),
+            Some(Node::Expr(around)) => match around.kind() {
+                ExprKind::Assign { target, .. } => (true, refers_to(target, variable)),
+                ExprKind::Call(call) | ExprKind::New(call) => {
+                    (!call.callee().outer_span().contains(parent.span()), false)
+                }
+                _ => (false, false),
+            },
+            _ => (false, false),
         };
-        if is_function_expression && is_value_of_variable {
-            return true;
+        if is_value_of_variable && is_given && !is_variable {
+            return false;
         }
+        is_value_of_variable |= is_function_expression && is_variable;
     }
-    false
+    is_value_of_variable
 }
 
 /// oxlint's `is_in_loop_body`: what a variable is in one turn of a loop, the next turn can see.
@@ -569,11 +636,10 @@ fn is_first_parameter_named<'a>(symbol: Symbol<'a>, pat: Pat<'a>) -> bool {
     first == Some(pat)
 }
 
-/// Where the last parameter of `function` that is used starts. 0 if none is used. oxlint does not look at a rest
-/// parameter.
-fn last_used_arg<'a>(function: Func<'a>, analysis: &VariableAnalysis<'a>, is_oxlint: bool) -> u32 {
+/// Where the last parameter of `function` that is used starts. 0 if none is used.
+fn last_used_arg<'a>(function: Func<'a>, analysis: &VariableAnalysis<'a>) -> u32 {
     let mut last = 0;
-    for param in function.params().iter().filter(|it| !(is_oxlint && it.is_rest())) {
+    for param in function.params().iter() {
         param.pat().for_each_binding(&mut |pat| {
             if let Some(it) = pat.symbol()
                 && (it.references().next().is_some() || analysis.is_eslint_used(Variable::new(it)))
@@ -889,7 +955,7 @@ impl NoUnusedVars {
                     && let Declaration::Param(pat) = def
                     && pat.span().start
                         < *(last_used_args.entry(function))
-                            .or_insert_with(|| last_used_arg(function, analysis, is_oxlint))
+                            .or_insert_with(|| last_used_arg(function, analysis))
                 {
                     return false;
                 }

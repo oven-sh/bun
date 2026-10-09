@@ -88,7 +88,30 @@ fn property_names<'s>(schema: &'s Json, names: &mut Vec<&'s [u8]>) {
     }
 }
 
-/// The same without the properties of the options that the schema does not name anywhere.
+/// `schema` without the limits that the types which oxlint reads options into do not have: how many items an array has at least,
+/// that they differ, that nothing follows them. And which strings are in an array: oxlint has second names for some.
+fn without_limits_on_arrays(schema: &Json) -> Json {
+    let is_limit = |key: &[u8]| matches!(key, b"minItems" | b"uniqueItems" | b"additionalItems");
+    match schema {
+        Json::Object(entries) => Json::Object(
+            (entries.iter().filter(|it| !is_limit(&it.0)))
+                .map(|(key, value)| match value {
+                    Json::Object(items) if key == b"items" => {
+                        let items = items.iter().filter(|it| it.0 != b"enum").cloned();
+                        let items = Json::Object(items.collect());
+                        (key.clone(), without_limits_on_arrays(&items))
+                    }
+                    _ => (key.clone(), without_limits_on_arrays(value)),
+                })
+                .collect(),
+        ),
+        Json::Array(items) => Json::Array(items.iter().map(without_limits_on_arrays).collect()),
+        other => other.clone(),
+    }
+}
+
+/// The same for a configuration of oxlint: without the properties of the options that the schema does not name anywhere, and
+/// without the limits on arrays.
 pub(crate) fn validate_known_properties(
     meta: &'static Meta,
     options: &[Json],
@@ -108,7 +131,10 @@ pub(crate) fn validate_known_properties(
             other => other.clone(),
         })
         .collect();
-    validate_by_id(&id, &known)
+    let parts = found.as_ref().and_then(Json::as_array).unwrap_or_default();
+    let schema = parts.first().map(without_limits_on_arrays);
+    let defaults = parts.get(1).and_then(Json::as_array).unwrap_or_default();
+    validate_with(schema.as_ref(), defaults, &known).map(drop)
 }
 
 /// The same for the rule that ESLint calls `id`, whether it is implemented or not.

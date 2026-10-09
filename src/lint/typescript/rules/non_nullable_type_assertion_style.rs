@@ -2,7 +2,7 @@ use bun_lint::prelude::*;
 use bun_lint::types::tsutils::{is_type_flag_set, is_union_type, union_constituents};
 use bun_lint::types::{SyntaxKind, Type, TypeFlags};
 use bun_lint::utils::ts_utils::{OperatorPrecedence, get_operator_precedence, ts_syntax_kind};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Enforce non-null assertions over explicit type assertions.
 pub struct NonNullableTypeAssertionStyle;
@@ -55,13 +55,15 @@ impl Rule for NonNullableTypeAssertionStyle {
         .fixable(Fixable::Code)
         .presets(Presets::STYLISTIC_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    /// [`same_type_without_nullish`] of an asserted and an original type: all their constituents are gone through, and
+    /// many assertions are about the same types.
+    type State<'a> = FxHashMap<(Type<'a>, Type<'a>), bool>;
 
     fn new(_: &Options) -> Self {
         NonNullableTypeAssertionStyle
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> FxHashMap<(Type<'a>, Type<'a>), bool> {
         on.exprs([ExprTag::As], |_, node, cx| {
             let ExprKind::As { expr, ty } = node.kind() else {
                 return;
@@ -71,7 +73,11 @@ impl Rule for NonNullableTypeAssertionStyle {
                 return;
             }
             let asserted = ty.ty();
-            if is_loose(asserted) || !same_type_without_nullish(asserted, original) {
+            if is_loose(asserted) {
+                return;
+            }
+            let is_same = || same_type_without_nullish(asserted, original);
+            if !*cx.state.entry((asserted, original)).or_insert_with(is_same) {
                 return;
             }
             cx.report(node, PREFER_NON_NULL_ASSERTION).fix(|fixer| {
@@ -83,5 +89,6 @@ impl Rule for NonNullableTypeAssertionStyle {
                 fixer.replace(node, text)
             });
         });
+        FxHashMap::default()
     }
 }

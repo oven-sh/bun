@@ -12,12 +12,25 @@ pub(crate) fn write_ts_intersection_type<'a>(
         return super::flow::write_interface_type(types, f);
     }
     match types.len() {
+        1 if lone_type_of_intersection_is_a_group(f) => write!(f, group(&types.first())),
         1 => write!(f, types.first()),
         _ => write!(
             f,
             group(&format_with(|f| format_intersection_types(types, f)))
         ),
     }
+}
+
+/// `& A` is an intersection for oxfmt, so a group: a block comment behind the `&` that ends its line is on the line of
+/// `A` if that fits. For Prettier it is `A`.
+pub(crate) fn lone_type_of_intersection_is_a_group(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+/// With the `&` at the start of the line, oxfmt leaves a comment that is on a line of its own there, above the `&`.
+/// Prettier writes it behind the `&`.
+fn own_line_comments_stay_above_operator(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// Prettier's `printIntersectionType`: object types stay on the line of the `&`, other types go
@@ -56,10 +69,18 @@ fn format_intersection_types<'a>(types: List<'a, TypeNode<'a>>, f: &mut Formatte
             || f.comments().has_leading_own_line_comment(item.span().start)
         {
             match is_operator_at_start {
-                true => write!(
-                    f,
-                    indent(&format_args!(soft_line_break_or_space(), "& ", content))
-                ),
+                true => {
+                    let comments_above = (own_line_comments_stay_above_operator(f)
+                        && f.comments().has_leading_own_line_comment(item.span().start))
+                    .then(|| format_leading_comments(item.span()));
+                    write!(
+                        f,
+                        indent(&format_args!(
+                            soft_line_break_or_space(),
+                            comments_above, "& ", content
+                        ))
+                    )
+                }
                 false => write!(
                     f,
                     indent(&format_args!(" &", soft_line_break_or_space(), content))

@@ -90,6 +90,18 @@ impl<'a> Checks<'a, '_> {
         }
     }
 
+    /// Those of [`Checks::early_errors`] of which it is known that OXC has them, and has them for the same code. It knows
+    /// decorators, `accessor` and `import defer`, and it lets much pass that acorn does not.
+    pub(super) fn early_errors_of_oxc(&mut self) {
+        // In TypeScript a variable can be only declared.
+        if self.file.is_javascript() {
+            self.declarations();
+        }
+        self.regular_expressions();
+        self.jumps();
+        self.labels();
+    }
+
     /// `parseModuleExportName`: a name of an import or an export that is written as a string.
     fn names_in_quotes(&mut self) {
         let file = self.file;

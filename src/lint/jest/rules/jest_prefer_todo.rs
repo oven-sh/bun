@@ -1,0 +1,25 @@
+use crate::jest::{self, Ctx};
+use crate::jest_tests::prefer_todo;
+use bun_lint::prelude::*;
+use bun_lint::rule::Plugin;
+
+/// When test cases are empty then it is better to mark them as `test.todo` as it will be highlighted in the summary output.
+pub struct PreferTodo;
+
+impl Rule for PreferTodo {
+    const META: Meta = Meta::oxlint(Plugin::Jest, "prefer-todo", Kind::Suggestion).fixable(Fixable::Code);
+    type State<'a> = ();
+
+    fn new(_: &Options) -> Self {
+        PreferTodo
+    }
+
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        if jest::is_test(file) {
+            on.finish(|_, cx| {
+                let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+                jest::run_on_jest_nodes(&ctx, &prefer_todo::run);
+            });
+        }
+    }
+}

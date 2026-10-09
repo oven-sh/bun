@@ -23,6 +23,10 @@ pub(crate) enum Syntax {
     BabelTs,
     /// `typescript`, for a file whose name does not say whether it has JSX.
     TypeScript,
+    /// TypeScript without JSX, and nothing else: what oxfmt takes the scripts of a Vue file for.
+    Ts,
+    /// TypeScript with JSX, and nothing else: the same if one of them says `lang="tsx"`.
+    Tsx,
 }
 
 /// `sourceType`
@@ -169,6 +173,11 @@ fn with_file(
         return false;
     };
     let mut options = options_in_html(f.options(), in_html);
+    // To Prettier the name of the file is still that of the HTML, so `<T,>() => {}` keeps its comma: it is not `.ts`.
+    // oxfmt prints a script like a file of its own.
+    if !matches!(piece, Piece::Script(flavor) if flavor.is_oxfmt()) {
+        options.filepath = f.options().filepath.clone();
+    }
     // A plugin of Prettier sorts the imports of the text before it is parsed.
     let mut sorts_text = None;
     if let Piece::Script(flavor) = piece {
@@ -256,6 +265,8 @@ fn paths_of(syntax: Syntax, code: &[u8]) -> &'static [&'static [u8]] {
             true => &[b"dummy.tsx", b"dummy.ts"],
             false => &[b"dummy.ts", b"dummy.tsx"],
         },
+        Syntax::Ts => &[b"dummy.ts"],
+        Syntax::Tsx => &[b"dummy.tsx"],
     }
 }
 

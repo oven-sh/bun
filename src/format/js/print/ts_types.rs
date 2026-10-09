@@ -441,6 +441,11 @@ pub(crate) fn write_ts_signature<'a>(member: Member<'a>, f: &mut Formatter<'a>) 
     }
 }
 
+/// `a: // comment ⏎ B;` stays as it is for oxfmt. For Prettier it is `a: B; // comment`.
+fn comments_behind_colon_of_property_signature_stay(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// Of the comments between the name of a property signature and its type `ty`, those that trail
 /// the name: those on its line that are before the `:`, or at the end of the line, unless a union
 /// or an intersection follows (Prettier's `handlePropertySignatureComments`).
@@ -452,10 +457,11 @@ fn comments_after_property_name<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> &'a 
         .take_while(|comment| comment.span.start < colon && !comment.preceded_by_newline())
         .count();
     let (_, rest) = comments.split_at(before_colon);
-    let takes_comments = matches!(
-        without_lone_operator(ty).kind(),
-        TypeKind::Union(_) | TypeKind::Intersection(_)
-    );
+    let takes_comments = comments_behind_colon_of_property_signature_stay(f)
+        || matches!(
+            without_lone_operator(ty).kind(),
+            TypeKind::Union(_) | TypeKind::Intersection(_)
+        );
     match takes_comments {
         true => &comments[..before_colon],
         false => &comments[..before_colon + end_of_line_comments(rest).len()],

@@ -548,8 +548,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         "",
         "2 problems",
       ]);
-      // The thread that reads the configuration loads the plugin too, to know its rules.
-      expect(lines.slice(4).sort().at(-1)).toBe("exit after 2 files");
+      expect(lines.slice(4)).toEqual(["exit after 2 files"]);
       expect(exitCode).toBe(1);
     },
     timeout,
@@ -1045,6 +1044,40 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       expect(stdout.split("\n").filter(it => it.endsWith(": 5 [Error/demo/length]"))).toHaveLength(128);
       expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "there is one more engine for every 32 files with rules in JavaScript, with types and without",
+    async () => {
+      const engines = async (count: number, extension: string) => {
+        const files: Record<string, string> = {
+          "tsconfig.json": JSON.stringify({ compilerOptions: { noLib: true, types: [] } }),
+          "eslint.config.mjs": `
+            import demo from "./plugin.mjs";
+            export default [
+              { files: ["src/*"], plugins: { demo }, rules: { "demo/no-foo": "error" } },
+              {
+                files: ["**/*.ts"],
+                plugins: { "@typescript-eslint": { meta: { name: "@typescript-eslint/eslint-plugin" } } },
+                languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } }, parserOptions: { projectService: true } },
+                rules: { "@typescript-eslint/no-floating-promises": "error" },
+              },
+            ];`,
+          "plugin.mjs": noFoo,
+        };
+        for (let i = 0; i < count; i++) files[`src/${i}.${extension}`] = "foo;\n";
+        const { stderr, exitCode } = await lint(files, ["--timing", "--threads", "8", "src"]);
+        expect(exitCode).toBe(1);
+        return /JavaScript: (\d+) engines/.exec(stderr)?.[1];
+      };
+      expect(await Promise.all([engines(9, "ts"), engines(40, "ts"), engines(9, "js"), engines(40, "js")])).toEqual([
+        "1",
+        "2",
+        "1",
+        "2",
+      ]);
     },
     timeout,
   );

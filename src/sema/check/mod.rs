@@ -750,6 +750,7 @@ impl<'s> Program<'s> {
             deepest_stack: std::cell::Cell::new(0),
             ran_out_of_stack: std::cell::Cell::new(false),
             scopes_of_what_is_in: Default::default(),
+            spread_indices_of_many: Default::default(),
             times_cut_short: std::cell::Cell::new(0),
             exprs_by_kind: None,
             provisional_shapes: Default::default(),
@@ -1427,6 +1428,8 @@ pub struct Checker<'p, 's> {
     ran_out_of_stack: std::cell::Cell<bool>,
     /// `enclosing_scope_of_expr` of what is in these expressions.
     scopes_of_what_is_in: std::cell::RefCell<FxHashMap<(FileId, ExprId), crate::bind::ScopeId>>,
+    /// `spread_indices` of the array literals and the calls with many elements or arguments.
+    spread_indices_of_many: FxHashMap<(FileId, ExprId), Option<(usize, usize)>>,
     /// How often the native stack ran low, or a result of `relations_cut_short` or `variances_cut_short` was read.
     times_cut_short: std::cell::Cell<u64>,
     /// For the most recently queried file.
@@ -3113,14 +3116,19 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(frame) = self.left_frame.take() else {
             return;
         };
-        let flow = frame.incomplete_flow;
+        // A frame that `enter` has pushed above a resolution has the mark of the frame below it, but has seen no loop from
+        // below the resolution (`is_flow_loop_visible`): its result is no more short-lived than that of any other
+        // non-cacheable frame. It is asked for from where the loop is not visible either, where a result that follows from a
+        // loop is no hit: every use would compute it again, and uses in uses cost uses ^ depth.
+        let flow = frame.incomplete_flow
+            && (self.flow_loops.last())
+                .is_some_and(|innermost| self.is_flow_loop_visible(innermost.5));
         // tsgo computes it again, and then finds in `flowLoopCache` the loop of which this
         // computation saw the types collected so far.
         if flow && self.is_flow_loop_cached_since(frame.serial) {
             return;
         }
         let scope = if flow {
-            // No loop on `flow_loops`: `type_of_expr_outside_loops` has set them aside, so the height is unknown and nothing is stored.
             let innermost_loop = self.flow_loops.last().map(|in_progress| in_progress.5);
             let outermost = self.frames.iter().position(|frame| frame.incomplete_flow);
             (outermost.zip(innermost_loop))

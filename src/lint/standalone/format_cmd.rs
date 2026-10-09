@@ -18,6 +18,7 @@
 mod bench;
 mod conformance;
 mod cursor;
+mod markdown;
 mod sort_imports;
 mod value;
 mod verify;
@@ -238,6 +239,13 @@ fn format_text_with_cursor(
         let mut out = Vec::new();
         return bun_format::yaml::format(code, options, &mut Default::default(), &mut out)
             .map(|()| with_cursor(code, out));
+    }
+    if options.flavor.is_oxfmt()
+        && options.parser.is_none()
+        && bun_format::toml::is_toml_path(name)
+    {
+        let mut out = Vec::new();
+        return bun_format::toml::format(code, options, &mut out).map(|()| with_cursor(code, out));
     }
     let is_markdown = match &options.parser {
         Some(parser) => matches!(&parser[..], b"markdown" | b"remark" | b"markdown-ast"),
@@ -535,6 +543,7 @@ pub(crate) fn run(args: &[String]) {
         Some("bench") => bench::bench(&args),
         Some("serve") => serve(&args),
         Some("cursor") => cursor::run(&args),
+        Some("markdown") => markdown::run(&args),
         Some("sort-imports") => sort_imports::run(&args),
         _ => output_line!(
             "usage: bun-lint format file|ir|conformance|check-idempotent|verify|bench|serve .."

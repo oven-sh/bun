@@ -3,6 +3,7 @@
 //!
 //! - [`Config::from_flat_json`]: an `eslint.config.*` that has been evaluated.
 //! - [`Config::from_rc_json`]: `.oxlintrc.json`, `.eslintrc.json`.
+//! - [`Config::from_legacy`]: the files of ESLint 8, with all that they extend and the files above them.
 //! - [`Config::get`]: the configuration of a file.
 //!
 //! # An evaluated `eslint.config.*` as JSON
@@ -46,6 +47,7 @@
 
 mod brace_expansion;
 mod cache;
+mod eslintrc;
 mod flat;
 mod glob_part;
 mod merge;
@@ -53,6 +55,7 @@ mod minimatch;
 mod path;
 mod presets;
 mod rc;
+mod shape;
 
 use super::registry::Registry;
 use super::resolved::{
@@ -65,7 +68,9 @@ use crate::language::LanguageOptions;
 use crate::options::{Json, Options};
 use crate::rule::{Meta, Plugin};
 use crate::runner::RuleEntry;
+use bun_core::strings;
 use cache::Cache;
+pub use eslintrc::{LegacyFile, LegacyKind, LegacyOptions, LoadLegacy};
 pub use flat::{ConfigError, LoadLocatedPlugin};
 use merge::RuleSetting;
 use minimatch::{How, Minimatch, SplitPath};
@@ -306,8 +311,12 @@ pub struct Config {
     keeps_options: bool,
     /// Any plugin that is not implemented here counts as configured.
     accepts_all_plugins: bool,
+    /// It is made of the files of ESLint 8.
+    is_legacy: bool,
     /// A rule of ESLint that typescript-eslint extends stands for the extension, as in oxlint.
     prefers_typescript_rules: bool,
+    /// `options` of an `.oxlintrc.json` and of what it extends.
+    options_of_oxlint: Vec<(Vec<u8>, Json)>,
     notes: Vec<Vec<u8>>,
     unknown_rules: Vec<Box<[u8]>>,
     js_plugins: Vec<Arc<js_plugin::Plugin>>,
@@ -325,6 +334,49 @@ fn is_ignored_by(ignores: &[Pattern], path: &SplitPath, mut is_ignored: bool) ->
         }
     }
     is_ignored
+}
+
+/// What the `ignorePatterns` of an `.oxlintrc.json` say about `path`: the last of them that matches it counts. `None`: none does.
+fn last_match(ignores: &[Pattern], path: &[u8]) -> Option<bool> {
+    let parts = SplitPath::new(path);
+    let mut patterns = ignores.iter().rev();
+    Some(
+        !patterns
+            .find(|it| it.matcher.matches(&parts, true))?
+            .is_negated,
+    )
+}
+
+/// `Gitignore::matched_path_or_any_parents` of the crate `ignore`, which oxlint asks: what is said about `path`, or else about the
+/// nearest directory that it is in about which anything is said. So a `!` takes a file out of a directory that is ignored, which it
+/// cannot in a `.gitignore`.
+fn last_match_or_of_parents(ignores: &[Pattern], mut path: &[u8]) -> Option<bool> {
+    loop {
+        if let Some(found) = last_match(ignores, path) {
+            return Some(found);
+        }
+        let inner = path.strip_suffix(b"/").unwrap_or(path);
+        path = inner.get(..=strings::last_index_of_char(inner, b'/')?)?;
+    }
+}
+
+/// [`is_ignored_by`] for `ignorePatterns` with a `!`. A directory in which a `!` can match is not ignored: it has to be read.
+fn is_ignored_by_oxlint(ignores: &[Pattern], path: &[u8], is_ignored: bool) -> bool {
+    let can_hold_exceptions = |directory: &[u8]| {
+        let how = How {
+            flip_negate: true,
+            partial: true,
+        };
+        let mut exceptions = ignores.iter().filter(|it| it.is_negated);
+        exceptions.any(|it| it.matcher.matches_path(directory, how))
+    };
+    match (
+        last_match_or_of_parents(ignores, path),
+        path.strip_suffix(b"/"),
+    ) {
+        (Some(true), Some(directory)) => !can_hold_exceptions(directory),
+        (found, _) => found.unwrap_or(is_ignored),
+    }
 }
 
 /// `pathMatches`
@@ -345,6 +397,12 @@ impl Config {
         &self.notes
     }
 
+    /// `options[name]` of an `.oxlintrc.json`, or else of what it extends.
+    pub fn option_of_oxlint(&self, name: &[u8]) -> Option<&Json> {
+        let mut options = self.options_of_oxlint.iter();
+        Some(&options.find(|it| it.0 == name)?.1)
+    }
+
     /// The rules that are configured, other than as `"off"`, and do not exist here. They are
     /// skipped.
     pub fn unknown_rules(&self) -> &[Box<[u8]>] {
@@ -363,8 +421,13 @@ impl Config {
                 continue;
             }
             let ignores = object.ignores.as_deref().unwrap_or_default();
+            let has_exceptions =
+                object.ignores_inside_only && ignores.iter().any(|it| it.is_negated);
             let Some(base_path) = &object.base_path else {
-                is_ignored = is_ignored_by(ignores, &parts, is_ignored);
+                is_ignored = match has_exceptions {
+                    true => is_ignored_by_oxlint(ignores, relative, is_ignored),
+                    false => is_ignored_by(ignores, &parts, is_ignored),
+                };
                 continue;
             };
             let mut own = path::relative(base_path, &path::resolve(&self.base_path, relative));
@@ -374,7 +437,10 @@ impl Config {
             if relative.ends_with(b"/") {
                 own.push(b'/');
             }
-            is_ignored = is_ignored_by(ignores, &SplitPath::new(&own), is_ignored);
+            is_ignored = match has_exceptions {
+                true => is_ignored_by_oxlint(ignores, &own, is_ignored),
+                false => is_ignored_by(ignores, &SplitPath::new(&own), is_ignored),
+            };
         }
         is_ignored
     }
@@ -436,12 +502,18 @@ impl Config {
         if self.is_directory_ignored(path::dirname(file)) || self.is_ignored_globally(&relative) {
             return FileConfig::Ignored;
         }
-        self.get_unless_ignored(registry, file)
+        // ESLint 8 lints what it is told to, whatever it is called.
+        self.get_if(registry, file, !self.is_legacy)
     }
 
     /// The same for a file that is known not to be ignored, and to be inside the base path:
     /// whoever walks the directories has asked [`Config::is_directory_ignored`] on the way.
     pub fn get_unless_ignored(&self, registry: &Registry, file: &[u8]) -> FileConfig {
+        self.get_if(registry, file, true)
+    }
+
+    /// `must_match`: a file that no `files` is for has no configuration.
+    fn get_if(&self, registry: &Registry, file: &[u8], must_match: bool) -> FileConfig {
         let relative = self.relative(file);
         let parts = SplitPath::new(&relative);
         let mut matching: Vec<u32> = Vec::new();
@@ -492,7 +564,7 @@ impl Config {
             }
             is_matched |= is_linted;
         }
-        if !is_matched {
+        if !is_matched && must_match {
             return FileConfig::Unconfigured;
         }
         FileConfig::Matched(
@@ -617,6 +689,9 @@ impl Config {
                 (config.processor_location).clone_from(&object.processor_location);
             }
         }
+        if self.is_legacy {
+            eslintrc::resolve_language_options(&mut language_options);
+        }
         // Another language validates its own.
         if config.is_javascript() {
             config.validate_language_options(&language_options);
@@ -625,6 +700,7 @@ impl Config {
         // oxlint has no `parser`.
         config.language.refuses_what_parser_refuses = !self.prefers_typescript_rules;
         config.language.is_oxlint = self.prefers_typescript_rules;
+        config.language.reads_env_comments = self.is_legacy;
         config.linter = linter;
         for setting in rules {
             // ESLint's `throwRuleNotFoundError`, where it can be known that ESLint has no such rule.

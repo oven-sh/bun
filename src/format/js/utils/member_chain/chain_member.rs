@@ -211,8 +211,10 @@ impl<'a> Format<'a> for FormatComputedMemberExpressionWithoutObject<'a> {
             return;
         };
         // A comment on its own line before the `[` leads what is in the brackets, unless that is a
-        // name.
-        if !f.is_quiet() && matches!(index.kind(), ExprKind::Ident(_)) {
+        // name. For oxfmt it stays where it is.
+        if !f.is_quiet()
+            && (matches!(index.kind(), ExprKind::Ident(_)) || f.options().flavor.is_oxfmt())
+        {
             let comments = f
                 .comments()
                 .comments_before_character(member.span().start, b'[');

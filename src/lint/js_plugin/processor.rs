@@ -5,7 +5,7 @@
 //! ESLint's JSON: [`write_messages`], [`read_messages`].
 
 use super::engine::Vm;
-use super::host::{Host, number};
+use super::host::{Host, number, realms_for};
 use super::offsets::Offsets;
 use super::wire::{self, result};
 use crate::context::Severity;
@@ -229,7 +229,8 @@ impl Host<'_> {
     ) -> Result<Json, Vec<u8>> {
         let mut outcome = Err(OUT_OF_STEP.to_vec());
         // Both calls are for the same realm: a processor remembers the blocks of a file.
-        self.engine.with_vm(&mut |vm| {
+        let among = realms_for(processor.needs_the_configuration);
+        self.engine.with_vm(among, &mut |vm| {
             outcome = self.process_in(vm, processor, path, text, lint);
         })?;
         outcome

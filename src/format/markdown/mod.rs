@@ -1,18 +1,17 @@
 //! Markdown.
 //!
-//! The specification is Prettier's `src/language-markdown`, which parses with micromark.
+//! The specification is Prettier's `src/language-markdown`, which parses with micromark. The parser is Bun's own, `bun_md`.
 //!
 //! ```text
-//! text ─ block::parse (with inline) ─→ Tree (mdast) ─ preprocess ─→ sentences ─ printer ─→ the document of `css::doc`
+//! text ─ bun_md ─→ events ─ parse ─→ Tree (mdast) ─ preprocess ─→ sentences ─ printer ─→ the document of `css::doc`
 //! ```
 
 pub(crate) mod ast;
-mod block;
-mod content;
 pub(crate) mod embed;
-mod inline;
+mod parse;
 mod preprocess;
 mod printer;
+mod spans;
 mod strings;
 mod unicode_tables;
 
@@ -63,16 +62,44 @@ pub struct Scratch {
 /// The syntax tree of `original`, for debugging.
 pub fn dump_ast(original: &[u8], out: &mut Vec<u8>) {
     let mut tree = ast::Tree::default();
-    let blanked = block::blank_front_matter(original);
+    let blanked = parse::blank_front_matter(original);
     let content = blanked.as_deref().unwrap_or(original);
-    if let Some(root) = block::parse(content, original, block::Syntax::Markdown, &mut tree) {
+    if let Some(root) = parse::parse(content, original, parse::Syntax::Markdown, &mut tree) {
         ast::dump(content, &tree, root, out);
     }
 }
 
+/// For the harness: the syntax tree of `original`, which is MDX.
+pub fn dump_mdx_ast(original: &[u8], out: &mut Vec<u8>) {
+    let mut tree = ast::Tree::default();
+    if let Some(root) = parse::parse(original, original, parse::Syntax::Mdx, &mut tree) {
+        ast::dump(original, &tree, root, out);
+    }
+}
+
+/// For the harness: makes the syntax tree of `original`. Returns how many nodes it has.
+pub fn count_nodes(original: &[u8], scratch: &mut Scratch) -> usize {
+    let blanked = parse::blank_front_matter(original);
+    let content = blanked.as_deref().unwrap_or(original);
+    let syntax = parse::Syntax::Markdown;
+    parse::parse(content, original, syntax, &mut scratch.tree);
+    scratch.tree.nodes.len()
+}
+
+/// For the harness: what `Bun.markdown.html` makes of `text` with the options `on` set.
+pub fn render_to_html(text: &[u8], on: &[&str]) -> Option<Box<[u8]>> {
+    let mut options = bun_md::root::Options::default();
+    for (name, _, set) in bun_md::root::Options::BOOL_FIELD_SETTERS {
+        if on.contains(name) {
+            set(&mut options, true);
+        }
+    }
+    bun_md::root::render_to_html_with_options(text, options).ok()
+}
+
 /// Fills `tree` with the syntax of `text`, which is a description in a JSDoc comment. Returns the root.
 pub(crate) fn parse_plain(text: &[u8], tree: &mut ast::Tree) -> Option<ast::NodeId> {
-    block::parse_content(text, tree, true)
+    parse::parse_content(text, tree, true)
 }
 
 /// Prettier's `inferParser(options, { language })`: the parser for code in `language`.
@@ -376,15 +403,15 @@ fn with_document<R>(
     mode: Mode,
     then: impl FnOnce(doc::Doc<'_>) -> R,
 ) -> Result<R, FormatError> {
-    let blanked = block::blank_front_matter(text);
+    let blanked = parse::blank_front_matter(text);
     let original = text;
     let text = blanked.as_deref().unwrap_or(text);
     let syntax = if mode.is_mdx {
-        block::Syntax::Mdx
+        parse::Syntax::Mdx
     } else {
-        block::Syntax::Markdown
+        parse::Syntax::Markdown
     };
-    let root = block::parse(text, original, syntax, tree).ok_or(FormatError::NestedTooDeeply)?;
+    let root = parse::parse(text, original, syntax, tree).ok_or(FormatError::NestedTooDeeply)?;
     let mut preprocessor = preprocess::Preprocessor {
         text,
         original,

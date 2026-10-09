@@ -1,6 +1,6 @@
 //! Prettier's `language-html/embed/vue-*.js`: the attributes of Vue.
 
-use super::ast::{Attribute, Id};
+use super::ast::{Attribute, Id, Kind};
 use super::js::{self, Binding, Hug, Syntax};
 use super::printer::Printer;
 use crate::options::{HtmlRoot, InHtml};
@@ -80,6 +80,18 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
                         tree.attribute(child, b"lang").flatten(),
                         Some(b"ts" | b"typescript")
                     )
+            })
+        })
+    }
+
+    /// oxfmt's `hasTsxScriptBlock`: whether a `<script>` anywhere in the file says `lang="tsx"`.
+    pub(crate) fn has_tsx_script(&mut self) -> bool {
+        let tree = self.tree;
+        *self.has_tsx_script.get_or_insert_with(|| {
+            (0..tree.nodes.len() as Id).any(|id| {
+                tree[id].kind == Kind::Element
+                    && tree[id].is_full_name(b"script")
+                    && tree.attribute(id, b"lang").flatten() == Some(b"tsx")
             })
         })
     }

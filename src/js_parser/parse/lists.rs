@@ -383,12 +383,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                     && !p.lexer.has_newline_before;
                             }
                             (Some(Statement::TsStmtGlobal), _) => {
+                                // For TypeScript's scanner no keyword is an identifier.
                                 return !p.is_ecmascript()
                                     && p.step()
-                                    && matches!(
-                                        p.lexer.token,
-                                        T::TOpenBrace | T::TIdentifier | T::TExport
-                                    );
+                                    && match p.lexer.token {
+                                        T::TOpenBrace | T::TExport => true,
+                                        T::TIdentifier => {
+                                            !crate::typescript::identifier::is_contextual_keyword(
+                                                p.lexer.identifier,
+                                            )
+                                        }
+                                        _ => false,
+                                    };
                             }
                             (Some(Statement::TsStmtAbstract | Statement::TsStmtDeclare), _) => {
                                 is_modifier = true

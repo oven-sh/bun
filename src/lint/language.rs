@@ -99,6 +99,8 @@ pub struct LanguageOptions {
     /// The configuration is one of oxlint: where a rule of oxlint does something else than the rule of ESLint or of the plugin
     /// that it is a port of, oxlint is followed.
     pub is_oxlint: bool,
+    /// The configuration is one of ESLint 8, where `/* eslint-env mocha */` defines the variables of an environment.
+    pub reads_env_comments: bool,
     /// All of `languageOptions.parserOptions`.
     pub parser_options: Json,
     /// ESLint's `settings`.
@@ -315,6 +317,7 @@ impl LanguageOptions {
                 .any(|key| is_truthy(parser_options.get(key))),
             refuses_what_parser_refuses: true,
             is_oxlint: false,
+            reads_env_comments: false,
             parser_options,
             settings: settings.clone(),
             config_globals: OnceLock::new(),
@@ -398,6 +401,7 @@ impl Default for LanguageOptions {
             wants_types: false,
             refuses_what_parser_refuses: true,
             is_oxlint: false,
+            reads_env_comments: false,
             parser_options: Json::Null,
             settings: Json::Null,
             config_globals: OnceLock::new(),

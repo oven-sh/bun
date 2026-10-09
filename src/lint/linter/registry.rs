@@ -202,7 +202,7 @@ pub fn parse_rule_id(id: &[u8]) -> (&[u8], &[u8]) {
 }
 
 impl Registry {
-    /// `lists`: `bun_lint_eslint::RULES`, `bun_lint_typescript::RULES`, `bun_lint_plugins::RULES`.
+    /// `lists`: `RULES` of each crate that has rules.
     pub fn new(lists: &[&'static [RuleEntry]]) -> Registry {
         let mut rules: Vec<_> = lists.iter().flat_map(|list| list.iter()).collect();
         rules.sort_by_key(|it| (it.meta.plugin as u8, it.meta.name));
@@ -250,14 +250,6 @@ impl Registry {
         let found = self.get(plugin, name).or_else(|| match plugin {
             // oxlint has them in one plugin.
             Plugin::React if prefers_typescript => self.get(Plugin::ReactHooks, name),
-            // oxlint has rules in other plugins that ESLint has given up: `no-sync`, `no-process-exit`.
-            Plugin::Node | Plugin::Unicorn
-                if prefers_typescript
-                    && is_in_oxlint(plugin, name)
-                    && !is_in_oxlint(Plugin::Eslint, name) =>
-            {
-                self.get(Plugin::Eslint, name)
-            }
             _ => None,
         });
         found.filter(|it| prefers_typescript || !it.meta.follows_oxlint)

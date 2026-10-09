@@ -53,6 +53,8 @@ fn or_exit<T>(parsed: Result<T, UsageError>) -> T {
 
 enum Command {
     Lint(Box<Options>),
+    /// The command line of `bun lint` cannot be read.
+    Refused(Vec<u8>),
     Format(Box<bun_lint_driver::fmt::cli::Options>),
 }
 
@@ -63,10 +65,14 @@ pub(crate) fn run(args: &[String]) {
         [b"@format", rest @ ..] => Command::Format(Box::new(or_exit(
             bun_lint_driver::fmt::cli::Options::parse(rest),
         ))),
-        args => Command::Lint(Box::new(or_exit(Options::parse(args)))),
+        args => match Options::parse(args) {
+            Ok(options) => Command::Lint(Box::new(options)),
+            Err(UsageError(message)) => Command::Refused(message),
+        },
     };
     let (help, cwd) = match &command {
         Command::Lint(options) => (options.help.then_some(("lint", PARAMS)), &options.cwd),
+        Command::Refused(_) => (None, &None),
         Command::Format(options) => (
             options
                 .help
@@ -119,6 +125,7 @@ pub(crate) fn run(args: &[String]) {
     }
     let outcome = match &command {
         Command::Lint(options) => bun_lint_driver::run(options, &environment),
+        Command::Refused(message) => bun_lint_driver::refuse_command_line(message, &environment),
         Command::Format(options) => bun_lint_driver::fmt::run(options, &environment),
     };
     let _ = std::io::stdout().write_all(&outcome.stdout);

@@ -957,12 +957,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     /// Lookahead with `nextIsUnambiguouslyStartOfFunctionType`, at a "(".
     #[inline(never)]
     fn is_unambiguously_start_of_function_type(&mut self) -> bool {
-        // `skipParameterStart` parses a whole binding pattern, with the expressions in it.
+        // `skipParameterStart` parses a whole binding pattern, with the expressions in it and the
+        // types in them, where every "(" is asked about again, twice. An answer that took long is
+        // kept: otherwise each level of `({[a as ({[b as ..` takes three times as long as the one
+        // in it.
+        let at = self.lexer.start;
+        let kept = &self.function_type_starts;
+        let place = match kept.binary_search_by_key(&at, |it| (it >> 1) as usize) {
+            Ok(known) => return kept[known] & 1 == 1,
+            Err(place) => place,
+        };
         let snapshot = self.parser_snapshot();
         let found = self
             .next_is_unambiguously_start_of_function_type()
             .unwrap_or(false);
+        let end = self.lexer.start;
         self.restore_parser_snapshot(snapshot);
+        // What was kept on the way is behind it.
+        if end.saturating_sub(at) > 64 {
+            self.function_type_starts
+                .insert(place, (at as u32) << 1 | u32::from(found));
+        }
         found
     }
 
@@ -4919,9 +4934,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         &mut self,
         is_optional_chain: bool,
     ) -> Result<bool, Error> {
-        self.lexer_backtracker_bool(|p| {
-            p.skip_type_script_type_arguments_with_backtracking(is_optional_chain)
-        })
+        // What follows a "<" that starts no type arguments is parsed again as an expression, with
+        // every "<" in it. An attempt that got far and failed is not made again: otherwise each
+        // level of `a < ({b = a < ({b = ..` takes twice as long as the one in it.
+        let at = self.lexer.start;
+        let key = (at as u32) << 1 | u32::from(is_optional_chain);
+        if self.ts_type_argument_backtracks.binary_search(&key).is_ok() {
+            return Ok(false);
+        }
+        let end = core::cell::Cell::new(at);
+        let skipped = self.lexer_backtracker_bool(|p| {
+            let skipped = p.skip_type_script_type_arguments_with_backtracking(is_optional_chain);
+            end.set(p.lexer.start);
+            skipped
+        })?;
+        if !skipped
+            && end.get().saturating_sub(at) > 64
+            && let Err(place) = self.ts_type_argument_backtracks.binary_search(&key)
+        {
+            self.ts_type_argument_backtracks.insert(place, key);
+        }
+        Ok(skipped)
     }
 
     pub(crate) fn try_skip_type_script_arrow_return_type_with_backtracking(

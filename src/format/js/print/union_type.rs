@@ -47,24 +47,39 @@ pub(crate) fn write_ts_union_type_in<'a>(
         .iter()
         .find(|comment| f.comments().is_suppression_comment(comment));
     let is_suppressed = match prettier_ignore_before_union_is_about_all_of_it(f) {
-        true => !f.is_quiet() && f.comments().is_suppressed(ty.span().start),
+        true => !union_prints_itself(ty, f) || follows_printed_suppression_comment(ty, f),
         false => suppression.is_some_and(|comment| !comment.preceded_by_newline()),
     };
     if is_suppressed {
-        return write!(
+        write!(
             f,
             [format_leading_comments, FormatSuppressedNode(ty.span())]
         );
+        // oxc's `write_suppressed_expression`: the comments before the `)` stay there, and a line comment has the `)` on
+        // the next line.
+        if prettier_ignore_before_union_is_about_all_of_it(f) && needs_parentheses(ty, f) {
+            let comments = f.comments().comments_before_character(ty.span().end, b')');
+            write!(f, FormatTrailingComments::Comments(comments));
+            if comments.last().is_some_and(|comment| comment.is_line()) {
+                write!(f, hard_line_break());
+            }
+        }
+        return;
     }
 
+    let parent = effective_parent(ty.ast_parent());
+    // For oxfmt a comment that ends its line is above the type of a type alias, and both are indented.
+    let has_comment_above = union_breaks_one_per_line(f)
+        && !f.is_quiet()
+        && matches!(parent, AstNodes::TSTypeAliasDeclaration(_))
+        && f.comments().has_leading_own_line_comment(ty.span().start);
     // `{ a: string } | null | void` is written like the object type alone.
-    if should_hug_type(ty, types, f) {
+    if !has_comment_above && should_hug_type(ty, types, f) {
         write!(f, format_leading_comments);
         f.join_with(" | ").entries(types.iter());
         return;
     }
 
-    let parent = effective_parent(ty.ast_parent());
     let is_one_of_several_tuple_elements = matches!(parent, AstNodes::TSTupleType(tuple) if matches!(tuple.kind(), TypeKind::Tuple(it) if it.len() > 1));
     // Prettier's `shouldUnionTypePrintOwnComments`. Otherwise they are outside of the parentheses.
     let prints_own_comments = !is_one_of_several_tuple_elements
@@ -150,6 +165,11 @@ pub(crate) fn prettier_ignore_before_union_is_about_all_of_it(f: &Formatter<'_>)
     f.options().flavor.is_oxfmt()
 }
 
+/// `A /* prettier-ignore */ | B`: for oxfmt a comment behind a type is only about it if it ends the line.
+fn prettier_ignore_behind_type_ends_its_line(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// Whether what the union `ty` is in has written a `prettier-ignore` comment that leads it, outside
 /// of its parentheses.
 fn follows_printed_suppression_comment<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> bool {
@@ -202,8 +222,26 @@ fn write_union_one_per_line<'a>(
     let is_after_code_at_end_of_line = |comment: &Comment| {
         comment.is_block() && !comment.preceded_by_newline() && comment.followed_by_newline()
     };
-    let is_jsdoc = |comment: &Comment| f.source_text().text_for(comment).starts_with(b"/**");
     let is_in_type_alias = matches!(members.parent, AstNodes::TSTypeAliasDeclaration(_));
+    let has_end_of_line_comment = leading_comments
+        .iter()
+        .any(|comment| comment.followed_by_newline());
+    // Comments go behind the `|` that is written before the first type, which writes them, wherever they are in the
+    // text. Only if one of them ends its line do they all stay before it: there would be a line break between the
+    // `|` and the type.
+    //
+    // ```ts
+    // type A = /* comment */ B | C;      type A =
+    //                                      | /* comment */ B
+    //                                      | C;
+    // ```
+    let comments_before_operator = match has_end_of_line_comment {
+        true => leading_comments,
+        false => &[][..],
+    };
+    // After the `?` or `:` of a conditional type the comments are behind the operator, and what follows is in line
+    // with them.
+    let is_branch_of_conditional_type = matches!(members.parent, AstNodes::TSConditionalType(it) if matches!(it.kind(), TypeKind::Cond { yes, no, .. } if yes.span().contains(members.ty.span()) || no.span().contains(members.ty.span())));
 
     let should_indent = match members.parent {
         AstNodes::TSTypeAssertion(_)
@@ -211,22 +249,19 @@ fn write_union_one_per_line<'a>(
         | AstNodes::TSTypeParameterInstantiation(_) => false,
         // The line break after the `=`, which a comment forces, comes with an indentation.
         AstNodes::TSTypeAliasDeclaration(statement) => {
-            !leading_comments
-                .iter()
-                .any(|comment| is_after_code_at_end_of_line(comment) && is_jsdoc(comment))
-                && !f
-                    .comments()
-                    .printed_comments()
-                    .last()
-                    .is_some_and(|comment| {
-                        comment.followed_by_newline()
-                            && comment.span.start > statement.span_without_export().start
-                    })
+            !type_alias_union_breaks_after_operator(statement, leading_comments, f)
+        }
+        AstNodes::TSConditionalType(_) if is_branch_of_conditional_type => {
+            comments_before_operator.is_empty()
+        }
+        // A line comment before `as` is written behind it, with a line break and an indentation.
+        AstNodes::TSAsExpression(cast) | AstNodes::TSSatisfiesExpression(cast) => {
+            !matches!(cast.kind(), ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } if f.comments().has_printed_line_comment_after(expr.span().end))
         }
         _ => true,
     };
     let needs_parentheses = needs_parentheses(members.ty, f);
-    let starts_with_line_break = should_indent && leading_comments.is_empty();
+    let starts_with_line_break = should_indent && comments_before_operator.is_empty();
     let types = format_with(|f| {
         let first_separator = format_args!(
             starts_with_line_break.then_some(soft_line_break_or_space()),
@@ -257,28 +292,22 @@ fn write_union_one_per_line<'a>(
     // `| (A | B)`
     let is_only_type = matches!(members.ty.ast_parent(), AstNodes::TSUnionType(_))
         && !matches!(members.parent, AstNodes::TSUnionType(_));
-    let has_end_of_line_comment = leading_comments
-        .iter()
-        .any(|comment| comment.followed_by_newline());
     let has_own_line_comment = leading_comments
         .iter()
         .any(|comment| comment.preceded_by_newline())
         || (is_in_type_alias
             && leading_comments
                 .iter()
-                .any(|it| is_after_code_at_end_of_line(it) && !is_jsdoc(it)));
-    let breaks_before_comments = match is_only_type {
-        true => has_end_of_line_comment,
-        false => has_own_line_comment,
-    };
-    let breaks_after_comments = is_only_type && has_own_line_comment && !has_end_of_line_comment;
+                .any(|it| is_after_code_at_end_of_line(it) && !is_jsdoc(it, f)));
+    let breaks_before_comments = (has_own_line_comment
+        || (has_end_of_line_comment && is_only_type))
+        && !is_branch_of_conditional_type;
     let inner = format_with(|f| {
         write!(
             f,
             [
                 breaks_before_comments.then_some(soft_line_break()),
-                FormatLeadingComments::Comments(leading_comments),
-                breaks_after_comments.then_some(soft_line_break()),
+                FormatLeadingComments::Comments(comments_before_operator),
                 group(&content)
             ]
         );
@@ -287,6 +316,48 @@ fn write_union_one_per_line<'a>(
         true => write!(f, group(&indent(&inner))),
         false => write!(f, group(&inner)),
     }
+}
+
+fn is_jsdoc(comment: &Comment, f: &Formatter<'_>) -> bool {
+    f.source_text().text_for(comment).starts_with(b"/**")
+}
+
+/// oxc's `alias_union_breaks_after_operator`: whether the union that is the type of the type alias `statement` leaves
+/// the line break and the indentation to the `=`. `leading_comments`: those that are left before the union.
+///
+/// - A JSDoc comment behind code ends its line, or one over several lines has its stars lined up.
+/// - A comment that has been written behind the left side ends the line of the `=`.
+pub(crate) fn type_alias_union_breaks_after_operator<'a>(
+    statement: Stmt<'a>,
+    leading_comments: &[Comment],
+    f: &Formatter<'a>,
+) -> bool {
+    let StmtKind::TypeAlias(alias) = statement.kind() else {
+        return false;
+    };
+    let left_end = alias
+        .type_params()
+        .angle_brackets_span()
+        .map_or_else(|| alias.name().span().end, |it| it.end);
+    leading_comments.iter().any(|comment| {
+        comment.is_indentable_block()
+            || (is_jsdoc(comment, f)
+                && !comment.preceded_by_newline()
+                && comment.followed_by_newline())
+    }) || f
+        .comments()
+        .printed_comments()
+        .last()
+        .is_some_and(|comment| comment.followed_by_newline() && comment.span.start > left_end)
+}
+
+/// oxc's `union_prints_itself`: a union that a `prettier-ignore` comment is about is written as it is, and what it is
+/// in treats it like any other type.
+pub(crate) fn union_prints_itself<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> bool {
+    matches!(ty.kind(), TypeKind::Union(_))
+        && (f.is_quiet()
+            || !(f.comments().is_suppressed(ty.span().start)
+                || f.comments().has_trailing_suppression_comment(ty.span().end)))
 }
 
 /// Prettier's `shouldIndentUnionType`.
@@ -334,14 +405,15 @@ impl<'a> Format<'a> for UnionMembers<'a> {
             // A `prettier-ignore` comment leads it, or trails it with the `|` behind it.
             let is_member_suppressed = is_suppressed.get()
                 || leading_comments.iter().any(is_suppression)
-                || next.is_some_and(|next| {
-                    let comments = f.comments().comments_in(member.span().between(next.span()));
-                    let trailing =
-                        comments.len() - count_leading_comments(comments, next.span().start, f);
-                    comments[..trailing]
-                        .iter()
-                        .any(|comment| is_suppression(comment) && !comment.preceded_by_newline())
-                });
+                || (!prettier_ignore_behind_type_ends_its_line(f)
+                    && next.is_some_and(|next| {
+                        let comments = f.comments().comments_in(member.span().between(next.span()));
+                        let trailing =
+                            comments.len() - count_leading_comments(comments, next.span().start, f);
+                        comments[..trailing].iter().any(|comment| {
+                            is_suppression(comment) && !comment.preceded_by_newline()
+                        })
+                    }));
 
             let format_member = format_with(|f| write_member(member, is_member_suppressed, f));
             // The comments between it and the next type that do not lead that one.
@@ -370,9 +442,18 @@ impl<'a> Format<'a> for UnionMembers<'a> {
                 write!(f, FormatTrailingComments::Comments(comments));
             });
 
-            // The comments after a type are only aligned with it if there are comments before it.
+            // The comments after a type are only aligned with it if there are comments before it. Never for oxfmt.
             if leading_comments.is_empty() {
                 write!(f, [align(2, &format_member), format_trailing_comments]);
+            } else if union_breaks_one_per_line(f) {
+                let leading_comments = FormatLeadingComments::Comments(leading_comments);
+                write!(
+                    f,
+                    [
+                        align(2, &format_args!(leading_comments, format_member)),
+                        format_trailing_comments
+                    ]
+                );
             } else {
                 let leading_comments = FormatLeadingComments::Comments(leading_comments);
                 write!(

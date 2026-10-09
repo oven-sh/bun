@@ -4,7 +4,7 @@ use super::ast::{Chomping, Id, Kind, List, Node, Tree};
 use super::compose::{ScalarType, scalar_source};
 use crate::css::doc::{Alignment, Elements, Group, IndentCommand, Line};
 use crate::options::ProseWrap;
-use crate::text::{self, is_previous_line_empty};
+use crate::text::{self, has_newline_backwards, is_previous_line_empty};
 use bun_core::strings;
 use std::borrow::Cow;
 
@@ -22,6 +22,8 @@ pub(crate) struct Printer<'t, 'a> {
     pub(crate) is_oxfmt: bool,
     /// Of the document that is being printed.
     pub(crate) is_last_document: bool,
+    /// Of the mapping or sequence whose first item is printed next.
+    pub(crate) is_first_item_ignored: bool,
     /// `printedEmptyLineCache`: for each position, whether a node ends there whose next line has been looked at.
     pub(crate) printed_empty_lines: Vec<bool>,
     pub(crate) last_group_id: u32,
@@ -345,7 +347,20 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             self.out.hard_line();
         }
 
-        if self.has_prettier_ignore(node) {
+        let mut is_ignored = self.has_prettier_ignore(node);
+        if self.is_oxfmt {
+            // For oxfmt the comment is about one node: before a mapping or a sequence, about the first in it.
+            match node.kind {
+                Kind::Mapping | Kind::Sequence => {
+                    self.is_first_item_ignored = std::mem::take(&mut is_ignored);
+                }
+                Kind::MappingItem | Kind::SequenceItem => {
+                    is_ignored |= std::mem::take(&mut self.is_first_item_ignored);
+                }
+                _ => {}
+            }
+        }
+        if is_ignored {
             // `replaceEndOfLine`
             for (index, line) in
                 strings::split(text::trim_end(self.source(node)), b"\n").enumerate()
@@ -371,7 +386,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                     && self
                         .parent(parent)
                         .and_then(|item| self.parent(item))
-                        .is_some_and(|it| it.kind == Kind::Mapping)
+                        .is_some_and(|it| it.kind == Kind::Mapping || self.is_oxfmt)
             });
             self.out.start_line_suffix();
             if !(node.kind == Kind::MappingValue && node.children.is_empty()) {
@@ -417,9 +432,13 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         match node.kind {
             Kind::Root => {
                 let last = self.last_descendant(node);
-                let should_print_hardline =
-                    !(matches!(last.kind, Kind::BlockLiteral | Kind::BlockFolded)
-                        && last.chomping == Chomping::Keep);
+                let source = self.source(last);
+                let should_print_hardline = !(matches!(last.kind, Kind::BlockLiteral | Kind::BlockFolded)
+                        && last.chomping == Chomping::Keep)
+                        // For oxfmt a file ends with a line break, and here none has been kept.
+                        || (self.is_oxfmt
+                            && strings::index_of_char_usize(source, b'\n')
+                                .is_none_or(|newline| newline + 1 == source.len()));
                 let mut keeps_line_breaks = false;
                 for (index, child) in tree.items(node.children).enumerate() {
                     let document = self.node(child);
@@ -503,21 +522,24 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                     let last = self.last_descendant(node);
                     let start = self.node(first_comment).position.start.offset as usize;
                     let is_block = matches!(last.kind, Kind::BlockFolded | Kind::BlockLiteral);
-                    let hard_lines =
-                        if self.is_oxfmt && !(is_block && last.chomping == Chomping::Keep) {
-                            1 + usize::from(is_previous_line_empty(self.text, start))
-                        } else if is_block {
-                            // There is a line break at the end of a block scalar that keeps its line breaks.
-                            if last.chomping == Chomping::Keep {
-                                0
-                            } else {
-                                2
-                            }
+                    let hard_lines = if self.is_oxfmt && !has_newline_backwards(self.text, start) {
+                        // It stays on its line.
+                        self.out.token(" ");
+                        0
+                    } else if self.is_oxfmt && !(is_block && last.chomping == Chomping::Keep) {
+                        1 + usize::from(is_previous_line_empty(self.text, start))
+                    } else if is_block {
+                        // There is a line break at the end of a block scalar that keeps its line breaks.
+                        if last.chomping == Chomping::Keep {
+                            0
                         } else {
-                            let keeps_empty_line = self.node(last_child).kind == Kind::Mapping
-                                && is_previous_line_empty(self.text, start);
-                            if keeps_empty_line { 2 } else { 1 }
-                        };
+                            2
+                        }
+                    } else {
+                        let keeps_empty_line = self.node(last_child).kind == Kind::Mapping
+                            && is_previous_line_empty(self.text, start);
+                        if keeps_empty_line { 2 } else { 1 }
+                    };
                     for _ in 0..hard_lines {
                         self.out.hard_line();
                     }
@@ -617,8 +639,11 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         if document.document_end_marker || document.trailing_comment.is_some() {
             return true;
         }
+        // For oxfmt, comments between two documents are no reason for a `...` that is not there.
         next.and_then(|next| self.first_child(next))
-            .is_some_and(|head| !head.children.is_empty() || !head.end_comments.is_empty())
+            .is_some_and(|head| {
+                !head.children.is_empty() || (!self.is_oxfmt && !head.end_comments.is_empty())
+            })
     }
 
     fn print_quoted(&mut self, node: &Node<'a>) {
@@ -779,7 +804,11 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             } else {
                 let mut lines: Vec<Vec<&'a [u8]>> = Vec::new();
                 for (index, line) in raw_lines.iter().enumerate() {
-                    let words = split_with_single_space(line);
+                    let words = match self.is_oxfmt && text::starts_with_white_space(line) {
+                        // A line that is indented more is not folded, so oxfmt leaves it as it is.
+                        true => vec![*line],
+                        false => split_with_single_space(line),
+                    };
                     // The test is made with the words joined by commas.
                     let is_blank_at = |word: Option<&&[u8]>, at_start: bool| {
                         word.is_some_and(|word| match at_start {
@@ -836,13 +865,19 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         // `removeUnnecessaryTrailingNewlines`
         let mut lines = lines;
         if node.chomping == Chomping::Keep {
-            if content.ends_with(b"\n") && lines.last().is_some_and(Words::is_empty) {
+            if (content.ends_with(b"\n") || self.is_oxfmt)
+                && lines.last().is_some_and(Words::is_empty)
+            {
                 lines.pop();
             }
             return lines;
         }
         let is_blank = |words: &Words<'a>| {
-            let is_blank = |word: &[u8]| word.iter().all(|b| matches!(b, b' ' | b'\t'));
+            // For oxfmt, blanks that are left of a line are a part of the value.
+            let is_blank = |word: &[u8]| match self.is_oxfmt {
+                true => word.is_empty(),
+                false => word.iter().all(|b| matches!(b, b' ' | b'\t')),
+            };
             match words {
                 Words::None => true,
                 Words::One(word) => is_blank(word),
@@ -918,6 +953,9 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 out.hard_line();
             }
             words.write_fill(out);
+            if self.is_oxfmt && !words.is_empty() {
+                out.keep_blanks();
+            }
             if index + 1 != lines.len() {
                 match words.is_empty() {
                     true => out.hard_line(),
@@ -963,6 +1001,22 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         for id in tree.items(node.children) {
             let child = self.node(id);
             self.print(id, is_last_descendant && child.next.is_none());
+            // For oxfmt, what is between the brackets is on one line or each on its own.
+            if self.is_oxfmt
+                && child.kind == Kind::FlowMappingItem
+                && self
+                    .first_child(child)
+                    .and_then(|key| self.first_child(key))
+                    .is_some_and(|key| {
+                        key.trailing_comment.is_some()
+                            || (matches!(
+                                key.kind,
+                                Kind::Plain | Kind::QuoteDouble | Kind::QuoteSingle
+                            ) && key.position.start.line != key.position.end.line)
+                    })
+            {
+                self.out.break_parent();
+            }
             let Some(next) = child.next else {
                 break;
             };
@@ -1137,7 +1191,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 || (has_end_comments
                     && !is_oxfmt
                     && value_content.is_some_and(|it| !is_block_collection(it)))
-                || (parent.is_some_and(|it| it.kind == Kind::Mapping)
+                || (parent.is_some_and(|it| it.kind == Kind::Mapping || is_oxfmt)
                     && key_content.is_some_and(|it| it.trailing_comment.is_some())
                     && is_inline_node(value_content))
                 || value_content.is_some_and(|it| {

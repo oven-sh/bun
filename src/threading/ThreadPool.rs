@@ -192,6 +192,8 @@ pub struct ThreadPool {
     /// `Config { max_threads, stack_size }` literals keep compiling; callers
     /// flip it after [`ThreadPool::init`].
     pub(crate) needs_stack_bounds: bool,
+    /// What its threads are called, before their number.
+    name: &'static str,
     pub(crate) stack_size: u32,
     pub(crate) max_threads: u32,
     sync: AtomicSync,
@@ -224,6 +226,7 @@ impl ThreadPool {
     pub fn init(config: Config) -> ThreadPool {
         ThreadPool {
             needs_stack_bounds: true,
+            name: "Bun Pool",
             stack_size: 1.max(config.stack_size),
             max_threads: 1.max(config.max_threads),
             sync: AtomicSync::new(Sync::zero()),
@@ -239,6 +242,12 @@ impl ThreadPool {
                 ..PoolStats::default()
             },
         }
+    }
+
+    /// The same pool, whose threads are called `name` and a number. Before any is started.
+    pub fn named(mut self, name: &'static str) -> ThreadPool {
+        self.name = name;
+        self
     }
 
     /// Dump aggregate worker idle/busy stats to stderr. No-op unless
@@ -303,18 +312,6 @@ impl ThreadPool {
             next = thread.next;
         }
         self.wake_for_idle_events();
-    }
-
-    /// How many threads [`push_idle_task_to_each_thread`](Self::push_idle_task_to_each_thread)
-    /// reaches. One that [`warm`](Self::warm) has spawned counts once it runs.
-    pub fn registered_threads(&self) -> usize {
-        let mut count = 0;
-        let mut next = self.threads.load(Ordering::Acquire);
-        while let Some(thread) = NonNull::new(next) {
-            count += 1;
-            next = bun_ptr::BackRef::from(thread).next;
-        }
-        count
     }
 }
 
@@ -1212,7 +1209,7 @@ impl Thread {
             let len = {
                 let mut cur: &mut [u8] = &mut counter_buf[..99];
                 let before = cur.len();
-                match write!(&mut cur, "Bun Pool {}", int) {
+                match write!(&mut cur, "{} {}", thread_pool.get().name, int) {
                     Ok(()) => before - cur.len(),
                     Err(_) => 0,
                 }

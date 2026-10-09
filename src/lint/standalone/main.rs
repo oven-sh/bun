@@ -16,6 +16,7 @@ mod linter_cmd;
 mod parser_cmd;
 mod perf_cmd;
 mod plugins_cmd;
+mod react_compiler_cmd;
 mod regex_cmd;
 mod selector_cmd;
 mod semantic_cmd;
@@ -41,6 +42,9 @@ fn all_rules() -> impl Iterator<Item = &'static RuleEntry> {
         .iter()
         .chain(bun_lint_typescript::RULES)
         .chain(bun_lint_plugins::RULES)
+        .chain(bun_lint_unicorn::RULES)
+        .chain(bun_lint_react::RULES)
+        .chain(bun_lint_jest::RULES)
 }
 
 pub(crate) use linter_cmd::with_file;
@@ -221,6 +225,7 @@ fn main() {
         Some("cli") => driver_cmd::run(&args[1..]),
         Some("selector") => selector_cmd::run(&args[1..]),
         Some("plugins") => plugins_cmd::run(&args[1..]),
+        Some("react-compiler") => react_compiler_cmd::run(&args[1..]),
         Some("js_plugin") => js_plugin_cmd::run(&args[1..]),
         Some("utils-eslint") => utils_eslint_cmd::run(&args[1..]),
         Some("utils-tsscope") => utils_tsscope_cmd::run(&args[1..]),

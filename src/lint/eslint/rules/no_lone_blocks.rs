@@ -29,7 +29,7 @@ fn has_block_level_binding<'a>(body: List<'a, Stmt<'a>>) -> bool {
     declarations().any(is_lexical) || declarations().any(is_function_in_strict_mode)
 }
 
-/// The rule of oxlint 1.80. It is about every empty block that is not part of a `try` statement or the body of a loop,
+/// The rule of oxlint 1.87. It is about every empty block that is not part of a `try` statement or the body of a loop,
 /// and about a block in the body of a function only if each of the two has one statement.
 fn check_as_oxlint<'a>(block: Stmt<'a>, body: List<'a, Stmt<'a>>, cx: &mut Cx<'a, NoLoneBlocks>) {
     let parent = block.parent();

@@ -30,7 +30,12 @@ members = [
   "src/lint/eslint",
   "src/lint/typescript",
   "src/lint/plugins",
+  "src/lint/oxlint",
+  "src/lint/unicorn",
+  "src/lint/react",
+  "src/lint/jest",
   "src/lint/graph",
+  "src/lint/react_compiler",
   "src/lint/standalone",
   "src/lint/driver",
   "src/lint/conformance",
@@ -389,7 +394,12 @@ bun_lint = { path = "src/lint" }
 bun_lint_eslint = { path = "src/lint/eslint" }
 bun_lint_typescript = { path = "src/lint/typescript" }
 bun_lint_plugins = { path = "src/lint/plugins" }
+bun_lint_oxlint = { path = "src/lint/oxlint" }
+bun_lint_unicorn = { path = "src/lint/unicorn" }
+bun_lint_react = { path = "src/lint/react" }
+bun_lint_jest = { path = "src/lint/jest" }
 bun_lint_graph = { path = "src/lint/graph" }
+bun_lint_react_compiler = { path = "src/lint/react_compiler" }
 bun_format = { path = "src/format" }
 bun_format_conformance = { path = "src/format/conformance" }
 bun_lint_driver = { path = "src/lint/driver" }

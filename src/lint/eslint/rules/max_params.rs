@@ -55,10 +55,14 @@ impl Config {
         let Some(max) = self.max else {
             return;
         };
+        let is_oxlint = cx.language().is_oxlint;
         let is_checked = match func.kind() {
             FnKind::Decl | FnKind::Expr | FnKind::Arrow | FnKind::FunctionType => true,
-            // Without a body it is a `TSEmptyBodyFunctionExpression` or a `TSMethodSignature`.
-            FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor => func.has_body(),
+            // Without a body it is a `TSEmptyBodyFunctionExpression` or a `TSMethodSignature`. The first is a function
+            // for oxlint.
+            FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor => {
+                func.has_body() || is_oxlint && matches!(func.owner(), Node::Member(it) if !it.is_signature())
+            }
             _ => false,
         };
         if !is_checked {
@@ -69,7 +73,9 @@ impl Config {
             CountThis::ExceptVoid => !this.ty().is_some_and(|ty| ty.is_keyword(Keyword::Void)),
             CountThis::Always => true,
         });
-        let count = func.params().len() + usize::from(counts_this);
+        // oxlint does not count a rest parameter.
+        let has_uncounted_rest = is_oxlint && func.params().last().is_some_and(Param::is_rest);
+        let count = func.params().len() + usize::from(counts_this) - usize::from(has_uncounted_rest);
         if count > max {
             let name = ast_utils::get_function_name_with_kind(func);
             let mut head = ast_utils::get_function_head_loc(func);
@@ -84,7 +90,7 @@ impl Config {
                 head.end = only.span().start;
             }
             // oxlint points at the parameters.
-            let params = func.params_span().filter(|_| cx.language().is_oxlint);
+            let params = func.params_span().filter(|_| is_oxlint);
             cx.report(params.unwrap_or(head), EXCEED)
                 .data("name", text::upper_case_first(&name).into_owned())
                 .data("count", count)

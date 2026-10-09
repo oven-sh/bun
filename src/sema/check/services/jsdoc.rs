@@ -138,25 +138,85 @@ fn tag_comment(text: &[u8]) -> Vec<u8> {
         }
         comment.extend_from_slice(line.strip_suffix(b"\r").unwrap_or(line));
     }
+    // `removeLeadingNewlines` of what follows the last link.
+    let (mut at, mut after_last_link) = (0, None);
+    while let Some(found) = bun_core::strings::index_of_char_usize(&comment[at..], b'{') {
+        at += found;
+        let link = link_len(&comment[at..]);
+        at += link.max(1);
+        if link > 0 {
+            after_last_link = Some(at);
+        }
+    }
+    if let Some(start) = after_last_link {
+        let line_breaks = comment[start..].iter().take_while(|&&c| c == b'\n');
+        let end = start + line_breaks.count();
+        comment.drain(start..end);
+    }
     comment.truncate(comment.trim_ascii_end().len());
     comment
+}
+
+/// `isWhiteSpaceSingleLine`, as far as ASCII goes.
+fn is_space(c: u8) -> bool {
+    matches!(c, b' ' | b'\t' | 0x0b | 0x0c)
+}
+
+/// Where what is written in a line begins: behind white space, and if `has_asterisk` an asterisk and more white space.
+fn end_of_margin(text: &[u8], line: usize, has_asterisk: bool) -> usize {
+    let skip_space = |at: usize| at + text[at..].iter().take_while(|&&c| is_space(c)).count();
+    let at = skip_space(line);
+    match text.get(at) {
+        Some(b'*') if has_asterisk => skip_space(at + 1),
+        _ => at,
+    }
 }
 
 /// The tags of the comment `/** .. */`.
 fn parse_tags(comment: &[u8]) -> Tags {
     let mut tags = Tags::default();
     let text = comment.strip_suffix(b"*/").unwrap_or(comment);
-    // Where each tag begins: at every `@` that is not in a link.
+    // Where each tag begins: at an `@` that is the first in its line, or that follows white space and is followed by
+    // something else (`scanJSDocCommentTextToken`). Not in a link, and in the text of a tag not between backticks.
     let mut starts: SmallVec<[usize; 8]> = SmallVec::new();
-    let mut at = 0;
-    while let Some(found) = bun_core::strings::index_of_any(&text[at..], b"@{") {
+    let mut at = if text.starts_with(b"/**") { 3 } else { 0 };
+    let mut margin = end_of_margin(text, at, false);
+    let mut is_in_backticks = false;
+    while let Some(found) = bun_core::strings::index_of_any(&text[at..], b"@{`\n") {
         at += found;
         match text[at] {
             b'@' => {
-                starts.push(at);
+                let is_in_text = || {
+                    is_space(text[at - 1])
+                        && text
+                            .get(at + 1)
+                            .is_none_or(|next| !next.is_ascii_whitespace())
+                };
+                if at == margin || !is_in_backticks && at > 0 && is_in_text() {
+                    starts.push(at);
+                    is_in_backticks = false;
+                }
                 at += 1;
             }
-            _ => at += link_len(&text[at..]).max(1),
+            b'`' => {
+                is_in_backticks = !is_in_backticks && !starts.is_empty();
+                at += 1;
+            }
+            b'\n' => {
+                at += 1;
+                margin = end_of_margin(text, at, true);
+                is_in_backticks = false;
+            }
+            _ if is_in_backticks => at += 1,
+            _ => {
+                let link = link_len(&text[at..]).max(1);
+                if let Some(line) =
+                    bun_core::strings::last_index_of_char(&text[at..at + link], b'\n')
+                {
+                    margin = end_of_margin(text, at + line + 1, true);
+                }
+                at += link;
+            }
         }
     }
     for (index, &start) in starts.iter().enumerate() {
@@ -205,7 +265,17 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             return None;
         }
         // `node.pos`
-        let pos = skip_trivia_back(text, hir.start(node) as usize);
+        let mut pos = skip_trivia_back(text, hir.start(node) as usize);
+        // It takes the last `/*` for the start of a comment, which can be in the text of the comment.
+        let comments = &hir.comments[..];
+        while let Some(&(start, end)) = comments
+            .partition_point(|comment| (comment.0 as usize) < pos)
+            .checked_sub(1)
+            .and_then(|around| comments.get(around))
+            && pos < end as usize
+        {
+            pos = skip_trivia_back(text, start as usize);
+        }
         // `getJSDocCommentRanges`
         let mut ranges = match kind {
             Kind::Parameter

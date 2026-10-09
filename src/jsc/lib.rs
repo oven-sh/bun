@@ -489,7 +489,7 @@ pub struct InitializeOptions {
     pub one_shot: bool,
     /// `bun test --isolate`/`--parallel`: each file gets a fresh global and per-global JIT code is discarded with it.
     pub short_lived_globals: bool,
-    /// `bun lint` with plugins in JavaScript: every thread of the pool has a VM of its own and is busy with it.
+    /// `bun lint` with plugins in JavaScript: there are many VMs, each busy on a thread of its own.
     pub vm_per_thread: bool,
 }
 

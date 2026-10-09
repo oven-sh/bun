@@ -1,8 +1,9 @@
 use crate::autolinks::{find_permissive_autolink, is_emph_boundary_resolved};
+use crate::compat;
 use crate::helpers;
 use crate::links::{BracketMatches, LabelLeave};
-use crate::parser::{self, MARK_DELIMITER, MARK_HIDES, Parser};
-use crate::types::{OFF, SpanType, TextType, VerbatimLine};
+use crate::parser::{self, MARK_DELIMITER, MARK_EXTENSION, MARK_HIDES, Parser};
+use crate::types::{OFF, SpanStart, SpanType, TextType, VerbatimLine};
 
 /// Emphasis delimiter entry for CommonMark emphasis algorithm.
 pub(crate) const MAX_EMPH_MATCHES: usize = 6;
@@ -19,6 +20,8 @@ pub(crate) struct LabelFrame {
     resolved: Vec<EmphDelim>,
     delim_cursor: usize,
     leave: LabelLeave,
+    /// Where what closes the label is in the block's inline content: `](href)`.
+    close: (usize, usize),
 }
 
 /// What hides the markers in it: they stand for themselves.
@@ -40,6 +43,11 @@ pub(crate) enum HiddenKind {
     Html,
     Autolink {
         is_email: bool,
+    },
+    FootnoteReference,
+    /// See `Extensions::span`.
+    Extension {
+        tag: u32,
     },
 }
 
@@ -180,11 +188,16 @@ impl Parser<'_> {
             return Ok(());
         }
 
+        self.inline_lines.clear();
+        self.inline_line = 0;
         // One line is not copied
         if let [vline] = block_lines
             && vline.beg <= vline.end
             && vline.end <= self.size
         {
+            if self.track {
+                self.inline_lines.push((0, vline.beg));
+            }
             let text = self.text;
             let mut line = &text[vline.beg as usize..vline.end as usize];
             if trim_trailing {
@@ -201,6 +214,10 @@ impl Parser<'_> {
 
             if !self.buffer.is_empty() {
                 self.buffer.push(b'\n');
+            }
+            if self.track {
+                self.inline_lines
+                    .push((self.buffer.len() as u32, vline.beg));
             }
             self.buffer
                 .extend_from_slice(&self.text[vline.beg as usize..vline.end as usize]);
@@ -239,10 +256,13 @@ impl Parser<'_> {
         // valid for them via `offset_within`.
         self.html_scan_memo.set(HtmlScanMemo::EMPTY);
 
+        self.inline_serial = self.inline_serial.wrapping_add(1);
+
         // Fast path: no character has a special meaning
         self.find_marks(content);
         if self.marks.is_empty() {
             if !content.is_empty() {
+                self.at(0, content.len());
                 self.emit_text(TextType::Normal, content)?;
             }
             return Ok(());
@@ -301,6 +321,7 @@ impl Parser<'_> {
                     resolved: core::mem::take(&mut resolved),
                     delim_cursor,
                     leave: parse.leave,
+                    close: (base + parse.label_end, base + parse.link_end),
                 });
                 base += parse.label_start;
                 cur = &cur[parse.label_start..parse.label_end];
@@ -325,6 +346,16 @@ impl Parser<'_> {
                 i = mark - base;
                 let c = content[i];
 
+                // The text that has not been emitted yet, up to `$end`.
+                macro_rules! flush_text {
+                    ($end:expr) => {
+                        if $end > text_start {
+                            self.at(base + text_start, base + $end);
+                            self.emit_text(TextType::Normal, &content[text_start..$end])?;
+                        }
+                    };
+                }
+
                 // Newline from merged lines — check for hard break
                 if c == b'\n' {
                     let mut emit_end = i;
@@ -348,12 +379,12 @@ impl Parser<'_> {
                             is_hard = true;
                         }
                     }
-                    if emit_end > text_start {
-                        self.emit_text(TextType::Normal, &content[text_start..emit_end])?;
-                    }
+                    flush_text!(emit_end);
                     if is_hard {
+                        self.at(base + emit_end, base + i + 1);
                         self.emit_text(TextType::Br, b"")?;
                     } else {
+                        self.at(base + i, base + i + 1);
                         self.emit_text(TextType::Softbr, b"")?;
                     }
                     i += 1;
@@ -366,9 +397,8 @@ impl Parser<'_> {
                     && i + 1 < content.len()
                     && helpers::is_ascii_punctuation(content[i + 1])
                 {
-                    if i > text_start {
-                        self.emit_text(TextType::Normal, &content[text_start..i])?;
-                    }
+                    flush_text!(i);
+                    self.at(base + i, base + i + 2);
                     i += 1;
                     self.emit_text(TextType::Normal, &content[i..i + 1])?;
                     i += 1;
@@ -378,25 +408,37 @@ impl Parser<'_> {
 
                 // Code spans, HTML tags, autolinks
                 if let Some(Hidden { beg, end, kind }) = self.hidden_over(&walk, content, base, i) {
-                    if beg > text_start {
-                        self.emit_text(TextType::Normal, &content[text_start..beg])?;
-                    }
+                    flush_text!(beg);
                     match kind {
                         HiddenKind::Code { ticks } => {
+                            self.at(base + beg, base + beg + ticks);
                             self.enter_span(SpanType::Code)?;
-                            let code_content = self
-                                .normalize_code_span_content(&content[beg + ticks..end - ticks]);
+                            let whole = &content[beg + ticks..end - ticks];
+                            let code_content = self.normalize_code_span_content(whole);
+                            let code_beg =
+                                base + beg + ticks + (whole.len() - code_content.len()) / 2;
+                            self.at(code_beg, code_beg + code_content.len());
                             self.emit_text(TextType::Code, code_content)?;
+                            self.at(base + end - ticks, base + end);
                             self.leave_span(SpanType::Code)?;
                         }
                         HiddenKind::Backticks => {
+                            self.at(base + beg, base + end);
                             self.emit_text(TextType::Normal, &content[beg..end])?;
                         }
                         HiddenKind::Html => {
+                            self.at(base + beg, base + end);
                             self.emit_text(TextType::Html, &content[beg..end])?;
                         }
                         HiddenKind::Autolink { is_email } => {
-                            self.render_autolink(&content[beg + 1..end - 1], is_email)?;
+                            self.render_autolink(&content[beg + 1..end - 1], is_email, base + beg)?;
+                        }
+                        HiddenKind::FootnoteReference => {
+                            self.render_footnote_reference(&content[beg + 2..end - 1], base + beg)?;
+                        }
+                        HiddenKind::Extension { tag } => {
+                            self.at(base + beg, base + end);
+                            self.renderer.ptr.extension_span(tag, &content[beg..end])?;
                         }
                     }
                     i = end;
@@ -404,7 +446,7 @@ impl Parser<'_> {
                     continue;
                 }
                 // It could only have hidden something.
-                if self.mark_char_map[c as usize] == MARK_HIDES {
+                if self.mark_char_map[c as usize] & !(MARK_HIDES | MARK_EXTENSION) == 0 {
                     i += 1;
                     continue;
                 }
@@ -417,35 +459,46 @@ impl Parser<'_> {
                     }
 
                     if delim_cursor < resolved.len() && resolved[delim_cursor].pos == i {
-                        if i > text_start {
-                            self.emit_text(TextType::Normal, &content[text_start..i])?;
-                        }
+                        flush_text!(i);
 
                         let d = &resolved[delim_cursor];
                         let run_end = d.pos + d.count;
+                        // Where the next marker of the run is.
+                        let mut marker = base + i;
 
                         // Emit closing tags first (innermost to outermost)
                         if d.emph_char == b'~' {
                             if d.close_count > 0 {
+                                self.at(marker, marker + d.close_count);
                                 self.leave_span(SpanType::Del)?;
+                                marker += d.close_count;
                             }
                         } else {
-                            self.emit_emph_close_tags(&d.close_sizes[0..d.close_num as usize])?;
+                            self.emit_emph_close_tags(
+                                &d.close_sizes[0..d.close_num as usize],
+                                &mut marker,
+                            )?;
                         }
 
                         // Emit remaining delimiter chars as text
                         let text_chars = d.count.saturating_sub(d.open_count + d.close_count);
                         if text_chars > 0 {
+                            self.at(marker, marker + text_chars);
                             self.emit_text(TextType::Normal, &content[i..i + text_chars])?;
+                            marker += text_chars;
                         }
 
                         // Emit opening tags (outermost to innermost)
                         if d.emph_char == b'~' {
                             if d.open_count > 0 {
+                                self.at(marker, marker + d.open_count);
                                 self.enter_span(SpanType::Del)?;
                             }
                         } else {
-                            self.emit_emph_open_tags(&d.open_sizes[0..d.open_num as usize])?;
+                            self.emit_emph_open_tags(
+                                &d.open_sizes[0..d.open_num as usize],
+                                &mut marker,
+                            )?;
                         }
 
                         delim_cursor += 1;
@@ -461,9 +514,8 @@ impl Parser<'_> {
                 // HTML entity
                 if c == b'&' {
                     if let Some(end_pos) = self.find_entity(content, i) {
-                        if i > text_start {
-                            self.emit_text(TextType::Normal, &content[text_start..i])?;
-                        }
+                        flush_text!(i);
+                        self.at(base + i, base + end_pos);
                         self.emit_text(TextType::Entity, &content[i..end_pos])?;
                         i = end_pos;
                         text_start = i;
@@ -477,10 +529,8 @@ impl Parser<'_> {
                     && i + 1 < content.len()
                     && content[i + 1] == b'['
                 {
-                    if i > text_start {
-                        self.emit_text(TextType::Normal, &content[text_start..i])?;
-                    }
-                    if let Some(parse) = self.process_wiki_link(content, i)? {
+                    flush_text!(i);
+                    if let Some(parse) = self.process_wiki_link(content, i, base)? {
                         enter_label!(parse);
                         continue;
                     }
@@ -491,12 +541,11 @@ impl Parser<'_> {
 
                 // Links: [text](url) or [text][ref]
                 if c == b'[' {
-                    if i > text_start {
-                        self.emit_text(TextType::Normal, &content[text_start..i])?;
-                    }
+                    flush_text!(i);
                     if let Some(parse) = self.process_link(content, i, false, &brackets, base)? {
                         enter_label!(parse);
                     } else {
+                        self.at(base + i, base + i + 1);
                         self.emit_text(TextType::Normal, b"[")?;
                         i += 1;
                         text_start = i;
@@ -506,12 +555,11 @@ impl Parser<'_> {
 
                 // Images: ![text](url)
                 if c == b'!' && i + 1 < content.len() && content[i + 1] == b'[' {
-                    if i > text_start {
-                        self.emit_text(TextType::Normal, &content[text_start..i])?;
-                    }
+                    flush_text!(i);
                     if let Some(parse) = self.process_link(content, i + 1, true, &brackets, base)? {
                         enter_label!(parse);
                     } else {
+                        self.at(base + i, base + i + 1);
                         self.emit_text(TextType::Normal, b"!")?;
                         i += 1;
                         text_start = i;
@@ -539,48 +587,25 @@ impl Parser<'_> {
                         }
                     }
                     if let Some(a) = al {
-                        if a.beg > text_start {
-                            self.emit_text(TextType::Normal, &content[text_start..a.beg])?;
-                        }
+                        flush_text!(a.beg);
 
                         // Determine URL prefix and render through the renderer
                         let link_text = &content[a.beg..a.end];
-                        if c == b'@' {
-                            self.renderer.enter_span(
-                                SpanType::A,
-                                crate::types::SpanDetail {
-                                    href: link_text,
-                                    permissive_autolink: true,
-                                    autolink_email: true,
-                                    ..Default::default()
-                                },
-                            )?;
-                            self.emit_text(TextType::Normal, link_text)?;
-                            self.renderer.leave_span(SpanType::A)?;
-                        } else if c == b'.' {
-                            self.renderer.enter_span(
-                                SpanType::A,
-                                crate::types::SpanDetail {
-                                    href: link_text,
-                                    permissive_autolink: true,
-                                    autolink_www: true,
-                                    ..Default::default()
-                                },
-                            )?;
-                            self.emit_text(TextType::Normal, link_text)?;
-                            self.renderer.leave_span(SpanType::A)?;
-                        } else {
-                            self.renderer.enter_span(
-                                SpanType::A,
-                                crate::types::SpanDetail {
-                                    href: link_text,
-                                    permissive_autolink: true,
-                                    ..Default::default()
-                                },
-                            )?;
-                            self.emit_text(TextType::Normal, link_text)?;
-                            self.renderer.leave_span(SpanType::A)?;
-                        }
+                        self.at(base + a.beg, base + a.beg);
+                        self.renderer.enter_span(
+                            SpanType::A,
+                            crate::types::SpanDetail {
+                                href: link_text,
+                                permissive_autolink: true,
+                                autolink_email: c == b'@',
+                                autolink_www: c == b'.',
+                                ..Default::default()
+                            },
+                        )?;
+                        self.at(base + a.beg, base + a.end);
+                        self.emit_text(TextType::Normal, link_text)?;
+                        self.at(base + a.end, base + a.end);
+                        self.renderer.leave_span(SpanType::A)?;
                         i = a.end;
                         text_start = i;
                         continue;
@@ -589,9 +614,8 @@ impl Parser<'_> {
 
                 // Null character
                 if c == 0 {
-                    if i > text_start {
-                        self.emit_text(TextType::Normal, &content[text_start..i])?;
-                    }
+                    flush_text!(i);
+                    self.at(base + i, base + i + 1);
                     self.emit_text(TextType::NullChar, b"")?;
                     i += 1;
                     text_start = i;
@@ -605,10 +629,12 @@ impl Parser<'_> {
             // either close the finished label and resume its enclosing
             // slice, or, for the outermost slice, finish.
             if text_start < cur.len() {
+                self.at(base + text_start, base + cur.len());
                 self.emit_text(TextType::Normal, &cur[text_start..])?;
             }
             match frames.pop() {
                 Some(frame) => {
+                    self.at(frame.close.0, frame.close.1);
                     match frame.leave {
                         LabelLeave::AltText => {}
                         LabelLeave::Image => {
@@ -708,10 +734,75 @@ impl Parser<'_> {
         })
     }
 
-    /// What starts at `pos` of `content` and hides the markers in it. Only the
-    /// scan that fills `hidden` asks.
-    pub(crate) fn hidden_at(&self, content: &[u8], pos: usize) -> Option<Hidden> {
-        let (end, kind) = match content[pos] {
+    /// Tells a consumer that wants to know where `beg..end` of the block's
+    /// inline content is in the document.
+    #[inline]
+    pub(crate) fn at(&mut self, beg: usize, end: usize) {
+        if self.track {
+            self.tell_inline_source(beg, end);
+        }
+    }
+
+    fn tell_inline_source(&mut self, beg: usize, end: usize) {
+        let beg = self.in_document(beg);
+        let end = match end {
+            0 => self.in_document(0),
+            _ => self.in_document(end - 1) + 1,
+        };
+        self.renderer.ptr.inline_source(beg, end);
+    }
+
+    /// Where the byte at `index` of the block's inline content is in the document.
+    fn in_document(&mut self, index: usize) -> OFF {
+        let lines = &self.inline_lines;
+        let is_before = |line: &(u32, OFF)| line.0 as usize <= index;
+        // Most of the time it is behind what was asked about last.
+        let after = match lines.get(self.inline_line) {
+            Some(line) if is_before(line) => skip_before(lines, self.inline_line + 1, is_before),
+            _ => lines.partition_point(is_before),
+        };
+        self.inline_line = after.saturating_sub(1);
+        match lines.get(self.inline_line) {
+            Some(&(line_beg, line_in_document)) => line_in_document + (index as u32 - line_beg),
+            None => 0,
+        }
+    }
+
+    /// What the byte at `pos` of `content` is in that hides the markers in it.
+    /// It does not start before `from`. Only the scan that fills `hidden` asks.
+    pub(crate) fn hidden_at(
+        &self,
+        content: &[u8],
+        pos: usize,
+        from: usize,
+        is_after_open_bracket: bool,
+    ) -> Option<Hidden> {
+        let c = content[pos];
+        let meaning = self.mark_char_map[c as usize];
+        if meaning & MARK_HIDES == 0 {
+            return None;
+        }
+        if meaning & MARK_EXTENSION != 0
+            && let Some(extensions) = self.extensions
+            && let Some(span) = (extensions.span)(&SpanStart {
+                content,
+                pos,
+                from,
+                is_after_open_bracket,
+                serial: self.inline_serial,
+            })
+            && from <= span.beg
+            && span.beg <= pos
+            && span.beg < span.end
+            && span.end <= content.len()
+        {
+            return Some(Hidden {
+                beg: span.beg,
+                end: span.end,
+                kind: HiddenKind::Extension { tag: span.tag },
+            });
+        }
+        let (end, kind) = match c {
             b'`' => {
                 let ticks = count_backticks(content, pos);
                 match self.find_code_span_end(content, pos + ticks, ticks) {
@@ -727,6 +818,10 @@ impl Parser<'_> {
                     (autolink.end_pos, HiddenKind::Autolink { is_email })
                 }
             },
+            b'[' if self.flags.footnotes => (
+                self.footnote_reference_end(content, pos)?,
+                HiddenKind::FootnoteReference,
+            ),
             _ => return None,
         };
         Some(Hidden {
@@ -736,12 +831,18 @@ impl Parser<'_> {
         })
     }
 
-    /// Emit emphasis opening tags (outermost to innermost).
-    pub(crate) fn emit_emph_open_tags(&mut self, sizes: &[u8]) -> crate::types::JsResult<()> {
+    /// Emit emphasis opening tags (outermost to innermost). `marker`: where
+    /// the first of their markers is. It is moved behind the last.
+    pub(crate) fn emit_emph_open_tags(
+        &mut self,
+        sizes: &[u8],
+        marker: &mut usize,
+    ) -> crate::types::JsResult<()> {
         // First match = innermost, so emit in reverse (outermost first in HTML)
-        for idx in 0..sizes.len() {
-            let j = sizes.len() - 1 - idx;
-            if sizes[j] == 2 {
+        for &size in sizes.iter().rev() {
+            self.at(*marker, *marker + size as usize);
+            *marker += size as usize;
+            if size == 2 {
                 self.enter_span(SpanType::Strong)?;
             } else {
                 self.enter_span(SpanType::Em)?;
@@ -752,8 +853,14 @@ impl Parser<'_> {
 
     /// Emit emphasis closing tags (innermost to outermost).
     /// First entry in sizes was matched first (innermost), emit in forward order.
-    pub(crate) fn emit_emph_close_tags(&mut self, sizes: &[u8]) -> crate::types::JsResult<()> {
+    pub(crate) fn emit_emph_close_tags(
+        &mut self,
+        sizes: &[u8],
+        marker: &mut usize,
+    ) -> crate::types::JsResult<()> {
         for &size in sizes {
+            self.at(*marker, *marker + size as usize);
+            *marker += size as usize;
             if size == 2 {
                 self.leave_span(SpanType::Strong)?;
             } else {
@@ -863,12 +970,18 @@ impl Parser<'_> {
                     i += 1;
                 }
                 let count = i - run_start;
+                let mut flanking = Flanking::of(content, run_start, i);
+                if compat::marker_next_to_marker_flanks(&self.flags) {
+                    let is_marker = |at: Option<&u8>| matches!(at, Some(b'*' | b'_' | b'~'));
+                    flanking.left |= is_marker(content.get(i));
+                    flanking.right |= run_start > 0 && is_marker(content.get(run_start - 1));
+                }
                 self.emph_delims.push(EmphDelim {
                     pos: run_start,
                     count,
                     emph_char: c,
-                    can_open: can_open_emphasis(c, content, run_start, i),
-                    can_close: can_close_emphasis(c, content, run_start, i),
+                    can_open: flanking.can_open(c, content, run_start),
+                    can_close: flanking.can_close(c, content, i),
                     remaining: count,
                     ..Default::default()
                 });
@@ -881,13 +994,14 @@ impl Parser<'_> {
                     i += 1;
                 }
                 let count = i - run_start;
-                if count == 1 || count == 2 {
+                if (count == 1 && !self.flags.no_single_tilde) || count == 2 {
+                    let flanking = Flanking::of(content, run_start, i);
                     self.emph_delims.push(EmphDelim {
                         pos: run_start,
                         count,
                         emph_char: b'~',
-                        can_open: can_open_emphasis(b'~', content, run_start, i),
-                        can_close: can_close_emphasis(b'~', content, run_start, i),
+                        can_open: flanking.can_open(b'~', content, run_start),
+                        can_close: flanking.can_close(b'~', content, i),
                         remaining: count,
                         ..Default::default()
                     });
@@ -1363,42 +1477,40 @@ pub(crate) fn is_right_flanking(content: &[u8], run_start: usize, run_end: usize
     true
 }
 
-pub(crate) fn can_open_emphasis(
-    emph_char: u8,
-    content: &[u8],
-    run_start: usize,
-    run_end: usize,
-) -> bool {
-    let lf = is_left_flanking(content, run_start, run_end);
-    if !lf {
-        return false;
-    }
-    if emph_char != b'_' {
-        return true;
-    }
-    // _ requires: left-flanking AND (not right-flanking OR preceded by punctuation)
-    let rf = is_right_flanking(content, run_start, run_end);
-    !rf || (run_start > 0
-        && helpers::is_unicode_punctuation(
-            helpers::decode_utf8_backward(content, run_start).codepoint,
-        ))
+/// Whether a delimiter run is left-flanking, right-flanking.
+#[derive(Clone, Copy)]
+struct Flanking {
+    left: bool,
+    right: bool,
 }
 
-pub(crate) fn can_close_emphasis(
-    emph_char: u8,
-    content: &[u8],
-    run_start: usize,
-    run_end: usize,
-) -> bool {
-    let rf = is_right_flanking(content, run_start, run_end);
-    if !rf {
-        return false;
+impl Flanking {
+    fn of(content: &[u8], run_start: usize, run_end: usize) -> Flanking {
+        Flanking {
+            left: is_left_flanking(content, run_start, run_end),
+            right: is_right_flanking(content, run_start, run_end),
+        }
     }
-    if emph_char != b'_' {
-        return true;
+
+    fn can_open(self, emph_char: u8, content: &[u8], run_start: usize) -> bool {
+        // _ requires: left-flanking AND (not right-flanking OR preceded by punctuation)
+        self.left
+            && (emph_char != b'_'
+                || !self.right
+                || (run_start > 0
+                    && helpers::is_unicode_punctuation(
+                        helpers::decode_utf8_backward(content, run_start).codepoint,
+                    )))
     }
-    // _ requires: right-flanking AND (not left-flanking OR followed by punctuation)
-    let lf = is_left_flanking(content, run_start, run_end);
-    !lf || (run_end < content.len()
-        && helpers::is_unicode_punctuation(helpers::decode_utf8(content, run_end).codepoint))
+
+    fn can_close(self, emph_char: u8, content: &[u8], run_end: usize) -> bool {
+        // _ requires: right-flanking AND (not left-flanking OR followed by punctuation)
+        self.right
+            && (emph_char != b'_'
+                || !self.left
+                || (run_end < content.len()
+                    && helpers::is_unicode_punctuation(
+                        helpers::decode_utf8(content, run_end).codepoint,
+                    )))
+    }
 }

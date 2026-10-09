@@ -396,7 +396,6 @@ pub(super) fn gather_captured_context<'h>(
     walker.walk_args(func.args());
     walker.walk_stmts(func.body().stmts.slice());
 
-    let module_scope = host.module_scope();
     let symbols = host.symbols();
 
     // Collect the earliest (lowest source position) reference location for each
@@ -427,10 +426,8 @@ pub(super) fn gather_captured_context<'h>(
         ) {
             continue;
         }
-        if let Some(member) = module_scope.members.get(sym.original_name.slice()) {
-            if member.ref_ == ref_ {
-                continue;
-            }
+        if host.is_module_level(ref_) {
+            continue;
         }
         let pos = ref_loc.start;
         let loc = convert_loc(ref_loc);

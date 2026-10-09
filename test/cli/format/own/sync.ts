@@ -23,7 +23,9 @@ for (const [path, bytes] of files) {
   const [asPrettier, asOxfmt]: [Options, string][][] = [[], []];
   for (const options of rowsOf(name, files)) {
     const failure = (error: Error) => `<${error.name}>`;
-    asPrettier.push([options, await prettier.format(Buffer.from(bytes).toString(), { ...options, filepath: name }).catch(failure)]);
+    const printed = await prettier.format(Buffer.from(bytes).toString(), { ...options, filepath: name }).catch(failure);
+    // Prettier has no TOML: only oxfmt judges.
+    if (printed !== "<UndefinedParserError>") asPrettier.push([options, printed]);
     const directory = mkdtempSync(join(tmpdir(), "oxfmt-"));
     writeFileSync(join(directory, ".oxfmtrc.json"), JSON.stringify(options));
     const { stdout, exitCode } = Bun.spawnSync([oxfmt, `--stdin-filepath=${basename(name)}`], { cwd: directory, stdin: bytes });

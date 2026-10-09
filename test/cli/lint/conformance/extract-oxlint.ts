@@ -125,7 +125,8 @@ function rawCasesOf(rule: Listed): { cases: Raw[]; unparsed: number } {
       const oxlintrc = it.oxlintrc ?? (it.settings && Object.keys(it.settings).length > 0 ? { settings: it.settings } : undefined);
       const { valid, name, code, filename, settings } = it;
       const options = it.options.length > 0 ? it.options : undefined;
-      cases.push({ valid, name, code, options, filename, settings, oxlintrc, plugins: it.plugins ?? [], inImportProject: rule.scope === "import" });
+      const plugins: string[] = it.plugins ?? [];
+      cases.push({ valid, name, code, options, filename, settings, oxlintrc, plugins, inImportProject: plugins.includes("import") || rule.scope === "import" });
     }
   }
   const seen = new Set<string>();

@@ -83,17 +83,6 @@
   "ours": []
  },
  {
-  "cause": "a syntax error that only oxc reports",
-  "suite": "typescript-eslint",
-  "options": [],
-  "extension": "ts",
-  "code": "\nimport { AccessorDecorator } from 'decorators';\nexport class Foo {\n  @AccessorDecorator\n  set bar() {}\n}\n    ",
-  "oxlint": [
-   "5:10"
-  ],
-  "ours": []
- },
- {
   "cause": "what is not exported in a declared namespace or module",
   "suite": "typescript-eslint",
   "options": [],
@@ -274,6 +263,17 @@
   ]
  },
  {
+  "cause": "?",
+  "suite": "oxc",
+  "options": [],
+  "extension": "js",
+  "code": "const value = (() => () => { return value; })();",
+  "oxlint": [
+   "1:7"
+  ],
+  "ours": []
+ },
+ {
   "cause": "a read that a sequence discards",
   "suite": "oxc",
   "options": [],
@@ -330,6 +330,116 @@
   "ours": [
    "1:43"
   ]
+ },
+ {
+  "cause": "?",
+  "suite": "oxc",
+  "options": [],
+  "extension": "tsx",
+  "code": "let a = 0; flag && a++;",
+  "oxlint": [
+   "1:5"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "?",
+  "suite": "oxc",
+  "options": [],
+  "extension": "tsx",
+  "code": "let a = 0; (flag && a++, 0);",
+  "oxlint": [
+   "1:5"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "?",
+  "suite": "oxc",
+  "options": [],
+  "extension": "tsx",
+  "code": "let a = 0; flag || a++;",
+  "oxlint": [
+   "1:5"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "?",
+  "suite": "oxc",
+  "options": [],
+  "extension": "tsx",
+  "code": "let a = 0; flag ?? a++;",
+  "oxlint": [
+   "1:5"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "?",
+  "suite": "oxc",
+  "options": [],
+  "extension": "tsx",
+  "code": "let a = 0; flag ? a++ : foo();",
+  "oxlint": [
+   "1:5"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "?",
+  "suite": "oxc",
+  "options": [],
+  "extension": "tsx",
+  "code": "let a = 0; flag ? foo() : a++;",
+  "oxlint": [
+   "1:5"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "?",
+  "suite": "oxc",
+  "options": [],
+  "extension": "tsx",
+  "code": "const a = 0; new Foo((a++, 0));",
+  "oxlint": [
+   "1:7"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "?",
+  "suite": "oxc",
+  "options": [],
+  "extension": "tsx",
+  "code": "const a = 0; new Foo(((a++, 0), 1));",
+  "oxlint": [
+   "1:7"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "?",
+  "suite": "oxc",
+  "options": [],
+  "extension": "tsx",
+  "code": "const a = class {}; new (a ??= Fallback, Other)();",
+  "oxlint": [
+   "1:7"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "?",
+  "suite": "oxc",
+  "options": [],
+  "extension": "tsx",
+  "code": "let a = class {}; new (a ??= Fallback, Other)();",
+  "oxlint": [
+   "1:5"
+  ],
+  "ours": []
  },
  {
   "cause": "React and names with a colon in JSX",

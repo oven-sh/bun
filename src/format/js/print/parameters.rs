@@ -301,6 +301,11 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
         write!(f, content);
     } else if !has_decorators {
         write!(f, group(&content));
+    } else if decorators_of_parameter_are_a_group_of_their_own(f) {
+        write!(
+            f,
+            [group(&FormatDecorators::of_param(param)), group(&content)]
+        );
     } else {
         write!(
             f,
@@ -310,6 +315,17 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
             ))
         );
     }
+}
+
+/// ```ts
+/// @A({ b: true })          @A({ b: true }) c:
+/// c: D | undefined,          | D
+///                            | undefined,
+/// ```
+///
+/// Prettier on the left: what does not fit breaks after the decorators first. oxfmt on the right.
+fn decorators_of_parameter_are_a_group_of_their_own(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// Whether `param` is a name, and its type a keyword or a name.

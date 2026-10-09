@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { existsSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { configurations } from "./oracle/plugins/oxlint/compare-options";
 import whatOxlintReports from "./oracle/plugins/oxlint/expected.json";
+import { directoryOf, filesOf, cases as fixCases } from "./oracle/plugins/oxlint/fixes";
+import fixDifferences from "./oracle/plugins/oxlint/fixes.differences.json";
+import whatOxlintFixes from "./oracle/plugins/oxlint/fixes.expected.json";
+import optionsOfOxlint from "./oracle/plugins/oxlint/options.json";
 import { projects } from "./oracle/plugins/oxlint/projects";
 
 const command = [bunExe(), "lint"];
@@ -226,6 +231,15 @@ describe.concurrent("bun lint", () => {
 
     test("from a subdirectory, with the configuration above", async () => {
       expect(await listed([], { cwd: "src/deep" })).toEqual({ files: ["<dir>/src/deep/f.js"], exitCode: 0 });
+    });
+
+    test.skipIf(isWindows)("a named pipe with the name of a script is passed over", async () => {
+      const { stdout, exitCode } = await lint({ "eslint.config.js": basic, "a.js": bad }, ["-f", "unix", "."], {
+        before: dir => expect(Bun.spawnSync(["mkfifo", join(dir, "pipe.js")]).exitCode).toBe(0),
+      });
+      expect(stdout).toContain("<dir>/a.js:1:1: ");
+      expect(stdout).not.toContain("pipe.js");
+      expect(exitCode).toBe(1);
     });
 
     test.skipIf(isWindows)("a link to a file is linted, a link to a directory is not followed", async () => {
@@ -496,6 +510,39 @@ describe.concurrent("bun lint", () => {
     });
 
     describe("like oxlint, with an .oxlintrc.json", () => {
+      test("--fix, --fix-suggestions, --fix-dangerously and --quiet change what oxlint's change", async () => {
+        const files = {
+          ".oxlintrc.json": JSON.stringify({
+            categories: { correctness: "off" },
+            jsPlugins: ["./plugin.js"],
+            rules: { "p/r": "warn" },
+          }),
+          "plugin.js": `export default {
+            meta: { name: "p" },
+            rules: {
+              r: {
+                meta: { fixable: "code", hasSuggestions: true },
+                create: context => ({
+                  Identifier(node) {
+                    const fix = fixer => fixer.replaceText(node, "done");
+                    if (node.name === "fixed") context.report({ node, message: "m", fix });
+                    if (node.name === "suggested") context.report({ node, message: "m", suggest: [{ desc: "d", fix }] });
+                  },
+                }),
+              },
+            },
+          };`,
+          "a.js": "fixed; suggested;\n",
+        };
+        const after = async (...flags: string[]) =>
+          (await lint(files, [...flags, "a.js"], { reads: ["a.js"] })).files["a.js"];
+        expect(await after("--fix")).toBe("done; suggested;\n");
+        expect(await after("--fix", "--quiet")).toBe("done; suggested;\n");
+        expect(await after("--fix-suggestions")).toBe("fixed; done;\n");
+        expect(await after("--fix", "--fix-suggestions")).toBe("done; done;\n");
+        expect(await after("--fix-dangerously")).toBe("done; done;\n");
+      });
+
       const rc = (more: object = {}) =>
         JSON.stringify({
           categories: { correctness: "off" },
@@ -674,7 +721,7 @@ describe.concurrent("bun lint", () => {
         expect(byDefault.exitCode).toBe(0);
       });
 
-      // What is expected in the next two tests is what oxlint 1.80.0 prints for the same files and arguments.
+      // What is expected in the next two tests is what oxlint 1.87.0 prints for the same files and arguments.
       const places = (raw: string) =>
         JSON.parse(raw)
           .diagnostics.map((it: any) => `${it.filename}:${it.labels[0].span.line} ${it.code} ${it.severity}`)
@@ -852,7 +899,7 @@ describe.concurrent("bun lint", () => {
           for (const [name, text] of Object.entries(texts)) files[`${directory}/${name}.js`] = text;
         }
         const { raw, exitCode } = await lint(files, ["-f", "json"]);
-        // oxlint 1.80.0 calls them node(no-sync) and so on.
+        // oxlint 1.87.0 calls them node(no-sync) and so on.
         const found = places(raw).map((it: string) => it.replace(/ \w+\((.*)\) /, " $1 "));
         const lines = { "callback-return": 3, "global-require": 2 };
         expect(found).toEqual(
@@ -863,7 +910,7 @@ describe.concurrent("bun lint", () => {
         expect(exitCode).toBe(0);
       });
 
-      // The projects of oracle/plugins/oxlint. expected.json is what oxlint 1.80.0 with tsgolint 7.0.2001 reports for them.
+      // The projects of oracle/plugins/oxlint. expected.json is what oxlint 1.87.0 with tsgolint 7.0.2003 reports for them.
       const found = (raw: string, names: string[]) => {
         const byProject = Object.fromEntries(names.map((it): [string, Set<string>] => [it, new Set()]));
         for (const it of JSON.parse(raw).diagnostics) {
@@ -904,6 +951,44 @@ describe.concurrent("bun lint", () => {
         const names = some.map(it => it.name);
         const { raw } = await lint(files, ["-f", "json", "--type-aware"]);
         expect(found(raw, names)).toEqual(expected(names));
+      });
+
+      test.each([false, true])("--fix changes what oxlint --fix changes (rules that need types: %p)", async typed => {
+        // fixes.expected.json is what oxlint 1.87.0 with tsgolint 7.0.2003 makes of the files. fixes.differences.json: not yet.
+        const differs = (directory: string) => (fixDifferences as Record<string, string[]>)[directory]?.includes("fix");
+        const some = fixCases
+          .map((it, index) => ({ it, directory: directoryOf(index) }))
+          .filter(({ it, directory }) => !!it.typed === typed && !differs(directory));
+        expect(some.length).toBeGreaterThan(5);
+        const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+        for (const { it, directory } of some) {
+          for (const [path, text] of Object.entries(filesOf(it))) files[`${directory}/${path}`] = text;
+        }
+        const reads = some.map(({ it, directory }) => `${directory}/${it.file}`);
+        const result = await lint(files, ["--fix", ...(typed ? ["--type-aware"] : [])], { reads });
+        expect(result.files).toEqual(
+          Object.fromEntries(
+            some.map(({ it, directory }) => [
+              `${directory}/${it.file}`,
+              whatOxlintFixes[directory as keyof typeof whatOxlintFixes].fix,
+            ]),
+          ),
+        );
+      });
+
+      test("the options that oxlint accepts are accepted", async () => {
+        // A configuration that is refused ends the run. options.json is what oxlint 1.87.0 accepts. Each of the configurations has
+        // options for many rules.
+        const configs = configurations(optionsOfOxlint);
+        expect(configs.length).toBeGreaterThan(100);
+        const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+        configs.forEach((config, index) => {
+          files[`${index}/.oxlintrc.json`] = JSON.stringify(config);
+          files[`${index}/a.ts`] = "export {};\n";
+        });
+        const { raw, stderr } = await lint(files, ["-f", "json"]);
+        // What is refused is said there.
+        expect(raw === "" ? stderr : JSON.parse(raw).number_of_files).toBe(configs.length);
       });
     });
 
@@ -1383,6 +1468,41 @@ describe.concurrent("bun lint", () => {
       const { raw, exitCode } = await lint({ ...files, "a.ts": `export const a: number = "";\n` }, []);
       expect(raw).toBe("");
       expect(exitCode).toBe(0);
+    });
+
+    // What typescript-eslint 8.71 says. `undefined`: nothing.
+    test("no-deprecated finds the tags of a comment where TypeScript does", async () => {
+      const comments: [comment: string, reason: string | undefined][] = [
+        ["/** @deprecated a\\@b c */", "a\\@b c"],
+        ["/** @deprecated mail a@b.c now */", "mail a@b.c now"],
+        ["/** @deprecated x @ y */", "x @ y"],
+        ["/** @deprecated x @y z */", "x"],
+        ["/** @deprecated `x @y` z */", "`x @y` z"],
+        ["/** text `a @deprecated b` c */", "b` c"],
+        ["/** @deprecated (@see y) */", "(@see y)"],
+        ["/** @deprecated a @*/", "a"],
+        ["/** text@deprecated no */", undefined],
+        ["/** text @deprecated yes */", "yes"],
+        ["/** @foo bar@deprecated no */", undefined],
+        ["/** @foo `bar @deprecated no` */", undefined],
+        ["/** @deprecated a {@link b}\n * c */", "a {@link b}c"],
+        ["/**\n * - @deprecated dash\n */", "dash"],
+        ['/** @deprecated Use `{ "*": ["./*"] }` instead. */', 'Use `{ "*": ["./*"] }` instead.'],
+      ];
+      const { raw } = await lint(
+        {
+          ...files,
+          "eslint.config.js": files["eslint.config.js"].replace("no-floating-promises", "no-deprecated"),
+          "a.ts":
+            comments.map(([comment], i) => `${comment}\nexport function f${i}() {}\n`).join("") +
+            comments.map((_, i) => `f${i}();\n`).join(""),
+        },
+        ["-f", "json"],
+      );
+      const reported: { message: string }[] = JSON.parse(raw)[0].messages;
+      expect(reported.map(it => it.message)).toEqual(
+        comments.flatMap(([, reason], i) => (reason === undefined ? [] : [`\`f${i}\` is deprecated. ${reason}`])),
+      );
     });
   });
 

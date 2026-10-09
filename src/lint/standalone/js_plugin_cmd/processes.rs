@@ -7,6 +7,8 @@
 
 use bun_lint::js_plugin::{Engine, Serve, Vm};
 use bun_threading::{Condition, Guarded};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread::ThreadId;
 
 const PROGRAM: u32 = 100;
 const RESULT: u32 = 100;
@@ -81,6 +83,8 @@ struct State {
     idle: Vec<Process>,
     /// How many processes there are, idle or not.
     count: usize,
+    /// The threads that have one, each as often as it has one.
+    users: Vec<ThreadId>,
 }
 
 /// Some processes. None is started before it is needed.
@@ -88,6 +92,8 @@ pub(crate) struct Processes<'e> {
     spawn: &'e Spawn<'e>,
     program: Vec<u8>,
     max: usize,
+    /// [`Engine::expect`]. 0: nobody has said.
+    expected: AtomicUsize,
     state: Guarded<State>,
     is_idle: Condition,
 }
@@ -102,6 +108,7 @@ impl<'e> Processes<'e> {
                 .flat_map(|it| it.1.bytes())
                 .collect(),
             max: max.max(1),
+            expected: AtomicUsize::new(0),
             state: Guarded::new(State::default()),
             is_idle: Condition::default(),
         }
@@ -130,31 +137,52 @@ impl<'e> Processes<'e> {
 }
 
 impl Engine for Processes<'_> {
-    fn with_vm(&self, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
+    fn with_vm(&self, _among: usize, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
+        let me = std::thread::current().id();
         let mut state = self.state.lock();
+        // It has one, which it would wait for.
+        let is_within = state.users.contains(&me);
         let idle = loop {
             if let Some(process) = state.idle.pop() {
                 break Some(process);
             }
-            if state.count < self.max {
+            let max = match self.expected.load(Ordering::Relaxed) {
+                0 => self.max,
+                expected => self.max.min(expected),
+            };
+            if state.count < max || is_within {
                 state.count += 1;
                 break None;
             }
             self.is_idle.wait_guarded(&mut state);
         };
+        state.users.push(me);
         drop(state);
-        let mut process = match idle {
-            Some(process) => process,
-            None => self.start().inspect_err(|_| self.lose())?,
+        let started = match idle {
+            Some(process) => Ok(process),
+            None => self.start().inspect_err(|_| self.lose()),
         };
-        then(&mut process);
+        let used = started.map(|mut process| {
+            then(&mut process);
+            process
+        });
+        let mut state = self.state.lock();
+        if let Some(at) = state.users.iter().rposition(|it| *it == me) {
+            state.users.swap_remove(at);
+        }
+        let process = used?;
         if process.has_failed {
+            drop(state);
             drop(process);
             self.lose();
         } else {
-            self.state.lock().idle.push(process);
+            state.idle.push(process);
             self.is_idle.notify_one();
         }
         Ok(())
+    }
+
+    fn expect(&self, realms: usize) {
+        self.expected.store(realms, Ordering::Relaxed);
     }
 }

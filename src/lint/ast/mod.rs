@@ -192,7 +192,22 @@ pub(crate) struct Lazy {
     pub(crate) by_kind: OnceCell<crate::runner::ByKind>,
     pub(crate) code_paths: crate::code_path::Store,
     pub(crate) linter: crate::linter::PerFile,
-    extension: OnceCell<Box<dyn std::any::Any>>,
+    extensions: [OnceCell<Box<dyn std::any::Any>>; 4],
+}
+
+/// What a script of a `.vue` file knows of the file around it, which has two scripts at most. oxlint lints each as a program of its
+/// own.
+#[derive(Copy, Clone, Default, Debug)]
+pub struct VueScript {
+    /// There is a script before it in the file. Also in a file that is not of Vue.
+    pub is_second: bool,
+    /// `<script setup>`
+    pub is_setup: bool,
+    pub other_is_setup: bool,
+    /// The other script has an `export default { props: .. }`.
+    pub other_exports_props: bool,
+    /// The other script has an `export default { emits: .. }`.
+    pub other_exports_emits: bool,
 }
 
 /// The file that is linted or formatted.
@@ -204,6 +219,7 @@ pub struct File<'a> {
     pub(crate) types: Option<crate::types::Checker<'a>>,
     pub(crate) sink: crate::context::Sink,
     pub(crate) modules: std::cell::Cell<Option<&'a dyn crate::modules::Modules>>,
+    vue_script: std::cell::Cell<VueScript>,
     language: &'a LanguageOptions,
     body: hir::IdList<hir::StmtId>,
     path: &'a [u8],
@@ -241,8 +257,19 @@ impl<'a> File<'a> {
             types,
             sink: crate::context::Sink::default(),
             modules: std::cell::Cell::new(None),
+            vue_script: std::cell::Cell::default(),
             path,
         }
+    }
+
+    /// Nothing is set unless it is a script of a `.vue` file.
+    #[inline]
+    pub fn vue_script(&self) -> VueScript {
+        self.vue_script.get()
+    }
+
+    pub fn set_vue_script(&self, script: VueScript) {
+        self.vue_script.set(script);
     }
 
     /// For a `hir` that does not hold its text.
@@ -323,14 +350,19 @@ impl<'a> File<'a> {
         Span::new(0, self.hir.text.len() as u32)
     }
 
-    /// What another crate computes from the file once and keeps as long as the file. `init` runs
-    /// the first time. There is one slot: `None` if it holds a value of another type.
-    #[inline]
+    /// What another crate computes from the file once and keeps as long as the file: one value of
+    /// each type. `init` runs the first time. `None` if there are values of four other types.
     pub fn extension<T: 'static>(&'a self, init: impl FnOnce() -> T) -> Option<&'a T> {
-        self.lazy
-            .extension
-            .get_or_init(|| Box::new(init()))
-            .downcast_ref()
+        let mut init = Some(init);
+        self.lazy.extensions.iter().find_map(|slot| {
+            let made = || -> Box<dyn std::any::Any> {
+                match init.take() {
+                    Some(init) => Box::new(init()),
+                    None => Box::new(()),
+                }
+            };
+            slot.get_or_init(made).downcast_ref()
+        })
     }
 
     /// ESLint's `sourceCode.hasBOM`. The text starts with a byte order mark, which is part of

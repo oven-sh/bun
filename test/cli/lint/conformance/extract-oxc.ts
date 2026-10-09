@@ -6,7 +6,7 @@
 // Writes `<dir>/<plugin>/<rule>.json` for every rule that `fixtures/` has, and `<dir>/stats.json`. A case whose code and
 // options equal those of an upstream case is dropped.
 //
-// The tests are Rust: `let pass = vec![..]`, `let fail = vec![..]`, `let fix = vec![..]` in `#[test]` functions, with
+// The tests are Rust: `let pass = vec![..]`, `let fail = vec![..]`, `let fix = vec![..]`, `pass.extend(vec![..])` in `#[test]` functions, with
 // elements `"code"`, `("code", Some(json!([..])), Some(json!({ "globals": .. })), Some(PathBuf::from("a.ts")))` and
 // `("code", "fixed", Some(json!([..])))`. They are read by a scanner that knows the literals of Rust and little else. An
 // element that is anything more (`format!`, a variable) is counted in `unparsed`.
@@ -340,14 +340,21 @@ export function casesOfFile(
   }
 
   for (let i = 0; i + 4 < tokens.length; i++) {
-    if (tokens[i].text !== "let" || tokens[i].start < firstTest) continue;
-    let at = i + 1;
-    if (tokens[at].text === "mut") at++;
+    if (tokens[i].start < firstTest) continue;
+    // `let pass = vec![`, and `pass.extend(vec![`.
+    const isLet = tokens[i].text === "let";
+    let at = isLet ? i + 1 : i;
+    if (isLet && tokens[at].text === "mut") at++;
     const name = tokens[at].text;
-    const list = /^_?(pass|fail|fix)/.exec(name)?.[1];
+    const list = tokens[at].kind === "word" ? /^_?(pass|fail|fix)/.exec(name)?.[1] : undefined;
     if (!list) continue;
-    // Over the type, if there is one.
-    while (at < tokens.length && tokens[at].text !== "=" && tokens[at].text !== ";") at++;
+    if (isLet) {
+      // Over the type, if there is one.
+      while (at < tokens.length && tokens[at].text !== "=" && tokens[at].text !== ";") at++;
+    } else {
+      if (tokens[at + 1]?.text !== "." || tokens[at + 2]?.text !== "extend" || tokens[at + 3]?.text !== "(") continue;
+      at += 3;
+    }
     if (tokens[at + 1]?.text !== "vec" || tokens[at + 2]?.text !== "!" || tokens[at + 3]?.text !== "[") continue;
     at += 4;
 

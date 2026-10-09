@@ -80,7 +80,9 @@ const limits: Limits = {
 const here = import.meta.dir;
 const manifest: Entry[] = JSON.parse(readFileSync(flags.get("manifest") || join(here, "manifest.json"), "utf8"));
 /** The versions that `bun lint` and `bun format` are compared with where a repository has none installed, and Prettier always. */
-const JUDGES = { eslint: "10.12.0", prettier: "3.9.9", oxlint: "1.80.0", oxfmt: "0.72.0" };
+const JUDGES = { eslint: "10.12.0", prettier: "3.9.9", oxlint: "1.87.0", oxfmt: "0.72.0" };
+/** What the judges need beside themselves: oxlint's rules that need types are in a package of its own. */
+const WITH_JUDGES = { "oxlint-tsgolint": "7.0.2003" };
 
 const nameOf = (repo: string) => repo.replace("/", "__");
 const cloneOf = (repo: string) => join(work, nameOf(repo));
@@ -368,6 +370,27 @@ function parse<T>(path: string): T | null {
 const warnings = (stderr: string) =>
   [...new Set(stderr.split("\n").filter(it => /^(warn|error):/.test(it)))].slice(0, 40);
 
+/**
+ * What the configuration asks for and `bun lint` cannot do: rules that it names and that are not there, files in other languages, rules in
+ * JavaScript that ask for types. Without `--allow-unsupported` these lines end the run with exit code 2, after the report. The comparison
+ * is made with the flag, and the lines say what stops a project from switching.
+ */
+const unsupported = (stderr: string) =>
+  // With the flag each of them is a warning of its own.
+  stderr
+    .split("\n")
+    .filter(it => /^warn: \d+ (rules? .* did not run: |files? (was|were) not linted, )/.test(it))
+    .map(it => it.slice("warn: ".length, 1000));
+const allows = (command: "lint" | "format") =>
+  bun &&
+  Bun.spawnSync({ cmd: [bun, command, "--help"], env: { npm_lifecycle_event: command } })
+    .stdout.toString()
+    .includes("--allow-unsupported")
+    ? ["--allow-unsupported"]
+    : [];
+const allowUnsupported = allows("lint");
+const allowUnsupportedFormat = allows("format");
+
 /** The plugins whose rules are on, with how many: from `--print-config` of their ESLint for one linted file of each extension. */
 async function pluginsOf(entry: Entry, run: Run, eslint: string, results: { filePath: string }[]) {
   const samples = new Map<string, string>();
@@ -409,7 +432,7 @@ async function lint(entry: Entry, run: Run) {
     perf: true,
   });
   const ours = await inCopy(entry, "ours", {
-    cmd: commandOf(run, [bun, "lint"], [...json, "--timing", ...(run.ourArgs ?? [])]),
+    cmd: commandOf(run, [bun, "lint"], [...json, "--timing", ...allowUnsupported, ...(run.ourArgs ?? [])]),
     cwd: run.cwd,
     env: { ...run.env, ...asScript("lint") },
     perf: true,
@@ -436,7 +459,11 @@ async function lint(entry: Entry, run: Run) {
   // What another version of their tool reports can be what the tool has learnt since: `bun lint` follows one version of each.
   // ESLint's judge runs with their configuration and their plugins.
   let judge = null;
-  if (version !== JUDGES[run.tool as "eslint"] && !(comparison && verdictOf(comparison, theirs.code) === "identical")) {
+  // oxlint's judge always runs: "the same as the latest release" is a number of its own, next to "the same as their version".
+  if (
+    version !== JUDGES[run.tool as "eslint"] &&
+    (run.tool === "oxlint" || !(comparison && verdictOf(comparison, theirs.code) === "identical"))
+  ) {
     const it = await inCopy(entry, "judge", {
       cmd: commandOf(run, [join(tools, "node_modules", ".bin", run.tool)], [...json, ...(run.theirArgs ?? [])]),
       cwd: run.cwd,
@@ -459,6 +486,7 @@ async function lint(entry: Entry, run: Run) {
     theirs: summary(theirs),
     ours: summary(ours),
     warnings: warnings(read(ours.stderr)),
+    unsupported: unsupported(read(ours.stderr)),
     plugins: run.tool === "eslint" && a ? await pluginsOf(entry, run, their.path, a) : undefined,
     // What `--timing` prints, above all how much JavaScript the plugins are.
     timing: read(ours.stderr)
@@ -527,7 +555,7 @@ async function fix(entry: Entry, run: Run) {
     env: run.env,
   });
   const ours = await inCopy(entry, "ours-fix", {
-    cmd: commandOf(run, [bun, "lint"], ["--fix", ...(run.ourArgs ?? [])]),
+    cmd: commandOf(run, [bun, "lint"], ["--fix", ...allowUnsupported, ...(run.ourArgs ?? [])]),
     cwd: run.cwd,
     env: { ...run.env, ...asScript("lint") },
     seconds: patience(theirs),
@@ -574,7 +602,7 @@ async function format(entry: Entry, run: Run) {
   const judge = join(tools, "node_modules", ".bin", run.tool);
   const judged = version !== JUDGES[run.tool as "prettier" | "oxfmt"];
   const env = { ...run.env, ...asScript("format") };
-  const [theirArgs, ourArgs] = [run.theirArgs ?? [], run.ourArgs ?? []];
+  const [theirArgs, ourArgs] = [run.theirArgs ?? [], [...allowUnsupportedFormat, ...(run.ourArgs ?? [])]];
   const write = run.tool === "prettier" ? ["--write"] : [];
 
   const theirCheck = await inCopy(entry, "theirs-check", {
@@ -995,7 +1023,7 @@ const revision = Bun.spawnSync({ cmd: [bun, "--revision"] })
 const only = flags.get("only")?.split(",");
 const stages = (flags.get("stages") ?? "clone,install,lint,fix,format").split(",");
 const entries = manifest.filter(it => !only || only.includes(it.repo));
-await installTools(tools, JUDGES);
+await installTools(tools, { ...JUDGES, ...WITH_JUDGES });
 
 async function one(entry: Entry) {
   const path = resultsOf(entry.repo);

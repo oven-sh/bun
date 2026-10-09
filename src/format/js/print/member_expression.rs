@@ -15,7 +15,7 @@ pub(crate) fn write_member_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
             f,
             [
                 object,
-                line_suffix_boundary(),
+                boundary_behind_object(f),
                 FormatComputedMemberExpressionWithoutObject(e)
             ]
         ),
@@ -23,9 +23,15 @@ pub(crate) fn write_member_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     }
 }
 
+/// A comment at the end of the line of the object stays there. oxfmt, like Prettier 3.8, moves it behind the member:
+/// `a // comment` and `.b` on the next line are `a.b // comment`.
+fn boundary_behind_object(f: &Formatter<'_>) -> Option<LineSuffixBoundary> {
+    (!f.options().flavor.is_oxfmt()).then_some(line_suffix_boundary())
+}
+
 fn write_static_member_expression<'a>(e: Expr<'a>, object: Expr<'a>, f: &mut Formatter<'a>) {
     let start = f.elements().len();
-    write!(f, [object, line_suffix_boundary()]);
+    write!(f, [object, boundary_behind_object(f)]);
 
     if f.is_quiet() {
         let lookup = format_with(|f| write_lookup_without_comments(e, f));

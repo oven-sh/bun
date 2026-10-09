@@ -2,17 +2,19 @@
 //! Everything but the messages is freed before the next file.
 
 use crate::cli::{FixType, Options};
-use crate::configs::Flavor;
+use crate::configs::{Flavor, Loaded};
 use crate::discover::{Status, Target};
+use crate::embedded::Framework;
 use crate::results::{Counts, FileResult, Linted};
 use crate::run::{Fatal, Timing};
 use crate::{fs, paths};
 use bun_core::strings;
-use bun_lint::ast::File;
+use bun_lint::ast::{File, VueScript};
 use bun_lint::context::Severity;
+use bun_lint::fix::SuggestionKind;
 use bun_lint::js_plugin::Host;
 use bun_lint::linter::{
-    Again, LintMessage, LintOptions, LintResult, Linter, ResolvedConfig, RuleId,
+    Again, LintMessage, LintOptions, LintResult, Linter, ResolvedConfig, RuleId, Suggestion,
 };
 use bun_lint::rule::Kind;
 use bun_lint_graph::Graph;
@@ -28,6 +30,10 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) linter: &'c Linter,
     pub(crate) options: &'c Options,
     pub(crate) cwd: &'c [u8],
+    /// The configuration of the working directory, if it is one of oxlint.
+    pub(crate) of_oxlint: Option<&'c Loaded>,
+    /// `--type-check`: what the type checker reports is reported too.
+    pub(crate) checks_types: bool,
     /// Whether [`FileResult::text`] is read.
     pub(crate) keeps_text: bool,
     /// Whether the fixes and the suggestions of messages are read, if only to be counted.
@@ -61,6 +67,7 @@ struct How<'h> {
     physical_path_len: Option<usize>,
     /// It is a script in a file: its language, and which rules run.
     script: Option<(ScriptKind, &'h RuleFilter<'h>)>,
+    vue_script: VueScript,
 }
 
 fn only_errors(_: &RuleId, severity: Severity) -> bool {
@@ -76,11 +83,15 @@ impl Context<'_, '_> {
             wants_fixes: self.fixes() || self.reads_fixes,
             wants_suppressions: self.reads_suppressions,
             // Warnings have to be counted for `--max-warnings`.
-            rule_filter: match self.options.quiet && self.options.max_warnings == -1 {
+            rule_filter: match self.options.quiet
+                && self.options.max_warnings == -1
+                && !self.fixes_warnings()
+            {
                 true => Some(&only_errors),
                 false => None,
             },
             js_plugins: Some(self.js_plugins),
+            respects_eslint_comments: self.of_oxlint.is_none_or(|it| it.respects_eslint_comments),
             ..LintOptions::default()
         }
     }
@@ -89,24 +100,40 @@ impl Context<'_, '_> {
         self.options.fix || self.options.fix_dry_run
     }
 
-    /// oxlint's `--fix-suggestions`: a suggestion is as good as a fix.
+    /// oxlint's `--fix-suggestions` and `--fix-dangerously`: a suggestion of a kind that they allow is as good as a fix.
+    /// `--fix-suggestions` alone makes no other change, `--fix-dangerously` makes all.
     pub(crate) fn promote_suggestions(&self, result: &mut LintResult) {
-        if !self.options.fix_suggestions {
+        let options = self.options;
+        if !options.fix_suggestions && !options.fix_dangerously {
             return;
         }
-        for message in result
-            .messages
-            .iter_mut()
-            .filter(|it| it.fix.is_none() && !it.suggestions.is_empty())
-        {
-            message.fix = Some(message.suggestions.swap_remove(0).fix);
-            message.suggestions.clear();
+        let is_allowed = |it: &Suggestion| match it.kind {
+            SuggestionKind::Suggestion => true,
+            SuggestionKind::DangerousFix | SuggestionKind::DangerousSuggestion => {
+                options.fix_dangerously
+            }
+        };
+        for message in &mut result.messages {
+            if !options.fix_safely && !options.fix_dangerously {
+                message.fix = None;
+            }
+            if message.fix.is_none()
+                && let Some(at) = message.suggestions.iter().position(is_allowed)
+            {
+                message.fix = Some(message.suggestions.swap_remove(at).fix);
+                message.suggestions.clear();
+            }
         }
+    }
+
+    /// Whether `--quiet` leaves the fixes of warnings alone: it only hides them from oxlint's report.
+    fn fixes_warnings(&self) -> bool {
+        self.of_oxlint.is_some() && self.fixes()
     }
 
     /// ESLint's `fix` option as `getFixerForFixTypes` makes it.
     pub(crate) fn should_fix(&self, message: &LintMessage) -> bool {
-        if self.options.quiet && message.severity != Severity::Error {
+        if self.options.quiet && message.severity != Severity::Error && !self.fixes_warnings() {
             return false;
         }
         let Some(types) = &self.options.fix_type else {
@@ -180,11 +207,12 @@ impl Context<'_, '_> {
         path: &[u8],
         text: &[u8],
         config: &ResolvedConfig,
-        kind: ScriptKind,
+        (kind, vue_script): (ScriptKind, VueScript),
         filter: &RuleFilter,
     ) -> LintResult {
         let how = How {
             script: Some((kind, filter)),
+            vue_script,
             ..How::default()
         };
         self.verify_as(path, text, config, how)
@@ -215,7 +243,11 @@ impl Context<'_, '_> {
             again: Some(again),
             ..How::default()
         };
-        let linted = self.verify_as(&path, &text, &config, how);
+        let linted = match Framework::of(&path).filter(|_| config.language.is_oxlint) {
+            // Its scripts are linted one by one, so all rules run once more.
+            Some(framework) => self.verify_scripts(framework, &path, &text, &config),
+            None => self.verify_as(&path, &text, &config, how),
+        };
         let had_types = result.had_types;
         *result = self.result(
             std::mem::take(&mut result.path),
@@ -268,6 +300,7 @@ impl Context<'_, '_> {
                 }
                 let file = File::new(path, &hir, bound, atoms, &config.language, None);
                 file.set_modules(self.modules);
+                file.set_vue_script(as_what.vue_script);
                 let options = self.lint_options();
                 let options = LintOptions {
                     again: as_what.again,
@@ -368,17 +401,26 @@ impl Context<'_, '_> {
             return Ok(warns.then(|| self.ignored(&target.path, &target.status)));
         };
         let started = self.timing.now();
-        let text = fs::read_sized(&target.path, target.size).map_err(|error| {
-            Fatal(
-                [
-                    b"Cannot read ",
-                    &target.path[..],
-                    b": ",
-                    &fs::describe(&error),
-                ]
-                .concat(),
-            )
-        })?;
+        let text = match fs::read_sized(&target.path, target.size) {
+            Ok(text) => text,
+            // A link that leads nowhere. oxlint passes over it.
+            Err(_)
+                if target.loaded.flavor == Flavor::Oxlint && fs::kind(&target.path).is_none() =>
+            {
+                return Ok(None);
+            }
+            Err(error) => {
+                return Err(Fatal(
+                    [
+                        b"Cannot read ",
+                        &target.path[..],
+                        b": ",
+                        &fs::describe(&error),
+                    ]
+                    .concat(),
+                ));
+            }
+        };
         self.timing.add(&self.timing.read, started);
         let shown = paths::to_native(target.path.clone());
         if let Some(framework) = target.framework() {

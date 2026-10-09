@@ -2991,10 +2991,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     return Ok(Some(p.s(S::TypeScript::default(), loc)));
                 }
                 // `parseAmbientExternalModuleDeclaration`: without a "{" there is no body.
-                if p.is_tolerant()
-                    && matches!(p.lexer.token, T::TIdentifier | T::TExport)
-                    && !p.is_ecmascript()
-                {
+                // For TypeScript's scanner no keyword is an identifier.
+                let is_declaration = match p.lexer.token {
+                    T::TExport => true,
+                    T::TIdentifier => {
+                        !crate::typescript::identifier::is_contextual_keyword(p.lexer.identifier)
+                    }
+                    _ => false,
+                };
+                if p.is_tolerant() && is_declaration && !p.is_ecmascript() {
                     p.lexer.expect_or_insert_semicolon()?;
                     return Ok(Some(p.keep_global(loc, loc, None, opts.is_export)));
                 }

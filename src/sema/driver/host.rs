@@ -429,27 +429,50 @@ impl Disk {
             true => &path[..without_trailing_slash(path).len().max(root_length(path))],
             false => path,
         };
-        if let Some(known) = self.directories.get_ref(path) {
-            return known;
+        // Up to a directory that is known, then down again. A loop: an import can name a path of
+        // any number of segments.
+        let mut unknown = Vec::new();
+        let mut at = path;
+        let mut directory = loop {
+            if let Some(known) = self.directories.get_ref(at) {
+                break known;
+            }
+            unknown.push(at);
+            let Split { parent, name } = split(at);
+            if name.is_empty() || Self::is_above_listings(parent) {
+                break &Directory::Unreadable;
+            }
+            at = parent;
+        };
+        while let Some(at) = unknown.pop() {
+            // Nothing is in a directory that does not exist, nor in memory: `InMemory::by_directory`
+            // enters a directory in all those above it. Those in between are not kept: their
+            // paths would take the square of the length.
+            if let Directory::Missing = directory {
+                return self
+                    .directories
+                    .insert_ref(path.to_vec(), Directory::Missing);
+            }
+            let read = self.read_directory(at, directory);
+            directory = self.directories.insert_ref(at.to_vec(), read);
         }
+        directory
+    }
+
+    /// The directory at `path`, which is in `parent`.
+    fn read_directory(&self, path: &[u8], parent: &Directory) -> Directory {
         // An entry that its parent does not list does not exist, so no system call is needed.
-        let Split { parent, name } = split(path);
-        if !name.is_empty()
-            && !Self::is_above_listings(parent)
-            && let Directory::Listed(listing) = self.directory(parent)
-            && let Some(found) = self.find_in(listing, name)
+        if let Directory::Listed(listing) = parent
+            && let Some(found) = self.find_in(listing, split(path).name)
             && !matches!(found, Some((_, true)))
         {
-            return self
-                .directories
-                .insert_ref(path.to_vec(), Directory::Missing);
+            return Directory::Missing;
         }
-        let read = match (list(path), self.in_memory.get(path)) {
+        match (list(path), self.in_memory.get(path)) {
             (read, None) | (read @ Directory::Unreadable, _) => read,
             (Directory::Listed(listing), Some(more)) => Directory::Listed(listing.with(more)),
             (Directory::Missing, Some(more)) => Directory::Listed(Listing::default().with(more)),
-        };
-        self.directories.insert_ref(path.to_vec(), read)
+        }
     }
 
     /// Whether `path` is a directory, for a path that `already_read` adds.
@@ -506,18 +529,38 @@ impl Disk {
 
     /// `path`, with every name in it spelled as its directory has it. Links are not followed.
     pub fn as_written(&self, path: &[u8]) -> Vec<u8> {
-        let Split { parent, name } = split(path);
-        if self.case_sensitive || name.is_empty() || Self::is_above_listings(parent) {
+        if self.case_sensitive {
             return path.to_vec();
         }
-        let written = match self.directory(parent) {
-            Directory::Listed(listing) => listing.find(name, false).map(|it| it.0),
-            Directory::Missing | Directory::Unreadable => None,
-        };
-        match parent {
-            b"/" => [b"/", written.unwrap_or(name)].concat(),
-            _ => inside(&self.as_written(parent), written.unwrap_or(name)),
+        // The names that a listing can have, the last one first, and what is above them.
+        let mut names = Vec::new();
+        let mut above = path;
+        loop {
+            let Split { parent, name } = split(above);
+            if name.is_empty() || Self::is_above_listings(parent) {
+                break;
+            }
+            names.push((parent, name));
+            above = parent;
         }
+        let mut written = above.to_vec();
+        // Nothing is asked about what is in a directory that does not exist.
+        let mut exists = true;
+        for (parent, name) in names.into_iter().rev() {
+            let found = match exists.then(|| self.directory(parent)) {
+                Some(Directory::Listed(listing)) => listing.find(name, false).map(|it| it.0),
+                Some(Directory::Missing) => {
+                    exists = false;
+                    None
+                }
+                Some(Directory::Unreadable) | None => None,
+            };
+            if !written.ends_with(b"/") {
+                written.push(b'/');
+            }
+            written.extend_from_slice(found.unwrap_or(name));
+        }
+        written
     }
 
     /// `path` is there.

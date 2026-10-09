@@ -322,7 +322,7 @@ pub(crate) fn write_template<'a>(
     let options = FormatOptions {
         html_template_depth: counter.saturating_add(1),
         parser: None,
-        filepath: None,
+        filepath: Some(f.filepath().into()),
         range_start: None,
         range_end: None,
         cursor_offset: None,

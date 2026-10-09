@@ -81,6 +81,15 @@ fn paren_group_open(node: ValueRef<'_>) -> Option<ValueRef<'_>> {
         .then(|| node.at(group.open))
 }
 
+/// The line of the `)` of a function or of what is in parentheses.
+fn line_of_closing_parenthesis(node: ValueRef<'_>) -> Option<u32> {
+    let group = match node.kind() {
+        ValueKind::Func => node.at(node.node().group),
+        _ => node,
+    };
+    paren_group_open(group).and_then(|_| group.at(group.node().close).node().loc.start_line())
+}
+
 fn ends_where_starts(a: ValueRef<'_>, b: ValueRef<'_>) -> bool {
     a.node().loc.end_offset().is_some() && a.node().loc.end_offset() == b.node().loc.start_offset()
 }
@@ -174,7 +183,7 @@ impl<'a> Printer<'a, '_> {
 
     /// `node`: a `value-comma_group`.
     fn shape_of_comma_group(&self, statement: Statement<'_, 'a>, node: ValueRef<'_>) -> Shape {
-        let at_rule = statement.at_rule;
+        let at_rule = self.at_rule_around(statement);
         if at_rule.is_some_and(|it| self.is_scss_control_directive(it)) {
             Shape::GroupIndent
         } else if node.groups().len() == 2
@@ -208,7 +217,7 @@ impl<'a> Printer<'a, '_> {
             && declaration_prop
                 .as_ref()
                 .is_some_and(|prop| **prop == *b"grid" || prop.starts_with(b"grid-template"));
-        let at_rule = statement.at_rule;
+        let at_rule = self.at_rule_around(statement);
         let is_control_directive = at_rule.is_some_and(|it| self.is_scss_control_directive(it));
         let has_inline_comment = node.groups().any(is_inline_comment);
         let is_in_paren_group = parent.is_some_and(|it| it.kind() == ValueKind::ParenGroup);
@@ -230,10 +239,35 @@ impl<'a> Printer<'a, '_> {
         self.sink.start_fill();
         let mut inside_scss_interpolation_in_string = false;
         let mut did_break = false;
+        // For oxfmt, `$a * 2` in SCSS is one expression, so next to other values it is one of what the lines are filled
+        // with, and is filled itself.
+        let has_expressions = self.is_oxfmt && self.syntax() == Syntax::Scss && !inside_calc;
+        let mut is_in_expression = false;
 
         for (i, i_node) in node.groups().enumerate() {
             let prev_node = i.checked_sub(1).and_then(|at| node.group(at));
             let next_node = node.group(i + 1);
+
+            let is_before_operator =
+                !is_math_operator(i_node) && next_node.is_some_and(is_math_operator);
+            if has_expressions
+                && !is_in_expression
+                && is_before_operator
+                && prev_node.is_none_or(|it| !is_math_operator(it))
+            {
+                let mut last = i;
+                while node.group(last + 1).is_some_and(is_math_operator)
+                    && node.group(last + 2).is_some_and(|it| !is_math_operator(it))
+                {
+                    last += 2;
+                }
+                if i > 0 || node.group(last + 1).is_some() {
+                    is_in_expression = true;
+                    self.sink.start_group(false);
+                    self.sink.start_indent();
+                    self.sink.start_fill();
+                }
+            }
 
             let is_at_end_of_line = is_inline_comment(i_node) && next_node.is_none();
             if is_at_end_of_line {
@@ -243,6 +277,15 @@ impl<'a> Printer<'a, '_> {
             self.value_stack.push(id);
             self.print_value(statement, i_node.id, prev_node.map(|it| it.id));
             self.value_stack.pop();
+            if is_in_expression
+                && !is_before_operator
+                && (!is_math_operator(i_node) || next_node.is_none())
+            {
+                is_in_expression = false;
+                self.sink.end_fill();
+                self.sink.end_indent();
+                self.sink.end_group();
+            }
             if is_at_end_of_line {
                 self.sink.end_line_suffix();
                 continue;
@@ -414,7 +457,11 @@ impl<'a> Printer<'a, '_> {
                 && is_func(next_node)
                 && !ends_where_starts(i_node, next_node)
             {
-                self.sink.token(" ");
+                // For oxfmt it is an operator like any other: the line can end behind it.
+                match self.is_oxfmt {
+                    true => self.sink.fill_separator(Separator::Line),
+                    false => self.sink.token(" "),
+                }
                 continue;
             }
 
@@ -485,9 +532,15 @@ impl<'a> Printer<'a, '_> {
             }
 
             if is_grid_value {
+                // oxfmt asks what is between the two, not where they start.
+                let line = match self.is_oxfmt {
+                    true => line_of_closing_parenthesis(i_node),
+                    false => None,
+                };
                 if i_node.node().has_source()
                     && next_node.node().has_source()
-                    && i_node.node().loc.start_line() != next_node.node().loc.start_line()
+                    && line.or_else(|| i_node.node().loc.start_line())
+                        != next_node.node().loc.start_line()
                 {
                     self.sink.fill_separator(Separator::HardLine);
                     did_break = true;

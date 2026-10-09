@@ -242,6 +242,16 @@ impl TextWidth {
 
     /// The same as `flavor` counts.
     pub(crate) fn from_text_as(text: &[u8], flavor: Flavor) -> TextWidth {
+        Self::from_text_with_tabs(text, flavor, 0)
+    }
+
+    /// The same, in JavaScript: for oxfmt a tab is as wide as the indentation.
+    pub(crate) fn from_javascript(text: &[u8], flavor: Flavor, indent_width: u8) -> TextWidth {
+        let tab_width = if flavor.is_oxfmt() { indent_width } else { 0 };
+        Self::from_text_with_tabs(text, flavor, u32::from(tab_width))
+    }
+
+    fn from_text_with_tabs(text: &[u8], flavor: Flavor, tab_width: u32) -> TextWidth {
         if super::width::is_all_printable(text) {
             return Self::single(text.len() as u32);
         }
@@ -255,6 +265,7 @@ impl TextWidth {
             if rest[at] == b'\n' {
                 return Self::multiline(width);
             }
+            width += tab_width;
             rest = &rest[at + 1..];
         }
     }

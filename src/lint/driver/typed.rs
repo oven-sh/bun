@@ -3,8 +3,8 @@
 //! Each is type checked with the `tsconfig.json` that an editor uses for it, and as an editor does
 //! it: what it imports is only looked at as far as its types are asked for, and a project that is
 //! referenced is read from its sources. A file is linted right after it is checked, by the thread
-//! that checked it, while its types are there. Type errors are not reported: that is what
-//! `bun check` is for.
+//! that checked it, while its types are there. Type errors are not reported, that is what
+//! `bun check` is for, unless oxlint's `--type-check` asks for them.
 //!
 //! # Fixes
 //!
@@ -15,15 +15,16 @@
 use crate::lint::Context;
 use crate::results::FileResult;
 use crate::run::Environment;
+use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::linter::{
-    LintMessage, LintResult, MAX_AUTOFIX_PASSES, ResolvedConfig, apply_fixes, grows_too_much,
-    max_fixed_len,
+    LintMessage, LintResult, MAX_AUTOFIX_PASSES, ResolvedConfig, RuleId, apply_fixes,
+    grows_too_much, max_fixed_len,
 };
 use bun_sema::program::FileId;
 use bun_sema::util::FxHashMap;
-use bun_sema_driver::Libs;
 use bun_sema_driver::host::{AlreadyRead, Provided, from_native, to_native};
+use bun_sema_driver::{Category, Diagnostic, Libs};
 use bun_threading::Guarded;
 use std::sync::Arc;
 
@@ -86,7 +87,10 @@ fn check_and_lint(
                     result.messages.insert(0, too_large_for_flow_analysis());
                 }
                 context.promote_suggestions(&mut result);
-                let is_reported = !result.messages.is_empty() || !result.suppressed.is_empty();
+                // What the type checker reports is known when all files are checked.
+                let is_reported = !result.messages.is_empty()
+                    || !result.suppressed.is_empty()
+                    || context.checks_types;
                 let text = (is_reported && (context.keeps_text || context.fixes()))
                     .then(|| file.text().to_vec());
                 (result, text)
@@ -114,7 +118,7 @@ fn check_and_lint(
         script_kinds_by_extension: &[],
         conditions: &[],
         compiler_options: &command_line.compiler_options,
-        threads: crate::run::threads_to_lint_on(context.options, context.js_plugins),
+        threads: context.options.threads,
         libs: environment.libs,
         progress: None,
         only: None,
@@ -127,6 +131,7 @@ fn check_and_lint(
             checks_only_named: true,
             reads_sources_of_references: true,
             current_directory_is_of_the_project: true,
+            reports_nothing_about_files: !context.checks_types,
             ..Default::default()
         },
         retains_everything: false,
@@ -142,8 +147,42 @@ fn check_and_lint(
         already_read,
         ..Default::default()
     };
-    bun_sema_driver::check_provided_then(&request, provided, |_| ());
-    std::mem::take(results.get_mut())
+    let diagnostics =
+        bun_sema_driver::check_provided_then(&request, provided, |report| report.diagnostics);
+    let mut results = std::mem::take(results.get_mut());
+    if context.checks_types {
+        for diagnostic in diagnostics
+            .iter()
+            .filter(|it| it.category == Category::Error)
+        {
+            let at = by_path.get(&diagnostic.path).copied();
+            if let Some((result, _)) = at.and_then(|at| results.get_mut(at)?.as_mut()) {
+                result.messages.push(type_error(diagnostic));
+            }
+        }
+        for (result, _) in results.iter_mut().flatten() {
+            result.messages.sort_by_key(|it| (it.line, it.column));
+        }
+    }
+    results
+}
+
+/// What oxlint makes of an error of the type checker: `typescript(TS2322)`, with the first line of the text. No comment disables it.
+fn type_error(diagnostic: &Diagnostic) -> LintMessage {
+    let text = &diagnostic.text[..];
+    let end = strings::index_of_char_usize(text, b'\n').unwrap_or(text.len());
+    LintMessage {
+        rule_id: Some(RuleId::Unknown(
+            format!("typescript/TS{}", diagnostic.code)
+                .into_bytes()
+                .into(),
+        )),
+        message: text[..end].to_vec(),
+        line: diagnostic.line,
+        column: diagnostic.column,
+        end: Some((diagnostic.end_line, diagnostic.end_column)),
+        ..LintMessage::default()
+    }
 }
 
 /// The checker has the text of a file without its byte order mark. Puts it back, so that it is in

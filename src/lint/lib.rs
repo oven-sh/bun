@@ -9,7 +9,8 @@
 //! - [`rule`]: what a rule is. Start there.
 //! - [`js_plugin`]: rules that are written in JavaScript.
 //!
-//! The rules are in the crates `bun_lint_eslint`, `bun_lint_typescript` and `bun_lint_plugins`.
+//! The rules are in the crates `bun_lint_eslint`, `bun_lint_typescript`, `bun_lint_plugins`, `bun_lint_unicorn`, `bun_lint_react`
+//! and `bun_lint_jest`.
 
 #![forbid(unsafe_code)]
 

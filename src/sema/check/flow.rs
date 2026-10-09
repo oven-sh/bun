@@ -188,6 +188,9 @@ pub(super) struct FlowMemo {
     /// `effects_signatures` has an entry, and those of them for which that is `None`.
     settled_calls: Vec<(u64, u64)>,
     settled_calls_of: Option<FileId>,
+    /// Indexed by flow node of the same file, or empty. For a call from which a walk has passed many calls of which that
+    /// is `None`: the node at which it arrived, and how many it passed. See `before_idle_calls`.
+    idle_runs: Vec<(FlowId, u32)>,
     /// The subjects of each test of the file `tests_of`, indexed by the flow node of the test.
     tests: Vec<About>,
     tests_of: Option<FileId>,
@@ -220,6 +223,8 @@ pub(super) struct FlowMemo {
     /// `has_order_dependent_assignment_marks`, by file, and for the file that was asked about last.
     order_dependent_assignment_marks: std::cell::RefCell<FxHashMap<FileId, bool>>,
     latest_order_dependent_assignment_marks: std::cell::Cell<Option<(FileId, bool)>>,
+    /// `last_assignment_pos`, where no later walk changes it.
+    last_assignment_positions: std::cell::RefCell<FxHashMap<(FileId, SymbolId), u32>>,
 }
 
 /// `FlowLoopKey`, without the reference.
@@ -6011,32 +6016,50 @@ impl<'p, 's> Checker<'p, 's> {
     /// `markNodeAssignments` so far have left it. 0: none has found an assignment. `u32::MAX`:
     /// `math.MaxInt32`.
     fn last_assignment_pos(&self, file: FileId, symbol: SymbolId) -> u32 {
+        let known = &self.flow_memo.last_assignment_positions;
+        if let Some(&known) = known.borrow().get(&(file, symbol)) {
+            return known;
+        }
+        let (position, is_final) = self.last_assignment_pos_so_far(file, symbol);
+        if is_final {
+            known.borrow_mut().insert((file, symbol), position);
+        }
+        position
+    }
+
+    /// And whether no later walk changes it: a walk only adds marks. It is asked for each reference to a variable from
+    /// a nested function, and goes from each assignment to the variable up to a function that is marked.
+    fn last_assignment_pos_so_far(&self, file: FileId, symbol: SymbolId) -> (u32, bool) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let Some(pat) = self.name_of_value_declaration(file, symbol) else {
-            return 0;
+            return (0, true);
         };
         if !hir.exports.is_empty() && self.is_marked_by_export_specifier(file, symbol, pat) {
-            return u32::MAX;
+            return (u32::MAX, true);
         }
+        let mut is_final = hir.exports.is_empty();
         if !bound.symbols[symbol.idx()]
             .flags
             .contains(SymFlags::ASSIGNED)
         {
-            return 0;
+            return (0, is_final);
         }
         let declaring_function = function_or_source_file_of(hir, hir.node(pat));
         let mut last = ExprId::NONE;
         for &(_, assignment) in bound.assignments_to(symbol) {
             let node = hir.node(assignment);
             match self.is_marked_in_nested_function(file, declaring_function, node) {
-                None => {}
-                Some(true) => return u32::MAX,
+                None => is_final = false,
+                Some(true) => return (u32::MAX, true),
                 Some(false) => last = assignment,
             }
         }
         match last.some() {
-            Some(last) => self.extend_assignment_position(file, last, hir[pat].pos),
-            None => 0,
+            Some(last) => {
+                let position = self.extend_assignment_position(file, last, hir[pat].pos);
+                (position, is_final)
+            }
+            None => (0, is_final),
         }
     }
 
@@ -6470,23 +6493,27 @@ impl<'p, 's> Checker<'p, 's> {
                     flow = before;
                 }
                 Flow::Call { before, call } => {
-                    if !self.flow_memo.is_idle_call(file, flow) {
-                        // `getTypeAtFlowCall`
-                        let (sig, is_cached) = self.effects_signature_and_is_cached(file, call);
-                        if is_cached {
-                            self.note_settled_call(file, flow, sig.is_none());
-                        }
-                        if let Some(sig) = sig {
-                            match self.sig_predicate(sig) {
-                                Some(predicate) if predicate.asserts => {
-                                    let then = Pending::Assert(call);
-                                    pending.push((then, std::mem::take(&mut shared_flow)));
-                                }
-                                _ if self.sig_return(sig).is_never() => {
-                                    break TypeId::UNREACHABLE_NEVER;
-                                }
-                                _ => {}
+                    if self.flow_memo.is_idle_call(file, flow) {
+                        let (arrived_at, passed) = self.before_idle_calls(file, flow, before);
+                        walk.steps = walk.steps.saturating_add(passed);
+                        flow = arrived_at;
+                        continue;
+                    }
+                    // `getTypeAtFlowCall`
+                    let (sig, is_cached) = self.effects_signature_and_is_cached(file, call);
+                    if is_cached {
+                        self.note_settled_call(file, flow, sig.is_none());
+                    }
+                    if let Some(sig) = sig {
+                        match self.sig_predicate(sig) {
+                            Some(predicate) if predicate.asserts => {
+                                let then = Pending::Assert(call);
+                                pending.push((then, std::mem::take(&mut shared_flow)));
                             }
+                            _ if self.sig_return(sig).is_never() => {
+                                break TypeId::UNREACHABLE_NEVER;
+                            }
+                            _ => {}
                         }
                     }
                     flow = before;
@@ -7625,6 +7652,34 @@ impl<'p, 's> Checker<'p, 's> {
         (sig, stored.is_some())
     }
 
+    /// FOR SPEED. Where a walk arrives that goes on from `before`, the antecedent of the idle call `flow`, through the idle
+    /// calls that only one node follows, and how many of them it passes. They do nothing to any walk. Each reference in n
+    /// call statements in a row walks back through those before it: so that this does not take n * n steps, the
+    /// answer is kept for the call at which a long run was entered, and the next walk enters right behind that.
+    fn before_idle_calls(&mut self, file: FileId, flow: FlowId, before: FlowId) -> (FlowId, u32) {
+        const LONG: u32 = 32;
+        let bound = self.bound(file);
+        let memo = &mut self.flow_memo;
+        let (mut at, mut passed) = (before, 0u32);
+        while let Flow::Call { before, .. } = bound.flow[at.idx()]
+            && memo.is_idle_call(file, at)
+            && !bound.is_shared(at)
+        {
+            // Where a run that is kept ended there can be an idle call by now.
+            (at, passed) = match memo.idle_runs.get(at.idx()) {
+                Some(&(arrived_at, more)) if more != 0 => (arrived_at, passed + 1 + more),
+                _ => (before, passed + 1),
+            };
+        }
+        if passed > LONG {
+            if memo.idle_runs.is_empty() {
+                memo.idle_runs.resize(bound.flow.len(), (FlowId::NONE, 0));
+            }
+            memo.idle_runs[flow.idx()] = (at, passed);
+        }
+        (at, passed)
+    }
+
     /// `effects_signatures` has an entry for the call of the flow node `flow`. `is_idle`: `None`.
     #[inline(never)]
     fn note_settled_call(&mut self, file: FileId, flow: FlowId, is_idle: bool) {
@@ -7638,6 +7693,7 @@ impl<'p, 's> Checker<'p, 's> {
             memo.settled_calls_of = Some(file);
             memo.settled_calls.clear();
             memo.settled_calls.resize(words, (0, 0));
+            memo.idle_runs.clear();
         }
         let (word, bit) = (flow.idx() / 64, 1 << (flow.idx() % 64));
         memo.settled_calls[word].0 |= bit;

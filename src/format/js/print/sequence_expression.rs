@@ -2,6 +2,19 @@ use crate::js::parentheses::expression::has_own_line_comment_between;
 use crate::prelude::*;
 use crate::{format_args, write};
 
+/// ```js
+/// return (          return (
+///   a(),              a(), b(), c
+///   b(),            );
+///   c
+/// );
+/// ```
+///
+/// Prettier on the left: what does not fit behind `return` has one expression on each line. oxfmt on the right.
+fn sequence_after_return_is_a_group_of_its_own(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// `a, b, c`
 pub(crate) fn write_sequence_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     let parent = e.ast_parent();
@@ -42,7 +55,8 @@ pub(crate) fn write_sequence_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) 
         // The statement has a group for the parentheses and what is in them, unless a comment
         // breaks them.
         AstNodes::ReturnStatement(statement) | AstNodes::ThrowStatement(statement)
-            if !has_own_line_comment_between(statement.span().start, e.span().start, f) =>
+            if !sequence_after_return_is_a_group_of_its_own(f)
+                && !has_own_line_comment_between(statement.span().start, e.span().start, f) =>
         {
             write!(f, format_inner);
         }

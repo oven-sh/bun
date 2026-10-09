@@ -251,6 +251,8 @@ pub(crate) struct CommentVariables {
     pub(crate) globals: Vec<CommentGlobal>,
     /// Where each is in `globals`.
     pub(crate) global_by_name: FxHashMap<Box<[u8]>, u32>,
+    /// The variables of the environments that `/* eslint-env */` comments name.
+    pub(crate) of_environments: FxHashMap<&'static [u8], Global>,
     /// The names in `/* exported */` comments.
     pub(crate) exported: Vec<Box<[u8]>>,
     pub(crate) is_exported: FxHashSet<Box<[u8]>>,
@@ -309,7 +311,8 @@ impl<'a> File<'a> {
     /// ESLint.
     pub fn global(&'a self, name: &[u8]) -> Option<GlobalVariable<'a>> {
         let config = self.language().config_globals();
-        let implicit = config.setting(name);
+        let implicit =
+            (config.setting(name)).or_else(|| self.global_of_environment_in_comments(name));
         let comment = self.global_in_comments(name);
         let lib = if self.uses_typescript_parser() {
             config.lib(name)

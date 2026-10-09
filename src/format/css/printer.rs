@@ -71,6 +71,11 @@ impl<'s, 'a> Statement<'s, 'a> {
         })
     }
 
+    fn is_in_keyframes(&self) -> bool {
+        self.at_rule
+            .is_some_and(|it| it.name.to_ascii_lowercase().ends_with(b"keyframes"))
+    }
+
     /// `insideIcssRuleNode`, for a declaration.
     fn inside_icss_rule(&self) -> bool {
         std::iter::successors(Some(self.scope), |scope| scope.parent).any(|scope| {
@@ -334,6 +339,16 @@ impl<'a> Printer<'a, '_> {
                 self.unit(is_too_long, |printer| {
                     let (mut id, mut previous) = (id, previous);
                     while id != end {
+                        let raw = &tree.nodes[id as usize];
+                        // oxfmt does not count a `//` comment at the end of the line when it asks what fits.
+                        let is_line_suffix = printer.is_oxfmt
+                            && id != first
+                            && raw.kind == Kind::Comment
+                            && (raw.inline || raw.raw_inline)
+                            && raw.next_sibling == end;
+                        if is_line_suffix {
+                            printer.sink.start_line_suffix();
+                        }
                         if id != first {
                             printer.sink.token(" ");
                         }
@@ -343,8 +358,11 @@ impl<'a> Printer<'a, '_> {
                             None
                         };
                         printer.print_in_sequence(scope, id, previous, memo_context, parsed, node);
-                        previous = Some(&tree.nodes[id as usize]);
-                        id = tree.nodes[id as usize].next_sibling;
+                        if is_line_suffix {
+                            printer.sink.end_line_suffix();
+                        }
+                        previous = Some(raw);
+                        id = raw.next_sibling;
                     }
                     write_after(printer);
                 });
@@ -846,6 +864,17 @@ impl<'a> Printer<'a, '_> {
         }
     }
 
+    /// `atRuleAncestorNode`, for a value. For oxfmt, only its parameters are in an at-rule: what is in its block is
+    /// printed as it is anywhere else.
+    pub(crate) fn at_rule_around<'s>(
+        &self,
+        statement: Statement<'s, 'a>,
+    ) -> Option<&'s CssNode<'a>> {
+        statement
+            .at_rule
+            .filter(|_| !self.is_oxfmt || statement.node().kind == Kind::AtRule)
+    }
+
     /// `isSCSSControlDirectiveNode`
     pub(crate) fn is_scss_control_directive(&self, node: &CssNode<'a>) -> bool {
         self.syntax() == Syntax::Scss
@@ -1024,9 +1053,7 @@ impl<'a> Printer<'a, '_> {
                 // `isKeyframeAtRuleKeywords`
                 let is_keyframe_keyword = (text::eq_lower_case(value, b"from")
                     || text::eq_lower_case(value, b"to"))
-                    && statement
-                        .at_rule
-                        .is_some_and(|it| it.name.to_ascii_lowercase().ends_with(b"keyframes"));
+                    && statement.is_in_keyframes();
                 match is_keyframe_keyword {
                     true => self.sink.text(&value.to_ascii_lowercase()),
                     false => self.sink.text(&adjust_numbers(value)),
@@ -1036,6 +1063,16 @@ impl<'a> Printer<'a, '_> {
             SelectorKind::Id => self
                 .sink
                 .text(selectors.text((node.value.0.saturating_sub(1), node.value.1))),
+            // For oxfmt, `.50%` in `@keyframes` is a number.
+            SelectorKind::Class
+                if self.is_oxfmt
+                    && previous.is_none()
+                    && value.first().is_some_and(u8::is_ascii_digit)
+                    && statement.is_in_keyframes() =>
+            {
+                let number = selectors.text((node.value.0.saturating_sub(1), node.value.1));
+                self.sink.text(&adjust_numbers(number));
+            }
             SelectorKind::Class => {
                 match (adjust_strings(value, single_quote), adjust_numbers(value)) {
                     // With the `.` before it.

@@ -1,7 +1,7 @@
 use crate::helpers;
 use crate::inlines::Walk;
 use crate::parser::{self, MARK_CLOSER, MARK_HIDES, MARK_OPENER, Parser};
-use crate::types::{OFF, SpanDetail, SpanType, TextType};
+use crate::types::{OFF, Reference, SpanDetail, SpanType, TextType};
 
 // Aliases for the real `SpanType` / `SpanDetail` types (named `Span` /
 // `SpanAttrs` in the original implementation).
@@ -211,6 +211,8 @@ impl Parser<'_> {
         let mut end = content.len();
         let mut walk = Walk::default();
         let mut pos: usize = 0;
+        // Up to where `content` is taken by what comes before brackets.
+        let mut taken: usize = 0;
         loop {
             pos = self.next_mark(&mut walk, pos);
             if pos >= end {
@@ -219,6 +221,7 @@ impl Parser<'_> {
                 };
                 BracketMatches::leave_open(&mut storage, top);
                 pos = end + 2;
+                taken = pos;
                 (end, top) = (outer_end, outer_top);
                 continue;
             }
@@ -228,14 +231,18 @@ impl Parser<'_> {
                 if pos < content.len() && helpers::is_ascii_punctuation(content[pos]) {
                     pos += 1;
                     escape_end = pos;
+                    taken = pos;
                 }
                 continue;
             }
             // Code spans, HTML tags and autolinks take precedence over brackets
             // (CommonMark §6.3)
-            if let Some(hidden) = self.hidden_at(content, pos) {
+            if let Some(hidden) =
+                self.hidden_at(content, pos, taken, top != BracketMatches::UNMATCHED)
+            {
                 self.hidden.push(hidden);
                 pos = hidden.end;
+                taken = pos;
                 continue;
             }
             match content[pos] {
@@ -252,6 +259,7 @@ impl Parser<'_> {
                             Some(pipe) => pipe + 1,
                             None => wiki_link.inner_start,
                         };
+                        taken = pos;
                         continue;
                     }
                     let index = storage.len() as OFF;
@@ -276,6 +284,7 @@ impl Parser<'_> {
                             inactive_below = index;
                         }
                         pos = link_end;
+                        taken = pos;
                         continue;
                     }
                 }
@@ -296,27 +305,34 @@ impl Parser<'_> {
         dest: &[u8],
         title: &[u8],
         is_image: bool,
+        reference: Reference,
+        // Where the `[` is in the block's inline content.
+        bracket: usize,
     ) -> Result<LabelLeave, parser::Error> {
         if self.image_nesting_level > 0 {
             // Inside image alt text: emit only text, no HTML tags
             Ok(LabelLeave::AltText)
         } else if is_image {
+            self.at(bracket - 1, bracket + 1);
             self.renderer.enter_span(
                 Span::Img,
                 SpanAttrs {
                     href: dest,
                     title,
+                    reference,
                     ..Default::default()
                 },
             )?;
             self.image_nesting_level += 1;
             Ok(LabelLeave::Image)
         } else {
+            self.at(bracket, bracket + 1);
             self.renderer.enter_span(
                 Span::A,
                 SpanAttrs {
                     href: dest,
                     title,
+                    reference,
                     ..Default::default()
                 },
             )?;
@@ -426,7 +442,8 @@ impl Parser<'_> {
             if pos < content.len() && content[pos] == b')' {
                 pos += 1;
 
-                let leave = self.enter_label_span(dest, title, is_image)?;
+                let leave =
+                    self.enter_label_span(dest, title, is_image, Reference::None, base + start)?;
                 return Ok(Some(LabelParse {
                     label_start: start + 1,
                     label_end,
@@ -456,10 +473,10 @@ impl Parser<'_> {
                 }
             }
             if pos < content.len() && content[pos] == b']' {
-                let ref_label = if pos > ref_start {
-                    &content[ref_start..pos]
+                let (ref_label, reference) = if pos > ref_start {
+                    (&content[ref_start..pos], Reference::Full)
                 } else {
-                    label
+                    (label, Reference::Collapsed)
                 };
                 pos += 1;
                 if let Some(ref_def) = self.lookup_ref_def(ref_label) {
@@ -470,7 +487,8 @@ impl Parser<'_> {
                     if !self.charge_ref_def_output(dest.len(), title.len()) {
                         return Ok(None);
                     }
-                    let leave = self.enter_label_span(&dest, &title, is_image)?;
+                    let leave =
+                        self.enter_label_span(&dest, &title, is_image, reference, base + start)?;
                     return Ok(Some(LabelParse {
                         label_start: start + 1,
                         label_end,
@@ -498,7 +516,13 @@ impl Parser<'_> {
                 if !self.charge_ref_def_output(dest.len(), title.len()) {
                     return Ok(None);
                 }
-                let leave = self.enter_label_span(&dest, &title, is_image)?;
+                let leave = self.enter_label_span(
+                    &dest,
+                    &title,
+                    is_image,
+                    Reference::Shortcut,
+                    base + start,
+                )?;
                 return Ok(Some(LabelParse {
                     label_start: start + 1,
                     label_end,
@@ -683,6 +707,7 @@ impl Parser<'_> {
         &mut self,
         content: &[u8],
         start: usize,
+        base: usize,
     ) -> Result<Option<LabelParse>, parser::Error> {
         let Some(m) = self.match_wiki_link(content, start) else {
             return Ok(None);
@@ -691,6 +716,7 @@ impl Parser<'_> {
         let target = &content[m.inner_start..m.pipe_pos.unwrap_or(m.inner_end)];
 
         // Render the wikilink
+        self.at(base + start, base + start + 2);
         self.renderer.enter_span(
             Span::Wikilink,
             SpanAttrs {
@@ -811,7 +837,10 @@ impl Parser<'_> {
         &mut self,
         url: &[u8],
         is_email: bool,
+        // Where the `<` is in the block's inline content.
+        beg: usize,
     ) -> crate::types::JsResult<()> {
+        self.at(beg, beg + 1);
         self.renderer.enter_span(
             Span::A,
             SpanAttrs {
@@ -821,8 +850,54 @@ impl Parser<'_> {
                 ..Default::default()
             },
         )?;
+        self.at(beg + 1, beg + 1 + url.len());
         self.emit_text(TextType::Normal, url)?;
+        self.at(beg + 1 + url.len(), beg + 2 + url.len());
         self.renderer.leave_span(Span::A)?;
         Ok(())
+    }
+
+    /// Where the `[^label]` at `pos` ends, if a footnote of that name is defined.
+    pub(crate) fn footnote_reference_end(&self, content: &[u8], pos: usize) -> Option<usize> {
+        if content.get(pos + 1) != Some(&b'^') {
+            return None;
+        }
+        let label_beg = pos + 2;
+        let mut end = label_beg;
+        loop {
+            match *content.get(end)? {
+                b']' => break,
+                b'[' | b' ' | b'\t' | b'\n' | b'\r' => return None,
+                b'\\' if matches!(content.get(end + 1), Some(b'[' | b'\\' | b']')) => end += 2,
+                _ => end += 1,
+            }
+            if end - label_beg > crate::ref_defs::MAX_LINK_LABEL_LEN {
+                return None;
+            }
+        }
+        let label = self.normalize_label(&content[label_beg..end]);
+        (!label.is_empty() && self.footnote_labels.contains(&label)).then_some(end + 1)
+    }
+
+    pub(crate) fn render_footnote_reference(
+        &mut self,
+        label: &[u8],
+        // Where the `[` is in the block's inline content.
+        beg: usize,
+    ) -> crate::types::JsResult<()> {
+        if self.image_nesting_level > 0 {
+            return Ok(());
+        }
+        self.at(beg, beg + 2);
+        self.renderer.enter_span(
+            Span::A,
+            SpanAttrs {
+                href: label,
+                reference: Reference::Footnote,
+                ..Default::default()
+            },
+        )?;
+        self.at(beg + 2 + label.len(), beg + 3 + label.len());
+        self.renderer.leave_span(Span::A)
     }
 }

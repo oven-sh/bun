@@ -15,13 +15,15 @@ pub(crate) const MARK_CLOSER: u8 = 1 << 1;
 pub(crate) const MARK_DELIMITER: u8 = 1 << 2;
 /// `hidden_at` can find something at it.
 pub(crate) const MARK_HIDES: u8 = 1 << 3;
-pub(crate) const MARK_OTHER: u8 = 1 << 4;
+/// One of `Extensions::span_bytes`.
+pub(crate) const MARK_EXTENSION: u8 = 1 << 4;
+pub(crate) const MARK_OTHER: u8 = 1 << 5;
 use bun_core::StackCheck;
 
 use super::helpers;
 use super::html_renderer::HtmlRenderer;
 use super::types::{
-    Align, BlockType, Container, Flags, OFF, Renderer, TABLE_MAXCOLCOUNT, VerbatimLine,
+    Align, BlockType, Container, Extensions, Flags, OFF, Renderer, TABLE_MAXCOLCOUNT, VerbatimLine,
 };
 use crate::RenderOptions;
 
@@ -56,6 +58,8 @@ pub(crate) struct Parser<'a> {
     pub(crate) marks_seen: u8,
     // What hides markers in that content, in its order.
     pub(crate) hidden: Vec<crate::inlines::Hidden>,
+    // How many times inline content has been processed.
+    pub(crate) inline_serial: u32,
 
     // Dynamic arrays
     pub(crate) containers: Vec<Container>,
@@ -111,6 +115,28 @@ pub(crate) struct Parser<'a> {
 
     // Stack overflow protection for recursive inline processing
     pub(crate) stack_check: StackCheck,
+
+    // `RendererImpl::wants_source`
+    pub(crate) track: bool,
+    // What `container_source` is told, for each container opener and closer
+    // in `block_bytes`, in their order.
+    pub(crate) container_sources: Vec<(OFF, OFF, u32)>,
+    // Where the line that is being analyzed starts.
+    pub(crate) line_beg: OFF,
+    // The lines of the paragraph whose reference definitions are being read.
+    pub(crate) def_lines: Vec<VerbatimLine>,
+    pub(crate) extensions: Option<Extensions<'a>>,
+    // Where each line of the inline content that is being processed starts in
+    // it, and in the document.
+    pub(crate) inline_lines: Vec<(u32, OFF)>,
+    // The index of the one of them that was asked about last.
+    pub(crate) inline_line: usize,
+    // `Extensions::leaf_bytes`
+    pub(crate) starts_extension_leaf: [bool; 256],
+    // Where the lines of the document start.
+    pub(crate) line_starts: Vec<OFF>,
+    // The labels of the footnotes that are defined, normalized.
+    pub(crate) footnote_labels: bun_collections::StringSet,
 }
 
 #[repr(C)]
@@ -277,6 +303,7 @@ impl<'a> Parser<'a> {
 
     fn init(text: &'a [u8], flags: Flags, rend: Renderer<'a>) -> Result<Parser<'a>, ParserError> {
         let size = input_size(text)?;
+        let track = rend.ptr.wants_source();
         let mut p = Parser {
             text,
             size,
@@ -294,6 +321,7 @@ impl<'a> Parser<'a> {
             marks: Vec::new(),
             marks_seen: 0,
             hidden: Vec::new(),
+            inline_serial: 0,
             containers: Vec::new(),
             block_bytes: Vec::new(),
             buffer: Vec::new(),
@@ -316,6 +344,16 @@ impl<'a> Parser<'a> {
             last_header_opens_list_item: false,
             max_ref_def_output: 16 * (size as u64).min(1024 * 1024 / 16),
             stack_check: StackCheck::init(),
+            track,
+            container_sources: Vec::new(),
+            line_beg: 0,
+            def_lines: Vec::new(),
+            extensions: None,
+            inline_lines: Vec::new(),
+            inline_line: 0,
+            starts_extension_leaf: [false; 256],
+            line_starts: Vec::new(),
+            footnote_labels: bun_collections::StringSet::new(),
         };
         p.build_mark_char_map();
         Ok(p)
@@ -343,6 +381,9 @@ impl<'a> Parser<'a> {
         map[b'`' as usize] = MARK_HIDES;
         map[b'[' as usize] = MARK_OPENER;
         map[b']' as usize] = MARK_CLOSER;
+        if flags.footnotes {
+            map[b'[' as usize] |= MARK_HIDES;
+        }
         if !flags.no_html_spans {
             map[b'<' as usize] = MARK_HIDES;
         }
@@ -366,6 +407,16 @@ impl<'a> Parser<'a> {
                 map[c as usize] = MARK_OTHER;
             }
         }
+    }
+
+    fn set_extensions(&mut self, extensions: Extensions<'a>) {
+        for &c in extensions.span_bytes {
+            self.mark_char_map[c as usize] |= MARK_HIDES | MARK_EXTENSION;
+        }
+        for &c in extensions.leaf_bytes {
+            self.starts_extension_leaf[c as usize] = true;
+        }
+        self.extensions = Some(extensions);
     }
 
     // ========================================
@@ -394,7 +445,7 @@ impl<'a> Parser<'a> {
     //   process_leaf_block, process_inline_content, enter_span, leave_span,
     //   emit_text, emit_emph_open_tags, emit_emph_close_tags,
     //   find_code_span_end, normalize_code_span_content, is_left_flanking,
-    //   is_right_flanking, can_open_emphasis, can_close_emphasis,
+    //   is_right_flanking,
     //   collect_emphasis_delimiters, resolve_emphasis_delimiters, find_entity,
     //   find_html_tag
     //
@@ -450,11 +501,19 @@ pub(crate) fn render_with_renderer<'a>(
     flags: Flags,
     render_options: RenderOptions,
     rend: Renderer<'a>,
+    extensions: Option<Extensions<'a>>,
 ) -> Result<(), ParserError> {
     let _ = render_options; // Available for renderer implementations; parse layer does not use these.
-    let input = helpers::skip_utf8_bom(text);
+    // Who wants to know where things are is told places in `text`.
+    let input = match rend.ptr.wants_source() {
+        true => text,
+        false => helpers::skip_utf8_bom(text),
+    };
 
     let mut p = Parser::init(input, flags, rend)?;
+    if let Some(extensions) = extensions {
+        p.set_extensions(extensions);
+    }
 
     p.process_doc()
 }

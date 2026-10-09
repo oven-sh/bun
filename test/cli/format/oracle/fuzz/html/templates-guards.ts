@@ -22,7 +22,7 @@ const shapes: Record<string, (n: number) => string> = {
   "templates behind comments": n => times("a = /* HTML */ `<b c=${x}>${y}</b>`;\n", n),
   "comments before a template": n => "a = " + times("/* b */ ", n) + "/* HTML */ `<b>c</b>`",
   "templates that cannot be parsed": n => times("a = html`<b c=${x}></i>`;\n", n),
-  "components": n => times("@Component({ template: `<b [c]=\"d\">{{ e }}</b>` })\nclass A {}\n", n),
+  "components": n => times('@Component({ template: `<b [c]="d">{{ e }}</b>` })\nclass A {}\n', n),
   "elements with substitutions": n => "a = html`" + times("<b c=${x}>${y}</b> ", n) + "`",
   "substitutions in a row": n => "a = html`" + times("${x}", n) + "`",
   "substitutions with spaces": n => "a = html`" + times("${x} ", n) + "`",
@@ -61,15 +61,18 @@ try {
       const path = join(directory, name.startsWith("components") ? "a.ts" : "a.js");
       writeFileSync(path, make(n) + "\n");
       const result = Bun.spawnSync([bin, "format", "file", path, "--embeddedHtml"], {
-        timeout: limit,
+        // The limit is on the time of the processor. The clock gets six times as much, for a busy machine.
+        timeout: limit * 6,
         stdout: "ignore",
         stderr: "ignore",
       });
       // The time of the processor: on a busy machine the clock says little.
       took.push(Number(result.resourceUsage.cpuTime.total) / 1000);
+      if (took.at(-1)! > limit) problem = "it takes too long";
       if (result.exitCode !== 0) problem = result.exitCode === null ? "it was ended" : `exit code ${result.exitCode}`;
     }
-    if (!problem && took[1] > 200 && took[1] > took[0] * 10) problem = "four times the size takes more than ten times as long";
+    if (!problem && took[1] > 200 && took[1] > took[0] * 10)
+      problem = "four times the size takes more than ten times as long";
     if (problem) failures++;
     console.log(`${problem ? "FAIL" : "ok  "} ${name}: ${took.map(it => it.toFixed(0)).join(" ms, ")} ms ${problem}`);
   }

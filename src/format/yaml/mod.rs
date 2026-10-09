@@ -76,9 +76,12 @@ fn write_document(
         single_quote: matches!(options.quote_style, QuoteStyle::Single),
         bracket_spacing: options.bracket_spacing.value(),
         trailing_comma: !matches!(options.trailing_commas, TrailingCommas::None),
-        tab_width: u32::from(options.indent_width.value()),
+        // Without indentation there is no structure, so for oxfmt there is some.
+        tab_width: u32::from(options.indent_width.value())
+            .max(u32::from(options.flavor.is_oxfmt())),
         is_oxfmt: options.flavor.is_oxfmt(),
         is_last_document: true,
+        is_first_item_ignored: false,
         printed_empty_lines: vec![false; text.len() + 1],
         last_group_id: 0,
         out,

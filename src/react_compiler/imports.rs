@@ -45,6 +45,10 @@ pub(crate) struct ProgramContext {
     // Variable renames from lowering, to be applied back to the Babel AST
     pub(crate) renames: Vec<crate::hir::environment::BindingRename>,
 
+    /// `OutputMode::Lint`: upstream's `env.logErrors()`. What a validation reports that does not
+    /// keep the function from being compiled.
+    pub(crate) logged: CompilerError,
+
     // Internal state
     known_referenced_names: IndexSet<String>,
     imports: IndexMap<&'static str, IndexMap<&'static str, NonLocalImportSpecifier>>,
@@ -69,6 +73,7 @@ impl ProgramContext {
             instrument_gating_name: None,
             hook_guard_name: None,
             renames: Vec::new(),
+            logged: CompilerError::new(),
             known_referenced_names: IndexSet::new(),
             imports: IndexMap::new(),
         }

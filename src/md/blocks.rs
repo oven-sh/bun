@@ -1,4 +1,5 @@
 use crate::autolinks::is_list_item_mark;
+use crate::compat;
 use crate::helpers;
 use crate::parser::{self, Parser};
 use crate::types::{self, BlockType, Container, Line, OFF, VerbatimLine};
@@ -29,11 +30,15 @@ impl Parser<'_> {
         }
 
         self.end_current_block()?;
+        if self.track {
+            self.renderer.ptr.line_starts(&self.line_starts);
+        }
 
         // Build ref def hashtable
         self.build_ref_def_hashtable()?;
 
         // Process all blocks
+        self.line_beg = OFF::MAX;
         self.leave_child_containers(0)?;
         self.process_all_blocks()?;
 
@@ -49,12 +54,18 @@ impl Parser<'_> {
         line: &mut Line,
     ) -> Result<(), parser::Error> {
         let mut off = off_start;
+        self.line_beg = off_start;
+        if self.track {
+            self.line_starts.push(off_start);
+        }
         let mut total_indent: u32 = 0;
         let mut n_parents: u32 = 0;
         let mut n_brothers: u32 = 0;
         let mut n_children: u32 = 0;
         let mut container = Container::default();
         let prev_line_has_list_loosening_effect = self.last_line_has_list_loosening_effect;
+        // Nothing is on the line but the markers of containers that were open before it.
+        let mut is_empty = false;
 
         *line = Line::default();
         line.enforce_new_block = false;
@@ -141,6 +152,9 @@ impl Parser<'_> {
                     if self.is_closing_code_fence(off, pivot_line.data) {
                         line.r#type = LineType::Blank; // ending fence treated as blank
                         self.last_line_has_list_loosening_effect = false;
+                        if let Some(cb_off) = self.current_block {
+                            self.get_block_header_at(cb_off).flags |= types::BLOCK_CLOSED;
+                        }
                         break;
                     }
                 }
@@ -165,7 +179,11 @@ impl Parser<'_> {
                     // HTML block is implicitly ended when enclosing container closes
                     self.html_block_type = 0;
                 } else {
-                    if self.is_html_block_end_condition(off, self.html_block_type) {
+                    if self.is_html_block_end_condition(off, self.html_block_type)
+                        && !(line.indent > 0
+                            && self.html_block_type >= 6
+                            && compat::only_a_line_without_blanks_ends_html(&self.flags))
+                    {
                         // Save type before clearing (md4c uses a local variable)
                         let ended_type = self.html_block_type;
                         self.html_block_type = 0;
@@ -174,7 +192,11 @@ impl Parser<'_> {
                         if ended_type == 6 || ended_type == 7 {
                             line.r#type = LineType::Blank;
                             line.indent = 0;
+                            is_empty = true;
                             break;
+                        }
+                        if let Some(cb_off) = self.current_block {
+                            self.get_block_header_at(cb_off).flags |= types::BLOCK_CLOSED;
                         }
                     }
                     line.r#type = LineType::Html;
@@ -185,6 +207,7 @@ impl Parser<'_> {
 
             // Check for blank line
             if off >= self.size || helpers::is_newline(self.text[off as usize]) {
+                is_empty = n_brothers + n_children == 0;
                 // Indented code continuation through blank lines
                 if effective_pivot_type == LineType::Indentedcode && n_parents == self.n_containers
                 {
@@ -291,6 +314,8 @@ impl Parser<'_> {
                         effective_pivot_type = LineType::Blank;
 
                         container = cont_result.container;
+                        container.mark_beg = off;
+                        container.mark_end = cont_result.off;
                         off = cont_result.off;
 
                         total_indent += container.contents_indent - container.mark_indent;
@@ -314,6 +339,8 @@ impl Parser<'_> {
                         self.containers[n_parents as usize].mark_indent = container.mark_indent;
                         self.containers[n_parents as usize].contents_indent =
                             container.contents_indent;
+                        self.containers[n_parents as usize].mark_beg = container.mark_beg;
+                        self.containers[n_parents as usize].mark_end = container.mark_end;
 
                         // HTML block ends when a new sibling container starts
                         self.html_block_type = 0;
@@ -337,6 +364,8 @@ impl Parser<'_> {
                 let cont_result = self.is_container_mark(line.indent, off);
                 if cont_result.is_container {
                     container = cont_result.container;
+                    container.mark_beg = off;
+                    container.mark_end = cont_result.off;
 
                     // List mark can't interrupt paragraph unless it's > or ordered starting at 1
                     if effective_pivot_type == LineType::Text && n_parents == self.n_containers {
@@ -344,6 +373,7 @@ impl Parser<'_> {
                             helpers::line_indentation(self.text, 0, cont_result.off).off;
                         if (after_mark >= self.size || helpers::is_newline(self.ch(after_mark)))
                             && container.ch != b'>'
+                            && container.ch != b'^'
                         {
                             // Blank after list mark can't interrupt paragraph
                         } else if (container.ch == b'.' || container.ch == b')')
@@ -371,6 +401,10 @@ impl Parser<'_> {
                             } else {
                                 container.contents_indent += 1;
                                 line.indent -= 1;
+                            }
+                            if container.ch == b'^' {
+                                container.contents_indent = 4;
+                                line.indent = 0;
                             }
 
                             if n_brothers + n_children == 0 {
@@ -407,6 +441,10 @@ impl Parser<'_> {
                         } else {
                             container.contents_indent += 1;
                             line.indent -= 1;
+                        }
+                        if container.ch == b'^' {
+                            container.contents_indent = 4;
+                            line.indent = 0;
                         }
 
                         if n_brothers + n_children == 0 {
@@ -468,7 +506,9 @@ impl Parser<'_> {
             // Check for opening code fence
             if line.indent < self.code_indent_offset
                 && off < self.size
-                && (self.text[off as usize] == b'`' || self.text[off as usize] == b'~')
+                && (self.text[off as usize] == b'`'
+                    || self.text[off as usize] == b'~'
+                    || (self.text[off as usize] == b'$' && self.flags.math_blocks))
             {
                 let fence_result = self.is_opening_code_fence(off);
                 if fence_result.is_fence {
@@ -489,15 +529,67 @@ impl Parser<'_> {
 
                 // Type 7 can't interrupt paragraph
                 if self.html_block_type == 7 && effective_pivot_type == LineType::Text {
-                    self.html_block_type = 0;
+                    if n_parents < self.n_containers
+                        && n_brothers + n_children == 0
+                        && compat::complete_tag_ends_lazy_paragraph(&self.flags)
+                    {
+                        n_parents = self.n_containers;
+                    } else {
+                        self.html_block_type = 0;
+                    }
                 }
 
                 if self.html_block_type > 0 {
+                    line.data = if self.html_block_type <= 5 {
+                        types::BLOCK_HTML_UNTIL_TEXT
+                    } else {
+                        0
+                    };
                     if self.is_html_block_end_condition(off, self.html_block_type) {
                         self.html_block_type = 0;
+                        line.data |= types::BLOCK_CLOSED;
                     }
                     line.enforce_new_block = true;
                     line.r#type = LineType::Html;
+                    break;
+                }
+            }
+
+            // Check for a leaf block of the consumer's own
+            if let Some(extensions) = self.extensions
+                && line.indent < self.code_indent_offset
+                && off < self.size
+                && self.starts_extension_leaf[self.text[off as usize] as usize]
+            {
+                let interrupts_paragraph = effective_pivot_type == LineType::Text;
+                let end = (extensions.leaf)(&types::LeafStart {
+                    text: self.text,
+                    off,
+                    indent: line.indent,
+                    is_in_container: if interrupts_paragraph && n_brothers + n_children == 0 {
+                        self.n_containers > 0
+                    } else {
+                        n_parents + n_brothers + n_children > 0
+                    },
+                    interrupts_paragraph,
+                    starts_container: &|line_beg| self.starts_container_in_paragraph(line_beg),
+                });
+                if let Some(end) = end {
+                    self.html_block_type = 0;
+                    line.data = types::BLOCK_EXTENSION | types::BLOCK_CLOSED;
+                    line.enforce_new_block = true;
+                    line.r#type = LineType::Html;
+                    let end = end.clamp(off, self.size);
+                    while self.track
+                        && let Some(len) = bun_core::strings::index_of_char_usize(
+                            &self.text[off as usize..end as usize],
+                            b'\n',
+                        )
+                    {
+                        off += len as OFF + 1;
+                        self.line_starts.push(off);
+                    }
+                    off = end;
                     break;
                 }
             }
@@ -597,6 +689,7 @@ impl Parser<'_> {
         };
 
         line.end = off;
+        let raw_end = off;
 
         // Trim trailing closing marks for ATX header
         if line.r#type == LineType::Atxheader {
@@ -673,6 +766,7 @@ impl Parser<'_> {
                     0
                 },
                 types::BLOCK_CONTAINER_CLOSER,
+                (self.line_beg, self.containers[n_parents as usize].end, 0),
             )?;
             self.push_container_bytes(
                 BlockType::Li,
@@ -682,6 +776,11 @@ impl Parser<'_> {
                     0
                 },
                 types::BLOCK_CONTAINER_OPENER,
+                (
+                    self.containers[n_parents as usize].mark_beg,
+                    self.containers[n_parents as usize].mark_end,
+                    self.containers[n_parents as usize].mark_indent,
+                ),
             )?;
             self.containers[n_parents as usize].is_task = container.is_task;
             self.containers[n_parents as usize].task_mark_off = container.task_mark_off;
@@ -689,6 +788,16 @@ impl Parser<'_> {
 
         if n_children > 0 {
             self.enter_child_containers(n_children)?;
+        }
+
+        if self.track {
+            let mut count = self.n_containers as usize;
+            while is_empty && count > 0 && self.containers[count - 1].ch != b'>' {
+                count -= 1;
+            }
+            for container in &mut self.containers[..count] {
+                container.end = raw_end;
+            }
         }
 
         Ok(())
@@ -841,11 +950,16 @@ impl Parser<'_> {
             _ => BlockType::P,
         };
 
+        // Of a line of HTML, `data` are flags.
+        let (flags, data) = match block_type {
+            BlockType::Html => (line.data, 0),
+            _ => (0, line.data),
+        };
         let aligned = self.append_block_header(BlockHeader {
             block_type,
             _pad: [0; 3],
-            flags: 0,
-            data: line.data,
+            flags,
+            data,
             n_lines: 0,
         })?;
 
@@ -1006,6 +1120,23 @@ impl Parser<'_> {
             }
             if end_pos >= merged.len() && (end_pos == pos || merged[end_pos - 1] != b'\n') {
                 newlines += 1;
+            }
+            if self.track {
+                let first = self.current_block_lines.get(lines_consumed as usize);
+                let last = self
+                    .current_block_lines
+                    .get((lines_consumed + newlines).saturating_sub(1) as usize);
+                if let (Some(first), Some(last)) = (first, last) {
+                    self.renderer.ptr.definition(&types::Definition {
+                        beg: first.beg,
+                        end: last.end,
+                        label: result.label,
+                        dest: result.dest,
+                        title: result.title,
+                        lines: &self.current_block_lines
+                            [lines_consumed as usize..(lines_consumed + newlines) as usize],
+                    });
+                }
             }
             lines_consumed += newlines;
             pos = end_pos;

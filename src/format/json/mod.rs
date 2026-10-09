@@ -17,7 +17,7 @@ mod writer;
 
 pub use sort_package_json::{SortPackageJson, sort_package_json};
 
-use crate::options::{Expand, IndentStyle, QuoteProperties, QuoteStyle};
+use crate::options::{Expand, Flavor, IndentStyle, QuoteProperties, QuoteStyle};
 use crate::text::BOM;
 use crate::{FormatError, FormatOptions};
 
@@ -131,6 +131,7 @@ pub fn parser_for_path(path: &[u8]) -> Option<Parser> {
 /// What the options and the parser come down to.
 struct Config {
     parser: Parser,
+    flavor: Flavor,
     print_width: u32,
     indent_width: u32,
     indent_style: IndentStyle,
@@ -160,6 +161,7 @@ impl Config {
                 && options.quote_style.is_double());
         Config {
             parser,
+            flavor: options.flavor,
             print_width: u32::from(options.line_width.value()),
             indent_width: u32::from(options.indent_width.value()),
             indent_style: options.indent_style,

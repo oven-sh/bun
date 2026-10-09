@@ -3,6 +3,7 @@
 use bun_paths::path_buffer_pool;
 use bun_paths::resolve_path::z;
 use bun_sys::{EntryKind, Fd, File, O};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 /// `ENOENT: No such file or directory`
 pub(crate) fn describe(error: &bun_sys::Error) -> Vec<u8> {
@@ -134,6 +135,13 @@ pub(crate) fn list(path: &[u8]) -> Option<Listing> {
             }
             kind => kind,
         };
+        // To open a pipe can take for ever, and neither it nor a socket or a device is a file to read.
+        if !matches!(
+            kind,
+            EntryKind::File | EntryKind::Directory | EntryKind::SymLink
+        ) {
+            continue;
+        }
         found.push(Entry {
             name: name.to_vec(),
             is_directory: kind == EntryKind::Directory,
@@ -156,6 +164,14 @@ pub(crate) fn real_path(path: &[u8]) -> Option<Vec<u8>> {
     )
 }
 
+/// What a temporary file is called after the name of the file that it stands for. No two are called the same in a run: two threads
+/// have the same random numbers, and can write the same file, which they have reached by two paths.
+fn temporary_suffix() -> String {
+    static COUNT: AtomicU32 = AtomicU32::new(0);
+    let count = COUNT.fetch_add(1, Ordering::Relaxed);
+    format!(".{:016x}{count:x}.tmp", bun_core::fast_random())
+}
+
 /// Replaces the file at `path`, which exists, so that nobody ever reads a part of `text`: writes
 /// another file next to it, which then takes its name. What links to the file still does.
 pub(crate) fn write_atomically(path: &[u8], text: &[u8]) -> bun_sys::Result<()> {
@@ -163,11 +179,7 @@ pub(crate) fn write_atomically(path: &[u8], text: &[u8]) -> bun_sys::Result<()> 
     let real = bun_sys::realpath(z(path, &mut path_buffer_pool::get()), &mut buffer)?.to_vec();
     let mode =
         bun_sys::stat(z(&real, &mut path_buffer_pool::get()))?.st_mode as bun_sys::Mode & 0o7777;
-    let mut temporary = real.clone();
-    {
-        use std::io::Write;
-        let _ = write!(temporary, ".{:016x}.tmp", bun_core::fast_random());
-    }
+    let temporary = [&real[..], temporary_suffix().as_bytes()].concat();
     let written = File::openat(
         Fd::cwd(),
         &temporary,
@@ -190,11 +202,7 @@ pub(crate) fn write_atomically(path: &[u8], text: &[u8]) -> bun_sys::Result<()> 
 /// Writes a file that need not exist, so that nobody ever reads a part of `text`, and makes the
 /// directories that it is in.
 pub(crate) fn write_new_atomically(path: &[u8], text: &[u8]) -> bun_sys::Result<()> {
-    let mut temporary = path.to_vec();
-    {
-        use std::io::Write;
-        let _ = write!(temporary, ".{:016x}.tmp", bun_core::fast_random());
-    }
+    let temporary = [path, temporary_suffix().as_bytes()].concat();
     let written = write_new(&temporary, text).and_then(|()| {
         bun_sys::rename(
             z(&temporary, &mut path_buffer_pool::get()),

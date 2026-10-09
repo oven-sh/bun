@@ -18,7 +18,7 @@ pub struct RenderOptions {
 
 #[derive(Clone, Copy)]
 pub struct Options {
-    pub(crate) tables: bool,
+    pub tables: bool,
     pub(crate) strikethrough: bool,
     pub(crate) tasklists: bool,
     pub permissive_autolinks: bool,
@@ -39,6 +39,16 @@ pub struct Options {
     pub(crate) tag_filter: bool,
     pub heading_ids: bool,
     pub autolink_headings: bool,
+    /// GFM: `[^label]: ..` is the definition of a footnote. Only for consumers
+    /// that look at `BLOCK_FOOTNOTE`.
+    pub footnotes: bool,
+    /// `$$` is a fence, like three backticks.
+    pub math_blocks: bool,
+    /// Strikethrough takes two tildes.
+    pub no_single_tilde: bool,
+    /// See `compat.rs`.
+    pub micromark: bool,
+    pub mdx: bool,
 }
 
 impl Default for Options {
@@ -63,6 +73,11 @@ impl Default for Options {
             tag_filter: false,
             heading_ids: false,
             autolink_headings: false,
+            footnotes: false,
+            math_blocks: false,
+            no_single_tilde: false,
+            micromark: false,
+            mdx: false,
         }
     }
 }
@@ -89,6 +104,11 @@ impl Options {
         tag_filter: false,
         heading_ids: false,
         autolink_headings: false,
+        footnotes: false,
+        math_blocks: false,
+        no_single_tilde: false,
+        micromark: false,
+        mdx: false,
     };
 
     pub const TERMINAL: Self = Self {
@@ -120,6 +140,11 @@ impl Options {
             no_indented_code_blocks: self.no_indented_code_blocks,
             no_html_blocks: self.no_html_blocks,
             no_html_spans: self.no_html_spans,
+            footnotes: self.footnotes,
+            math_blocks: self.math_blocks,
+            no_single_tilde: self.no_single_tilde,
+            micromark: self.micromark,
+            mdx: self.mdx,
         }
     }
 
@@ -208,6 +233,23 @@ pub fn render_with_renderer<'a>(
         options.to_flags(),
         options.to_render_options(),
         renderer,
+        None,
+    )
+}
+
+/// The same with syntax of the consumer's own.
+pub fn render_with_extensions<'a>(
+    text: &'a [u8],
+    options: Options,
+    renderer: Renderer<'a>,
+    extensions: crate::types::Extensions<'a>,
+) -> Result<(), parser::ParserError> {
+    parser::render_with_renderer(
+        text,
+        options.to_flags(),
+        options.to_render_options(),
+        renderer,
+        Some(extensions),
     )
 }
 

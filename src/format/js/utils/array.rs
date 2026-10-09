@@ -13,7 +13,11 @@ pub(crate) fn write_array_node<'a, N: Format<'a> + Spanned>(
     f: &mut Formatter<'a>,
 ) {
     let last_index = len.saturating_sub(1);
-    for (index, element) in array.into_iter().enumerate() {
+    let breaks_at_empty_lines = empty_line_between_elements_breaks_array(f);
+    let mut has_seen_hole = false;
+    let mut elements = array.into_iter().enumerate().peekable();
+    while let Some((index, element)) = elements.next() {
+        has_seen_hole |= element.is_none();
         match &element {
             Some(element) => {
                 write!(f, group(element));
@@ -27,14 +31,22 @@ pub(crate) fn write_array_node<'a, N: Format<'a> + Spanned>(
         if index != last_index {
             // An empty line after an element is kept if the array breaks.
             let text = f.source_text().as_bytes();
+            let is_before_hole = matches!(elements.peek(), Some((_, None)));
             match element
                 .is_some_and(|it| is_line_after_element_empty(text, it.span().end as usize))
             {
-                true => write!(f, soft_empty_line_or_space()),
-                false => write!(f, soft_line_break_or_space()),
+                true if !breaks_at_empty_lines => write!(f, soft_empty_line_or_space()),
+                true if !has_seen_hole && !is_before_hole => write!(f, empty_line()),
+                _ => write!(f, soft_line_break_or_space()),
             }
         }
     }
+}
+
+/// For Prettier an empty line between two elements is kept if the array breaks. For oxfmt it breaks the array. From the
+/// first hole on, and before it, oxfmt keeps none.
+fn empty_line_between_elements_breaks_array(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// Prettier's `isLineAfterElementEmpty`: the line after the comma that follows the element that ends

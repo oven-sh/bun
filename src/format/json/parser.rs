@@ -195,6 +195,21 @@ struct Reader<'t, 'c> {
     unresolved: usize,
 }
 
+/// oxfmt's `blank_line_after_comma`: the line breaks between a value and its comma are no empty line.
+fn empty_line_is_behind_the_comma(config: &Config) -> bool {
+    config.flavor.is_oxfmt()
+}
+
+/// In oxfmt an empty line is a forced line break, between the elements of an array too.
+fn empty_line_breaks_every_array(config: &Config) -> bool {
+    config.flavor.is_oxfmt()
+}
+
+/// oxfmt's `has_line_terminator_after_skipping_comments`.
+fn line_separator_after_the_brace_counts(config: &Config) -> bool {
+    config.flavor.is_oxfmt()
+}
+
 enum State {
     Value,
     AfterValue(u32),
@@ -400,6 +415,7 @@ impl Reader<'_, '_> {
             b'{' => {
                 let object = self.open(Kind::Object)?;
                 self.line_breaks = 0;
+                self.line_separators = 0;
                 self.skip_trivia(object, Owner::NONE)?;
                 Ok(State::NameOrEnd)
             }
@@ -458,7 +474,10 @@ impl Reader<'_, '_> {
             return Ok(self.close());
         }
         let is_first = self.tree.open.last().is_some_and(|open| open.count == 0);
-        if is_first && self.line_breaks > 0 {
+        if is_first
+            && (self.line_breaks > 0
+                || (self.line_separators > 0 && line_separator_after_the_brace_counts(self.config)))
+        {
             let open = self.tree.open.last().ok_or(SyntaxError)?.node;
             self.tree.nodes[open as usize].flags |= BREAK_AFTER_OPEN;
         }
@@ -611,15 +630,27 @@ impl Reader<'_, '_> {
         match self.peek() {
             Some(b',') => {
                 self.at += 1;
+                if empty_line_is_behind_the_comma(self.config) {
+                    self.line_breaks = 0;
+                    self.line_separators = 0;
+                }
                 self.skip_trivia(enclosing, preceding)?;
                 if self.peek() == Some(end) {
                     return Ok(self.close());
                 }
+                // Where there is a comment in between, oxfmt's answer is Prettier's in all that is known.
+                let has_comment = self.unresolved != self.tree.comments.len();
+                let is_behind_the_comma = empty_line_is_behind_the_comma(self.config);
                 // What is asked skips any number of commas: those of holes too.
-                if (self.line_breaks + self.line_separators > 1 || self.peek() == Some(b','))
+                if (self.line_breaks + self.line_separators > 1
+                    || self.peek() == Some(b',')
+                    || (is_behind_the_comma && has_comment))
                     && !self.config.is_stringify()
                 {
                     let is_blank = match container {
+                        _ if is_behind_the_comma && !has_comment => {
+                            self.line_breaks + self.line_separators > 1
+                        }
                         Kind::Object => is_next_line_empty(self.text, node.end as usize),
                         _ => is_line_after_element_empty(self.text, node.end as usize),
                     };
@@ -672,7 +703,8 @@ impl Reader<'_, '_> {
                 if open.elements == ElementKinds::Containers && open.count > 1 {
                     node.flags |= MATRIX;
                 }
-                node.has(MATRIX) || (is_concise && open.has_blank)
+                node.has(MATRIX)
+                    || ((is_concise || empty_line_breaks_every_array(config)) && open.has_blank)
             }
         };
         let is_object = node.kind == Kind::Object;

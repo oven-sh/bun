@@ -962,7 +962,9 @@ impl<'d> Printer<'d> {
             last = Some(line);
         }
         if let Some(last) = last {
-            self.line_width = TextWidth::from_text_as(last, self.options.flavor).value() as usize;
+            let width =
+                TextWidth::from_javascript(last, self.options.flavor, self.options.indent_width);
+            self.line_width = width.value() as usize;
         }
     }
 

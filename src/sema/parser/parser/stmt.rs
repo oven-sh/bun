@@ -401,6 +401,8 @@ impl Parser<'_> {
         let permit_const = matches!(of, TypeParameter | ClassMember);
         let stop_on_static_block = of == ClassMember;
         let mut flags = Flags::empty();
+        // "[...leadingDecorators, ...leadingModifiers, ...trailingDecorators, ...trailingModifiers]"
+        let (mut has_trailing_decorators, mut has_trailing_modifiers) = (false, false);
         loop {
             let token = self.token();
             if token == T::At {
@@ -408,6 +410,10 @@ impl Parser<'_> {
                     self.fail();
                     return flags;
                 }
+                if has_trailing_modifiers {
+                    return flags;
+                }
+                has_trailing_decorators = !flags.is_empty();
                 self.decorator();
                 continue;
             }
@@ -434,6 +440,7 @@ impl Parser<'_> {
             }
             let flag = modifier_flag(token);
             flags |= flag;
+            has_trailing_modifiers = has_trailing_decorators;
             self.s.modifiers.push(Modifier {
                 kind: ModifierKind::Keyword(flag),
                 pos,

@@ -82,6 +82,7 @@ impl Parser<'_> {
 
         // First line is header, second is underline, rest are body
         self.enter_block(BlockType::Thead, 0, 0)?;
+        self.tell_source(block_lines[0].beg, block_lines[0].end);
         self.enter_block(BlockType::Tr, 0, 0)?;
         self.process_table_row(block_lines[0], true, col_count)?;
         self.leave_block(BlockType::Tr, 0)?;
@@ -90,6 +91,7 @@ impl Parser<'_> {
         if block_lines.len() > 2 {
             self.enter_block(BlockType::Tbody, 0, 0)?;
             for vline in &block_lines[2..] {
+                self.tell_source(vline.beg, vline.end);
                 self.enter_block(BlockType::Tr, 0, 0)?;
                 self.process_table_row(*vline, false, col_count)?;
                 self.leave_block(BlockType::Tr, 0)?;
@@ -99,13 +101,21 @@ impl Parser<'_> {
         Ok(())
     }
 
+    fn tell_source(&mut self, beg: types::OFF, end: types::OFF) {
+        if self.track {
+            self.renderer.ptr.inline_source(beg, end);
+        }
+    }
+
     pub(crate) fn process_table_row(
         &mut self,
         vline: VerbatimLine,
         is_header: bool,
         col_count: u32,
     ) -> Result<(), ParserError> {
-        let row_text = &self.text[vline.beg as usize..vline.end as usize];
+        let row_text = self.text[vline.beg as usize..vline.end as usize].trim_ascii_end();
+        // Who wants to know what is written gets the cells that are written.
+        let col_count = if self.track { u32::MAX } else { col_count };
         let mut start: usize = 0;
         let mut cell_index: u32 = 0;
 
@@ -150,13 +160,19 @@ impl Parser<'_> {
             } else {
                 0
             };
+            self.tell_source(vline.beg + start as u32, vline.beg + end as u32);
             self.enter_block(cell_type, align_data, 0)?;
             if cell_beg < cell_end {
                 let cell_content = &row_text[cell_beg..cell_end];
+                if self.track {
+                    self.inline_lines.clear();
+                    self.inline_line = 0;
+                    self.inline_lines.push((0, vline.beg + cell_beg as u32));
+                }
                 // GFM: \| in table cells should be consumed at the table level,
                 // replacing \| with | before inline processing. This matters for
                 // code spans where backslash escapes don't apply.
-                if bun_core::strings::index_of(cell_content, b"\\|").is_some() {
+                if !self.track && bun_core::strings::index_of(cell_content, b"\\|").is_some() {
                     let mut buf: Vec<u8> = Vec::new();
                     let unescaped: &[u8] = if buf.try_reserve(cell_content.len()).is_ok() {
                         let mut ci: usize = 0;
@@ -197,7 +213,7 @@ impl Parser<'_> {
         } else {
             BlockType::Td
         };
-        while cell_index < col_count {
+        while !self.track && cell_index < col_count {
             let align_data: u32 = if cell_index < types::TABLE_MAXCOLCOUNT {
                 self.table_alignments[cell_index as usize] as u32
             } else {

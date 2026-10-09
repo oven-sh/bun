@@ -1046,36 +1046,10 @@ pub struct BoundIn<S: Storage> {
     pub expr_kinds: S::List<u8>,
     /// How many of `expr_kinds` are 0, 1, 2 and so on, up to `2 * ExprTag::COUNT`.
     pub expr_kind_counts: S::List<u32>,
-    /// What is declared among the locals of a scope, the exports of a file, a namespace or an enum, or
-    /// as a type parameter, in the order it is bound: the symbol that the declaration got, which for
-    /// one that is refused is a symbol of its own, and the scope. Of the two symbols of what is
-    /// exported it is the one among the exports. Each declaration is here once. What is in no table,
-    /// so that no name refers to it, is not here: a class or a function expression without a name,
-    /// `declare module "m"`.
-    pub declared: S::List<(SymbolId, Decl, ScopeId)>,
-    /// For each of `scopes`, what makes it, where `ScopeKind` does not tell.
-    pub scope_node: S::List<ScopeNode>,
 }
 
 /// See [`BoundIn::expr_kinds`].
 pub const NOT_REACHED: u8 = u8::MAX;
-
-/// What makes a scope whose kind is `ScopeKind::Block` or `ScopeKind::TypeParams`.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum ScopeNode {
-    /// `ScopeKind` tells.
-    None,
-    /// A block, a `for`, `for`-`in` or `for`-`of` statement, the case block of a `switch` statement, or
-    /// the `catch` clause of a `try` statement.
-    Stmt(StmtId),
-    /// The name of a function expression, around the function.
-    NameOfFn(FnId),
-    /// The name of a class expression, around the class.
-    NameOfClass(ClassId),
-    /// A conditional type, for its `infer` type parameters, a mapped type, or an `infer` outside of
-    /// any conditional type.
-    Type(TypeNodeId),
-}
 
 /// The side tables of a file that has been loaded.
 pub type Bound<'s> = BoundIn<InArena<'s>>;
@@ -1083,8 +1057,6 @@ pub type Bound<'s> = BoundIn<InArena<'s>>;
 pub type BoundBuilder = BoundIn<Growable>;
 
 pub const UNREACHABLE: FlowId = FlowId(0);
-/// What a binder without a flow graph has in place of every flow node other than [`UNREACHABLE`].
-pub const REACHABLE: FlowId = FlowId(1);
 
 /// What the binder also calls while it binds.
 /// The text of `PropertyNameOrName()` of the binding element whose name is `pat`. `NONE` if that is
@@ -1871,8 +1843,6 @@ impl BoundBuilder {
             flow_places,
             expr_kinds,
             expr_kind_counts,
-            declared,
-            scope_node,
         } = self;
         *ran_out_of_stack = Default::default();
         symbols.clear();
@@ -1964,8 +1934,6 @@ impl BoundBuilder {
         *flow_places = Default::default();
         expr_kinds.clear();
         expr_kind_counts.clear();
-        declared.clear();
-        scope_node.clear();
     }
 
     /// The same. What is left is empty, and the lists that are long in most files keep their room.
@@ -2103,8 +2071,6 @@ impl BoundBuilder {
             flow_places: self.flow_places,
             expr_kinds: copy_to_arena(&mut self.expr_kinds, arena),
             expr_kind_counts: copy_to_arena(&mut self.expr_kind_counts, arena),
-            declared: copy_to_arena(&mut self.declared, arena),
-            scope_node: copy_to_arena(&mut self.scope_node, arena),
         }
     }
 }
@@ -2133,7 +2099,7 @@ pub fn bind<'s>(
     atoms: &dyn crate::atom::Intern,
     arena: &'s Arena,
 ) -> Bound<'s> {
-    binder::Binder::<false>::run(file, options, atoms).into_arena(arena)
+    binder::Binder::run(file, options, atoms).into_arena(arena)
 }
 
 /// The lists of the last file that was bound on this thread, for the next one to use their room. They
@@ -2185,6 +2151,6 @@ fn leave_to_binder<'r>(
     recycled: &'r mut Recycled,
 ) -> &'r BoundBuilder {
     let room = recycled.room();
-    room.b = binder::Binder::<false>::run(file, options, atoms);
+    room.b = binder::Binder::run(file, options, atoms);
     &room.b
 }

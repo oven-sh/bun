@@ -16,6 +16,13 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+// For `bun_core::output::stdio::init`, which the threads of Bun's pool count on.
+#[unsafe(no_mangle)]
+extern "C" fn bun_initialize_process() {}
+#[unsafe(no_mangle)]
+#[allow(non_upper_case_globals)]
+static bun_is_stdio_null: [core::sync::atomic::AtomicI32; 3] = [const { core::sync::atomic::AtomicI32::new(0) }; 3];
+
 // Two more natives, which only a build with debug assertions refers to. Nothing that is fuzzed calls them.
 #[unsafe(no_mangle)]
 extern "C" fn WTF__DumpStackTrace(_trace: *const usize, _count: usize) {}
@@ -74,6 +81,8 @@ static SETTINGS: OnceLock<Settings> = OnceLock::new();
 
 thread_local! {
     static PANIC: RefCell<Option<(String, String)>> = const { RefCell::new(None) };
+    /// Whether this thread is in [`Run::guarded`], where a panic is caught.
+    static IS_GUARDED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The size of the smallest input that is known for each finding.
     static KNOWN: RefCell<HashMap<String, usize>> = RefCell::new(HashMap::new());
 }
@@ -110,6 +119,11 @@ fn settings() -> &'static Settings {
             let message = (payload.downcast_ref::<&str>().map(|it| (*it).to_owned()))
                 .or_else(|| payload.downcast_ref::<String>().cloned())
                 .unwrap_or_default();
+            // On a thread of the pool nobody catches it, and whoever waits for that thread waits for ever. In Bun it ends the process.
+            if !IS_GUARDED.get() {
+                eprintln!("PANIC ON ANOTHER THREAD {place}: {message}");
+                std::process::abort();
+            }
             PANIC.set(Some((place, message)));
         }));
         Settings {
@@ -202,7 +216,9 @@ impl<'a> Run<'a> {
     /// The result of `work`, or nothing if it panics, which is reported. What takes long is too.
     pub fn guarded<R>(&self, work: impl FnOnce() -> R) -> Option<R> {
         let started = cpu_time();
+        IS_GUARDED.set(true);
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(work));
+        IS_GUARDED.set(false);
         let elapsed = cpu_time().saturating_sub(started);
         if elapsed > settings().slow {
             let size = self.data.len().max(1).ilog2();

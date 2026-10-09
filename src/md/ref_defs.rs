@@ -32,7 +32,7 @@ pub(crate) struct ParsedTitle<'a> {
 impl Parser<'_> {
     /// Normalize a link label for comparison: collapse whitespace runs to single space,
     /// strip leading/trailing whitespace, case-fold.
-    pub(crate) fn normalize_label(&mut self, raw: &[u8]) -> Vec<u8> {
+    pub(crate) fn normalize_label(&self, raw: &[u8]) -> Vec<u8> {
         // Collapse whitespace and apply Unicode case folding (per CommonMark §6.7)
         let mut result: Vec<u8> = Vec::new();
         let mut in_ws = true; // skip leading whitespace
@@ -338,6 +338,7 @@ impl Parser<'_> {
 
             // Merge lines into buffer to parse ref defs
             self.buffer.clear();
+            self.def_lines.clear();
             for li in 0..n_lines {
                 // SAFETY: li < n_lines so lines_off + li*size_of::<VerbatimLine>() is within
                 // the [lines_off, lines_off + lines_size) range bounds-checked above;
@@ -360,6 +361,9 @@ impl Parser<'_> {
                 }
                 self.buffer
                     .extend_from_slice(&self.text[vline.beg as usize..vline.end as usize]);
+                if self.track {
+                    self.def_lines.push(vline);
+                }
             }
 
             // Move the merged buffer out of self so parse_ref_def/normalize_label
@@ -403,6 +407,23 @@ impl Parser<'_> {
                     && (result.end_pos == pos || merged[result.end_pos - 1] != b'\n')
                 {
                     newlines += 1;
+                }
+                if self.track {
+                    let first = self.def_lines.get(lines_consumed as usize);
+                    let last = self
+                        .def_lines
+                        .get((lines_consumed + newlines).saturating_sub(1) as usize);
+                    if let (Some(first), Some(last)) = (first, last) {
+                        self.renderer.ptr.definition(&types::Definition {
+                            beg: first.beg,
+                            end: last.end,
+                            label: result.label,
+                            dest: result.dest,
+                            title: result.title,
+                            lines: &self.def_lines
+                                [lines_consumed as usize..(lines_consumed + newlines) as usize],
+                        });
+                    }
                 }
                 lines_consumed += newlines;
                 pos = result.end_pos;

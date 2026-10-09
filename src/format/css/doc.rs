@@ -348,6 +348,9 @@ enum Element {
     LineSuffixBoundary,
     /// What has been taken out.
     Nothing,
+    /// The blanks at the end of what has been written stay, whatever follows. Prettier has no word for it, so neither
+    /// has a tree.
+    KeepBlanks,
     /// A group with nothing but text in it, which follows. To come to a group is all that it does to the printer, so it
     /// has no end.
     TextGroup,
@@ -538,6 +541,10 @@ impl Elements {
                 _ => {}
             }
         }
+    }
+
+    pub(crate) fn keep_blanks(&mut self) {
+        self.list.push(Element::KeepBlanks);
     }
 
     pub(crate) fn line_suffix_boundary(&mut self) {
@@ -981,6 +988,7 @@ impl Elements {
                 }
                 Element::StartLineSuffix { end } => Doc::LineSuffix(contents(at, end)),
                 Element::Nothing
+                | Element::KeepBlanks
                 | Element::End
                 | Element::EndFill
                 | Element::StartItem { .. }
@@ -1329,7 +1337,10 @@ impl<'o> Printer<'o> {
                         return false;
                     }
                 }
-                Element::BreakParent | Element::Nothing | Element::TextGroup => {}
+                Element::BreakParent
+                | Element::Nothing
+                | Element::TextGroup
+                | Element::KeepBlanks => {}
             }
         }
         false
@@ -1520,6 +1531,7 @@ impl<'o> Printer<'o> {
                         position = self.write_indent(indent);
                     }
                 }
+                Element::KeepBlanks => self.start = self.out.len(),
                 Element::BreakParent | Element::Nothing => {}
             }
         }

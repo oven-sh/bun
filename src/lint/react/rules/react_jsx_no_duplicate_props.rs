@@ -1,0 +1,66 @@
+use crate::react::is_jsx;
+use bun_core::strings;
+use bun_lint::prelude::*;
+use bun_lint::rule::Plugin;
+use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
+
+/// This rule prevents duplicate props in JSX elements.
+pub struct JsxNoDuplicateProps;
+
+const JSX_NO_DUPLICATE_PROPS: Message =
+    Message::new("", "No duplicate props allowed. The prop \"{{prop_name}}\" is duplicated.");
+
+/// With more attributes than this, the names are looked up in a table.
+const FEW: usize = 8;
+
+impl Rule for JsxNoDuplicateProps {
+    const META: Meta = Meta::oxlint(Plugin::React, "jsx-no-duplicate-props", Kind::Problem);
+    type State<'a> = ();
+
+    fn new(_: &Options) -> Self {
+        JsxNoDuplicateProps
+    }
+
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        if !is_jsx(file) {
+            return;
+        }
+        on.exprs([ExprTag::Jsx], |_, e, cx| {
+            let ExprKind::Jsx(jsx) = e.kind() else {
+                return;
+            };
+            let attributes = jsx.attrs();
+            let count = attributes.len();
+            if count < 2 {
+                return;
+            }
+            // Each is reported with the one of the same name before it.
+            let report = |name: Name<'a>, old: Key<'a>| {
+                cx.report(old.span(cx.file()), JSX_NO_DUPLICATE_PROPS).data("prop_name", name);
+            };
+            if count <= FEW {
+                let names: SmallVec<[(Name<'a>, Key<'a>); FEW]> = attributes.iter().filter_map(identifier).collect();
+                for (i, (name, _)) in names.iter().enumerate() {
+                    if let Some((_, old)) = names.iter().take(i).rev().find(|it| it.0 == *name) {
+                        report(*name, *old);
+                    }
+                }
+                return;
+            }
+            let mut props: FxHashMap<Name<'a>, Key<'a>> = FxHashMap::default();
+            for (name, key) in attributes.iter().filter_map(identifier) {
+                if let Some(old) = props.insert(name, key) {
+                    report(name, old);
+                }
+            }
+        });
+    }
+}
+
+/// The name of an attribute, unless it has a namespace.
+fn identifier(attribute: Prop<'_>) -> Option<(Name<'_>, Key<'_>)> {
+    let key = attribute.key()?;
+    let name = key.name()?;
+    (!strings::contains_char(name.bytes(), b':')).then_some((name, key))
+}

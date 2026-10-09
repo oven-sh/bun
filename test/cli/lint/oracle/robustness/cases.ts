@@ -39,6 +39,22 @@ export type Case = {
 };
 
 const fn = (body: string) => `function f(a, b) {\n${body}\n}\n`;
+/** A parser as PEG.js generates it: rules that call each other in a ring, collect what they get in arrays, in loops, and one of them tries `alternatives` one after the other. */
+const generatedParser = (alternatives: number) => {
+  let tried = "(J = r, J !== r ? (O = J) : (W = O, O = r))";
+  for (let i = 1; i < alternatives; i++) tried = `(J = r, J !== r ? (O = J) : (W = O, O = r), O === r && ${tried})`;
+  return `export function parse() {
+  var r = {}, W = 0, A = function (O: unknown) {}, A2 = function (O: unknown, J: unknown) {};
+  function start() { many(); }
+  function list() { var O, re, de; if (re = []) for (; de !== r;) re.push(de), de = item(); else re = r; return O; }
+  function item() { var J, re; return re = many(), J = A(re); }
+  function many() { var J, re; for (; re !== r;) re = choice(); return J !== r && (J = A(J)); }
+  function choice() { var O, J; return O === r && (J = rule()); }
+  function rule() { var O, J, re, Ke; return Ke = list(), J = A2(re, Ke), O = J, O === r && ${tried}; }
+  return start();
+}
+`;
+};
 const typed = ["--type-aware", "-f", "unix"];
 
 export const cases: Case[] = [
@@ -49,6 +65,15 @@ export const cases: Case[] = [
     file: "a.js",
     text: () => `if (${rep("a && ", 100_000)}a) {}\nx = ${rep("a || b && ", 50_000)}a;\n`,
     rules: { "no-constant-binary-expression": "error", "no-constant-condition": "error" },
+    reports: {},
+    exitCode: 0,
+  },
+  {
+    name: "an import of a path with 30,000 segments",
+    file: "a.ts",
+    text: () => `import "./${rep("a/", 30_000)}a";\nexport {};\n`,
+    rules: { "typescript/no-floating-promises": "error" },
+    args: typed,
     reports: {},
     exitCode: 0,
   },
@@ -87,9 +112,10 @@ export const cases: Case[] = [
     exitCode: 1,
   },
   {
-    name: "a mapped type in parentheses in the as clause of the next, 300 deep",
+    // Each level took three times as long as the one in it. No deeper: a debug build has large frames.
+    name: "a mapped type in parentheses in the as clause of the next, 40 deep",
     file: "a.ts",
-    text: () => `export type X = ${rep("({[K in a as ", 300)}x${rep("]: b})", 300)};\n`,
+    text: () => `export type X = ${rep("({[K in a as ", 40)}x${rep("]: b})", 40)};\n`,
     rules: { "no-debugger": "error" },
     reports: {},
     exitCode: 0,
@@ -561,6 +587,18 @@ export const cases: Case[] = [
   }),
 
   // ── time that doubles with each line ──
+  // Seven times as long for each alternative. Yarn's release bundle, which many repositories commit, has such a parser.
+  ...["", "// @ts-nocheck\n"].map(
+    (comment): Case => ({
+      name: `a generated parser with a rule of 16 alternatives${comment && ", in a file that is not checked"}`,
+      file: "a.ts",
+      text: () => comment + generatedParser(16),
+      rules: { "typescript/no-floating-promises": "error" },
+      args: typed,
+      reports: {},
+      exitCode: 0,
+    }),
+  ),
   {
     name: "interfaces that extend each other in 60 diamonds",
     file: "a.ts",
@@ -737,5 +775,112 @@ export const cases: Case[] = [
     args: typed,
     reports: {},
     exitCode: 0,
+  },
+  {
+    name: "12,000 overloads, each with a type parameter",
+    isHeavy: true,
+    file: "a.ts",
+    text: () => seq(12_000, i => `export function f<T${i}>(a: string): void;\n`) + "export function f(a: any) {}\n",
+    rules: { "typescript/no-unnecessary-type-parameters": "error" },
+    args: typed,
+    reports: { "@typescript-eslint/no-unnecessary-type-parameters": 12_000 },
+    exitCode: 1,
+  },
+  {
+    name: "12,000 overloads with a callback, called 750 times with an async function",
+    isHeavy: true,
+    file: "a.ts",
+    text: () =>
+      seq(12_000, i => `declare function g(a: ${i}, cb: () => void): void;\n`) +
+      seq(750, i => `function f${i}() { g(0, async () => {}); }\n`),
+    rules: { "typescript/no-misused-promises": "error", "typescript/strict-void-return": "error" },
+    args: typed,
+    reports: { "@typescript-eslint/no-misused-promises": 750, "@typescript-eslint/strict-void-return": 750 },
+    exitCode: 1,
+  },
+  {
+    name: "a type with 8,000 properties, and a union of 8,000, that 8,000 functions take",
+    isHeavy: true,
+    file: "a.ts",
+    text: () =>
+      `type O = {${seq(8_000, i => `readonly p${i}: string`, "; ")}};\n` +
+      `type U = ${seq(8_000, i => `{readonly p${i}: string}`, " | ")};\n` +
+      seq(8_000, i => `export function f${i}(p: O, q: U) {}\n`),
+    rules: { "typescript/prefer-readonly-parameter-types": "error" },
+    args: typed,
+    reports: {},
+    exitCode: 0,
+  },
+  {
+    name: "a union of 8,000 function types that is the type of 8,000 statements",
+    isHeavy: true,
+    file: "a.ts",
+    text: () =>
+      `declare const u: ${seq(8_000, i => `((a: ${i}) => Promise<${i}>)`, " | ")};\n` +
+      seq(8_000, i => `function f${i}() { u; }\n`),
+    rules: { "typescript/no-floating-promises": "error" },
+    args: typed,
+    reports: {},
+    exitCode: 0,
+  },
+  {
+    name: "six chains of 9,000 property accesses on any",
+    isHeavy: true,
+    file: "a.ts",
+    text: () => `declare const a: any;\n${rep(`a${rep(".b", 9_000)};\n`, 6)}`,
+    rules: { "typescript/no-unsafe-member-access": "error", "typescript/no-deprecated": "error" },
+    args: typed,
+    reports: { "@typescript-eslint/no-unsafe-member-access": 6 },
+    exitCode: 1,
+  },
+  {
+    name: "a sum of 100,000 names",
+    isHeavy: true,
+    file: "a.ts",
+    text: () => `declare const a: number;\nexport const x = ${rep("a + ", 100_000)}a;\n`,
+    rules: { "typescript/no-deprecated": "error" },
+    args: typed,
+    reports: {},
+    exitCode: 0,
+  },
+  {
+    name: "a template literal type with 16,000 substitutions",
+    isHeavy: true,
+    file: "a.ts",
+    text: () => "type B = 'b';\nexport type A = `" + rep("${B}", 16_000) + "`;\n",
+    rules: { "typescript/no-deprecated": "error" },
+    args: typed,
+    reports: {},
+    exitCode: 0,
+  },
+  {
+    name: "type arguments 7,000 deep, six times",
+    isHeavy: true,
+    file: "a.ts",
+    text: () => seq(6, i => `export type A${i} = ${rep("Array<", 7_000)}string${rep(">", 7_000)};\n`),
+    rules: { "typescript/no-deprecated": "error" },
+    args: typed,
+    reports: {},
+    exitCode: 0,
+  },
+  {
+    name: "a regular expression in a variable that 30,000 functions match with",
+    isHeavy: true,
+    file: "a.ts",
+    text: () => "const r = /a/;\n" + seq(30_000, i => `export function f${i}(s: string) { s.match(r); }\n`),
+    rules: { "typescript/prefer-regexp-exec": "error" },
+    args: typed,
+    reports: { "@typescript-eslint/prefer-regexp-exec": 30_000 },
+    exitCode: 1,
+  },
+  {
+    name: "intersection types 1,200 deep",
+    isSlow: true,
+    file: "a.ts",
+    text: () => `export type A = ${rep("{a: 1} & ({a: 1} & ", 1_200)}{b: 1}${rep(")", 1_200)};\n`,
+    rules: { "typescript/no-duplicate-type-constituents": "error" },
+    args: typed,
+    reports: { "@typescript-eslint/no-duplicate-type-constituents": 2_399 },
+    exitCode: 1,
   },
 ];

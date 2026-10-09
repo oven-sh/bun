@@ -13,8 +13,9 @@ pub trait Vm {
 
 /// Has the realms.
 pub trait Engine: Sync {
-    /// Calls `then` with a realm that nothing else uses meanwhile. `Err`: there is none, and `then` was not called.
-    fn with_vm(&self, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>>;
+    /// Calls `then` with one of the first `among` realms, which nothing else uses meanwhile. `then` can ask for one itself, and
+    /// is not kept waiting. `Err`: there is none, and `then` was not called.
+    fn with_vm(&self, among: usize, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>>;
 
     /// Says how many realms are going to be used at a time, at most. Nobody says so if a realm is needed to find out.
     fn expect(&self, _realms: usize) {}

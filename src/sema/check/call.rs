@@ -3092,7 +3092,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !pulls
             && let ExprKind::Call(c) = hir[call].kind
             && let ExprKind::Fn(func) = hir[hir[c].callee].kind
-            && let Some(index) = hir.ids(hir[c].args).position(|a| a == arg)
+            && let Some(index) = super::context::index_of_node(hir, hir[c].args, arg)
         {
             let params = hir[func].params;
             let param = if index < params.len() {
@@ -3118,13 +3118,10 @@ impl<'p, 's> Checker<'p, 's> {
             }
             _ => return None,
         };
-        let mut index = hir.ids(hir[id].args).position(|a| a == arg)?;
+        let mut index = super::context::index_of_node(hir, hir[id].args, arg)?;
         // `getEffectiveCallArguments`: a spread tuple counts as its elements, anything else as one
         // argument.
-        if hir
-            .ids(hir[id].args)
-            .any(|a| matches!(hir[a].kind, ExprKind::Spread(_)))
-        {
+        if self.spread_indices(file, call, hir[id].args).is_some() {
             let effective = self.effective_args(file, hir[id].args);
             index = effective.iter().position(
                 |a| matches!(a, Arg::Expr(e) | Arg::SpreadElement(_, _, _, e) if *e == arg),

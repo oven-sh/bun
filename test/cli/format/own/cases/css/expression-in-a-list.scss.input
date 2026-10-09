@@ -1,0 +1,7 @@
+.a {
+  padding: $global-spacing * 1.5 (25px + $global-spacing * 2) $global-spacing * 1.5 $global-spacing * 3;
+  margin: $a * 2 $b;
+  margin: $a + $b;
+  width: $global-spacing-of-the-whole-page * 1.5 + $global-spacing-of-the-whole-page * 2.5 + $more;
+  font: 12px/1.5 $font;
+}

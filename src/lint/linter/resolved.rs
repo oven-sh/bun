@@ -45,6 +45,12 @@ pub fn severity_of(value: &Json) -> Option<Severity> {
     })
 }
 
+/// Whether the options are valid for the rule of ESLint that `meta` extends: `"max-params": ["error", 2]`.
+fn is_valid_for_base_rule(meta: &Meta, options: &[Json]) -> bool {
+    (meta.extends_base_rule)
+        .is_some_and(|base| super::schema::validate_by_id(base.as_bytes(), options).is_ok())
+}
+
 /// An entry of ESLint's `rules`.
 #[derive(Clone)]
 pub struct ConfiguredRule {
@@ -194,7 +200,8 @@ impl ResolvedConfig {
             && !entry.meta.follows_oxlint
             && let Err(lines) = super::schema::validate(entry.meta, options)
             && !(self.prefers_typescript_rules
-                && super::schema::validate_known_properties(entry.meta, options).is_ok())
+                && (super::schema::validate_known_properties(entry.meta, options).is_ok()
+                    || is_valid_for_base_rule(entry.meta, options)))
         {
             let id = super::RuleId::Known(entry.meta).to_vec();
             self.error = Some([b"Key \"rules\": Key \"", &id[..], b"\":\n", &lines].concat());

@@ -452,7 +452,7 @@ impl Preprocessor<'_> {
                         .tree
                         .kind(node.parent)
                         .is_some_and(super::printer::Printer::is_inline_wrapper)
-                    && !super::inline::has_html_comment(self.tree.str(self.text, node.value)) =>
+                    && !super::spans::has_html_comment(self.tree.str(self.text, node.value)) =>
             {
                 if let Some(node) = self.tree.get_mut(id) {
                     node.kind = Kind::Jsx;

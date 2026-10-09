@@ -26,6 +26,7 @@ pub mod options;
 pub mod pragma;
 pub mod range;
 mod text;
+pub mod toml;
 pub mod verify;
 pub mod yaml;
 

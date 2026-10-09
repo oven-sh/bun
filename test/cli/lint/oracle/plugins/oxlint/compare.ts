@@ -1,7 +1,7 @@
 // Compares `bun lint` with oxlint on small projects, for the rules of plugins whose port in oxlint differs from the plugin: with a
 // configuration of oxlint, oxlint is what counts.
 //
-//   BUN_LINT="<bun-lint> cli" OXLINT_BIN=<oxlint 1.80> OXLINT_TSGOLINT_PATH=<tsgolint 7.0.2001> bun compare.ts [--record] [name..]
+//   BUN_LINT="<bun-lint> cli" OXLINT_BIN=<oxlint 1.87> OXLINT_TSGOLINT_PATH=<tsgolint 7.0.2003> bun compare.ts [--record] [name..]
 //
 // Without OXLINT_BIN, what oxlint reports is read from expected.json, which `--record` writes.
 

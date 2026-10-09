@@ -153,9 +153,70 @@ enum ArrayItem<'a> {
     Eof { pos: usize },
 }
 
+/// A token of a document, as a range of its text. What is between two tokens is white space, line
+/// breaks and comments.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Token {
+    pub kind: TokenKind,
+    pub start: u32,
+    pub end: u32,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum TokenKind {
+    /// `[` of `[a]`
+    TableOpen,
+    /// `]` of `[a]`
+    TableClose,
+    /// `[[` of `[[a]]`
+    ArrayTableOpen,
+    /// `]]` of `[[a]]`
+    ArrayTableClose,
+    /// One segment of a key, with its quotes.
+    Key,
+    Dot,
+    Equals,
+    /// A string, a number, a date, a time or a boolean.
+    Scalar,
+    ArrayOpen,
+    ArrayClose,
+    InlineOpen,
+    InlineClose,
+    Comma,
+}
+
 pub struct TOML;
 
 impl TOML {
+    /// The tokens of `text` in its order, for who wants a document as it is written. The syntax is
+    /// what [`TOML::parse`] takes. What tables and keys mean is not looked at (a key can be there
+    /// twice), and an integer can have any size. `Err`: what is wrong with the syntax.
+    pub fn tokens(text: &[u8]) -> Result<Vec<Token>, Vec<u8>> {
+        let source = Source::init_path_string(b"".as_slice(), text);
+        let mut log = Log::init();
+        let bump = Bump::new();
+        let is_short_enough = source
+            .check_parseable_len(&mut log, "TOML document")
+            .is_ok();
+        let mut tokenizer = Tokenizer {
+            scanner: Scanner {
+                src: text,
+                pos: 0,
+                bump: &bump,
+                source: &source,
+                log: &mut log,
+                redact: false,
+                keeps_text: true,
+            },
+            tokens: Vec::new(),
+        };
+        if is_short_enough && tokenizer.document().is_ok() {
+            return Ok(tokenizer.tokens);
+        }
+        let message = log.msgs.first().map(|it| it.data.text.to_vec());
+        Err(message.unwrap_or_else(|| b"Syntax error".to_vec()))
+    }
+
     pub fn parse<'a>(
         source: &'a Source,
         log: &mut Log,
@@ -171,6 +232,7 @@ impl TOML {
                 source,
                 log,
                 redact: redact_logs,
+                keeps_text: false,
             },
             bump,
             stack_check: StackCheck::init(),
@@ -235,6 +297,8 @@ struct Scanner<'a, 'log> {
     source: &'a Source,
     log: &'log mut Log,
     redact: bool,
+    /// The caller goes by the text of a number, so its value need not fit anything.
+    keeps_text: bool,
 }
 
 impl<'a, 'log> Scanner<'a, 'log> {
@@ -1014,6 +1078,9 @@ impl<'a, 'log> Scanner<'a, 'log> {
         } else {
             i64::MAX as u64
         };
+        if self.keeps_text {
+            return Ok(ValueData::Number(0.0));
+        }
         if int_overflow || magnitude > signed_limit {
             return Err(self.err(start, b"Integer is outside the 64-bit signed range"));
         }
@@ -1085,6 +1152,9 @@ impl<'a, 'log> Scanner<'a, 'log> {
 
         self.expect_value_terminator()?;
 
+        if self.keeps_text {
+            return Ok(ValueData::Number(0.0));
+        }
         if overflow || value > i64::MAX as u64 {
             return Err(self.err(start, b"Integer is outside the 64-bit signed range"));
         }
@@ -1475,6 +1545,147 @@ impl<'a, 'log> Scanner<'a, 'log> {
 }
 
 // ── parser ──────────────────────────────────────────────────────────────────
+
+/// Consumes tokens from the scanner and lists their ranges: [`TOML::tokens`]. The grammar is that
+/// of [`Parser`]. There is no recursion.
+struct Tokenizer<'a, 'log> {
+    scanner: Scanner<'a, 'log>,
+    tokens: Vec<Token>,
+}
+
+impl<'a> Tokenizer<'a, '_> {
+    /// A token from `start` to the cursor.
+    fn push(&mut self, kind: TokenKind, start: usize) {
+        self.tokens.push(Token {
+            kind,
+            start: start as u32,
+            end: self.scanner.pos as u32,
+        });
+    }
+
+    /// A token of `len` bytes that ends at the cursor.
+    fn push_last(&mut self, kind: TokenKind, len: usize) {
+        self.push(kind, self.scanner.pos - len);
+    }
+
+    fn document(&mut self) -> PResult<()> {
+        self.scanner.init_document()?;
+        loop {
+            match self.scanner.scan_line_start()? {
+                LineStart::Eof => return Ok(()),
+                LineStart::TableOpen { aot, pos } => {
+                    let (open, close) = match aot {
+                        true => (TokenKind::ArrayTableOpen, TokenKind::ArrayTableClose),
+                        false => (TokenKind::TableOpen, TokenKind::TableClose),
+                    };
+                    self.push(open, pos);
+                    loop {
+                        let key = self.scanner.scan_key_after_sep()?;
+                        self.push(TokenKind::Key, key.pos);
+                        match self.scanner.scan_header_sep(aot)? {
+                            HeaderSep::Dot => self.push_last(TokenKind::Dot, 1),
+                            HeaderSep::Close => break,
+                        }
+                    }
+                    self.push_last(close, 1 + usize::from(aot));
+                    self.scanner.scan_line_end(b"a table header")?;
+                }
+                LineStart::Key(first) => {
+                    self.keyval(first)?;
+                    self.scanner.scan_line_end(b"a key/value pair")?;
+                }
+            }
+        }
+    }
+
+    /// `first` has been scanned: the rest of its key, `=` and the value with all that is in it.
+    fn keyval(&mut self, first: KeySeg<'a>) -> PResult<()> {
+        // What closes the arrays and inline tables that are open.
+        let mut open: Vec<TokenKind> = Vec::new();
+        let mut key = first;
+        'keyval: loop {
+            self.push(TokenKind::Key, key.pos);
+            while let KeyvalSep::Dot = self.scanner.scan_keyval_sep()? {
+                self.push_last(TokenKind::Dot, 1);
+                let next = self.scanner.scan_key_after_sep()?;
+                self.push(TokenKind::Key, next.pos);
+            }
+            self.push_last(TokenKind::Equals, 1);
+            let mut value = self.scanner.scan_value_required()?;
+            'value: loop {
+                // Whether a value is complete. Otherwise an array or an inline table has been opened.
+                let mut is_after_value = false;
+                match value.data {
+                    ValueData::ArrayOpen => {
+                        self.push(TokenKind::ArrayOpen, value.pos);
+                        open.push(TokenKind::ArrayClose);
+                    }
+                    ValueData::InlineOpen => {
+                        self.push(TokenKind::InlineOpen, value.pos);
+                        open.push(TokenKind::InlineClose);
+                    }
+                    _ => {
+                        self.push(TokenKind::Scalar, value.pos);
+                        is_after_value = true;
+                    }
+                }
+                loop {
+                    let Some(&close) = open.last() else {
+                        return Ok(());
+                    };
+                    let is_inline = close == TokenKind::InlineClose;
+                    if is_after_value {
+                        let separator = if is_inline {
+                            let what = "Expected ',' or '}' in an inline table but found";
+                            self.scanner.scan_list_sep(b'}', what)?
+                        } else {
+                            let what = "Expected ',' or ']' in an array but found";
+                            self.scanner.scan_list_sep(b']', what)?
+                        };
+                        match separator {
+                            ListSep::Comma => self.push_last(TokenKind::Comma, 1),
+                            ListSep::Close => {
+                                self.push_last(close, 1);
+                                open.pop();
+                                continue;
+                            }
+                        }
+                    }
+                    if is_inline {
+                        match self.scanner.scan_inline_key()? {
+                            InlineKey::Close => {}
+                            InlineKey::Eof { pos } => {
+                                return Err(self
+                                    .scanner
+                                    .err(pos, b"Unterminated inline table; expected '}'"));
+                            }
+                            InlineKey::Key(first) => {
+                                key = first;
+                                continue 'keyval;
+                            }
+                        }
+                    } else {
+                        match self.scanner.scan_array_item()? {
+                            ArrayItem::Close => {}
+                            ArrayItem::Eof { pos } => {
+                                return Err(self
+                                    .scanner
+                                    .err(pos, b"Unterminated array; expected ']'"));
+                            }
+                            ArrayItem::Value(item) => {
+                                value = item;
+                                continue 'value;
+                            }
+                        }
+                    }
+                    self.push_last(close, 1);
+                    open.pop();
+                    is_after_value = true;
+                }
+            }
+        }
+    }
+}
 
 /// Consumes tokens from the scanner and builds the `Expr` tree. Has no
 /// access to source bytes; every decision is made on a typed token.

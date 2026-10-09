@@ -31,25 +31,25 @@ const CONSTRUCTORS_AS_METHODS: u16 = 1 << 14;
 pub struct Allow(u16);
 
 impl Allow {
-    /// typescript-eslint spells two of them with a hyphen.
+    /// typescript-eslint spells two of them with a hyphen. The other second names are oxlint's: no schema allows them.
     pub fn new(options: &Options) -> Allow {
         let allowed = options.object(0).strings("allow").into_iter();
         Allow(allowed.fold(0, |all, kind| {
             all | match kind {
-                "functions" => FUNCTIONS,
-                "arrowFunctions" => ARROW_FUNCTIONS,
-                "generatorFunctions" => GENERATOR_FUNCTIONS,
-                "methods" => METHODS,
-                "generatorMethods" => GENERATOR_METHODS,
-                "getters" => GETTERS,
-                "setters" => SETTERS,
-                "constructors" => CONSTRUCTORS,
-                "asyncFunctions" => ASYNC_FUNCTIONS,
-                "asyncMethods" => ASYNC_METHODS,
+                "functions" | "function" => FUNCTIONS,
+                "arrowFunctions" | "arrow-functions" => ARROW_FUNCTIONS,
+                "generatorFunctions" | "generator-functions" => GENERATOR_FUNCTIONS,
+                "methods" | "method" => METHODS,
+                "generatorMethods" | "generator-methods" => GENERATOR_METHODS,
+                "getters" | "getter" => GETTERS,
+                "setters" | "setter" => SETTERS,
+                "constructors" | "constructor" => CONSTRUCTORS,
+                "asyncFunctions" | "async-functions" => ASYNC_FUNCTIONS,
+                "asyncMethods" | "async-methods" => ASYNC_METHODS,
                 "privateConstructors" | "private-constructors" => PRIVATE_CONSTRUCTORS,
                 "protectedConstructors" | "protected-constructors" => PROTECTED_CONSTRUCTORS,
-                "decoratedFunctions" => DECORATED_FUNCTIONS,
-                "overrideMethods" => OVERRIDE_METHODS,
+                "decoratedFunctions" | "decorated-functions" => DECORATED_FUNCTIONS,
+                "overrideMethods" | "override-methods" => OVERRIDE_METHODS,
                 _ => 0,
             }
         }))

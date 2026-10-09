@@ -1469,17 +1469,7 @@ fn is_module_level_or_global(builder: &HirBuilder, ref_: Ref) -> bool {
     ) {
         return true;
     }
-    if let Some(member) = builder
-        .host()
-        .module_scope()
-        .members
-        .get(sym.original_name.slice())
-    {
-        if member.ref_ == ref_ {
-            return true;
-        }
-    }
-    false
+    builder.host().is_module_level(ref_)
 }
 
 // =============================================================================

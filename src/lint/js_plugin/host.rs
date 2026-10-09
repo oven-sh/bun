@@ -189,6 +189,14 @@ fn report_of(json: &Json, offsets: &Offsets) -> Option<Report> {
 
 const OUT_OF_STEP: &[u8] = b"The program for JavaScript plugins is out of step.";
 
+/// Among how many realms one is taken for a file. One is enough to run the configuration file, with all that it imports.
+pub(super) fn realms_for(needs_the_configuration: bool) -> usize {
+    match needs_the_configuration {
+        true => 1,
+        false => usize::MAX,
+    }
+}
+
 impl<'e> Host<'e> {
     /// `cwd`: ESLint's `context.cwd`.
     pub fn with_engine(engine: &'e dyn Engine, cwd: &[u8]) -> Host<'e> {
@@ -276,11 +284,6 @@ impl<'e> Host<'e> {
         rules
     }
 
-    /// Whether any plugin has been loaded.
-    pub fn has_plugins(&self) -> bool {
-        !self.state.lock().plugins.is_empty()
-    }
-
     /// Loads a plugin. `specifier`: a path, relative to `directory`, or the name of a package, which
     /// is looked for from there. `alias`: the prefix of its rules, if it is not the name that the
     /// plugin has for itself.
@@ -359,8 +362,9 @@ impl<'e> Host<'e> {
             return Ok(plugin);
         }
         let mut loaded = Err(OUT_OF_STEP.to_vec());
-        self.engine
-            .with_vm(&mut |vm| loaded = self.load_in(vm, &location, None))?;
+        self.engine.with_vm(usize::MAX, &mut |vm| {
+            loaded = self.load_in(vm, &location, None)
+        })?;
         let described = crate::json::parse(&loaded?).ok_or(OUT_OF_STEP)?;
         Ok(self.register(location, &described, false))
     }
@@ -480,9 +484,12 @@ impl<'e> Host<'e> {
         physical_path_len: Option<usize>,
     ) -> Result<Vec<Report>, Failure> {
         let mut outcome = Err(Failure::from(OUT_OF_STEP.to_vec()));
-        self.engine.with_vm(&mut |vm| {
-            outcome = self.run_in(vm, file, settings, enabled, wants_fixes, physical_path_len);
-        })?;
+        let needs_the_configuration = settings.sources.is_some()
+            || (enabled.iter()).any(|it| it.rule.needs_the_configuration);
+        self.engine
+            .with_vm(realms_for(needs_the_configuration), &mut |vm| {
+                outcome = self.run_in(vm, file, settings, enabled, wants_fixes, physical_path_len);
+            })?;
         outcome
     }
 

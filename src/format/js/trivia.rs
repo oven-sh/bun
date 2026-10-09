@@ -150,7 +150,14 @@ impl<'a> Format<'a> for FormatTrailingComments<'a> {
 #[cold]
 fn write_trailing_comments<'a>(comments: &'a [Comment], f: &mut Formatter<'a>) {
     let mut total_lines_before = 0;
-    let mut previous_comment: Option<&Comment> = None;
+    // `a; // b` and `; // c` on the next line: the one before the empty statement has been written by itself.
+    let mut previous_comment: Option<&Comment> = comments.first().and_then(|first| {
+        let previous = f.comments().printed_comments().last()?;
+        let between = Span::new(previous.span.end, first.span.start.max(previous.span.end));
+        let is_only_empty_statements =
+            (f.source_text()).all_bytes(between, |b| b.is_ascii_whitespace() || b == b';');
+        (previous.is_line() && is_only_empty_statements).then_some(previous)
+    });
 
     for comment in comments {
         f.comments_mut().increment_printed_count();

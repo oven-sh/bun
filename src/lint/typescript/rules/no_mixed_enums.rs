@@ -1,6 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::is_type_flag_set;
 use bun_lint::types::{SyntaxKind, Type, TypeFlags};
+use rustc_hash::FxHashMap;
 
 /// Disallow enums from having both number and string members.
 pub struct NoMixedEnums;
@@ -13,6 +14,11 @@ enum AllowedType {
     String,
     Unknown,
 }
+
+/// By a variable, [`get_type_from_imported`] of the first of its declarations that has one: an enum that is declared
+/// many times has as many declarations to go through for each of them.
+#[derive(Default)]
+pub struct State<'a>(FxHashMap<Symbol<'a>, Option<AllowedType>>);
 
 /// Whether it is in quotes, and one name of upstream's `getModuleName`.
 fn name_part<'a>(module: Module<'a>) -> (bool, &'a [u8]) {
@@ -109,7 +115,12 @@ fn get_member_type(member: EnumMember) -> AllowedType {
     }
 }
 
-fn get_desired_type_for_definition<'a>(file: &'a File<'a>, node: Enum<'a>, first: EnumMember<'a>) -> AllowedType {
+fn get_desired_type_for_definition<'a>(
+    file: &'a File<'a>,
+    node: Enum<'a>,
+    first: EnumMember<'a>,
+    known: &mut State<'a>,
+) -> AllowedType {
     let (statement, name) = (node.stmt(), node.name().name());
 
     // Merged ambiently via module augmentation.
@@ -117,7 +128,8 @@ fn get_desired_type_for_definition<'a>(file: &'a File<'a>, node: Enum<'a>, first
         let Some(variable) = scope.get_name(name) else {
             continue;
         };
-        if let Some(from_imported) = variable.declarations().find_map(|it| get_type_from_imported(file, it)) {
+        let find = || variable.declarations().find_map(|it| get_type_from_imported(file, it));
+        if let Some(from_imported) = *known.0.entry(variable).or_insert_with(find) {
             return from_imported;
         }
     }
@@ -142,13 +154,13 @@ impl Rule for NoMixedEnums {
     const META: Meta = Meta::typescript("no-mixed-enums", Kind::Problem)
         .presets(Presets::STRICT_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoMixedEnums
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
         on.stmts([StmtTag::Enum], |_, statement, cx| {
             let StmtKind::Enum(node) = statement.kind() else {
                 return;
@@ -156,7 +168,7 @@ impl Rule for NoMixedEnums {
             let Some(first) = node.members().first() else {
                 return;
             };
-            let desired_type = get_desired_type_for_definition(cx.file(), node, first);
+            let desired_type = get_desired_type_for_definition(cx.file(), node, first, &mut cx.state);
             if desired_type == AllowedType::Unknown {
                 return;
             }
@@ -174,5 +186,6 @@ impl Rule for NoMixedEnums {
                 }
             }
         });
+        State::default()
     }
 }

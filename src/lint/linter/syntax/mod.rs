@@ -10,6 +10,7 @@
 
 mod espree;
 mod order;
+mod oxc;
 mod typescript_estree;
 
 use super::message::LintMessage;
@@ -94,7 +95,9 @@ pub fn parse_error<'a>(file: &'a File<'a>) -> Option<LintMessage> {
                 [.., b'.', b'c', b't', b's'] => espree::module_syntax_in_commonjs(file, true),
                 _ => None,
             };
-            of_parser.map(|it| it.1).or_else(of_oxlint)
+            (of_parser.map(|it| it.1))
+                .or_else(of_oxlint)
+                .or_else(|| oxc::first_error(file))
         }
         // It converts a tree only if the parser has nothing to say.
         (Parser::TypeScript, None) => typescript_estree::first_error(file, false),

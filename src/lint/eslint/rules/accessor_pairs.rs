@@ -133,7 +133,12 @@ impl AccessorPairs {
         };
         let report = |accessor: Accessor<'a>| {
             let message = if accessor.is_getter { missing_setter } else { missing_getter };
-            cx.report(ast_utils::get_function_head_loc(accessor.func), message)
+            // oxlint points at the key.
+            let place = match cx.language().is_oxlint {
+                true => accessor.key.inner_span(cx.file()),
+                false => ast_utils::get_function_head_loc(accessor.func),
+            };
+            cx.report(place, message)
                 .data("name", ast_utils::get_function_name_with_kind(accessor.func));
         };
         let few: SmallVec<[Accessor<'a>; MAX_KEYS_TO_COMPARE_IN_PAIRS + 1]> =

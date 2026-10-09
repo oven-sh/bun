@@ -1,0 +1,23 @@
+------------------
+{ printWidth: 80 }
+------------------
+parts:
+  app:
+    plugin:
+      "nil"
+      # cd ~ && rm -rf ~/squashfs-root && unsquashfs a.snap
+    stage-packages:
+      - a
+
+-------------------
+{ printWidth: 100 }
+-------------------
+parts:
+  app:
+    plugin:
+      "nil"
+      # cd ~ && rm -rf ~/squashfs-root && unsquashfs a.snap
+    stage-packages:
+      - a
+
+===================== End =====================

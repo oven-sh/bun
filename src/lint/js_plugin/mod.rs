@@ -1,8 +1,8 @@
 //! Rules that are written in JavaScript: the plugins of ESLint, as `jsPlugins` of an
 //! `.oxlintrc.json` names them and `plugins` of an `eslint.config.js` has them.
 //!
-//! They run in a JavaScript realm ([`Vm`]) that whoever uses this module provides ([`Engine`]): in Bun a VM on the thread
-//! that lints the file. What runs there is the [`PROGRAM`] in `worker/`: ESLint's API for rules, on top of what it asks this
+//! They run in a JavaScript realm ([`Vm`]) that whoever uses this module provides ([`Engine`]): in Bun a VM on a thread of
+//! its own. What runs there is the [`PROGRAM`] in `worker/`: ESLint's API for rules, on top of what it asks this
 //! side for. [`Host`] is what the linter talks to.
 //!
 //! The program is given the text of a file and which rules to run. Everything else it asks for the first time a rule needs

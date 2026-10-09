@@ -148,12 +148,14 @@ try {
       const path = join(directory, file);
       writeFileSync(path, make(n));
       const result = Bun.spawnSync([bin, "format", "file", path], {
-        timeout: limit,
+        // The limit is on the time of the processor. The clock gets six times as much, for a busy machine.
+        timeout: limit * 6,
         stdout: "ignore",
         stderr: "ignore",
       });
       // The time of the processor: on a busy machine the clock says little.
       took.push(Number(result.resourceUsage.cpuTime.total) / 1000);
+      if (took.at(-1)! > limit) problem = "it takes too long";
       if (result.exitCode !== 0)
         problem ||= result.signalCode ? `ended by ${result.signalCode}` : `exit code ${result.exitCode}`;
     }

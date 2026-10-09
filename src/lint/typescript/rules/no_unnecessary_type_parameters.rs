@@ -86,8 +86,16 @@ fn is_type_parameter_repeated_in_ast<'a>(
 /// By the declaration of the type parameter.
 type Counts<'a> = FxHashMap<TsNode<'a>, u32>;
 
-/// What has been counted in the type of a function.
-type CountsByType<'a> = FxHashMap<Type<'a>, Rc<Counts<'a>>>;
+#[derive(Default)]
+pub struct State<'a> {
+    /// What has been counted in the type of a function.
+    counts_by_type: FxHashMap<Type<'a>, Rc<Counts<'a>>>,
+    without_type_parameters: TypesWithoutTypeParameters<'a>,
+}
+
+/// The types that have been gone through to the end, and no type parameter was found. To go through one again counts
+/// nothing, whatever has been visited before, and many functions mention the same large types.
+type TypesWithoutTypeParameters<'a> = FxHashSet<Type<'a>>;
 
 /// Upstream's `collectTypeParameterUsageCounts`: how often each type parameter appears in a type.
 struct UsageCounter<'a, 'c> {
@@ -100,6 +108,9 @@ struct UsageCounter<'a, 'c> {
     visited_constraints: FxHashSet<TsNode<'a>>,
     visited_default: bool,
     depth: u32,
+    without_type_parameters: &'c mut TypesWithoutTypeParameters<'a>,
+    /// How many type parameters have been found, and how often something was not gone through.
+    found_or_left_out: u32,
 }
 
 /// Upstream's `assumeMultipleUses`: what one appearance of a type parameter counts as.
@@ -126,14 +137,22 @@ impl<'a> UsageCounter<'a, '_> {
     fn visit_type(&mut self, ty: Type<'a>, uses: Uses, place: Place) {
         // The same type more than 3 ** 2 times is likely a recursive type, like
         // `type T = { [P in keyof T]: T }`. If not, what it refers to has been counted often enough.
+        if self.without_type_parameters.contains(&ty) {
+            return;
+        }
         let usages = self.type_usages.entry(ty).or_insert(0);
         *usages += 1;
         if *usages > 9 || self.depth >= MAX_DEPTH {
+            self.found_or_left_out += 1;
             return;
         }
+        let before = self.found_or_left_out;
         self.depth += 1;
         self.visit_parts(ty, uses, place);
         self.depth -= 1;
+        if self.found_or_left_out == before {
+            self.without_type_parameters.insert(ty);
+        }
     }
 
     fn visit_types_list(&mut self, types: impl IntoIterator<Item = Type<'a>>, uses: Uses) {
@@ -193,6 +212,7 @@ impl<'a> UsageCounter<'a, '_> {
     }
 
     fn visit_type_parameter(&mut self, ty: Type<'a>, uses: Uses) {
+        self.found_or_left_out += 1;
         let Some(declaration) = ty.get_symbol().and_then(|symbol| symbol.declarations().next()) else {
             return;
         };
@@ -226,6 +246,8 @@ impl<'a> UsageCounter<'a, '_> {
             for symbol in properties {
                 self.visit_type(symbol.get_type(), Uses::One, Place::Elsewhere);
             }
+        } else {
+            self.found_or_left_out += 1;
         }
 
         if let TypeStructure::Mapped {
@@ -280,6 +302,7 @@ fn collect_type_parameter_usage_counts<'a>(
     node: TsNode<'a>,
     found_identifier_usages: &mut Counts<'a>,
     from_class: bool,
+    without_type_parameters: &mut TypesWithoutTypeParameters<'a>,
 ) {
     let mut counter = UsageCounter {
         found_identifier_usages,
@@ -289,6 +312,8 @@ fn collect_type_parameter_usage_counts<'a>(
         visited_constraints: FxHashSet::default(),
         visited_default: false,
         depth: 0,
+        without_type_parameters,
+        found_or_left_out: 0,
     };
     match node.kind() {
         SyntaxKind::CallSignature | SyntaxKind::Constructor => {
@@ -368,7 +393,7 @@ fn check_node<'a>(
     type_parameters: List<'a, TypeParam<'a>>,
     start_of_body: u32,
     descriptor: &'static str,
-    count_type_parameter_usage: impl Fn(&mut CountsByType<'a>) -> Rc<Counts<'a>>,
+    count_type_parameter_usage: impl Fn(&mut State<'a>) -> Rc<Counts<'a>>,
 ) {
     let mut counts = None;
     for type_parameter in type_parameters {
@@ -401,13 +426,13 @@ impl Rule for NoUnnecessaryTypeParameters {
         .has_suggestions()
         .presets(Presets::STRICT_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = CountsByType<'a>;
+    type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoUnnecessaryTypeParameters
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> CountsByType<'a> {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
         on.funcs(|_, node, cx| {
             let type_parameters = node.type_params();
             // Upstream does not listen for a `TSConstructSignatureDeclaration`.
@@ -421,15 +446,16 @@ impl Rule for NoUnnecessaryTypeParameters {
             };
             check_node(cx, type_parameters, start_of_body.unwrap_or(u32::MAX), "function", |known| {
                 let ts_node = node.ts_node();
-                let count = || {
+                let State { counts_by_type, without_type_parameters } = known;
+                let mut count = || {
                     let mut counts = Counts::default();
-                    collect_type_parameter_usage_counts(ts_node, &mut counts, false);
+                    collect_type_parameter_usage_counts(ts_node, &mut counts, false, without_type_parameters);
                     Rc::new(counts)
                 };
                 match ts_node.kind() {
                     SyntaxKind::CallSignature | SyntaxKind::Constructor => count(),
                     // Each overload of a function has the type of the function, with the signatures of all of them.
-                    _ => Rc::clone(known.entry(ts_node.get_type_at_location()).or_insert_with(count)),
+                    _ => Rc::clone(counts_by_type.entry(ts_node.get_type_at_location()).or_insert_with(count)),
                 }
             });
         });
@@ -438,18 +464,18 @@ impl Rule for NoUnnecessaryTypeParameters {
             if type_parameters.is_empty() {
                 return;
             }
-            check_node(cx, type_parameters, node.body_span().start, "class", |_| {
-                let mut counts = Counts::default();
+            check_node(cx, type_parameters, node.body_span().start, "class", |known| {
+                let (mut counts, known) = (Counts::default(), &mut known.without_type_parameters);
                 for type_parameter in type_parameters {
-                    collect_type_parameter_usage_counts(type_parameter.ts_node(), &mut counts, true);
+                    collect_type_parameter_usage_counts(type_parameter.ts_node(), &mut counts, true, known);
                 }
                 // A static block has no type.
                 for member in node.members().iter().filter(|member| member.kind() != MemberKind::StaticBlock) {
-                    collect_type_parameter_usage_counts(member.ts_node(), &mut counts, true);
+                    collect_type_parameter_usage_counts(member.ts_node(), &mut counts, true, known);
                 }
                 Rc::new(counts)
             });
         });
-        CountsByType::default()
+        State::default()
     }
 }

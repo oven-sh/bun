@@ -246,6 +246,8 @@ pub struct Lexer<'a> {
     /// token, as in TypeScript's parser, so that there is an AST to check no matter how many errors
     /// the file has.
     pub(crate) tolerant: bool,
+    /// How many speculative parses are open (`P::parser_snapshot`).
+    pub(crate) trials: u32,
     /// `Options::is_javascript`
     pub(crate) is_javascript: bool,
     /// `Dialect::ecmascript`, in a JavaScript file. Tolerant mode only.
@@ -380,8 +382,15 @@ impl<'a> LexerLog<'a> for Lexer<'a> {
             },
             ..Default::default()
         });
+        self.stop_after_syntax_error();
         Ok(())
     }
+}
+
+/// An error of TypeScript's parser that `parse_for_sema` lets pass in another dialect: octal literals
+/// and escapes, `\8`, `08`, `a?.#b`, `assert { type: "json" }`.
+fn is_accepted_by_other_parsers(code: u32) -> bool {
+    matches!(code, 1121 | 1487 | 1488 | 1489 | 18030 | 2880)
 }
 
 /// FOR SPEED, in tolerant mode: the type checker reads the offset and the length of a location
@@ -1300,6 +1309,38 @@ impl<'a> Lexer<'a> {
             metadata: bun_ast::Metadata::TypeScript { code, kind },
             ..Default::default()
         });
+        if kind == TypeScriptKind::Parse && !is_accepted_by_other_parsers(code) {
+            self.stop_after_syntax_error();
+        }
+    }
+
+    /// After a syntax error is logged. Only the formatter asks for Babel's reading: it leaves a file
+    /// with a syntax error as it is and names the first one. So the rest of the text is not read:
+    /// the next token is the end of the file. A speculative parse may yet drop the error.
+    #[cold]
+    pub(crate) fn stop_after_syntax_error(&mut self) {
+        if self.is_babel && self.trials == 0 {
+            self.current = self.contents.len();
+            self.code_point = -1;
+        }
+    }
+
+    /// `stop_after_syntax_error`, at the end of a speculative parse that is kept, with the messages
+    /// from the index `first` on.
+    #[cold]
+    pub(crate) fn stop_after_syntax_error_since(&mut self, first: usize) {
+        let is_syntax_error = |msg: &bun_ast::Msg| {
+            msg.kind == bun_ast::Kind::Err
+                && match msg.metadata {
+                    bun_ast::Metadata::TypeScript { kind, code } => {
+                        kind == TypeScriptKind::Parse && !is_accepted_by_other_parsers(code)
+                    }
+                    _ => true,
+                }
+        };
+        if self.log().msgs.iter().skip(first).any(is_syntax_error) {
+            self.stop_after_syntax_error();
+        }
     }
 
     /// The range from `start` to the end of the previous token.
@@ -3476,6 +3517,7 @@ impl<'a> Lexer<'a> {
             is_legacy_octal_literal: false,
             is_log_disabled: false,
             tolerant: false,
+            trials: 0,
             is_javascript: false,
             is_ecmascript: false,
             is_script: false,

@@ -192,6 +192,18 @@ pub(crate) fn type_arguments<'a>(
     FormatTypeArguments { params, owner }
 }
 
+/// ```ts
+/// a<                 a<// comment
+///   // comment       { b: c }>();
+///   { b: c }
+/// >();
+/// ```
+///
+/// Prettier on the left, oxfmt on the right.
+fn only_comment_behind_type_argument_counts(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 impl<'a> FormatTypeArguments<'a> {
     /// Without the comments around the `<..>`.
     pub(crate) fn write_without_comments(self, f: &mut Formatter<'a>) {
@@ -235,6 +247,9 @@ impl<'a> FormatTypeArguments<'a> {
         );
         let before = f.comments().comments_in(Span::before(outer.start, inner));
         let after = f.comments().comments_in(Span::after(inner, outer.end));
+        if only_comment_behind_type_argument_counts(f) {
+            return !after.is_empty();
+        }
         before.iter().chain(after).any(|comment| comment.is_line())
             || after
                 .last()

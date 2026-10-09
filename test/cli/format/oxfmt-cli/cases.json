@@ -10,7 +10,7 @@
    "nested/deep/test.js": "const a = 1\n"
   },
   "config_ignore_patterns": {
-   "basic/.oxfmtrc.json": "{\n  \"ignorePatterns\": [\"not-formatted/\"]\n}\n",
+   "basic/.oxfmtrc.json": "{\n  \"ignorePatterns\": [\"not-formatted/\", \"!not-formatted/bad.js\"]\n}\n",
    "basic/fmtrc.jsonc": "{\n  \"ignorePatterns\": [\"*.js\"],\n}\n",
    "nested_cwd/.oxfmtrc.json": "{\n  \"ignorePatterns\": [\"sub/generated/**\"]\n}\n",
    "basic/not-formatted/bad.js": "  class                 Bar {}\n",
@@ -19,6 +19,10 @@
    "nested_cwd/src/test.js": "// This file should be formatted\nconst x=1\n",
    "nested_cwd/sub/generated/error.html": "<link rel=stylesheet href=/styles.css />\n",
    "nested_cwd/sub/src/test.js": "// This file should be formatted\nconst x=1\n"
+  },
+  "config_ignore_patterns_parent": {
+   "config/.oxfmtrc.json": "{\n  \"ignorePatterns\": [\"../src/skipMe.js\"]\n}\n",
+   "src/skipMe.js": "const y=2\n"
   },
   "config_in_subdirectory": {
    "outside/file.js": "const x = 1;\n",
@@ -44,6 +48,9 @@
    "quote_type/test.js": "const a = \"hello\";\nconst b = \"world\";\n",
    "tab_width_fallback/.editorconfig": "[*]\nindent_style = space\ntab_width = 8\n",
    "tab_width_fallback/test.js": "if (condition) { console.log(\"hello world\"); }\n",
+   "unset_in_root/.editorconfig": "[*]\nindent_style = space\nindent_size = unset\n\n[*.ts]\nindent_size = 4\n",
+   "unset_in_root/test.js": "if (true) { console.log(\"js\"); }\n",
+   "unset_in_root/test.ts": "if (true) { console.log(\"ts\"); }\n",
    "with_oxfmtrc/.editorconfig": "[*]\nindent_style = tab\nindent_size = 8\n",
    "with_oxfmtrc/.oxfmtrc.json": "{\n  \"useTabs\": false,\n  \"tabWidth\": 2\n}\n",
    "with_oxfmtrc/test.js": "if (true) { console.log(\"hello\"); }\n",
@@ -75,6 +82,10 @@
    "test.ts": "const typed: string = \"ts\";\n",
    "test.tsx": "const Component: React.FC = () => <div>TSX</div>;\n"
   },
+  "force_color": {
+   "formatted.js": "const a = 1;\n",
+   "unformatted.js": "const b=2\n"
+  },
   "gitignore": {
    "ignored-by-root.js": "const   y=2\n",
    "root.js": "const   x=1\n",
@@ -85,6 +96,9 @@
   "gitignore_parent": {
    "apps/keep.js": "const x   =2;\n",
    "apps/dist/unformatted.js": "const a   =1;\n"
+  },
+  "gitignore_walk_root": {
+   "sub/generated/pkg/index.ts": "const answer = 42\n"
   },
   "glob_patterns": {
    "lib/util.js": "class X {\n",
@@ -100,7 +114,7 @@
    "should_ignore/err.js": "class {\n"
   },
   "ignore_patterns": {
-   ".prettierignore": "not-formatted/\n",
+   ".prettierignore": "not-formatted/\n!not-formatted/bad.ts\n",
    "custom.ignore": "ignored/\n",
    "gitignore.txt": "ignored/\n",
    "good.ts": "class Foo {}\n",
@@ -138,6 +152,10 @@
    "priority/.oxfmtrc.json": "{\n  \"semi\": false\n}\n",
    "priority/oxfmt.config.ts": "export default {\n  semi: true,\n};\n",
    "priority/test.ts": "const a = 1;\n"
+  },
+  "js_config_mts": {
+   "oxfmt.config.mts": "export default {\n  semi: false,\n};\n",
+   "test.ts": "const answer = 42;\n"
   },
   "multiple_files": {
    "app.tsx": "interface   Props   {\n    title  :  string\n    count  :  number\n}\nconst   App   :   React.FC  <  Props  >   =   (  {  title  ,  count  }  )   =>   {\nreturn   <div  >\n        <h1  >  {  title  }  </h1>\n    <span  >  Count  :  {  count  }  </span>\n</div>\n}\n",
@@ -237,6 +255,10 @@
    "bool_reset_override/desc-sorted.js": "import z from \"z\";\nimport c from \"c\";\nimport a from \"a\";\n",
    "bool_reset_override/disabled.js": "import z from \"z\";\nimport a from \"a\";\n",
    "bool_reset_override/reset-to-default.js": "import a from \"a\";\nimport c from \"c\";\nimport z from \"z\";\n",
+   "editorconfig_per_file/.editorconfig": "[*]\nindent_style = space\nindent_size = 2\n\n[*.ts]\nindent_size = 4\n",
+   "editorconfig_per_file/.oxfmtrc.json": "{\n  \"overrides\": [{ \"files\": [\"*.js\", \"*.ts\"], \"options\": { \"semi\": false } }]\n}\n",
+   "editorconfig_per_file/test.js": "if (true) { console.log(\"js\"); }\n",
+   "editorconfig_per_file/test.ts": "if (true) { console.log(\"ts\"); }\n",
    "editorconfig_root_only/.editorconfig": "[*]\nindent_style = tab\n",
    "editorconfig_root_only/.oxfmtrc.json": "{\n  \"overrides\": [{ \"files\": [\"*.js\"], \"options\": { \"semi\": false } }]\n}\n",
    "editorconfig_root_only/test.js": "if (true) {\n\tconsole.log(\"hello\")\n}\n",
@@ -263,6 +285,7 @@
   },
   "oxfmtrc_overrides_invalid": {
    "cross_field_conflict.json": "{\n  \"sortImports\": {\n    \"partitionByNewline\": true,\n    \"newlinesBetween\": false\n  },\n  \"overrides\": [\n    {\n      \"files\": [\"*\"],\n      \"options\": {\n        \"sortImports\": {\n          \"newlinesBetween\": true\n        }\n      }\n    }\n  ]\n}\n",
+   "invalid_glob.json": "{\n  \"overrides\": [\n    {\n      \"files\": [\"src/**/*.{js,ts\"],\n      \"options\": {\n        \"semi\": false\n      }\n    }\n  ]\n}\n",
    "invalid_value.json": "{\n  \"overrides\": [\n    {\n      \"files\": [\"*\"],\n      \"options\": {\n        \"printWidth\": 500\n      }\n    }\n  ]\n}\n",
    "root_invalid.json": "{\n  \"printWidth\": 500\n}\n",
    "test.js": "const x=1\n"
@@ -284,17 +307,27 @@
   "stdin": {
    "input.graphql": "{   user(id:1){name}}",
    "input.rb": "puts 'hello'",
-   "input.ts": "const   x:number=1"
+   "input.ts": "const   x:number=1",
+   "invalid.js": "class {\n"
   },
   "stdin_ignore_patterns": {
-   ".oxfmtrc.json": "{\n  \"ignorePatterns\": [\"ignored/\"]\n}\n",
-   ".prettierignore": "prettierignored/\n",
-   "input.ts": "const   x:number=1\n"
+   ".oxfmtrc.json": "{\n  \"ignorePatterns\": [\"ignored/\", \"!ignored/test.ts\"]\n}\n",
+   ".prettierignore": "prettierignored/\n!prettierignored/test.ts\n",
+   "input.ts": "const   x:number=1\n",
+   "prettierignored/.oxfmtrc.json": "{ \"printWidth\": \"broken\" }\n"
   },
   "stdin_nested_config": {
    ".oxfmtrc.json": "{ \"tabWidth\": 4 }\n",
    "input.js": "function foo() { if (true) { console.log(\"hello\"); } }\n",
    "sub/.oxfmtrc.json": "{ \"tabWidth\": 2 }\n"
+  },
+  "toml": {
+   "Cargo.lock": "# This is a lock file and should be ignored\n[[package]]\nname   =   \"test\"\nversion    =    \"0.1.0\"\n",
+   "Pipfile": "[packages]\nrequests   =   \"*\"\nflask   =   {   version   =   \">=2.0\"  ,  extras   =   [  \"async\"  ]   }\n\n[dev-packages]\npytest=\"*\"\n",
+   "config.toml": "[package]\nname=\"test\"\nversion    =    \"0.1.0\"\ndescription   =  \"A test package\"\n\n[dependencies]\nfoo={version=\"1.0\"}\nbar   =   {   version   =   \"2.0\"  ,  features   =   [  \"a\"  ,  \"b\"  ]   }\n",
+   "config.toml.example": "# Example configuration\n[server]\nhost   =   \"localhost\"\nport=8080\n\n[logging]\nlevel    =    \"info\"\n",
+   "poetry.lock": "# This is a lock file and should be ignored\n[[package]]\nname    =    \"requests\"\nversion=\"2.28.0\"\n",
+   "use-tab.json": "{ \"useTabs\": true, \"printWidth\": 40 }\n"
   },
   "vcs_dirs": {
    "root.js": "// This file should NOT be ignored\nconst   y   =   2;\n",
@@ -459,6 +492,31 @@
    ]
   },
   {
+   "name": "config_ignore_patterns",
+   "index": 4,
+   "args": [
+    "--check",
+    "--no-error-on-unmatched-pattern",
+    "not-formatted/bad.js"
+   ],
+   "cwd": "basic",
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "config_ignore_patterns_parent",
+   "index": 0,
+   "args": [
+    "--check",
+    "--config=config/.oxfmtrc.json",
+    "."
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": []
+  },
+  {
    "name": "config_in_subdirectory",
    "index": 0,
    "args": [
@@ -599,6 +657,20 @@
    "exitCode": 0,
    "changed": {},
    "listed": []
+  },
+  {
+   "name": "editorconfig",
+   "index": 9,
+   "args": [
+    "test.js",
+    "test.ts"
+   ],
+   "cwd": "unset_in_root",
+   "exitCode": 0,
+   "changed": {
+    "unset_in_root/test.js": "if (true) {\n  console.log(\"js\");\n}\n",
+    "unset_in_root/test.ts": "if (true) {\n    console.log(\"ts\");\n}\n"
+   }
   },
   {
    "name": "exclude_nested",
@@ -835,6 +907,93 @@
    "listed": []
   },
   {
+   "name": "force_color",
+   "index": 0,
+   "args": [
+    "--check"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "unformatted.js"
+   ]
+  },
+  {
+   "name": "force_color",
+   "index": 1,
+   "args": [
+    "--check"
+   ],
+   "env": {
+    "FORCE_COLOR": "1"
+   },
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "unformatted.js"
+   ]
+  },
+  {
+   "name": "force_color",
+   "index": 2,
+   "args": [
+    "--check"
+   ],
+   "env": {
+    "NO_COLOR": "1"
+   },
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "unformatted.js"
+   ]
+  },
+  {
+   "name": "force_color",
+   "index": 3,
+   "args": [
+    "--check"
+   ],
+   "env": {
+    "FORCE_COLOR": "0"
+   },
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "unformatted.js"
+   ]
+  },
+  {
+   "name": "force_color",
+   "index": 4,
+   "args": [
+    "--check"
+   ],
+   "env": {
+    "CI": "true"
+   },
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "unformatted.js"
+   ]
+  },
+  {
+   "name": "force_color",
+   "index": 5,
+   "args": [
+    "--list-different"
+   ],
+   "env": {
+    "FORCE_COLOR": "1"
+   },
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "unformatted.js"
+   ]
+  },
+  {
    "name": "gitignore",
    "index": 0,
    "args": [
@@ -869,6 +1028,22 @@
    ]
   },
   {
+   "name": "gitignore",
+   "index": 2,
+   "args": [
+    "--check",
+    "ignored-by-root.js"
+   ],
+   "gitignore": {
+    ".gitignore": "ignored-by-root.js\nsubdir/"
+   },
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "ignored-by-root.js"
+   ]
+  },
+  {
    "name": "gitignore_parent",
    "index": 0,
    "args": [
@@ -883,6 +1058,51 @@
    "listed": [
     "keep.js"
    ]
+  },
+  {
+   "name": "gitignore_walk_root",
+   "index": 0,
+   "args": [
+    "--check"
+   ],
+   "cwd": "sub/generated/pkg",
+   "gitignore": {
+    "sub/.gitignore": "generated\n"
+   },
+   "exitCode": 2,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "gitignore_walk_root",
+   "index": 1,
+   "args": [
+    "--check",
+    "index.ts"
+   ],
+   "cwd": "sub/generated/pkg",
+   "gitignore": {
+    "sub/.gitignore": "generated\n"
+   },
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "index.ts"
+   ]
+  },
+  {
+   "name": "gitignore_walk_root",
+   "index": 2,
+   "args": [
+    "--check",
+    "sub/generated/pkg"
+   ],
+   "gitignore": {
+    "sub/.gitignore": "generated\n"
+   },
+   "exitCode": 2,
+   "changed": {},
+   "listed": []
   },
   {
    "name": "glob_patterns",
@@ -1007,6 +1227,17 @@
    ]
   },
   {
+   "name": "glob_patterns",
+   "index": 8,
+   "args": [
+    "--check",
+    "src/*.{js,ts"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": []
+  },
+  {
    "name": "ignore_and_override",
    "index": 0,
    "args": [
@@ -1088,6 +1319,20 @@
    ]
   },
   {
+   "name": "ignore_and_override",
+   "index": 6,
+   "args": [
+    "--ignore-path",
+    "ignore2",
+    "--stdin-filepath",
+    "should_format/ok.js"
+   ],
+   "stdin": "should_format/ok.js",
+   "exitCode": 0,
+   "changed": {},
+   "stdout": "const a = 1;\n"
+  },
+  {
    "name": "ignore_patterns",
    "index": 0,
    "args": [
@@ -1142,6 +1387,18 @@
    "listed": []
   },
   {
+   "name": "ignore_patterns",
+   "index": 4,
+   "args": [
+    "--check",
+    "--no-error-on-unmatched-pattern",
+    "not-formatted/bad.ts"
+   ],
+   "exitCode": 0,
+   "changed": {},
+   "listed": []
+  },
+  {
    "name": "ignore_symlink",
    "index": 0,
    "args": [
@@ -1166,6 +1423,7 @@
    "exitCode": 0,
    "changed": {
     "oxfmtrc_only/test.css": ".foo {\n  color: red;\n}",
+    "oxfmtrc_only/test.toml": "[foo]\nbar = 1",
     "oxfmtrc_only/test.ts": "const foo = 1;"
    }
   },
@@ -1181,6 +1439,7 @@
    "exitCode": 0,
    "changed": {
     "editorconfig_only/test.css": ".foo {\n  color: red;\n}",
+    "editorconfig_only/test.toml": "[foo]\nbar = 1",
     "editorconfig_only/test.ts": "const foo = 1;"
    }
   },
@@ -1233,6 +1492,19 @@
    "exitCode": 1,
    "changed": {},
    "listed": []
+  },
+  {
+   "name": "js_config_mts",
+   "index": 0,
+   "args": [
+    "--check",
+    "test.ts"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "test.ts"
+   ]
   },
   {
    "name": "multiple_files",
@@ -1824,6 +2096,20 @@
    "listed": []
   },
   {
+   "name": "oxfmtrc_overrides",
+   "index": 8,
+   "args": [
+    "test.js",
+    "test.ts"
+   ],
+   "cwd": "editorconfig_per_file",
+   "exitCode": 0,
+   "changed": {
+    "editorconfig_per_file/test.js": "if (true) {\n  console.log(\"js\")\n}\n",
+    "editorconfig_per_file/test.ts": "if (true) {\n    console.log(\"ts\")\n}\n"
+   }
+  },
+  {
    "name": "oxfmtrc_overrides_invalid",
    "index": 0,
    "args": [
@@ -1859,6 +2145,19 @@
     "test.js"
    ],
    "exitCode": 2,
+   "changed": {},
+   "listed": []
+  },
+  {
+   "name": "oxfmtrc_overrides_invalid",
+   "index": 3,
+   "args": [
+    "-c",
+    "invalid_glob.json",
+    "--check",
+    "test.js"
+   ],
+   "exitCode": 1,
    "changed": {},
    "listed": []
   },
@@ -1986,6 +2285,18 @@
    "stdout": ""
   },
   {
+   "name": "stdin",
+   "index": 3,
+   "args": [
+    "--stdin-filepath",
+    "invalid.js"
+   ],
+   "stdin": "invalid.js",
+   "exitCode": 2,
+   "changed": {},
+   "stdout": ""
+  },
+  {
    "name": "stdin_ignore_patterns",
    "index": 0,
    "args": [
@@ -2044,6 +2355,31 @@
    "exitCode": 0,
    "changed": {},
    "stdout": "function foo() {\n  if (true) {\n    console.log(\"hello\");\n  }\n}\n"
+  },
+  {
+   "name": "toml",
+   "index": 0,
+   "args": [
+    "--check"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "config.toml"
+   ]
+  },
+  {
+   "name": "toml",
+   "index": 1,
+   "args": [
+    "--config",
+    "use-tab.json",
+    "config.toml"
+   ],
+   "exitCode": 0,
+   "changed": {
+    "config.toml": "[package]\nname = \"test\"\nversion = \"0.1.0\"\ndescription = \"A test package\"\n\n[dependencies]\nfoo = { version = \"1.0\" }\nbar = { version = \"2.0\", features = [\n\t\"a\",\n\t\"b\",\n] }\n"
+   }
   },
   {
    "name": "vcs_dirs",

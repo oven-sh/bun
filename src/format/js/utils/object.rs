@@ -178,7 +178,14 @@ pub(crate) fn should_preserve_quote<'a>(key: Key<'a>, f: &Formatter<'a>) -> bool
 
 fn requires_quotes<'a>(key: Key<'a>, parent: Option<AstNodes<'a>>, f: &Formatter<'a>) -> bool {
     matches!(key.kind(), KeyKind::String(_))
-        && unquoted(f.source_text().text_for(&key.span(file_of(f))), parent, f).is_none()
+        && unquoted(f.source_text().text_for(&key.span(file_of(f))), parent, f).is_none_or(
+            |content| number_in_quotes_requires_them(f) && !is_es5_identifier_name(content),
+        )
+}
+
+/// With `quoteProps: "consistent"`, `{ "1": a, b: c }` is `{ 1: a, b: c }` for Prettier and `{ "1": a, "b": c }` for oxfmt.
+fn number_in_quotes_requires_them(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// Prettier's `hasSiblingsRequireQuoted`. `parent`: what has the name.

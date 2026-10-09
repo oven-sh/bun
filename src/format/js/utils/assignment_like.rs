@@ -759,7 +759,11 @@ fn leading_comments_of_right_side<'a>(right: Expr<'a>, f: &Formatter<'a>) -> Lea
         if comment.followed_by_newline() || comment.is_indentable_block() {
             return LeadingComments::Break;
         }
-        if f.comments().is_type_cast_comment(comment) {
+        // `/** @type {T} */ a.b()` casts nothing.
+        if f.comments().is_type_cast_comment(comment)
+            && f.source_text()
+                .next_non_whitespace_byte_is(comment.end(), b'(')
+        {
             return match right.is_parenthesized() {
                 true => LeadingComments::TypeCast,
                 false => LeadingComments::TypeCastOfLeftEdge,
@@ -1155,7 +1159,11 @@ fn is_poorly_breakable_member_or_call_chain<'a>(
     }
     // Prettier's `printCallExpression`: only the call of a member can be a member chain. It is asked
     // of every call: in `a.b().c()()` of the second from the right.
-    !call_expressions.iter().any(|&call_expression| {
+    let asked = match only_last_call_can_be_member_chain(f) {
+        true => call_expressions.get(..1).unwrap_or_default(),
+        false => &call_expressions[..],
+    };
+    !asked.iter().any(|&call_expression| {
         call_expression.callee().is_some_and(|callee| {
             matches!(
                 callee.as_ast_nodes(),
@@ -1165,6 +1173,12 @@ fn is_poorly_breakable_member_or_call_chain<'a>(
             )
         }) && is_member_call_chain(call_expression, f)
     })
+}
+
+/// `a = await b.c("d")!.e("f")!.g("h")!.i!()`: oxfmt asks whether the last call is a member chain, which the call of
+/// `x!` is not, and breaks the line after the `=`.
+fn only_last_call_can_be_member_chain(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// For oxfmt a chain with a comment anywhere in it is not poorly breakable. Prettier only looks at

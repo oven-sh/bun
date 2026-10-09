@@ -34,6 +34,7 @@ pub type LoadLocatedPlugin<'l> =
 pub(super) struct Semantics {
     pub(super) keeps_options: bool,
     pub(super) accepts_all_plugins: bool,
+    pub(super) is_legacy: bool,
 }
 
 /// What is collected while the objects are read.
@@ -584,13 +585,17 @@ impl Config {
         Ok(reader.finish(Semantics {
             keeps_options: true,
             accepts_all_plugins: false,
+            is_legacy: false,
         }))
     }
 }
 
 impl Reader<'_> {
     /// Loads the plugins of which a rule is enabled that does not exist here.
-    fn load_js_plugins(&mut self, load: &mut LoadLocatedPlugin<'_>) -> Result<(), ConfigError> {
+    pub(super) fn load_js_plugins(
+        &mut self,
+        load: &mut LoadLocatedPlugin<'_>,
+    ) -> Result<(), ConfigError> {
         for (prefix, location) in std::mem::take(&mut self.js_locations) {
             let mut unknown = self.unknown_rules.iter();
             if !unknown.any(|id| parse_rule_id(id).0 == &prefix[..]) {
@@ -614,7 +619,9 @@ impl Reader<'_> {
             objects: self.objects,
             keeps_options: semantics.keeps_options,
             accepts_all_plugins: semantics.accepts_all_plugins,
+            is_legacy: semantics.is_legacy,
             prefers_typescript_rules: self.prefers_typescript_rules,
+            options_of_oxlint: Vec::new(),
             notes: self.notes,
             unknown_rules: self.unknown_rules,
             js_plugins: self.js_plugins,

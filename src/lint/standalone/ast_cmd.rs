@@ -1171,7 +1171,7 @@ fn differences_of_recycled<A: bun_sema::hir::Storage, B: bun_sema::hir::Storage>
         ids expr_symbol expr_parent stmt_parent type_scope pat_parent pat_symbol prop_owner member_owner param_fn
         type_param_symbol type_param_scope fn_symbol class_symbol class_owner class_scope interface_symbol alias_symbol
         enum_symbol enum_member_symbol enum_member_owner module_symbol var_stmt case_stmt type_query_operands
-        requires_scope_change stmt_flow case_fallthrough expr_kinds expr_kind_counts declared scope_node
+        requires_scope_change stmt_flow case_fallthrough expr_kinds expr_kind_counts
     }
     fn functions<S: bun_sema::hir::Storage>(of: &bun_sema::bind::BoundIn<S>) -> Vec<String> {
         let one = |it: &bun_sema::bind::FnInfo| {

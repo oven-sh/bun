@@ -58,6 +58,11 @@ fn is_all_of_expression_in_html(f: &Formatter<'_>) -> bool {
     )
 }
 
+/// `a[B].c().d()`: for Prettier `B` looks like a factory, and `.c()` stays on its line. oxfmt only looks at `a.B`.
+fn name_in_brackets_can_be_factory(f: &Formatter<'_>) -> bool {
+    !f.options().flavor.is_oxfmt()
+}
+
 /// A group ends before a member access that follows a call, and after a comment. Without either, a
 /// chain has at most one group after the head, and no call that an empty line could follow.
 fn is_one_group_after_the_head(has_inner_call: bool, f: &Formatter<'_>) -> bool {
@@ -148,7 +153,8 @@ impl<'a, 'b> MemberChain<'a, 'b> {
                     name.bytes()
                 }
                 Some((ChainMember::ComputedMember(_), ExprKind::Index { index, .. }))
-                    if matches!(index.kind(), ExprKind::Ident(_)) =>
+                    if matches!(index.kind(), ExprKind::Ident(_))
+                        && name_in_brackets_can_be_factory(f) =>
                 {
                     index.text()
                 }

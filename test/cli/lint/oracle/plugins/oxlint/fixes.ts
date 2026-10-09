@@ -1,0 +1,83 @@
+// What `--fix`, `--fix-suggestions` and `--fix-dangerously` make of a file, rule by rule: with a configuration of oxlint they change
+// what oxlint changes. `oxlint --rules -f json` names the most dangerous kind of fix that a rule can have, which says nothing about a
+// report, and for the rules that need types it is wrong: so each case was tried.
+
+export interface Case {
+  /** As it is written in `rules`. */
+  rule: string;
+  /** The name of the file, which says what language it is. */
+  file: string;
+  text: string;
+  /** It is linted with `--type-aware`. */
+  typed?: boolean;
+}
+
+export const flagSets = { fix: ["--fix"], suggestions: ["--fix-suggestions"], dangerously: ["--fix-dangerously"] };
+
+const js = (rule: string, text: string): Case => ({ rule, file: "a.js", text: text + "\n" });
+const ts = (rule: string, text: string): Case => ({ rule: `typescript/${rule}`, file: "a.ts", text: text + "\n" });
+const typed = (rule: string, text: string): Case => ({ ...ts(rule, text), typed: true });
+
+export const cases: Case[] = [
+  // The rule of oxlint has no fix of any kind.
+  js("no-lonely-if", "if (a) {} else { if (b) {} }"),
+  js("no-extra-bind", "a = function () {}.bind(b);"),
+  js("no-useless-return", "function a() { return; }"),
+  js("logical-assignment-operators", "a = a || b;"),
+  ts("method-signature-style", "interface A { b(): void }"),
+  ts("no-empty-interface", "interface A extends B {}"),
+  // It has suggestions only.
+  ts("no-inferrable-types", "let a: number = 1;"),
+  js("no-debugger", "debugger;"),
+  js("no-console", "console.log(1);"),
+  typed("non-nullable-type-assertion-style", "declare const a: string | null; export const b = a as string;"),
+  // Its fix is dangerous.
+  js("no-unneeded-ternary", "a = b ? true : false;"),
+  js("no-unneeded-ternary", "a = b ? b : c;"),
+  js("require-await", "async function a() { b(); }"),
+  js("radix", "parseInt(a);"),
+  js("no-eq-null", "a == null;"),
+  ts("no-extraneous-class", "class A {}"),
+  // It depends on the report.
+  js("no-extra-boolean-cast", "if (!!a) {}"),
+  js("no-extra-boolean-cast", "if (Boolean(a)) {}"),
+  js("eqeqeq", "a == 'b'; typeof a == 'c'; a == b;"),
+  js("operator-assignment", "a = a + b;"),
+  ts("consistent-type-definitions", "type A = { b: 1 };"),
+  js("no-unused-vars", "import a from 'a'; const b = 1; export {};"),
+  js("no-compare-neg-zero", "a === -0;"),
+  ts("explicit-member-accessibility", "class A { b = 1 }"),
+  ts("prefer-as-const", "let a: 'b' = 'b'; let c = 'd' as 'd';"),
+  // It has a fix.
+  js("no-div-regex", "a = /=b/;"),
+  js("no-var", "var a = 1; a;"),
+  js("no-var", "var a = 1; a = 2;"),
+  js("prefer-const", "let a = 1; a;"),
+  js("curly", "if (a) b();"),
+  js("no-useless-escape", "a = '\\d';"),
+  js("valid-typeof", "typeof a == undefined;"),
+  js("no-implicit-coercion", "a = !!b; a = +b;"),
+  js("func-names", "a = function () {};"),
+  js("sort-keys", "a = { c: 1, b: 2 };"),
+  js("no-negated-condition", "if (!a) { b(); } else { c(); }"),
+  // tsgolint fixes what the executable says has no fix.
+  typed("dot-notation", `declare const a: { b: 1 }; a["b"];`),
+  typed("prefer-readonly", "export class A { private b = 1; c() { return this.b; } }"),
+  typed("prefer-string-starts-ends-with", `declare const a: string; a[0] === "b";`),
+  typed("no-unnecessary-boolean-literal-compare", "declare const a: boolean; if (a === true) {}"),
+  typed("prefer-regexp-exec", `"a".match(/b/);`),
+  typed("consistent-type-exports", "type A = 1; export { A };"),
+  typed("no-unnecessary-qualifier", "namespace A { export type B = 1; const c: A.B = 1; }"),
+  typed("prefer-includes", `declare const a: string[]; a.indexOf("b") !== -1;`),
+];
+
+/** The directory of a case, which has a configuration file of its own. */
+export const directoryOf = (index: number) => `${index}-${cases[index].rule.replace(/^.*\//, "")}`;
+
+export const filesOf = ({ rule, file, text, typed }: Case): Record<string, string> => ({
+  ".oxlintrc.json": JSON.stringify({ plugins: ["typescript"], categories: { correctness: "off" }, rules: { [rule]: "error" } }),
+  [file]: text,
+  ...(typed && {
+    "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext", lib: ["esnext", "dom"] } }),
+  }),
+});

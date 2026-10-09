@@ -75,11 +75,14 @@ const env = {
   NO_COLOR: "1",
 };
 
-async function run(cwd: string, cmd: string[], extra: Record<string, string | undefined> = {}) {
+/** `timeout`: for what may never end. Less than that of the test, after which nothing ends the process. */
+async function run(cwd: string, cmd: string[], extra: Record<string, string | undefined> = {}, timeout?: number) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...cmd],
     cwd,
     env: { ...env, ...extra },
+    timeout,
+    killSignal: "SIGKILL",
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -93,8 +96,8 @@ async function run(cwd: string, cmd: string[], extra: Record<string, string | un
   return { stdout: clean(stdout), stderr: clean(stderr), exitCode };
 }
 
-const check = (dir: { toString(): string }, args: string[] = [], extra = {}) =>
-  run(String(dir), ["check", ...args], extra);
+const check = (dir: { toString(): string }, args: string[] = [], extra = {}, timeout?: number) =>
+  run(String(dir), ["check", ...args], extra, timeout);
 
 // Some sandboxes have no pseudo-terminals.
 const hasTerminal = (() => {
@@ -2340,6 +2343,22 @@ export {};
       `);
     });
 
+    test("a comparison in a function whose return type is first asked for in a loop of another function", async () => {
+      using dir = project({
+        "a.ts": `declare const r: {};
+export function many() { let re; while (re !== r) { re = rule(); } }
+function rule() { const O: void = undefined; return O === r || {} === r || O === NaN; }
+`,
+      });
+      const { stdout } = await check(dir);
+      expect(stdout.split("\n").map(line => line.slice(0, 27))).toEqual([
+        "a.ts(3,53): error TS2367: T",
+        "a.ts(3,64): error TS2839: T",
+        "a.ts(3,76): error TS2367: T",
+        "a.ts(3,76): error TS2845: T",
+      ]);
+    });
+
     test("two versions of a package that declare the same module", async () => {
       using dir = project({
         "one.d.ts": `declare module "thing" {\n  class Thing {\n    constructor(size: number);\n    one: string;\n  }\n}\n`,
@@ -2825,6 +2844,18 @@ const wrong: number = "";
       expect(stderr.split("\n")[0]).toBe(
         "error: ran out of stack in a.ts. This is a bug in Bun: errors in this file may be missing.",
       );
+      expect(exitCode).toBe(1);
+    });
+
+    test("an import of a path with 30,000 segments", async () => {
+      using dir = project({
+        "a.ts": `import "./${repeat("a/", 30_000)}a";\nexport const wrong: number = "";\n`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.split("\n").map(line => line.slice(0, 26))).toEqual([
+        "a.ts(1,8): error TS2882: C",
+        "a.ts(2,14): error TS2322: ",
+      ]);
       expect(exitCode).toBe(1);
     });
 
@@ -15498,6 +15529,8 @@ describe.concurrent("--check", () => {
         // tsc reads these until its stack overflows.
         [["@self.txt"], `error TS5083: Cannot read file '<dir>/self.txt'.`],
         [["@one.txt"], `error TS5083: Cannot read file '<dir>/one.txt'.`],
+        // So it does with a long chain of files. Here 64 can be open at a time.
+        [["@chain0.txt"], `error TS5083: Cannot read file '<dir>/chain64.txt'.`],
       ],
       "`null` unsets an option": [
         [["--strict", "false"], assignment],
@@ -15529,6 +15562,7 @@ describe.concurrent("--check", () => {
         "open.txt": `--strict "false\n`,
         "lines.txt": `--strict\nfalse`,
         "self.txt": `@self.txt\n`,
+        ...Object.fromEntries(Array.from({ length: 70 }, (_, i) => [`chain${i}.txt`, `@chain${i + 1}.txt\n`])),
         "one.txt": `@two.txt\n`,
         "two.txt": `@one.txt\n`,
         "empty/not-a-tsconfig.json": `{}\n`,
@@ -16832,6 +16866,35 @@ describe.concurrent("--check", () => {
         expect(exitCode).toBe(1);
       },
     );
+
+    // A parser as PEG.js generates it, as in the release bundle of Yarn: rules that call each other in a ring and collect
+    // what they get in arrays, in loops. It took seven times as long for each alternative of the last rule.
+    test("a generated parser with a rule of 16 alternatives", async () => {
+      let tried = "(J = r, J !== r ? (O = J) : (W = O, O = r))";
+      for (const _ of range(15)) tried = `(J = r, J !== r ? (O = J) : (W = O, O = r), O === r && ${tried})`;
+      using dir = project({
+        "index.ts": `export function parse() {
+  var r = {}, W = 0, A = function (O: unknown) {}, A2 = function (O: unknown, J: unknown) {};
+  function start() { many(); }
+  function list() { var O, re, de; if (re = []) for (; de !== r;) re.push(de), de = item(); else re = r; return O; }
+  function item() { var J, re; return re = many(), J = A(re); }
+  function many() { var J, re; for (; re !== r;) re = choice(); return J !== r && (J = A(J)); }
+  function choice() { var O, J; return O === r && (J = rule()); }
+  function rule() { var O, J, re, Ke; return Ke = list(), J = A2(re, Ke), O = J, O === r && ${tried}; }
+  return start();
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir, [], {}, 30_000);
+      expect(stdout.split("\n").flatMap(line => /error TS7023: '(\w+)' implicitly/.exec(line)?.[1] ?? [])).toEqual([
+        "list",
+        "item",
+        "many",
+        "choice",
+        "rule",
+      ]);
+      expect(exitCode).toBe(1);
+    }, 60_000);
 
     test("variables in a loop that each need the one before", async () => {
       const n = size / 2;

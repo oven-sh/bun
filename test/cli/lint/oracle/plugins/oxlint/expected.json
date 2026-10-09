@@ -654,8 +654,7 @@
   "a.js:7:58 eslint(require-await)",
   "a.js:7:76 eslint(require-await)",
   "a.js:7:89 eslint(require-await)",
-  "a.js:8:16 eslint(require-await)",
-  "a.js:9:16 eslint(require-await)"
+  "a.js:8:16 eslint(require-await)"
  ],
  "prefer-promise-reject-errors/what-is-promise": [
   "a.ts:5:1 eslint(prefer-promise-reject-errors)",
@@ -730,8 +729,7 @@
  "no-unused-vars/parameters": [
   "a.js:11:21 eslint(no-unused-vars)",
   "a.js:12:33 eslint(no-unused-vars)",
-  "a.js:7:19 eslint(no-unused-vars)",
-  "a.js:8:19 eslint(no-unused-vars)"
+  "a.js:7:19 eslint(no-unused-vars)"
  ],
  "no-unused-vars/rest-siblings": [
   "a.js:11:21 eslint(no-unused-vars)",
@@ -812,7 +810,9 @@
   "a.ts:14:3 typescript(prefer-for-of)",
   "a.ts:2:6 typescript(prefer-for-of)",
   "a.ts:3:6 typescript(prefer-for-of)",
-  "a.ts:4:6 typescript(prefer-for-of)"
+  "a.ts:4:6 typescript(prefer-for-of)",
+  "a.ts:5:6 typescript(prefer-for-of)",
+  "a.ts:6:6 typescript(prefer-for-of)"
  ],
  "triple-slash-reference/top-level-imports": [
   "b.ts:1:1 typescript(triple-slash-reference)",
@@ -881,7 +881,6 @@
   "a.ts:6:22 typescript(unbound-method)"
  ],
  "no-meaningless-void-operator/by-the-type": [
-  "a.ts:10:1 typescript(no-meaningless-void-operator)",
   "a.ts:3:1 typescript(no-meaningless-void-operator)",
   "a.ts:4:1 typescript(no-meaningless-void-operator)",
   "a.ts:7:1 typescript(no-meaningless-void-operator)",
@@ -1302,5 +1301,57 @@
   "a.ts:4:10 typescript(consistent-indexed-object-style)",
   "a.ts:5:12 typescript(consistent-indexed-object-style)",
   "a.ts:6:10 typescript(consistent-indexed-object-style)"
- ]
+ ],
+ "accessor-pairs/place": [
+  "a.js:1:11 eslint(accessor-pairs)",
+  "a.js:2:15 eslint(accessor-pairs)",
+  "a.js:2:34 eslint(accessor-pairs)",
+  "a.js:3:12 eslint(accessor-pairs)"
+ ],
+ "max-params/what-counts": [
+  "a.ts:2:11 eslint(max-params)",
+  "a.ts:3:30 eslint(max-params)",
+  "a.ts:3:57 eslint(max-params)",
+  "a.ts:3:84 eslint(max-params)",
+  "a.ts:5:10 eslint(max-params)",
+  "a.ts:6:19 eslint(max-params)"
+ ],
+ "new-cap/names": [
+  "a.js:3:5 eslint(new-cap)",
+  "a.js:4:12 eslint(new-cap)",
+  "a.js:5:9 eslint(new-cap)"
+ ],
+ "capitalized-comments/directives": [
+  "a.js:7:1 eslint(capitalized-comments)"
+ ],
+ "prefer-const/place": [
+  "a.ts:1:5 eslint(prefer-const)",
+  "a.ts:2:5 eslint(prefer-const)",
+  "a.ts:4:5 eslint(prefer-const)",
+  "a.ts:6:5 eslint(prefer-const)",
+  "a.ts:6:8 eslint(prefer-const)"
+ ],
+ "max-params/number": [
+  "a.ts:1:11 eslint(max-params)"
+ ],
+ "no-empty-function/second-names": [
+  "a.ts:2:14 eslint(no-empty-function)",
+  "a.ts:3:31 eslint(no-empty-function)",
+  "a.ts:3:63 eslint(no-empty-function)"
+ ],
+ "options/limits-on-arrays": [
+  "a.js:1:1 eslint(no-console)",
+  "a.js:2:3 eslint(eqeqeq)"
+ ],
+ "no-unused-vars/what-is-read-for-something-else": [
+  "a.js:10:7 eslint(no-unused-vars)",
+  "a.js:14:5 eslint(no-unused-vars)",
+  "a.js:17:5 eslint(no-unused-vars)",
+  "a.js:3:5 eslint(no-unused-vars)",
+  "a.js:4:5 eslint(no-unused-vars)",
+  "a.js:5:5 eslint(no-unused-vars)",
+  "a.js:6:5 eslint(no-unused-vars)",
+  "a.js:7:5 eslint(no-unused-vars)"
+ ],
+ "prefer-for-of/the-index-in-the-array": []
 }

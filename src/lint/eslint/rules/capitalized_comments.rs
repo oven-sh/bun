@@ -76,6 +76,12 @@ fn is_maybe_url(value: &[u8]) -> bool {
 }
 
 /// It has a token or a comment before it and one after it, on the lines where it starts and ends.
+/// What oxlint passes over and ESLint does not.
+fn oxlint_is_directive(value: &[u8]) -> bool {
+    let rest = text::trim_start(value);
+    [&b"oxlint-"[..], b"prettier-ignore", b"oxfmt-ignore"].iter().any(|it| rest.starts_with(it))
+}
+
 fn is_inline_comment<'a>(file: &'a File<'a>, comment: Token<'a>) -> bool {
     let previous = file.tokens_before(comment).with_comments().next();
     let next = file.tokens_after(comment).with_comments().next();
@@ -113,6 +119,7 @@ impl CapitalizedComments {
         };
         if *expected == *letter
             || ast_utils::matches_comments_ignore_pattern(value)
+            || cx.language().is_oxlint && oxlint_is_directive(value)
             || (options.ignore_pattern.as_ref()).is_some_and(|it| it.test(&without_asterisks(value)))
             || options.ignore_inline_comments && is_inline_comment(cx.file(), comment)
             || options.ignore_consecutive_comments && is_consecutive_comment(cx.file(), comment)

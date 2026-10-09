@@ -116,7 +116,7 @@ fn to_data(d: &Diagnostic, style: &Style, says_code: bool, shown: usize) -> bun_
     // the preceding line would be mistaken for the error's line.
     // Nor for lines that are not hand-written, which fill the screen.
     let is_blank = lines.last().is_none_or(|line| line.trim_ascii().is_empty());
-    let is_hidden = is_blank || lines.iter().any(|line| line.len() > 1000);
+    let is_hidden = is_blank || lines.iter().any(|line| line.len() > crate::MAX_SHOWN_LINE);
     let lines = if is_hidden { &[] } else { lines };
     let location = (!d.path.is_empty()).then(|| bun_ast::Location {
         file: Vec::from(display_path(&d.path, style)).into(),
@@ -326,7 +326,11 @@ fn write_agent(out: &mut Vec<u8>, d: &Diagnostic, duplicates: &[&Diagnostic], st
     out.extend_from_slice(b">\n");
     out.extend_from_slice(&d.text);
     out.push(b'\n');
-    if !d.source.is_empty() {
+    let has_long_line = d
+        .source
+        .iter()
+        .any(|line| line.len() > crate::MAX_SHOWN_LINE);
+    if !d.source.is_empty() && !has_long_line {
         out.extend_from_slice(b"<source>\n");
         // For an error that spans many lines, only its start. Leading and trailing blank lines
         // carry no information.

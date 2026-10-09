@@ -36,7 +36,7 @@ fn is_destructuring_pattern(pattern: Pat) -> bool {
 
 /// Upstream goes down from each of these places to the optional chains. This is the way up.
 ///
-/// oxlint 1.80 sees through what only concerns types, as in `(a?.b as T).c` and `(a?.b)!.c`. It says nothing about a
+/// oxlint 1.87 sees through what only concerns types, as in `(a?.b as T).c` and `(a?.b)!.c`. It says nothing about a
 /// spread among arguments, about the default value of a parameter and about `#a in b?.c`.
 fn usage_of(e: Expr<'_>, is_oxlint: bool) -> Usage<'_> {
     let unsafe_if = |is_unsafe: bool| if is_unsafe { Usage::Unsafe } else { Usage::Safe };

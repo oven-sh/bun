@@ -41,7 +41,7 @@ fn irregular_at(text: &[u8]) -> Option<(Irregular, usize)> {
     })
 }
 
-/// What `skipJSXText`, `skipRegExps` and `skipTemplates` are where the options do not say: on in oxlint 1.80.
+/// What `skipJSXText`, `skipRegExps` and `skipTemplates` are where the options do not say: on in oxlint 1.87.
 fn skips_by_default(file: &File) -> bool {
     file.language().is_oxlint
 }

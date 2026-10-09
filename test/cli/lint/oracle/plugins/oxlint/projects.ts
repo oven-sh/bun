@@ -495,7 +495,7 @@ export const projects: Project[] = [
   },
   {
     name: "require-await/places",
-    about: "oxlint_place; await using is not seen",
+    about: "oxlint_place",
     config: rules([], { "require-await": "error" }),
     files: {
       "a.js": lines(
@@ -672,7 +672,7 @@ export const projects: Project[] = [
   },
   {
     name: "no-unused-vars/parameters",
-    about: "function_of_plain_parameter, last_used_arg: a default value changes nothing, and a rest parameter does not count",
+    about: "function_of_plain_parameter, last_used_arg: a default value changes nothing",
     config: unused,
     files: {
       "a.js": lines(
@@ -915,7 +915,7 @@ export const projects: Project[] = [
   },
   {
     name: "prefer-for-of/arrays-with-a-name",
-    about: "oxlint_knows_name_of; what is between the parentheses is printed",
+    about: "oxlint_looks_at; what is between the parentheses is printed",
     config: rules(["typescript"], { "typescript/prefer-for-of": "error" }),
     files: {
       "a.ts": lines(
@@ -1079,7 +1079,7 @@ export const projects: Project[] = [
   },
   {
     name: "no-meaningless-void-operator/by-the-type",
-    about: "whatever the operand is",
+    about: "whatever the operand is, unless it is an assignment",
     config: rules(["typescript"], { "typescript/no-meaningless-void-operator": "error" }),
     typed: true,
     files: {
@@ -1684,5 +1684,100 @@ export const projects: Project[] = [
     about: "the index signature",
     config: rules(["typescript"], { "typescript/consistent-indexed-object-style": "error" }),
     files: { "a.ts": lines(`interface A {`, `  [b: string]: 1;`, `}`, `let c: { [b: string]: 1 };`, `type D = { readonly [b: string]: 1 };`, `type E = { [F in string]: 1 };`) },
+  },
+  {
+    name: "accessor-pairs/place",
+    about: "the key",
+    config: rules([], { "accessor-pairs": "error" }),
+    files: { "a.js": lines(`a = { set b(c) {} };`, `class D { set e(c) {} static set f(c) {} }`, `a = { set ["g"](c) {} };`) },
+  },
+  {
+    name: "max-params/what-counts",
+    about: "a rest parameter does not count; a method without a body is a function",
+    config: rules([], { "max-params": ["error", 2] }),
+    files: { "a.ts": lines(`function a(b: 1, c: 2, ...d: 3[]) {}`, `function e(b: 1, c: 2, d: 3, ...f: 4[]) {}`, `abstract class G { abstract h(b: 1, c: 2, d: 3): void; i(b: 1, c: 2, d: 3): void; i(b: 1, c: 2, d?: 3) {} }`, `interface J { k(b: 1, c: 2, d: 3): void }`, `type L = (b: 1, c: 2, d: 3) => void;`, `declare function m(b: 1, c: 2, d: 3): void;`) },
+  },
+  {
+    name: "new-cap/names",
+    about: "the names of the built-in functions count, whatever they refer to",
+    config: rules([], { "new-cap": "error" }),
+    files: { "a.js": lines(`const { Symbol, Foo } = primordials;`, `a = Symbol("b");`, `a = Foo("b");`, `a = c.Date.UTC(1);`, `a = new d();`) },
+  },
+  {
+    name: "capitalized-comments/directives",
+    about: "oxlint_is_directive",
+    config: rules([], { "capitalized-comments": "error" }),
+    files: { "a.js": lines(`// prettier-ignore`, `a();`, `// oxfmt-ignore`, `a();`, `// oxlint-disable-next-line no-undef`, `a();`, `// lower`, `a();`, `// eslint-disable-next-line no-undef`, `a();`) },
+  },
+  {
+    name: "prefer-const/place",
+    about: "the declaration",
+    config: rules([], { "prefer-const": "error" }),
+    files: { "a.ts": lines(`let a = 1;`, `let b;`, `b = 2;`, `let c: number;`, `c = 3;`, `let d, e;`, `d = 4;`, `e = 5;`, `export { a, b, c, d, e };`) },
+  },
+  {
+    name: "max-params/number",
+    about: "the options of ESLint's rule, which typescript-eslint's schema refuses",
+    config: rules([], { "max-params": ["error", 1] }),
+    files: { "a.ts": lines(`function a(b: 1, c: 2) {}`, `function d(b: 1) {}`) },
+  },
+  {
+    name: "no-empty-function/second-names",
+    about: "oxlint's second names of the kinds",
+    config: rules([], { "no-empty-function": ["error", { allow: ["async-functions", "getter", "generator-methods", "constructor", "privateConstructors"] }] }),
+    files: { "a.ts": lines(`async function a() {}`, `function b() {}`, `class C { get d() {} set d(e) {} *f() {} constructor() {} g() {} }`, `class H { private constructor() {} }`) },
+  },
+  {
+    name: "options/limits-on-arrays",
+    about: "without_limits_on_arrays",
+    config: rules([], {
+      "no-console": ["error", { allow: [] }],
+      "eqeqeq": ["error", "smart", { null: "ignore" }],
+      "no-invalid-regexp": ["error", { allowConstructorFlags: ["a", "a"] }],
+    }),
+    files: { "a.js": lines(`console.log(1);`, `a == b;`, `a == null;`, `typeof a == "c";`, `new RegExp("d", "a");`) },
+  },
+  {
+    name: "no-unused-vars/what-is-read-for-something-else",
+    about: "oxlint_is_self_reassignment, oxlint_is_self_call, oxlint_nearest_function",
+    config: unused,
+    files: {
+      "a.js": lines(
+        `let a = 0; a = new a;`,
+        `let b = 0; b = new A(b);`,
+        `let c = {}; c = c.d;`,
+        `let e = {}; e = f[e];`,
+        `let g = 0; g = g ? 1 : 2;`,
+        `let h = 0; h = h && 1;`,
+        `let i = 0; i = f || i || f;`,
+        `let j = 0; switch (j) { case 1: j = 2; }`,
+        `let k = 0; switch (f) { case k: k = 2; }`,
+        `const l = function () { l(); };`,
+        `const m = f(() => { m(); });`,
+        `const n = new A(() => { n(); });`,
+        `const o = (() => { o(); })();`,
+        `let p; p = () => { p(); };`,
+        `let q; f = q = () => { q(); };`,
+        `let r; f(r = () => { r(); });`,
+        `let s = () => { return s = s + 1; };`,
+        `let t = 0; f.g = () => { return t = t + 1; };`,
+        `let u = 0; f(() => { return u = u + 1; });`,
+        `let v = 0; (() => { return v = v + 1; })();`,
+      ),
+    },
+  },
+  {
+    name: "prefer-for-of/the-index-in-the-array",
+    about: "oxlint_looks_at",
+    config: rules(["typescript"], { "typescript/prefer-for-of": "error" }),
+    files: {
+      "a.ts": lines(
+        `for (let i = 0; i < i.length; i++) {}`,
+        `for (let i = 0; i < a[i].length; i++) {}`,
+        `for (var i = 0; i < a.length; i++) { for (var j = 0; j < a[i].length; j++) { a[i][j]; } }`,
+        `for (let i = 0; i < this.#b.length; i++) {}`,
+        `for (let i = 0; i < a?.b.length; i++) {}`,
+      ),
+    },
   },
 ];

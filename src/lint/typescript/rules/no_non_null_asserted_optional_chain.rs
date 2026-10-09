@@ -10,7 +10,7 @@ const NO_NON_NULL_OPTIONAL_CHAIN: Message = Message::new(
 const SUGGEST_REMOVING_NON_NULL: Message =
     Message::new("suggestRemovingNonNull", "You should remove the non-null assertion.");
 
-/// What oxlint 1.80 does: each `!` is reported by itself, where it is, and what only concerns types is seen through, so
+/// What oxlint 1.87 does: each `!` is reported by itself, where it is, and what only concerns types is seen through, so
 /// that `(a?.b as T)!` is reported too.
 fn check_as_oxlint<'a>(e: Expr<'a>, operand: Expr<'a>, cx: &mut Cx<'a, NoNonNullAssertedOptionalChain>) {
     let mut inner = operand;

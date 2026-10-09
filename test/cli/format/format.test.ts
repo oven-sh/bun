@@ -39,6 +39,8 @@ async function format(files: Record<string, string>, args: string[], options: Op
     stdout: normalizeBunSnapshot(stdout, String(dir)),
     stderr: normalizeBunSnapshot(stderr, String(dir)),
     exitCode,
+    /** The seconds of the processor that it took: on a busy machine the clock says little. */
+    cpu: Number(proc.resourceUsage()?.cpuTime.total ?? 0) / 1e6,
     files: Object.fromEntries((options.reads ?? []).map(name => [name, read(name)])),
   };
 }
@@ -442,9 +444,9 @@ describe.concurrent("bun format", () => {
   });
 
   test("other languages are left alone, which is an error at the end, or a warning with --allow-unsupported", async () => {
-    const files = { "a.mdx": "#   a\n", "b.wxs": "var a   = 1\n", "c.js": ugly };
+    const files = { "a.mdx": "#   a\n", "b.mdx": "#   b\n", "c.js": ugly };
     const reads = Object.keys(files);
-    const text = "2 files are in a language that bun format does not support yet, and left as they are: 1 .mdx, 1 .wxs";
+    const text = "2 files are in a language that bun format does not support yet, and left as they are: 2 .mdx";
     const result = await format(files, [], { reads });
     expect(result.files).toEqual({ ...files, "c.js": formatted });
     expect(result.stderr.trimEnd().split("\n").at(-1)).toBe(
@@ -460,20 +462,32 @@ describe.concurrent("bun format", () => {
     expect(allowed.exitCode).toBe(0);
   });
 
-  test("what oxfmt formats and bun format cannot is named: TOML, and Svelte if the configuration has svelte", async () => {
-    const files = { "a.svelte": "<p   >a</p>\n", "b.toml": "a   = 1\n", "Cargo.lock": "a   = 1\n", "c.js": ugly };
+  test("with an .oxfmtrc.json TOML is formatted, and Svelte, which bun format cannot format, is named if the configuration has svelte", async () => {
+    const files = {
+      "a.svelte": "<p   >a</p>\n",
+      "b.toml": "a   = 1\n",
+      "Pipfile": "[a]\nb=[ 1,2 ]\n",
+      "Cargo.lock": "a   = 1\n",
+      "c.js": ugly,
+    };
+    const after = { ...files, "b.toml": "a = 1\n", "Pipfile": "[a]\nb = [1, 2]\n", "c.js": formatted };
     const reads = Object.keys(files);
     const result = await format({ ...files, ".oxfmtrc.json": '{ "svelte": {} }\n' }, [], { reads });
-    expect(result.files).toEqual({ ...files, "c.js": formatted });
+    expect(result.files).toEqual(after);
     expect(result.stderr).toContain(
-      "[error] 2 files are in a language that bun format does not support yet, and left as they are: 1 .svelte, 1 .toml",
+      "[error] 1 file is in a language that bun format does not support yet, and left as they are: 1 .svelte",
     );
     expect(result.exitCode).toBe(2);
-    const without = await format({ ...files, ".oxfmtrc.json": "{}\n" }, ["--check", "--allow-unsupported"], { reads });
-    expect(without.stderr.split("\n")).toContain(
-      "[warn] 1 file is in a language that bun format does not support yet, and left as they are: 1 .toml",
-    );
-    expect(without.exitCode).toBe(1);
+    const without = await format({ ...files, ".oxfmtrc.json": "{}\n" }, [], { reads });
+    expect(without.files).toEqual(after);
+    expect(without.stderr).not.toContain("does not support yet");
+    expect(without.exitCode).toBe(0);
+    // Prettier has no TOML.
+    expect(await different(files, [])).toEqual(["c.js"]);
+    const broken = await format({ "b.toml": "a = = 1\n", ".oxfmtrc.json": "{}\n" }, [], { reads: ["b.toml"] });
+    expect(broken.files["b.toml"]).toBe("a = = 1\n");
+    expect(broken.stderr).toContain("b.toml: SyntaxError: It is not TOML.");
+    expect(broken.exitCode).toBe(2);
   });
 
   test(".prettierignore and .gitignore make no difference between upper and lower case, as for Prettier", async () => {
@@ -541,7 +555,7 @@ describe.concurrent("bun format", () => {
     expect(result.exitCode).toBe(0);
     const withPlugin = await format(
       { ".prettierrc": `{ "plugins": ["prettier-plugin-tailwindcss"], ${unknown} }`, "a.js": ugly },
-      ["a.js"],
+      ["--allow-unsupported", "a.js"],
       { reads: ["a.js"] },
     );
     expect(withPlugin.files["a.js"]).toBe(formatted);
@@ -553,6 +567,188 @@ describe.concurrent("bun format", () => {
     expect(oxfmt.files["a.js"]).toBe(formatted);
     expect(oxfmt.stderr).not.toContain("nonsense");
     expect(oxfmt.exitCode).toBe(0);
+  });
+
+  test("a plugin that may print files in another way: they are left as they are, which is an error, unless --allow-unsupported", async () => {
+    const files = {
+      ".prettierrc": '{ "plugins": ["prettier-plugin-brace-style", "prettier-plugin-svelte", "./own.js"] }\n',
+      "a.js": ugly,
+      "b.svelte": "<p   >b</p>\n",
+      "other/.prettierrc": "{}\n",
+      "other/c.js": ugly,
+    };
+    const reads = ["a.js", "b.svelte", "other/c.js"];
+    const result = await format(files, [], { reads });
+    expect(result.files).toEqual({ "a.js": ugly, "b.svelte": files["b.svelte"], "other/c.js": formatted });
+    expect(result.stderr).toContain(
+      "[error] 1 file is left as they are: the configuration names plugins that bun format does not have, and that may print them in another way: prettier-plugin-brace-style, ./own.js. With --allow-unsupported they are formatted without.",
+    );
+    expect(result.stderr).toContain("[error] 1 file is in a language that bun format does not support yet");
+    expect(result.exitCode).toBe(2);
+    const allowed = await format(files, ["--allow-unsupported"], { reads });
+    expect(allowed.files).toEqual({ "a.js": formatted, "b.svelte": files["b.svelte"], "other/c.js": formatted });
+    expect(allowed.stderr).toContain("[warn] Plugins are not supported");
+    expect(allowed.exitCode).toBe(0);
+    const flag = await format({ "a.js": ugly }, ["--plugin", "prettier-plugin-brace-style"], { reads: ["a.js"] });
+    expect(flag.files["a.js"]).toBe(ugly);
+    expect(flag.stderr).toContain("bun format does not have the plugin prettier-plugin-brace-style");
+    expect(flag.exitCode).toBe(2);
+  });
+
+  test("a plugin that only adds a language: the rest is formatted, and the files of that language are counted", async () => {
+    const files = {
+      ".prettierrc": '{ "plugins": ["prettier-plugin-astro"] }\n',
+      "a.js": ugly,
+      "b.astro": "<p   >b</p>\n",
+      "c.svelte": "<p   >c</p>\n",
+    };
+    const result = await format(files, [], { reads: ["a.js", "b.astro", "c.svelte"] });
+    expect(result.files).toEqual({ "a.js": formatted, "b.astro": files["b.astro"], "c.svelte": files["c.svelte"] });
+    expect(result.stderr).toContain("and left as they are: 1 .astro.");
+    expect(result.exitCode).toBe(2);
+  });
+
+  test("which names are read: Prettier's, or oxfmt's with an .oxfmtrc.json, which tells upper case from lower case", async () => {
+    const script = "a  ;\n";
+    const json = '{"a":   1}\n';
+    const files = {
+      "a.es6": script,
+      "b.jsm": script,
+      "Jakefile": script,
+      "c.start.frag": script,
+      "d.wxs": script,
+      "e.js.flow": script,
+      "f.4DForm": json,
+      "g.JSON": json,
+      "h.MD": "#   h\n",
+      "i.yaml.sed": "a:   1\n",
+      "j.frag": script,
+    };
+    expect(await different(files, [])).toEqual([
+      "a.es6",
+      "b.jsm",
+      "c.start.frag",
+      "d.wxs",
+      "e.js.flow",
+      "g.JSON",
+      "h.MD",
+      "i.yaml.sed",
+      "Jakefile",
+    ]);
+    expect(await different({ ...files, ".oxfmtrc.json": "{}\n" }, [])).toEqual([
+      "Jakefile",
+      "a.es6",
+      "b.jsm",
+      "c.start.frag",
+      "f.4DForm",
+    ]);
+  });
+
+  test("below an .oxfmtrc.json files are printed as oxfmt prints them, also if the run starts above it", async () => {
+    const files = {
+      "a.ts": "let a = // comment\n{\n  b: 1\n}\n",
+      "packages/c/.oxfmtrc.json": "{}\n",
+      "packages/c/a.ts": "let a = // comment\n{\n  b: 1\n}\n",
+    };
+    const result = await format(files, [], { reads: ["a.ts", "packages/c/a.ts"] });
+    expect(result.files).toEqual({
+      "a.ts": "let a =\n  // comment\n  {\n    b: 1,\n  };\n",
+      "packages/c/a.ts": "let a = // comment\n  {\n    b: 1,\n  };\n",
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("with an .oxfmtrc.json a file with @flow is not read as Flow, as oxfmt does not", async () => {
+    const files = { "a.js": "// @flow\nfunction f(a: number) {}\n", "b.js": "// @flow\nf( 1 )\n" };
+    const reads = Object.keys(files);
+    const result = await format({ ...files, ".oxfmtrc.json": "{}\n" }, [], { reads });
+    expect(result.files).toEqual({ "a.js": files["a.js"], "b.js": "// @flow\nf(1);\n" });
+    expect(result.stderr).toContain("a.js: SyntaxError");
+    expect(result.exitCode).toBe(2);
+    expect((await format(files, [], { reads })).exitCode).toBe(0);
+  });
+
+  describe("without a configuration file", () => {
+    // 90 columns: one line for oxfmt, whose lines are 100 wide.
+    const asOxfmt = `const value = someFunction(argumentNumberOne, argumentNumberTwo, argumentNumberThree);\n`;
+    const asPrettier = `const value = someFunction(\n  argumentNumberOne,\n  argumentNumberTwo,\n  argumentNumberThree,\n);\n`;
+    const after = async (files: Record<string, string>, args: string[] = []) =>
+      (await format({ "a.ts": asOxfmt, ...files }, args, { reads: ["a.ts"] })).files["a.ts"];
+
+    test("a project that depends on oxfmt, or Vite+, and not on Prettier is formatted like oxfmt does", async () => {
+      expect(await after({})).toBe(asPrettier);
+      expect(await after({ "package.json": '{ "devDependencies": { "oxfmt": "0.72.0" } }\n' })).toBe(asOxfmt);
+      expect(await after({ "package.json": '{ "dependencies": { "vite-plus": "1.0.0" } }\n' })).toBe(asOxfmt);
+      expect(
+        await after({ "package.json": '{ "devDependencies": { "oxfmt": "0.72.0", "prettier": "3.9.9" } }\n' }),
+      ).toBe(asPrettier);
+      // A configuration file says more than that.
+      expect(
+        await after({ "package.json": '{ "devDependencies": { "oxfmt": "0.72.0" } }\n', ".prettierrc": "{}\n" }),
+      ).toBe(asPrettier);
+    });
+
+    test("--flavor says which", async () => {
+      expect(await after({}, ["--flavor", "oxfmt"])).toBe(asOxfmt);
+      expect(
+        await after({ "package.json": '{ "devDependencies": { "oxfmt": "0.72.0" } }\n' }, ["--flavor=prettier"]),
+      ).toBe(asPrettier);
+      const result = await format({ "a.ts": asOxfmt }, ["--flavor", "biome"]);
+      expect(result.stderr).toContain('Invalid --flavor value. Expected "oxfmt" or "prettier", but received "biome".');
+      expect(result.exitCode).toBe(2);
+    });
+
+    test("--config with a name that has oxfmt in it is a configuration file of oxfmt", async () => {
+      const files = { "config/oxfmtrc.json": '{ "ignorePatterns": ["b.ts"] }\n', "b.ts": ugly };
+      const result = await format({ "a.ts": asOxfmt, ...files }, ["--config", "config/oxfmtrc.json"], {
+        reads: ["a.ts", "b.ts"],
+      });
+      expect(result.files).toEqual({ "a.ts": asOxfmt, "b.ts": ugly });
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("--init writes an .oxfmtrc.json, as oxfmt does, and not over one that is there", async () => {
+      const result = await format({ "a.ts": asOxfmt }, ["--init"], { reads: [".oxfmtrc.json", "a.ts"] });
+      expect(result.files).toEqual({ ".oxfmtrc.json": '{\n  "ignorePatterns": []\n}\n', "a.ts": asOxfmt });
+      expect(result.stdout).toBe("Created `.oxfmtrc.json`.");
+      expect(result.exitCode).toBe(0);
+      const again = await format({ ".oxfmtrc.jsonc": "{}\n" }, ["--init"], { reads: [".oxfmtrc.jsonc"] });
+      expect(again.files[".oxfmtrc.jsonc"]).toBe("{}\n");
+      expect(again.stderr).toContain("A configuration file of oxfmt already exists.");
+      expect(again.exitCode).toBe(1);
+    });
+  });
+
+  test("an oxfmt.config.ts that imports defineConfig from oxfmt works without the package", async () => {
+    const files = {
+      "oxfmt.config.ts": 'import { defineConfig } from "oxfmt";\nexport default defineConfig({ semi: false });\n',
+      "a.js": "a;\n",
+    };
+    const result = await format(files, ["a.js"], { reads: ["a.js"] });
+    expect(result.stderr).toBe("");
+    expect(result.files["a.js"]).toBe("a\n");
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("sortTailwindcss, which has no effect yet, is an error at the end of the run, or a warning with --allow-unsupported", async () => {
+    const files = { ".oxfmtrc.json": '{ "sortTailwindcss": {} }\n', "a.js": ugly };
+    const result = await format(files, [], { reads: ["a.js"] });
+    expect(result.files["a.js"]).toBe(formatted);
+    expect(result.stderr).toContain(
+      "[error] sortTailwindcss is not supported yet, and has no effect. With --allow-unsupported this is a warning.",
+    );
+    expect(result.exitCode).toBe(2);
+    const allowed = await format(files, ["--allow-unsupported"], { reads: ["a.js"] });
+    expect(allowed.stderr).toContain("[warn] sortTailwindcss is not supported yet, and has no effect.");
+    expect(allowed.exitCode).toBe(0);
+    const off = await format({ ...files, ".oxfmtrc.json": '{ "sortTailwindcss": false }\n' }, [], { reads: ["a.js"] });
+    expect(off.stderr).not.toContain("sortTailwindcss");
+    expect(off.exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("a named pipe with the name of a script is passed over, as by Prettier", async () => {
+    const before = (dir: string) => expect(Bun.spawnSync(["mkfifo", join(dir, "pipe.js")]).exitCode).toBe(0);
+    expect(await different({ "a.js": ugly }, [], { before })).toEqual(["a.js"]);
   });
 
   test("--experimental-cli is accepted", async () => {
@@ -705,6 +901,36 @@ describe.concurrent("bun format", () => {
     expect(result.exitCode).toBe(2);
   });
 
+  test.each([
+    "function f(x: number): string",
+    "function* g()",
+    "class A { m(): void }",
+    "x = { m(): void }",
+    "export default function f(): void",
+  ])("Flow: a function without a body is a syntax error: %j", async code => {
+    const files = { "a.js": `// @flow\n${code}\n` };
+    const result = await format(files, ["a.js"], { reads: ["a.js"] });
+    expect(result.files).toEqual(files);
+    expect(result.stderr).toContain("[error] a.js: SyntaxError: ");
+    expect(result.exitCode).toBe(2);
+  });
+
+  test("Flow: a function that is declared has no body", async () => {
+    const code = `// @flow
+declare function f(x: number): string;
+declare class A {
+  m(): void;
+}
+declare module "m" {
+  declare function g(): void;
+}
+declare export function h(): void;
+`;
+    const result = await format({ "a.js": code }, ["--check", "a.js"]);
+    expect(result.stderr).not.toContain("a.js");
+    expect(result.exitCode).toBe(0);
+  });
+
   test("the modifiers of JavaScript where they can be", async () => {
     const code = `class A {
   static async *a() {}
@@ -851,15 +1077,23 @@ try {
     ],
     ["end tags in a string of TypeScript", "a.vue", `<script lang="ts">\na = "${times("</ ", 60_000)}";\n</script>\n`],
     ["blanks in v-for", "a.vue", `<template><a v-for="a${times(" ", 60_000)}b"></a></template>\n`],
-  ])("HTML does not take quadratic time: %s", async (_, name, text) => {
-    const result = await format({ [name]: text }, ["--check", name]);
-    expect(result.stderr).not.toContain("[error]");
-    expect(result.exitCode).toBe(1);
-  });
+  ])(
+    "HTML does not take quadratic time: %s",
+    async (_, name, text) => {
+      const result = await format({ [name]: text }, ["--check", name]);
+      expect(result.stderr).not.toContain("[error]");
+      expect(result.cpu).toBeLessThan(5);
+      expect(result.exitCode).toBe(1);
+    },
+    60_000,
+  );
 
   test("an e after a dot or a digit is a letter like another, unless it is an exponent of zero", async () => {
     const result = await format(
-      { "a.html": "<script>e. e</script>\n", "b.vue": "<script>\nmodule  .  exports = a1.e + 1e0 + 1.e-00\n</script>\n" },
+      {
+        "a.html": "<script>e. e</script>\n",
+        "b.vue": "<script>\nmodule  .  exports = a1.e + 1e0 + 1.e-00\n</script>\n",
+      },
       [],
       { reads: ["a.html", "b.vue"] },
     );

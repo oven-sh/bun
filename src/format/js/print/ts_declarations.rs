@@ -389,7 +389,7 @@ fn type_alias_layout<'a>(
         }
         TypeKind::Union(_) if type_alias_comments_stay_behind_operator(f) => false,
         _ if type_alias_comments_stay_behind_operator(f)
-            && f.comments().has_comment_before(ty.span().start) =>
+            && f.comments().has_leading_own_line_comment(ty.span().start) =>
         {
             true
         }

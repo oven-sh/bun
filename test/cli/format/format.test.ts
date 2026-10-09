@@ -478,6 +478,20 @@ describe.concurrent("bun format", () => {
     expect(await different(files, ["(src|test)/**/*.ts"])).toEqual(["src/a.ts", "test/x/b.ts"]);
   });
 
+  test("ignorePatterns that ignore *.* do not ignore the directory that is searched", async () => {
+    const files = {
+      ".oxfmtrc.json": '{ "ignorePatterns": ["*.*", "!*.css", "!*.ts"] }\n',
+      "a.ts": ugly,
+      "app/b.ts": ugly,
+      "app/c.js": ugly,
+      "app/d.css": "a{}\n",
+      "e.md": "#   e\n",
+    };
+    for (const args of [[], ["."], ["app", "a.ts"]]) {
+      expect(await different(files, args)).toEqual(["a.ts", "app/b.ts", "app/d.css"]);
+    }
+  });
+
   describe("a parser that Prettier does not have", () => {
     const files = {
       "a.svelte": '<p   class="a">hi</p>\n',

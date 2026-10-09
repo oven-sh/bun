@@ -317,7 +317,7 @@ fn search(
         } else {
             None
         },
-        is_ignored_by_configuration: gitignore::is_file_ignored_anywhere(
+        is_ignored_by_configuration: gitignore::is_directory_ignored_anywhere(
             configs.ignores_of(&above),
             &paths::join(base, b"."),
         ),
@@ -603,7 +603,7 @@ pub(crate) fn expand_as_oxfmt(
         };
         let is_directory = kind == fs::Kind::Directory;
         let is_ignored = |chain: &Chain| match is_directory {
-            true => gitignore::is_file_ignored_anywhere(chain, &paths::join(&path, b".")),
+            true => gitignore::is_directory_ignored_anywhere(chain, &path),
             false => gitignore::is_file_ignored_anywhere(chain, &path),
         };
         if ignored.files.iter().any(is_ignored) {

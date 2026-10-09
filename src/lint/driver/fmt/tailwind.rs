@@ -88,24 +88,15 @@ fn find(directory: &[u8]) -> Option<Found> {
     Some(Found { root, config })
 }
 
-/// Whether the `prettier-plugin-tailwindcss` that Prettier loads from `directory` is older than 0.7.0, which is when it
-/// started to look for Tailwind and its configuration from the file. Before, it looked from Prettier's configuration file.
-fn is_plugin_before_0_7(directory: &[u8]) -> bool {
+/// Of the `prettier-plugin-tailwindcss` that Prettier loads from `directory`: the first two numbers of its version.
+fn version_of_plugin(directory: &[u8]) -> Option<(u64, u64)> {
     let name = b"node_modules/prettier-plugin-tailwindcss/package.json";
     let package = paths::ancestors(directory).find_map(|it| fs::read(&paths::join(it, name)).ok());
-    let package = package.and_then(|text| bun_lint::json::parse(&text));
-    let Some(version) = package.as_ref().and_then(|it| it.get(b"version")?.as_str()) else {
-        return false;
-    };
-    let mut numbers = strings::split(version, b".").map(|it| {
-        std::str::from_utf8(it)
-            .ok()
-            .and_then(|it| it.parse::<u32>().ok())
-    });
-    matches!(
-        (numbers.next().flatten(), numbers.next().flatten()),
-        (Some(0), Some(0..=6))
-    )
+    let package = bun_lint::json::parse(&package?)?;
+    let parsed = bun_semver::Version::parse_utf8(package.get(b"version")?.as_str()?);
+    let version = parsed.version.min();
+    // `0.0.0-insiders.d539a72` is newer than all.
+    (parsed.valid && version.minor > 0).then_some((version.major, version.minor))
 }
 
 /// The classes in files for which the same Tailwind is asked.
@@ -123,8 +114,8 @@ struct Group {
 struct Known {
     is_loaded: bool,
     by_directory: FxHashMap<Vec<u8>, Option<Found>>,
-    /// [`is_plugin_before_0_7`], by the directory.
-    is_plugin_old: FxHashMap<Vec<u8>, bool>,
+    /// [`version_of_plugin`], by the directory.
+    plugins: FxHashMap<Vec<u8>, Option<(u64, u64)>>,
     groups: FxHashMap<Which, Group>,
     /// A directory with files that have classes, from which there is no Tailwind to be found.
     without_package: Option<Vec<u8>>,
@@ -266,13 +257,16 @@ pub(crate) fn for_file(
     };
     let is_on = |key: &[u8]| get(key).and_then(Json::as_bool) == Some(true);
     let mut known = classes.known.lock();
-    let directory = match of_config.filter(|_| is_on(b"followsPlugin")) {
-        Some(of_config)
-            if *(known.is_plugin_old.entry(of_config.to_vec()))
-                .or_insert_with(|| is_plugin_before_0_7(of_config)) =>
-        {
-            of_config
-        }
+    // The project's own plugin is what this stands in for. One that is not installed is the newest.
+    let plugin = match is_on(b"followsPlugin") {
+        true => *(known.plugins.entry(base.to_vec())).or_insert_with(|| version_of_plugin(base)),
+        false => None,
+    };
+    let is_before = |minor: u64| plugin.is_some_and(|it| it < (0, minor));
+    // Since 0.7.0 it looks for Tailwind and its configuration from the file. Before, it looked from Prettier's configuration
+    // file.
+    let directory = match of_config {
+        Some(of_config) if is_before(7) => of_config,
         _ => paths::dirname(path),
     };
     // What earlier runs have found out.
@@ -310,8 +304,9 @@ pub(crate) fn for_file(
     Tailwind {
         functions: Names::new(names(b"functions")),
         attributes: Names::new(names(b"attributes")),
-        preserves_whitespace: is_on(b"preserveWhitespace"),
-        preserves_duplicates: is_on(b"preserveDuplicates"),
+        // Since 0.6.0 it does more than sort.
+        preserves_whitespace: is_on(b"preserveWhitespace") || is_before(6),
+        preserves_duplicates: is_on(b"preserveDuplicates") || is_before(6),
         follows_plugin: is_on(b"followsPlugin"),
         orders: Box::new(OfGroup {
             classes: Arc::clone(classes),

@@ -29,6 +29,8 @@ impl NoUselessCall {
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
                 ast_utils::equal_tokens(cx.file(), obj, this_arg)
             }
+            // oxlint knows what `this` is only in the call of a name.
+            _ if cx.language().is_oxlint && applied.tag() != ExprTag::Ident => false,
             _ => ast_utils::is_null_or_undefined(this_arg),
         };
         if is_valid_this_arg {

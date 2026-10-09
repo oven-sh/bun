@@ -1,3 +1,4 @@
+use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::{
     CompilerOption, is_boolean_literal_type, is_compiler_option_enabled,
@@ -870,6 +871,63 @@ fn get_uncast_type(expression: Expr<'_>) -> Type<'_> {
     expression.ty()
 }
 
+/// Looks for a call that infers its type arguments, but not in functions and assertions, which expect other things.
+#[derive(Default)]
+struct CallThatInfers {
+    /// How many functions and assertions are around.
+    hidden: u32,
+    is_found: bool,
+}
+
+impl CallThatInfers {
+    fn hides(node: Node) -> bool {
+        matches!(node, Node::Expr(e) if e.as_fn().is_some()
+            || matches!(e.tag(), ExprTag::As | ExprTag::AsConst | ExprTag::Satisfies))
+    }
+}
+
+impl<'a> Visitor<'a> for CallThatInfers {
+    fn enter(&mut self, node: Node<'a>) {
+        self.hidden += u32::from(Self::hides(node));
+        if self.hidden == 0
+            && !self.is_found
+            && let Node::Expr(e) = node
+            && let ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) = e.kind()
+            && call.type_args().is_empty()
+            && let Some(declaration) = e.resolved_signature().and_then(|it| it.declaration())
+        {
+            // The type parameters of the signature of a constructor are those of the class.
+            let generic = match declaration.kind() {
+                SyntaxKind::Constructor => declaration.parent(),
+                _ => Some(declaration),
+            };
+            let mut parts = generic.into_iter().flat_map(TsNode::children);
+            self.is_found = parts.any(|it| it.kind() == SyntaxKind::TypeParameter);
+        }
+    }
+
+    fn exit(&mut self, node: Node<'a>) {
+        self.hidden = self.hidden.saturating_sub(u32::from(Self::hides(node)));
+    }
+}
+
+/// `Array.from(a.querySelectorAll("b")) as C[]`: what is asserted is expected of the inner call too, through the outer
+/// one. Only the outer one is resolved again where nothing is expected, so nothing is said about such an assertion.
+fn is_asserted_type_expected_of_a_call_in_the_arguments(expression: Expr) -> bool {
+    let mut call = expression;
+    while let ExprKind::Await(argument) = call.kind() {
+        call = argument;
+    }
+    let (ExprKind::Call(it) | ExprKind::New(it) | ExprKind::TaggedTemplate(it)) = call.kind() else {
+        return false;
+    };
+    let mut calls = CallThatInfers::default();
+    for argument in it.args() {
+        walk_node(Node::Expr(argument), &mut calls);
+    }
+    calls.is_found
+}
+
 fn fix_assertion<'a>(fixer: Fixer<'a>, assertion: Assertion<'a>) -> Option<Vec<Fix>> {
     let file = fixer.file();
     let Assertion {
@@ -929,6 +987,9 @@ impl NoUnnecessaryTypeAssertion {
 
         let uncast_type = get_uncast_type(expression);
         if cast_type.is_unresolved() || uncast_type.is_unresolved() {
+            return;
+        }
+        if cx.language().is_oxlint && is_asserted_type_expected_of_a_call_in_the_arguments(expression) {
             return;
         }
         let would_same_type_be_inferred = match cast_type_is_literal {

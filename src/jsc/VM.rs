@@ -93,7 +93,7 @@ impl VM {
         JSC__VM__runGC(self, sync)
     }
 
-    pub fn heap_size(&self) -> usize {
+    pub(crate) fn heap_size(&self) -> usize {
         JSC__VM__heapSize(self)
     }
 
@@ -162,7 +162,7 @@ impl VM {
 
     /// `RESOURCE_USAGE` build option in JavaScriptCore is required for this function
     /// This is faster than checking the heap size
-    pub(crate) fn block_bytes_allocated(&self) -> usize {
+    pub fn block_bytes_allocated(&self) -> usize {
         JSC__VM__blockBytesAllocated(self)
     }
 }

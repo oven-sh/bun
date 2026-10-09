@@ -20,6 +20,7 @@ bun_format.workspace = true
 bun_glob.workspace = true
 bun_sema.workspace = true
 bun_sema_driver.workspace = true
+bun_semver.workspace = true
 bun_js_parser.workspace = true
 bun_ast.workspace = true
 bun_clap.workspace = true

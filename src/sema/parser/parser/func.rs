@@ -36,7 +36,7 @@ fn signature_context(flags: Flags) -> u32 {
     context
 }
 
-impl Parser<'_> {
+impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// `parseFunctionDeclaration`
     pub(crate) fn function_declaration(
         &mut self,
@@ -108,7 +108,7 @@ impl Parser<'_> {
         if !has_body(&self.f[func]) {
             self.fail_unless_recovering();
         }
-        if self.reads_jsdoc {
+        if self.reads_jsdoc() {
             self.function_jsdoc(func, start);
         }
         self.finish_expr(ExprKind::Fn(func), start)
@@ -158,7 +158,7 @@ impl Parser<'_> {
         let (body, open) = match self.token() {
             T::OpenBrace => self.function_block(signature_context(flags)),
             // `parseBlock` without its `{`
-            _ if kind == FnKind::Expr || self.recovers && !self.can_parse_semicolon() => {
+            _ if kind == FnKind::Expr || self.recovers() && !self.can_parse_semicolon() => {
                 match code {
                     1005 => self.expected(T::OpenBrace),
                     code => self.error_at_token(code, &[]),
@@ -294,8 +294,8 @@ impl Parser<'_> {
                 break;
             }
         }
-        self.lists = lists;
-        if self.recovers && self.s.type_params.len() == base {
+        self.leave_list(lists);
+        if self.recovers() && self.s.type_params.len() == base {
             self.empty_type_parameters(less_than);
         }
         if self.options.is_javascript
@@ -326,7 +326,7 @@ impl Parser<'_> {
     #[cold]
     #[inline(never)]
     fn expression_in_place_of_constraint(&mut self) {
-        if !self.recovers {
+        if !self.recovers() {
             return self.fail();
         }
         if self.is_too_deep() {
@@ -409,7 +409,7 @@ impl Parser<'_> {
                 break;
             }
         }
-        self.lists = lists;
+        self.leave_list(lists);
         self.context = saved;
         let params: Span<ParamId> = take_span!(self, params, base);
         for index in modifiers..self.s.param_modifiers.len() {
@@ -423,7 +423,7 @@ impl Parser<'_> {
             self.f.decorators.push((owner, decorator));
         }
         self.s.decorators.truncate(decorators);
-        if self.reads_jsdoc {
+        if self.reads_jsdoc() {
             self.parameters_jsdoc(params);
         }
         Some(params)
@@ -432,7 +432,7 @@ impl Parser<'_> {
     /// `is_at_element` for a parameter. `isStartOfParameter`: a private name starts one.
     #[inline(always)]
     fn is_at_parameter(&mut self) -> bool {
-        !self.recovers
+        !self.recovers()
             || self.token() == T::PrivateIdentifier
             || self.is_at_element(ListKind::Parameters)
     }
@@ -491,7 +491,7 @@ impl Parser<'_> {
             self.next();
             // A decorator of `this` is an error of the parser.
             if token.is_modifier() || token == T::At {
-                if self.recovers {
+                if self.recovers() {
                     return self.this_parameter_after_modifiers(base, start, pat, flags);
                 }
                 self.refuse(Refusal::Reported);
@@ -513,7 +513,7 @@ impl Parser<'_> {
                 _ => self.identifier_or_pattern(),
             };
             // "to avoid this we'll advance cursor to the next token."
-            if self.recovers
+            if self.recovers()
                 && !has_modifiers
                 && self.token().is_modifier()
                 && (self.f.pats.get(pat.idx())).is_some_and(|it| it.pos == it.end)
@@ -803,14 +803,14 @@ impl Parser<'_> {
             false => TypeNodeId::NONE,
         };
         if !allow_ambiguity
-            && self.recovers
+            && self.recovers()
             && self.f.diagnostics.len() > errors
             && self.has_arrow_function_blocking_parse_error(ret)
         {
             return None;
         }
         let last = self.token();
-        if last != T::EqualsGreaterThan && !self.recovers {
+        if last != T::EqualsGreaterThan && !self.recovers() {
             // Before a `{` TypeScript takes it for an arrow function whose `=>` is missing.
             if last == T::OpenBrace && !self.has_failed() && !self.is_ecmascript {
                 self.refuse(Refusal::Reported);
@@ -834,9 +834,7 @@ impl Parser<'_> {
             }
             // `parseIdentifier`
             _ if self.is_identifier() => {
-                if self.lx.has_escape {
-                    self.forget_escaped_keyword();
-                }
+                self.take_as_name();
                 let name = self.note_identifier(self.lx.atom, self.lx.start);
                 (FnBody::Expr(self.token_expr(ExprKind::Ident(name))), 0)
             }
@@ -869,7 +867,7 @@ impl Parser<'_> {
         if matches!(body, FnBody::Block(_)) {
             self.f.body_starts.push((func, open));
         }
-        if self.reads_jsdoc {
+        if self.reads_jsdoc() {
             self.function_jsdoc(func, start);
         }
         Some(self.finish_expr(ExprKind::Fn(func), start))
@@ -910,7 +908,7 @@ impl Parser<'_> {
             self.fail_unless_recovering();
         }
         // `isStartOfExpressionStatement`
-        if self.recovers
+        if self.recovers()
             && !matches!(self.token(), T::Semicolon | T::Function | T::Class)
             && self.is_start_of_statement()
             && (self.token() == T::At || !self.is_start_of_expression())
@@ -965,7 +963,7 @@ impl Parser<'_> {
         if matches!(body, FnBody::Block(_)) {
             self.f.body_starts.push((func, open));
         }
-        if self.reads_jsdoc {
+        if self.reads_jsdoc() {
             self.function_jsdoc(func, start);
         }
         self.finish_expr(ExprKind::Fn(func), start)

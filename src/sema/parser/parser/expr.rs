@@ -38,6 +38,79 @@ fn binary_operator(token: T) -> BinOp {
     }
 }
 
+/// TypeScript reports an error in a type and goes on. What it goes on with can end with a `>`, and
+/// then these are type arguments with an error in them. `less_than`: where the `<` is. The attempt
+/// has failed at the token `failed_token` at `failed_at`.
+fn can_be_type_arguments_with_an_error(
+    src: &[u8],
+    less_than: usize,
+    (failed_token, failed_at): (T, u32),
+) -> bool {
+    let rest = src.get(less_than..).unwrap_or_default();
+    let statement = rest.get(..256).unwrap_or(rest);
+    let statement = match bun_core::strings::index_of_char_usize(statement, b';') {
+        Some(end) => &statement[..end],
+        None => statement,
+    };
+    // It skips no token on the way: any but a comma ends a list of type arguments, which
+    // makes `isInSomeParsingContext` true. So it does not get past a bracket that closes
+    // what was opened before the `<`.
+    let mut depth = 0u32;
+    let is_unmatched = |c: &u8| match c {
+        b'(' | b'[' | b'{' => {
+            depth += 1;
+            false
+        }
+        b')' | b']' | b'}' if depth == 0 => true,
+        b')' | b']' | b'}' => {
+            depth -= 1;
+            false
+        }
+        _ => false,
+    };
+    let statement = match statement.iter().position(is_unmatched) {
+        Some(end) => &statement[..end],
+        None => statement,
+    };
+    // `canFollowTypeArgumentsInExpression`
+    let ends_a_list = |at: usize| {
+        let after = statement.get(at + 1..).unwrap_or_default();
+        let next = after.iter().find(|c| !matches!(c, b' ' | b'\t'));
+        statement.get(at.wrapping_sub(1)) != Some(&b'=')
+            && !matches!(after.first(), Some(b'>' | b'='))
+            && !next.is_some_and(|c| {
+                c.is_ascii_alphanumeric() || b"_$\"'{[<+-~#@".contains(c) || *c >= 0x80
+            })
+    };
+    // What is before the error was read without one.
+    let mut from = (failed_at as usize).saturating_sub(less_than);
+    // A word where none is expected is left to what is around. Only a list takes it, as its
+    // next element after a missing comma.
+    if failed_token.is_identifier_or_keyword() && !is_in_list_of_type(statement, from) {
+        from = statement.len();
+    }
+    while let Some(found) = statement
+        .get(from..)
+        .and_then(|rest| bun_core::strings::index_of_char_usize(rest, b'>'))
+    {
+        if ends_a_list(from + found) {
+            return true;
+        }
+        from += found + 1;
+    }
+    false
+}
+
+/// `GetTextOfNodeFromSourceText`: where `e` is written, with its parentheses if no other expression
+/// has got any since.
+fn range_as_written(f: &FileBuilder, e: ExprId) -> (u32, u32) {
+    match (f.parens.last(), f.exprs.get(e.idx())) {
+        (Some(&(inside, open, end)), _) if inside == e => (open, end),
+        (_, Some(written)) => (written.pos, written.end),
+        _ => (0, 0),
+    }
+}
+
 /// Whether `end` is in a tuple, in an object type or among parameters in the text of types `text`.
 fn is_in_list_of_type(text: &[u8], end: usize) -> bool {
     let mut open = Vec::new();
@@ -86,7 +159,7 @@ fn assignment_operator(token: T) -> Option<BinOp> {
     })
 }
 
-impl Parser<'_> {
+impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[inline(always)]
     pub(crate) fn add_expr(&mut self, kind: ExprKind, pos: u32, end: u32) -> ExprId {
         let id = ExprId(self.f.exprs.len() as u32);
@@ -148,13 +221,13 @@ impl Parser<'_> {
         let mut start = self.pos();
         let mut expression = self.assignment_expression();
         // `()` stays at its `)`.
-        if is_in_parentheses && self.recovers && self.token() != T::CloseParen {
+        if is_in_parentheses && self.recovers() && self.token() != T::CloseParen {
             start = self.place_missing_operand(expression).unwrap_or(start);
         }
         while self.token() == T::Comma {
             self.next();
             let right = self.assignment_expression();
-            if is_in_parentheses && self.recovers {
+            if is_in_parentheses && self.recovers() {
                 self.place_missing_operand(right);
             }
             let kind = ExprKind::Binary {
@@ -534,7 +607,7 @@ impl Parser<'_> {
                     self.next();
                     // `checkNullishCoalesceOperands` reports `a ?? b || c`, and who follows acorn or
                     // Babel looks for it in the tree.
-                    let takes_a_mix = self.recovers;
+                    let takes_a_mix = self.recovers();
                     let is_as_or = takes_a_mix && !self.options.dialect.typescript_5;
                     let right = self.binary_expression(match is_as_or {
                         // `OperatorPrecedenceCoalesce` is `OperatorPrecedenceLogicalOR`.
@@ -625,7 +698,7 @@ impl Parser<'_> {
         let is_await_name = operator == T::Await && !self.is_await_expression();
         let expression = self.simple_unary_expression();
         if self.token() == T::AsteriskAsterisk {
-            if is_await_name && !self.recovers {
+            if is_await_name && !self.recovers() {
                 let precedence = T::AsteriskAsterisk.binary_precedence();
                 return self.binary_expression_rest(precedence, expression, start);
             }
@@ -638,7 +711,7 @@ impl Parser<'_> {
     #[cold]
     #[inline(never)]
     fn unary_expression_before_power(&mut self, operator: T, start: u32) {
-        if !self.recovers {
+        if !self.recovers() {
             return self.refuse(Refusal::Reported);
         }
         let at = (start, self.prev_end());
@@ -784,7 +857,7 @@ impl Parser<'_> {
     #[cold]
     #[inline(never)]
     fn await_as_decorator(&mut self) -> ExprId {
-        if !self.recovers {
+        if !self.recovers() {
             self.refuse(Refusal::Reported);
             return ExprId::NONE;
         }
@@ -818,7 +891,7 @@ impl Parser<'_> {
     #[cold]
     #[inline(never)]
     fn super_without_access(&mut self, start: u32, mut obj: ExprId) -> ExprId {
-        if !self.recovers {
+        if !self.recovers() {
             self.fail();
             return obj;
         }
@@ -894,7 +967,7 @@ impl Parser<'_> {
     fn import_expression(&mut self) -> ExprId {
         let start = self.pos();
         // `nextTokenIsOpenParenOrLessThan`, `nextTokenIsDot`: otherwise `parsePrimaryExpression`.
-        if self.recovers && !matches!(self.peek(), T::OpenParen | T::LessThan | T::Dot) {
+        if self.recovers() && !matches!(self.peek(), T::OpenParen | T::LessThan | T::Dot) {
             return self.missing_expression(1109);
         }
         self.next();
@@ -947,7 +1020,7 @@ impl Parser<'_> {
                 break;
             }
         }
-        self.lists = lists;
+        self.leave_list(lists);
         self.context = saved;
         let close = self.close_of_argument_list();
         if self.s.ids.len() == base {
@@ -967,7 +1040,7 @@ impl Parser<'_> {
     #[cold]
     #[inline(never)]
     fn import_without_arguments(&mut self, start: u32, is_deferred: bool) -> ExprId {
-        if !self.recovers || is_deferred || self.token() != T::LessThan {
+        if !self.recovers() || is_deferred || self.token() != T::LessThan {
             self.fail();
             return ExprId::NONE;
         }
@@ -1096,7 +1169,7 @@ impl Parser<'_> {
                 && !self.is_ecmascript
                 && self.is_followed_by_word_on_same_line()
             {
-                if self.recovers {
+                if self.recovers() {
                     let after_dot = self.full_start();
                     self.error(1003, (after_dot, Diagnostic::NO_LENGTH), &[]);
                     return (known::empty, after_dot);
@@ -1297,7 +1370,7 @@ impl Parser<'_> {
         less_than: u32,
         allows_chain: bool,
     ) -> (ExprId, Chain) {
-        if !self.recovers {
+        if !self.recovers() {
             self.refuse(Refusal::Reported);
             return (obj, Chain::No);
         }
@@ -1349,7 +1422,7 @@ impl Parser<'_> {
         callee: ExprId,
         type_args: IdList<TypeNodeId>,
     ) -> ExprId {
-        if !self.recovers {
+        if !self.recovers() {
             self.refuse(Refusal::Reported);
             return callee;
         }
@@ -1423,7 +1496,7 @@ impl Parser<'_> {
                 break;
             }
         }
-        self.lists = lists;
+        self.leave_list(lists);
         self.context = saved;
         let close = self.close_of_argument_list();
         (self.take_ids(base), close)
@@ -1557,64 +1630,12 @@ impl Parser<'_> {
         follows.then(|| self.take_ids(base))
     }
 
-    /// After an attempt at the `<` at `less_than` that failed. TypeScript reports an error in a type
-    /// and goes on. What it goes on with can end with a `>`, and then these are type arguments with
-    /// an error in them.
+    /// After an attempt at the `<` at `less_than` that failed.
     fn refuse_type_arguments_with_an_error(&mut self, less_than: usize) {
-        if let Some((failed_token, failed_at)) = self.was_abandoned_at {
-            let rest = self.lx.src.get(less_than..).unwrap_or_default();
-            let statement = rest.get(..256).unwrap_or(rest);
-            let statement = match bun_core::strings::index_of_char_usize(statement, b';') {
-                Some(end) => &statement[..end],
-                None => statement,
-            };
-            // It skips no token on the way: any but a comma ends a list of type arguments, which
-            // makes `isInSomeParsingContext` true. So it does not get past a bracket that closes
-            // what was opened before the `<`.
-            let mut depth = 0u32;
-            let is_unmatched = |c: &u8| match c {
-                b'(' | b'[' | b'{' => {
-                    depth += 1;
-                    false
-                }
-                b')' | b']' | b'}' if depth == 0 => true,
-                b')' | b']' | b'}' => {
-                    depth -= 1;
-                    false
-                }
-                _ => false,
-            };
-            let statement = match statement.iter().position(is_unmatched) {
-                Some(end) => &statement[..end],
-                None => statement,
-            };
-            // `canFollowTypeArgumentsInExpression`
-            let ends_a_list = |at: usize| {
-                let after = statement.get(at + 1..).unwrap_or_default();
-                let next = after.iter().find(|c| !matches!(c, b' ' | b'\t'));
-                statement.get(at.wrapping_sub(1)) != Some(&b'=')
-                    && !matches!(after.first(), Some(b'>' | b'='))
-                    && !next.is_some_and(|c| {
-                        c.is_ascii_alphanumeric() || b"_$\"'{[<+-~#@".contains(c) || *c >= 0x80
-                    })
-            };
-            // What is before the error was read without one.
-            let mut from = (failed_at as usize).saturating_sub(less_than);
-            // A word where none is expected is left to what is around. Only a list takes it, as its
-            // next element after a missing comma.
-            if failed_token.is_identifier_or_keyword() && !is_in_list_of_type(statement, from) {
-                from = statement.len();
-            }
-            while let Some(found) = statement
-                .get(from..)
-                .and_then(|rest| bun_core::strings::index_of_char_usize(rest, b'>'))
-            {
-                if ends_a_list(from + found) {
-                    self.refuse(Refusal::Reported);
-                    break;
-                }
-                from += found + 1;
-            }
+        if let Some(failed) = self.was_abandoned_at
+            && can_be_type_arguments_with_an_error(self.lx.src, less_than, failed)
+        {
+            self.refuse(Refusal::Reported);
         }
     }
 
@@ -1660,9 +1681,7 @@ impl Parser<'_> {
             T::LessThan if self.is_ecmascript => self.jsx_element_or_fragment(),
             T::Import if self.is_ecmascript => self.import_expression(),
             _ if self.is_identifier() => {
-                if self.lx.has_escape {
-                    self.forget_escaped_keyword();
-                }
+                self.take_as_name();
                 let name = self.lx.atom;
                 self.note_identifier(name, self.lx.start);
                 self.token_expr(ExprKind::Ident(name))
@@ -1691,7 +1710,7 @@ impl Parser<'_> {
         }
         self.next();
         let end = self.prev_end();
-        let expression = match self.reads_jsdoc {
+        let expression = match self.reads_jsdoc() {
             true => self.parenthesized_jsdoc(open, expression),
             false => expression,
         };
@@ -1706,8 +1725,8 @@ impl Parser<'_> {
             return self.flow_type_cast(open, expression);
         }
         self.expected(T::CloseParen);
-        if self.recovers {
-            let expression = match self.reads_jsdoc {
+        if self.recovers() {
+            let expression = match self.reads_jsdoc() {
                 true => self.parenthesized_jsdoc(open, expression),
                 false => expression,
             };
@@ -1741,7 +1760,7 @@ impl Parser<'_> {
                 break;
             }
         }
-        self.lists = lists;
+        self.leave_list(lists);
         self.context = saved;
         self.expect_matching((T::OpenBracket, T::CloseBracket), Some(start));
         let elements = self.take_ids(base);
@@ -1775,7 +1794,7 @@ impl Parser<'_> {
         if self.options.dialect.babel {
             return;
         }
-        match self.recovers {
+        match self.recovers() {
             true => self.lx.rescan_template_without_tag(),
             false => self.report(),
         }
@@ -1784,7 +1803,7 @@ impl Parser<'_> {
     /// `IsUnterminated` of the last piece of a template, which is the token.
     #[inline(always)]
     fn is_at_unterminated_piece(&self) -> bool {
-        self.recovers && self.lx.end as usize == self.lx.src.len() && self.ends_without_backtick()
+        self.recovers() && self.lx.end as usize == self.lx.src.len() && self.ends_without_backtick()
     }
 
     /// The piece of a template at the end of the text has no `` ` `` of its own at its end.
@@ -1938,15 +1957,10 @@ impl Parser<'_> {
     #[cold]
     #[inline(never)]
     fn optional_chain_from_new_expression(&mut self, callee: ExprId) {
-        if !self.recovers {
+        if !self.recovers() {
             return self.refuse(Refusal::Reported);
         }
-        // `GetTextOfNodeFromSourceText`
-        let (from, to) = match (self.f.parens.last(), self.f.exprs.get(callee.idx())) {
-            (Some(&(inside, open, end)), _) if inside == callee => (open, end),
-            (_, Some(written)) => (written.pos, written.end),
-            _ => (0, 0),
-        };
+        let (from, to) = range_as_written(&self.f, callee);
         let src = self.lx.src;
         let text = src.get(from as usize..to as usize).unwrap_or_default();
         self.error_at_token(1209, &[text]);
@@ -1973,11 +1987,11 @@ impl Parser<'_> {
                 break;
             }
         }
-        self.lists = lists;
+        self.leave_list(lists);
         self.context = saved;
         self.expect_matching((T::OpenBrace, T::CloseBrace), open);
         let props: Span<PropId> = take_span!(self, props, base);
-        if self.reads_jsdoc {
+        if self.reads_jsdoc() {
             self.take_property_types(base, props);
         }
         for index in modifiers..self.s.prop_modifiers.len() {
@@ -2081,7 +2095,7 @@ impl Parser<'_> {
     /// context of the top level of a module. That context, where there is one to leave.
     #[inline(always)]
     fn await_context_of_module(&self) -> u32 {
-        match self.recovers && self.has_context(ctx::TOP_LEVEL) {
+        match self.recovers() && self.has_context(ctx::TOP_LEVEL) {
             true if !self.options.dialect.typescript_5 => ctx::AWAIT,
             _ => 0,
         }
@@ -2207,7 +2221,7 @@ impl Parser<'_> {
                 start,
             );
             // The function expression starts at its parameters.
-            let parameters = match self.recovers {
+            let parameters = match self.recovers() {
                 true => self.start_of_parameters(func),
                 false => self.f[func].anchor,
             };
@@ -2235,7 +2249,7 @@ impl Parser<'_> {
             }
         } else {
             // In a script `{ await }` is a shorthand.
-            if self.recovers && key == PropKey::Name(known::r#await) {
+            if self.recovers() && key == PropKey::Name(known::r#await) {
                 self.note_await();
             }
             self.expect(T::Colon);
@@ -2260,7 +2274,7 @@ impl Parser<'_> {
         if self.options.is_javascript && is_function {
             self.check_js_method_of_object(&prop, modifiers);
         }
-        let prop = match self.reads_jsdoc {
+        let prop = match self.reads_jsdoc() {
             true => self.property_jsdoc(prop),
             false => prop,
         };
@@ -2310,7 +2324,7 @@ impl Parser<'_> {
         match self.token() {
             T::OpenBracket | T::PrivateIdentifier => true,
             // acorn's `isClassElementNameStart`. Without recovery an accessor fails at them.
-            T::OpenBrace | T::Asterisk | T::DotDotDot => !self.is_ecmascript && !self.recovers,
+            T::OpenBrace | T::Asterisk | T::DotDotDot => !self.is_ecmascript && !self.recovers(),
             _ => self.is_literal_property_name(),
         }
     }

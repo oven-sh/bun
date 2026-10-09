@@ -79,8 +79,19 @@ pub struct Known<'a> {
 impl<'a> Known<'a> {
     /// ESLint's `getContainingLoopNode`.
     fn get_containing_loop_node(&mut self, node: Node<'a>) -> Option<Stmt<'a>> {
+        let is_oxlint = node.file().language().is_oxlint;
         let found = self.containing_loops.find(node, |current, parent| match parent {
             Node::Stmt(statement) => match statement.kind() {
+                // For oxlint what is in the head of a loop is in the body of the loop around that.
+                StmtKind::For { body, .. }
+                | StmtKind::ForIn { body, .. }
+                | StmtKind::ForOf { body, .. }
+                | StmtKind::While { body, .. }
+                | StmtKind::DoWhile { body, .. }
+                    if is_oxlint =>
+                {
+                    (current == Node::Stmt(body)).then_some(Some(statement))
+                }
                 StmtKind::While { .. } | StmtKind::DoWhile { .. } => Some(Some(statement)),
                 // `init` is outside of the loop.
                 StmtKind::For { init, .. } => {
@@ -234,18 +245,6 @@ pub fn check<'a, R: Rule<State<'a> = Known<'a>>>(func: Func<'a>, dialect: Dialec
     var_names.push(b'\'');
     let mut place = func.estree_span();
     if cx.language().is_oxlint {
-        let body = match loop_node.kind() {
-            StmtKind::For { body, .. }
-            | StmtKind::ForIn { body, .. }
-            | StmtKind::ForOf { body, .. }
-            | StmtKind::While { body, .. }
-            | StmtKind::DoWhile { body, .. } => body,
-            _ => loop_node,
-        };
-        // What is in the head of a loop is in the body of the loop around that.
-        if !body.span().contains(place) && cx.state.get_containing_loop_node(loop_node.into()).is_none() {
-            return;
-        }
         // oxlint looks at the functions that are directly in the loop, with all that is in them: once at the function
         // that is called where it is written, not at those in it.
         let (whole, mut at) = (loop_node.span(), func);

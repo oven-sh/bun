@@ -560,6 +560,7 @@ These differences are intentional:
 - **`--fix` does not write through a link that leads out of the repository**, or out of the working directory if that is in no repository. ESLint and oxlint do. The run fails and names the file.
 - **A file that TypeScript finds too large for control flow analysis (TS2563) gets a warning.** What rules that need types say about it may be wrong or incomplete, as in typescript-eslint, which says nothing.
 - **A configuration file that leaves a timer or a server running does not keep the run alive.** ESLint prints its report and never exits.
+- **What a configuration file prints is shown only if it fails.** ESLint runs the file in its own process, so a `console.log` in it ends up in the report.
 - **A summary line on stderr** says how many files were linted and how long it took.
 
 ## Differences from oxlint

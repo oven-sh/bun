@@ -103,12 +103,15 @@ impl RestrictPlusOperands {
             return;
         }
 
+        // oxlint points at the left side.
+        let place = if cx.language().is_oxlint { left.outer_span() } else { node.span() };
         for (base_type, other_type) in [(left_type, right_type), (right_type, left_type)] {
             if !self.allow_number_and_string
                 && is_type_flag_set(base_type, TypeFlags::STRING_LIKE)
                 && is_type_flag_set(other_type, TypeFlags::NUMBER_LIKE | TypeFlags::BIG_INT_LIKE)
             {
-                cx.report(node, MISMATCHED)
+                cx.report(place, MISMATCHED)
+                    .comments_apply_at(node.span())
                     .data("left", left_type.to_text())
                     .data("right", right_type.to_text())
                     .data("stringLike", self.string_like.clone());
@@ -117,7 +120,8 @@ impl RestrictPlusOperands {
             if is_type_flag_set(base_type, TypeFlags::NUMBER_LIKE)
                 && is_type_flag_set(other_type, TypeFlags::BIG_INT_LIKE)
             {
-                cx.report(node, BIGINT_AND_NUMBER)
+                cx.report(place, BIGINT_AND_NUMBER)
+                    .comments_apply_at(node.span())
                     .data("left", left_type.to_text())
                     .data("right", right_type.to_text());
                 return;

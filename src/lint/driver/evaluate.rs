@@ -171,15 +171,12 @@ fn run(
         cwd: paths::dirname(path),
     };
     let fail = |why: &[u8]| {
-        Fatal(
-            [
-                b"Cannot load the configuration file ",
-                path,
-                b":\n",
-                why.trim_ascii_end(),
-            ]
-            .concat(),
-        )
+        // It has left without a word: `process.exit(1)`.
+        let why: &[u8] = match why.trim_ascii_end() {
+            b"" => b"It could not be evaluated.",
+            why => why,
+        };
+        Fatal([b"Cannot load the configuration file ", path, b":\n", why].concat())
     };
     let printed = (environment.run_script)(&script).map_err(|error| fail(&error))?;
     let json = strings::last_index_of(&printed, MARKER).map(|at| &printed[at + MARKER.len()..]);

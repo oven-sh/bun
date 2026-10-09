@@ -4005,6 +4005,56 @@ foo(b)
       timeout,
     );
 
+    const rules = `export default [{ rules: { "no-debugger": "error", "no-var": "warn" } }];`;
+    test.each([
+      ["exports a configuration", rules, true, 1],
+      ["prints", `console.log("out"); console.error("err"); process.emitWarning("old"); ${rules}`, true, 1],
+      ["leaves a timer behind", `setInterval(() => {}, 1000); ${rules}`, true, 1],
+      // ESLint goes on, too.
+      ["sets process.exitCode", `process.exitCode = 5; ${rules}`, true, 1],
+      ["exports what no configuration can have", `export default [{ nonsense: 1 }];`, true, 2],
+      [
+        "exports options that a rule does not take",
+        `export default [{ rules: { "no-debugger": ["error", 1] } }];`,
+        true,
+        2,
+      ],
+      [
+        "exports a rule that is not built in",
+        `export default [{ rules: { "no-var": 2, "not-built-in": 2 } }];`,
+        true,
+        2,
+      ],
+      ["exports nothing to lint with", `export default [];`, true, 0],
+      ["throws", `console.error("before"); throw new Error("boom");`, false, 2],
+      ["exports a promise that is rejected", `export default Promise.reject(new Error("rejected"));`, false, 2],
+      ["leaves", `process.exit(0);`, false, 2],
+      ["leaves with an error, and without a word", `process.exit(3);`, false, 2],
+    ])(
+      "the first run is as the next: one that %s",
+      async (_, config, isKept, exitCode) => {
+        using dir = tempDir("bun-lint-platform", {
+          "node_modules/.keep": "",
+          "eslint.config.mjs": config,
+          "a.js": "debugger;\nvar a;\n",
+        });
+        age(join(String(dir), "eslint.config.mjs"), 60);
+        const run = async () => {
+          const { stdout, stderr, exitCode } = await lint(dir, ["a.js"]);
+          return { stdout, stderr: stderr.replace(/\[[\d.]+m?s\]/, "[time]"), exitCode };
+        };
+        const first = await run();
+        // What fails is run again.
+        expect(existsSync(join(String(dir), "node_modules", ".cache", "bun-lint"))).toBe(isKept);
+        expect(await run()).toEqual(first);
+        // What it prints is seen only if it fails.
+        expect(first.stdout + first.stderr).not.toMatch(/\bout\b|\berr\b|\bold\b/);
+        if (!isKept) expect(first.stderr).toMatch(/eslint\.config\.mjs:\r?\n./);
+        expect(first.exitCode).toBe(exitCode);
+      },
+      timeout,
+    );
+
     // `timeout 10 bun lint`, an editor that ends what it has started, a step of CI that is cancelled.
     test.each([
       ["waits", "await new Promise(() => setInterval(() => {}, 1000));"],

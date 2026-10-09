@@ -187,6 +187,9 @@ impl ExplicitFunctionReturnType {
             cx.report(head(), MISSING_RETURN_TYPE);
             return;
         }
+        if is_oxlint && options.allow_higher_order_functions && oxlint_returns_functions(func) {
+            return;
+        }
         check_function_return_type(func, options, |mut loc| {
             // oxlint points at the decorators of a member.
             if is_oxlint && let Some(member) = member_of(func) {
@@ -199,6 +202,18 @@ impl ExplicitFunctionReturnType {
             cx.report(loc, MISSING_RETURN_TYPE);
         });
     }
+}
+
+/// `does_immediately_return_function_expression` as oxlint has it for this rule: it looks through `as`, `satisfies` and
+/// `!` around what is returned.
+fn oxlint_returns_functions(func: Func) -> bool {
+    let is_function = |value: Expr| value.skip_type_wrappers().as_fn().is_some();
+    if let FnBody::Expr(body) = func.body() {
+        return is_function(body);
+    }
+    let mut returns = func.returns().peekable();
+    returns.peek().is_some()
+        && returns.all(|statement| matches!(statement.kind(), StmtKind::Return(Some(value)) if is_function(value)))
 }
 
 impl Rule for ExplicitFunctionReturnType {

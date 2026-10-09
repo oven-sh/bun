@@ -421,8 +421,8 @@ extern "C" void JSC__useOptionsForVMPerThread(const char* envp[], size_t envc)
     }
 }
 
-// Only for the VMs in which `bun lint` and `bun format` run plugins: never in the runtime. A heap doubles between two collections
-// while it is under a quarter of the RAM, then grows by less: several VMs share what one is sized by.
+// Only for the VMs in which `bun lint` and `bun format` run plugins: never in the runtime. How much a heap grows between two
+// collections goes by the RAM: several VMs share what one is sized by.
 // After JSCInitialize and before the first VM, as above.
 extern "C" void JSC__useRAMSize(size_t bytes, const char* envp[], size_t envc)
 {

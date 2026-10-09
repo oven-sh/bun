@@ -59,12 +59,17 @@ impl Rule for BanTslintComment {
                 if !is_enable_disable(comment.comment_value()) {
                     continue;
                 }
-                // oxlint has what is in the comment.
-                let text = match cx.language().is_oxlint {
-                    true => trim(comment.comment_value()).to_vec(),
-                    false => to_text(comment),
-                };
-                cx.report(comment, COMMENT_DETECTED).data("text", text).fix(|fixer| {
+                // oxlint has what is in the comment, and points at the comment with the line break right after it, which is
+                // also what it removes.
+                if cx.language().is_oxlint {
+                    let has_line_break = cx.text().get(comment.end() as usize) == Some(&b'\n');
+                    let full_comment = Span::new(comment.start(), comment.end() + u32::from(has_line_break));
+                    cx.report(full_comment, COMMENT_DETECTED)
+                        .data("text", trim(comment.comment_value()))
+                        .fix(|fixer| fixer.remove(full_comment));
+                    continue;
+                }
+                cx.report(comment, COMMENT_DETECTED).data("text", to_text(comment)).fix(|fixer| {
                     let file = fixer.file();
                     let (start, end) = (file.position(comment.start()), file.position(comment.end()));
                     let range_start = file.offset(Position {

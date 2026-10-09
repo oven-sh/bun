@@ -6319,9 +6319,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// What `getContextFreeTypeOfExpression` answers for the call `e` where nothing has resolved the call before. A tool
-    /// that asks before it checks the file gets that; here the file is checked first, so the signature that is stored was
-    /// inferred with what is expected of the call. Nothing is kept of it.
+    /// What `getContextFreeTypeOfExpression` answers for the call `e` where nothing has resolved the call before, nor the
+    /// calls in it: what is expected of `e` is expected of a call in its arguments too, where a type parameter leads there. A
+    /// tool that asks before it checks the file gets that; here the file is checked first, so the signatures that are stored
+    /// were inferred with what is expected of the call. Nothing is kept of it.
     pub(super) fn context_free_type_of_call_resolved_afresh(
         &mut self,
         file: FileId,
@@ -6330,12 +6331,15 @@ impl<'p, 's> Checker<'p, 's> {
         let reported = self.reported.len();
         let level = self.inference_contexts.len() + 1;
         let outer = std::mem::replace(&mut self.context_free_level, level);
-        self.call_to_resolve_afresh = Some((file, e));
+        let range = (file, self.hir(file)[e].pos, self.end_of_expr(file, e));
+        let around = self.calls_to_resolve_afresh.replace(range);
+        let resolved_around = std::mem::take(&mut self.calls_resolved_afresh);
         let (ty, _) = self.run_memoizable(|c| {
             let mode = CheckMode::SKIP_CONTEXT_SENSITIVE;
             c.check_expression_with_contextual_type(file, e, TypeId::ANY, None, mode)
         });
-        self.call_to_resolve_afresh = None;
+        self.calls_to_resolve_afresh = around;
+        self.calls_resolved_afresh = resolved_around;
         self.context_free_level = outer;
         self.reported.truncate(reported);
         ty

@@ -18,7 +18,21 @@ struct Heritage {
     has_error: bool,
 }
 
-impl Parser<'_> {
+/// What the name of a member of a class says about the member. `name_token`: its first token.
+pub(crate) fn flags_of_member_name(name_token: T, name_kind: NameKind, key: PropKey) -> Flags {
+    match name_kind {
+        _ if name_token == T::BigInt => Flags::LITERAL_NAME,
+        NameKind::StringLiteral => Flags::STRING_NAME | Flags::LITERAL_NAME,
+        NameKind::NumericLiteral => Flags::LITERAL_NAME,
+        NameKind::ComputedString if matches!(key, PropKey::Name(_)) => {
+            Flags::STRING_NAME | Flags::COMPUTED_NAME
+        }
+        _ if name_token == T::OpenBracket => Flags::COMPUTED_NAME,
+        _ => Flags::empty(),
+    }
+}
+
+impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// `parseClassDeclaration`
     pub(crate) fn class_declaration(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
         // Only its modifiers say that `default class {}` has `default`.
@@ -47,7 +61,7 @@ impl Parser<'_> {
                 && (is_ecmascript || it.flags.contains(Flags::EXPORT))
         };
         if self.f.classes.get(class.idx()).is_some_and(lacks_name)
-            && !(self.recovers && self.lists == 1 << ListKind::SourceElements as u32)
+            && !(self.recovers() && self.lists == 1 << ListKind::SourceElements as u32)
         {
             self.report();
         }
@@ -60,7 +74,7 @@ impl Parser<'_> {
         let start = self.pos();
         let base = self.s.modifiers.len();
         let class = self.class((start, start), base, Flags::empty());
-        if self.reads_jsdoc {
+        if self.reads_jsdoc() {
             self.class_jsdoc(class, start);
         }
         self.finish_expr(ExprKind::Class(class), start)
@@ -76,7 +90,7 @@ impl Parser<'_> {
         }
         let keyword = self.pos();
         let class = self.class((start, keyword), base, flags & Flags::ABSTRACT);
-        if self.reads_jsdoc {
+        if self.reads_jsdoc() {
             self.class_jsdoc(class, start);
         }
         self.finish_expr(ExprKind::Class(class), keyword)
@@ -88,7 +102,7 @@ impl Parser<'_> {
     #[inline(never)]
     #[track_caller]
     fn missing_declaration_expression(&mut self, start: u32, base: usize) -> ExprId {
-        if !self.recovers {
+        if !self.recovers() {
             self.fail();
             return ExprId::NONE;
         }
@@ -104,7 +118,7 @@ impl Parser<'_> {
     #[inline(never)]
     #[track_caller]
     fn type_arguments_in_no_list(&mut self) {
-        if !self.recovers {
+        if !self.recovers() {
             return self.refuse(Refusal::Reported);
         }
         let before = self.checkpoint();
@@ -231,7 +245,7 @@ impl Parser<'_> {
                 }
             }
         }
-        self.lists = lists;
+        self.leave_list(lists);
         heritage.other_extends = self.f.list(&other_extends);
         heritage.other_implements = self.f.list(&other_implements);
         heritage
@@ -275,14 +289,14 @@ impl Parser<'_> {
         {
             // A `SemicolonClassElement` is not a member.
             if self.eat(T::Semicolon) {
-                if self.reads_jsdoc {
+                if self.reads_jsdoc() {
                     self.semicolon_jsdoc();
                 }
                 continue;
             }
             self.class_element(members);
         }
-        self.lists = lists;
+        self.leave_list(lists);
         if has_members {
             self.expect(T::CloseBrace);
         }
@@ -373,7 +387,7 @@ impl Parser<'_> {
     #[inline(never)]
     #[track_caller]
     fn is_constructor_without_parameters(&mut self, name: T) -> bool {
-        if self.recovers && name == T::Constructor {
+        if self.recovers() && name == T::Constructor {
             return true;
         }
         self.report();
@@ -473,22 +487,13 @@ impl Parser<'_> {
         };
         if name_token == T::BigInt {
             key = PropKey::None;
-            flags |= Flags::LITERAL_NAME;
         }
-        match name_kind {
-            NameKind::StringLiteral => flags |= Flags::STRING_NAME | Flags::LITERAL_NAME,
-            NameKind::NumericLiteral => flags |= Flags::LITERAL_NAME,
-            NameKind::ComputedString if matches!(key, PropKey::Name(_)) => {
-                flags |= Flags::STRING_NAME | Flags::COMPUTED_NAME;
-            }
-            _ if name_token == T::OpenBracket => flags |= Flags::COMPUTED_NAME,
-            _ => {}
-        }
+        flags |= flags_of_member_name(name_token, name_kind, key);
         // Neither `tryParseConstructorDeclaration` nor the property without a name looks for it.
         let mut question = None;
         if self.token() == T::Question
             && has_name
-            && !(self.recovers
+            && !(self.recovers()
                 && name_token == T::Constructor
                 && kind == MemberKind::Property
                 && !is_generator)
@@ -581,7 +586,7 @@ impl Parser<'_> {
             member.init = self.optional_initializer();
             self.context = inner;
             // `parseSemicolonAfterPropertyName`
-            if self.token() == T::OpenParen && self.recovers
+            if self.token() == T::OpenParen && self.recovers()
                 || !self.eat(T::Semicolon) && !self.can_parse_semicolon()
             {
                 let is_identifier =
@@ -597,7 +602,7 @@ impl Parser<'_> {
             pos: start.full,
             end: self.prev_end(),
         };
-        if self.reads_jsdoc {
+        if self.reads_jsdoc() {
             self.member_jsdoc(&mut member, first_modifier);
         }
         member.modifiers = self.take_modifiers(first_modifier);
@@ -631,7 +636,7 @@ impl Parser<'_> {
             anchor: open,
             start: start.pos,
         });
-        if self.reads_jsdoc {
+        if self.reads_jsdoc() {
             self.static_block_jsdoc(start);
         }
         self.s.members.push(Member {

@@ -657,7 +657,8 @@ impl<'s> Program<'s> {
             printing_floors: Vec::new(),
             serialized_types: Default::default(),
             context_free_level: usize::MAX,
-            call_to_resolve_afresh: None,
+            calls_to_resolve_afresh: None,
+            calls_resolved_afresh: Vec::new(),
             found_cycle: false,
             left_a_cycle: false,
             stale_resolutions: Vec::new(),
@@ -1201,9 +1202,11 @@ pub struct Checker<'p, 's> {
     /// The height of `inference_contexts` while `getContextFreeTypeOfExpression` rechecks an
     /// expression: diagnostics reported then are kept.
     context_free_level: usize,
-    /// `resolved_signature` resolves this call as if nothing had resolved it, once, and stores nothing: see
-    /// `context_free_type_of_call_resolved_afresh`.
-    call_to_resolve_afresh: Option<(FileId, ExprId)>,
+    /// `resolved_signature` resolves the calls in this range of a file as if nothing had resolved them, and stores nothing:
+    /// see `context_free_type_of_call_resolved_afresh`.
+    calls_to_resolve_afresh: Option<(FileId, u32, u32)>,
+    /// Those that it has resolved so, each with what it has found, or `None` while it is at it.
+    calls_resolved_afresh: Vec<(ExprId, Option<ResolvedCall>)>,
     /// The stack depth at each point where a query was made that TypeScript would not have made
     /// there, or not yet.
     /// A cycle through such a point may be an artifact of this resolver: the result is unresolved,

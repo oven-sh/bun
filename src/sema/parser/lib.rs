@@ -170,7 +170,7 @@ pub fn parse(
     atoms: &dyn Intern,
     scratch: &mut Scratch,
 ) -> Result<Parsed, Refused> {
-    let parsed = parser::Parser::run(text, options, Some(atoms), scratch)?;
+    let parsed = parser::run(text, options, Some(atoms), scratch)?;
     if !options.reads_jsdoc || options.is_javascript {
         return Ok(parsed);
     }
@@ -183,7 +183,7 @@ pub fn parse(
     }
     scratch.recycle(parsed.file);
     scratch.jsdoc_wanted = wanted;
-    let parsed = parser::Parser::run(text, options, Some(atoms), scratch);
+    let parsed = parser::run(text, options, Some(atoms), scratch);
     scratch.jsdoc_wanted = 0;
     parsed
 }
@@ -195,7 +195,7 @@ pub fn parse_with_own_atoms(
     options: Options,
     scratch: &mut Scratch,
 ) -> Result<Parsed, Refused> {
-    parser::Parser::run(text, options, None, scratch)
+    parser::run(text, options, None, scratch)
 }
 
 /// The number of tokens of `text`, as far as that can be told without parsing. For benchmarks of

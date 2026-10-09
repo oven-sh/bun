@@ -228,8 +228,9 @@ describe.concurrent("sortTailwindcss", () => {
       const flags = allows ? ["--allow-unsupported", "."] : ["."];
       const lists = [];
       for (let run = 0; run < 3; run++) {
-        const { stdout, stderr, exitCode } = await formatIn(String(dir), [], ["--list-different", ...flags]);
-        lists.push({ files: stdout.trim().split("\n").sort(), stderr, exitCode });
+        const list = ["--log-level=log", "--list-different", ...flags];
+        const { stdout, stderr, exitCode } = await formatIn(String(dir), [], list);
+        lists.push({ files: stdout.split("\n").filter(it => it.endsWith(".jsx")), stdout, stderr, exitCode });
       }
       expect(lists[0].files).toEqual(allows ? names.toSorted() : ["four/a.jsx", "one/a.jsx", "two/a.jsx"]);
       expect(lists[0].stderr).toContain(
@@ -267,6 +268,14 @@ describe.concurrent("sortTailwindcss", () => {
       });
     }
     expect(await format(files, ["docs/a.jsx"])).toMatchObject({ stderr: "", files: [reversed] });
+    // Before 0.6.0 it did nothing but sort.
+    const twice = { ...files, "a.jsx": '<a className="p-4  flex   p-4" />;\n' };
+    expect((await format({ ...twice, ...plugin("0.5.14") }, ["a.jsx"])).files).toEqual([
+      '<a className="flex  p-4   p-4" />;\n',
+    ]);
+    expect((await format({ ...twice, ...plugin("0.6.0") }, ["a.jsx"])).files).toEqual([
+      '<a className="flex p-4" />;\n',
+    ]);
     // That of the directory of the configuration file counts, and so does its Tailwind.
     const nearer = { "docs/.prettierrc": files[".prettierrc"], ...plugin("0.6.6") };
     expect(await format({ ...files, ...nearer }, ["docs/a.jsx"])).toMatchObject({ stderr: "", files: [reversed] });

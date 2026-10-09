@@ -62,7 +62,32 @@ enum Body {
     Class,
 }
 
-impl Parser<'_> {
+/// A property of a record, as far as its name says. `name_token`: the first token of the name.
+fn property_of_record(
+    name_token: T,
+    (key, name_kind, name_pos): (PropKey, NameKind, u32),
+    flags: Flags,
+    start: u32,
+) -> Member {
+    let key = match name_token {
+        T::BigInt => PropKey::None,
+        _ => key,
+    };
+    Member {
+        kind: MemberKind::Property,
+        key,
+        flags: flags | super::class::flags_of_member_name(name_token, name_kind, key),
+        ty: TypeNodeId::NONE,
+        init: ExprId::NONE,
+        func: FnId::NONE,
+        name_pos,
+        start,
+        loc: TextRange::default(),
+        modifiers: Span::EMPTY,
+    }
+}
+
+impl<const GENERAL: bool> Parser<'_, GENERAL> {
     // ───────────────────────────── tokens ─────────────────────────────
 
     /// Whether the token is the name `word`, which is no keyword of TypeScript's.
@@ -2216,28 +2241,9 @@ impl Parser<'_> {
             return self.fail();
         }
         let name_token = self.token();
-        let (mut key, name_kind, name_pos) = self.property_name();
-        match (name_token, name_kind) {
-            (T::BigInt, _) => {
-                key = PropKey::None;
-                flags |= Flags::LITERAL_NAME;
-            }
-            (_, NameKind::StringLiteral) => flags |= Flags::STRING_NAME | Flags::LITERAL_NAME,
-            (_, NameKind::NumericLiteral) => flags |= Flags::LITERAL_NAME,
-            _ => {}
-        }
-        let mut member = Member {
-            kind: MemberKind::Property,
-            key,
-            flags,
-            ty: TypeNodeId::NONE,
-            init: ExprId::NONE,
-            func: FnId::NONE,
-            name_pos,
-            start: start.pos,
-            loc: TextRange::default(),
-            modifiers: Span::EMPTY,
-        };
+        let name = self.property_name();
+        let mut member = property_of_record(name_token, name, flags, start.pos);
+        let (key, flags, name_pos) = (member.key, member.flags, member.name_pos);
         let mut end = 0;
         if self.token() == T::Colon && !is_generator && !flags.contains(Flags::ASYNC) {
             member.ty = self.type_annotation();

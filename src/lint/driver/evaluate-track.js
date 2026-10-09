@@ -95,9 +95,10 @@ function finish(config, dependencies = [path]) {
     const match = /^(.*[\\/]node_modules[\\/](?:@[^\\/]+[\\/])?[^\\/]+)[\\/]/.exec(file);
     files.add(match ? resolve(match[1], "package.json") : file);
   }
-  // A timer, a watcher or a server that the configuration has left behind would keep the process alive for ever.
+  // A timer, a watcher or a server that the configuration has left behind would keep the process alive for ever. The answer is
+  // there, whatever the configuration has made of `process.exitCode`.
   process.stdout.write(
     marker + JSON.stringify({ config, files: [...files], environment: [...environment], uncacheable }),
-    () => process.exit(),
+    () => process.exit(0),
   );
 }

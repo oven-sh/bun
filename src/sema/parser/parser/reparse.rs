@@ -43,12 +43,30 @@ fn is_valid_identifier(text: &[u8]) -> bool {
 }
 
 /// `entityNameToString`
+/// The names of those of `tags` that no parameter matches, with the code of what is said about each.
+fn push_unmatched_names<'d, 't>(
+    tags: &[&'d Property<'t>],
+    is_matched: &[bool],
+    errors: &mut Vec<(&'d [Name<'t>], u32)>,
+) {
+    for (&property, &is_matched) in tags.iter().zip(is_matched) {
+        if is_matched {
+            continue;
+        }
+        match property.name[..] {
+            [_] if !property.is_name_first => errors.push((&property.name, 8024)),
+            [_] | [] => {}
+            [..] => errors.push((&property.name, 8032)),
+        }
+    }
+}
+
 fn entity_name_to_string(name: &[Name<'_>]) -> Vec<u8> {
     let parts: Vec<&[u8]> = name.iter().map(|part| &*part.text).collect();
     parts.join(&b'.')
 }
 
-impl<'a> Parser<'a> {
+impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
     // ───────────────────────────── helpers ─────────────────────────────
 
     fn name_atom(&mut self, name: &Name<'_>) -> Atom {
@@ -208,7 +226,7 @@ impl<'a> Parser<'a> {
             true => name.start.saturating_sub(1),
             false => name.start,
         };
-        match self.recovers {
+        match self.recovers() {
             true => self.f.error(DiagnosticKind::Parse, start, name.end, 1003),
             false => self.report(),
         }
@@ -1201,16 +1219,7 @@ impl<'a> Parser<'a> {
         {
             errors.push((&last.name, 8029));
         }
-        for (&property, &is_matched) in tags.iter().zip(&is_matched) {
-            if is_matched {
-                continue;
-            }
-            match property.name[..] {
-                [_] if !property.is_name_first => errors.push((&property.name, 8024)),
-                [_] | [] => {}
-                [..] => errors.push((&property.name, 8032)),
-            }
-        }
+        push_unmatched_names(&tags, &is_matched, &mut errors);
         for (name, code) in errors {
             let (Some(first), Some((last, left))) = (name.first(), name.split_last()) else {
                 continue;

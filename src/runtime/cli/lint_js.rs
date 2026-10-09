@@ -283,7 +283,6 @@ fn group_in(line: &[u8]) -> Option<(&[u8], &'static [u8], &'static [u8])> {
 }
 
 /// What such a file says. `max`: there is no limit.
-#[cfg_attr(not(any(target_os = "linux", test)), expect(dead_code))]
 fn limit_in(text: &[u8]) -> Option<usize> {
     core::str::from_utf8(text.trim_ascii()).ok()?.parse().ok()
 }
@@ -311,20 +310,24 @@ fn limit_of_the_groups() -> Option<usize> {
     None
 }
 
-/// The memory of the machine, or of the container.
-fn memory() -> usize {
-    let machine = bun_core::get_total_memory_size();
-    limit_of_the_groups().map_or(machine, |it| it.min(machine))
+/// What all engines together may take: a quarter of the memory of the machine, or of the container. JavaScriptCore is told the
+/// same, so what the user tells it instead goes here too.
+fn memory_for_engines() -> usize {
+    let said = bun_core::getenv_z(bun_core::zstr!("BUN_JSC_forceRAMSize"));
+    said.and_then(limit_in).unwrap_or_else(|| {
+        let machine = bun_core::get_total_memory_size();
+        limit_of_the_groups().map_or(machine, |it| it.min(machine)) / 4
+    })
 }
 
-/// Runs the `exit` handlers of the VM of this thread, if it has one. With
-/// `BUN_DESTRUCT_VM_ON_EXIT` the VM is freed too.
-fn end_vm() {
+/// Runs the `exit` handlers of the VM of this thread, if it has one. If it `frees`, and with
+/// `BUN_DESTRUCT_VM_ON_EXIT`, the VM is freed too.
+fn end_vm(frees: bool) {
     if !VirtualMachine::is_loaded() {
         return;
     }
     let vm = VirtualMachine::get();
-    if !bun_core::env_var::feature_flag::BUN_DESTRUCT_VM_ON_EXIT::get().unwrap_or(false) {
+    if !frees && !bun_core::env_var::feature_flag::BUN_DESTRUCT_VM_ON_EXIT::get().unwrap_or(false) {
         let _lock = vm.global().vm().get_api_lock();
         return vm.as_mut().on_exit();
     }
@@ -356,6 +359,8 @@ enum Turn {
     Returned(Result<Vec<u8>, Vec<u8>>),
     /// To the engine: nothing is going to be asked of it any more. It returns nothing.
     End,
+    /// To the engine: it ends now, and frees its VM. The others need the memory.
+    Free,
 }
 
 /// Where the two meet. Only one of them waits at a time.
@@ -393,9 +398,9 @@ struct Start {
 }
 
 impl Start {
-    /// [`memory`]
+    /// [`memory_for_engines`]
     fn memory(&self) -> usize {
-        *self.memory.get_or_init(memory)
+        *self.memory.get_or_init(memory_for_engines)
     }
 
     /// Makes a VM for this thread.
@@ -409,7 +414,7 @@ impl Start {
             }
             // The memory that is for the engines, by which they are counted too. With under 16 GB it goes by what the process
             // takes, which is all engines together: told all the memory of a container, six large engines went over it.
-            jsc::expect_ram_size(self.memory() / 4);
+            jsc::expect_ram_size(self.memory());
             // What a process has one of, like `FileSystem::instance()`, is made when its first VM starts, and not for
             // several threads at a time.
             first = Some(start_vm().and_then(|()| {
@@ -432,11 +437,11 @@ fn run_engine(number: usize, start: &Start, desk: &Desk) -> ! {
         ));
     }
     let started = start.start_vm();
+    let mut has_answered = false;
     loop {
-        let Turn::Call { kind, content } =
-            desk.hear(|turn| matches!(turn, Turn::Call { .. } | Turn::End))
-        else {
-            end_vm();
+        let heard = desk.hear(|turn| matches!(turn, Turn::Call { .. } | Turn::End | Turn::Free));
+        let Turn::Call { kind, content } = heard else {
+            end_vm(matches!(heard, Turn::Free));
             desk.say(Turn::Returned(Ok(Vec::new())));
             continue;
         };
@@ -451,8 +456,13 @@ fn run_engine(number: usize, start: &Start, desk: &Desk) -> ! {
             }
         };
         let returned = (started.clone()).and_then(|()| ThreadVm.call(kind, &content, &mut ask));
-        if started.is_ok() {
-            let heap = VirtualMachine::get().jsc_vm().heap_size();
+        // To its first call it answers what it has to load. After the second that is loaded.
+        if started.is_ok() && core::mem::replace(&mut has_answered, true) {
+            // 0 in a build of JavaScriptCore that does not count: 1 says that the engine has answered, and takes no room.
+            let heap = VirtualMachine::get()
+                .jsc_vm()
+                .block_bytes_allocated()
+                .max(1);
             desk.heap.store(heap, core::sync::atomic::Ordering::Relaxed);
         }
         desk.say(Turn::Returned(returned));
@@ -489,24 +499,47 @@ impl Vm for Borrowed<'_> {
                     serve(kind, &details, &mut answer);
                     self.desk.say(Turn::Answered(answer));
                 }
-                Turn::Returned(returned) => return returned,
+                Turn::Returned(returned) => {
+                    self.note_the_heap();
+                    return returned;
+                }
                 _ => {}
             }
         }
     }
 }
 
+impl Borrowed<'_> {
+    fn note_the_heap(&self) {
+        let heap = self.desk.heap.load(core::sync::atomic::Ordering::Relaxed);
+        let mut state = self.engines.state.lock();
+        let known = &mut state.all[self.at];
+        let is_the_first_time = known.largest == 0 && heap > 0;
+        (known.heap, known.largest) = (heap, heap.max(known.largest));
+        drop(state);
+        // Those that wait may start another one by now.
+        if is_the_first_time {
+            self.engines.is_idle.notify_all();
+        }
+    }
+}
+
 impl Drop for Borrowed<'_> {
     fn drop(&mut self) {
-        let mut state = self.engines.state.lock();
-        let heap = self.desk.heap.load(core::sync::atomic::Ordering::Relaxed);
-        let largest = &mut state.all[self.at].2;
-        *largest = heap.max(*largest);
         if self.is_borrowed_further_up {
             return;
         }
+        let mut state = self.engines.state.lock();
         state.borrowed.retain(|it| it.1 != self.at);
-        state.idle.push(self.at);
+        // They have grown since they were started. The first has the heavy files, and one is left beside those that are kept.
+        let all: usize = state.all.iter().map(|it| it.heap).sum();
+        if self.at != 0 && all > self.engines.start.memory() && state.count() - state.kept > 1 {
+            let known = &mut state.all[self.at];
+            (known.heap, known.is_freed) = (0, true);
+            self.desk.say(Turn::Free);
+        } else {
+            state.idle.push(self.at);
+        }
         drop(state);
         self.engines.demand.note(self.size);
         // Each of those that wait may wait for another one.
@@ -514,16 +547,38 @@ impl Drop for Borrowed<'_> {
     }
 }
 
+/// What an engine counts for before it has loaded what it needs and says its size: no configuration that was seen took more. So
+/// with 16 GB of memory two engines start at once, and with less, or for a third, the size of one is waited for.
+const NOT_LOADED_YET: usize = 2 << 30;
+
+/// An engine.
+struct Known {
+    desk: Arc<Desk>,
+    /// Who has borrowed it last.
+    by: ThreadId,
+    /// How large its heap was when it was given back last, and at most.
+    heap: usize,
+    largest: usize,
+    /// It was told to free its VM, and is not lent any more.
+    is_freed: bool,
+}
+
 #[derive(Default)]
 struct State {
-    /// With who has borrowed it last, and the largest that its heap was when it was given back.
-    all: Vec<(Arc<Desk>, ThreadId, usize)>,
+    all: Vec<Known>,
     /// Which of them nobody has borrowed. The last one was given back last.
     idle: Vec<usize>,
     /// Who has borrowed which.
     borrowed: Vec<(ThreadId, usize)>,
     /// How many are kept: [`Engine::keep_vm`]. They are not there for the files by which the others are counted.
     kept: usize,
+}
+
+impl State {
+    /// How many engines there are.
+    fn count(&self) -> usize {
+        self.all.iter().filter(|it| !it.is_freed).count()
+    }
 }
 
 /// The engines. None is started before it is needed.
@@ -538,21 +593,25 @@ pub(crate) struct Engines {
 impl Engines {
     /// Ends every engine. Nothing is being linted any more.
     pub(crate) fn end_all(&self) {
-        for (desk, ..) in core::mem::take(&mut self.state.lock().all) {
-            desk.say(Turn::End);
+        for Known { desk, is_freed, .. } in core::mem::take(&mut self.state.lock().all) {
+            if !is_freed {
+                desk.say(Turn::End);
+            }
             desk.hear(|turn| matches!(turn, Turn::Returned(_)));
         }
     }
 
-    /// Whether one more engine fits in the memory that is for them, a quarter of all, if it gets as large as the largest of those
-    /// after the first, which has the heavy files. Nobody knows before one of these has been given back: so long there are two.
+    /// Whether one more engine fits in the memory that is for them, if it gets as large as the largest of those after the first,
+    /// which has the heavy files, or as that one if it is alone.
     fn has_room_for_another(&self, state: &State) -> bool {
         let [first, others @ ..] = &state.all[..] else {
             return true;
         };
-        let largest = others.iter().map(|it| it.2).max().unwrap_or(0);
-        others.is_empty()
-            || (largest > 0 && first.2 + (others.len() + 1) * largest <= self.start.memory() / 4)
+        let known = |size: usize| Some(size).filter(|&it| it > 0);
+        let first = known(first.largest).unwrap_or(NOT_LOADED_YET);
+        let largest = others.iter().map(|it| it.largest).max();
+        let largest = largest.and_then(known).unwrap_or(first);
+        first + state.count() * largest <= self.start.memory()
     }
 
     /// Waits for an engine.
@@ -564,7 +623,7 @@ impl Engines {
             return Ok(Borrowed {
                 engines: self,
                 at,
-                desk: Arc::clone(&state.all[at].0),
+                desk: Arc::clone(&state.all[at].desk),
                 size,
                 is_borrowed_further_up: true,
             });
@@ -575,18 +634,18 @@ impl Engines {
             let find = |is_it: &dyn Fn(usize) -> bool| state.idle.iter().rposition(|&at| is_it(at));
             let found = match is_heavy {
                 true => find(&|at| at == 0),
-                false => find(&|at| state.all[at].1 == me)
+                false => find(&|at| state.all[at].by == me)
                     .or_else(|| find(&|at| at != 0))
                     .or_else(|| find(&|_| true)),
             };
             if let Some(found) = found {
                 let at = state.idle.remove(found);
-                state.all[at].1 = me;
+                state.all[at].by = me;
                 break at;
             }
             let can_start =
                 (!is_heavy || state.all.is_empty()) && self.has_room_for_another(&state);
-            if can_start && (self.demand).is_worth_another(state.all.len() - state.kept) {
+            if can_start && (self.demand).is_worth_another(state.count() - state.kept) {
                 let (at, desk) = (state.all.len(), Arc::<Desk>::default());
                 let (start, for_thread) = (Arc::clone(&self.start), Arc::clone(&desk));
                 // SAFETY: no VM or JS state crosses: a number, a `Once` with a flag, and a `Desk`, whose turns are bytes. This
@@ -595,7 +654,13 @@ impl Engines {
                     .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
                     .spawn(move || run_engine(at, &start, &for_thread))
                     .map_err(|_| b"Could not start a thread for the plugins.".to_vec())?;
-                state.all.push((desk, me, 0));
+                state.all.push(Known {
+                    desk,
+                    by: me,
+                    heap: 0,
+                    largest: 0,
+                    is_freed: false,
+                });
                 break at;
             }
             self.is_idle.wait_guarded(&mut state);
@@ -604,7 +669,7 @@ impl Engines {
         Ok(Borrowed {
             engines: self,
             at,
-            desk: Arc::clone(&state.all[at].0),
+            desk: Arc::clone(&state.all[at].desk),
             size,
             is_borrowed_further_up: false,
         })
@@ -625,6 +690,12 @@ impl Engine for Engines {
         self.state.lock().kept -= 1;
         drop(borrowed);
         Ok(())
+    }
+
+    fn sizes(&self) -> (usize, usize) {
+        let state = self.state.lock();
+        let largest = state.all.iter().map(|it| it.largest).max().unwrap_or(0);
+        (largest, state.all.len() - state.count())
     }
 
     fn expect(&self, files: usize, size: u64, most: usize) {

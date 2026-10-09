@@ -300,8 +300,10 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.iife_resolving.is_empty() && self.iife_resolving.contains(&(file, call)) {
             return self.any_signature_while_arguments_are_checked();
         }
-        if self.call_to_resolve_afresh == Some((file, call)) {
-            return self.resolve_signature_afresh(file, call);
+        if self.calls_to_resolve_afresh.is_some()
+            && let Some(resolved) = self.resolve_signature_afresh(file, call)
+        {
+            return resolved;
         }
         if let Some(known) = self.cached_resolved_signature(file, call) {
             return known;
@@ -410,18 +412,24 @@ impl<'p, 's> Checker<'p, 's> {
         resolved
     }
 
-    /// `resolved_signature` of `call_to_resolve_afresh`. What is stored for the call, and what was reported for it, stays
-    /// as it is; whatever asks for the call meanwhile gets what is stored.
+    /// `resolved_signature` of one of `calls_to_resolve_afresh`, once for each. What is stored for the call, and what was
+    /// reported for it, stays as it is. `None`: it is not one of them, or it is asked for while it is resolved so: then
+    /// what is stored answers.
     #[cold]
-    fn resolve_signature_afresh(&mut self, file: FileId, call: ExprId) -> ResolvedCall {
-        self.call_to_resolve_afresh = None;
+    fn resolve_signature_afresh(&mut self, file: FileId, call: ExprId) -> Option<ResolvedCall> {
+        let (of, start, end) = self.calls_to_resolve_afresh?;
+        if of != file || !(start..end).contains(&self.hir(file)[call].pos) {
+            return None;
+        }
+        if let Some(&(_, known)) = self.calls_resolved_afresh.iter().find(|it| it.0 == call) {
+            return known;
+        }
         let resolution_start = self.resolution_start;
         if !self.enter(Query::Call(file, call)) {
-            return ResolvedCall {
-                sig: None,
-                ret: TypeId::UNRESOLVED,
-            };
+            return None;
         }
+        let at = self.calls_resolved_afresh.len();
+        self.calls_resolved_afresh.push((call, None));
         self.resolution_start = self.stack.len();
         let around = self.call_resolution_errors.take();
         let resolved = self.resolve_signature(file, call);
@@ -431,7 +439,8 @@ impl<'p, 's> Checker<'p, 's> {
         let resolved = self.with_return_type(resolved);
         self.resolved_meanwhile.pop();
         let _ = self.leave(Query::Call(file, call));
-        resolved
+        self.calls_resolved_afresh[at].1 = Some(resolved);
+        Some(resolved)
     }
 
     fn effective_args(&mut self, file: FileId, args: IdList<ExprId>) -> Args {

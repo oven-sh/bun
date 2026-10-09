@@ -159,7 +159,9 @@ pub(crate) struct Checkpoint {
     jsdoc: jsdoc::Lens,
 }
 
-pub(crate) struct Parser<'a> {
+/// `GENERAL`: it can recover from errors and read JSDoc comments, if the options say so. Without it
+/// it does neither, and a text without errors pays nothing for the two.
+pub(crate) struct Parser<'a, const GENERAL: bool> {
     pub(crate) lx: Lexer<'a>,
     pub(crate) f: FileBuilder,
     pub(crate) s: Stacks,
@@ -168,10 +170,10 @@ pub(crate) struct Parser<'a> {
     /// How many classes enclose the node.
     pub(crate) classes_around: u32,
     pub(crate) options: Options,
-    /// `Options::recovers`
-    pub(crate) recovers: bool,
-    /// `Options::reads_jsdoc`, in a file of which comments are read.
-    pub(crate) reads_jsdoc: bool,
+    /// See `recovers()`.
+    recovers: bool,
+    /// See `reads_jsdoc()`.
+    reads_jsdoc: bool,
     pub(crate) jsdoc: jsdoc::State,
     /// `parsingContexts`: a bit for each `ListKind` of which a list is open.
     pub(crate) lists: u32,
@@ -221,34 +223,144 @@ pub(crate) struct Parser<'a> {
     pub(crate) was_abandoned_at: Option<(T, u32)>,
 }
 
-impl<'a> Parser<'a> {
-    pub(crate) fn run(
-        text: &'a [u8],
-        options: Options,
-        atoms: Option<&'a dyn Intern>,
-        scratch: &'a mut Scratch,
-    ) -> Result<Parsed, Refused> {
-        if text.len() >= 1 << 30 {
-            return Err(Refused::new(Refusal::TooLarge));
+/// `isAnExternalModuleIndicatorNode`
+fn is_an_external_module_indicator(f: &FileBuilder, id: StmtId) -> bool {
+    let Some(statement) = f.stmts.get(id.idx()) else {
+        return false;
+    };
+    let flags = match statement.kind {
+        StmtKind::Var(_) => f.modifiers_to_flags(statement.modifiers),
+        StmtKind::Fn(x) => f[x].flags,
+        StmtKind::Class(x) => f[x].flags,
+        StmtKind::Interface(x) => f[x].flags,
+        StmtKind::TypeAlias(x) => f[x].flags,
+        StmtKind::Enum(x) => f[x].flags,
+        StmtKind::Module(x) => f[x].flags,
+        // `import a = b.c` aliases an existing entity. It does not make the file a module.
+        StmtKind::ImportEquals(x) if !matches!(f[x].target, ImportEqualsTarget::Require(_)) => {
+            f[x].flags
         }
-        match atoms {
-            Some(atoms) => scratch.names.belong_to(atoms),
-            None => scratch.names.begin_own(text.len()),
-        }
-        let jsdoc = jsdoc::State::new(&options, atoms.is_some(), scratch.jsdoc_wanted);
-        let atoms = atoms.unwrap_or(&crate::names::NoInterner);
-        let mut file = recycled_file(std::mem::take(&mut scratch.recycled));
-        let mut stacks = std::mem::take(&mut scratch.stacks);
-        stacks.clear();
-        let mut lx = Lexer::new(text, atoms, &mut scratch.names);
-        lx.is_jsx = options.is_jsx;
-        lx.recovers = options.recovers;
-        lx.comments = std::mem::take(&mut file.comments);
+        StmtKind::ImportEquals(_)
+        | StmtKind::Import(_)
+        | StmtKind::ExportNamed(_)
+        | StmtKind::ExportStar { .. }
+        | StmtKind::ExportDefault(_)
+        | StmtKind::ExportAssign(_) => return true,
+        _ => Flags::empty(),
+    };
+    flags.contains(Flags::EXPORT)
+}
+
+/// What a parser starts with.
+struct Seed<'a> {
+    lx: Lexer<'a>,
+    file: FileBuilder,
+    stacks: Stacks,
+    options: Options,
+    jsdoc: jsdoc::State,
+}
+
+/// What is left of a parser.
+struct Harvest<'a> {
+    lx: Lexer<'a>,
+    file: FileBuilder,
+    stacks: Stacks,
+    has_top_level_await: bool,
+}
+
+pub(crate) fn run<'a>(
+    text: &'a [u8],
+    options: Options,
+    atoms: Option<&'a dyn Intern>,
+    scratch: &'a mut Scratch,
+) -> Result<Parsed, Refused> {
+    if text.len() >= 1 << 30 {
+        return Err(Refused::new(Refusal::TooLarge));
+    }
+    match atoms {
+        Some(atoms) => scratch.names.belong_to(atoms),
+        None => scratch.names.begin_own(text.len()),
+    }
+    let jsdoc = jsdoc::State::new(&options, atoms.is_some(), scratch.jsdoc_wanted);
+    let atoms = atoms.unwrap_or(&crate::names::NoInterner);
+    let mut file = recycled_file(std::mem::take(&mut scratch.recycled));
+    let mut stacks = std::mem::take(&mut scratch.stacks);
+    stacks.clear();
+    let mut lx = Lexer::new(text, atoms, &mut scratch.names);
+    lx.is_jsx = options.is_jsx;
+    lx.recovers = options.recovers;
+    lx.comments = std::mem::take(&mut file.comments);
+    let is_ecmascript = options.dialect.ecmascript && options.is_javascript && !options.is_json;
+    lx.is_ecmascript = is_ecmascript;
+    lx.is_typescript_5 = options.dialect.typescript_5;
+    lx.is_script = is_ecmascript && options.dialect.script;
+    let is_general = options.recovers || jsdoc.wanted != 0;
+    let seed = Seed {
+        lx,
+        file,
+        stacks,
+        options,
+        jsdoc,
+    };
+    let Harvest {
+        lx,
+        file: mut f,
+        stacks,
+        has_top_level_await,
+    } = match is_general {
+        true => Parser::<true>::new(seed).parse(),
+        false => Parser::<false>::new(seed).parse(),
+    };
+    let (refusal, refused_at) = (lx.refusal, lx.refused_at);
+    let (comment_directives, leading_comments) = (lx.comment_directives, lx.leading_comments);
+    f.comments = lx.comments;
+    scratch.stacks = stacks;
+    if let Some(why) = refusal {
+        scratch.recycled = f;
+        return Err(Refused {
+            why,
+            at: refused_at.0,
+            by: refused_at.1,
+        });
+    }
+    f.comment_directives = comment_directives;
+    let names = &mut scratch.names;
+    let source = text;
+    let mut intern = |it: &[u8]| names.atom(crate::names::Text::elsewhere(source, it), atoms);
+    let errors = f.diagnostics.len();
+    if !crate::pragmas::process_pragmas_into_fields(
+        text,
+        &leading_comments,
+        options.recovers,
+        &mut intern,
+        &mut f,
+    ) {
+        scratch.recycled = f;
+        return Err(Refused::new(Refusal::Reported));
+    }
+    if f.diagnostics.len() > errors {
+        f.diagnostics.sort_by_key(|it| (it.start, it.code));
+        f.has_parse_diagnostics = true;
+    }
+    f.mentioned.extend_from_slice(scratch.names.mentioned());
+    Ok(Parsed {
+        file: f,
+        has_top_level_await,
+    })
+}
+
+impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
+    #[inline(always)]
+    fn new(seed: Seed<'a>) -> Self {
+        let Seed {
+            lx,
+            file,
+            stacks,
+            options,
+            jsdoc,
+        } = seed;
         let is_script = options.is_javascript && !options.is_json;
         let is_ecmascript = options.dialect.ecmascript && is_script;
-        lx.is_ecmascript = is_ecmascript;
-        lx.is_typescript_5 = options.dialect.typescript_5;
-        lx.is_script = is_ecmascript && options.dialect.script;
         let is_flow = options.dialect.flow && is_script;
         let mut context = ctx::TOP_LEVEL;
         if options.is_declaration_file {
@@ -256,7 +368,7 @@ impl<'a> Parser<'a> {
         } else if !options.await_is_a_name {
             context |= ctx::AWAIT;
         }
-        let mut this = Parser {
+        Parser {
             lx,
             f: file,
             s: stacks,
@@ -295,54 +407,30 @@ impl<'a> Parser<'a> {
             has_reported: false,
             failed_at: (T::Eof, 0),
             was_abandoned_at: None,
-        };
-        this.source_file();
-        this.report_what_the_scanner_flagged();
-        let refusal = this.lx.refusal;
-        let refused_at = this.lx.refused_at;
-        let comment_directives = std::mem::take(&mut this.lx.comment_directives);
-        let leading_comments = std::mem::take(&mut this.lx.leading_comments);
-        let comments = std::mem::take(&mut this.lx.comments);
-        let Parser {
-            mut f,
-            s,
-            has_top_level_await,
-            ..
-        } = this;
-        scratch.stacks = s;
-        f.comments = comments;
-        if let Some(why) = refusal {
-            scratch.recycled = f;
-            return Err(Refused {
-                why,
-                at: refused_at.0,
-                by: refused_at.1,
-            });
         }
-        f.comment_directives = comment_directives;
-        let names = &mut scratch.names;
-        let source = text;
-        let mut intern = |it: &[u8]| names.atom(crate::names::Text::elsewhere(source, it), atoms);
-        let errors = f.diagnostics.len();
-        if !crate::pragmas::process_pragmas_into_fields(
-            text,
-            &leading_comments,
-            options.recovers,
-            &mut intern,
-            &mut f,
-        ) {
-            scratch.recycled = f;
-            return Err(Refused::new(Refusal::Reported));
+    }
+
+    fn parse(mut self) -> Harvest<'a> {
+        self.source_file();
+        self.report_what_the_scanner_flagged();
+        Harvest {
+            lx: self.lx,
+            file: self.f,
+            stacks: self.s,
+            has_top_level_await: self.has_top_level_await,
         }
-        if f.diagnostics.len() > errors {
-            f.diagnostics.sort_by_key(|it| (it.start, it.code));
-            f.has_parse_diagnostics = true;
-        }
-        f.mentioned.extend_from_slice(scratch.names.mentioned());
-        Ok(Parsed {
-            file: f,
-            has_top_level_await,
-        })
+    }
+
+    /// `Options::recovers`
+    #[inline(always)]
+    pub(crate) fn recovers(&self) -> bool {
+        GENERAL && self.recovers
+    }
+
+    /// `Options::reads_jsdoc`, in a file of which comments are read.
+    #[inline(always)]
+    pub(crate) fn reads_jsdoc(&self) -> bool {
+        GENERAL && self.reads_jsdoc
     }
 
     /// `parseSourceFileWorker`
@@ -371,21 +459,21 @@ impl<'a> Parser<'a> {
         while self.token() != T::Eof && self.is_at_element(ListKind::SourceElements) {
             let statement = self.statement();
             self.take_stray_decorators(0);
-            if self.is_an_external_module_indicator(statement) {
+            if is_an_external_module_indicator(&self.f, statement) {
                 self.f.has_module_syntax = true;
             }
-            if self.reads_jsdoc {
+            if self.reads_jsdoc() {
                 self.statement_jsdoc(statement);
                 self.list_reparsed(reparsed);
             }
             self.s.ids.push(statement.0);
         }
-        if self.reads_jsdoc {
+        if self.reads_jsdoc() {
             self.end_of_file_jsdoc(reparsed);
         }
         self.f.body = self.take_ids(base);
         self.take_errors_of_scanner();
-        if self.reads_jsdoc {
+        if self.reads_jsdoc() {
             self.finish_jsdoc();
         }
         if self.f.diagnostics.iter().any(|it| it.code == 1141) {
@@ -401,7 +489,8 @@ impl<'a> Parser<'a> {
             self.f.diagnostics.sort_by_key(|it| (it.start, it.code));
         }
         let is_of_parser = |it: &Diagnostic| it.kind == DiagnosticKind::Parse;
-        self.f.has_parse_diagnostics = self.recovers && self.f.diagnostics.iter().any(is_of_parser);
+        self.f.has_parse_diagnostics =
+            self.recovers() && self.f.diagnostics.iter().any(is_of_parser);
         if !self.f.body_starts.is_sorted_by_key(|body| body.0.0) {
             self.f.body_starts.sort_unstable_by_key(|body| body.0.0);
         }
@@ -414,35 +503,6 @@ impl<'a> Parser<'a> {
         if !self.f.modifiers_of_props.is_sorted_by_key(|it| it.0.0) {
             self.f.modifiers_of_props.sort_unstable_by_key(|it| it.0.0);
         }
-    }
-
-    /// `isAnExternalModuleIndicatorNode`
-    fn is_an_external_module_indicator(&self, id: StmtId) -> bool {
-        let f = &self.f;
-        let Some(statement) = f.stmts.get(id.idx()) else {
-            return false;
-        };
-        let flags = match statement.kind {
-            StmtKind::Var(_) => f.modifiers_to_flags(statement.modifiers),
-            StmtKind::Fn(x) => f[x].flags,
-            StmtKind::Class(x) => f[x].flags,
-            StmtKind::Interface(x) => f[x].flags,
-            StmtKind::TypeAlias(x) => f[x].flags,
-            StmtKind::Enum(x) => f[x].flags,
-            StmtKind::Module(x) => f[x].flags,
-            // `import a = b.c` aliases an existing entity. It does not make the file a module.
-            StmtKind::ImportEquals(x) if !matches!(f[x].target, ImportEqualsTarget::Require(_)) => {
-                f[x].flags
-            }
-            StmtKind::ImportEquals(_)
-            | StmtKind::Import(_)
-            | StmtKind::ExportNamed(_)
-            | StmtKind::ExportStar { .. }
-            | StmtKind::ExportDefault(_)
-            | StmtKind::ExportAssign(_) => return true,
-            _ => Flags::empty(),
-        };
-        flags.contains(Flags::EXPORT)
     }
 
     // ───────────────────────────── tokens ─────────────────────────────
@@ -460,10 +520,16 @@ impl<'a> Parser<'a> {
     /// `nextTokenWithoutCheck`: goes on from a word that is taken as a name.
     #[inline(always)]
     pub(crate) fn next_after_name(&mut self) {
-        if self.lx.has_escape {
+        self.take_as_name();
+        self.lx.next();
+    }
+
+    /// The token, a word, is taken as a name.
+    #[inline(always)]
+    pub(crate) fn take_as_name(&mut self) {
+        if GENERAL && self.lx.has_escape {
             self.forget_escaped_keyword();
         }
-        self.lx.next();
     }
 
     /// The start of the token.
@@ -496,7 +562,7 @@ impl<'a> Parser<'a> {
     #[track_caller]
     pub(crate) fn fail(&mut self) {
         // Where going on is not written yet. A speculative parse would go on too.
-        if self.recovers {
+        if self.recovers() {
             return self.refuse(Refusal::Unsupported);
         }
         if !self.has_failed() {
@@ -730,7 +796,7 @@ impl<'a> Parser<'a> {
         self.classes_around = to.classes_around;
         self.has_top_level_await = to.has_top_level_await;
         self.unclaimed_nullable_types = to.unclaimed_nullable_types;
-        if self.reads_jsdoc {
+        if self.reads_jsdoc() {
             self.rollback_jsdoc(to);
         }
     }
@@ -751,7 +817,7 @@ impl<'a> Parser<'a> {
         truncate_file(&mut self.f, &lens);
         let strays = since.stacks.stray_decorators as usize;
         self.s.stray_decorators.truncate(strays);
-        if self.reads_jsdoc {
+        if self.reads_jsdoc() {
             self.rollback_jsdoc(since);
         }
     }
@@ -862,7 +928,7 @@ impl<'a> Parser<'a> {
         if !self.lx.token.is_identifier_or_keyword() {
             return self.missing_identifier(0, 0);
         }
-        if self.lx.token == T::PrivateIdentifier && !self.recovers {
+        if self.lx.token == T::PrivateIdentifier && !self.recovers() {
             self.fail();
             return (Atom::NONE, self.pos());
         }
@@ -902,7 +968,7 @@ impl<'a> Parser<'a> {
     #[inline(never)]
     #[track_caller]
     pub(crate) fn note_stray_decorators(&mut self, base: usize, end: u32) {
-        if !self.recovers {
+        if !self.recovers() {
             return self.fail();
         }
         // Only the list of the file takes them.
@@ -928,7 +994,7 @@ impl<'a> Parser<'a> {
     /// many were saved when the list began.
     #[inline(always)]
     pub(crate) fn take_stray_decorators(&mut self, base: usize) {
-        if self.s.stray_decorators.len() > base {
+        if GENERAL && self.s.stray_decorators.len() > base {
             self.take_stray_decorators_slowly(base);
         }
     }

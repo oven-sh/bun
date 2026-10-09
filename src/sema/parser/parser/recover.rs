@@ -175,13 +175,13 @@ enum ListStep {
     Over,
 }
 
-impl Parser<'_> {
+impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// `parseErrorAtRange`. Without recovery: `fail`.
     #[cold]
     #[inline(never)]
     #[track_caller]
     pub(crate) fn error(&mut self, code: u32, at: (u32, u32), args: &[&[u8]]) {
-        if !self.recovers {
+        if !self.recovers() {
             return self.fail();
         }
         // A loop that is not written for recovery yet can stay at a token for ever. What is nested
@@ -211,7 +211,7 @@ impl Parser<'_> {
     /// the next of them.
     #[inline(always)]
     pub(crate) fn take_errors_of_scanner(&mut self) {
-        if !self.lx.errors.is_empty() {
+        if GENERAL && !self.lx.errors.is_empty() {
             self.take_errors_of_scanner_slowly();
         }
     }
@@ -229,7 +229,7 @@ impl Parser<'_> {
     #[inline(never)]
     pub(crate) fn forget_escaped_keyword(&mut self) {
         let at = self.lx.start;
-        if self.recovers && !self.lx.forget_escaped_keyword() {
+        if self.recovers() && !self.lx.forget_escaped_keyword() {
             (self.f.diagnostics).retain(|it| it.code != 1260 || it.start != at);
         }
     }
@@ -284,7 +284,7 @@ impl Parser<'_> {
     #[inline]
     #[track_caller]
     pub(crate) fn fail_unless_recovering(&mut self) {
-        if !self.recovers {
+        if !self.recovers() {
             self.fail();
         }
     }
@@ -294,7 +294,7 @@ impl Parser<'_> {
     #[inline(never)]
     #[track_caller]
     pub(crate) fn error_and_go_on(&mut self, code: u32, at: (u32, u32), args: &[&[u8]]) {
-        match self.recovers {
+        match self.recovers() {
             true => self.error(code, at, args),
             false => self.report(),
         }
@@ -311,7 +311,7 @@ impl Parser<'_> {
         code: u32,
         code_of_private_name: u32,
     ) -> (Atom, u32) {
-        if !self.recovers {
+        if !self.recovers() {
             self.fail();
             return (Atom::NONE, self.pos());
         }
@@ -357,7 +357,7 @@ impl Parser<'_> {
     #[track_caller]
     pub(crate) fn missing_expression(&mut self, code: u32) -> ExprId {
         self.missing_identifier(code, 0);
-        match self.recovers {
+        match self.recovers() {
             true => self.add_expr(ExprKind::Missing, self.pos(), self.full_start()),
             false => ExprId::NONE,
         }
@@ -445,7 +445,7 @@ impl Parser<'_> {
         has_type: bool,
         has_initializer: bool,
     ) {
-        if !self.recovers {
+        if !self.recovers() {
             return self.fail();
         }
         if self.token() == T::At && !self.newline_before() {
@@ -466,7 +466,7 @@ impl Parser<'_> {
     /// The condition of the loop of `parseHeritageClauses`, which is a list only from the first
     /// clause on.
     pub(crate) fn is_at_heritage_clause(&mut self, is_first: bool) -> bool {
-        if is_first || !self.recovers {
+        if is_first || !self.recovers() {
             return matches!(self.token(), T::Extends | T::Implements);
         }
         self.skip_to_element(ListKind::HeritageClauses)
@@ -477,7 +477,7 @@ impl Parser<'_> {
     /// recovery asks: without it, what is no element is an error where it is parsed.
     #[inline(always)]
     pub(crate) fn is_at_element(&mut self, kind: ListKind) -> bool {
-        !self.recovers || self.skip_to_element(kind)
+        !self.recovers() || self.skip_to_element(kind)
     }
 
     #[cold]
@@ -508,16 +508,27 @@ impl Parser<'_> {
     /// `recover_missing_comma`, which only recovery needs.
     #[inline(always)]
     pub(crate) fn goes_on_without_comma(&mut self, kind: ListKind, element: u32) -> bool {
-        self.recovers && self.recover_missing_comma(kind, element)
+        self.recovers() && self.recover_missing_comma(kind, element)
     }
 
     /// A list of `kind` is open from here on. Returns `lists` as the caller restores it after the
     /// list.
     #[inline(always)]
     pub(crate) fn enter_list(&mut self, kind: ListKind) -> u32 {
+        if !GENERAL {
+            return 0;
+        }
         let saved = self.lists;
         self.lists = saved | 1 << kind as u32;
         saved
+    }
+
+    /// After the list: `lists` is what `enter_list` has returned.
+    #[inline(always)]
+    pub(crate) fn leave_list(&mut self, lists: u32) {
+        if GENERAL {
+            self.lists = lists;
+        }
     }
 
     /// What the token is to the list of `kind`, which the loop of the list is at the top of.

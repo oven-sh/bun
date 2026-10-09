@@ -58,7 +58,7 @@ pub(crate) enum ModifiersOf {
     ClassMember,
 }
 
-impl Parser<'_> {
+impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[inline(always)]
     pub(crate) fn start(&self) -> Start {
         Start {
@@ -115,7 +115,7 @@ impl Parser<'_> {
             T::Switch => self.switch_statement(),
             T::Throw => self.throw_statement(),
             T::Try => self.try_statement(),
-            T::Catch | T::Finally if self.recovers => self.try_statement(),
+            T::Catch | T::Finally if self.recovers() => self.try_statement(),
             T::Debugger => {
                 self.next();
                 self.semicolon();
@@ -149,7 +149,7 @@ impl Parser<'_> {
             // immediately follows. Otherwise they're an identifier in an expression statement."
             T::Private | T::Protected | T::Public | T::Accessor | T::Static | T::Readonly
                 if !self.is_ecmascript
-                    && !self.recovers
+                    && !self.recovers()
                     && self.is_followed_by_word_on_same_line() =>
             {
                 self.fail();
@@ -191,7 +191,7 @@ impl Parser<'_> {
             }
         }
         let statement = self.statement();
-        if self.reads_jsdoc {
+        if self.reads_jsdoc() {
             self.statement_jsdoc(statement);
         }
         // The other parser takes these for statements of the file if no block is around them.
@@ -267,7 +267,7 @@ impl Parser<'_> {
                 T::Using => return self.is_using_declaration(),
                 T::Await => return self.is_await_using_declaration(),
                 T::Interface | T::Type => return self.next_is_identifier_on_same_line(),
-                T::Defer if self.recovers => return self.next_is_identifier_on_same_line(),
+                T::Defer if self.recovers() => return self.next_is_identifier_on_same_line(),
                 T::Module | T::Namespace => {
                     self.next();
                     return !self.newline_before()
@@ -311,7 +311,7 @@ impl Parser<'_> {
                     let mut current = self.token();
                     if current == T::Type {
                         // The native parser decides by the token after `type` alone.
-                        if self.recovers {
+                        if self.recovers() {
                             self.next();
                             return matches!(self.token(), T::Asterisk | T::OpenBrace)
                                 || self.is_identifier() && !self.newline_before();
@@ -523,7 +523,7 @@ impl Parser<'_> {
         if flags.contains(Flags::AMBIENT) {
             self.context |= ctx::AMBIENT;
             // `parseClassDeclarationOrExpression`: no `await` in it has the statement reparsed.
-            if self.recovers
+            if self.recovers()
                 && self.token() == T::Class
                 && !flags.contains(Flags::EXPORT)
                 && self.has_context(ctx::TOP_LEVEL)
@@ -550,7 +550,7 @@ impl Parser<'_> {
     fn declaration_worker(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
         match self.token() {
             T::Var | T::Let | T::Const | T::Using => self.variable_statement(start, base, flags),
-            T::Await if !self.recovers || self.is_await_using_declaration() => {
+            T::Await if !self.recovers() || self.is_await_using_declaration() => {
                 self.variable_statement(start, base, flags)
             }
             T::Function if flags.contains(Flags::AMBIENT) && self.is_flow => {
@@ -599,7 +599,7 @@ impl Parser<'_> {
     #[inline(never)]
     #[track_caller]
     fn missing_declaration(&mut self, start: Start, base: usize) -> StmtId {
-        if !self.recovers {
+        if !self.recovers() {
             self.fail();
             return StmtId::NONE;
         }
@@ -666,7 +666,7 @@ impl Parser<'_> {
         };
         self.next();
         // `for (let of X) { }`: the list is empty, and `of` is the keyword.
-        if self.recovers && self.token() == T::Of && self.is_before_identifier_and_close_paren() {
+        if self.recovers() && self.token() == T::Of && self.is_before_identifier_and_close_paren() {
             return Span::EMPTY;
         }
         let flags = flags | self.ambient();
@@ -694,7 +694,7 @@ impl Parser<'_> {
             let pat = match self.token() {
                 T::PrivateIdentifier => self.missing_binding_identifier(18029),
                 // `parseArrayBindingPattern`, `parseObjectBindingPattern`: `in` is an operator.
-                T::OpenBracket | T::OpenBrace if is_in_for && self.recovers => {
+                T::OpenBracket | T::OpenBrace if is_in_for && self.recovers() => {
                     let saved = self.enter_context(0, ctx::DISALLOW_IN);
                     let pat = self.identifier_or_pattern();
                     self.context = saved;
@@ -739,10 +739,10 @@ impl Parser<'_> {
                 break;
             }
         }
-        self.lists = lists;
+        self.leave_list(lists);
         self.context = saved;
         let decls = take_span!(self, var_decls, base);
-        if self.reads_jsdoc {
+        if self.reads_jsdoc() {
             self.variable_declarations_jsdoc(decls);
         }
         decls
@@ -829,7 +829,7 @@ impl Parser<'_> {
                 break;
             }
         }
-        self.lists = lists;
+        self.leave_list(lists);
         self.context = saved;
         if has_members {
             self.expect(T::CloseBrace);
@@ -863,7 +863,7 @@ impl Parser<'_> {
                 let mut is_string = self.token() == T::String;
                 // Only after `module` is a string a name.
                 if is_string && keyword == T::Namespace {
-                    match self.recovers {
+                    match self.recovers() {
                         true => is_string = false,
                         false => self.report(),
                     }
@@ -908,7 +908,7 @@ impl Parser<'_> {
 
     /// `parseIdentifierName`, for the `b` of `namespace a.b`.
     fn name_of_nested_namespace(&mut self) -> (Atom, u32) {
-        if !self.recovers {
+        if !self.recovers() {
             return self.identifier();
         }
         let (name, name_pos) = self.identifier_name();
@@ -980,13 +980,13 @@ impl Parser<'_> {
         let reparsed = self.jsdoc.reparsed.len();
         while self.is_in_list(T::CloseBrace) && self.is_at_element(ListKind::BlockStatements) {
             let statement = self.statement();
-            if self.reads_jsdoc {
+            if self.reads_jsdoc() {
                 self.statement_jsdoc(statement);
                 self.list_reparsed(reparsed);
             }
             self.s.ids.push(statement.0);
         }
-        self.lists = lists;
+        self.leave_list(lists);
         self.f.has_module_syntax = was_module;
         self.take_ids(base)
     }
@@ -1009,7 +1009,7 @@ impl Parser<'_> {
     #[cold]
     #[inline(never)]
     pub(crate) fn equals_after_block(&mut self) {
-        if self.recovers {
+        if self.recovers() {
             self.error_at_token(2809, &[]);
             self.next();
         }
@@ -1212,7 +1212,7 @@ impl Parser<'_> {
             false => self.expression_allowing_in(),
         };
         if !self.eat(T::Semicolon) && !self.can_parse_semicolon() {
-            match self.recovers {
+            match self.recovers() {
                 true => self.missing_semicolon_after(value),
                 false => self.fail(),
             }
@@ -1260,15 +1260,15 @@ impl Parser<'_> {
                 && self.is_at_element(ListKind::SwitchClauseStatements)
             {
                 let statement = self.statement();
-                if self.reads_jsdoc {
+                if self.reads_jsdoc() {
                     self.statement_jsdoc(statement);
                     self.list_reparsed_of_clause(reparsed);
                 }
                 self.s.ids.push(statement.0);
             }
-            self.lists = lists;
+            self.leave_list(lists);
             let body = self.take_ids(ids);
-            if self.reads_jsdoc {
+            if self.reads_jsdoc() {
                 self.clause_jsdoc(pos);
             }
             self.s.cases.push(Case {
@@ -1278,7 +1278,7 @@ impl Parser<'_> {
                 end: self.prev_end(),
             });
         }
-        self.lists = lists;
+        self.leave_list(lists);
         self.expect(T::CloseBrace);
         let cases = take_span!(self, cases, base);
         self.add_stmt(StmtKind::Switch { expr, cases }, start, Span::EMPTY)
@@ -1297,7 +1297,7 @@ impl Parser<'_> {
                 let ty = self.type_annotation();
                 // `checkCatchClause` reports it.
                 let init = match self.token() {
-                    T::Equals if self.recovers => self.initializer(),
+                    T::Equals if self.recovers() => self.initializer(),
                     T::Equals => {
                         self.refuse(Refusal::Reported);
                         ExprId::NONE
@@ -1315,7 +1315,7 @@ impl Parser<'_> {
                         end: self.prev_end(),
                     },
                 });
-                if self.reads_jsdoc {
+                if self.reads_jsdoc() {
                     self.variable_declaration_jsdoc(param);
                 }
                 self.expect(T::CloseParen);
@@ -1394,7 +1394,7 @@ impl Parser<'_> {
         {
             return self.add_stmt(StmtKind::Expr(expression), start, Span::EMPTY);
         }
-        if self.recovers {
+        if self.recovers() {
             self.missing_semicolon_after(expression);
             return self.add_stmt(StmtKind::Expr(expression), start, Span::EMPTY);
         }

@@ -26,7 +26,47 @@ pub(super) struct Specifier {
     pub(super) end: u32,
 }
 
-impl Parser<'_> {
+/// The ranges of the imports and exports that are no statement of the file or of a module block.
+fn misplaced_declarations(f: &FileBuilder) -> Vec<core::ops::Range<u32>> {
+    let mut is_well_placed = vec![false; f.stmts.len()];
+    let lists = std::iter::once(f.body).chain(f.modules.iter().map(|it| it.body));
+    for statement in lists.flat_map(|list| f.ids(list)) {
+        if let Some(it) = is_well_placed.get_mut(statement.idx()) {
+            *it = true;
+        }
+    }
+    let mut misplaced = Vec::new();
+    for (statement, is_well_placed) in f.stmts.iter().zip(is_well_placed) {
+        if !is_well_placed
+            && matches!(
+                statement.kind,
+                StmtKind::Import(_)
+                    | StmtKind::ImportEquals(_)
+                    | StmtKind::ExportNamed(_)
+                    | StmtKind::ExportStar { .. }
+            )
+        {
+            misplaced.push(statement.start..statement.loc.end);
+        }
+    }
+    misplaced
+}
+
+/// "The parser expected to find a '}' to match the '{' token here.", at `open`: for the last error of
+/// the parser, whether it is about that `}` or not.
+fn relate_to_open_brace(diagnostics: &mut [Diagnostic], open: u32) {
+    let mut errors = diagnostics.iter_mut();
+    if let Some(last) = errors.rfind(|it| it.kind == DiagnosticKind::Parse)
+        && last.code == 1005
+    {
+        let at = (open, Diagnostic::NO_LENGTH);
+        let texts = [T::OpenBrace.text(), T::CloseBrace.text()];
+        last.related
+            .push(Diagnostic::new(DiagnosticKind::Parse, at, 1007, &texts));
+    }
+}
+
+impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// Whether the text is read as acorn or Babel read it: what TypeScript's parser leaves to the
     /// checker is an error of their parsers.
     #[inline]
@@ -118,28 +158,7 @@ impl Parser<'_> {
     #[cold]
     #[inline(never)]
     pub(crate) fn forget_specifiers_of_misplaced_declarations(&mut self) {
-        let f = &self.f;
-        let mut is_well_placed = vec![false; f.stmts.len()];
-        let lists = std::iter::once(f.body).chain(f.modules.iter().map(|it| it.body));
-        for statement in lists.flat_map(|list| f.ids(list)) {
-            if let Some(it) = is_well_placed.get_mut(statement.idx()) {
-                *it = true;
-            }
-        }
-        let mut misplaced = Vec::new();
-        for (statement, is_well_placed) in f.stmts.iter().zip(is_well_placed) {
-            if !is_well_placed
-                && matches!(
-                    statement.kind,
-                    StmtKind::Import(_)
-                        | StmtKind::ImportEquals(_)
-                        | StmtKind::ExportNamed(_)
-                        | StmtKind::ExportStar { .. }
-                )
-            {
-                misplaced.push(statement.start..statement.loc.end);
-            }
-        }
+        let misplaced = misplaced_declarations(&self.f);
         self.f.diagnostics.retain(|it| {
             it.kind != DiagnosticKind::Checker
                 || it.code != 1141
@@ -270,7 +289,7 @@ impl Parser<'_> {
                 break;
             }
         }
-        self.lists = lists;
+        self.leave_list(lists);
         if !self.eat(T::CloseBrace) {
             self.unclosed_import_attributes(open);
         }
@@ -296,20 +315,11 @@ impl Parser<'_> {
     #[cold]
     #[inline(never)]
     pub(crate) fn unclosed_import_attributes(&mut self, open: u32) {
-        if !self.recovers {
+        if !self.recovers() {
             return self.fail();
         }
         self.expected(T::CloseBrace);
-        // The last error, whether it is that one or not.
-        let mut errors = self.f.diagnostics.iter_mut();
-        if let Some(last) = errors.rfind(|it| it.kind == DiagnosticKind::Parse)
-            && last.code == 1005
-        {
-            let at = (open, Diagnostic::NO_LENGTH);
-            let texts = [T::OpenBrace.text(), T::CloseBrace.text()];
-            last.related
-                .push(Diagnostic::new(DiagnosticKind::Parse, at, 1007, &texts));
-        }
+        relate_to_open_brace(&mut self.f.diagnostics, open);
     }
 
     /// Leaves the await context that the top level is. `statementHasAwaitIdentifier` is restored
@@ -587,7 +597,7 @@ impl Parser<'_> {
                         break;
                     }
                 }
-                self.lists = lists;
+                self.leave_list(lists);
                 if has_list {
                     self.expect(T::CloseBrace);
                 }
@@ -841,7 +851,7 @@ impl Parser<'_> {
                 break;
             }
         }
-        self.lists = lists;
+        self.leave_list(lists);
         if has_list {
             self.expect(T::CloseBrace);
         }

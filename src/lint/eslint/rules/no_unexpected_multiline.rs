@@ -33,6 +33,13 @@ fn break_after(e: Expr) -> Option<Span> {
     text::has_line_break(file.slice(Span::after(before, open))).then(|| Span::new(open, open + 1))
 }
 
+/// The `(` of a call with type arguments, if it is on another line than their `>`: where oxlint looks.
+fn break_after_type_args<'a>(call: Call<'a>, file: &'a File<'a>) -> Option<Span> {
+    let open = file.token_before(call.args().first()?.outer_span())?.span();
+    let close = file.token_before(open)?.span();
+    text::has_line_break(file.slice(close.between(open))).then_some(open)
+}
+
 /// With `--fix-dangerously` oxlint puts a `;` before it.
 fn report<'a>(at: Span, message: Message, cx: &Cx<'a, NoUnexpectedMultiline>) {
     let report = cx.report(at, message);
@@ -55,7 +62,10 @@ impl NoUnexpectedMultiline {
         if let ExprKind::Call(call) = e.kind()
             && !call.is_optional()
             && !call.args().is_empty()
-            && let Some(open) = break_after(call.callee())
+            && let Some(open) = match cx.language().is_oxlint && !call.type_args().is_empty() {
+                true => break_after_type_args(call, cx.file()),
+                false => break_after(call.callee()),
+            }
         {
             report(open, FUNCTION, cx);
         }

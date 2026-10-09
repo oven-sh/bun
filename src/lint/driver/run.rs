@@ -1330,6 +1330,16 @@ impl Run<'_> {
                 loading.linted_by_eslint
             );
         }
+        if let (largest @ 1.., freed) = loading.sizes {
+            let largest = largest as f64 / 1e6;
+            let _ = write!(self.out.stderr, "; the largest took {largest:.0} MB");
+            if freed > 0 {
+                let _ = write!(
+                    self.out.stderr,
+                    ", {freed} were freed to stay in the memory"
+                );
+            }
+        }
         self.out.stderr.push(b'\n');
         // Every file that is valid and goes to the parser that recovers from errors is a defect of the other.
         let counts = &bun_js_parser::sema::DIRECT_PARSER_COUNTS;

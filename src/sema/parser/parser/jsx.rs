@@ -23,10 +23,10 @@ fn text_between(src: &[u8], (start, end): (u32, u32)) -> &[u8] {
     src.get(start as usize..end as usize).unwrap_or_default()
 }
 
-impl Parser<'_> {
+impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// What `parseUpdateExpression` does at a `<`.
     pub(crate) fn jsx_element_or_fragment(&mut self) -> ExprId {
-        if self.recovers && !self.is_at_jsx_element() {
+        if self.recovers() && !self.is_at_jsx_element() {
             return self.update_expression_at_less_than();
         }
         self.jsx_elements(false)
@@ -74,7 +74,7 @@ impl Parser<'_> {
     #[cold]
     #[inline(never)]
     fn jsx_elements_without_parent(&mut self, first: ExprId) -> ExprId {
-        if !self.recovers {
+        if !self.recovers() {
             self.refuse(Refusal::Unsupported);
             return first;
         }
@@ -218,7 +218,7 @@ impl Parser<'_> {
                 T::LessThan => {
                     let (child, closes_this) = self.jsx_element(false, jsx.tag);
                     if closes_this {
-                        self.lists = lists;
+                        self.leave_list(lists);
                         self.s.ids.push(child.0);
                         return self.jsx_element_closed_by_child(
                             jsx,
@@ -232,7 +232,7 @@ impl Parser<'_> {
                 }
                 T::LessThanSlash => break,
                 _ => {
-                    self.lists = lists;
+                    self.leave_list(lists);
                     return self.jsx_element_without_closing_tag(
                         jsx, base, start, full_start, name, parent,
                     );
@@ -240,7 +240,7 @@ impl Parser<'_> {
             };
             self.s.ids.push(child.0);
         }
-        self.lists = lists;
+        self.leave_list(lists);
         jsx.children = self.take_ids(base);
         // `parseJsxClosingElement`, `parseJsxClosingFragment`
         jsx.close_pos = self.pos();
@@ -322,7 +322,7 @@ impl Parser<'_> {
         name: (u32, u32),
         parent: ExprId,
     ) -> (ExprId, bool) {
-        if !self.recovers {
+        if !self.recovers() {
             self.fail();
             self.s.ids.truncate(base);
             return (ExprId::NONE, false);
@@ -369,7 +369,7 @@ impl Parser<'_> {
         parent: ExprId,
         is_in_expression: bool,
     ) -> (ExprId, bool) {
-        if !self.recovers {
+        if !self.recovers() {
             self.refuse(Refusal::Reported);
             return (ExprId::NONE, false);
         }
@@ -430,7 +430,7 @@ impl Parser<'_> {
     fn scan_jsx_identifier(&mut self) {
         if self.token().is_identifier_or_keyword()
             && (self.lx.has_escape
-                || self.recovers && self.lx.src.get(self.lx.end as usize) == Some(&b'-'))
+                || self.recovers() && self.lx.src.get(self.lx.end as usize) == Some(&b'-'))
         {
             self.unusual_jsx_identifier();
         }
@@ -442,7 +442,7 @@ impl Parser<'_> {
     #[cold]
     #[inline(never)]
     fn unusual_jsx_identifier(&mut self) {
-        if !self.recovers {
+        if !self.recovers() {
             return self.report();
         }
         let src = self.lx.src;
@@ -495,7 +495,7 @@ impl Parser<'_> {
     #[cold]
     #[inline(never)]
     fn jsx_identifier_at_another_token(&mut self) -> Atom {
-        if !self.recovers {
+        if !self.recovers() {
             self.fail();
             return Atom::NONE;
         }
@@ -583,7 +583,7 @@ impl Parser<'_> {
             self.note_identifier(name, start);
         }
         while self.eat(T::Dot) {
-            let (name, name_pos) = match self.recovers {
+            let (name, name_pos) = match self.recovers() {
                 true => self.jsx_member_name(),
                 false => self.identifier_name(),
             };
@@ -655,7 +655,7 @@ impl Parser<'_> {
                 continue;
             }
             if !self.token().is_identifier_or_keyword() || self.token() == T::PrivateIdentifier {
-                if !self.recovers
+                if !self.recovers()
                     || matches!(self.token(), T::GreaterThan | T::Slash)
                     || !self.is_at_element(ListKind::JsxAttributes)
                 {
@@ -688,7 +688,7 @@ impl Parser<'_> {
                         };
                         self.expect(T::CloseBrace);
                     }
-                    T::LessThan if self.recovers => value = self.jsx_elements_after_equals(),
+                    T::LessThan if self.recovers() => value = self.jsx_elements_after_equals(),
                     T::LessThan => (value, _) = self.jsx_element(true, ExprId::NONE),
                     _ => self.missing_jsx_attribute_value(),
                 }
@@ -708,7 +708,7 @@ impl Parser<'_> {
                 postfix_token: 0,
             });
         }
-        self.lists = lists;
+        self.leave_list(lists);
         take_span!(self, props, base)
     }
 
@@ -733,7 +733,7 @@ impl Parser<'_> {
     #[cold]
     #[inline(never)]
     fn missing_jsx_attribute_value(&mut self) {
-        if !self.recovers {
+        if !self.recovers() {
             return self.fail();
         }
         self.error_at_token(1145, &[]);
@@ -745,7 +745,7 @@ impl Parser<'_> {
     #[cold]
     #[inline(never)]
     fn empty_jsx_attribute_value(&mut self, open: u32) -> ExprId {
-        if !self.recovers {
+        if !self.recovers() {
             self.refuse(Refusal::Reported);
             return ExprId::NONE;
         }
@@ -788,7 +788,7 @@ impl Parser<'_> {
     #[inline(never)]
     fn unclosed_jsx_expression_child(&mut self, expression: ExprId, open: u32) {
         self.expected(T::CloseBrace);
-        if self.recovers {
+        if self.recovers() {
             let end = self.full_start();
             self.f.jsx_expressions.push((expression, open, end));
             self.rescan_jsx_child();

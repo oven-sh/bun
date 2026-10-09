@@ -49,6 +49,8 @@ impl<'a> StaticallyNamed<'a> for IdentifierLike<'a> {
 pub struct Deprecations<'a> {
     /// tsgolint has no reason for a variable, whose comment is at the statement.
     has_no_reasons_for_variables: bool,
+    /// For tsgolint a member does not inherit the tag of what it implements or overrides.
+    is_nothing_inherited: bool,
     of_symbols: FxHashMap<TsSymbol<'a>, Option<&'a [u8]>>,
     of_signatures: FxHashMap<Signature<'a>, Option<&'a [u8]>>,
 }
@@ -58,8 +60,12 @@ impl<'a> Deprecations<'a> {
     fn of_symbol(&mut self, symbol: Option<TsSymbol<'a>>) -> Option<&'a [u8]> {
         let symbol = symbol?;
         let has_no_reasons_for_variables = self.has_no_reasons_for_variables;
+        let is_nothing_inherited = self.is_nothing_inherited;
         *self.of_symbols.entry(symbol).or_insert_with(|| {
-            let reason = symbol.deprecation()?;
+            let reason = match is_nothing_inherited {
+                true => symbol.declarations().find_map(TsNode::deprecation)?,
+                false => symbol.deprecation()?,
+            };
             let is_variable =
                 || symbol.declarations().next().is_some_and(|it| it.kind() == SyntaxKind::VariableDeclaration);
             Some(if has_no_reasons_for_variables && is_variable() { &b""[..] } else { reason })
@@ -69,7 +75,11 @@ impl<'a> Deprecations<'a> {
     /// `getJsDocDeprecation(signature)`
     fn of_signature(&mut self, signature: Option<Signature<'a>>) -> Option<&'a [u8]> {
         let signature = signature?;
-        *self.of_signatures.entry(signature).or_insert_with(|| signature.deprecation())
+        let is_nothing_inherited = self.is_nothing_inherited;
+        *self.of_signatures.entry(signature).or_insert_with(|| match is_nothing_inherited {
+            true => signature.declaration()?.deprecation(),
+            false => signature.deprecation(),
+        })
     }
 
     /// `searchForDeprecationInAliasesChain`: an alias on the way from an import to what it finally refers to can be deprecated:
@@ -424,7 +434,13 @@ impl NoDeprecated {
         let ExprKind::Object(properties) = object.kind() else {
             return;
         };
-        if properties.is_empty() || !object.is_assignment_target() {
+        if properties.is_empty() {
+            return;
+        }
+        if !object.is_assignment_target() {
+            if cx.language().is_oxlint {
+                self.check_object_literal_as_tsgolint(object, properties, cx);
+            }
             return;
         }
         for property in properties {
@@ -435,6 +451,38 @@ impl NoDeprecated {
                 let reason = cx.state.of_property(node.node, node.name, || object.ty());
                 self.report(node, reason, cx);
             }
+        }
+    }
+
+    /// tsgolint's `checkObjectLiteralPropertyDeprecation`: a property that gives a value to one that is deprecated in
+    /// what is expected of the object.
+    fn check_object_literal_as_tsgolint<'a>(
+        &self,
+        object: Expr<'a>,
+        properties: List<'a, Prop<'a>>,
+        cx: &mut Cx<'a, Self>,
+    ) {
+        let Some(expected) = object.ts_node().get_apparent_type_of_contextual_type() else {
+            return;
+        };
+        for property in properties {
+            let Some(key) = property.key() else {
+                continue;
+            };
+            let name = match key.kind() {
+                KeyKind::Ident(name)
+                | KeyKind::String(name)
+                | KeyKind::Number(name)
+                | KeyKind::Private(name)
+                | KeyKind::ComputedString(name)
+                | KeyKind::ComputedNumber(name) => name.bytes(),
+                KeyKind::Computed(e) => match e.ty().value() {
+                    Some(LiteralValue::String(value)) => value,
+                    _ => continue,
+                },
+            };
+            let reason = cx.state.of_symbol(expected.get_property(name));
+            self.report(IdentifierLike::new(NameOf(property).ts_node(), key.span(cx.file()), name), reason, cx);
         }
     }
 
@@ -534,6 +582,7 @@ impl NoDeprecated {
     /// Upstream does not take the key of an abstract member for a declaration.
     fn check_member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         if member.flags().contains(Flags::ABSTRACT)
+            && !cx.language().is_oxlint
             && let Some(key) = member.key()
             && let KeyKind::Ident(name) = key.kind()
         {
@@ -586,6 +635,11 @@ impl Rule for NoDeprecated {
         on.stmts([StmtTag::Try, StmtTag::ImportEquals, StmtTag::Module], Self::check_statement);
         on.members(Self::check_member);
         on.export_specs(Self::check_export_specifier);
-        Deprecations { has_no_reasons_for_variables: file.language().is_oxlint, ..Deprecations::default() }
+        let is_oxlint = file.language().is_oxlint;
+        Deprecations {
+            has_no_reasons_for_variables: is_oxlint,
+            is_nothing_inherited: is_oxlint,
+            ..Deprecations::default()
+        }
     }
 }

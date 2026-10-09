@@ -8,7 +8,20 @@ use crate::token::T;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
 
-impl Parser<'_> {
+/// What the name of a member of a type says about the member. `name_token`: its first token.
+fn flags_of_type_member_name(name_token: T, name_kind: NameKind, key: PropKey) -> Flags {
+    match name_kind {
+        NameKind::StringLiteral => Flags::STRING_NAME,
+        NameKind::NumericLiteral => Flags::LITERAL_NAME,
+        NameKind::ComputedString if matches!(key, PropKey::Name(_)) => {
+            Flags::STRING_NAME | Flags::COMPUTED_NAME
+        }
+        _ if name_token == T::OpenBracket => Flags::COMPUTED_NAME,
+        _ => Flags::empty(),
+    }
+}
+
+impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[inline(always)]
     pub(crate) fn add_type(&mut self, kind: TypeNodeKind, pos: u32, end: u32) -> TypeNodeId {
         let id = TypeNodeId(self.f.types.len() as u32);
@@ -183,7 +196,7 @@ impl Parser<'_> {
     /// `len(p.diagnostics)`. Only recovery has any.
     #[inline]
     fn number_of_errors(&mut self) -> usize {
-        match self.recovers {
+        match self.recovers() {
             true => self.count_errors(),
             false => 0,
         }
@@ -329,7 +342,7 @@ impl Parser<'_> {
     #[cold]
     #[inline(never)]
     fn function_type_without_parentheses(&mut self, operator: T) -> TypeNodeId {
-        if !self.recovers {
+        if !self.recovers() {
             self.refuse(Refusal::Reported);
             return TypeNodeId::NONE;
         }
@@ -436,7 +449,7 @@ impl Parser<'_> {
                     self.next();
                     if self.eat(T::CloseBracket) {
                         ty = self.finish_type(TypeNodeKind::Array(ty), start);
-                    } else if self.recovers && !self.is_start_of_type(false) {
+                    } else if self.recovers() && !self.is_start_of_type(false) {
                         self.expected(T::CloseBracket);
                         ty = self.finish_type(TypeNodeKind::Array(ty), start);
                     } else {
@@ -639,7 +652,7 @@ impl Parser<'_> {
             T::Asserts => {
                 let is_predicate = self.look_ahead(|p| {
                     p.next();
-                    let is_name = match p.recovers {
+                    let is_name = match p.recovers() {
                         // `nextTokenIsIdentifierOrKeywordOnSameLine`
                         true => p.token().is_identifier_or_keyword(),
                         false => p.is_identifier() || p.token() == T::This,
@@ -811,7 +824,7 @@ impl Parser<'_> {
             && self.newline_before()
             && !self.is_flow
             && self.is_followed_by_word_on_same_line();
-        if starts_something_else && !self.recovers {
+        if starts_something_else && !self.recovers() {
             self.refuse(Refusal::Reported);
         }
         if is_word && !starts_something_else {
@@ -819,7 +832,7 @@ impl Parser<'_> {
                 return Some(self.identifier_name());
             }
             // `parsePrivateIdentifier`
-            match self.recovers {
+            match self.recovers() {
                 true => self.next(),
                 false => self.fail(),
             }
@@ -909,7 +922,7 @@ impl Parser<'_> {
                 break None;
             }
         };
-        self.lists = lists;
+        self.leave_list(lists);
         error
     }
 
@@ -917,7 +930,7 @@ impl Parser<'_> {
     /// word starts no type, although it can be the name in a type reference.
     fn type_in_list(&mut self) -> TypeNodeId {
         // With recovery `is_at_element` has asked, and a comma is an element whose type is missing.
-        if !self.recovers && !self.is_start_of_type(false) {
+        if !self.recovers() && !self.is_start_of_type(false) {
             self.fail();
             return TypeNodeId::NONE;
         }
@@ -996,7 +1009,7 @@ impl Parser<'_> {
         let (mut count, mut comma) = (0, None);
         let lists = self.enter_list(ListKind::HeritageClauseElement);
         while self.is_at_element(ListKind::HeritageClauseElement) {
-            if !self.recovers && !self.is_heritage_element() {
+            if !self.recovers() && !self.is_heritage_element() {
                 break;
             }
             let full = self.full_start();
@@ -1010,7 +1023,7 @@ impl Parser<'_> {
                 break;
             }
         }
-        self.lists = lists;
+        self.leave_list(lists);
         // `isListTerminator`
         if !matches!(self.token(), T::OpenBrace | T::Extends | T::Implements) {
             self.fail_unless_recovering();
@@ -1023,7 +1036,7 @@ impl Parser<'_> {
     /// `not_entity_name`: what it says about `A?.B`.
     pub(crate) fn heritage_type(&mut self, is_checked: bool, not_entity_name: u32) -> TypeNodeId {
         let before = self.lx.mark();
-        let reference = match self.recovers {
+        let reference = match self.recovers() {
             // What type arguments have built is taken back if the expression goes on after them.
             true => self.try_parse(|p| p.heritage_entity_name(is_checked, not_entity_name)),
             false => self.heritage_entity_name(is_checked, not_entity_name),
@@ -1115,7 +1128,7 @@ impl Parser<'_> {
     #[cold]
     #[inline(never)]
     fn goes_on_after_type_arguments(&mut self) -> bool {
-        if !self.recovers {
+        if !self.recovers() {
             self.refuse(Refusal::Reported);
             return false;
         }
@@ -1205,7 +1218,7 @@ impl Parser<'_> {
                 }
             }
         }
-        self.lists = lists;
+        self.leave_list(lists);
         (extends, self.f.list(&others))
     }
 
@@ -1470,7 +1483,7 @@ impl Parser<'_> {
                 break;
             }
         }
-        self.lists = lists;
+        self.leave_list(lists);
         self.expect(T::CloseBracket);
         let elements = take_span!(self, tuple_elems, base);
         self.finish_type(TypeNodeKind::Tuple(elements), start)
@@ -1750,7 +1763,7 @@ impl Parser<'_> {
             let member = self.type_member();
             self.s.members.push(member);
         }
-        self.lists = lists;
+        self.leave_list(lists);
         take_span!(self, members, base)
     }
 
@@ -1903,7 +1916,7 @@ impl Parser<'_> {
         // `shouldParseReturnType`: "This is easy to get backward, especially in type contexts, so
         // parse the type anyway"
         if self.token() == T::EqualsGreaterThan
-            && self.recovers
+            && self.recovers()
             && !matches!(kind, FnKind::Getter | FnKind::Setter)
         {
             self.expected(T::Colon);
@@ -1958,7 +1971,7 @@ impl Parser<'_> {
             let first_modifier = self.s.modifiers.len();
             if self.token().is_modifier() {
                 // With recovery `is_at_element` has asked.
-                if !self.recovers && !self.look_ahead(Self::scan_type_member_start) {
+                if !self.recovers() && !self.look_ahead(Self::scan_type_member_start) {
                     self.fail();
                 }
                 member.flags = self.modifiers(ModifiersOf::TypeMember);
@@ -1997,15 +2010,7 @@ impl Parser<'_> {
                 key = PropKey::None;
             }
             (member.key, member.name_pos) = (key, name_pos);
-            match name_kind {
-                NameKind::StringLiteral => member.flags |= Flags::STRING_NAME,
-                NameKind::NumericLiteral => member.flags |= Flags::LITERAL_NAME,
-                NameKind::ComputedString if matches!(key, PropKey::Name(_)) => {
-                    member.flags |= Flags::STRING_NAME | Flags::COMPUTED_NAME;
-                }
-                _ if name_token == T::OpenBracket => member.flags |= Flags::COMPUTED_NAME,
-                _ => {}
-            }
+            member.flags |= flags_of_type_member_name(name_token, name_kind, key);
             // `parseAccessorDeclaration` takes none.
             if member.kind == MemberKind::Property && self.eat(T::Question) {
                 member.flags |= Flags::OPTIONAL;
@@ -2052,7 +2057,7 @@ impl Parser<'_> {
     fn body_in_type(&mut self, kind: MemberKind, func: FnId) -> bool {
         if !matches!(kind, MemberKind::Getter | MemberKind::Setter) {
             // `parseTypeMemberSemicolon` reports the `{`.
-            if !self.recovers {
+            if !self.recovers() {
                 self.refuse(Refusal::Reported);
             }
             return false;

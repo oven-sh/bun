@@ -3956,6 +3956,35 @@ describe("bun format on Windows, macOS and Linux", () => {
       utimesSync(path, time, time);
     };
 
+    test.each([
+      ["exports options", `export default { semi: false };`, true, 1],
+      ["prints", `console.log("out"); console.error("err"); export default { semi: false };`, true, 1],
+      ["sets process.exitCode", `process.exitCode = 5; export default { semi: false };`, true, 1],
+      ["exports an option that does not exist", `export default { semi: false, nonsense: 1 };`, true, 1],
+      ["exports a value that an option does not take", `export default { semi: "perhaps" };`, true, 2],
+      ["throws", `console.error("before"); throw new Error("boom");`, false, 2],
+      ["leaves with an error, and without a word", `process.exit(3);`, false, 2],
+    ])(
+      "the first run is as the next: one that %s",
+      async (_, config, isKept, exitCode) => {
+        using dir = tempDir("bun-format-platform", {
+          "node_modules/.keep": "",
+          "prettier.config.mjs": config,
+          "a.js": "a;\n",
+        });
+        age(join(String(dir), "prettier.config.mjs"), 60);
+        const first = await format(dir, ["--check", "a.js"]);
+        // What fails is run again.
+        expect(existsSync(join(String(dir), "node_modules", ".cache"))).toBe(isKept);
+        expect(await format(dir, ["--check", "a.js"])).toEqual(first);
+        // What it prints is seen only if it fails.
+        expect(first.stdout + first.stderr).not.toMatch(/\bout\b|\berr\b/);
+        if (!isKept) expect(first.stderr).toMatch(/prettier\.config\.mjs:\r?\n\[error\] ./);
+        expect(first.exitCode).toBe(exitCode);
+      },
+      slow ? 240_000 : 30_000,
+    );
+
     test(
       "what it exports is kept until the file or what it has read changes",
       async () => {

@@ -115,6 +115,105 @@ pub(crate) struct Lens {
     unmatched_augments_tags: u32,
 }
 
+impl Lens {
+    #[cold]
+    #[inline(never)]
+    fn of(state: &State, file: &FileBuilder) -> Lens {
+        Lens {
+            reparsed: state.reparsed.len() as u32,
+            attached: state.attached.len() as u32,
+            property_types: state.property_types.len() as u32,
+            full_signatures: state.full_signatures.len() as u32,
+            documented_functions: state.documented_functions.len() as u32,
+            hosts: file.jsdoc_hosts.len() as u32,
+            types: file.jsdoc_types.len() as u32,
+            modifiers: file.jsdoc_modifiers.len() as u32,
+            member_comments: file.jsdoc_member_comments.len() as u32,
+            param_errors: file.jsdoc_param_errors.len() as u32,
+            functions_with_param_tags: file.functions_with_param_tags.len() as u32,
+            unmatched_augments_tags: file.unmatched_augments_tags.len() as u32,
+        }
+    }
+
+    /// `fns`: how many functions the file had.
+    #[cold]
+    #[inline(never)]
+    fn restore(&self, state: &mut State, file: &mut FileBuilder, fns: u32) {
+        let lens = self;
+        state.reparsed.truncate(lens.reparsed as usize);
+        state.attached.truncate(lens.attached as usize);
+        state.property_types.truncate(lens.property_types as usize);
+        // What was put in since is a function that was added since.
+        if state.full_signatures.len() > lens.full_signatures as usize {
+            state.full_signatures.retain(|&func| func < fns);
+        }
+        if state.documented_functions.len() > lens.documented_functions as usize {
+            state.documented_functions.retain(|&func| func < fns);
+        }
+        file.jsdoc_hosts.truncate(lens.hosts as usize);
+        file.jsdoc_types.truncate(lens.types as usize);
+        file.jsdoc_modifiers.truncate(lens.modifiers as usize);
+        file.jsdoc_member_comments
+            .truncate(lens.member_comments as usize);
+        file.jsdoc_param_errors.truncate(lens.param_errors as usize);
+        file.functions_with_param_tags
+            .truncate(lens.functions_with_param_tags as usize);
+        file.unmatched_augments_tags
+            .truncate(lens.unmatched_augments_tags as usize);
+    }
+}
+
+/// `TokenFullStart` of the token at `token`, if comments are before it. Otherwise `token`.
+fn full_start_before(src: &[u8], comments: &[(u32, u32)], token: u32) -> u32 {
+    let before = comments.partition_point(|comment| comment.0 < token);
+    let mut first = token as usize;
+    for &(start, end) in comments.get(..before).unwrap_or_default().iter().rev() {
+        if end_of_run(src, end as usize, is_blank) < first {
+            break;
+        }
+        first = start as usize;
+    }
+    if first == token as usize {
+        return token;
+    }
+    loop {
+        let (c, start) = last_char(src.get(..first).unwrap_or_default());
+        if !is_blank(c) {
+            return first as u32;
+        }
+        first = start;
+    }
+}
+
+/// `finish_jsdoc`, of the file with the text `src` and the comments `comments`.
+fn finish_lists_of_jsdoc(file: &mut FileBuilder, src: &[u8], comments: &[(u32, u32)]) {
+    for &(start, end) in comments {
+        let comment = src.get(start as usize..end as usize).unwrap_or_default();
+        if is_jsdoc_like(comment) && can_have_tags(comment) {
+            file.jsdoc_comments.push((start, end));
+        }
+    }
+    // A type is scanned at least twice.
+    file.jsdoc_asterisks.sort_unstable();
+    file.jsdoc_asterisks.dedup();
+    // Only `findOriginatingJSDocSatisfiesTag` asks for them.
+    let mut hosts = file.jsdoc_hosts.iter();
+    if hosts.any(|host| host.first_satisfies_tag != u32::MAX) {
+        file.jsdoc_hosts.sort_by_key(|host| host.token);
+        file.jsdoc_hosts.dedup_by_key(|host| host.token);
+    } else {
+        file.jsdoc_hosts.clear();
+    }
+    file.jsdoc_types.sort_unstable_by_key(|it| it.0);
+    file.jsdoc_modifiers.sort_unstable_by_key(|it| it.0);
+    file.jsdoc_member_comments.sort_unstable_by_key(|it| it.0);
+    // A type is parsed again for each node that it annotates.
+    if file.import_attributes.len() > 1 {
+        file.import_attributes.sort_by_key(|it| it.0);
+        file.import_attributes.dedup_by_key(|it| it.0);
+    }
+}
+
 /// What `parseJSDocComment` saves.
 struct Outer<'a> {
     mark: Mark,
@@ -263,7 +362,7 @@ fn is_only_of_jsdoc(at: JSDocScannerState) -> bool {
 
 // ───────────────────────────── what jsdoc.go asks of parser.go ─────────────────────────────
 
-impl Syntax for Parser<'_> {
+impl<const GENERAL: bool> Syntax for Parser<'_, GENERAL> {
     fn next_token(&mut self, from: usize) -> JSDocScannerState {
         if self.has_failed() {
             return self.given_up();
@@ -392,7 +491,7 @@ impl Syntax for Parser<'_> {
     }
 }
 
-impl<'a> Parser<'a> {
+impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
     /// `ScannerState`, of the lexer.
     fn state(&self) -> JSDocScannerState {
         if self.has_failed() {
@@ -711,7 +810,7 @@ impl<'a> Parser<'a> {
                 break;
             }
         }
-        self.lists = lists;
+        self.leave_list(lists);
         self.expect(T::CloseBrace);
     }
 
@@ -905,29 +1004,6 @@ impl<'a> Parser<'a> {
 
     // ───────────────────────────── the comments of a node ─────────────────────────────
 
-    /// `TokenFullStart` of the token at `token`, if comments are before it. Otherwise `token`.
-    fn full_start_before(&self, token: u32) -> u32 {
-        let (src, comments) = (self.lx.src, &self.lx.comments);
-        let before = comments.partition_point(|comment| comment.0 < token);
-        let mut first = token as usize;
-        for &(start, end) in comments.get(..before).unwrap_or_default().iter().rev() {
-            if end_of_run(src, end as usize, is_blank) < first {
-                break;
-            }
-            first = start as usize;
-        }
-        if first == token as usize {
-            return token;
-        }
-        loop {
-            let (c, start) = last_char(src.get(..first).unwrap_or_default());
-            if !is_blank(c) {
-                return first as u32;
-            }
-            first = start;
-        }
-    }
-
     /// The JSDoc comments of the node whose first token is at `token`, with the full start
     /// `full_start`. `with_trailing`: with those on the line of the token before
     /// (`GetTrailingCommentRanges`).
@@ -1057,7 +1133,7 @@ impl<'a> Parser<'a> {
     #[cold]
     #[inline(never)]
     pub(crate) fn clause_jsdoc(&mut self, pos: u32) {
-        let full_start = self.full_start_before(pos);
+        let full_start = full_start_before(self.lx.src, &self.lx.comments, pos);
         self.with_jsdoc(pos, full_start, false, &mut Host::Other);
     }
 
@@ -1160,7 +1236,7 @@ impl<'a> Parser<'a> {
     #[inline(never)]
     pub(crate) fn semicolon_jsdoc(&mut self) {
         let semicolon = self.prev_end().saturating_sub(1);
-        let full_start = self.full_start_before(semicolon);
+        let full_start = full_start_before(self.lx.src, &self.lx.comments, semicolon);
         self.with_jsdoc(semicolon, full_start, false, &mut Host::Other);
     }
 
@@ -1172,7 +1248,7 @@ impl<'a> Parser<'a> {
         if !self.f.is_js {
             return expression;
         }
-        let full_start = self.full_start_before(open);
+        let full_start = full_start_before(self.lx.src, &self.lx.comments, open);
         let mut host = Host::Parenthesized(expression);
         self.with_jsdoc(open, full_start, true, &mut host);
         match host {
@@ -1185,7 +1261,7 @@ impl<'a> Parser<'a> {
     #[cold]
     #[inline(never)]
     pub(crate) fn function_jsdoc(&mut self, func: FnId, start: u32) {
-        let full_start = self.full_start_before(start);
+        let full_start = full_start_before(self.lx.src, &self.lx.comments, start);
         self.with_jsdoc(start, full_start, true, &mut Host::Function(func));
     }
 
@@ -1193,7 +1269,7 @@ impl<'a> Parser<'a> {
     #[cold]
     #[inline(never)]
     pub(crate) fn class_jsdoc(&mut self, class: ClassId, start: u32) {
-        let full_start = self.full_start_before(start);
+        let full_start = full_start_before(self.lx.src, &self.lx.comments, start);
         self.with_jsdoc(start, full_start, false, &mut Host::Class(class));
     }
 
@@ -1201,7 +1277,7 @@ impl<'a> Parser<'a> {
     #[cold]
     #[inline(never)]
     pub(crate) fn property_jsdoc(&mut self, prop: Prop) -> Prop {
-        let full_start = self.full_start_before(prop.start);
+        let full_start = full_start_before(self.lx.src, &self.lx.comments, prop.start);
         let mut host = Host::Property(prop, TypeNodeId::NONE);
         self.with_jsdoc(prop.start, full_start, false, &mut host);
         let Host::Property(documented, ty) = host else {
@@ -1270,93 +1346,25 @@ impl<'a> Parser<'a> {
     /// For `checkpoint`.
     #[inline(always)]
     pub(crate) fn jsdoc_lens(&self) -> Lens {
-        match self.reads_jsdoc {
-            true => self.jsdoc_lens_slowly(),
+        match self.reads_jsdoc() {
+            true => Lens::of(&self.jsdoc, &self.f),
             false => Lens::default(),
         }
     }
 
-    #[cold]
-    #[inline(never)]
-    fn jsdoc_lens_slowly(&self) -> Lens {
-        let (state, file) = (&self.jsdoc, &self.f);
-        Lens {
-            reparsed: state.reparsed.len() as u32,
-            attached: state.attached.len() as u32,
-            property_types: state.property_types.len() as u32,
-            full_signatures: state.full_signatures.len() as u32,
-            documented_functions: state.documented_functions.len() as u32,
-            hosts: file.jsdoc_hosts.len() as u32,
-            types: file.jsdoc_types.len() as u32,
-            modifiers: file.jsdoc_modifiers.len() as u32,
-            member_comments: file.jsdoc_member_comments.len() as u32,
-            param_errors: file.jsdoc_param_errors.len() as u32,
-            functions_with_param_tags: file.functions_with_param_tags.len() as u32,
-            unmatched_augments_tags: file.unmatched_augments_tags.len() as u32,
-        }
-    }
-
     /// For `rollback`.
-    #[cold]
-    #[inline(never)]
+    #[inline(always)]
     pub(crate) fn rollback_jsdoc(&mut self, to: &Checkpoint) {
-        let (state, file, lens) = (&mut self.jsdoc, &mut self.f, &to.jsdoc);
-        state.reparsed.truncate(lens.reparsed as usize);
-        state.attached.truncate(lens.attached as usize);
-        state.property_types.truncate(lens.property_types as usize);
-        // What was put in since is a function that was added since.
-        let fns = to.file.fns;
-        if state.full_signatures.len() > lens.full_signatures as usize {
-            state.full_signatures.retain(|&func| func < fns);
-        }
-        if state.documented_functions.len() > lens.documented_functions as usize {
-            state.documented_functions.retain(|&func| func < fns);
-        }
-        file.jsdoc_hosts.truncate(lens.hosts as usize);
-        file.jsdoc_types.truncate(lens.types as usize);
-        file.jsdoc_modifiers.truncate(lens.modifiers as usize);
-        file.jsdoc_member_comments
-            .truncate(lens.member_comments as usize);
-        file.jsdoc_param_errors.truncate(lens.param_errors as usize);
-        file.functions_with_param_tags
-            .truncate(lens.functions_with_param_tags as usize);
-        file.unmatched_augments_tags
-            .truncate(lens.unmatched_augments_tags as usize);
+        to.jsdoc.restore(&mut self.jsdoc, &mut self.f, to.file.fns);
     }
 
     /// Once the file is parsed: the lists about its comments get their order.
     #[cold]
     #[inline(never)]
     pub(crate) fn finish_jsdoc(&mut self) {
-        if !self.f.is_js {
-            return;
-        }
-        let (src, file) = (self.lx.src, &mut self.f);
-        for &(start, end) in &self.lx.comments {
-            let comment = src.get(start as usize..end as usize).unwrap_or_default();
-            if is_jsdoc_like(comment) && can_have_tags(comment) {
-                file.jsdoc_comments.push((start, end));
-            }
-        }
-        // A type is scanned at least twice.
-        file.jsdoc_asterisks = std::mem::take(&mut self.lx.jsdoc_asterisks);
-        file.jsdoc_asterisks.sort_unstable();
-        file.jsdoc_asterisks.dedup();
-        // Only `findOriginatingJSDocSatisfiesTag` asks for them.
-        let mut hosts = file.jsdoc_hosts.iter();
-        if hosts.any(|host| host.first_satisfies_tag != u32::MAX) {
-            file.jsdoc_hosts.sort_by_key(|host| host.token);
-            file.jsdoc_hosts.dedup_by_key(|host| host.token);
-        } else {
-            file.jsdoc_hosts.clear();
-        }
-        file.jsdoc_types.sort_unstable_by_key(|it| it.0);
-        file.jsdoc_modifiers.sort_unstable_by_key(|it| it.0);
-        file.jsdoc_member_comments.sort_unstable_by_key(|it| it.0);
-        // A type is parsed again for each node that it annotates.
-        if file.import_attributes.len() > 1 {
-            file.import_attributes.sort_by_key(|it| it.0);
-            file.import_attributes.dedup_by_key(|it| it.0);
+        if self.f.is_js {
+            self.f.jsdoc_asterisks = std::mem::take(&mut self.lx.jsdoc_asterisks);
+            finish_lists_of_jsdoc(&mut self.f, self.lx.src, &self.lx.comments);
         }
     }
 }

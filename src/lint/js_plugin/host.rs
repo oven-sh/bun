@@ -79,6 +79,8 @@ pub struct Loading {
     pub need_the_configuration: Vec<Box<[u8]>>,
     /// How many texts ESLint's own `Linter` was given.
     pub linted_by_eslint: u64,
+    /// [`Engine::sizes`]
+    pub sizes: (usize, usize),
 }
 
 impl Loading {
@@ -214,7 +216,10 @@ impl<'e> Host<'e> {
 
     /// What has been loaded so far. Only the number of realms is known unless the host is [measuring](Host::measuring).
     pub fn loading(&self) -> Loading {
-        self.state.lock().loading.clone()
+        Loading {
+            sizes: self.engine.sizes(),
+            ..self.state.lock().loading.clone()
+        }
     }
 
     /// Answers what a realm asks for whatever it is called with. Returns whether that is what was asked for.

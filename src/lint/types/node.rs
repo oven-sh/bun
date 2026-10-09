@@ -274,6 +274,19 @@ impl<'a> TsNode<'a> {
         Type::new(self.file, id)
     }
 
+    /// The text of the `@deprecated` tag among `getJSDocTags(node)`: of the node itself, nothing is inherited.
+    pub fn deprecation(self) -> Option<&'a [u8]> {
+        self.file.query(|q| q.deprecation_of_node(self.raw))
+    }
+
+    /// `checker.getApparentTypeOfContextualType(node)`
+    pub fn get_apparent_type_of_contextual_type(self) -> Option<Type<'a>> {
+        let id = self
+            .file
+            .query(|q| q.apparent_type_of_contextual_type(self.raw))?;
+        Some(Type::new(self.file, id))
+    }
+
     /// `checker.getContextualType(node)`
     pub fn get_contextual_type(self) -> Option<Type<'a>> {
         let id = self.file.query(|q| q.contextual_type(self.raw))?;

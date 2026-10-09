@@ -142,6 +142,10 @@ impl PreferNamedCaptureGroup {
             let Some(regex_node) = call.args().first() else {
                 continue;
             };
+            // For ESLint a literal is the string that it would be made into, for oxlint it is no string.
+            if cx.language().is_oxlint && regex_node.tag() == ExprTag::Regex {
+                continue;
+            }
             let Some(pattern) = get_string_if_constant(regex_node, None) else {
                 continue;
             };

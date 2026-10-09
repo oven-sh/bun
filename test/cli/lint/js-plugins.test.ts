@@ -1687,6 +1687,50 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
+  test(
+    "engines that grow over the memory that is for them are freed, and every file is linted",
+    async () => {
+      const run = async (count: number, threads: string) => {
+        const files: Record<string, string> = {
+          "eslint.config.mjs": `
+            import own from "./plugin.mjs";
+            // A pattern, which starts JavaScriptCore before any engine does.
+            export default [{ files: ["src/*"], plugins: { own }, rules: { "own/grows": "error", "id-match": ["error", "^[a-z]+$"] } }];`,
+          "plugin.mjs": `
+            const kept = [];
+            const grows = {
+              create: context => ({
+                Program(node) {
+                  for (let i = 0; i < 100_000; i++) kept.push({ a: i, b: [i] });
+                  context.report({ node, message: "seen" });
+                },
+              }),
+            };
+            export default { rules: { grows } };`,
+        };
+        const text = "foo;\n" + Buffer.alloc(250_000, "// comment\n").toString();
+        for (let i = 0; i < count; i++) files[`src/${i}.js`] = text;
+        const variables = { BUN_JSC_forceRAMSize: String(64 << 20) };
+        const { raw, stderr, exitCode } = await lint(
+          files,
+          ["-f", "json", "--timing", "--threads", threads, "src"],
+          [],
+          variables,
+        );
+        expect(exitCode).toBe(1);
+        const seen = JSON.parse(raw).filter((it: any) => it.messages.some((it: any) => it.message === "seen")).length;
+        return { seen, freed: Number(/, (\d+) were freed to stay in the memory/.exec(stderr)?.[1] ?? 0) };
+      };
+      const more = Math.max(40, availableParallelism() + 1);
+      const [one, some, many] = await Promise.all([run(1, "8"), run(40, "8"), run(more, "0")]);
+      expect(one).toEqual({ seen: 1, freed: 0 });
+      expect([some.seen, many.seen]).toEqual([40, more]);
+      expect(some.freed).toBeGreaterThan(0);
+      expect(many.freed).toBeGreaterThan(0);
+    },
+    timeout,
+  );
+
   // The other tests name a number of threads. A user does not.
   test(
     "a thread for each core, and more files than that",

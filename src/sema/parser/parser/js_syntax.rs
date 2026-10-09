@@ -3,7 +3,29 @@
 use super::{Parser, ctx};
 use bun_sema::hir::*;
 
-impl Parser<'_> {
+/// What is said about the declaration `stmt` as a whole: where, the code and its argument.
+fn error_of_js_declaration(
+    file: &FileBuilder,
+    stmt: &Stmt,
+) -> Option<((u32, u32), u32, &'static [u8])> {
+    let whole = (stmt.start, stmt.loc.end);
+    Some(match stmt.kind {
+        StmtKind::Fn(f) if !has_body_node(&file[f]) => (whole, 8017, b""),
+        StmtKind::Import(i) if file[i].type_only => (whole, 8006, b"import type"),
+        StmtKind::ExportNamed(e) if file[e].type_only => (whole, 8006, b"export type"),
+        StmtKind::ExportStar { type_only, .. } if type_only => (whole, 8006, b"export type"),
+        StmtKind::ImportEquals(_) => (whole, 8002, b""),
+        StmtKind::ExportAssign(_) => (whole, 8003, b""),
+        StmtKind::Interface(i) => ((file[i].name_pos, 0), 8006, b"interface"),
+        StmtKind::Module(m) if file[m].specifies_module => ((file[m].name_pos, 0), 8006, b"module"),
+        StmtKind::Module(m) => ((file[m].name_pos, 0), 8006, b"namespace"),
+        StmtKind::Enum(e) => ((file[e].name_pos, 0), 8006, b"enum"),
+        StmtKind::TypeAlias(a) => ((file[a].name_pos, 0), 8008, b""),
+        _ => return None,
+    })
+}
+
+impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// `jsErrorAtRange`. An end of 0: the end of the token at the start. `what`: the `{0}` of the
     /// message, if it has one. Nothing inside a type is reported.
     #[cold]
@@ -142,24 +164,9 @@ impl Parser<'_> {
         if let StmtKind::Fn(_) | StmtKind::Var(_) | StmtKind::Class(_) = stmt.kind {
             self.check_js_modifiers(stmt.modifiers, false);
         }
-        let (file, whole) = (&self.f, (stmt.start, stmt.loc.end));
-        let (at, code, what): (_, _, &[u8]) = match stmt.kind {
-            StmtKind::Fn(f) if !has_body_node(&file[f]) => (whole, 8017, b""),
-            StmtKind::Import(i) if file[i].type_only => (whole, 8006, b"import type"),
-            StmtKind::ExportNamed(e) if file[e].type_only => (whole, 8006, b"export type"),
-            StmtKind::ExportStar { type_only, .. } if type_only => (whole, 8006, b"export type"),
-            StmtKind::ImportEquals(_) => (whole, 8002, b""),
-            StmtKind::ExportAssign(_) => (whole, 8003, b""),
-            StmtKind::Interface(i) => ((file[i].name_pos, 0), 8006, b"interface"),
-            StmtKind::Module(m) if file[m].specifies_module => {
-                ((file[m].name_pos, 0), 8006, b"module")
-            }
-            StmtKind::Module(m) => ((file[m].name_pos, 0), 8006, b"namespace"),
-            StmtKind::Enum(e) => ((file[e].name_pos, 0), 8006, b"enum"),
-            StmtKind::TypeAlias(a) => ((file[a].name_pos, 0), 8008, b""),
-            _ => return,
-        };
-        self.js_error(at, code, what);
+        if let Some((at, code, what)) = error_of_js_declaration(&self.f, &stmt) {
+            self.js_error(at, code, what);
+        }
     }
 
     /// For a method or an accessor in an object literal.

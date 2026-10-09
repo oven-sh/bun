@@ -4,7 +4,7 @@ use super::Parser;
 use crate::token::T;
 use bun_sema::hir::*;
 
-impl Parser<'_> {
+impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// `parseJSONText`, at the first token: the value of the file. `bindSourceFileIfExternalModule`:
     /// the file is an `export =` of it. What is no JSON is left to `bun_sema::json::validate_json`.
     pub(crate) fn json_text(&mut self) -> StmtId {

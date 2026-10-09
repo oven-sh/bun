@@ -5,7 +5,7 @@ use crate::token::T;
 use bun_sema::atom::known;
 use bun_sema::hir::*;
 
-impl Parser<'_> {
+impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// `parseIdentifierOrPattern`
     #[inline]
     pub(crate) fn identifier_or_pattern(&mut self) -> PatId {
@@ -97,7 +97,7 @@ impl Parser<'_> {
                 break;
             }
         }
-        self.lists = lists;
+        self.leave_list(lists);
         self.context = saved;
         self.expect(T::CloseBracket);
         let elements = take_span!(self, pat_elems, base);
@@ -122,7 +122,7 @@ impl Parser<'_> {
             let pos = self.pos();
             let property = if !self.eat(T::DotDotDot) {
                 self.object_binding_element(pos)
-            } else if self.recovers {
+            } else if self.recovers() {
                 self.rest_binding_element(pos)
             } else {
                 let key_pos = self.pos();
@@ -150,7 +150,7 @@ impl Parser<'_> {
                 self.flag(DiagnosticKind::Grammar, 1013, at, &[]);
             }
         }
-        self.lists = lists;
+        self.leave_list(lists);
         self.context = saved;
         self.expect(T::CloseBrace);
         let properties = take_span!(self, pat_props, base);

@@ -348,6 +348,7 @@ These differences are intentional:
 - **A Handlebars template that Prettier would damage is left as it is.** Prettier deletes `<!DOCTYPE html>`, joins the lines of an inline `<script>`, and turns `{{this/name}}` into `{{name}}`. `bun format` reports such a file and exits with 2.
 - **Nothing is written through a link that leads out of the repository**, or out of the working directory if that is in no repository. Prettier writes there. The run fails and names the file.
 - **A configuration file that leaves a timer or a server running does not keep the run alive.** Prettier does its work and never exits.
+- **What a configuration file prints is shown only if it fails.**
 - **`--cache` has no effect.** Every run formats every file.
 - **`--file-info` and `--support-info` are errors.**
 

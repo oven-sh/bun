@@ -135,7 +135,7 @@ pub fn with_file<R>(
     let atoms = Interner::new_in(&session);
     let arena = session.arena();
     let how = language.parse_options(path);
-    let (mut hir, _) = bun_js_parser::sema::summarize_as(
+    let mut hir = bun_sema_parser::summarize_as(
         how.dialect,
         arena,
         path,

@@ -1338,13 +1338,13 @@ impl Run<'_> {
         }
         self.out.stderr.push(b'\n');
         // Every file that is valid and goes to the parser that recovers from errors is a defect of the other.
-        let counts = &bun_js_parser::sema::DIRECT_PARSER_COUNTS;
+        let counts = &bun_sema_parser::COUNTS;
         let _ = write!(
             self.out.stderr,
             "  parsed directly: {} files",
             counts.parsed.load(Ordering::Relaxed)
         );
-        for (why, count) in bun_js_parser::sema::REFUSALS.iter().zip(&counts.refused) {
+        for (why, count) in bun_sema_parser::Refusal::ALL.iter().zip(&counts.refused) {
             match count.load(Ordering::Relaxed) {
                 0 => {}
                 count => _ = write!(self.out.stderr, ", refused ({why:?}): {count}"),

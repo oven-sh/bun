@@ -16,6 +16,7 @@ mod lexer;
 mod names;
 mod parser;
 mod pragmas;
+mod summarize;
 mod token;
 
 pub use names::FileAtoms;
@@ -23,6 +24,10 @@ pub use parser::keyword_suggestion;
 
 use bun_sema::atom::Intern;
 use bun_sema::hir::FileBuilder;
+pub use summarize::{
+    COUNTS, Counts, Summary, ThreadCaches, summarize, summarize_as, summarize_in,
+    with_part_in_place, with_summary, with_summary_in_place,
+};
 
 /// Why a text is not parsed.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
@@ -52,6 +57,22 @@ pub enum Refusal {
 }
 
 impl Refusal {
+    /// The scanner has met what is no token.
+    fn is_of_scanner(self) -> bool {
+        matches!(
+            self,
+            Refusal::NotUtf8
+                | Refusal::Unterminated
+                | Refusal::UnexpectedCharacter
+                | Refusal::ConflictMarker
+                | Refusal::InvalidEscape
+                | Refusal::EscapedKeyword
+                | Refusal::UnusualNumber
+                | Refusal::UnusualRegex
+                | Refusal::UnusualPrivateName
+        )
+    }
+
     /// How many reasons there are.
     pub const COUNT: usize = Refusal::Unsupported as usize + 1;
 
@@ -86,6 +107,8 @@ pub struct Refused {
     pub at: u32,
     /// The line of this crate that refused.
     pub by: &'static core::panic::Location<'static>,
+    /// The end of the last token that was scanned.
+    pub after: u32,
 }
 
 impl Refused {
@@ -95,6 +118,7 @@ impl Refused {
             why,
             at: 0,
             by: core::panic::Location::caller(),
+            after: 0,
         }
     }
 }
@@ -120,6 +144,23 @@ pub struct Options {
     /// what the checker asks about them. Only [`parse`] does it, and only for TypeScript's dialect.
     pub reads_jsdoc: bool,
     pub dialect: bun_sema::resolve::Dialect,
+    pub goal: Goal,
+}
+
+/// What is parsed.
+#[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
+pub enum Goal {
+    /// The text, which is a file.
+    #[default]
+    File,
+    /// What the text starts with, as acorn's `parseExpressionAt` does it: nothing is said about what
+    /// follows, and nothing of it is read but one token. The file has one statement.
+    /// `parseExpression`: an expression statement.
+    Expression,
+    /// `var`, `let` or `const` and their declarations, with or without a `;` behind them.
+    Declaration,
+    /// `parseType`: the type of a type alias without a name.
+    Type,
 }
 
 /// What a thread keeps from one file to the next: the caches of names, and the capacity of every
@@ -161,6 +202,24 @@ pub struct Parsed {
     pub file: FileBuilder,
     /// `await` was read as a keyword at the top level.
     pub has_top_level_await: bool,
+    /// The end of the last token of what [`Options::goal`] asks for.
+    pub end: u32,
+}
+
+/// `parser::run`. What follows a part of a text need not be a token: then the text ends before it.
+fn run(
+    text: &[u8],
+    options: Options,
+    atoms: Option<&dyn Intern>,
+    scratch: &mut Scratch,
+) -> Result<Parsed, Refused> {
+    let refused = match parser::run(text, options, atoms, scratch) {
+        Err(refused) if options.goal != Goal::File && refused.why.is_of_scanner() => refused,
+        done => return done,
+    };
+    let before = text.get(..refused.after as usize).unwrap_or_default();
+    let at = refused.after;
+    parser::run(before, options, atoms, scratch).or(Err(Refused { at, ..refused }))
 }
 
 /// The HIR of `text`. Names are interned in `atoms`.
@@ -170,7 +229,7 @@ pub fn parse(
     atoms: &dyn Intern,
     scratch: &mut Scratch,
 ) -> Result<Parsed, Refused> {
-    let parsed = parser::run(text, options, Some(atoms), scratch)?;
+    let parsed = run(text, options, Some(atoms), scratch)?;
     if !options.reads_jsdoc || options.is_javascript {
         return Ok(parsed);
     }
@@ -183,7 +242,7 @@ pub fn parse(
     }
     scratch.recycle(parsed.file);
     scratch.jsdoc_wanted = wanted;
-    let parsed = parser::run(text, options, Some(atoms), scratch);
+    let parsed = run(text, options, Some(atoms), scratch);
     scratch.jsdoc_wanted = 0;
     parsed
 }
@@ -195,7 +254,7 @@ pub fn parse_with_own_atoms(
     options: Options,
     scratch: &mut Scratch,
 ) -> Result<Parsed, Refused> {
-    parser::run(text, options, None, scratch)
+    run(text, options, None, scratch)
 }
 
 /// The number of tokens of `text`, as far as that can be told without parsing. For benchmarks of

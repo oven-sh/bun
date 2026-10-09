@@ -858,11 +858,23 @@ impl<'a> Formatter<'a> {
     /// removed, and of several variants the flattest is taken.
     pub(crate) fn write_without_soft_lines(&mut self, content: &(impl Format<'a> + ?Sized)) {
         let written = self.capture(content);
-        self.remove_soft_lines(written, &mut Vec::new());
+        self.remove_soft_lines(written, &mut Vec::new(), Variants::Flattest);
+    }
+
+    /// Prettier's `removeLines`: the same, but the printer still chooses among the variants, and takes the most expanded one
+    /// if none fits.
+    pub(crate) fn write_with_lines_removed(&mut self, content: &(impl Format<'a> + ?Sized)) {
+        let written = self.capture(content);
+        self.remove_soft_lines(written, &mut Vec::new(), Variants::All);
     }
 
     /// Writes the elements at `range` without their soft line breaks.
-    fn remove_soft_lines(&mut self, range: Interned, conditions: &mut Vec<PrintMode>) {
+    fn remove_soft_lines(
+        &mut self,
+        range: Interned,
+        conditions: &mut Vec<PrintMode>,
+        variants: Variants,
+    ) {
         let mut indices = range.range();
         while let Some(&element) = indices
             .next()
@@ -912,11 +924,23 @@ impl<'a> Formatter<'a> {
                     FormatElement::Space
                 }
                 FormatElement::Interned(interned) => {
-                    FormatElement::Interned(self.clean_interned(interned, conditions))
+                    FormatElement::Interned(self.clean_interned(interned, conditions, variants))
+                }
+                FormatElement::BestFitting(best_fitting) if variants == Variants::All => {
+                    let mut cleaned = smallvec::SmallVec::<[Interned; 4]>::new();
+                    for index in best_fitting.range() {
+                        let Some(&variant) = self.storage.variants.get(index) else {
+                            continue;
+                        };
+                        let slot = self.start_capture();
+                        self.remove_soft_lines(variant, conditions, variants);
+                        cleaned.push(self.end_capture(slot));
+                    }
+                    self.best_fitting_of(&cleaned)
                 }
                 FormatElement::BestFitting(best_fitting) => {
                     if let Some(&flattest) = self.storage.variants(best_fitting).first() {
-                        self.remove_soft_lines(flattest, conditions);
+                        self.remove_soft_lines(flattest, conditions, variants);
                     }
                     continue;
                 }
@@ -926,7 +950,18 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    fn clean_interned(&mut self, interned: Interned, conditions: &mut Vec<PrintMode>) -> Interned {
+    fn clean_interned(
+        &mut self,
+        interned: Interned,
+        conditions: &mut Vec<PrintMode>,
+        variants: Variants,
+    ) -> Interned {
+        // What is kept is what has been cleaned the usual way.
+        if variants == Variants::All {
+            let slot = self.start_capture();
+            self.remove_soft_lines(interned, conditions, variants);
+            return self.end_capture(slot);
+        }
         if let Some(&cleaned) = self.cleaned.get(&interned) {
             return cleaned;
         }
@@ -952,7 +987,7 @@ impl<'a> Formatter<'a> {
         });
         let cleaned = if needs_cleaning {
             let slot = self.start_capture();
-            self.remove_soft_lines(interned, conditions);
+            self.remove_soft_lines(interned, conditions, variants);
             self.end_capture(slot)
         } else {
             interned
@@ -1091,4 +1126,11 @@ impl<'a> Formatter<'a> {
         }
         out
     }
+}
+
+/// Which of the variants of a [`BestFitting`] are left when soft line breaks are removed.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Variants {
+    Flattest,
+    All,
 }

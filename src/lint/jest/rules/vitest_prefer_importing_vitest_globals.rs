@@ -1,5 +1,6 @@
+use bun_lint_oxlint::hash_order::HashOrder;
 use bun_lint_oxlint::import::{ImportImportName, import_entries};
-use crate::jest::{HashOrder, OxlintOrder, is_vitest_import_source, parent_expression};
+use crate::jest::{OxlintOrder, is_vitest_import_source, parent_expression};
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;

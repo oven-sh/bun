@@ -104,7 +104,7 @@ fn rules(args: &[String]) {
         let atoms = Interner::new_in(&session);
         let arena = session.arena();
         let options = language.parse_options(path.as_bytes());
-        let mut hir = bun_js_parser::sema::summarize_as(
+        let mut hir = bun_sema_parser::summarize_as(
             options.dialect,
             arena,
             path.as_bytes(),
@@ -113,8 +113,7 @@ fn rules(args: &[String]) {
             &atoms,
             options.experimental_decorators,
             options.every_file_is_a_module,
-        )
-        .0;
+        );
         hir.text = code.clone().into();
         let bind_options = BindOptions {
             emit_standard_class_fields: true,

@@ -190,11 +190,6 @@ thread_local! {
     static RECYCLED: core::cell::Cell<Notes> = Default::default();
 }
 
-/// Swaps this thread's recycled buffers.
-pub(crate) fn replace_recycled(room: Notes) -> Notes {
-    RECYCLED.replace(room)
-}
-
 impl Notes {
     /// Empty notes with the capacity recycled from this thread's previous file.
     pub(crate) fn take_recycled() -> Notes {

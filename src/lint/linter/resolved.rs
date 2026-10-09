@@ -65,6 +65,8 @@ pub struct ConfiguredRule {
     refusal: Option<Arc<[u8]>>,
     /// See [`ConfiguredRule::reported_as`].
     reported_as: &'static Meta,
+    /// See [`ConfiguredRule::name`].
+    name: Option<Arc<[u8]>>,
 }
 
 impl ConfiguredRule {
@@ -88,6 +90,7 @@ impl ConfiguredRule {
             instance,
             refusal,
             reported_as: entry.meta,
+            name: None,
         }
     }
 
@@ -99,6 +102,17 @@ impl ConfiguredRule {
 
     pub(crate) fn report_as(mut self, meta: &'static Meta) -> Self {
         self.reported_as = meta;
+        self
+    }
+
+    /// What the configuration calls it, if it is one more instance of the rule under a name:
+    /// [`RuleId::Named`](super::RuleId::Named).
+    pub fn name(&self) -> Option<&Arc<[u8]>> {
+        self.name.as_ref()
+    }
+
+    pub(crate) fn named(mut self, name: Option<Arc<[u8]>>) -> Self {
+        self.name = name;
         self
     }
 
@@ -144,6 +158,8 @@ pub struct ResolvedConfig {
     pub linter: LinterOptions,
     /// In the order of the configuration, which is the order the rules run in.
     pub rules: Vec<ConfiguredRule>,
+    /// One of them has a [name](ConfiguredRule::name).
+    pub(crate) has_named_rules: bool,
     /// Those of JavaScript plugins, also the ones that are off. They run if [`LintOptions::js_plugins`](super::LintOptions) is
     /// there, and are skipped otherwise.
     pub js_rules: Vec<ConfiguredJsRule>,
@@ -193,9 +209,16 @@ pub struct ResolvedConfig {
 impl ResolvedConfig {
     pub fn rule(&self, entry: &RuleEntry) -> Option<&ConfiguredRule> {
         let (plugin, name) = (entry.meta.plugin, entry.meta.name);
-        self.rules
-            .iter()
-            .find(|it| it.entry.meta.plugin == plugin && it.entry.meta.name == name)
+        let is_it = |it: &&ConfiguredRule| {
+            it.name.is_none() && it.entry.meta.plugin == plugin && it.entry.meta.name == name
+        };
+        self.rules.iter().find(is_it)
+    }
+
+    /// The instance of a rule that the configuration calls `id`: [`ConfiguredRule::name`]. Only the configuration gives names.
+    pub fn named_rule(&self, id: &[u8]) -> Option<&ConfiguredRule> {
+        let mut named = self.rules.iter().filter(|_| self.has_named_rules);
+        named.find(|it| it.name.as_deref() == Some(id))
     }
 
     pub(crate) fn validate_language_options(&mut self, language_options: &Json) {
@@ -208,6 +231,7 @@ impl ResolvedConfig {
     pub(crate) fn validate(
         &mut self,
         entry: &'static RuleEntry,
+        name: Option<&[u8]>,
         severity: Severity,
         options: &[Json],
     ) {
@@ -221,7 +245,7 @@ impl ResolvedConfig {
                 && (super::schema::validate_known_properties(entry.meta, options).is_ok()
                     || is_valid_for_base_rule(entry.meta, options)))
         {
-            let id = super::RuleId::Known(entry.meta).to_vec();
+            let id = name.map_or_else(|| super::RuleId::Known(entry.meta).to_vec(), <[u8]>::to_vec);
             self.error = Some([b"Key \"rules\": Key \"", &id[..], b"\":\n", &lines].concat());
         }
     }
@@ -385,10 +409,11 @@ impl ResolvedConfig {
         config
     }
 
-    /// What an entry of `rules` does. `options`: what follows the severity.
+    /// What an entry of `rules` does, for whoever has the rule and not its name: the test suites. It is
+    /// not a second way to read `rules`. `options`: what follows the severity.
     pub fn configure(&mut self, entry: &'static RuleEntry, severity: Severity, options: &[Json]) {
         let options: Arc<[Json]> = options.into();
-        self.validate(entry, severity, &options);
+        self.validate(entry, None, severity, &options);
         let instance =
             (severity != Severity::Off).then(|| Arc::from((entry.build)(&Options::new(&options))));
         self.rules

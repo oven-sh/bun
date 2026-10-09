@@ -4,13 +4,13 @@ use super::{Args, collect_files, format_text_or_panic, is_other_language};
 use crate::host::{self, output_line};
 use bun_format::FormatOptions;
 use bun_format::verify::{Program, Scratch};
-use bun_js_parser::sema::Summary;
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser, SourceType};
 use bun_sema::atom::{Intern, Interner};
 use bun_sema::bind::{BindOptions, bind_for_format};
 use bun_sema::resolve::Dialect;
 use bun_sema::session::Session;
+use bun_sema_parser::Summary;
 use std::io::{BufRead as _, Read as _, Write as _};
 
 /// Parses `code` the way `bun format` does and calls `then` with the tree, and with what its names are of.
@@ -44,7 +44,7 @@ fn with_tree<R>(
     let session = Session::new();
     let atoms = Interner::new_in(&session);
     let how = language.parse_options(path.as_bytes());
-    bun_js_parser::sema::with_summary_in_place(
+    bun_sema_parser::with_summary_in_place(
         dialect,
         (session.arena(), &session),
         path.as_bytes(),
@@ -166,6 +166,14 @@ pub(super) fn verify_pairs(args: &Args) {
         };
         let html = html_parser.map(|parser| {
             bun_format::html::has_same_content(&before, &after, parser, &args.options)
+        });
+        let is_svelte = args.options.parser.as_deref() == Some(&b"svelte"[..]);
+        let html = html.or_else(|| {
+            let options = FormatOptions {
+                parse_javascript: Some(bun_lint_driver::fmt::parse_javascript),
+                ..args.options.clone()
+            };
+            is_svelte.then(|| bun_format::svelte::has_same_content(&before, &after, &options, None))
         });
         let _ = match html.map_or_else(
             || compare(name, &before, &after, &args.options, &mut scratch),

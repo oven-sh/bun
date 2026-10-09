@@ -2,8 +2,10 @@ use crate::oxlint::jsdoc::{JSDocFinder, JSDocPluginSettings};
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use rustc_hash::FxHashMap;
+use bun_lint_oxlint::hash_order::HashOrder;
+use rustc_hash::{FxHashMap, FxHasher};
 use smallvec::SmallVec;
+use std::hash::Hasher;
 
 /// Ensures that property names in JSDoc are not duplicated on the same block and that nested properties have defined roots.
 pub struct CheckPropertyNames;
@@ -62,30 +64,11 @@ impl Rule for CheckPropertyNames {
 /// The first of `spans` in the order of a `FxHashSet<Span>` to which they are added one after the other. oxlint has the places of a
 /// report from there.
 fn first_in_hash_order(spans: &[Span]) -> Option<Span> {
-    let hash = |it: Span| (u64::from(it.start) | (u64::from(it.end) << 32)).wrapping_mul(0xf135_7aea_2e62_a9c5).rotate_left(26);
-    let insert = |table: &mut [Option<Span>], it: Span| {
-        let (before, after) = table.split_at_mut(hash(it) as usize & table.len().saturating_sub(1));
-        if let Some(slot) = after.iter_mut().chain(before).find(|slot| slot.is_none()) {
-            *slot = Some(it);
-        }
-    };
-    let mut table: Vec<Option<Span>> = Vec::new();
-    for (items, &it) in spans.iter().enumerate() {
-        let capacity = match table.len() {
-            buckets @ ..8 => buckets.saturating_sub(1),
-            buckets => buckets / 8 * 7,
-        };
-        if items == capacity {
-            let buckets = match items + 1 {
-                ..4 => 4,
-                4..8 => 8,
-                wanted => (wanted * 8 / 7).next_power_of_two(),
-            };
-            let mut grown = vec![None; buckets];
-            table.iter().flatten().for_each(|it| insert(&mut grown, *it));
-            table = grown;
-        }
-        insert(&mut table, it);
+    let mut table = HashOrder::new();
+    for &it in spans {
+        let mut hasher = FxHasher::default();
+        hasher.write_u64(u64::from(it.start) | (u64::from(it.end) << 32));
+        table.insert(hasher.finish(), it);
     }
-    table.into_iter().flatten().next()
+    table.iter().next()
 }

@@ -32,6 +32,7 @@ pub(crate) fn write_variable_declaration<'a>(
     };
     // Whether it ends with a `;`, which it does not in the head of a loop, and whether it is in a loop.
     let (semicolon, is_in_for_loop) = match statement.parent() {
+        Node::File(_) if f.options().in_html.root == HtmlRoot::SvelteStatement => (false, false),
         _ if !statement.modifiers().is_empty() && statement.is_exported() => {
             (statement.is_default_export(), false)
         }

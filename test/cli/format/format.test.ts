@@ -830,10 +830,10 @@ describe.concurrent("bun format", () => {
   });
 
   test("other languages are left alone, which is an error at the end, or a warning with --allow-unsupported", async () => {
-    const left = { "a.svelte": "<p   >a</p>\n", "b.svelte": "<p   >b</p>\n" };
-    const files = { ".prettierrc": '{ "plugins": ["prettier-plugin-svelte"] }\n', ...left, "c.js": ugly };
+    const left = { "a.astro": "<p   >a</p>\n", "b.astro": "<p   >b</p>\n" };
+    const files = { ".prettierrc": '{ "plugins": ["prettier-plugin-astro"] }\n', ...left, "c.js": ugly };
     const reads = [...Object.keys(left), "c.js"];
-    const text = "2 files are in a language that bun format does not support yet, and left as they are: 2 .svelte";
+    const text = "2 files are in a language that bun format does not support yet, and left as they are: 2 .astro";
     const result = await format(files, [], { reads });
     expect(result.files).toEqual({ ...left, "c.js": formatted });
     expect(result.stderr.trimEnd().split("\n").at(-1)).toBe(
@@ -1086,20 +1086,21 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     test(
       "is left as it is if the plugin is not installed, and what would help is said",
       async () => {
-        const { "node_modules/prettier-plugin-svelte/package.json": _, ...rest } = files;
-        const result = await format(rest, [], { reads });
-        expect(result.files["a.svelte"]).toBe(files["a.svelte"]);
+        // Svelte is built in, for whoever has not installed another version of the plugin.
+        const astro = { ".prettierrc": '{ "plugins": ["prettier-plugin-astro"] }\n', "a.astro": "<p   >a</p>\n" };
+        const result = await format({ ...packages, ...astro }, [], { reads: ["a.astro"] });
+        expect(result.files["a.astro"]).toBe(astro["a.astro"]);
         expect(result.stderr).toContain(
-          "[warn] Not installed: prettier-plugin-svelte. With all plugins of the configuration and prettier installed, bun format hands the files of their languages to them.",
+          "[warn] Not installed: prettier-plugin-astro. With all plugins of the configuration and prettier installed, bun format hands the files of their languages to them.",
         );
-        expect(result.stderr).toContain("and left as they are: 1 .svelte.");
+        expect(result.stderr).toContain("and left as they are: 1 .astro.");
         expect(result.exitCode).toBe(2);
       },
       timeout,
     );
   });
 
-  test("with an .oxfmtrc.json TOML is formatted, and Svelte, which bun format cannot format, is named if the configuration has svelte", async () => {
+  test("with an .oxfmtrc.json TOML is formatted, and Svelte if the configuration has svelte", async () => {
     const files = {
       "a.svelte": "<p   >a</p>\n",
       "b.toml": "a   = 1\n",
@@ -1110,11 +1111,9 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     const after = { ...files, "b.toml": "a = 1\n", "Pipfile": "[a]\nb = [1, 2]\n", "c.js": formatted };
     const reads = Object.keys(files);
     const result = await format({ ...files, ".oxfmtrc.json": '{ "svelte": {} }\n' }, [], { reads });
-    expect(result.files).toEqual(after);
-    expect(result.stderr).toContain(
-      "[error] 1 file is in a language that bun format does not support yet, and left as they are: 1 .svelte",
-    );
-    expect(result.exitCode).toBe(2);
+    expect(result.files).toEqual({ ...after, "a.svelte": "<p>a</p>\n" });
+    expect(result.stderr).not.toContain("does not support yet");
+    expect(result.exitCode).toBe(0);
     const without = await format({ ...files, ".oxfmtrc.json": "{}\n" }, [], { reads });
     expect(without.files).toEqual(after);
     expect(without.stderr).not.toContain("does not support yet");
@@ -1229,23 +1228,23 @@ ${packages["node_modules/prettier/index.cjs"]}`;
 
   test("a plugin that may print files in another way: they are left as they are, which is an error, unless --allow-unsupported", async () => {
     const files = {
-      ".prettierrc": '{ "plugins": ["prettier-plugin-brace-style", "prettier-plugin-svelte", "./own.js"] }\n',
+      ".prettierrc": '{ "plugins": ["prettier-plugin-brace-style", "prettier-plugin-astro", "./own.js"] }\n',
       "a.js": ugly,
-      "b.svelte": "<p   >b</p>\n",
+      "b.astro": "<p   >b</p>\n",
       "other/.prettierrc": "{}\n",
       "other/c.js": ugly,
     };
-    const reads = ["a.js", "b.svelte", "other/c.js"];
+    const reads = ["a.js", "b.astro", "other/c.js"];
     // The other file is the .prettierrc itself.
     const result = await format(files, [], { reads });
-    expect(result.files).toEqual({ "a.js": ugly, "b.svelte": files["b.svelte"], "other/c.js": formatted });
+    expect(result.files).toEqual({ "a.js": ugly, "b.astro": files["b.astro"], "other/c.js": formatted });
     expect(result.stderr).toContain(
       "[error] 2 files are left as they are: the configuration names plugins that bun format does not have, and that may print them in another way: prettier-plugin-brace-style, ./own.js. With --allow-unsupported they are formatted without.",
     );
     expect(result.stderr).toContain("[error] 1 file is in a language that bun format does not support yet");
     expect(result.exitCode).toBe(2);
     const allowed = await format(files, ["--allow-unsupported"], { reads });
-    expect(allowed.files).toEqual({ "a.js": formatted, "b.svelte": files["b.svelte"], "other/c.js": formatted });
+    expect(allowed.files).toEqual({ "a.js": formatted, "b.astro": files["b.astro"], "other/c.js": formatted });
     expect(allowed.stderr).toContain("[warn] Plugins are not supported");
     expect(allowed.exitCode).toBe(0);
     const flag = await format({ "a.js": ugly }, ["--plugin", "prettier-plugin-brace-style"], { reads: ["a.js"] });
@@ -1447,23 +1446,23 @@ ${packages["node_modules/prettier/index.cjs"]}`;
 
   describe("a parser that Prettier does not have", () => {
     const files = {
-      "a.svelte": '<p   class="a">hi</p>\n',
+      "a.astro": '<p   class="a">hi</p>\n',
       "b.foo": "a:   1\n",
       "c.js": "c  ;\n",
       "d.js": "d  ;\n",
     };
     const reads = Object.keys(files);
     const overrides = [
-      { files: "*.svelte", options: { parser: "svelte" } },
+      { files: "*.astro", options: { parser: "astro" } },
       { files: ["*.foo", "c.js"], options: { parser: "nonsense" } },
     ];
 
     test("in the overrides of a .prettierrc: the files are left as they are, and counted", async () => {
-      const config = JSON.stringify({ plugins: ["prettier-plugin-svelte"], overrides });
+      const config = JSON.stringify({ plugins: ["prettier-plugin-astro"], overrides });
       const result = await format({ ...files, ".prettierrc": config }, [], { reads });
       expect(result.files).toEqual({ ...files, "d.js": "d;\n" });
       expect(result.stderr).toContain(
-        "3 files are in a language that bun format does not support yet, and left as they are: 1 .foo, 1 .js, 1 .svelte",
+        "3 files are in a language that bun format does not support yet, and left as they are: 1 .astro, 1 .foo, 1 .js",
       );
       expect(result.exitCode).toBe(2);
       const checked = await format({ ...files, ".prettierrc": config, "d.js": "d;\n" }, ["--check", ...reads], {
@@ -1483,10 +1482,10 @@ ${packages["node_modules/prettier/index.cjs"]}`;
 
     test("on standard input: what is read is printed", async () => {
       const config = JSON.stringify({ overrides });
-      const result = await format({ ".prettierrc": config }, ["--stdin-filepath", "a.svelte"], {
-        stdin: files["a.svelte"],
+      const result = await format({ ".prettierrc": config }, ["--stdin-filepath", "a.astro"], {
+        stdin: files["a.astro"],
       });
-      expect(result.raw).toBe(files["a.svelte"]);
+      expect(result.raw).toBe(files["a.astro"]);
       expect(result.exitCode).toBe(0);
     });
 

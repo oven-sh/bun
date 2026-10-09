@@ -1,3 +1,4 @@
+#![allow(dead_code, unused)]
 //! NOTE on arena slices: this is the AST crate. Nearly every slice-typed
 //! struct field points into either the source text or the
 //! parser arena and is bulk-freed at end-of-parse. Per PORTING.md, lifetime

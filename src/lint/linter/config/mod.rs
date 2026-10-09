@@ -874,7 +874,16 @@ impl Config {
                 true => None,
                 false => config.find_rule(registry, &setting.id),
             };
-            let entry = match (native, js) {
+            // One more instance of a rule, under a name. A plugin of the configuration that has the prefix answers for it.
+            let is_free = native.is_none()
+                && js.is_none()
+                && !config.foreign_plugins.iter().any(|it| **it == *prefix);
+            let base = match is_free {
+                true => registry.base_of(&setting.id),
+                false => None,
+            };
+            let name: Option<Arc<[u8]>> = base.map(|_| Arc::from(&setting.id[..]));
+            let entry = match (native.or(base), js) {
                 (Some(entry), _) => entry,
                 (None, Some(Some(rule))) => {
                     let options: Arc<[Json]> = setting.options.into();
@@ -919,7 +928,7 @@ impl Config {
                 !options.is_empty() && config.error.is_none() && setting.severity != Severity::Off;
             let index = is_validated.then(|| registry.index_of(entry)).flatten();
             if !self.is_legacy && !index.is_some_and(|it| self.cache.is_valid(it, &options)) {
-                config.validate(entry, setting.severity, &options);
+                config.validate(entry, name.as_deref(), setting.severity, &options);
                 if let Some(index) = index.filter(|_| config.error.is_none()) {
                     self.cache.set_valid(index, &options);
                 }
@@ -930,9 +939,11 @@ impl Config {
                 })
             });
             let reported_as = self.reported_as(registry, entry, setting.written_for);
+            config.has_named_rules |= name.is_some();
             config.rules.push(
                 ConfiguredRule::new(entry, setting.severity, options, instance)
-                    .report_as(reported_as),
+                    .report_as(reported_as)
+                    .named(name),
             );
         }
         if !self.js_plugins.is_empty() {

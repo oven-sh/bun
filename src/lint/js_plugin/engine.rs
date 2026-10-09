@@ -71,6 +71,11 @@ impl Demand {
         *self.0.lock() = Left { bytes: size, most };
     }
 
+    /// How large the files are that are still to come.
+    pub fn left(&self) -> u64 {
+        self.0.lock().bytes
+    }
+
     /// A file of `size` bytes is done.
     pub fn note(&self, size: usize) {
         let mut left = self.0.lock();

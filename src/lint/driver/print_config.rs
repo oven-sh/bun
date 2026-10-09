@@ -80,10 +80,11 @@ pub(crate) fn print(config: Option<&ResolvedConfig>) -> Vec<u8> {
     let rules = rules.map(|rule| {
         let mut setting = vec![number(rule.severity as u32)];
         setting.extend(rule.options.iter().cloned());
-        (
-            RuleId::Known(rule.entry.meta).to_vec(),
-            Json::Array(setting),
-        )
+        let id = match rule.name() {
+            Some(name) => name.to_vec(),
+            None => RuleId::Known(rule.entry.meta).to_vec(),
+        };
+        (id, Json::Array(setting))
     });
     let js_rules = config.js_rules.iter().map(|rule| {
         let mut setting = vec![number(rule.severity as u32)];

@@ -18,6 +18,9 @@ pub enum RuleId {
     Known(&'static Meta),
     /// A rule of a JavaScript plugin.
     Js(Arc<js_plugin::Rule>),
+    /// One more instance of a rule that exists, under a name that the configuration gives it: `no-restricted-syntax/<name>`.
+    /// The rule, and all of the name.
+    Named(&'static Meta, Arc<[u8]>),
     /// As a configuration or a comment names it.
     Unknown(Box<[u8]>),
 }
@@ -27,6 +30,7 @@ impl PartialEq for RuleId {
         match (self, other) {
             (RuleId::Known(a), RuleId::Known(b)) => a.plugin == b.plugin && a.name == b.name,
             (RuleId::Js(a), RuleId::Js(b)) => Arc::ptr_eq(a, b),
+            (RuleId::Named(_, a), RuleId::Named(_, b)) => a == b,
             (RuleId::Unknown(a), RuleId::Unknown(b)) => a == b,
             _ => false,
         }
@@ -39,6 +43,7 @@ impl std::hash::Hash for RuleId {
         match self {
             RuleId::Known(meta) => (meta.plugin, meta.name).hash(state),
             RuleId::Js(rule) => Arc::as_ptr(rule).hash(state),
+            RuleId::Named(_, name) => name.hash(state),
             RuleId::Unknown(name) => name.hash(state),
         }
     }
@@ -55,6 +60,7 @@ impl RuleId {
                 out.extend_from_slice(meta.name.as_bytes());
             }
             RuleId::Js(rule) => out.extend_from_slice(&rule.id),
+            RuleId::Named(_, name) => out.extend_from_slice(name),
             RuleId::Unknown(name) => out.extend_from_slice(name),
         }
     }

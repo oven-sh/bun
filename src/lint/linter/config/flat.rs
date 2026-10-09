@@ -297,6 +297,10 @@ impl Reader<'_> {
                 Some(entry) => {
                     setting.id = crate::linter::RuleId::Known(entry.meta).to_vec().into()
                 }
+                // One more instance of a rule of ESLint, which is of no plugin.
+                None if !is_foreign && self.registry.base_of(id).is_some() => {
+                    setting.plugin = Box::default();
+                }
                 None => {
                     let is_new = !self.unknown_rules.iter().any(|it| **it == *id);
                     if setting.severity != Severity::Off && is_new {

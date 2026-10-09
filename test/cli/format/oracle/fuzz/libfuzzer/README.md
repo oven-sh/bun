@@ -17,7 +17,7 @@ The crate is not a member of Bun's workspace. It links the crates that it tests 
 | `options` | the same, and the first line of the text is the options, as they are in a `.prettierrc` or an `.oxfmtrc.json`: regular expressions, globs, groups | where the text is |
 | `config` | `bun format --check .` and `bun lint .` as a whole, in a small project in memory whose configuration file is the text: how `.prettierrc` in JSON, JSON5, YAML and TOML, `package.json`, `.editorconfig`, ignore files, `.oxfmtrc.json`, `.oxlintrc.json` and `.eslintrc` are found, read and applied, overrides, the options of rules. After a line `-----`: the text of `base.json`, which the file can extend. After a line `=====`: the text of `a.ts`. With a flag it writes: after `bun format --write .` nothing is left for `--check` (`not-formatted-after-write`). No program is run, no plugin is loaded | the name of the file (`FILES` in `config.rs`) |
 | `regex` | `bun_lint::regex::Regex`, which is `RegExp` for the patterns in the options of rules and in `importOrder`: the text is a pattern, a line break, and what is searched. `test`, `find`, all matches, `split`, `replace` and `source` have to agree with `exec`. `regex-oracle.mjs` asks the `RegExp` of Node.js | nothing. The first eight flags of the input: `d g i m s u v y` |
-| `glob` | `bun_glob::Pattern` with `Options::MINIMATCH_DOT`, which is minimatch with `dot`: the text is a pattern, a line break, and a path. `glob-oracle.mjs` asks minimatch | |
+| `glob` | `bun_glob`: a pattern, a line break, and a path, for `Pattern` with each of its `Options` and `of_oxc_glob_set`; or an ignore file whose last line is a path, for `IgnoreRules` with each `IgnoreSyntax`. Nothing panics, every mode is bounded, and the debug assertions compare two ways of matching. `glob-oracle.mjs` asks minimatch about variant 0 | who reads it: 0 to 5 a pattern, 6 to 15 an ignore file |
 | `readers` | Bun's two readers of JSON, as long as there are two, with each of seven sets of options: `bun_lint::json::comparison::describe` says the same of both | |
 | `md` | `bun_md`, which is behind `Bun.markdown`: Markdown to HTML | |
 | `lint` | `bun lint`: every rule that needs neither types nor other files, with its default options, the comments that configure rules, and fixes | the extension, the parser, module or script |
@@ -106,7 +106,7 @@ The other way to a recursion without a check: a small stack. `FUZZ_STACK_KB=1024
 
 ## What AddressSanitizer sees here
 
-The crates of the formatter, the linter and the new parser forbid `unsafe`, so there it can only find a bug of the compiler. It is for what they call: `bun_core`, `bun_alloc`, `bun_sema` and `bun_js_parser`, which have `unsafe`.
+The crates of the formatter, the linter and the new parser forbid `unsafe`, so there it can only find a bug of the compiler. It is for what they call: `bun_core`, `bun_alloc` and `bun_sema`, which have `unsafe`.
 
 - It sees every block of the global allocator, which is `malloc` here as in Bun's own builds with AddressSanitizer (`--cfg bun_asan`).
 - It sees every block of an arena, which it would not in Bun: there an arena is a heap of mimalloc, whose blocks lie side by side in pages that AddressSanitizer knows nothing about. `mimalloc.rs` makes each a block of `malloc`: reading past the end of one, or using one after its heap is destroyed, is reported. Reading up to 48 bytes before the start of one is not: the list of the heap's blocks is there.

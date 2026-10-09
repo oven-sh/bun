@@ -109,6 +109,7 @@ fn is_name_of(name: &[u8], id: &RuleId) -> bool {
             .and_then(|it| it.strip_suffix(b"/"))
             .is_some_and(|it| it == meta.plugin.prefix().as_bytes()),
         RuleId::Js(rule) => name == &rule.id[..],
+        RuleId::Named(_, id) => name == &id[..],
         RuleId::Unknown(_) => false,
     }
 }
@@ -419,6 +420,9 @@ pub(crate) fn apply<'a>(
             ),
             RuleId::Js(rule) => {
                 index.overlapping(last_part(&rule.id), &places, (start, end), &mut overlapping)
+            }
+            RuleId::Named(_, id) => {
+                index.overlapping(last_part(id), &places, (start, end), &mut overlapping)
             }
             RuleId::Unknown(_) => {}
         }

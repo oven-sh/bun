@@ -28,8 +28,6 @@ pub enum Phase {
     Discover,
     Read,
     Parse,
-    /// From Bun's AST to `hir`.
-    Lower,
     Bind,
     /// Resolution of the imports and the `/// <reference>`s of a file.
     Resolve,
@@ -41,11 +39,10 @@ pub enum Phase {
 }
 
 impl Phase {
-    pub const ALL: [Phase; 9] = [
+    pub const ALL: [Phase; 8] = [
         Phase::Discover,
         Phase::Read,
         Phase::Parse,
-        Phase::Lower,
         Phase::Bind,
         Phase::Resolve,
         Phase::Link,

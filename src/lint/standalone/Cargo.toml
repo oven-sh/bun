@@ -29,7 +29,7 @@ bun_sema_driver.workspace = true
 bun_threading.workspace = true
 bun_sema.workspace = true
 bun_sema_standalone = { path = "../../sema/standalone" }
-bun_js_parser.workspace = true
+bun_sema_parser.workspace = true
 bun_core.workspace = true
 bstr.workspace = true
 rustc-hash = "2"

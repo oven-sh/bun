@@ -59,15 +59,6 @@ thread_local! {
     static SEEN_NAMES: std::cell::Cell<(u64, Box<[std::cell::Cell<SeenName>]>)> = Default::default();
 }
 
-/// `RECYCLED` and `SEEN_NAMES`.
-#[derive(Default)]
-pub(crate) struct Recycled(hir::FileBuilder, (u64, Box<[std::cell::Cell<SeenName>]>));
-
-/// Swaps this thread's recycled buffers.
-pub(crate) fn replace_recycled(room: Recycled) -> Recycled {
-    Recycled(RECYCLED.replace(room.0), SEEN_NAMES.replace(room.1))
-}
-
 impl Drop for Builder<'_> {
     fn drop(&mut self) {
         SEEN_NAMES.set((self.atoms.number(), std::mem::take(&mut self.seen_names)));

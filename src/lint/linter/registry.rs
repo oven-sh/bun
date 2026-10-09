@@ -221,6 +221,15 @@ impl Registry {
         Some(self.rules[at.ok()?])
     }
 
+    /// The rule of which `id` is one more instance, under a name that a configuration gives it: `no-restricted-syntax/<name>`.
+    pub fn base_of(&self, id: &[u8]) -> Option<&'static RuleEntry> {
+        let (prefix, name) = parse_rule_id(id);
+        match prefix == b"no-restricted-syntax" && !name.is_empty() {
+            true => self.get(Plugin::Eslint, prefix),
+            false => None,
+        }
+    }
+
     /// The position of a rule in [`Registry::all`].
     pub fn index_of(&self, entry: &RuleEntry) -> Option<usize> {
         let key = (entry.meta.plugin as u8, entry.meta.name);

@@ -208,15 +208,8 @@
   "src/lint/jest/rules/vitest_prefer_importing_vitest_globals.rs": {
     "trim_end": 1
   },
-  "src/lint/linter/config/brace_expansion.rs": {
-    "is_line_terminator": 1
-  },
   "src/lint/linter/config/eslintrc.rs": {
     "is_absolute": 1
-  },
-  "src/lint/linter/config/minimatch.rs": {
-    "is_line_terminator": 1,
-    "unescape": 1
   },
   "src/lint/linter/config/path.rs": {
     "dirname": 1,
@@ -237,9 +230,6 @@
     "trim": 1,
     "trim_end": 1,
     "trim_start": 1
-  },
-  "src/lint/oxlint/module_record.rs": {
-    "hash_bytes": 1
   },
   "src/lint/oxlint/text.rs": {
     "file_name": 1,
@@ -350,9 +340,6 @@
     "last_index_of": 1,
     "push_code_point": 1,
     "to_utf16": 1
-  },
-  "src/lint/utils/ignore.rs": {
-    "is_space": 1
   },
   "src/lint/utils/text.rs": {
     "code_point_at": 1,

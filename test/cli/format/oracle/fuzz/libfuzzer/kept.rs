@@ -179,7 +179,7 @@ pub fn program(path: &[u8], text: &[u8]) -> Option<Program> {
     let how = language.parse_options(path);
     let session = Session::new();
     let atoms = Interner::new_in(&session);
-    bun_js_parser::sema::with_summary(
+    bun_sema_parser::with_summary(
         Dialect::babel(false),
         (session.arena(), &session),
         path,

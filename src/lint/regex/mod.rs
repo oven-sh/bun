@@ -90,46 +90,47 @@ use subject::Subject;
 /// The start and the end of the match and of each group.
 type Slots = SmallVec<[u32; 16]>;
 
-/// V8's `EscapeRegExpSource`.
-fn escape_source(pattern: &[u8]) -> Box<[u8]> {
-    if pattern.is_empty() {
-        return (*b"(?:)").into();
+/// `EscapeRegExpPattern`, as V8 does it: what `regex.source` is for the pattern `text`.
+pub(crate) fn escape_source(text: Cow<'_, [u8]>) -> Cow<'_, [u8]> {
+    if text.is_empty() {
+        return Cow::Borrowed(b"(?:)");
     }
-    if strings::index_of_any(pattern, b"/\n\r\xE2").is_none() {
-        return pattern.into();
+    if strings::index_of_any(&text, b"/\n\r\xE2").is_none() {
+        return text;
     }
-    let mut out = Vec::with_capacity(pattern.len() + 8);
-    let (mut in_class, mut escaped) = (false, false);
-    let mut rest = pattern;
-    while let Some((&byte, tail)) = rest.split_first() {
-        let (line_terminator, tail): (&[u8], _) = match rest {
-            [b'\n', tail @ ..] => (b"n", tail),
-            [b'\r', tail @ ..] => (b"r", tail),
-            [0xE2, 0x80, 0xA8, tail @ ..] => (b"u2028", tail),
-            [0xE2, 0x80, 0xA9, tail @ ..] => (b"u2029", tail),
-            _ => (b"", tail),
+    let mut source = Vec::with_capacity(text.len() + 4);
+    let (mut is_escaped, mut is_in_class) = (false, false);
+    let mut rest = &text[..];
+    while let [byte, after @ ..] = rest {
+        let line_terminator: Option<(&[u8], usize)> = match rest {
+            [b'\n', ..] => Some((b"n", 1)),
+            [b'\r', ..] => Some((b"r", 1)),
+            [0xE2, 0x80, 0xA8, ..] => Some((b"u2028", 3)),
+            [0xE2, 0x80, 0xA9, ..] => Some((b"u2029", 3)),
+            _ => None,
         };
-        rest = tail;
-        if !line_terminator.is_empty() {
-            if !escaped {
-                out.push(b'\\');
+        if let Some((escape, len)) = line_terminator {
+            if !is_escaped {
+                source.push(b'\\');
             }
-            out.extend_from_slice(line_terminator);
-            escaped = false;
+            source.extend_from_slice(escape);
+            is_escaped = false;
+            rest = &rest[len..];
             continue;
         }
-        if !escaped {
+        if !is_escaped {
             match byte {
-                b'/' if !in_class => out.push(b'\\'),
-                b'[' => in_class = true,
-                b']' => in_class = false,
+                b'/' if !is_in_class => source.push(b'\\'),
+                b'[' => is_in_class = true,
+                b']' => is_in_class = false,
                 _ => {}
             }
         }
-        out.push(byte);
-        escaped = byte == b'\\' && !escaped;
+        is_escaped = !is_escaped && *byte == b'\\';
+        source.push(*byte);
+        rest = after;
     }
-    out.into()
+    Cow::Owned(source)
 }
 
 /// The names of the groups with the groups of each, in the order in which the names first appear.
@@ -221,7 +222,7 @@ impl Regex {
             compiled: compile(pattern, flags)?,
             unsticky: OnceLock::new(),
             flags,
-            source: escape_source(pattern),
+            source: escape_source(Cow::Borrowed(pattern)).into_owned().into(),
             group_count: ast.capturing_groups().count() as u32 + 1,
             names: group_names(&ast),
         })

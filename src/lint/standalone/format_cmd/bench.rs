@@ -3,13 +3,13 @@
 use super::{Args, collect_files};
 use crate::host::{self, output_line};
 use bun_format::Scratch;
-use bun_js_parser::sema::Summary;
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser, SourceType};
 use bun_sema::atom::{Intern, InternerPerThread};
 use bun_sema::bind::{BindOptions, Recycled, bind_for_format_in, try_bind_for_format_in};
 use bun_sema::resolve::Dialect;
 use bun_sema::session::Session;
+use bun_sema_parser::Summary;
 use std::fmt::Write as _;
 use std::hash::Hasher as _;
 
@@ -41,7 +41,7 @@ fn with_file_as<R>(
     };
     let arena = session.arena();
     let how = language.parse_options(path.as_bytes());
-    bun_js_parser::sema::with_summary_in_place(
+    bun_sema_parser::with_summary_in_place(
         Dialect::babel(is_script),
         (arena, session),
         path.as_bytes(),

@@ -1,9 +1,9 @@
 //! Statements and declarations.
 
 use super::{ListKind, Parser, ctx, take_span};
-use crate::Refusal;
 use crate::token::T;
-use bun_sema::atom::Atom;
+use crate::{Goal, Refusal};
+use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
 
 /// The first token of a node: its start, and `node.Pos()`.
@@ -638,6 +638,41 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             modifiers: Span::EMPTY,
         });
         id
+    }
+
+    /// `Options::goal`, at the first token: the one statement of the file. Nothing is read after it.
+    pub(crate) fn part(&mut self, goal: Goal) -> StmtId {
+        let start = self.start();
+        let statement = match goal {
+            Goal::File | Goal::Expression => {
+                let expression = self.expression_allowing_in();
+                self.add_stmt(StmtKind::Expr(expression), start, Span::EMPTY)
+            }
+            Goal::Declaration => {
+                if !matches!(self.token(), T::Var | T::Let | T::Const) {
+                    self.fail();
+                }
+                let declarations = self.variable_declaration_list(false, Flags::empty());
+                self.add_stmt(StmtKind::Var(declarations), start, Span::EMPTY)
+            }
+            Goal::Type => {
+                let ty = self.ty();
+                let alias = self.f.add_alias(Alias {
+                    name: known::empty,
+                    name_pos: start.pos,
+                    flags: Flags::empty(),
+                    type_params: Span::EMPTY,
+                    ty,
+                    stmt: StmtId::NONE,
+                });
+                let statement = self.add_stmt(StmtKind::TypeAlias(alias), start, Span::EMPTY);
+                self.f[alias].stmt = statement;
+                statement
+            }
+        };
+        self.end = self.prev_end();
+        self.lx.stop();
+        statement
     }
 
     /// `parseVariableStatement`

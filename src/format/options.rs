@@ -46,6 +46,8 @@ pub struct FormatOptions {
     /// For HTML and what is like it.
     pub html_whitespace_sensitivity: HtmlWhitespaceSensitivity,
     pub vue_indent_script_and_style: bool,
+    /// For Svelte.
+    pub svelte: SvelteOptions,
     /// The name of the file, if it is not the one that it was parsed under: text from stdin.
     pub filepath: Option<Box<[u8]>>,
     /// Prettier's `parser`, if it is not left to the name of the file: `json5`, `babel`, ..
@@ -100,14 +102,45 @@ pub struct FormatOptions {
 /// code could be formatted.
 pub type FormatJavaScript = fn(&[u8], &[u8], &FormatOptions, &mut Vec<u8>) -> bool;
 
-/// Parses JavaScript or TypeScript, which this crate cannot do by itself. It is given the name of a file that says which
-/// of them it is, the code, whether that is a script, and what to call with the file, errors or not.
-pub type ParseJavaScript =
-    fn(&[u8], &[u8], bool, &mut dyn for<'b> FnMut(&'b bun_lint::ast::File<'b>));
+/// How much of a text is parsed.
+#[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
+pub enum Goal {
+    /// All of it.
+    #[default]
+    Program,
+    /// The expression that it starts with, commas included. More can follow, in any language.
+    Expression,
+    /// The same for a `let`, `const` or `var`.
+    Declaration,
+    /// The same for a type.
+    Type,
+}
+
+/// Code to parse.
+#[derive(Copy, Clone)]
+pub struct Code<'c> {
+    /// The name of a file that says whether it is JavaScript or TypeScript.
+    pub path: &'c [u8],
+    pub text: &'c [u8],
+    pub is_script: bool,
+    pub goal: Goal,
+}
+
+/// What has become of [`Code`].
+pub struct Parsed<'b> {
+    /// Errors or not. If less than a program has been asked for, that is its only statement: a type is the type of an alias.
+    pub file: &'b bun_lint::ast::File<'b>,
+    /// Where what has been parsed ends in the text, with the parentheses around it.
+    pub end: u32,
+    /// Where in the text.
+    pub first_error: Option<u32>,
+}
+
+/// Parses JavaScript or TypeScript, which this crate cannot do by itself, and calls what it is given with the result.
+pub type ParseJavaScript = fn(Code<'_>, &mut dyn for<'b> FnMut(&Parsed<'b>));
 
 /// The same for a caller that keeps what it parses with: a text can have many pieces of code in it.
-pub type JavaScriptParser<'p> =
-    &'p dyn Fn(&[u8], &[u8], bool, &mut dyn for<'b> FnMut(&'b bun_lint::ast::File<'b>));
+pub type JavaScriptParser<'p> = &'p dyn Fn(Code<'_>, &mut dyn for<'b> FnMut(&Parsed<'b>));
 
 /// What Prettier tells the formatter of code that is in HTML: the options whose names start with `__`, and the parsers for
 /// what is less than a program.
@@ -124,6 +157,10 @@ pub struct InHtml {
     pub is_style_attribute: bool,
     /// `singleQuote`, which `quote_style` does not say in an attribute.
     pub quote_style: QuoteStyle,
+    /// `singleQuote: true`, whatever the options say: what `prettier-plugin-svelte` asks for between double quotes.
+    pub has_single_quotes: bool,
+    /// The parser is `babel-ts`: TypeScript, in a tree of Babel.
+    pub has_tree_of_babel: bool,
 }
 
 /// What the code is.
@@ -148,6 +185,10 @@ pub enum HtmlRoot {
     NgDirective,
     /// `__ng_interpolation`
     NgInterpolation,
+    /// `svelteExpressionParser`, `svelteTSExpressionParser`: the root is a `File` whose `program` is an expression, or a function.
+    SvelteExpression,
+    /// `svelteStatementParser`, `svelteTSStatementParser`: the same with a statement, which loses its `;`.
+    SvelteStatement,
 }
 
 impl HtmlRoot {
@@ -161,6 +202,65 @@ impl HtmlRoot {
                 | HtmlRoot::NgDirective
                 | HtmlRoot::NgInterpolation
         )
+    }
+}
+
+/// The parts of a component of Svelte.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum SveltePart {
+    Options,
+    Scripts,
+    Markup,
+    Styles,
+}
+
+impl SveltePart {
+    /// `options-scripts-markup-styles` and the like: each of the four once.
+    fn order(value: &[u8]) -> Option<[SveltePart; 4]> {
+        let mut order = Vec::with_capacity(4);
+        for name in bun_core::strings::split(value, b"-") {
+            let part = match name {
+                b"options" => SveltePart::Options,
+                b"scripts" => SveltePart::Scripts,
+                b"markup" => SveltePart::Markup,
+                b"styles" => SveltePart::Styles,
+                _ => return None,
+            };
+            if order.contains(&part) {
+                return None;
+            }
+            order.push(part);
+        }
+        <[SveltePart; 4]>::try_from(order).ok()
+    }
+}
+
+/// The options of `prettier-plugin-svelte`.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct SvelteOptions {
+    /// `svelteSortOrder`. `None`: `"none"`.
+    pub sort_order: Option<[SveltePart; 4]>,
+    /// `svelteAllowShorthand`
+    pub allows_shorthand: bool,
+    /// `svelteIndentScriptAndStyle`
+    pub indents_script_and_style: bool,
+    /// The tool has the language, so the blocks of it in Markdown are formatted.
+    pub is_in_markdown: bool,
+}
+
+impl Default for SvelteOptions {
+    fn default() -> Self {
+        SvelteOptions {
+            sort_order: Some([
+                SveltePart::Options,
+                SveltePart::Scripts,
+                SveltePart::Markup,
+                SveltePart::Styles,
+            ]),
+            allows_shorthand: true,
+            indents_script_and_style: true,
+            is_in_markdown: false,
+        }
     }
 }
 
@@ -305,6 +405,15 @@ impl FormatOptions {
                 };
             }
             b"vueIndentScriptAndStyle" => self.vue_indent_script_and_style = boolean()?,
+            b"svelte" => self.svelte.is_in_markdown = boolean()?,
+            b"svelteSortOrder" => {
+                self.svelte.sort_order = match value {
+                    b"none" => None,
+                    _ => Some(SveltePart::order(value).ok_or(InvalidOption)?),
+                };
+            }
+            b"svelteAllowShorthand" => self.svelte.allows_shorthand = boolean()?,
+            b"svelteIndentScriptAndStyle" => self.svelte.indents_script_and_style = boolean()?,
             b"filepath" => self.filepath = Some(value.into()),
             b"parser" => self.parser = Some(value.into()),
             b"rangeStart" => self.range_start = Some(number(u32::MAX)?),

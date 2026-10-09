@@ -278,9 +278,21 @@ oxfmt's option, and the plugin of Prettier that it is made of: the classes of Ta
 - **Not there**: with `preserveWhitespace`, a line break in a list does not break the groups around it in oxfmt. oxfmt does not sort in the cells of a `test.each` table. Without the package oxfmt takes a Tailwind that the plugin brings along, also for `config` with version 4 installed.
 - **Tests**: `test/cli/format/tailwind`, with a stand-in for the package. `test/cli/format/oracle/tailwind/make-fixtures.ts` makes what is expected with the real tools.
 
+## Svelte
+
+`src/format/svelte`: a port of `prettier-plugin-svelte` 4.1.1, which oxfmt calls too, and of the parser of Svelte 5.57 (`phases/1-parse`).
+
+- **The steps are the plugin's.** `snip.rs` takes what is in `<script>` and `<style>` out of the text, by the plugin's two regular expressions. `parser.rs` makes the tree of `parse(text, { modern: true })`, as far as the plugin looks at it (`ast.rs`). `print.rs` makes the plugin's documents of it, as a tree (`doc.rs`): the plugin takes documents apart again (`trim`, the last child of a list), so they cannot be written as they are made. `doc::write` writes them through `html/writer.rs`, and lets go of each as it is written. `code.rs` writes JavaScript and style sheets where `embed` does.
+- **JavaScript in the markup** has no end that could be found without parsing it. `trait Js` (`parser.rs`) asks for one expression, declaration or type at the start of a text. `js.rs` answers with `Goal::{Expression, Declaration, Type}` of `ParseJavaScript`, which the driver maps to `bun_sema_parser::Goal`. There is no scanner of JavaScript here, and there must not be one.
+- **Hooks in the printer of JavaScript**: `HtmlRoot::{SvelteExpression, SvelteStatement}`, `InHtml::{has_single_quotes, has_tree_of_babel}`, `Formatter::write_with_lines_removed` (Prettier's `removeLines`, which keeps conditional groups).
+- **When** (`src/lint/driver/fmt`): for oxfmt with `svelte` in the configuration. For Prettier if the configuration names the plugin and the installed one is 4.1.1, or none is installed: `Configs::has_our_svelte`. Every other version prints some components in another way (4.1.0: 19 of 7,047 real ones), so its files go to the Prettier of the project, as do ranges: see below. The version of `svelte` does not decide: an older one refuses newer syntax and prints the rest the same.
+- **What the plugin damages is not written**: `verify.rs`, on the reader of `html/verify.rs`. `prop='"'` becomes `prop="""`, `{a /* b */}` loses its comment, `{ b: c = 1 }` its key. Such a file is an error and stays as it is. Three things are printed in another way than the plugin prints them, because it loses text: what is in a script under `<!-- prettier-ignore -->`, a `literalline` at an end of the markup, and the parts of a component with `svelteSortOrder: "none"`.
+- **Tailwind**: `tailwind.rs`, the plugin's `transformSvelte`.
+- **Tests**: `test/cli/format/svelte`. `cases.json` has what the real plugin and the real oxfmt print, and is made by `test/cli/format/oracle/svelte/make-fixtures.ts`. `oracle/svelte` also has the generator of components and the comparison of trees with `svelte/compiler`. An oracle has to repair two things after every file: see `make-fixtures.ts`.
+
 ## Languages that only a plugin of Prettier reads
 
-`.svelte`, `.astro`, `.php` and the like. In Prettier's flavor, a file whose language a plugin of the configuration reads is handed to the Prettier of the project.
+`.astro`, `.php` and the like, and `.svelte` with another version of the plugin than the one that is built in. In Prettier's flavor, a file whose language a plugin of the configuration reads is handed to the Prettier of the project.
 
 - **Where**: `src/lint/driver/fmt/prettier.rs`, which talks to the host of the JS plugins of `bun lint`: `src/lint/js_plugin/prettier.rs` and `worker/prettier.js`.
 - **When**: `prettier` and every package that the configuration names as a plugin are installed. Prettier loads all of them, also those that are built in here. Else the files are named and left as they are.

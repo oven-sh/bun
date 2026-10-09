@@ -1246,7 +1246,7 @@ fn bind_check(path: &str, language: &LanguageOptions, is_for_format: bool, is_ve
             let atoms = bun_sema::atom::Interner::new_in(&session);
             let arena = session.arena();
             let how = language.parse_options(input.filename.as_bytes());
-            let mut hir = bun_js_parser::sema::summarize_as(
+            let mut hir = bun_sema_parser::summarize_as(
                 how.dialect,
                 arena,
                 input.filename.as_bytes(),
@@ -1255,8 +1255,7 @@ fn bind_check(path: &str, language: &LanguageOptions, is_for_format: bool, is_ve
                 &atoms,
                 how.experimental_decorators,
                 how.every_file_is_a_module,
-            )
-            .0;
+            );
             hir.text = input.code.clone().into();
             let options = BindOptions {
                 emit_standard_class_fields: true,

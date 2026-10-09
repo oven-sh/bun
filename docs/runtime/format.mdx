@@ -1,9 +1,9 @@
 ---
 title: "Formatting"
-description: "Format JavaScript, TypeScript, HTML, Vue, Angular templates, CSS, JSON, YAML, Markdown, GraphQL, and Handlebars with bun format, a fast formatter that is compatible with Prettier"
+description: "Format JavaScript, TypeScript, HTML, Vue, Svelte, Angular templates, CSS, JSON, YAML, Markdown, GraphQL, and Handlebars with bun format, a fast formatter that is compatible with Prettier"
 ---
 
-`bun format` formats JavaScript, TypeScript, HTML, Vue, Angular templates, CSS, JSON, YAML, Markdown, GraphQL, and Handlebars the way [Prettier](https://prettier.io) does. It reads your `.prettierrc`, and uses every CPU core.
+`bun format` formats JavaScript, TypeScript, HTML, Vue, Svelte, Angular templates, CSS, JSON, YAML, Markdown, GraphQL, and Handlebars the way [Prettier](https://prettier.io) does. It reads your `.prettierrc`, and uses every CPU core.
 
 ```bash terminal icon="terminal"
 bun format
@@ -81,7 +81,7 @@ Checking formatting...
 
     - The Prettier extension of your editor uses it.
     - `eslint-plugin-prettier` runs it.
-    - A plugin formats files in a language that `bun format` does not have, like Svelte: `bun format` hands them to it.
+    - A plugin formats files in a language that `bun format` does not have, like Astro: `bun format` hands them to it.
 
   </Step>
 </Steps>
@@ -97,7 +97,9 @@ Checking formatting...
 `bun format` takes every flag of Prettier 3 except `--file-info` and `--support-info`.
 
 `bun format` formats `.js`, `.mjs`, `.cjs`, `.jsx`, `.js.flow`, the other names that Prettier takes for JavaScript (`.es6`, `.jsm`, `Jakefile`, ..., and a file without an extension that starts with `#!/usr/bin/env node`), `.ts`, `.mts`, `.cts`, `.tsx`, `.json`, `.jsonc`, `.json5`, `.css`, `.scss`, `.less`, `.yaml`, `.yml`, `.md`, `.mdx`, `.graphql`, `.gql`, `.hbs`, `.handlebars`, `.html`, `.htm`, `.xhtml`, `.vue`, `.component.html`, and `.mjml` files. A `.js` file with a `@flow` comment at the top is read as Flow. Scripts, styles, and expressions in HTML, Vue, and Angular templates are formatted too. So is HTML in `` html`...` `` and `` /* HTML */ `...` `` templates, in the `template` of an Angular `@Component`, and in `html`, `vue`, and `angular-html` code blocks in Markdown; `--embedded-language-formatting=off` leaves those as they are.
-**Svelte, Astro, and the other languages of plugins** go over a bridge. If the configuration of Prettier names a plugin that adds a language, like `prettier-plugin-svelte`, and `prettier` and the plugin are installed, `bun format` hands the files of that language to them, with the configuration file and the flags, and checks or writes what comes back. The output is Prettier's, and so is the speed. Prettier stays installed for these files, with every plugin that the configuration names, the built-in ones too. The run says how many went that way.
+**Svelte** is built in: `.svelte` files are formatted the way `prettier-plugin-svelte` 4.1.1 does it, if the configuration of Prettier names the plugin. If another version of the plugin is installed, which prints some components in another way, the files go over the bridge below.
+
+**Astro and the other languages of plugins** go over a bridge. If the configuration of Prettier names a plugin that adds a language, like `prettier-plugin-astro`, and `prettier` and the plugin are installed, `bun format` hands the files of that language to them, with the configuration file and the flags, and checks or writes what comes back. The output is Prettier's, and so is the speed. Prettier stays installed for these files, with every plugin that the configuration names, the built-in ones too. The run says how many went that way.
 
 Without the packages, and with an `.oxfmtrc.json`, it leaves such files as they are. It formats the rest, and then ends with an error that says how many files of which kind it left, and exit code `2`: a check that skips files in silence is not the check you replaced. `--allow-unsupported` makes that a warning.
 
@@ -179,7 +181,7 @@ If the configuration file nearest to the working directory is one of these, `bun
 - Which files are read goes by oxfmt's list of names, which tells upper case from lower case: `a.MD` is not Markdown.
 - A configuration file that cannot be used ends the run with exit code `1`.
 
-`sortImports`, `sortPackageJson`, and `jsdoc` work as in oxfmt. `sortTailwindcss` sorts the classes in JavaScript, TypeScript, CSS, SCSS, Less, HTML, Vue, Angular, Handlebars, and Markdown files, in the order of the `tailwindcss` that the project has installed, version 3 or 4. Svelte files are not supported, which oxfmt formats if the configuration has `svelte`: they count as files in a language that is not supported.
+`sortImports`, `sortPackageJson`, and `jsdoc` work as in oxfmt. `sortTailwindcss` sorts the classes in JavaScript, TypeScript, CSS, SCSS, Less, HTML, Vue, Svelte, Angular, Handlebars, and Markdown files, in the order of the `tailwindcss` that the project has installed, version 3 or 4. Svelte files are formatted if the configuration has `svelte`, as in oxfmt.
 
 TOML files (`*.toml`, `*.toml.example`, `Pipfile`, `Cargo.toml.orig`) are formatted as oxfmt formats them: keys and values stay as they are written, white space, empty lines and the layout of arrays change. A file that is not valid TOML is left as it is, with a warning that says what is wrong with it, where oxfmt says nothing and rewrites the rest of it.
 
@@ -339,8 +341,9 @@ These differences are intentional:
 - **It writes by default.** `prettier` without `--write` prints the formatted code. `--write` is accepted and changes nothing.
 - **No arguments means the current directory.**
 - **Only changed files are printed**, without the time each took, and a summary line goes to stderr.
-- **No Svelte or Astro of its own.** The files go to the project's own Prettier and its plugin, if they are installed. If not, they are left as they are, and the run ends with an error that counts them. With `--allow-unsupported` it is a warning.
-- **Plugins do not load.** The three that sort imports and `prettier-plugin-tailwindcss` are built in. A plugin that only adds a language, like `prettier-plugin-svelte` or `prettier-plugin-astro`, changes nothing for the rest: the files of that language are handed to the project's own Prettier. Those whose `parser` in the configuration is that of a plugin that `bun format` does not know count as files in a language that is not supported. Any other plugin, like `prettier-plugin-brace-style`, may print the files of the project in another way than `bun format` would, so the files that its configuration file is for are left as they are, and the run ends with an error that names the plugin. With `--allow-unsupported` they are formatted without it.
+- **No Astro of its own, and one version of Svelte.** Astro files, and Svelte files if the installed `prettier-plugin-svelte` is not 4.1.1, go to the project's own Prettier and its plugin, if they are installed. If not, they are left as they are, and the run ends with an error that counts them. With `--allow-unsupported` it is a warning.
+- **A Svelte component that the plugin would damage is left as it is**, and the run ends with an error that names it: `prop='"'`, which the plugin prints as `prop="""`, or `{a /* b */}`, whose comment it loses.
+- **Plugins do not load.** The three that sort imports and `prettier-plugin-tailwindcss` are built in. A plugin that only adds a language, like `prettier-plugin-astro`, changes nothing for the rest: the files of that language are handed to the project's own Prettier. Those whose `parser` in the configuration is that of a plugin that `bun format` does not know count as files in a language that is not supported. Any other plugin, like `prettier-plugin-brace-style`, may print the files of the project in another way than `bun format` would, so the files that its configuration file is for are left as they are, and the run ends with an error that names the plugin. With `--allow-unsupported` they are formatted without it.
 - **An unknown flag is an error.** Prettier warns and goes on.
 - **A file is checked before it is written.** `bun format` parses what it is about to write and compares it with what it read. If the two are not the same program, it leaves the file as it is and reports a bug.
 - **HTML is checked too.** If what is about to be written does not have the same elements, attributes, and text as the file, `bun format` leaves the file as it is, reports it, and exits with 2.
@@ -360,7 +363,7 @@ These differences are intentional:
 
 - **The output is that of oxfmt 0.72**, whichever version you had installed.
 - **No language server, no migration.** `--lsp` and `--migrate` are errors: `bun format does not support --lsp.`
-- **No Svelte.** `bun format` leaves the files as they are, and the run ends with an error that counts them and exit code `2`. With `--allow-unsupported` it is a warning.
+- **A Svelte component that oxfmt would damage is left as it is**, and the run ends with an error that names it: `prop='"'`, which oxfmt prints as `prop="""`, or `{a /* b */}`, whose comment it loses.
 - **Errors and warnings are in the words of Bun**, with `[error]` or `[warn]` before each line. What else is printed about a run is what oxfmt prints, on the same stream.
 - **A TOML file that is not valid is left as it is**, with a warning. oxfmt rewrites the rest of the file.
 - **A file is checked before it is written**, as in [Differences from Prettier](#differences-from-prettier).

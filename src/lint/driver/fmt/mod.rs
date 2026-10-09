@@ -15,12 +15,12 @@ use crate::{fs, paths};
 use bstr::BStr;
 use bun_collections::index_sort::sort_slice_by;
 use bun_core::strings;
+use bun_format::options::{Code, Goal, Parsed};
 use bun_format::pragma::BeforeParsing;
 use bun_format::syntax_error::SyntaxError;
 use bun_format::tailwind::Tailwind;
 use bun_format::verify::Program;
 use bun_format::{FormatError, FormatOptions, Scratch};
-use bun_js_parser::sema::Summary;
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, ParseOptions, Parser, SourceType};
 use bun_lint::linter::TypesInJavaScript;
@@ -31,6 +31,7 @@ use bun_sema::bind::{BindOptions, Recycled, bind, bind_for_format_in, try_bind_f
 use bun_sema::hir::Diagnostic;
 use bun_sema::resolve::Dialect;
 use bun_sema::session::Session;
+use bun_sema_parser::Summary;
 use bun_threading::Guarded;
 use cli::{LogLevel, Options};
 use config::{Configs, Flavor, Resolved};
@@ -130,7 +131,7 @@ fn with_tree<'h, R>(
     then: impl FnOnce(Summary<'_, 'h>, &dyn Intern, &LanguageOptions) -> R,
 ) -> R {
     let (language, dialect, options) = how.language_and_dialect();
-    bun_js_parser::sema::with_summary_in_place(
+    bun_sema_parser::with_summary_in_place(
         dialect,
         (how.memory.arena(), how.memory),
         how.path,
@@ -279,6 +280,7 @@ struct Scratches {
     graphql: bun_format::graphql::Scratch,
     handlebars: bun_format::handlebars::Scratch,
     html: bun_format::html::Scratch,
+    svelte: bun_format::svelte::Scratch,
     yaml: bun_format::yaml::Scratch,
     markdown: bun_format::markdown::Scratch,
     verify: bun_format::verify::Scratch,
@@ -362,24 +364,73 @@ fn format_block_in(
         .is_ok()
 }
 
-/// For the scripts and expressions in HTML: calls `then` with `code` parsed as the file at `path`.
-fn parse_javascript(
-    path: &[u8],
-    code: &[u8],
-    is_script: bool,
-    then: &mut dyn for<'b> FnMut(&'b File<'b>),
-) {
+/// For the scripts and expressions in HTML.
+pub fn parse_javascript(code: Code<'_>, then: &mut dyn for<'b> FnMut(&Parsed<'b>)) {
     let names = Session::new();
+    let names = (&Interner::new_in(&names) as &dyn Intern, &names);
+    parse_code(code, &Resolved::default(), names, then);
+}
+
+fn parse_code(
+    code: Code<'_>,
+    resolved: &Resolved,
+    (atoms, memory): (&dyn Intern, &Session),
+    then: &mut dyn for<'b> FnMut(&Parsed<'b>),
+) {
     let how = How {
-        path,
-        is_script,
+        path: code.path,
+        is_script: code.is_script,
         is_flow: false,
-        resolved: &Resolved::default(),
+        resolved,
         verifies: false,
-        atoms: &Interner::new_in(&names),
-        memory: &names,
+        atoms,
+        memory,
     };
-    with_file(&how, code, |file, _, _| then(file));
+    // `error`: in the place of the first error in `text`.
+    let whole = |text: &[u8], error: Option<u32>, then: &mut dyn for<'b> FnMut(&Parsed<'b>)| {
+        with_file(&how, text, |file, _, first_error| {
+            then(&Parsed {
+                file,
+                end: text.len() as u32,
+                first_error: error.or(first_error.map(|it| it.start)),
+            })
+        })
+    };
+    let goal = match code.goal {
+        Goal::Program => return whole(code.text, None, then),
+        Goal::Expression => bun_sema_parser::Goal::Expression,
+        Goal::Declaration => bun_sema_parser::Goal::Declaration,
+        Goal::Type => bun_sema_parser::Goal::Type,
+    };
+    let (language, dialect, _) = how.language_and_dialect();
+    let is_javascript = language.parser != Parser::TypeScript;
+    let mut then = Some(then);
+    let parsed = bun_sema_parser::with_part_in_place(
+        dialect,
+        is_javascript,
+        code.text,
+        goal,
+        |summary, atoms, end| {
+            let (Summary::InPlace(hir), Some(then)) = (summary, then.take()) else {
+                return;
+            };
+            let mut recycled = Recycled::of_this_thread();
+            let Some(bound) = try_bind_for_format_in(&*hir, &mut recycled) else {
+                return;
+            };
+            let file =
+                File::new(code.path, &*hir, bound, atoms, &language, None).with_text(code.text);
+            then(&Parsed {
+                file: &file,
+                end,
+                first_error: None,
+            });
+        },
+    );
+    // There is no file to show. An empty one says where the error is.
+    if let (Err(at), Some(then)) = (parsed, then) {
+        whole(b"", Some(at), then);
+    }
 }
 
 /// Whether the two texts are the same value. What cannot be read as a value, with a key twice, is not looked at.
@@ -517,6 +568,31 @@ fn format(
             }
             return finish(done, out, "TOML");
         }
+        Some(Kind::Svelte) => {
+            let plain = Resolved::default();
+            let parse = |code: Code<'_>, then: &mut dyn for<'b> FnMut(&Parsed<'b>)| {
+                parse_code(code, &plain, (atoms, memory), then);
+            };
+            let parse = Some(&parse as bun_format::options::JavaScriptParser<'_>);
+            let done = bun_format::svelte::format(
+                name,
+                text,
+                options,
+                parse,
+                &mut scratch.svelte,
+                &mut out,
+            );
+            if verifies
+                && done.is_ok()
+                && out != text
+                && !bun_format::svelte::has_same_content(text, &out, options, parse)
+            {
+                return Err(Failure::Loss(
+                    "formatting it the way prettier-plugin-svelte does would change what is in it",
+                ));
+            }
+            return finish(done, out, "Svelte");
+        }
         Some(Kind::Handlebars) => {
             let done =
                 bun_format::handlebars::format(text, options, &mut scratch.handlebars, &mut out);
@@ -529,20 +605,8 @@ fn format(
         }
         Some(Kind::Html(parser)) => {
             let plain = Resolved::default();
-            let parse = |path: &[u8],
-                         code: &[u8],
-                         is_script: bool,
-                         then: &mut dyn for<'b> FnMut(&'b File<'b>)| {
-                let how = How {
-                    path,
-                    is_script,
-                    is_flow: false,
-                    resolved: &plain,
-                    verifies: false,
-                    atoms,
-                    memory,
-                };
-                with_file(&how, code, |file, _, _| then(file));
+            let parse = |code: Code<'_>, then: &mut dyn for<'b> FnMut(&Parsed<'b>)| {
+                parse_code(code, &plain, (atoms, memory), then);
             };
             let done = bun_format::html::format_with(
                 name,
@@ -798,12 +862,16 @@ struct Run<'r> {
 fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Language {
     // The `parser` option says what it is. One that Prettier does not have is that of a plugin.
     match configs.parser_for(scope, path) {
+        Some(parser) if &*parser == b"svelte" && !configs.has_our_svelte(scope) => Language::Other,
         Some(parser) if Kind::of_parser(&parser).is_none() => Language::Other,
         Some(_) => Language::Supported,
         None if configs.is_oxfmt_for(scope) => {
             files::language_for_oxfmt(path, configs.formats_svelte(scope))
         }
         None => match files::language_of(path) {
+            Language::Unknown if path.ends_with(b".svelte") && configs.has_our_svelte(scope) => {
+                Language::Supported
+            }
             Language::Unknown if configs.is_read_by_plugin(scope, path) => Language::Other,
             Language::Unknown if files::parser_by_interpreter(path).is_some() => {
                 Language::Supported
@@ -1238,7 +1306,7 @@ impl Run<'_> {
                 let is_free = || {
                     matches!(
                         Kind::with_options(&target.path, &options.options),
-                        Some(Kind::Handlebars | Kind::Html(_))
+                        Some(Kind::Handlebars | Kind::Html(_) | Kind::Svelte)
                     )
                 };
                 let formatted = match format(

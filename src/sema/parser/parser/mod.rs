@@ -18,9 +18,10 @@ mod ty;
 
 use crate::lexer::{Lexer, Mark};
 use crate::token::T;
-use crate::{Options, Parsed, Refusal, Refused, Scratch};
+use crate::{Goal, Options, Parsed, Refusal, Refused, Scratch};
 use bun_sema::atom::{Atom, Intern};
 use bun_sema::hir::*;
+use bun_sema::util::SharedSort;
 pub(crate) use recover::ListKind;
 pub use recover::keyword_suggestion;
 
@@ -189,6 +190,8 @@ pub(crate) struct Parser<'a, const GENERAL: bool> {
     /// In Flow: where the last expression statement starts.
     pub(crate) flow_statement_start: u32,
     pub(crate) has_top_level_await: bool,
+    /// `Parsed::end`
+    pub(crate) end: u32,
     /// `statementHasAwaitIdentifier`, as far as recovery asks: see `is_in_some_parsing_context`.
     pub(crate) has_await_in_statement: bool,
     /// It was an `await` that recovery met where no name can be.
@@ -266,6 +269,7 @@ struct Harvest<'a> {
     file: FileBuilder,
     stacks: Stacks,
     has_top_level_await: bool,
+    end: u32,
 }
 
 pub(crate) fn run<'a>(
@@ -279,7 +283,9 @@ pub(crate) fn run<'a>(
     }
     match atoms {
         Some(atoms) => scratch.names.belong_to(atoms),
-        None => scratch.names.begin_own(text.len()),
+        None if options.goal == Goal::File => scratch.names.begin_own(text.len()),
+        // What follows the part is not paid for.
+        None => scratch.names.begin_own(text.len().min(1 << 12)),
     }
     let jsdoc = jsdoc::State::new(&options, atoms.is_some(), scratch.jsdoc_wanted);
     let atoms = atoms.unwrap_or(&crate::names::NoInterner);
@@ -293,6 +299,7 @@ pub(crate) fn run<'a>(
     let is_ecmascript = options.dialect.ecmascript && options.is_javascript && !options.is_json;
     lx.is_ecmascript = is_ecmascript;
     lx.is_typescript_5 = options.dialect.typescript_5;
+    lx.is_babel = options.dialect.babel;
     lx.is_script = is_ecmascript && options.dialect.script;
     let is_general = options.recovers || jsdoc.wanted != 0;
     let seed = Seed {
@@ -307,6 +314,7 @@ pub(crate) fn run<'a>(
         file: mut f,
         stacks,
         has_top_level_await,
+        end,
     } = match is_general {
         true => Parser::<true>::new(seed).parse(),
         false => Parser::<false>::new(seed).parse(),
@@ -321,6 +329,7 @@ pub(crate) fn run<'a>(
             why,
             at: refused_at.0,
             by: refused_at.1,
+            after: lx.refused_after,
         });
     }
     f.comment_directives = comment_directives;
@@ -339,13 +348,14 @@ pub(crate) fn run<'a>(
         return Err(Refused::new(Refusal::Reported));
     }
     if f.diagnostics.len() > errors {
-        f.diagnostics.sort_by_key(|it| (it.start, it.code));
+        f.diagnostics.shared_sort_by_key(|it| (it.start, it.code));
         f.has_parse_diagnostics = true;
     }
     f.mentioned.extend_from_slice(scratch.names.mentioned());
     Ok(Parsed {
         file: f,
         has_top_level_await,
+        end,
     })
 }
 
@@ -392,6 +402,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             has_type_arguments_in_expressions: is_flow || !options.is_javascript,
             flow_statement_start: u32::MAX,
             has_top_level_await: false,
+            end: 0,
             has_await_in_statement: false,
             was_await_refused: false,
             reparses_rest_of_file: false,
@@ -418,6 +429,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             file: self.f,
             stacks: self.s,
             has_top_level_await: self.has_top_level_await,
+            end: self.end,
         }
     }
 
@@ -436,6 +448,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
     /// `parseSourceFileWorker`
     fn source_file(&mut self) {
         self.f.source_len = self.lx.src.len() as u32;
+        self.end = self.f.source_len;
         self.f.kind = if self.options.is_json {
             FileKind::Json
         } else if self.options.is_declaration_file {
@@ -454,6 +467,10 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             let value = self.json_text();
             self.f.has_module_syntax = true;
             self.s.ids.push(value.0);
+        }
+        if self.options.goal != Goal::File {
+            let part = self.part(self.options.goal);
+            self.s.ids.push(part.0);
         }
         let reparsed = self.jsdoc.reparsed.len();
         while self.token() != T::Eof && self.is_at_element(ListKind::SourceElements) {
@@ -486,22 +503,30 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             bun_sema::ecmascript::report_syntax_of_typescript(&mut self.f, self.lx.src);
         }
         if self.f.diagnostics.len() > 1 {
-            self.f.diagnostics.sort_by_key(|it| (it.start, it.code));
+            self.f
+                .diagnostics
+                .shared_sort_by_key(|it| (it.start, it.code));
         }
         let is_of_parser = |it: &Diagnostic| it.kind == DiagnosticKind::Parse;
         self.f.has_parse_diagnostics =
             self.recovers() && self.f.diagnostics.iter().any(is_of_parser);
         if !self.f.body_starts.is_sorted_by_key(|body| body.0.0) {
-            self.f.body_starts.sort_unstable_by_key(|body| body.0.0);
+            self.f
+                .body_starts
+                .shared_sort_unstable_by_key(|body| body.0.0);
         }
         if !self.f.parens.is_sorted_by_key(|it| it.0.0) {
-            self.f.parens.sort_by_key(|it| it.0.0);
+            self.f.parens.shared_sort_by_key(|it| it.0.0);
         }
         if !self.f.jsx_expressions.is_sorted_by_key(|it| it.0.0) {
-            self.f.jsx_expressions.sort_unstable_by_key(|it| it.0.0);
+            self.f
+                .jsx_expressions
+                .shared_sort_unstable_by_key(|it| it.0.0);
         }
         if !self.f.modifiers_of_props.is_sorted_by_key(|it| it.0.0) {
-            self.f.modifiers_of_props.sort_unstable_by_key(|it| it.0.0);
+            self.f
+                .modifiers_of_props
+                .shared_sort_unstable_by_key(|it| it.0.0);
         }
     }
 

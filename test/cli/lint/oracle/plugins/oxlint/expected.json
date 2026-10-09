@@ -4749,5 +4749,8 @@
   "a.ts:22:17+3 typescript(no-redundant-type-constituents)",
   "a.ts:25:19+13 typescript(no-unnecessary-type-assertion)",
   "b.ts:7:17+7 typescript(no-redundant-type-constituents)"
+ ],
+ "no-duplicates/full-table": [
+  "a.js:111:26+11 import(no-duplicates)"
  ]
 }

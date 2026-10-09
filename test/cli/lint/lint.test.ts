@@ -2258,6 +2258,205 @@ describe.concurrent("bun lint", () => {
     });
   });
 
+  // What ESLint 10.12 does with these `rules`, given two lines more: a plugin `no-restricted-syntax` that hands out ESLint's own rule
+  // under the names.
+  describe("no-restricted-syntax/<name> is one more instance of the rule", () => {
+    const moment = { selector: 'ImportDeclaration[source.value="moment"]', message: "Use date-fns." };
+    const environment = {
+      selector: 'MemberExpression[object.name="process"][property.name="env"]',
+      message: "Read the environment in config.js.",
+    };
+    const rules = {
+      "no-restricted-syntax": ["error", "WithStatement"],
+      "no-restricted-syntax/no-moment": ["error", moment],
+      "no-restricted-syntax/no-env": ["warn", environment],
+    };
+    const flat = (more = "", all: object = rules) =>
+      `export default [{ linterOptions: { reportUnusedDisableDirectives: "warn" }, rules: ${JSON.stringify(all)} }${more}];\n`;
+    const code = 'import moment from "moment";\nconst e = process.env.X;\nexport { moment, e };\n';
+    const json = async (files: Record<string, string>, ...flags: string[]) =>
+      JSON.parse((await lint(files, ["-f", "json", ...flags, "a.js"])).raw)[0].messages;
+
+    test.each([
+      [
+        "plain",
+        'import moment from "moment";\nconst e = process.env.X;\nexport { moment, e };\n',
+        [
+          {
+            "ruleId": "no-restricted-syntax/no-moment",
+            "severity": 2,
+            "message": "Use date-fns.",
+            "line": 1,
+            "column": 1,
+            "endLine": 1,
+            "endColumn": 29,
+            "messageId": "restrictedSyntax",
+          },
+          {
+            "ruleId": "no-restricted-syntax/no-env",
+            "severity": 1,
+            "message": "Read the environment in config.js.",
+            "line": 2,
+            "column": 11,
+            "endLine": 2,
+            "endColumn": 22,
+            "messageId": "restrictedSyntax",
+          },
+        ],
+        1,
+      ],
+      [
+        "directives",
+        'import moment from "moment"; // eslint-disable-line no-restricted-syntax/no-moment\nconst e = process.env.X; // eslint-disable-line no-restricted-syntax\nconst f = process.env.Y; // eslint-disable-line no-restricted-syntax/no-env\n// eslint-disable-next-line no-restricted-syntax/no-such\nexport { moment, e, f };\n',
+        [
+          {
+            "ruleId": "no-restricted-syntax/no-env",
+            "severity": 1,
+            "message": "Read the environment in config.js.",
+            "line": 2,
+            "column": 11,
+            "endLine": 2,
+            "endColumn": 22,
+            "messageId": "restrictedSyntax",
+          },
+          {
+            "ruleId": null,
+            "severity": 1,
+            "message": "Unused eslint-disable directive (no problems were reported from 'no-restricted-syntax').",
+            "line": 2,
+            "column": 26,
+          },
+          {
+            "ruleId": "no-restricted-syntax/no-such",
+            "severity": 2,
+            "message": "Definition for rule 'no-restricted-syntax/no-such' was not found.",
+            "line": 4,
+            "column": 1,
+            "endLine": 4,
+            "endColumn": 57,
+          },
+        ],
+        1,
+      ],
+      [
+        "comments",
+        '/* eslint no-restricted-syntax/no-env: "off", no-restricted-syntax/no-moment: "warn" */\nimport moment from "moment";\nconst e = process.env.X;\nexport { moment, e };\n',
+        [
+          {
+            "ruleId": "no-restricted-syntax/no-moment",
+            "severity": 1,
+            "message": "Use date-fns.",
+            "line": 2,
+            "column": 1,
+            "endLine": 2,
+            "endColumn": 29,
+            "messageId": "restrictedSyntax",
+          },
+        ],
+        0,
+      ],
+      [
+        "options",
+        '/* eslint no-restricted-syntax/no-env: ["error", "ExportNamedDeclaration"] */\nconst e = process.env.X;\nexport { e };\n',
+        [
+          {
+            "ruleId": "no-restricted-syntax/no-env",
+            "severity": 2,
+            "message": "Using 'ExportNamedDeclaration' is not allowed.",
+            "line": 3,
+            "column": 1,
+            "endLine": 3,
+            "endColumn": 14,
+            "messageId": "restrictedSyntax",
+          },
+        ],
+        1,
+      ],
+    ] as [string, string, object[], number][])("%s", async (_, code, messages, exitCode) => {
+      const result = await lint({ "eslint.config.js": flat(), "a.js": code }, ["-f", "json", "a.js"]);
+      expect(JSON.parse(result.raw)[0].messages).toMatchObject(messages);
+      expect(JSON.parse(result.raw)[0].messages).toHaveLength(messages.length);
+      expect(result.exitCode).toBe(exitCode);
+    });
+
+    test("an object for some files, --rule, --print-config, rulesMeta, suppressions", async () => {
+      const off = `, { files: ["a.js"], rules: { "no-restricted-syntax/no-env": "off" } }`;
+      expect((await json({ "eslint.config.js": flat(off), "a.js": code })).map((it: any) => it.ruleId)).toEqual([
+        "no-restricted-syntax/no-moment",
+      ]);
+      const files = { "eslint.config.js": flat(), "a.js": code };
+      const changed = await json(files, "--rule", 'no-restricted-syntax/no-env: ["error", "ImportDeclaration"]');
+      expect(changed.map((it: any) => `${it.line} ${it.severity} ${it.ruleId} ${it.message}`)).toEqual([
+        "1 2 no-restricted-syntax/no-env Using 'ImportDeclaration' is not allowed.",
+        "1 2 no-restricted-syntax/no-moment Use date-fns.",
+      ]);
+      const printed = JSON.parse((await lint(files, ["--print-config", "a.js"])).raw).rules;
+      expect(
+        Object.fromEntries(Object.entries(printed).filter(it => it[0].startsWith("no-restricted-syntax"))),
+      ).toEqual({
+        "no-restricted-syntax": [2, "WithStatement"],
+        "no-restricted-syntax/no-moment": [
+          2,
+          { "selector": 'ImportDeclaration[source.value="moment"]', "message": "Use date-fns." },
+        ],
+        "no-restricted-syntax/no-env": [
+          1,
+          {
+            "selector": 'MemberExpression[object.name="process"][property.name="env"]',
+            "message": "Read the environment in config.js.",
+          },
+        ],
+      });
+      const { metadata } = JSON.parse((await lint(files, ["-f", "json-with-metadata", "a.js"])).raw);
+      expect(Object.keys(metadata.rulesMeta)).toEqual([
+        "no-restricted-syntax/no-moment",
+        "no-restricted-syntax/no-env",
+      ]);
+      expect(metadata.rulesMeta["no-restricted-syntax/no-moment"].docs.url).toBe(
+        "https://eslint.org/docs/latest/rules/no-restricted-syntax",
+      );
+      const suppressed = await lint(files, ["--suppress-all", "a.js"], { reads: ["eslint-suppressions.json"] });
+      expect(JSON.parse(suppressed.files["eslint-suppressions.json"])).toEqual({
+        "a.js": { "no-restricted-syntax/no-moment": { "count": 1 } },
+      });
+    });
+
+    test("options that the schema refuses are refused under the name", async () => {
+      const all = { "no-restricted-syntax/no-env": ["error", { nonsense: 1 }] };
+      const { stderr, exitCode } = await lint({ "eslint.config.js": flat("", all), "a.js": code }, ["a.js"]);
+      expect(stderr).toContain(
+        'Key "rules": Key "no-restricted-syntax/no-env":\n\tValue {"nonsense":1} should be string.\n\tValue {"nonsense":1} should NOT have additional properties.\n\t\tUnexpected property "nonsense". Expected properties: "selector", "message".\n\tValue {"nonsense":1} should match exactly one schema in oneOf.',
+      );
+      expect(exitCode).toBe(2);
+    });
+
+    test("a plugin of the configuration that has the prefix answers for it", async () => {
+      const plugin = `{ rules: { "no-env": { create: context => ({ Program(node) { context.report({ node, message: "theirs" }); } }) } } }`;
+      const theirs = `export default [{ plugins: { "no-restricted-syntax": ${plugin} }, rules: { "no-restricted-syntax/no-env": "error" } }];`;
+      const messages = await json({ "eslint.config.js": theirs, "a.js": code });
+      expect(messages.map((it: any) => `${it.ruleId} ${it.message}`)).toEqual(["no-restricted-syntax/no-env theirs"]);
+    });
+
+    test("with an .oxlintrc.json: the code, the comments, the suppressions", async () => {
+      const files = {
+        ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, rules }),
+        "a.js":
+          'import moment from "moment";\nconst e = process.env.X; // oxlint-disable-line no-restricted-syntax/no-env\n' +
+          "const f = process.env.Y;\nexport { moment, e, f };\n",
+      };
+      const { stdout, exitCode } = await lint(files, ["-f", "unix", "a.js"]);
+      expect(stdout.split("\n").filter(it => it.startsWith("a.js:"))).toEqual([
+        "a.js:1:1: Use date-fns. [Error/no-restricted-syntax(no-moment)]",
+        "a.js:3:11: Read the environment in config.js. [Warning/no-restricted-syntax(no-env)]",
+      ]);
+      expect(exitCode).toBe(1);
+      const suppressed = await lint(files, ["--suppress-all", "a.js"], { reads: ["oxlint-suppressions.json"] });
+      expect(JSON.parse(suppressed.files["oxlint-suppressions.json"])).toEqual({
+        "a.js": { "no-restricted-syntax/no-moment": { count: 1 } },
+      });
+    });
+  });
+
   describe("bulk suppressions", () => {
     const files = {
       "eslint.config.js": config({ "no-debugger": "error" }),

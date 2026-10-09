@@ -114,7 +114,7 @@ pub struct LanguageOptions {
     pub config_globals: OnceLock<ConfigGlobals>,
 }
 
-/// What the parser is told about a file: arguments of `bun_js_parser::sema::summarize_as`.
+/// What the parser is told about a file: arguments of `bun_sema_parser::summarize_as`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct ParseOptions {
     /// Whose reading of the syntax counts where parsers differ: that of acorn for espree.

@@ -117,10 +117,11 @@ pub(super) fn write_with_metadata(out: &mut Vec<u8>, results: &[FileResult], met
         .iter()
         .flat_map(|it| it.messages.iter().chain(&it.suppressed))
     {
-        let Some(bun_lint::linter::RuleId::Known(rule)) = &message.rule_id else {
+        use bun_lint::linter::RuleId;
+        let Some(id @ (RuleId::Known(rule) | RuleId::Named(rule, _))) = &message.rule_id else {
             continue;
         };
-        let id = bun_lint::linter::RuleId::Known(rule).to_vec();
+        let id = id.to_vec();
         if seen.contains(&id) {
             continue;
         }

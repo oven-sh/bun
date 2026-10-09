@@ -24,7 +24,7 @@ pub fn parse<'s>(
     experimental_decorators: bool,
 ) -> hir::File<'s> {
     let path = path.as_bytes();
-    bun_js_parser::sema::summarize(
+    bun_sema_parser::summarize(
         arena,
         path,
         None,
@@ -33,7 +33,6 @@ pub fn parse<'s>(
         experimental_decorators,
         false,
     )
-    .0
 }
 
 /// Runs `work(i)` for every `i` below `count` on `threads` threads, which have the stack of a thread of `bun check`.

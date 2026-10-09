@@ -441,7 +441,8 @@ fn check_node_for_nullish<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
     let message = if is_type_flag_set(ty, TypeFlags::NEVER) {
         NEVER
     } else if !is_possibly_nullish(ty)
-        && (is_chain_expression || !is_nullable_member_expression(node, cx))
+        // For tsgolint `a?.[b]` is an access like `a[b]`.
+        && ((is_chain_expression && !cx.language().is_oxlint) || !is_nullable_member_expression(node, cx))
     {
         // The type of an element of an array does not tell that the index may be out of bounds.
         if !cx.state.is_no_unchecked_indexed_access

@@ -4,6 +4,7 @@
 //! - [`ModuleRecord`] is that of the file which is linted, with the places.
 //! - [`Record`] is that of another file, without them: [`get_loaded_module`].
 
+use crate::hash_order::{HashOrder, hash_of_str};
 use crate::import::{
     ImportEntry, ImportImportName, default_keyword_span, export_declaration_span,
     has_module_syntax, import_entries, is_export_declaration, is_type_export_declaration,
@@ -135,113 +136,22 @@ pub fn requested_modules<'a>(
     all
 }
 
-/// `hash_bytes` of `rustc-hash` 2, on a 64-bit machine.
-fn hash_bytes(bytes: &[u8]) -> u64 {
-    let multiply_mix = |x: u64, y: u64| {
-        let full = u128::from(x) * u128::from(y);
-        full as u64 ^ (full >> 64) as u64
-    };
-    let first = |bytes: &[u8]| {
-        bytes
-            .first_chunk::<8>()
-            .map_or(0, |it| u64::from_le_bytes(*it))
-    };
-    let last = |bytes: &[u8]| {
-        bytes
-            .last_chunk::<8>()
-            .map_or(0, |it| u64::from_le_bytes(*it))
-    };
-    let (mut s0, mut s1) = (0x243f_6a88_85a3_08d3_u64, 0x1319_8a2e_0370_7344_u64);
-    match bytes.len() {
-        0 => {}
-        len @ 1..4 => {
-            let at = |at: usize| bytes.get(at).map_or(0, |it| u64::from(*it));
-            s0 ^= at(0);
-            s1 ^= at(len - 1) << 8 | at(len / 2);
-        }
-        4..8 => {
-            s0 ^= bytes
-                .first_chunk::<4>()
-                .map_or(0, |it| u64::from(u32::from_le_bytes(*it)));
-            s1 ^= bytes
-                .last_chunk::<4>()
-                .map_or(0, |it| u64::from(u32::from_le_bytes(*it)));
-        }
-        8..=16 => {
-            s0 ^= first(bytes);
-            s1 ^= last(bytes);
-        }
-        len => {
-            let mut bulk = bytes.get(..len - 1).unwrap_or_default();
-            while let Some((chunk, rest)) = bulk.split_first_chunk::<16>() {
-                (s0, s1) = (
-                    s1,
-                    multiply_mix(s0 ^ first(chunk), 0xa409_3822_299f_31d0 ^ last(chunk)),
-                );
-                bulk = rest;
-            }
-            let suffix = bytes.last_chunk::<16>().map_or(bytes, |it| it.as_slice());
-            s0 ^= first(suffix);
-            s1 ^= last(suffix);
-        }
-    }
-    multiply_mix(s0, s1) ^ bytes.len() as u64
-}
-
-/// What `FxHasher` makes of a string.
-fn hash_of_str(text: &[u8]) -> usize {
-    let add_to_hash = |hash: u64, i: u64| hash.wrapping_add(i).wrapping_mul(0xf135_7aea_2e62_a9c5);
-    add_to_hash(add_to_hash(0, hash_bytes(text)), 0xff).rotate_left(26) as usize
-}
-
-/// A table of `hashbrown` with room for `capacity` entries.
-fn hash_table(capacity: usize) -> Vec<Option<(usize, usize)>> {
-    let buckets = match capacity {
-        ..4 => 4,
-        4..8 => 8,
-        _ => (capacity * 8 / 7).next_power_of_two(),
-    };
-    vec![None; buckets]
-}
-
-/// Puts an entry, which is its hash and a number, in the first free place from where its hash says. `hashbrown` looks at 16 places
-/// at a time, which comes to the same unless that many are taken in a row.
-fn insert_in_hash_table(table: &mut [Option<(usize, usize)>], entry: (usize, usize)) {
-    let (before, after) = table.split_at_mut(entry.0 & table.len().saturating_sub(1));
-    if let Some(free) = after.iter_mut().chain(before).find(|it| it.is_none()) {
-        *free = Some(entry);
-    }
-}
-
 /// `requested`, which is in the order of the source, in the order in which oxlint goes through its `requested_modules`. That is a
 /// `FxHashMap` which is collected from the `FxHashMap` to which the parser adds one specifier after the other.
 pub fn in_hash_order<'a, T>(requested: Vec<(Name<'a>, T)>) -> Vec<(Name<'a>, T)> {
-    let mut of_parser: Vec<Option<(usize, usize)>> = Vec::new();
-    for (count, (name, _)) in requested.iter().enumerate() {
-        let capacity = match of_parser.len() {
-            buckets @ ..8 => buckets.saturating_sub(1),
-            buckets => buckets / 8 * 7,
-        };
-        if count == capacity {
-            let mut grown = hash_table(capacity + 1);
-            of_parser
-                .iter()
-                .flatten()
-                .for_each(|it| insert_in_hash_table(&mut grown, *it));
-            of_parser = grown;
-        }
-        insert_in_hash_table(&mut of_parser, (hash_of_str(name.bytes()), count));
+    let mut of_parser = HashOrder::new();
+    for (at, (name, _)) in requested.iter().enumerate() {
+        let hash = hash_of_str(name.bytes());
+        of_parser.insert(hash, (hash, at));
     }
-    let mut collected = hash_table(requested.len());
+    let mut collected = HashOrder::with_capacity(requested.len());
     of_parser
         .iter()
-        .flatten()
-        .for_each(|it| insert_in_hash_table(&mut collected, *it));
+        .for_each(|(hash, at)| collected.insert(hash, at));
     let mut requested: Vec<Option<(Name<'a>, T)>> = requested.into_iter().map(Some).collect();
     collected
         .iter()
-        .flatten()
-        .filter_map(|it| requested.get_mut(it.1)?.take())
+        .filter_map(|at| requested.get_mut(at)?.take())
         .collect()
 }
 

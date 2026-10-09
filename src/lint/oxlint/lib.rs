@@ -6,6 +6,7 @@
 
 pub mod ast_util;
 pub mod codegen;
+pub mod hash_order;
 pub mod import;
 pub mod module_record;
 pub mod no_negated_condition;

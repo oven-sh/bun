@@ -22,6 +22,7 @@ use bun_sema::check::jsdoc::syntax::{
 };
 use bun_sema::check::jsdoc::{JSDocScannerState, JSDocToken};
 use bun_sema::hir::*;
+use bun_sema::util::SharedSort;
 use smallvec::SmallVec;
 
 /// What is known about a JSDoc comment before it is read.
@@ -194,22 +195,23 @@ fn finish_lists_of_jsdoc(file: &mut FileBuilder, src: &[u8], comments: &[(u32, u
         }
     }
     // A type is scanned at least twice.
-    file.jsdoc_asterisks.sort_unstable();
+    file.jsdoc_asterisks.shared_sort_unstable();
     file.jsdoc_asterisks.dedup();
     // Only `findOriginatingJSDocSatisfiesTag` asks for them.
     let mut hosts = file.jsdoc_hosts.iter();
     if hosts.any(|host| host.first_satisfies_tag != u32::MAX) {
-        file.jsdoc_hosts.sort_by_key(|host| host.token);
+        file.jsdoc_hosts.shared_sort_by_key(|host| host.token);
         file.jsdoc_hosts.dedup_by_key(|host| host.token);
     } else {
         file.jsdoc_hosts.clear();
     }
-    file.jsdoc_types.sort_unstable_by_key(|it| it.0);
-    file.jsdoc_modifiers.sort_unstable_by_key(|it| it.0);
-    file.jsdoc_member_comments.sort_unstable_by_key(|it| it.0);
+    file.jsdoc_types.shared_sort_unstable_by_key(|it| it.0);
+    file.jsdoc_modifiers.shared_sort_unstable_by_key(|it| it.0);
+    file.jsdoc_member_comments
+        .shared_sort_unstable_by_key(|it| it.0);
     // A type is parsed again for each node that it annotates.
     if file.import_attributes.len() > 1 {
-        file.import_attributes.sort_by_key(|it| it.0);
+        file.import_attributes.shared_sort_by_key(|it| it.0);
         file.import_attributes.dedup_by_key(|it| it.0);
     }
 }

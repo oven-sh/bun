@@ -59,7 +59,6 @@ bun_lint_driver = { path = "../../../../../../src/lint/driver" }
 bun_sema = { path = "../../../../../../src/sema" }
 bun_sema_driver = { path = "../../../../../../src/sema/driver" }
 bun_sema_parser = { path = "../../../../../../src/sema/parser" }
-bun_js_parser = { path = "../../../../../../src/js_parser" }
 bun_threading = { path = "../../../../../../src/threading" }
 bun_core = { path = "../../../../../../src/bun_core" }
 bstr = { version = "1", default-features = false, features = ["alloc"] }
@@ -124,9 +123,6 @@ rustflags = ["-Cpasses=sancov-module", "-Cllvm-args=-sanitizer-coverage-level=4"
 [profile.fuzz.package.bun_sema_parser]
 rustflags = ["-Cpasses=sancov-module", "-Cllvm-args=-sanitizer-coverage-level=4", "-Cllvm-args=-sanitizer-coverage-inline-8bit-counters", "-Cllvm-args=-sanitizer-coverage-pc-table", "-Cllvm-args=-sanitizer-coverage-trace-compares", "-Cllvm-args=-simplifycfg-branch-fold-threshold=0"]
 
-[profile.fuzz.package.bun_js_parser]
-rustflags = ["-Cpasses=sancov-module", "-Cllvm-args=-sanitizer-coverage-level=4", "-Cllvm-args=-sanitizer-coverage-inline-8bit-counters", "-Cllvm-args=-sanitizer-coverage-pc-table", "-Cllvm-args=-sanitizer-coverage-trace-compares", "-Cllvm-args=-simplifycfg-branch-fold-threshold=0"]
-
 # Without the operands of comparisons: an interner, which is made for every text, compares a lot.
 [profile.fuzz.package.bun_sema]
 rustflags = ["-Cpasses=sancov-module", "-Cllvm-args=-sanitizer-coverage-level=4", "-Cllvm-args=-sanitizer-coverage-inline-8bit-counters", "-Cllvm-args=-sanitizer-coverage-pc-table", "-Cllvm-args=-simplifycfg-branch-fold-threshold=0"]
@@ -172,9 +168,6 @@ rustflags = ["-Cinstrument-coverage"]
 rustflags = ["-Cinstrument-coverage"]
 
 [profile.coverage.package.bun_sema_parser]
-rustflags = ["-Cinstrument-coverage"]
-
-[profile.coverage.package.bun_js_parser]
 rustflags = ["-Cinstrument-coverage"]
 
 [profile.coverage.package.bun_sema]

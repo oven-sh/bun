@@ -827,7 +827,11 @@ impl<'d> Printer<'d> {
         measure.must_be_flat = true;
 
         let mut flat_pairs = 0usize;
-        if !self.fill_entry_fits(&mut measure)? {
+        // On a line that is too long already, Prettier's `fits` says no to everything, also to an item that is nothing, or a
+        // line break: the texts of `prettier-plugin-svelte` that start with a blank are fills whose items are the line breaks.
+        let is_too_long =
+            !self.options.flavor.is_oxfmt() && measure.is_past(self.options.print_width);
+        if is_too_long || !self.fill_entry_fits(&mut measure)? {
             return Ok((0, FillPairLayout::Expanded));
         }
         // Goes on to the first item or separator that does not fit, so that no item is measured

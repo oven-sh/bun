@@ -5,10 +5,13 @@
 
 use super::map_strings::{MapString, write_mapped};
 use crate::ir::element::{Interned, TextWidth};
+use crate::js::comments::{ParsedBy, collect};
 use crate::js::context::JsFormatContext;
 use crate::js::print::program::{FormatStatements, write_hashbang};
 use crate::js::sort_imports::{SortImports, sorted_text};
-use crate::options::{Flavor, HtmlRoot, InHtml, JavaScriptParser, ParseJavaScript};
+use crate::options::{
+    Code, Flavor, Goal, HtmlRoot, InHtml, JavaScriptParser, ParseJavaScript, Parsed,
+};
 use crate::prelude::*;
 use crate::tailwind::{Ends, Tailwind, plugin};
 use crate::{format_args, text, write};
@@ -41,8 +44,9 @@ pub(crate) enum SourceType {
 }
 
 /// The name of a file whose text is `(`, an expression and `)`. See `AstNodes::parent`.
-const EXPRESSION_JSX: &[u8] = b"\0.jsx";
-const EXPRESSION_TS: &[u8] = b"\0.ts";
+pub(crate) const EXPRESSION_JSX: &[u8] = b"\0.jsx";
+pub(crate) const EXPRESSION_TS: &[u8] = b"\0.ts";
+pub(crate) const EXPRESSION_TSX: &[u8] = b"\0.tsx";
 
 /// Prettier's `isProbablyJsx`: `/(?:^[^"'`]*<\/|^[^/]{2}.*\/>)/m`
 fn is_probably_jsx(text: &[u8]) -> bool {
@@ -74,7 +78,7 @@ fn is_probably_jsx(text: &[u8]) -> bool {
 pub(crate) fn options_in_html(options: &FormatOptions, in_html: InHtml) -> FormatOptions {
     FormatOptions {
         // In an attribute, double quotes would have to be written as entities.
-        quote_style: if in_html.is_in_attribute {
+        quote_style: if in_html.is_in_attribute || in_html.has_single_quotes {
             QuoteStyle::Single
         } else {
             options.quote_style
@@ -124,25 +128,39 @@ impl<'p> Parse<'p> {
         Parse::new(f.context().parse_javascript, f.options())
     }
 
-    fn call(
+    /// A program.
+    pub(crate) fn call(
         self,
         path: &[u8],
-        code: &[u8],
+        text: &[u8],
         is_script: bool,
         then: &mut dyn for<'b> FnMut(&'b File<'b>),
     ) {
+        let goal = Goal::Program;
+        self.call_for(
+            Code {
+                path,
+                text,
+                is_script,
+                goal,
+            },
+            &mut |parsed| then(parsed.file),
+        );
+    }
+
+    pub(crate) fn call_for(self, code: Code<'_>, then: &mut dyn for<'b> FnMut(&Parsed<'b>)) {
         match self {
-            Parse::Function(parse) => parse(path, code, is_script, then),
-            Parse::Closure(parse) => parse(path, code, is_script, then),
+            Parse::Function(parse) => parse(code, then),
+            Parse::Closure(parse) => parse(code, then),
         }
     }
 }
 
-type Write<'w> = &'w mut dyn for<'b> FnMut(&'b File<'b>, &mut Formatter<'b>) -> bool;
+pub(crate) type Write<'w> = &'w mut dyn for<'b> FnMut(&'b File<'b>, &mut Formatter<'b>) -> bool;
 
 /// What code is.
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum Piece {
+pub(crate) enum Piece {
     /// All that is in a `<script>`, and whose output it is. What sorts imports and rewrites JSDoc comments takes it for
     /// a file.
     Script(Flavor),
@@ -166,7 +184,7 @@ enum Attempt {
 /// Parses `code` as the file at each of `paths`, until it is one without errors, and calls `write` with that file and
 /// a formatter that goes on with the document of `f`. Returns what `write` returns, and `false` if `code` cannot be
 /// parsed: nothing has been written then.
-fn with_file(
+pub(crate) fn with_file(
     f: &mut Formatter<'_>,
     code: &[u8],
     paths: &[&[u8]],
@@ -229,7 +247,11 @@ fn with_file(
                     }
                     let comments = file.extension(|| {
                         let mut comments = Vec::new();
-                        crate::js::comments::collect(file, options.flavor, &mut comments);
+                        let parsed_by = match options.in_html.has_tree_of_babel {
+                            true => ParsedBy::Babel,
+                            false => ParsedBy::WhatItsNameSays,
+                        };
+                        collect(file, options.flavor, parsed_by, &mut comments);
                         comments
                     });
                     let comments = comments.map_or(&[][..], |comments: &Vec<Comment>| comments);
@@ -424,7 +446,7 @@ pub(crate) fn with_sorted_classes(
     Some(sorted)
 }
 
-fn paths_of(syntax: Syntax, code: &[u8]) -> &'static [&'static [u8]] {
+pub(crate) fn paths_of(syntax: Syntax, code: &[u8]) -> &'static [&'static [u8]] {
     match syntax {
         Syntax::Babel => &[b"dummy.jsx"],
         Syntax::BabelTs => &[b"dummy.tsx", b"dummy.ts"],
@@ -557,7 +579,7 @@ pub(crate) fn write_hugged<'b>(
 }
 
 /// The expression that `file` is made of, if its text is `(`, an expression, a line break and `)`.
-fn expression_of<'b>(file: &'b File<'b>) -> Option<Expr<'b>> {
+pub(crate) fn expression_of<'b>(file: &'b File<'b>) -> Option<Expr<'b>> {
     let mut statements = file.body().iter();
     let (Some(statement), None) = (statements.next(), statements.next()) else {
         return None;
@@ -627,7 +649,7 @@ fn is_reserved_word(name: &[u8]) -> bool {
 
 /// Most expressions in templates are `a`, `a.b.c` or `!a`. Those are written here, as `printMemberExpression` has them,
 /// without being parsed. Returns whether `code` is one.
-fn write_path(f: &mut Formatter<'_>, code: &[u8], hug: Hug) -> bool {
+pub(crate) fn write_path(f: &mut Formatter<'_>, code: &[u8], hug: Hug) -> bool {
     let code = code.trim_ascii();
     let path = &code[code.iter().take_while(|byte| **byte == b'!').count()..];
     let is_name = |name: &[u8]| {

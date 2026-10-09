@@ -3,7 +3,7 @@
 //! The plugin changes the strings and the templates of the tree before Prettier prints it. Here the text is changed and
 //! parsed again, as for the plugins that sort imports. oxfmt has rules of its own: `js/utils/tailwindcss.rs`.
 
-use super::{Ends, Tailwind};
+use super::{Ends, Tailwind, Tidies};
 use crate::text;
 use bun_core::strings;
 use bun_lint::ast::walk::{Visitor, walk};
@@ -47,6 +47,7 @@ struct Sorter<'a, 't> {
     roots: usize,
     /// What is written in the place of what.
     changes: Vec<(Span, Vec<u8>)>,
+    tidies: Tidies,
 }
 
 /// To Babel what is in an optional chain is no `CallExpression` and no `MemberExpression`.
@@ -56,7 +57,10 @@ fn is_other_node_to_babel(e: Expr<'_>) -> bool {
 
 /// To Babel `"use strict"` is no `StringLiteral`.
 fn is_directive_to_babel(e: Expr<'_>) -> bool {
-    e.file().is_javascript() && matches!(e.parent(), Node::Stmt(it) if it.directive().is_some())
+    e.file().is_javascript()
+        // A file that is one expression has none.
+        && e.file().path().first() != Some(&0)
+        && matches!(e.parent(), Node::Stmt(it) if it.directive().is_some())
 }
 
 /// `isSortableExpression`
@@ -161,7 +165,7 @@ impl<'a> Sorter<'a, '_> {
             collapses_start: !kept.start && index == 0,
             collapses_end: !kept.end && index + 1 == count,
         };
-        let sorted = self.tailwind.sorted_between(text, ends);
+        let sorted = self.tailwind.sorted_with(text, ends, self.tidies);
         if *sorted == *text {
             return;
         }
@@ -295,6 +299,26 @@ impl<'a> Visitor<'a> for Sorter<'a, '_> {
     }
 }
 
+/// For `file`, which is the expression in the braces of an attribute for classes of Svelte: what is written in the place
+/// of what. All its strings and templates are sorted, and nothing else is done to them.
+pub fn sorted_in_svelte<'a>(file: &'a File<'a>, tailwind: &Tailwind) -> Vec<(Span, Vec<u8>)> {
+    if file.has_parse_errors() {
+        return Vec::new();
+    }
+    let mut sorter = Sorter {
+        tailwind,
+        around: Vec::new(),
+        roots: 1,
+        changes: Vec::new(),
+        tidies: Tidies {
+            collapses_white_space: false,
+            removes_duplicates: false,
+        },
+    };
+    walk(file, &mut sorter);
+    sorter.changes
+}
+
 /// The text of `file` with the classes in it sorted. `None`: it is the same.
 pub fn sorted_text<'a>(file: &'a File<'a>, tailwind: &Tailwind) -> Option<Vec<u8>> {
     let text = file.text();
@@ -313,6 +337,7 @@ pub fn sorted_text<'a>(file: &'a File<'a>, tailwind: &Tailwind) -> Option<Vec<u8
         around: Vec::new(),
         roots: 0,
         changes: Vec::new(),
+        tidies: tailwind.tidies(),
     };
     walk(file, &mut sorter);
     let mut changes = sorter.changes;

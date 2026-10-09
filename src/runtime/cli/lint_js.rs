@@ -510,7 +510,7 @@ impl Borrowed<'_> {
         if *calls != 2 {
             return;
         }
-        state.measure();
+        state.measure(self.engines.demand.left());
         drop(state);
         // Those that wait may start another one by now.
         self.engines.is_idle.notify_all();
@@ -525,13 +525,19 @@ impl Drop for Borrowed<'_> {
         let mut state = self.engines.state.lock();
         state.borrowed.retain(|it| it.1 != self.at);
         // They have grown since they were started. The first has the heavy files, and one is left beside those that are kept. What
-        // the last one gives back is seen when it is gone.
-        state.measure();
+        // the last one gives back is seen a while after it is gone. Looking costs a system call: every time only from four fifths on.
+        state.given_back = state.given_back.wrapping_add(1);
+        if state.given_back.is_multiple_of(16) || state.taken / 4 * 5 >= self.engines.start.memory()
+        {
+            state.measure(self.engines.demand.left());
+        }
         if self.at != 0
             && state.taken > self.engines.start.memory()
             && state.count() - state.kept > 1
             && !state.all.iter().any(Known::is_being_freed)
+            && state.given_back.wrapping_sub(state.freed_at) >= 16
         {
+            state.freed_at = state.given_back;
             state.all[self.at].is_freed = true;
             self.desk.say(Turn::Free);
         } else {
@@ -585,6 +591,13 @@ struct State {
     taken: usize,
     most: usize,
     most_for_one: usize,
+    /// What it took, and how many bytes were still to be linted, when `grows_by` was last computed: by how many bytes it has
+    /// grown since then for each byte that was linted.
+    looked_at: (usize, u64),
+    grows_by: f64,
+    /// How often an engine was given back, and what that was when one was last freed.
+    given_back: u32,
+    freed_at: u32,
 }
 
 impl State {
@@ -593,10 +606,18 @@ impl State {
         self.all.iter().filter(|it| !it.is_freed).count()
     }
 
-    fn measure(&mut self) {
+    /// `left`: [`Demand::left`]
+    fn measure(&mut self, left: u64) {
         let now = bun_sys::self_process_memory_usage().unwrap_or(0);
         self.taken = now.saturating_sub(self.before);
         self.most = self.most.max(self.taken);
+        // Over a 32nd of what was left: less says little.
+        let (taken, left_then) = self.looked_at;
+        let done = left_then.saturating_sub(left);
+        if done > 0 && done >= left_then / 32 {
+            self.grows_by = self.taken.saturating_sub(taken) as f64 / done as f64;
+            self.looked_at = (self.taken, left);
+        }
         if let loaded @ 1.. = self.all.iter().filter(|it| it.is_loaded()).count() {
             self.most_for_one = self.most_for_one.max(self.taken / loaded);
         }
@@ -623,16 +644,17 @@ impl Engines {
         }
     }
 
-    /// Whether one more engine fits in the memory that is for them, if it and those that have not loaded yet get as large as an
-    /// engine has been so far.
+    /// Whether one more engine fits in the memory that is for them: if those that have loaded go on growing with each byte as they
+    /// have in this run, until all is linted, and it and those that have not loaded yet get as large as one of these.
     fn has_room_for_another(&self, state: &State) -> bool {
-        let one = match state.most_for_one {
-            0 => NOT_LOADED_YET,
-            one => one,
-        };
+        let (count, memory) = (state.count(), self.start.memory());
         let loaded = state.all.iter().filter(|it| it.is_loaded()).count();
-        state.all.is_empty()
-            || state.taken + (state.count() - loaded + 1) * one <= self.start.memory()
+        if loaded == 0 {
+            return state.all.is_empty() || state.taken + (count + 1) * NOT_LOADED_YET <= memory;
+        }
+        let at_the_end = state.taken as f64 + state.grows_by * self.demand.left() as f64;
+        let one = (at_the_end / loaded as f64).max(state.most_for_one as f64);
+        one * (count + 1) as f64 <= memory as f64
     }
 
     /// Waits for an engine.
@@ -677,6 +699,7 @@ impl Engines {
                     .map_err(|_| b"Could not start a thread for the plugins.".to_vec())?;
                 if state.all.is_empty() {
                     state.before = bun_sys::self_process_memory_usage().unwrap_or(0);
+                    state.looked_at = (0, self.demand.left());
                 }
                 state.all.push(Known {
                     desk,

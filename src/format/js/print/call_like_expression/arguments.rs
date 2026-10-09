@@ -256,46 +256,60 @@ fn format_all_elements_broken_out<'a>(
     expand: bool,
     f: &mut Formatter<'a>,
 ) {
+    let has_lines = has_lines_in_parentheses(expand, f);
     write!(
         f,
         group(&format_args!(
             "(",
-            soft_block_indent(&format_with(|f| {
-                for (index, element) in elements.iter().enumerate() {
-                    if let Some(element) = *element {
-                        if index > 0 {
-                            write!(f, soft_line_break_or_space());
+            soft_block_indent_with_maybe_space(
+                &format_with(|f| {
+                    for (index, element) in elements.iter().enumerate() {
+                        if let Some(element) = *element {
+                            if index > 0 {
+                                write!(f, soft_line_break_or_space());
+                            }
+                            f.write_element(element);
                         }
-                        f.write_element(element);
                     }
-                }
-                write!(f, node.trailing_commas());
-            })),
+                    write!(f, node.trailing_commas());
+                }),
+                has_lines
+            ),
             ")",
         ))
         .should_expand(expand)
     );
 }
 
+/// Prettier's `allArgsBrokenOut` has `line`, not `softline`, behind the `(` and before the `)`. They are line breaks
+/// either way, until `removeLines` makes blanks of them: `prettier-plugin-svelte` does, in the head of a block.
+fn has_lines_in_parentheses(expand: bool, f: &Formatter<'_>) -> bool {
+    expand && !f.options().flavor.is_oxfmt()
+}
+
 #[inline(never)]
 fn format_all_args_broken_out<'a>(node: &FormatArguments<'a>, expand: bool, f: &mut Formatter<'a>) {
     let last_index = node.len().saturating_sub(1);
+    let has_lines = has_lines_in_parentheses(expand, f);
     write!(
         f,
         group(&format_args!(
             "(",
-            soft_block_indent(&format_with(|f| {
-                for (index, argument) in node.iter().enumerate() {
-                    write!(f, argument);
-                    if index != last_index {
-                        match is_empty_line_kept_after(node.args, index, f) {
-                            true => write!(f, [",", empty_line()]),
-                            false => write!(f, [",", soft_line_break_or_space()]),
+            soft_block_indent_with_maybe_space(
+                &format_with(|f| {
+                    for (index, argument) in node.iter().enumerate() {
+                        write!(f, argument);
+                        if index != last_index {
+                            match is_empty_line_kept_after(node.args, index, f) {
+                                true => write!(f, [",", empty_line()]),
+                                false => write!(f, [",", soft_line_break_or_space()]),
+                            }
                         }
                     }
-                }
-                write!(f, node.trailing_commas());
-            })),
+                    write!(f, node.trailing_commas());
+                }),
+                has_lines
+            ),
             ")",
         ))
         .should_expand(expand)

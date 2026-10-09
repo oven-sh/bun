@@ -33,6 +33,8 @@ pub(crate) struct Lexer<'a> {
     pub(crate) refusal: Option<Refusal>,
     /// Where the text was refused, and by which line of this crate.
     pub(crate) refused_at: (u32, &'static core::panic::Location<'static>),
+    /// `full_start`, then.
+    pub(crate) refused_after: u32,
     /// `</` is one token.
     pub(crate) is_jsx: bool,
     /// `Dialect::ecmascript`, in a JavaScript file.
@@ -41,6 +43,8 @@ pub(crate) struct Lexer<'a> {
     pub(crate) is_script: bool,
     /// `Dialect::typescript_5`
     pub(crate) is_typescript_5: bool,
+    /// `Dialect::babel`
+    pub(crate) is_babel: bool,
     pub(crate) atoms: &'a dyn Intern,
     pub(crate) names: &'a mut Names,
     /// `hir::File::comment_directives`
@@ -142,6 +146,24 @@ fn decode_last(text: &[u8]) -> Option<(u32, usize)> {
     })
 }
 
+/// Where the first of `ends` is from `pos` on, or the end of `src`.
+#[inline]
+fn end_of_run_before(src: &[u8], mut pos: usize, ends: [u8; 4]) -> usize {
+    while let Some(chunk) = src.get(pos..).and_then(|rest| rest.first_chunk::<16>()) {
+        let bytes = u8x16::from_array(*chunk);
+        let [a, b, c, d] = ends.map(|end| bytes.simd_eq(u8x16::splat(end)));
+        let mask = (a | b | c | d).to_bitmask();
+        if mask != 0 {
+            return pos + mask.trailing_zeros() as usize;
+        }
+        pos += 16;
+    }
+    while src.get(pos).is_some_and(|c| !ends.contains(c)) {
+        pos += 1;
+    }
+    pos
+}
+
 /// `IsWhiteSpaceSingleLine` for a code point that is not ASCII.
 fn is_unicode_blank(c: u32) -> bool {
     matches!(
@@ -177,10 +199,12 @@ impl<'a> Lexer<'a> {
             number: 0.0,
             refusal: None,
             refused_at: (0, core::panic::Location::caller()),
+            refused_after: 0,
             is_jsx: false,
             is_ecmascript: false,
             is_script: false,
             is_typescript_5: false,
+            is_babel: false,
             atoms,
             names,
             comment_directives: Vec::new(),
@@ -357,10 +381,16 @@ impl<'a> Lexer<'a> {
         if self.refusal.is_none() {
             self.refusal = Some(why);
             self.refused_at = (self.start, core::panic::Location::caller());
+            self.refused_after = self.full_start;
         }
         self.token = T::Eof;
         self.start = self.src.len() as u32;
         self.end = self.start;
+    }
+
+    /// Nothing more of the text is read.
+    pub(crate) fn stop(&mut self) {
+        self.token = T::Eof;
     }
 
     /// From here on the text ends where `src` ends: before the `*/` of a comment, or with the file.
@@ -1351,10 +1381,12 @@ impl<'a> Lexer<'a> {
                         }
                     },
                 },
-                Some(&c) => {
-                    is_ascii &= c < 0x80;
-                    text.push(c);
-                    pos += 1;
+                Some(_) => {
+                    let end = end_of_run_before(src, pos + 1, [quote, b'\\', b'\n', b'\r']);
+                    let written = src.get(pos..end).unwrap_or_default();
+                    is_ascii &= written.is_ascii();
+                    text.extend_from_slice(written);
+                    pos = end;
                 }
             }
         };
@@ -1497,10 +1529,12 @@ impl<'a> Lexer<'a> {
                         1
                     };
                 }
-                Some(&c) => {
-                    is_ascii &= c < 0x80;
-                    text.push(c);
-                    pos += 1;
+                Some(_) => {
+                    let end = end_of_run_before(src, pos + 1, [b'`', b'$', b'\\', b'\r']);
+                    let written = src.get(pos..end).unwrap_or_default();
+                    is_ascii &= written.is_ascii();
+                    text.extend_from_slice(written);
+                    pos = end;
                 }
             }
         };
@@ -2043,6 +2077,10 @@ impl Lexer<'_> {
                 if !matches!(src.get(pos), Some(b'"' | b'\'')) {
                     return self.refuse(Refusal::Unsupported);
                 }
+                // There it is a string of JavaScript, and refused as one.
+                if pos > before && self.scans_jsx_strings_as_typescript_5() {
+                    return self.refuse(Refusal::Unterminated);
+                }
                 pos
             }
         };
@@ -2082,6 +2120,12 @@ impl Lexer<'_> {
         self.is_string_of_javascript(before, start)
     }
 
+    /// For `scanJsxAttributeValue` of TypeScript 5 and 6, on which typescript-estree runs, blanks before the quote are
+    /// enough to leave the string to `scan`. Babel and acorn-jsx read it as TypeScript 7 does.
+    fn scans_jsx_strings_as_typescript_5(&self) -> bool {
+        self.is_typescript_5 && !self.is_ecmascript && !self.is_babel
+    }
+
     /// `ScanJsxAttributeValue`: whether `Scan` scans the string at `start`, after a comment.
     #[cold]
     #[inline(never)]
@@ -2092,8 +2136,7 @@ impl Lexer<'_> {
         {
             pos += len;
         }
-        // For TypeScript 5 blanks are enough.
-        if pos < start || self.is_typescript_5 && before < start {
+        if pos < start || before < start && self.scans_jsx_strings_as_typescript_5() {
             return true;
         }
         self.forget_errors_from(before as u32);

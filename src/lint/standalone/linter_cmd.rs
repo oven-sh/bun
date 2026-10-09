@@ -61,7 +61,7 @@ pub(crate) fn with_file<R>(
     let atoms = Interner::new_in(&session);
     let arena = session.arena();
     let options = language.parse_options(path.as_bytes());
-    let mut hir = bun_js_parser::sema::summarize_as(
+    let mut hir = bun_sema_parser::summarize_as(
         options.dialect,
         arena,
         path.as_bytes(),
@@ -70,8 +70,7 @@ pub(crate) fn with_file<R>(
         &atoms,
         options.experimental_decorators,
         options.every_file_is_a_module,
-    )
-    .0;
+    );
     hir.text = code.to_vec().into();
     let bind_options = BindOptions {
         emit_standard_class_fields: true,
@@ -920,7 +919,7 @@ fn prettier(args: &[String]) {
             let atoms = Interner::new_in(&session);
             let arena = session.arena();
             let options = language.parse_options(path);
-            let mut hir = bun_js_parser::sema::summarize_as(
+            let mut hir = bun_sema_parser::summarize_as(
                 bun_sema::resolve::Dialect::babel(is_script),
                 arena,
                 path,
@@ -929,8 +928,7 @@ fn prettier(args: &[String]) {
                 &atoms,
                 options.experimental_decorators,
                 options.every_file_is_a_module,
-            )
-            .0;
+            );
             hir.text = code.to_vec().into();
             let bind_options = BindOptions {
                 emit_standard_class_fields: true,

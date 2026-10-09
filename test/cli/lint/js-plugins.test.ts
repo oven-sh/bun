@@ -1586,12 +1586,12 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
-  // ESLint in Node.js gives up at 740: "Not enough stack space to parse input". So does the parser here between 500 and 1,000 in a
+  // ESLint in Node.js gives up at 740: "Not enough stack space to parse input". So does the parser here between 300 and 400 in a
   // debug build, whose frames are larger.
   test(
     "a rule goes through a tree that is 2,000 deep",
     async () => {
-      const depth = isDebug || isASAN ? 500 : 2000;
+      const depth = isDebug || isASAN ? 200 : 2000;
       const { stdout, exitCode } = await lint(
         {
           "eslint.config.mjs": `
@@ -1893,6 +1893,60 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       expect([some.seen, many.seen]).toEqual([40, more]);
       expect(some.freed).toBeGreaterThan(0);
       expect(many.freed).toBeGreaterThan(0);
+    },
+    timeout,
+  );
+
+  test(
+    "a file in which nothing occurs that is listened to: no listener is called, and who asks for the tree has it",
+    async () => {
+      const run = async (count: number, threads: string) => {
+        const files: Record<string, string> = {
+          ".oxlintrc.json": oxlintrc({
+            jsPlugins: ["./plugin.mjs"],
+            rules: { "own/rare": "error", "own/selected": "error", "own/after": "error" },
+          }),
+          "plugin.mjs": `
+            const seen = (context, what) => node => context.report({ node, message: what });
+            export default {
+              meta: { name: "own" },
+              rules: {
+                rare: { create: context => ({ WithStatement: seen(context, "with"), "LabeledStatement:exit": seen(context, "label") }) },
+                selected: { create: context => ({ "CallExpression[callee.name='wanted']": seen(context, "call") }) },
+                after: {
+                  createOnce: context => ({
+                    DebuggerStatement() {},
+                    after: () => context.report({ loc: { line: 1, column: 0 }, message: "statements: " + context.sourceCode.ast.body.length }),
+                  }),
+                },
+              },
+            };`,
+        };
+        const texts = ["a; b;\n", "x: a;\n", "wanted();\n", "unwanted(); b; c;\n"];
+        for (let i = 0; i < count; i++) files[`src/${i}.js`] = texts[i % texts.length];
+        const { raw, exitCode } = await lint(files, ["-f", "unix", "--threads", threads, "src"]);
+        expect(exitCode).toBe(1);
+        const messages = Array.from(
+          raw.matchAll(/src\/(\d+)\.js:\d+:\d+: (.*?) \[/g),
+          it => `${Number(it[1]) % texts.length} ${it[2]}`,
+        );
+        return Object.fromEntries(
+          Map.groupBy(messages, it => it)
+            .entries()
+            .map(([key, all]) => [key, all.length]),
+        );
+      };
+      expect(await run(1, "8")).toEqual({ "0 statements: 2": 1 });
+      const more = 4 * (availableParallelism() + 1);
+      const each = more / 4;
+      expect(await run(more, "0")).toEqual({
+        "0 statements: 2": each,
+        "1 label": each,
+        "1 statements: 1": each,
+        "2 call": each,
+        "2 statements: 1": each,
+        "3 statements: 3": each,
+      });
     },
     timeout,
   );

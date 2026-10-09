@@ -200,7 +200,7 @@ impl Context<'_, '_> {
         };
         types.contains(&match &message.rule_id {
             None => FixType::Directive,
-            Some(RuleId::Known(meta)) => match meta.kind {
+            Some(RuleId::Known(meta) | RuleId::Named(meta, _)) => match meta.kind {
                 Kind::Problem => FixType::Problem,
                 Kind::Suggestion => FixType::Suggestion,
                 Kind::Layout => FixType::Layout,
@@ -370,7 +370,7 @@ impl Context<'_, '_> {
         let session = self.memory;
         let arena = session.arena();
         let how = config.language.parse_options(path);
-        bun_js_parser::sema::with_summary(
+        bun_sema_parser::with_summary(
             how.dialect,
             (arena, session),
             path,

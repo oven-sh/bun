@@ -10,7 +10,7 @@ use crate::ir::prelude::{Format, Formatter, hard_line_break};
 use crate::js::ast_nodes::{
     AstNodes, ExpressionStatement, Program, node_as_ast_nodes, type_parameters_of,
 };
-use crate::js::comments::{self, Comment, Comments};
+use crate::js::comments::{self, Comment, Comments, ParsedBy};
 use crate::js::print::program::ends_before_semicolon;
 use crate::js::source_text::SourceText;
 use crate::options::{Flavor, LineEnding};
@@ -230,7 +230,7 @@ pub(crate) fn write_with_line_ending(mut text: &[u8], line_ending: &[u8], out: &
 fn comments_of<'a>(file: &'a File<'a>, flavor: Flavor) -> &'a [Comment] {
     let comments = file.extension(|| {
         let mut comments = Vec::new();
-        comments::collect(file, flavor, &mut comments);
+        comments::collect(file, flavor, ParsedBy::WhatItsNameSays, &mut comments);
         comments
     });
     comments.map_or(&[][..], |comments: &Vec<Comment>| comments)

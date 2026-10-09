@@ -98,7 +98,7 @@ fn lint(path: &[u8], text: &[u8], config: &ResolvedConfig, options: &LintOptions
     let session = Session::new();
     let atoms = Interner::new_in(&session);
     let how = config.language.parse_options(path);
-    bun_js_parser::sema::with_summary(
+    bun_sema_parser::with_summary(
         how.dialect,
         (session.arena(), &session),
         path,

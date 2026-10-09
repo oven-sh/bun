@@ -12,6 +12,7 @@ commits, and `licenses/` has the license of each (all MIT).
 | eslint-plugin-react-hooks | 7.0.0   | 2     | 1325  |
 | eslint-plugin-import      | 2.32.0  | 2     | 255   |
 | eslint-plugin-n           | 18.4.1  | 4     | 1530  |
+| eslint-plugin-react       | 7.37.5  | 1     | 124   |
 | oxc (oxlint)              | 1.70.0  | 1     | 83    |
 
 The rules of `react-hooks` follow eslint-plugin-react-hooks 7.1.1, which reports the same for all of these cases of 7.0.0.
@@ -22,11 +23,11 @@ of oxlint's port of the rule: see `extract-plugins.ts`.
 
 `more/` has cases from elsewhere in the same format, each with what the same ESLint reports for it:
 
-| directory                | cases | what                                                                                             |
-| ------------------------ | ----- | ------------------------------------------------------------------------------------------------ |
-| `more/reviews`           | 68128 | written while the rules were compared with upstream's code line by line, and minimized from differences on real code |
-| `more/oxlint-tsgolint`   | 8728  | the tests that oxlint and tsgolint have for their ports of the rules. What those expect is not used |
-| `more/typescript-parser` | 30880 | the cases of ESLint's core rules again, parsed by `@typescript-eslint/parser`                     |
+| directory                | cases | what                                                                                                                 |
+| ------------------------ | ----- | -------------------------------------------------------------------------------------------------------------------- |
+| `more/reviews`           | 68358 | written while the rules were compared with upstream's code line by line, and minimized from differences on real code |
+| `more/oxlint-tsgolint`   | 8728  | the tests that oxlint and tsgolint have for their ports of the rules. What those expect is not used                  |
+| `more/typescript-parser` | 30880 | the cases of ESLint's core rules again, parsed by `@typescript-eslint/parser`                                        |
 
 `oxlint/` has the tests of the rules that are ports of the rules in oxlint's own plugins (`unicorn`, `oxc`, `react`, `jsx-a11y`,
 `nextjs`, `import`, `promise`, ..): the cases in oxlint's sources, each with what the **executable of oxlint 1.87.0** reports for it.
@@ -211,12 +212,12 @@ columns on one line.
 
 A case that cannot be reproduced without upstream's test code. It still has what ESLint reported.
 
-| `skip`                                | plugin            | cases | why                                                                                  |
-| ------------------------------------- | ----------------- | ----- | ------------------------------------------------------------------------------------ |
-| `test-only plugin: <name>`            | eslint            | 12    | the code enables a helper rule that the test file defines                            |
-| `test-only rule: <name>`              | typescript-eslint | 5     | same, through `defineRule()`                                                         |
-| `parser: custom`                      | typescript-eslint | 1     | a stub parser without parser services                                                |
-| `skipped upstream`                    | typescript-eslint | 1     | `skip: true` in the test; a known false negative                                     |
+| `skip`                     | plugin            | cases | why                                                       |
+| -------------------------- | ----------------- | ----- | --------------------------------------------------------- |
+| `test-only plugin: <name>` | eslint            | 12    | the code enables a helper rule that the test file defines |
+| `test-only rule: <name>`   | typescript-eslint | 5     | same, through `defineRule()`                              |
+| `parser: custom`           | typescript-eslint | 1     | a stub parser without parser services                     |
+| `skipped upstream`         | typescript-eslint | 1     | `skip: true` in the test; a known false negative          |
 
 106 core cases name a "parser" of `tests/fixtures/parsers/*.js`, which returns a hard-coded AST (type annotations, old
 babel-eslint and typescript-eslint). They are not skipped: 105 are recorded with the real parser that reads the code

@@ -88,15 +88,23 @@ fn find(directory: &[u8]) -> Option<Found> {
     Some(Found { root, config })
 }
 
-/// Of the `prettier-plugin-tailwindcss` that Prettier loads from `directory`: the first two numbers of its version.
-fn version_of_plugin(directory: &[u8]) -> Option<(u64, u64)> {
-    let name = b"node_modules/prettier-plugin-tailwindcss/package.json";
-    let package = paths::ancestors(directory).find_map(|it| fs::read(&paths::join(it, name)).ok());
+/// The version of the package `name` that is loaded from `directory`.
+pub(crate) fn version_of_package(name: &[u8], directory: &[u8]) -> Option<[u64; 3]> {
+    let file = [b"node_modules/", name, b"/package.json"].concat();
+    let package = paths::ancestors(directory).find_map(|it| fs::read(&paths::join(it, &file)).ok());
     let package = bun_lint::json::parse(&package?)?;
     let parsed = bun_semver::Version::parse_utf8(package.get(b"version")?.as_str()?);
     let version = parsed.version.min();
+    parsed
+        .valid
+        .then_some([version.major, version.minor, version.patch])
+}
+
+/// Of the `prettier-plugin-tailwindcss` that Prettier loads from `directory`: the first two numbers of its version.
+fn version_of_plugin(directory: &[u8]) -> Option<(u64, u64)> {
+    let [major, minor, _] = version_of_package(b"prettier-plugin-tailwindcss", directory)?;
     // `0.0.0-insiders.d539a72` is newer than all.
-    (parsed.valid && version.minor > 0).then_some((version.major, version.minor))
+    (minor > 0).then_some((major, minor))
 }
 
 /// The classes in files for which the same Tailwind is asked.
@@ -432,6 +440,7 @@ pub(crate) fn only_where_sorted(options: &mut FormatOptions, kind: Option<Kind>)
                 | Kind::Css(_)
                 | Kind::Markdown
                 | Kind::Handlebars
+                | Kind::Svelte
                 | Kind::Html(Parser::Html | Parser::Vue | Parser::Angular)
         )
     );

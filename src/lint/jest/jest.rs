@@ -14,6 +14,7 @@ use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint_oxlint::ast_util::{scope_made_by, static_property_info};
 use bun_lint_oxlint::codegen::Codegen;
+use bun_lint_oxlint::hash_order::HashOrder;
 use bun_lint_oxlint::import::import_entries;
 use bun_lint_oxlint::regex_flags::rust_regex;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -1168,88 +1169,6 @@ pub(crate) fn convert_pattern(pattern: &str) -> Option<Regex> {
 }
 
 // ───────────────────────────── the order of hash tables ─────────────────────────────
-
-/// A table of the crate `hashbrown`, as far as it takes to know in which order it is iterated. Some rules of oxlint report the first
-/// of what they find in such a table, or print the names in it. The order follows from the hashes and from the order in which
-/// they are inserted. The groups are of 16, as on x86-64.
-pub(crate) struct HashOrder<T> {
-    /// Each with its hash.
-    buckets: Vec<Option<(u64, T)>>,
-    len: usize,
-}
-
-impl<T: Copy> HashOrder<T> {
-    pub(crate) fn new() -> Self {
-        HashOrder {
-            buckets: Vec::new(),
-            len: 0,
-        }
-    }
-
-    /// `RawTableInner::find_insert_slot`
-    fn find_insert_slot(buckets: &[Option<(u64, T)>], hash: u64) -> Option<usize> {
-        const WIDTH: usize = 16;
-        let mask = buckets.len().checked_sub(1)?;
-        let is_empty = |i: usize| buckets.get(i).is_some_and(Option::is_none);
-        let (mut pos, mut stride) = ((hash & (mask as u64)) as usize, 0);
-        while stride <= buckets.len() {
-            // After the control bytes of a table that is smaller than a group there are empty ones, up to the width of a group. Then
-            // the first are repeated, as after those of every table.
-            let found = (pos..pos + WIDTH).find(|&i| match buckets.len() < WIDTH {
-                true => (buckets.len()..WIDTH).contains(&i) || is_empty(i % WIDTH),
-                false => is_empty(i & mask),
-            });
-            if let Some(found) = found.map(|i| i & mask) {
-                return if is_empty(found) {
-                    Some(found)
-                } else {
-                    (0..buckets.len()).find(|&i| is_empty(i))
-                };
-            }
-            stride += WIDTH;
-            pos = (pos + stride) & mask;
-        }
-        None
-    }
-
-    fn place(buckets: &mut [Option<(u64, T)>], hash: u64, item: T) {
-        if let Some(bucket) =
-            HashOrder::find_insert_slot(buckets, hash).and_then(|at| buckets.get_mut(at))
-        {
-            *bucket = Some((hash, item));
-        }
-    }
-
-    /// `item` has to be new.
-    pub(crate) fn insert(&mut self, hash: u64, item: T) {
-        let capacity = match self.buckets.len() {
-            0 => 0,
-            buckets @ 1..=8 => buckets - 1,
-            buckets => buckets / 8 * 7,
-        };
-        if self.len >= capacity {
-            let mut grown = vec![
-                None;
-                match capacity + 1 {
-                    0..=3 => 4,
-                    4..=7 => 8,
-                    wanted => (wanted * 8 / 7).next_power_of_two(),
-                }
-            ];
-            self.buckets
-                .iter()
-                .flatten()
-                .for_each(|it| HashOrder::place(&mut grown, it.0, it.1));
-            self.buckets = grown;
-        }
-        HashOrder::place(&mut self.buckets, hash, item);
-        self.len += 1;
-    }
-
-    pub(crate) fn iter(&self) -> impl Iterator<Item = T> {
-        self.buckets.iter().flatten().map(|it| it.1)
-    }
-}
 
 /// How oxc hashes the name of an identifier: `IdentHasher`, after `ident_hash`.
 fn ident_hash(name: &[u8]) -> u64 {

@@ -96,44 +96,6 @@ fn find_directive_in_comment(comment: Token<'_>) -> Option<MatchedTsDirective<'_
     match_directive(rest, SUPPRESSIONS)
 }
 
-/// `regex.source`
-// TODO(api): replace by regex::Regex::source, once it escapes as `RegExp.prototype.source` does
-fn escaped_source(regex: &Regex) -> Vec<u8> {
-    let source = regex.source();
-    let mut out = Vec::with_capacity(source.len());
-    let (mut is_escaped, mut in_class, mut at) = (false, false, 0);
-    while let Some(&byte) = source.get(at) {
-        let line_break: &[u8] = match &source[at..] {
-            [b'\n', ..] => b"n",
-            [b'\r', ..] => b"r",
-            [0xE2, 0x80, 0xA8, ..] => b"u2028",
-            [0xE2, 0x80, 0xA9, ..] => b"u2029",
-            _ => b"",
-        };
-        if !line_break.is_empty() {
-            if !is_escaped {
-                out.push(b'\\');
-            }
-            out.extend_from_slice(line_break);
-            at += if byte == 0xE2 { 3 } else { 1 };
-            is_escaped = false;
-            continue;
-        }
-        if byte == b'/' && !is_escaped && !in_class {
-            out.push(b'\\');
-        }
-        out.push(byte);
-        match byte {
-            b'[' if !is_escaped => in_class = true,
-            b']' if !is_escaped => in_class = false,
-            _ => {}
-        }
-        is_escaped = !is_escaped && byte == b'\\';
-        at += 1;
-    }
-    out
-}
-
 impl BanTsComment {
     fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
@@ -205,7 +167,7 @@ impl BanTsComment {
                     {
                         cx.report(place, TS_DIRECTIVE_COMMENT_DESCRIPTION_NOT_MATCH_PATTERN)
                             .data("directive", directive)
-                            .data("format", escaped_source(format));
+                            .data("format", format.source().to_vec());
                     }
                 }
             }

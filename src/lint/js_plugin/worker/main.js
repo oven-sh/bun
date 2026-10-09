@@ -530,12 +530,26 @@ function selectorRequest() {
 // What matches the selectors of `bySelector`, in its order. `null`: not asked for yet.
 let matches = null;
 
-// The `Program`.
+// The numbers of the types that are listened to. `null`: every node matters.
+function listenedTypes() {
+  if (codePathCalls !== null) return null;
+  return [...new Set([...Object.keys(enterByType), ...Object.keys(exitByType)])].map(Number);
+}
+
+// Nothing that is listened to is in the file, so its tree was not sent. Who asks for it now gets it.
+let isWithoutListened = false;
+
+// The `Program`. `null`, to `traverse`: nothing that is listened to is in the file.
 function program() {
   if (tree === null) {
     // Once the listeners are known, what matches comes with the tree.
     const count = isTraversing ? bySelector.size : 0;
-    ask(AST, isTraversing ? selectorRequest() : "[]");
+    const types = isTraversing && !isWithoutListened ? listenedTypes() : null;
+    ask(AST, `[${isTraversing ? selectorRequest() : "[]"},${JSON.stringify(types)}]`);
+    if (new Uint32Array(buffers[AST], 0, 1)[0] === 0) {
+      isWithoutListened = true;
+      return null;
+    }
     tree = readTree(buffers[AST], count);
     if (isTraversing) matches = tree.matches;
     makeNodes();
@@ -625,14 +639,15 @@ function callsByNode(isExit, byType) {
 
 function traverse() {
   isTraversing = true;
-  program();
-  if (matches === null && bySelector.size > 0) {
+  const root = program();
+  if (root !== null && matches === null && bySelector.size > 0) {
     const length = ask(MATCHES, selectorRequest());
     matches = readMatches(new Uint32Array(buffers[MATCHES], 0, length >> 2), bySelector.size);
   }
   for (const { selector } of bySelector.values()) {
     if (selector.error !== null) throw new SyntaxError(selector.error);
   }
+  if (root === null) return;
   const { count, types, twice } = tree;
   const enterByNode = bySelector.size > 0 ? callsByNode(false, enterByType) : null;
   const exitByNode = bySelector.size > 0 ? callsByNode(true, exitByType) : null;
@@ -701,7 +716,7 @@ function reset() {
   exitByType = [];
   bySelector = new Map();
   codePathCalls = null;
-  hasListeners = hasExitListeners = isTraversing = false;
+  hasListeners = hasExitListeners = isTraversing = isWithoutListened = false;
   currentRule = currentNode = null;
   reports = [];
   resetTokens();

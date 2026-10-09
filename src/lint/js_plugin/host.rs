@@ -444,12 +444,8 @@ impl<'e> Host<'e> {
     }
 
     /// Given JSON, the numbers of selectors, these.
-    fn selectors(&self, numbers: &[u8]) -> Vec<Option<Arc<Selector>>> {
-        let numbers = crate::json::parse(numbers);
-        let numbers = numbers
-            .as_ref()
-            .and_then(Json::as_array)
-            .unwrap_or_default();
+    fn selectors(&self, numbers: Option<&Json>) -> Vec<Option<Arc<Selector>>> {
+        let numbers = numbers.and_then(Json::as_array).unwrap_or_default();
         if numbers.is_empty() {
             return Vec::new();
         }
@@ -549,12 +545,33 @@ impl<'e> Host<'e> {
                 }
             }
             ask::SELECTORS => self.describe_selectors(details, out),
+            // The numbers of selectors. With `AST`: these, and those of the types that are listened to, if only they matter.
             ask::AST | ask::MATCHES => {
-                let selectors = self.selectors(details);
+                let details = crate::json::parse(details);
+                let parts = details.as_ref().and_then(Json::as_array);
+                let (numbers, types) = match asked {
+                    ask::AST => (
+                        parts.and_then(|it| it.first()),
+                        parts.and_then(|it| it.get(1)),
+                    ),
+                    _ => (details.as_ref(), None),
+                };
+                let selectors = self.selectors(numbers);
                 let selectors: Vec<Option<&Selector>> =
                     selectors.iter().map(Option::as_deref).collect();
+                let types = types.and_then(Json::as_array).map(|types| {
+                    let mut listened = [false; 256];
+                    for it in types.iter().filter_map(|it| number(Some(it))) {
+                        if let Some(it) = listened.get_mut(it as usize) {
+                            *it = true;
+                        }
+                    }
+                    listened
+                });
                 match asked {
-                    ask::AST => ids = Some(ast::write(file, &offsets, &selectors, out)),
+                    ask::AST => {
+                        ids = Some(ast::write(file, &offsets, &selectors, types.as_ref(), out));
+                    }
                     _ => ast::write_only_matches(file, &offsets, &selectors, out),
                 }
             }

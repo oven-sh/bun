@@ -33,7 +33,7 @@ pub(super) fn code(message: &LintMessage) -> Option<Vec<u8>> {
 /// [`scope`] for the prefix of `rule`. A plugin in JavaScript is called what it is called.
 pub(crate) fn scope_of<'p>(rule: &RuleId, prefix: &'p [u8]) -> &'p [u8] {
     match rule {
-        RuleId::Js(_) => prefix,
+        RuleId::Js(_) | RuleId::Named(..) => prefix,
         RuleId::Known(_) | RuleId::Unknown(_) => scope(prefix),
     }
 }

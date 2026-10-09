@@ -10050,4 +10050,13 @@ export const projects: Project[] = [
       ),
     },
   },
+  {
+    name: "no-duplicates/full-table",
+    about: "112 specifiers in a table of 128 places: after a full group of 16 hashbrown looks 16 places on, then 48",
+    config: rules(["import"], { "import/no-duplicates": "error" }),
+    files: {
+      "a.js": Array.from({ length: 56 }, (_, i) => lines(`import { x as a${i} } from "./d53/m${i}";`, `import { x as b${i} } from "./d53/m${i}.js";`)).join(""),
+      ...Object.fromEntries(Array.from({ length: 56 }, (_, i) => [`d53/m${i}.js`, "export const x = 1;\n"])),
+    },
+  },
 ];

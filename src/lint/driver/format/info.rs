@@ -95,7 +95,7 @@ impl<'r> Source<'r> {
         let start = (message.line, message.column);
         let end = message.end.unwrap_or(start);
         Some(match message.rule_id {
-            Some(RuleId::Known(_)) => self.label(start, end),
+            Some(RuleId::Known(_) | RuleId::Named(..)) => self.label(start, end),
             // A plugin in JavaScript does not see the mark: its 0 is after it.
             Some(RuleId::Js(_) | RuleId::Unknown(_)) | None => self.between(start, end),
         })

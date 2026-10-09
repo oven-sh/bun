@@ -57,7 +57,7 @@ use std::time::{Duration, Instant};
 /// allocated it, and the allocator defers such a free.
 #[derive(Default)]
 pub struct ThreadCaches {
-    idle: Guarded<Vec<(ThreadId, RecentAtoms, bun_js_parser::sema::ThreadCaches)>>,
+    idle: Guarded<Vec<(ThreadId, RecentAtoms, bun_sema_parser::ThreadCaches)>>,
 }
 
 impl ThreadCaches {
@@ -69,7 +69,7 @@ impl ThreadCaches {
                 let set = (
                     std::thread::current().id(),
                     RecentAtoms::take(),
-                    bun_js_parser::sema::ThreadCaches::take(),
+                    bun_sema_parser::ThreadCaches::take(),
                 );
                 self.0.idle.lock().push(set);
             }
@@ -89,7 +89,7 @@ impl ThreadCaches {
     /// Frees the buffers of the parser, which have the capacity of the largest file that a thread
     /// has parsed. Outside a parallel region.
     pub(crate) fn drop_those_of_the_parser(&self) {
-        drop(bun_js_parser::sema::ThreadCaches::take());
+        drop(bun_sema_parser::ThreadCaches::take());
         for set in self.idle.lock().iter_mut() {
             set.2 = Default::default();
         }

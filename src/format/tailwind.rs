@@ -102,6 +102,13 @@ pub struct Ends {
     pub collapses_end: bool,
 }
 
+/// What is done to a list of classes besides sorting it.
+#[derive(Clone, Copy, Debug)]
+pub struct Tidies {
+    pub collapses_white_space: bool,
+    pub removes_duplicates: bool,
+}
+
 impl Ends {
     /// Nothing that counts.
     pub const FREE: Ends = Ends {
@@ -181,10 +188,23 @@ impl Tailwind {
 
     /// `sortClasses(text, { env, ignoreFirst, ignoreLast, collapseWhitespace })`
     pub fn sorted_between<'t>(&self, text: &'t [u8], ends: Ends) -> Cow<'t, [u8]> {
+        self.sorted_with(text, ends, self.tidies())
+    }
+
+    /// What the options allow.
+    pub fn tidies(&self) -> Tidies {
+        Tidies {
+            collapses_white_space: !self.preserves_whitespace,
+            removes_duplicates: !self.preserves_duplicates,
+        }
+    }
+
+    /// The same where less is done than the options allow.
+    pub fn sorted_with<'t>(&self, text: &'t [u8], ends: Ends, tidies: Tidies) -> Cow<'t, [u8]> {
         if text.is_empty() || strings::contains(text, b"{{") {
             return Cow::Borrowed(text);
         }
-        let collapses_whitespace = !self.preserves_whitespace;
+        let collapses_whitespace = tidies.collapses_white_space;
         if collapses_whitespace && text.iter().all(|&byte| is_white_space(byte)) {
             return Cow::Borrowed(&b" "[..]);
         }
@@ -259,7 +279,7 @@ impl Tailwind {
             .iter()
             .map(|&(class, rank)| {
                 let is_seen = seen.contains(class);
-                if rank.is_some() && !self.preserves_duplicates {
+                if rank.is_some() && tidies.removes_duplicates {
                     seen.insert(class);
                 }
                 is_seen

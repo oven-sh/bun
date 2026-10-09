@@ -6,6 +6,7 @@
 //! kind and its place among the others.
 
 use crate::syntax_error::{Message, Refusal, Refused, SyntaxError};
+use bun_core::fmt::{hex_digit_value, parse_hex4};
 use bun_lint::span::Span;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -183,16 +184,6 @@ const fn is_name_continue(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
-fn hex_digit(byte: Option<&u8>) -> Option<u32> {
-    (*byte? as char).to_digit(16)
-}
-
-fn hex_code(text: &[u8]) -> Option<u32> {
-    (0..4).try_fold(0, |code, index| {
-        Some(code << 4 | hex_digit(text.get(index))?)
-    })
-}
-
 /// The escape sequence that `text` starts with: the character that it stands for, and its length.
 pub(crate) fn read_escape(text: &[u8]) -> Option<(char, usize)> {
     let simple = |c: char| Some((c, 2));
@@ -215,12 +206,12 @@ pub(crate) fn read_escape(text: &[u8]) -> Option<(char, usize)> {
                         .flatten()
                         .map(|c| (c, size + 1));
                 }
-                code = code.checked_shl(4)? | hex_digit(text.get(size))?;
+                code = code.checked_shl(4)? | u32::from(hex_digit_value(*text.get(size)?)?);
             }
             None
         }
         b'u' => {
-            let code = hex_code(text.get(2..)?)?;
+            let code = u32::from(parse_hex4(text.get(2..)?)?);
             if let Some(c) = char::from_u32(code) {
                 return Some((c, 6));
             }
@@ -228,7 +219,10 @@ pub(crate) fn read_escape(text: &[u8]) -> Option<(char, usize)> {
             if !(0xD800..=0xDBFF).contains(&code) || text.get(6..8) != Some(b"\\u") {
                 return None;
             }
-            let trailing = hex_code(text.get(8..)?).filter(|it| (0xDC00..=0xDFFF).contains(it))?;
+            let trailing = u32::from(parse_hex4(text.get(8..)?)?);
+            if !(0xDC00..=0xDFFF).contains(&trailing) {
+                return None;
+            }
             char::from_u32(0x10000 + ((code - 0xD800) << 10) + (trailing - 0xDC00)).map(|c| (c, 12))
         }
         _ => None,

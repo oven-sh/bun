@@ -82,6 +82,8 @@ pub(crate) enum Kind {
     Toml,
     /// HTML, Vue, Angular templates, Lightning Web Components, MJML.
     Html(bun_format::html::Parser),
+    /// For oxfmt with `svelte` in the configuration, for Prettier with the plugin.
+    Svelte,
 }
 
 impl Kind {
@@ -96,6 +98,8 @@ impl Kind {
             b"mdx" => Some(Kind::Mdx),
             b"graphql" => Some(Kind::GraphQl),
             b"glimmer" => Some(Kind::Handlebars),
+            // Of `prettier-plugin-svelte`. Whether it is this one that reads the file: `Configs::has_our_svelte`.
+            b"svelte" => Some(Kind::Svelte),
             b"babel" | b"babel-flow" | b"babel-ts" | b"flow" | b"typescript" | b"acorn"
             | b"espree" | b"meriyah" | b"oxc" | b"oxc-ts" => Some(Kind::Script),
             _ => None,
@@ -109,9 +113,9 @@ impl Kind {
         if !options.flavor.is_oxfmt() || options.parser.is_some() {
             return Kind::of(path, options.parser.as_deref());
         }
-        match classify_for_oxfmt(path) {
-            Some(ForOxfmt::Kind(kind)) => Some(kind),
-            _ => None,
+        match classify_for_oxfmt(path)? {
+            ForOxfmt::Kind(kind) => Some(kind),
+            ForOxfmt::Svelte => Some(Kind::Svelte),
         }
     }
 
@@ -356,7 +360,7 @@ pub(crate) fn language_of(path: &[u8]) -> Language {
 pub(crate) fn language_for_oxfmt(path: &[u8], formats_svelte: bool) -> Language {
     match classify_for_oxfmt(path) {
         Some(ForOxfmt::Kind(_)) => Language::Supported,
-        Some(ForOxfmt::Svelte) if formats_svelte => Language::Other,
+        Some(ForOxfmt::Svelte) if formats_svelte => Language::Supported,
         Some(ForOxfmt::Svelte) | None => Language::Unknown,
     }
 }

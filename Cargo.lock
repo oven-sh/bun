@@ -1043,7 +1043,6 @@ dependencies = [
  "bun_core",
  "bun_format",
  "bun_glob",
- "bun_js_parser",
  "bun_lint",
  "bun_lint_conformance",
  "bun_lint_eslint",
@@ -1056,6 +1055,7 @@ dependencies = [
  "bun_paths",
  "bun_sema",
  "bun_sema_driver",
+ "bun_sema_parser",
  "bun_semver",
  "bun_sys",
  "bun_threading",
@@ -1079,10 +1079,10 @@ name = "bun_lint_graph"
 version = "0.0.0"
 dependencies = [
  "bun_core",
- "bun_js_parser",
  "bun_lint",
  "bun_sema",
  "bun_sema_driver",
+ "bun_sema_parser",
  "bun_threading",
  "smallvec",
 ]
@@ -1157,7 +1157,6 @@ dependencies = [
  "bun_format",
  "bun_format_conformance",
  "bun_glob",
- "bun_js_parser",
  "bun_lint",
  "bun_lint_conformance",
  "bun_lint_driver",
@@ -1172,6 +1171,7 @@ dependencies = [
  "bun_react_compiler",
  "bun_sema",
  "bun_sema_driver",
+ "bun_sema_parser",
  "bun_sema_standalone",
  "bun_threading",
  "rustc-hash",
@@ -1619,10 +1619,10 @@ dependencies = [
  "bstr",
  "bun_ast",
  "bun_core",
- "bun_js_parser",
  "bun_parsers",
  "bun_paths",
  "bun_sema",
+ "bun_sema_parser",
  "bun_sys",
  "bun_threading",
 ]
@@ -1631,6 +1631,7 @@ dependencies = [
 name = "bun_sema_parser"
 version = "0.0.0"
 dependencies = [
+ "bun_alloc",
  "bun_ast",
  "bun_core",
  "bun_sema",
@@ -1645,7 +1646,6 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_core",
- "bun_js_parser",
  "bun_sema",
  "bun_sema_parser",
  "bun_sema_standalone",
@@ -1664,6 +1664,7 @@ dependencies = [
  "bun_sema",
  "bun_sema_baselines",
  "bun_sema_driver",
+ "bun_sema_parser",
  "bun_sys",
  "bun_threading",
  "libc",

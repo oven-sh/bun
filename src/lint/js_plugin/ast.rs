@@ -451,15 +451,22 @@ fn walk<'a, 's>(
     writer
 }
 
-/// Appends the tree of `file`, and what matches `selectors`.
+/// Appends the tree of `file`, and what matches `selectors`. `listened`: by the number of a type, whether somebody listens to it. A
+/// tree without nodes is appended if no such node is in the file and nothing matches: making the nodes is dearer than this.
 pub(super) fn write<'a>(
     file: &'a File<'a>,
     offsets: &Offsets,
     selectors: &[Option<&Selector>],
+    listened: Option<&[bool; 256]>,
     out: &mut Vec<u8>,
 ) -> NodeIds<'a> {
     let writer = walk(file, offsets, selectors);
     let tree = &writer.tree;
+    let is_listened = |listened: &[bool; 256]| tree.types.iter().any(|&it| listened[it as usize]);
+    if listened.is_some_and(|it| !is_listened(it)) && writer.matches.iter().all(Vec::is_empty) {
+        wire::words(out, &[0; HEADER]);
+        return writer.ids;
+    }
     let matches: usize = writer.matches.iter().map(|it| it.len() + 1).sum();
     let header: [u32; HEADER] = [
         tree.types.len() as u32,

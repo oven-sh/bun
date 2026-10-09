@@ -10,8 +10,9 @@ use super::static_value::{
     Eval, IteratorKind, MAX_LEN, PropertyKey, StaticSymbol, StaticValue, Stop, join,
     string_to_bigint,
 };
-use crate::regex::{Ignore, Mode, Options, validate_pattern};
+use crate::regex::{Ignore, Mode, Options, escape_source, validate_pattern};
 use crate::utils::text;
+use bun_core::fmt::{hex_byte_upper, hex_pair_value};
 use bun_core::strings;
 use std::borrow::Cow;
 
@@ -425,52 +426,9 @@ fn new_regex<'a>(pattern: Cow<'a, [u8]>, flags: &[u8]) -> Option<StaticValue<'a>
     )
     .ok()?;
     Some(StaticValue::Regex {
-        pattern: escape_regex_source(pattern),
+        pattern: escape_source(pattern),
         flags,
     })
-}
-
-/// `EscapeRegExpPattern`: what `regex.source` is for the pattern `text`.
-fn escape_regex_source(text: Cow<'_, [u8]>) -> Cow<'_, [u8]> {
-    if text.is_empty() {
-        return Cow::Borrowed(b"(?:)");
-    }
-    if strings::index_of_any(&text, b"/\n\r\xE2").is_none() {
-        return text;
-    }
-    let mut source = Vec::with_capacity(text.len() + 4);
-    let (mut is_escaped, mut is_in_class) = (false, false);
-    let mut rest = &text[..];
-    while let [byte, after @ ..] = rest {
-        let line_terminator: Option<(&[u8], usize)> = match rest {
-            [b'\n', ..] => Some((b"n", 1)),
-            [b'\r', ..] => Some((b"r", 1)),
-            [0xE2, 0x80, 0xA8, ..] => Some((b"u2028", 3)),
-            [0xE2, 0x80, 0xA9, ..] => Some((b"u2029", 3)),
-            _ => None,
-        };
-        if let Some((escape, len)) = line_terminator {
-            if !is_escaped {
-                source.push(b'\\');
-            }
-            source.extend_from_slice(escape);
-            is_escaped = false;
-            rest = &rest[len..];
-            continue;
-        }
-        if !is_escaped {
-            match byte {
-                b'/' if !is_in_class => source.push(b'\\'),
-                b'[' => is_in_class = true,
-                b']' => is_in_class = false,
-                _ => {}
-            }
-        }
-        is_escaped = !is_escaped && *byte == b'\\';
-        source.push(*byte);
-        rest = after;
-    }
-    Cow::Owned(source)
 }
 
 /// The keys of a `Map` and the elements of a `Set` have no `-0`.
@@ -1019,14 +977,9 @@ fn math<'a>(name: &str, args: Args<'_, 'a>) -> Eval<StaticValue<'a>> {
     })
 }
 
-fn push_hex(text: &mut Vec<u8>, byte: u8) {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    text.extend_from_slice(&[HEX[usize::from(byte >> 4)], HEX[usize::from(byte & 15)]]);
-}
-
 fn push_percent_escape(text: &mut Vec<u8>, byte: u8) {
     text.push(b'%');
-    push_hex(text, byte);
+    text.extend_from_slice(&hex_byte_upper(byte));
 }
 
 /// `Encode`: `encodeURI` and `encodeURIComponent`, which leave letters, digits and `unescaped` as
@@ -1055,9 +1008,7 @@ fn hex_value(digits: &[u16]) -> Option<u32> {
 /// stay. It throws for an escape that is incomplete or is not UTF-8.
 fn decode_uri<'a>(text: &[u8], preserved: &[u8]) -> Eval<StaticValue<'a>> {
     let byte_at = |at: usize| match text.get(at..at + 3) {
-        Some(&[b'%', high, low]) => {
-            hex_value(&[u16::from(high), u16::from(low)]).map(|byte| byte as u8)
-        }
+        Some(&[b'%', high, low]) => hex_pair_value(high, low),
         _ => None,
     };
     let mut decoded = Vec::with_capacity(text.len());
@@ -1103,8 +1054,8 @@ fn escape<'a>(text: &[u8]) -> StaticValue<'a> {
             Err(_) => {
                 escaped.extend_from_slice(b"%u");
                 let [high, low] = unit.to_be_bytes();
-                push_hex(&mut escaped, high);
-                push_hex(&mut escaped, low);
+                escaped.extend_from_slice(&hex_byte_upper(high));
+                escaped.extend_from_slice(&hex_byte_upper(low));
             }
         }
     }

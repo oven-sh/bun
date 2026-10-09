@@ -88,6 +88,8 @@ impl<'a> BinaryLikeExpression<'a> {
             AstNodes::Program(_) => match f.options().in_html.root {
                 // Prettier's `NGRoot`.
                 HtmlRoot::NgAction | HtmlRoot::NgDirective | HtmlRoot::NgInterpolation => false,
+                // A `File`.
+                HtmlRoot::SvelteExpression => false,
                 // The same for `__ng_binding`, and `JsExpressionRoot`.
                 _ => self.operator != BinOp::BitOr,
             },

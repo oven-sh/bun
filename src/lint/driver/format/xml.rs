@@ -4,6 +4,7 @@ use super::Meta;
 use super::info::Source;
 use super::oxlint::{code, file_name, is_error};
 use crate::results::FileResult;
+use bun_core::strings::xml_escape_entity;
 use std::io::Write;
 
 /// What is printed of a problem.
@@ -94,14 +95,10 @@ fn group(
 /// Every value that goes into the document goes through here. oxlint prints the names of files and rules as they are, so that
 /// a file called `a"><x y=".js` shapes its report.
 fn write_xml_escaped(out: &mut Vec<u8>, text: &[u8]) {
-    for byte in text {
-        match byte {
-            b'<' => out.extend_from_slice(b"&lt;"),
-            b'>' => out.extend_from_slice(b"&gt;"),
-            b'\'' => out.extend_from_slice(b"&apos;"),
-            b'&' => out.extend_from_slice(b"&amp;"),
-            b'"' => out.extend_from_slice(b"&quot;"),
-            byte => out.push(*byte),
+    for &byte in text {
+        match xml_escape_entity(byte) {
+            Some(entity) => out.extend_from_slice(entity),
+            None => out.push(byte),
         }
     }
 }

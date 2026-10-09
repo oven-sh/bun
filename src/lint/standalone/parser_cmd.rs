@@ -40,7 +40,7 @@ fn parse(path: &str, code: &[u8], dialect: Dialect) -> (bool, Vec<Diagnostic>) {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
     let path = path.as_bytes();
-    let hir = bun_js_parser::sema::summarize_as(
+    let hir = bun_sema_parser::summarize_as(
         dialect,
         session.arena(),
         path,
@@ -49,8 +49,7 @@ fn parse(path: &str, code: &[u8], dialect: Dialect) -> (bool, Vec<Diagnostic>) {
         &atoms,
         false,
         !dialect.script,
-    )
-    .0;
+    );
     (
         hir.has_errors || hir.has_parse_diagnostics,
         hir.diagnostics.to_vec(),

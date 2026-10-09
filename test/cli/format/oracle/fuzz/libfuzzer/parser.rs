@@ -1,5 +1,5 @@
-//! `bun_sema_parser` on bytes. It has to refuse or to parse. What it parses has to be valid for the
-//! parser that recovers from errors too, with the same HIR: as `bun-hir fuzz`, with coverage.
+//! `bun_sema_parser` on bytes. It has to refuse or to parse. What the parser that stops at the first error parses has no error
+//! for the one that recovers, and both make the same HIR of it: as `bun-hir compare`, with coverage.
 
 #![no_main]
 
@@ -43,68 +43,13 @@ fn options_for(path: &[u8], dialect: Dialect) -> Options {
     }
 }
 
-/// What is wrong, and what it is about. As `compare_one` there.
-fn compare_one(
-    path: &[u8],
-    text: &[u8],
-    decorators: bool,
-    recovers: bool,
-    dialect: Dialect,
-    scratch: &mut Scratch,
-) -> Option<(&'static str, String)> {
+/// Flow is only parsed: it has to end, and not to crash.
+fn only_parse(path: &[u8], text: &[u8], dialect: Dialect, scratch: &mut Scratch) {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
-    // The other parser does not read Flow.
-    if dialect.flow {
-        if let Ok(parsed) = bun_sema_parser::parse(text, options_for(path, dialect), &atoms, scratch) {
-            scratch.recycle(parsed.file);
-        }
-        return None;
+    if let Ok(parsed) = bun_sema_parser::parse(text, options_for(path, dialect), &atoms, scratch) {
+        scratch.recycle(parsed.file);
     }
-    let every_file_is_a_module = dialect != Dialect::default() && !dialect.script;
-    let (reference, _) = bun_js_parser::sema::summarize_with_recovery(
-        dialect,
-        false,
-        (session.arena(), &session),
-        path,
-        None,
-        text,
-        &atoms,
-        decorators,
-        every_file_is_a_module,
-    );
-    let is_refused_by_reference = reference.has_errors
-        || reference.has_parse_diagnostics
-        || (reference.diagnostics.iter()).any(|it| it.kind == DiagnosticKind::Parse)
-        || reference.ran_out_of_stack;
-    let mut options = options_for(path, dialect);
-    options.recovers = recovers;
-    let mut parsed = bun_sema_parser::parse(text, options, &atoms, scratch);
-    if let Ok(first) = &parsed
-        && first.has_top_level_await
-        && !every_file_is_a_module
-        && !first.file.has_module_syntax
-        && (dialect.script
-            || ![&b".mts"[..], b".cts", b".mjs", b".cjs"].iter().any(|it| path.ends_with(it)))
-        && !(first.file.exprs.iter()).any(|e| matches!(e.kind, ExprKind::ImportMeta))
-    {
-        options.await_is_a_name = true;
-        parsed = bun_sema_parser::parse(text, options, &atoms, scratch);
-    }
-    let parsed = parsed.ok()?;
-    // How it goes on after an error is not compared yet: it has to end, and not to crash.
-    let wrong = if is_refused_by_reference && parsed.file.has_parse_diagnostics {
-        None
-    } else if is_refused_by_reference {
-        let first = reference.diagnostics.first();
-        Some(("accepted", format!("{:?}", first.map(|it| (it.kind, it.code)))))
-    } else {
-        let mut comparison = compare::Comparison::new(&reference, &parsed.file);
-        comparison.run();
-        comparison.difference.take().map(|it| ("different", it))
-    };
-    scratch.recycle(parsed.file);
-    wrong
 }
 
 /// As `parse_as_file` there.
@@ -155,26 +100,7 @@ fn agree_one(
         Err(why) if matches!(why.why, Refusal::TooLarge | Refusal::TooDeep | Refusal::NotUtf8) => return None,
         // An early error of acorn's or Babel's, which TypeScript's parser does not have: whoever calls words it.
         Err(why) if why.why == Refusal::Reported && dialect != Dialect::default() => return None,
-        Err(why) => {
-            // The worst kind: the text is valid. As long as there is another parser to say so.
-            let (reference, _) = bun_js_parser::sema::summarize_with_recovery(
-                dialect,
-                false,
-                (session.arena(), &session),
-                path,
-                None,
-                text,
-                &atoms,
-                false,
-                dialect != Dialect::default() && !dialect.script,
-            );
-            let is_valid = !(reference.has_errors
-                || reference.has_parse_diagnostics
-                || (reference.diagnostics.iter()).any(|it| it.kind == DiagnosticKind::Parse)
-                || reference.ran_out_of_stack);
-            let kind = if is_valid { "recovery-gives-up-on-a-valid-text" } else { "recovery-gives-up" };
-            return Some((kind, format!("{:?} by {}:{}", why.why, why.by.file(), why.by.line())));
-        }
+        Err(why) => return Some(("recovery-gives-up", format!("{:?} by {}:{}", why.why, why.by.file(), why.by.line()))),
     };
     match (strict, general, error) {
         (Ok(_), _, Some(error)) => Some(("strict-accepts-an-error", error)),
@@ -199,31 +125,27 @@ fn run(data: &[u8]) {
     let path = PATHS[input.variant as usize % PATHS.len()];
     let (name, dialect) = dialect_of(u32::from(input.width), input.has(0));
     let mut run = Run::new(data);
-    // Only this dialect is ever parsed with recovery.
-    let recovers = input.has(2) && dialect == Dialect::default();
     let reads_jsdoc = input.has(3) && dialect == Dialect::default();
-    run.how = format!(
-        "{path} --dialect={name} script={} decorators={} recovers={recovers} jsdoc={reads_jsdoc}",
-        input.has(0),
-        input.has(1)
-    );
+    run.how = format!("{path} --dialect={name} script={} jsdoc={reads_jsdoc}", input.has(0));
     if shows() {
         show(&run.how, input.text);
     }
     let wrong = run.guarded(|| {
         // After a panic it is in no state to be used again.
         let mut scratch = SCRATCH.take();
-        let wrong = compare_one(path.as_bytes(), input.text, input.has(1), recovers, dialect, &mut scratch)
-            .or_else(|| match dialect.flow {
-                true => None,
-                false => agree_one(path.as_bytes(), input.text, reads_jsdoc, dialect, &mut scratch),
-            });
+        let wrong = match dialect.flow {
+            true => {
+                only_parse(path.as_bytes(), input.text, dialect, &mut scratch);
+                None
+            }
+            false => agree_one(path.as_bytes(), input.text, reads_jsdoc, dialect, &mut scratch),
+        };
         SCRATCH.set(scratch);
         wrong
     });
     if let Some(Some((kind, what))) = wrong {
         // One for each line of the parser that gives up.
-        let key = if kind.starts_with("recovery-gives-up") { what.clone() } else { shape(what.as_bytes()) };
+        let key = if kind == "recovery-gives-up" { what.clone() } else { shape(what.as_bytes()) };
         run.report(kind, &format!("{name}-{key}"), &what);
     }
 }

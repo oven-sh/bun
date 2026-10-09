@@ -1,14 +1,14 @@
 //! `bun-hir`: the test harness of `bun_sema_parser`.
 //!
-//! - `compare <file or directory>.. [--jobs=n] [--show=n] [--decorators] [--list]
-//!   [--dialect=tsc|estree|espree|babel] [--script] [--recover] [--jsdoc]`: parses every file with both
-//!   parsers and compares the results node by node. A `.jsonl` file is a list of texts, one to a line:
-//!   `{"id", "filename", "code", "sourceType", "parser"}`. Without `--dialect` such a text is read as
-//!   its `parser` reads it, `"espree"` or `"typescript"`, and a file as `tsc` reads it. `--jsdoc`: both
-//!   read the JSDoc comments, as `bun check` has it.
-//! - `dump <inputs as for compare> [--jsdoc]`: what the reference makes of each.
-//! - `bench <file or directory>.. [--reference] [--repeat=n]`: parses every file on one thread.
-//! - `snippets <file.json>..`: the same comparison for the `code` strings of test fixtures.
+//! - `compare <file or directory>.. [--jobs=n] [--show=n] [--list] [--dialect=tsc|estree|espree|babel|flow] [--script]
+//!   [--jsdoc]`: parses every file with the parser that refuses a text at its first error and with the parser that
+//!   recovers, and compares the results node by node. A `.jsonl` file is a list of texts, one to a line:
+//!   `{"id", "filename", "code", "sourceType", "parser"}`. Without `--dialect` such a text is read as its `parser`
+//!   reads it, `"espree"` or `"typescript"`, and a file as `tsc` reads it. `--jsdoc`: both read the JSDoc comments, as
+//!   `bun check` has it.
+//! - `dump <inputs as for compare> [--jsdoc] [--decorators]`: what a tool gets for each.
+//! - `bench <file or directory>.. [--lexer] [--own-atoms] [--repeat=n]`: parses every file on one thread.
+//! - `fuzz <file or directory>..`: see `fuzz`.
 
 #![forbid(unsafe_code)]
 
@@ -54,6 +54,7 @@ fn options_for(path: &[u8], dialect: Dialect) -> Options {
         recovers: false,
         reads_jsdoc: false,
         dialect,
+        goal: Default::default(),
     }
 }
 
@@ -72,104 +73,21 @@ fn dialect_of(name: &str, script: bool) -> Option<Dialect> {
 enum Outcome {
     /// With the first list that is numbered in another order, if any.
     Identical(Option<&'static str>),
-    /// The reference reports an error, and so the direct parser is right to refuse. With the first
+    /// The reference reports an error, and so the strict parser is right to refuse. With the first
     /// error.
     BothRefuse(Refused, String),
-    /// With the first diagnostic of the reference, which is not about the syntax.
-    Refused(Refused, Option<String>),
-    /// The direct parser accepts what the reference reports an error about.
+    /// The reference has no error.
+    Refused(Refused),
+    /// The strict parser accepts what the reference reports an error about.
     Accepted(String),
     Different(String),
-    /// Both report errors, and go on in the same way.
-    Recovered,
-    /// Both report errors. With the first difference.
-    RecoveredDifferently(String),
 }
 
 /// How both parsers read a text.
 #[derive(Clone, Copy)]
 struct Reading {
     dialect: Dialect,
-    decorators: bool,
-    recovers: bool,
     reads_jsdoc: bool,
-}
-
-fn compare_one(path: &[u8], text: &[u8], how: Reading, scratch: &mut Scratch) -> Outcome {
-    let Reading {
-        dialect,
-        decorators,
-        recovers,
-        reads_jsdoc,
-    } = how;
-    let session = Session::new();
-    let atoms = Interner::new_in(&session);
-    let arena = session.arena();
-    // As the linter has it.
-    let every_file_is_a_module = dialect != Dialect::default() && !dialect.script;
-    let (reference, _) = bun_js_parser::sema::summarize_with_recovery(
-        dialect,
-        reads_jsdoc,
-        (arena, &session),
-        path,
-        None,
-        text,
-        &atoms,
-        decorators,
-        every_file_is_a_module,
-    );
-    // The other diagnostics are about a tree that is the same without them: they are compared.
-    let is_refused_by_reference = reference.has_errors
-        || reference.has_parse_diagnostics
-        || (reference.diagnostics.iter()).any(|it| it.kind == DiagnosticKind::Parse)
-        || reference.ran_out_of_stack;
-    let mut options = options_for(path, dialect);
-    options.recovers = recovers;
-    options.reads_jsdoc = reads_jsdoc;
-    match parse_as_file(path, text, options, &atoms, scratch) {
-        Err(why) if is_refused_by_reference => {
-            let first = reference.diagnostics.first();
-            let first = first.map(|it| (it.kind, it.code, it.start));
-            Outcome::BothRefuse(why, format!("{first:?}"))
-        }
-        Err(why) => {
-            let first = reference.diagnostics.first();
-            Outcome::Refused(
-                why,
-                first.map(|it| format!("{:?}", (it.kind, it.code, it.start))),
-            )
-        }
-        Ok(parsed) => {
-            let outcome = if is_refused_by_reference && parsed.file.has_parse_diagnostics {
-                let mut comparison = compare::Comparison::new(&reference, &parsed.file);
-                comparison.compares_jsdoc = reads_jsdoc;
-                comparison.run();
-                match comparison.difference.take() {
-                    Some(difference) => Outcome::RecoveredDifferently(difference),
-                    None => Outcome::Recovered,
-                }
-            } else if is_refused_by_reference {
-                let first = reference.diagnostics.first();
-                Outcome::Accepted(format!(
-                    "{:?}",
-                    first.map(|it| (it.kind, it.code, it.start))
-                ))
-            } else {
-                let mut comparison = compare::Comparison::new(&reference, &parsed.file);
-                comparison.compares_jsdoc = reads_jsdoc;
-                comparison.run();
-                match comparison.difference.take() {
-                    Some(difference) => Outcome::Different(difference),
-                    None => match difference_with_own_atoms(text, options, scratch) {
-                        Some(difference) => Outcome::Different(difference),
-                        None => Outcome::Identical(comparison.other_order),
-                    },
-                }
-            };
-            scratch.recycle(parsed.file);
-            outcome
-        }
-    }
 }
 
 /// `bun_sema_parser::parse`, and once more if the file turns out to be a script that uses `await`
@@ -220,7 +138,7 @@ fn agree_one(path: &[u8], text: &[u8], how: Reading, scratch: &mut Scratch) -> O
     };
     match (strict, general, error) {
         (Err(why), _, Some(error)) => Outcome::BothRefuse(why, error),
-        (Err(why), ..) => Outcome::Refused(why, None),
+        (Err(why), ..) => Outcome::Refused(why),
         (Ok(_), _, Some(error)) => Outcome::Accepted(error),
         (Ok(_), Err(_), None) => Outcome::Accepted(String::new()),
         (Ok(strict), Ok(general), None) => {
@@ -229,7 +147,10 @@ fn agree_one(path: &[u8], text: &[u8], how: Reading, scratch: &mut Scratch) -> O
             comparison.run();
             match comparison.difference.take() {
                 Some(difference) => Outcome::Different(difference),
-                None => Outcome::Identical(comparison.other_order),
+                None => match difference_with_own_atoms(text, options, scratch) {
+                    Some(difference) => Outcome::Different(difference),
+                    None => Outcome::Identical(comparison.other_order),
+                },
             }
         }
     }
@@ -289,8 +210,6 @@ struct Totals {
     refused: BTreeMap<String, Vec<String>>,
     accepted: Vec<(String, String)>,
     different: Vec<(String, String)>,
-    recovered: usize,
-    recovered_differently: Vec<(String, String)>,
 }
 
 impl Totals {
@@ -312,23 +231,16 @@ impl Totals {
                 it.by.file(),
                 it.by.line()
             )),
-            Outcome::Refused(it, first) => (self.refused.entry(format!("{:?}", it.why)))
+            Outcome::Refused(it) => (self.refused.entry(format!("{:?}", it.why)))
                 .or_default()
                 .push(format!(
-                    "{name}:{} by {}:{}{}",
+                    "{name}:{} by {}:{}",
                     it.at,
                     it.by.file(),
-                    it.by.line(),
-                    first.map_or_else(String::new, |it| format!(
-                        " the reference reports Some({it})"
-                    ))
+                    it.by.line()
                 )),
             Outcome::Accepted(what) => self.accepted.push((name.to_owned(), what)),
             Outcome::Different(what) => self.different.push((name.to_owned(), what)),
-            Outcome::Recovered => self.recovered += 1,
-            Outcome::RecoveredDifferently(what) => {
-                self.recovered_differently.push((name.to_owned(), what));
-            }
         }
     }
 
@@ -369,19 +281,6 @@ impl Totals {
             self.both_refuse.len(),
             self.accepted.len(),
         );
-        if self.recovered + self.recovered_differently.len() > 0 {
-            self.recovered_differently.sort();
-            if list {
-                for (name, what) in &self.recovered_differently {
-                    output_line!("RECOVERED DIFFERENTLY {name}\n    {what}");
-                }
-            }
-            output_line!(
-                "    with errors: {} recovered as the reference, {} differently",
-                self.recovered,
-                self.recovered_differently.len()
-            );
-        }
         for (why, names) in &self.refused {
             output_line!("    refused: {why} {}", names.len());
         }
@@ -489,9 +388,6 @@ fn inputs_of(args: &[String]) -> Vec<Input> {
 
 fn compare(args: &[String]) {
     let inputs = inputs_of(args);
-    let decorators = args.iter().any(|arg| arg == "--decorators");
-    let recovers = args.iter().any(|arg| arg == "--recover");
-    let agrees = args.iter().any(|arg| arg == "--agree");
     let reads_jsdoc = args.iter().any(|arg| arg == "--jsdoc");
     let mut totals = Guarded::new(Totals::default());
     bun_sema_standalone::for_each_parallel(flag(args, "jobs").unwrap_or(8), inputs.len(), |i| {
@@ -513,14 +409,9 @@ fn compare(args: &[String]) {
         let outcome = SCRATCH.with_borrow_mut(|scratch| {
             let how = Reading {
                 dialect: input.dialect,
-                decorators,
-                recovers,
                 reads_jsdoc,
             };
-            match agrees {
-                true => agree_one(input.path.as_bytes(), text, how, scratch),
-                false => compare_one(input.path.as_bytes(), text, how, scratch),
-            }
+            agree_one(input.path.as_bytes(), text, how, scratch)
         });
         totals.lock().add(&input.id, outcome);
     });
@@ -537,19 +428,19 @@ fn dump(args: &[String]) {
         };
         let session = Session::new();
         let atoms = Interner::new_in(&session);
-        let dialect = input.dialect;
-        let (reference, _) = bun_js_parser::sema::summarize_with_recovery(
-            dialect,
-            args.iter().any(|arg| arg == "--jsdoc"),
-            (session.arena(), &session),
-            input.path.as_bytes(),
-            None,
-            &text,
-            &atoms,
-            args.iter().any(|arg| arg == "--decorators"),
-            dialect != Dialect::default() && !dialect.script,
-        );
-        let (nodes, _) = bun_sema_standalone::hir_dump::dump_and_orphans(&reference, &atoms);
+        let (dialect, path) = (input.dialect, input.path.as_bytes());
+        let decorators = args.iter().any(|arg| arg == "--decorators");
+        let is_module = dialect != Dialect::default() && !dialect.script;
+        let arena = session.arena();
+        let file = match args.iter().any(|arg| arg == "--jsdoc") {
+            true => {
+                bun_sema_parser::summarize(arena, path, None, &text, &atoms, decorators, is_module)
+            }
+            false => bun_sema_parser::summarize_as(
+                dialect, arena, path, None, &text, &atoms, decorators, is_module,
+            ),
+        };
+        let (nodes, _) = bun_sema_standalone::hir_dump::dump_and_orphans(&file, &atoms);
         output_line!("=== {}\n{nodes}", input.id);
     }
 }
@@ -577,16 +468,13 @@ fn fuzz(args: &[String]) {
             }
             let how = Reading {
                 dialect,
-                decorators: false,
-                recovers: false,
                 reads_jsdoc,
             };
-            match SCRATCH.with_borrow_mut(|scratch| compare_one(path, text, how, scratch)) {
+            match SCRATCH.with_borrow_mut(|scratch| agree_one(path, text, how, scratch)) {
                 Outcome::Identical(_) => fuzz::Verdict::Identical,
                 Outcome::BothRefuse(..) | Outcome::Refused(..) => fuzz::Verdict::Refused,
                 Outcome::Accepted(what) => fuzz::Verdict::Wrong(format!("accepted: {what}")),
                 Outcome::Different(what) => fuzz::Verdict::Wrong(format!("different: {what}")),
-                Outcome::Recovered | Outcome::RecoveredDifferently(_) => fuzz::Verdict::Refused,
             }
         },
     );
@@ -596,7 +484,6 @@ fn bench(args: &[String]) {
     let files = files_of(args);
     let texts: Vec<Vec<u8>> = files.iter().filter_map(|it| host::read(it).ok()).collect();
     let bytes: usize = texts.iter().map(Vec::len).sum();
-    let is_reference = args.iter().any(|arg| arg == "--reference");
     let is_lexer = args.iter().any(|arg| arg == "--lexer");
     let has_own_atoms = args.iter().any(|arg| arg == "--own-atoms");
     let session = Session::new();
@@ -608,20 +495,6 @@ fn bench(args: &[String]) {
         for (path, text) in files.iter().zip(&texts) {
             if is_lexer {
                 nodes += bun_sema_parser::count_tokens(text, &atoms, &mut scratch);
-                parsed += 1;
-            } else if is_reference {
-                let session = Session::new();
-                let atoms = Interner::new_in(&session);
-                let file = bun_js_parser::sema::summarize(
-                    session.arena(),
-                    path.as_bytes(),
-                    None,
-                    text,
-                    &atoms,
-                    false,
-                    false,
-                );
-                nodes += file.0.exprs.len();
                 parsed += 1;
             } else if let Ok(file) = {
                 let options = options_for(path.as_bytes(), Dialect::default());
@@ -646,6 +519,33 @@ fn bench(args: &[String]) {
     }
 }
 
+/// `part --goal=expression|declaration|type [--js] <text> ..`: where the part at the start of each text ends.
+fn part(args: &[String]) {
+    let goal = match args.iter().find_map(|arg| arg.strip_prefix("--goal=")) {
+        Some("declaration") => bun_sema_parser::Goal::Declaration,
+        Some("type") => bun_sema_parser::Goal::Type,
+        _ => bun_sema_parser::Goal::Expression,
+    };
+    let is_javascript = args.iter().any(|arg| arg == "--js");
+    let mut scratch = Scratch::default();
+    for text in args.iter().filter(|arg| !arg.starts_with("--")) {
+        let options = Options {
+            is_javascript,
+            goal,
+            ..Default::default()
+        };
+        match bun_sema_parser::parse_with_own_atoms(text.as_bytes(), options, &mut scratch) {
+            Ok(parsed) => {
+                let (part, rest) = text.split_at(parsed.end as usize);
+                let statements = parsed.file.ids(parsed.file.body).count();
+                output_line!("{part:?} | {rest:?} | {statements} statement");
+                scratch.recycle(parsed.file);
+            }
+            Err(refused) => output_line!("{text:?}: {:?} at {}", refused.why, refused.at),
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let stack = 16 << 20;
@@ -656,7 +556,8 @@ fn main() {
             Some("dump") => dump(&args[1..]),
             Some("bench") => bench(&args[1..]),
             Some("fuzz") => fuzz(&args[1..]),
-            _ => error_line!("usage: bun-hir compare|bench <paths>"),
+            Some("part") => part(&args[1..]),
+            _ => error_line!("usage: bun-hir compare|dump|bench|fuzz <paths>"),
         }
     };
     std::thread::Builder::new()

@@ -168,10 +168,22 @@ struct Running<'r> {
     entry: &'static RuleEntry,
     /// [`ConfiguredRule::reported_as`]
     reported_as: &'static Meta,
+    /// [`ConfiguredRule::name`]
+    name: Option<&'r Arc<[u8]>>,
     severity: Severity,
     rule: RuleRef<'r>,
     /// [`ConfiguredRule::refusal`]
     refusal: Option<Cow<'r, [u8]>>,
+}
+
+impl Running<'_> {
+    /// ESLint's `ruleId` of what it reports.
+    fn id(&self) -> RuleId {
+        match self.name {
+            Some(name) => RuleId::Named(self.entry.meta, Arc::clone(name)),
+            None => RuleId::Known(self.reported_as),
+        }
+    }
 }
 
 enum RuleRef<'r> {
@@ -190,6 +202,8 @@ struct RunningJs<'r> {
 #[derive(Copy, Clone)]
 enum Named<'c> {
     Native(&'static RuleEntry),
+    /// One that has a [name](ConfiguredRule::name).
+    Instance(&'c ConfiguredRule, &'c Arc<[u8]>),
     Js(&'c Arc<js_plugin::Rule>),
 }
 
@@ -197,6 +211,7 @@ impl Named<'_> {
     fn id(self) -> RuleId {
         match self {
             Named::Native(entry) => RuleId::Known(entry.meta),
+            Named::Instance(rule, name) => RuleId::Named(rule.entry.meta, Arc::clone(name)),
             Named::Js(rule) => RuleId::Js(Arc::clone(rule)),
         }
     }
@@ -204,6 +219,7 @@ impl Named<'_> {
     fn is(self, other: Named) -> bool {
         match (self, other) {
             (Named::Native(a), Named::Native(b)) => is_same_rule(a, b),
+            (Named::Instance(_, a), Named::Instance(_, b)) => a == b,
             (Named::Js(a), Named::Js(b)) => Arc::ptr_eq(a, b),
             _ => false,
         }
@@ -212,14 +228,18 @@ impl Named<'_> {
     /// [`schema::validate`]. `Ok`: what a rule of a JavaScript plugin gets as its options.
     fn validate(self, options: &[Json]) -> Result<Vec<Json>, Vec<u8>> {
         match self {
-            Named::Native(entry) => schema::validate(entry.meta, options).map(|()| Vec::new()),
+            Named::Native(entry) | Named::Instance(&ConfiguredRule { entry, .. }, _) => {
+                schema::validate(entry.meta, options).map(|()| Vec::new())
+            }
             Named::Js(rule) => schema::validate_js(rule, options),
         }
     }
 
     fn with_defaults(self, options: &[Json]) -> Vec<Json> {
         match self {
-            Named::Native(entry) => schema::with_defaults(entry.meta, options),
+            Named::Native(entry) | Named::Instance(&ConfiguredRule { entry, .. }, _) => {
+                schema::with_defaults(entry.meta, options)
+            }
             Named::Js(rule) => schema::with_js_defaults(rule, options),
         }
     }
@@ -229,7 +249,7 @@ impl<'c> Named<'c> {
     /// The rule, if it is one of a JavaScript plugin.
     fn js(self) -> Option<&'c js_plugin::Rule> {
         match self {
-            Named::Native(_) => None,
+            Named::Native(_) | Named::Instance(..) => None,
             Named::Js(rule) => Some(rule),
         }
     }
@@ -316,6 +336,7 @@ impl Linter {
                 running.push(Running {
                     entry: rule.entry,
                     reported_as: rule.reported_as(),
+                    name: rule.name(),
                     severity: rule.severity,
                     rule: RuleRef::Shared(instance),
                     refusal: rule.refusal().map(Cow::Borrowed),
@@ -405,7 +426,7 @@ impl Linter {
         let ignores_what_is_filtered = !config.language.is_oxlint;
         if let Some(filter) = options.rule_filter {
             running.retain(|it| {
-                let id = RuleId::Known(it.reported_as);
+                let id = it.id();
                 let runs = it.severity == Severity::Off || filter(&id, it.severity);
                 if !runs && ignores_what_is_filtered {
                     rules_to_ignore.push(id);
@@ -539,6 +560,9 @@ impl Linter {
                 );
             }
             let mut message = to_message(diagnostic, rule.reported_as, &locator);
+            if rule.name.is_some() {
+                message.rule_id = Some(rule.id());
+            }
             if follows_oxlint {
                 change_as_oxlint(&mut message, changes.1);
             }
@@ -584,6 +608,7 @@ impl Linter {
             match config.find_js_rule(name) {
                 Some(_) => true,
                 None if config.find_rule(&self.registry, name).is_some() => true,
+                None if config.named_rule(name).is_some() => true,
                 // One of a plugin that is skipped.
                 None if slash.is_some() && config.has_skipped_rules => false,
                 None => !config::is_rule_of_oxlint(slash.map_or(name, |it| &name[it + 1..])),
@@ -903,6 +928,11 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
         is_turned_on: bool,
     ) -> Option<Named<'c>> {
         let config = self.config;
+        if let Some(rule) = config.named_rule(id)
+            && let Some(name) = rule.name()
+        {
+            return Some(Named::Instance(rule, name));
+        }
         let js = config.find_js_rule(id);
         let native = || (config.find_rule(&self.linter.registry, id)).map(Named::Native);
         let lacks_it = config.lacks_rule(id);
@@ -1027,6 +1057,7 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
             };
             let existing = match rule {
                 Named::Native(entry) => self.config.rule(entry).map(Existing::Native),
+                Named::Instance(rule, _) => Some(Existing::Native(rule)),
                 Named::Js(rule) => self.config.js_rule(rule).map(Existing::Js),
             };
             // A comment that has only a severity keeps the options of the configuration.
@@ -1070,6 +1101,7 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
             let (entry, existing) = match (rule, existing) {
                 (Named::Native(entry), Some(Existing::Native(existing))) => (entry, Some(existing)),
                 (Named::Native(entry), _) => (entry, None),
+                (Named::Instance(rule, _), _) => (rule.entry, Some(rule)),
                 (Named::Js(js), existing) => {
                     let is_it = |it: &RunningJs| Arc::ptr_eq(&it.configured.rule, js);
                     if severity == Severity::Off {
@@ -1098,6 +1130,8 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
                     continue;
                 }
             };
+            let name = existing.and_then(ConfiguredRule::name);
+            let is_it = |it: &Running| is_same_rule(it.entry, entry) && it.name == name;
             let shared = existing
                 .filter(|_| keeps_options)
                 .and_then(ConfiguredRule::instance);
@@ -1113,7 +1147,7 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
             let rule = match shared {
                 Some(rule) => RuleRef::Shared(rule),
                 None if severity == Severity::Off => {
-                    running.retain(|it| !is_same_rule(it.entry, entry));
+                    running.retain(|it| !is_it(it));
                     continue;
                 }
                 None => RuleRef::Own((entry.build)(&Options::new(options))),
@@ -1121,11 +1155,12 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
             let new = Running {
                 entry,
                 reported_as: existing.map_or(entry.meta, ConfiguredRule::reported_as),
+                name,
                 severity,
                 rule,
                 refusal,
             };
-            match running.iter_mut().find(|it| is_same_rule(it.entry, entry)) {
+            match running.iter_mut().find(|it| is_it(it)) {
                 Some(running) => *running = new,
                 None => running.push(new),
             }

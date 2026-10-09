@@ -1247,7 +1247,7 @@ impl Host for Disk {
         options: ParseOptions,
     ) -> hir::File<'s> {
         let began = Instant::now();
-        let (file, parsing) = bun_js_parser::sema::summarize(
+        let file = bun_sema_parser::summarize(
             arena,
             path,
             self.script_kind(path),
@@ -1256,8 +1256,7 @@ impl Host for Disk {
             options.experimental_decorators,
             options.module_detection == ModuleDetection::Force,
         );
-        self.spent(Phase::Parse, parsing);
-        self.spent(Phase::Lower, began.elapsed().saturating_sub(parsing));
+        self.spent(Phase::Parse, began.elapsed());
         file
     }
     fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {

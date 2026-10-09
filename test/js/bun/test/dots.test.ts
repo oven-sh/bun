@@ -101,3 +101,39 @@ test("dots 2", async () => {
     }
   `);
 });
+
+// console.timeEnd, console.timeLog and console.assert(false) print on stderr like console.warn. The dots line
+// ends and the file name shows before the first of them, as it does for console.warn in "dots 2".
+test("dots 3", async () => {
+  const result = await Bun.spawn({
+    cmd: [bunExe(), "test", import.meta.dir + "/printing/dots/dots4.fixture.ts", "--dots"],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const exitCode = await result.exited;
+  const stderr = await result.stderr.text();
+  expect({
+    exitCode,
+    stderr: normalizeBunSnapshot(stderr.replace(/\[[\d.]+m?s\] timer/g, "<elapsed> timer")),
+  }).toMatchInlineSnapshot(`
+    {
+      "exitCode": 0,
+      "stderr": 
+    ".....
+
+    test/js/bun/test/printing/dots/dots4.fixture.ts:
+    <elapsed> timer
+    ......
+    Assertion failed
+    ......
+    <elapsed> timer value
+    .
+
+    18 pass
+    0 fail
+    Ran 18 tests across 1 file."
+    ,
+    }
+  `);
+});

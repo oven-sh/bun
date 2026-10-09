@@ -3135,20 +3135,11 @@ impl VirtualMachine {
             MAIN_THREAD_VM.store(vm, core::sync::atomic::Ordering::Release);
         }
 
-        // ConsoleObject is self-referential (buffers + adapters) — allocate
-        // stable storage and init in place.
-        // `console.init(Output.rawErrorWriter(), Output.rawWriter())` must
-        // happen BEFORE the pointer is stored/passed; the previous port left
-        // it as raw `MaybeUninit` (UB on first C++ read).
-        let mut console_box: Box<core::mem::MaybeUninit<crate::console_object::ConsoleObject>> =
-            Box::new(core::mem::MaybeUninit::uninit());
-        crate::console_object::ConsoleObject::init_in_place(
-            &mut console_box,
-            bun_core::Output::raw_error_writer(),
-            bun_core::Output::raw_writer(),
-        );
         let console =
-            bun_core::heap::into_raw(console_box).cast::<crate::console_object::ConsoleObject>();
+            bun_core::heap::into_raw(Box::new(crate::console_object::ConsoleObject::new(
+                bun_core::Output::raw_error_writer(),
+                bun_core::Output::raw_writer(),
+            )));
 
         let context_id = opts
             .context_id

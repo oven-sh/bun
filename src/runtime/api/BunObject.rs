@@ -565,7 +565,6 @@ fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     let mut format_options = ConsoleObject::FormatOptions {
         enable_colors: false,
         add_newline: false,
-        flush: false,
         max_depth: 5,
         quote_strings: true,
         ordered_properties: false,
@@ -639,7 +638,6 @@ fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
     let mut format_options = ConsoleObject::FormatOptions {
         enable_colors: false,
         add_newline: false,
-        flush: false,
         max_depth: 8,
         quote_strings: true,
         ordered_properties: false,
@@ -680,7 +678,6 @@ pub(crate) fn bun_inspect_singleline(global_this: &JSGlobalObject, value: JSValu
         ConsoleObject::FormatOptions {
             enable_colors: false,
             add_newline: false,
-            flush: false,
             max_depth: u16::MAX,
             quote_strings: true,
             ordered_properties: false,

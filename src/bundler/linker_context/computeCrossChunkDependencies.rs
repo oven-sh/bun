@@ -340,12 +340,6 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                         deps.wrapper_refs[chunk.entry_point.source_index() as usize],
                         (),
                     );
-                    // "await __esmWait(init_foo);"
-                    if flags.wrap == WrapKind::Esm && flags.is_async_or_has_async_dependency {
-                        let _ = chunk_meta
-                            .imports
-                            .put(deps.ctx.get().esm_wait_runtime_ref, ());
-                    }
                 }
             }
         }

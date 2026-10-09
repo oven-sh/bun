@@ -870,7 +870,7 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                             if let Some(module_info) = module_info.as_deref_mut() {
                                 module_info.flags.has_tla = true;
                             }
-                            // "await __esmWait(init_foo);"
+                            // "await init_foo();"
                             stmts.push(Stmt::alloc(
                                 S::SExpr {
                                     value: Expr::init(
@@ -878,15 +878,9 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                                             value: Expr::init(
                                                 E::Call {
                                                     target: Expr::init_identifier(
-                                                        c.esm_wait_runtime_ref,
+                                                        ast.wrapper_ref,
                                                         bun_ast::Loc::EMPTY,
                                                     ),
-                                                    args: bun_ast::ExprNodeList::from_slice(&[
-                                                        Expr::init_identifier(
-                                                            ast.wrapper_ref,
-                                                            bun_ast::Loc::EMPTY,
-                                                        ),
-                                                    ]),
                                                     ..Default::default()
                                                 },
                                                 bun_ast::Loc::EMPTY,
@@ -1284,7 +1278,6 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
         has_run_symbol_renamer: true,
 
         to_esm_ref,
-        esm_wait_ref: c.esm_wait_runtime_ref,
         to_commonjs_ref: to_common_js_ref,
         require_or_import_meta_for_source_callback: js_printer::RequireOrImportMetaCallback::init::<
             LinkerContext,

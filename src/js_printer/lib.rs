@@ -1320,7 +1320,6 @@ pub struct Options<'a> {
     pub bundling: bool,
     pub to_commonjs_ref: Ref,
     pub to_esm_ref: Ref,
-    pub esm_wait_ref: Ref,
     /// `__preload`: when set, an `import()` of a chunk is printed as `(__preload(chunkId), import(path))`.
     pub module_preload_ref: Ref,
     pub require_ref: Option<Ref>,
@@ -1407,7 +1406,6 @@ impl<'a> Default for Options<'a> {
             bundling: false,
             to_commonjs_ref: Ref::NONE,
             to_esm_ref: Ref::NONE,
-            esm_wait_ref: Ref::NONE,
             module_preload_ref: Ref::NONE,
             require_ref: None,
             import_meta_ref: Ref::NONE,
@@ -2768,13 +2766,9 @@ pub(crate) mod __gated_printer {
 
                 // Internal "import()" of async ESM
                 if record.kind == ImportKind::Dynamic && meta.is_wrapper_async {
-                    // "(async () => __esmWait(init_foo))()": always a promise, also when it throws
                     self.print_space_before_identifier();
-                    self.print(b"(async () => ");
-                    self.print_symbol(self.options.esm_wait_ref);
-                    self.print(b"(");
                     self.print_symbol(meta.wrapper_ref);
-                    self.print(b"))()");
+                    self.print(b"()");
                     if meta.exports_ref.is_valid() {
                         let _ = self.print_dot_then_prefix();
                         self.print_space_before_identifier();

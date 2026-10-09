@@ -138,10 +138,10 @@ fn group_files(c: &LinkerContext, already_wrapped: &AutoBitSet) -> crate::Result
     // A file comes after what it imports whoever loads it, so an initializer without side effects
     // is in place for its readers. Not in an import cycle, where the file entered first runs last.
     if groups.iter().any(|group| group.loader_count >= 2) {
-        let is_cyclic = find_cyclic_files(c);
+        let (cycle_of_file, _) = find_import_cycles(c);
         for (id, &group) in group_of_file.iter().enumerate() {
             if group != NO_GROUP
-                && is_cyclic[id]
+                && cycle_of_file[id] != NO_CYCLE
                 && !already_wrapped.is_set(id)
                 && groups[group as usize].loader_count >= 2
                 && has_top_level_initializer(c, id as IndexInt)
@@ -565,8 +565,11 @@ fn has_top_level_initializer(c: &LinkerContext, source_index: IndexInt) -> bool 
         })
 }
 
-/// Per file: whether it is in a strongly connected component of several files (Tarjan's algorithm).
-fn find_cyclic_files(c: &LinkerContext) -> Vec<bool> {
+pub(crate) const NO_CYCLE: u32 = u32::MAX;
+
+/// Per file: the strongly connected component of several files that it is in, or `NO_CYCLE`. And how
+/// many there are (Tarjan's algorithm).
+pub(crate) fn find_import_cycles(c: &LinkerContext) -> (Vec<u32>, usize) {
     const UNVISITED: u32 = u32::MAX;
     struct Frame {
         source_index: IndexInt,
@@ -576,7 +579,8 @@ fn find_cyclic_files(c: &LinkerContext) -> Vec<bool> {
     }
 
     let files_len = c.graph.files.len();
-    let mut is_cyclic: Vec<bool> = vec![false; files_len];
+    let mut cycle_of_file: Vec<u32> = vec![NO_CYCLE; files_len];
+    let mut cycles_len: usize = 0;
     // The position in `scc_stack` when the file was pushed.
     let mut index: Vec<u32> = vec![UNVISITED; files_len];
     let mut lowlink: Vec<u32> = vec![0; files_len];
@@ -585,7 +589,8 @@ fn find_cyclic_files(c: &LinkerContext) -> Vec<bool> {
     let mut edges: Vec<IndexInt> = Vec::new();
     let mut stack: Vec<Frame> = Vec::new();
 
-    for &root in c.graph.entry_points.items_source_index() {
+    for root in c.graph.reachable_files.iter() {
+        let root = root.get();
         if index[root as usize] != UNVISITED {
             continue;
         }
@@ -632,12 +637,15 @@ fn find_cyclic_files(c: &LinkerContext) -> Vec<bool> {
                 let is_cycle = component.len() > 1;
                 for member in component {
                     on_scc_stack[member as usize] = false;
-                    is_cyclic[member as usize] = is_cycle;
+                    if is_cycle {
+                        cycle_of_file[member as usize] = cycles_len as u32;
+                    }
                 }
+                cycles_len += is_cycle as usize;
             }
         }
     }
-    is_cyclic
+    (cycle_of_file, cycles_len)
 }
 
 /// The tracked files that loading an entry point evaluates, in evaluation order.

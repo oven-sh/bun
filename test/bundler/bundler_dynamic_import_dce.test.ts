@@ -3833,7 +3833,7 @@ describe("bundler", () => {
     },
     stdout: "before\nt start\nt end\ngot u late\nthen late",
     output(out) {
-      expect(out).toContain("await (async () => __esmWait(init_t))().then(() => ({}))");
+      expect(out).toContain("await init_t().then(() => ({}))");
     },
   });
 

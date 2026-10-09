@@ -2547,7 +2547,7 @@ describe("bundler", () => {
     },
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
-      expect(out).toContain("__esmWait(init_async)");
+      expect(out).toContain("await init_async()");
       expect(out).toContain("init_sync()");
     },
   });
@@ -3741,6 +3741,54 @@ describe("bundler", () => {
     },
     target: "bun",
     run: { stdout: "caught boom.js\ndone" },
+  });
+  // entry.js is not in a wrapper. The import() calls put t1.js and t2.js in one each.
+  for (const [name, second] of [
+    ["Import", `import { b } from "./t2.js"; console.log("entry", b);`],
+    ["ExportStar", `export * from "./t2.js"; console.log("entry");`],
+  ]) {
+    itBundled("edgecase/EsmWrapperTwoAsyncImportsOutsideOfWrapper" + name, {
+      files: {
+        "/entry.js": /* js */ `
+          import "./t1.js";
+          ${second}
+          export const later = () => [import("./t1.js"), import("./t2.js")];
+        `,
+        "/t1.js": `console.log("t1 starts"); await null; console.log("t1 ends");`,
+        "/t2.js": `console.log("t2 starts"); await null; console.log("t2 ends"); export const b = 2;`,
+      },
+      format: "esm",
+      run: { stdout: "t1 starts\nt2 starts\nt1 ends\nt2 ends\nentry" + (name === "Import" ? " 2" : "") },
+    });
+  }
+  // member.js is done before root.js, which started the cycle. user.js waits for both.
+  itBundled("edgecase/EsmWrapperAsyncImportCycleImporter", {
+    files: {
+      "/entry.js": `import("./x.js").then(() => console.log("entry"));`,
+      "/x.js": `import "./root.js"; import "./user.js"; console.log("x");`,
+      "/root.js": /* js */ `
+        import { helper } from "./member.js";
+        export const cfg = await Promise.resolve({ ok: 1 });
+        console.log("root", typeof helper);
+      `,
+      "/member.js": `import { cfg } from "./root.js"; export function helper() { return cfg.ok; } console.log("member");`,
+      "/user.js": `import { helper } from "./member.js"; console.log("user", helper());`,
+    },
+    format: "esm",
+    run: { stdout: "member\nroot function\nuser 1\nx\nentry" },
+  });
+  // Tree shaking drops the import in c.js, and t.js is in the bundle for another reason. A __commonJS
+  // wrapper cannot wait, so the import stays dropped.
+  itBundled("edgecase/EsmWrapperDroppedAsyncImportInCommonJS", {
+    files: {
+      "/entry.js": `import c from "./c.js"; console.log(c.v); export const later = () => import("./t.js");`,
+      "/c.js": `import { unused } from "pure"; module.exports = { v: 1 };`,
+      "/t.js": `export const t = await 1;`,
+      "/node_modules/pure/package.json": `{ "name": "pure", "main": "index.js", "sideEffects": false }`,
+      "/node_modules/pure/index.js": `import { t } from "../../t.js"; export const unused = t;`,
+    },
+    format: "esm",
+    run: { stdout: "1" },
   });
   // Diamond-shaped DAG (half the modules have two importers). The code-
   // splitting reachability pass tracks min distance-from-entry for each file;

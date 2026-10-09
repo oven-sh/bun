@@ -2579,24 +2579,25 @@ describe("bundler", () => {
     ],
   });
 
-  // n.js and a1.js reach the await of d.js only through the cycle, so they run before it is done.
+  // The wrapper of each file of the cycle is an async function, n.js too.
   itBundled("splitting/SharedChunkOrderConflictAsyncImportCycle", {
     files: {
       "/index.js": `import "./p.js"; import "./a2.js"; console.log("index");`,
       "/worker.js": `import "./a2.js"; import "./p.js"; console.log("worker");`,
       "/p.js": `console.log("p");`,
-      "/a2.js": `import "./a1.js"; import "./d.js"; console.log("a2");`,
-      "/a1.js": `import "./n.js"; import "./a2.js"; console.log("a1");`,
-      "/n.js": `import "./a1.js"; console.log("n");`,
-      "/d.js": `await 0; console.log("d");`,
+      // a2 -> a1 -> n -> a1, a1 -> a2, and a2 -> d, which has the await.
+      "/a2.js": `import { n } from "./a1.js"; import { d } from "./d.js"; console.log("a2", n(), d);`,
+      "/a1.js": `import { n } from "./n.js"; import "./a2.js"; export const a1 = "a1"; export { n };`,
+      "/n.js": `import { a1 } from "./a1.js"; export const n = () => "n" + a1;`,
+      "/d.js": `export const d = await Promise.resolve("d");`,
     },
     entryPoints: ["/index.js", "/worker.js"],
     splitting: true,
     outdir: "/out",
     format: "esm",
     run: [
-      { file: "/out/index.js", stdout: "p\nn\na1\nd\na2\nindex" },
-      { file: "/out/worker.js", stdout: "n\na1\np\nd\na2\nworker" },
+      { file: "/out/index.js", stdout: "p\na2 na1 d\nindex" },
+      { file: "/out/worker.js", stdout: "p\na2 na1 d\nworker" },
     ],
   });
 
@@ -2731,6 +2732,52 @@ describe("bundler", () => {
       { file: "/out/m0.js", stdout: "1 function\n3 function\n0 v3 K" },
       { file: "/out/m1.js", stdout: "3 function\n1 function" },
     ],
+  });
+
+  // d.js is in the chunk of index.js alone, and only w.js, a wrapper that worker.js loads too, imports it.
+  // index.js reads the binding that w.js re-exports, so d.js prints ahead of index.js.
+  itBundled("splitting/SharedChunkOrderConflictEntryChunkFileOnlyBehindWrapper", {
+    files: {
+      "/index.js": `import "./p.js"; import { x, d } from "./w.js"; console.log("index", x, d);`,
+      "/worker.js": `import { x } from "./w.js"; import "./p.js"; console.log("worker", x);`,
+      "/w.js": `export { d } from "pkg/d.js"; console.log("w"); export const x = 1;`,
+      "/p.js": `console.log("p");`,
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "sideEffects": false }`,
+      "/node_modules/pkg/d.js": `export const d = "d";`,
+    },
+    entryPoints: ["/index.js", "/worker.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/index.js", stdout: "p\nw\nindex 1 d" },
+      { file: "/out/worker.js", stdout: "w\np\nworker 1" },
+    ],
+  });
+
+  // page.js waits for a.js and b.js at once. a.js has started when b.js throws, and ends after that.
+  itBundled("splitting/SharedChunkOrderConflictAsyncImportThrows", {
+    files: {
+      "/run.js": /* js */ `
+        process.on("unhandledRejection", error => console.log("unhandled", error.message));
+        import("./page.js")
+          .catch(error => console.log("caught", error.message))
+          .then(() => new Promise(resolve => setImmediate(resolve)))
+          .then(() => console.log("done"));
+      `,
+      "/page.js": `import "./a.js"; import "./b.js"; console.log("page");`,
+      "/other.js": `import "./b.js"; import "./a.js";`,
+      "/a.js": `console.log("a starts"); await new Promise(resolve => setImmediate(resolve)); console.log("a ends");`,
+      "/b.js": `import "./boom.js"; import "./t.js"; console.log("b");`,
+      "/t.js": `await 0;`,
+      "/boom.js": `throw new Error("boom");`,
+    },
+    entryPoints: ["/run.js", "/other.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    target: "bun",
+    run: { file: "/out/run.js", stdout: "a starts\ncaught boom\na ends\ndone" },
   });
 
   // f2.cjs has started when it requires f1.js, so f1.js comes after a wrapper and is one.

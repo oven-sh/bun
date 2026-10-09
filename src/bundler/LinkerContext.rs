@@ -97,9 +97,8 @@ pub struct LinkerContext<'a> {
     /// We may need to refer to the CommonJS "module" symbol for exports
     pub(crate) unbound_module_ref: Ref,
 
-    /// "__esmAsync" and "__esmWait": "__esm" for a file that reaches a top-level await
-    pub(crate) esm_async_runtime_ref: Ref,
-    pub(crate) esm_wait_runtime_ref: Ref,
+    /// We may need to refer to the "__promiseAll" runtime symbol
+    pub(crate) promise_all_runtime_ref: Ref,
     /// `__preload` / `__chunks`: modulepreload for split browser `import()`s.
     pub(crate) preload_runtime_ref: Ref,
     pub(crate) chunks_runtime_ref: Ref,
@@ -166,8 +165,7 @@ impl<'a> Default for LinkerContext<'a> {
             cjs_runtime_ref: Ref::NONE,
             esm_runtime_ref: Ref::NONE,
             unbound_module_ref: Ref::NONE,
-            esm_async_runtime_ref: Ref::NONE,
-            esm_wait_runtime_ref: Ref::NONE,
+            promise_all_runtime_ref: Ref::NONE,
             preload_runtime_ref: Ref::NONE,
             chunks_runtime_ref: Ref::NONE,
             options: Default::default(),
@@ -604,12 +602,8 @@ impl<'a> LinkerContext<'a> {
             .get(b"__commonJS")
             .expect("infallible: runtime export")
             .ref_;
-        self.esm_async_runtime_ref = runtime_named_exports
-            .get(b"__esmAsync")
-            .expect("infallible: runtime export")
-            .ref_;
-        self.esm_wait_runtime_ref = runtime_named_exports
-            .get(b"__esmWait")
+        self.promise_all_runtime_ref = runtime_named_exports
+            .get(b"__promiseAll")
             .expect("infallible: runtime export")
             .ref_;
         // Browser runtime only (`RUNTIME_PRELOAD_BROWSER`).
@@ -965,10 +959,6 @@ impl<'a> LinkerContext<'a> {
         self.tree_shaking_and_code_splitting()?;
         resolve_chunk_order_conflicts(self)?;
         find_wrappers_behind_imports(self)?;
-        self.validate_async_imports_of_commonjs_files();
-        if self.log().has_errors() {
-            return Err(LinkError::BuildFailed);
-        }
 
         if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
             self.check_for_memory_corruption();
@@ -2263,47 +2253,6 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    /// A `__commonJS` wrapper returns `module.exports` at once, so it cannot wait for what it imports.
-    fn validate_async_imports_of_commonjs_files(&mut self) {
-        let flags = self.graph.meta.items_flags();
-        let tla_keywords = self.parse_graph().ast.items_top_level_await_keyword();
-        let input_files = self.parse_graph().input_files.items_source();
-        let mut import_record_indices: Vec<u32> = Vec::new();
-        for source_index in self.graph.reachable_files.iter() {
-            let id = source_index.get() as usize;
-            if flags[id].wrap != WrapKind::Cjs
-                || !flags[id].is_async_or_has_async_dependency
-                || !self.graph.files_live.is_set(id)
-            {
-                continue;
-            }
-            import_record_indices.clear();
-            self.for_each_async_wrapper_call(source_index.get(), |import_record_index, _| {
-                if import_record_indices.last() != Some(&import_record_index) {
-                    import_record_indices.push(import_record_index);
-                }
-            });
-            for &import_record_index in &import_record_indices {
-                let record = &self.graph.ast.items_import_records()[id].as_slice()
-                    [import_record_index as usize];
-                let other = record.source_index.get() as usize;
-                self.log_disjoint().add_range_error_fmt(
-                    Some(&input_files[id]),
-                    record.range,
-                    format_args!(
-                        "This import is not allowed in a CommonJS module because the imported file \"{}\" {} a top-level await",
-                        bstr::BStr::new(&input_files[other].path.pretty),
-                        if tla_keywords[other].is_empty() {
-                            "depends on"
-                        } else {
-                            "contains"
-                        },
-                    ),
-                );
-            }
-        }
-    }
-
     pub(crate) fn should_remove_import_export_stmt(
         &mut self,
         stmts: &mut StmtList,
@@ -2451,23 +2400,42 @@ impl<'a> LinkerContext<'a> {
         ));
     }
 
-    /// The async wrappers that the `import` statements of a file call, in order.
-    pub(crate) fn async_wrappers_called_by(&self, source_index: crate::IndexInt) -> Vec<Ref> {
-        let wrapper_refs = self.graph.ast.items_wrapper_ref();
-        let mut wrappers: Vec<Ref> = Vec::new();
-        self.for_each_async_wrapper_call(source_index, |_, wrapper| {
-            if !wrappers.contains(&wrapper_refs[wrapper as usize]) {
-                wrappers.push(wrapper_refs[wrapper as usize]);
+    /// The async wrappers that a file waits for: the ones that its `import` statements call, in order.
+    /// And for one in an import cycle that the file is not in, the files where the cycle can start:
+    /// the one where it did start ends last.
+    pub(crate) fn async_wrappers_awaited_by(
+        &self,
+        source_index: crate::IndexInt,
+    ) -> Vec<crate::IndexInt> {
+        let mut wrappers: Vec<crate::IndexInt> = Vec::new();
+        self.for_each_async_wrapper_call(source_index, |wrapper| {
+            if !wrappers.contains(&wrapper) {
+                wrappers.push(wrapper);
             }
         });
+        let cycle_of_file = self.graph.async_cycle_of_file.as_slice();
+        if cycle_of_file.is_empty() {
+            return wrappers;
+        }
+        for i in 0..wrappers.len() {
+            let cycle = cycle_of_file[wrappers[i] as usize];
+            if cycle == u32::MAX || cycle == cycle_of_file[source_index as usize] {
+                continue;
+            }
+            for &entrance in self.graph.async_cycle_entrances[cycle as usize].iter() {
+                if self.runs_with(source_index, entrance) && !wrappers.contains(&entrance) {
+                    wrappers.push(entrance);
+                }
+            }
+        }
         wrappers
     }
 
-    /// `each(import record, file)` for every call of an async wrapper that the file prints for an `import`.
-    fn for_each_async_wrapper_call(
+    /// `each(file)` for every call of an async wrapper that the file prints for an `import`.
+    pub(crate) fn for_each_async_wrapper_call(
         &self,
         source_index: crate::IndexInt,
-        mut each: impl FnMut(u32, crate::IndexInt),
+        mut each: impl FnMut(crate::IndexInt),
     ) {
         let flags = self.graph.meta.items_flags();
         let wrapper_refs = self.graph.ast.items_wrapper_ref();
@@ -2504,7 +2472,7 @@ impl<'a> LinkerContext<'a> {
                     .map_or(&target, |behind| behind);
                 for &other in called {
                     if is_async_wrapper(other) {
-                        each(import_record_index, other);
+                        each(other);
                     }
                 }
             }
@@ -2612,7 +2580,6 @@ impl<'a> LinkerContext<'a> {
             has_run_symbol_renamer: true,
 
             to_esm_ref,
-            esm_wait_ref: self.esm_wait_runtime_ref,
             to_commonjs_ref,
             module_preload_ref: if self.module_preload() {
                 self.preload_runtime_ref
@@ -3697,31 +3664,21 @@ impl<'a> LinkerContext<'a> {
                 // This depends on the "__esm" symbol and declares the "init_foo" symbol
                 // for similar reasons to the CommonJS closure above.
 
-                let has_runtime_wrapper =
-                    wrapper_ref.is_valid() && self.options.output_format != Format::InternalBakeDev;
-                let is_async = self.graph.meta.items_flags()[source_index as usize]
-                    .is_async_or_has_async_dependency;
-                let runtime_ref = if is_async {
-                    self.esm_async_runtime_ref
+                let esm_parts: &[u32] = if wrapper_ref.is_valid()
+                    && self.options.output_format != Format::InternalBakeDev
+                {
+                    self.top_level_symbols_to_parts_for_runtime(self.esm_runtime_ref)
                 } else {
-                    self.esm_runtime_ref
-                };
-                // What is outside of an async wrapper waits for it with "__esmWait".
-                let runtime_refs: &[Ref] = match (has_runtime_wrapper, is_async) {
-                    (false, _) => &[],
-                    (true, false) => &[runtime_ref],
-                    (true, true) => &[runtime_ref, self.esm_wait_runtime_ref],
+                    &[]
                 };
 
-                // generate a dummy part that depends on the runtime symbols
-                let mut dependencies = DependencyList::init_capacity(runtime_refs.len());
-                for &runtime_ref in runtime_refs {
-                    for &part in self.top_level_symbols_to_parts_for_runtime(runtime_ref) {
-                        dependencies.push(Dependency {
-                            part_index: part,
-                            source_index: bun_ast::Index::RUNTIME,
-                        });
-                    }
+                // generate a dummy part that depends on the "__esm" symbol
+                let mut dependencies = DependencyList::init_capacity(esm_parts.len());
+                for &part in esm_parts {
+                    dependencies.append_assume_capacity(Dependency {
+                        part_index: part,
+                        source_index: bun_ast::Index::RUNTIME,
+                    });
                 }
 
                 let mut symbol_uses = PartSymbolUseMap::default();
@@ -3746,12 +3703,12 @@ impl<'a> LinkerContext<'a> {
                     .expect("unreachable");
                 debug_assert!(part_index != bun_ast::NAMESPACE_EXPORT_PART_INDEX);
                 *wrapper_part_index = crate::Index::part(part_index);
-                if has_runtime_wrapper {
+                if wrapper_ref.is_valid() && self.options.output_format != Format::InternalBakeDev {
                     self.graph
                         .generate_symbol_import_and_use(
                             source_index,
                             part_index,
-                            runtime_ref,
+                            self.esm_runtime_ref,
                             1,
                             crate::Index::RUNTIME,
                         )
@@ -3806,22 +3763,6 @@ impl<'a> LinkerContext<'a> {
         {
             insert_flags.insert(bun_ast::ImportRecordFlags::WRAP_WITH_TO_ESM);
             *to_esm_uses += 1;
-        }
-
-        // "import()" waits for an async wrapper from outside of it.
-        if kind == ImportKind::Dynamic
-            && other_flags.wrap == WrapKind::Esm
-            && other_flags.is_async_or_has_async_dependency
-            && wrapper_ref.is_valid()
-            && self.options.output_format != Format::InternalBakeDev
-        {
-            self.graph.generate_symbol_import_and_use(
-                source_index,
-                part_index,
-                self.esm_wait_runtime_ref,
-                1,
-                Index::RUNTIME,
-            )?;
         }
 
         // If this is an ESM wrapper, also depend on the exports object

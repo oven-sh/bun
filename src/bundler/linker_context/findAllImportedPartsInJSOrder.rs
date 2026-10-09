@@ -506,6 +506,8 @@ enum WalkFrame {
     },
     /// The walk is past what `run` waits for: `run` goes at the end of `owned[slot].runs`.
     Place { run: PartRun, slot: u32 },
+    /// The same for a whole file that a wrapper leads to and does not run. It stays unless an `import` runs the file.
+    PlaceUnlessImported { source_index: IndexInt, slot: u32 },
     /// The class-name object of a CSS file goes at the end of `owned[slot].runs`, unless the list has it.
     PlaceCss { source_index: IndexInt, slot: u32 },
 }
@@ -587,6 +589,8 @@ impl EntryWalk {
 
         // Per file: the last wrapper that led to it and does not run it.
         let mut passed: HashMap<IndexInt, IndexInt> = HashMap::default();
+        // (slot, index in `runs`, file) of each `PlaceUnlessImported`.
+        let mut provisional_runs: Vec<(u32, usize, IndexInt)> = Vec::new();
 
         debug_assert!(stack.is_empty());
         stack.push(WalkFrame::Enter {
@@ -598,6 +602,21 @@ impl EntryWalk {
             let (source_index, loader, wrapper) = match frame {
                 WalkFrame::Place { run, slot } => {
                     self.owned[slot as usize].runs.push(run);
+                    continue;
+                }
+                WalkFrame::PlaceUnlessImported { source_index, slot } => {
+                    if !seen.is_set(source_index as usize) {
+                        let runs = &mut self.owned[slot as usize].runs;
+                        provisional_runs.push((slot, runs.len(), source_index));
+                        runs.push(PartRun {
+                            source_index,
+                            begin: 0,
+                            end: u32::MAX,
+                        });
+                        if c.graph.code_splitting {
+                            self.entered.push(source_index);
+                        }
+                    }
                     continue;
                 }
                 WalkFrame::PlaceCss { source_index, slot } => {
@@ -622,7 +641,8 @@ impl EntryWalk {
             }
             // The file goes where an `import` runs it. The wrapper calls what is behind it (`find_wrappers_behind_imports`).
             if wrapper != NO_WRAPPER && !c.runs_with(wrapper, source_index) {
-                if passed.insert(source_index, wrapper) != Some(wrapper) {
+                let last_wrapper = passed.insert(source_index, wrapper);
+                if last_wrapper != Some(wrapper) {
                     let mark = stack.len();
                     for_each_edge(c, source_index, false, |_, edge| {
                         if let Edge::Import(other) = edge
@@ -635,6 +655,11 @@ impl EntryWalk {
                             });
                         }
                     });
+                    if last_wrapper.is_none()
+                        && let Some(slot) = slot_of(source_index)
+                    {
+                        stack.push(WalkFrame::PlaceUnlessImported { source_index, slot });
+                    }
                     stack[mark..].reverse();
                 }
                 continue;
@@ -730,6 +755,15 @@ impl EntryWalk {
                 });
             }
             stack[mark..].reverse();
+        }
+
+        // From the last, so that the indices of the others hold.
+        for &(slot, run_index, source_index) in provisional_runs.iter().rev() {
+            if seen.is_set(source_index as usize) {
+                self.owned[slot as usize].runs.remove(run_index);
+            } else {
+                seen.set(source_index as usize);
+            }
         }
     }
 }

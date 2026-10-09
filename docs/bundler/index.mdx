@@ -606,10 +606,11 @@ await Promise.all([import("./x.ts"), import("./y.ts")]); // a, b or b, a
 
 If the order matters, `await` the first `import()` before you start the second.
 
-This covers the order of the modules inside shared chunks. Two limits remain:
+This covers the order of the modules inside shared chunks. Three limits remain:
 
 - A module that an HTML entrypoint names in a `<script src>`, and the shared modules that run before it, keep one order for every page.
 - A shared chunk still runs before the code of the entrypoint that imports it, including the entrypoint's own earlier imports.
+- A module that reaches a top-level `await` through its imports is written as an `async` function. Everything that imports it waits for it, but it can run a few microtasks later than it does unbundled, after a module that it has no `import` in common with.
 
 #### Tree-shaking `import()` and `require()` results
 

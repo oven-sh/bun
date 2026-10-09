@@ -3,6 +3,7 @@ use bun_alloc::AllocError;
 use bun_ast::ImportKind;
 
 use crate::linker_context::find_all_imported_parts_in_js_order::{Edge, for_each_edge};
+use crate::linker_context::resolve_chunk_order_conflicts::{NO_CYCLE, find_import_cycles};
 use crate::linker_context_mod::TreeShakeWork;
 use crate::options::{Format, Loader};
 use crate::{Index, IndexInt, LinkerContext, WrapKind};
@@ -118,9 +119,13 @@ pub(crate) fn find_wrappers_behind_imports(c: &mut LinkerContext) -> Result<(), 
                 visited.clear();
                 let flags = c.graph.meta.items_flags();
                 let wrapper_refs = c.graph.ast.items_wrapper_ref();
+                // A `__commonJS` wrapper cannot wait, so what tree shaking dropped from it stays dropped.
+                let skips_async_wrappers = !is_part_live && flags[id].wrap == WrapKind::Cjs;
                 c.for_each_file_run_by_import(source_index, target, &mut visited, |other| {
                     if flags[other as usize].wrap == WrapKind::Esm
                         && wrapper_refs[other as usize].is_valid()
+                        && !(skips_async_wrappers
+                            && flags[other as usize].is_async_or_has_async_dependency)
                     {
                         wrappers.push(other);
                     }
@@ -156,33 +161,111 @@ pub(crate) fn find_wrappers_behind_imports(c: &mut LinkerContext) -> Result<(), 
     }
     let has_new_calls = !worklist.is_empty();
     c.mark_live(worklist);
+    let has_new_awaits = record_awaited_wrappers(c)?;
 
-    // A file outside of a wrapper prints `await __esmWait(init_x)` for the async wrappers that it imports.
+    if has_new_calls || has_new_awaits {
+        c.compute_entry_bits()?;
+    }
+    Ok(())
+}
+
+/// A file prints one `await` of the async wrappers that it waits for (`async_wrappers_awaited_by`).
+/// Finds the import cycles that this goes by, and records the symbols that the `await` adds to the file.
+fn record_awaited_wrappers(c: &mut LinkerContext) -> Result<bool, AllocError> {
+    let flags = c.graph.meta.items_flags();
+    let wrapper_refs = c.graph.ast.items_wrapper_ref();
+    let is_async_wrapper = |id: usize| {
+        flags[id].wrap == WrapKind::Esm
+            && flags[id].is_async_or_has_async_dependency
+            && c.graph.files_live.is_set(id)
+            && wrapper_refs[id].is_valid()
+    };
+    if !c
+        .graph
+        .reachable_files
+        .iter()
+        .any(|source_index| is_async_wrapper(source_index.get() as usize))
+    {
+        return Ok(false);
+    }
+
+    let (cycle_of_file, cycles_len) = find_import_cycles(c);
+    let mut entrances: Vec<Vec<IndexInt>> = vec![Vec::new(); cycles_len];
+    let mut is_entrance: Vec<bool> = vec![false; c.graph.files.len()];
+    let mut add_entrance = |source_index: IndexInt| {
+        let id = source_index as usize;
+        if is_async_wrapper(id) && !core::mem::replace(&mut is_entrance[id], true) {
+            entrances[cycle_of_file[id] as usize].push(source_index);
+        }
+    };
+    let entry_point_kinds = c.graph.files.items_entry_point_kind();
+    for source_index in c.graph.reachable_files.iter() {
+        let id = source_index.get() as usize;
+        if cycle_of_file[id] != NO_CYCLE && entry_point_kinds[id].is_entry_point() {
+            add_entrance(source_index.get());
+        }
+        for record in c.graph.ast.items_import_records()[id].as_slice() {
+            if record.source_index.is_valid()
+                && let cycle = cycle_of_file[record.source_index.get() as usize]
+                && cycle != NO_CYCLE
+                && cycle != cycle_of_file[id]
+            {
+                add_entrance(record.source_index.get());
+            }
+        }
+    }
+    if entrances.iter().any(|entrances| !entrances.is_empty()) {
+        c.graph.async_cycle_of_file = cycle_of_file;
+        c.graph.async_cycle_entrances = entrances.into_iter().map(Into::into).collect();
+    }
+
+    let mut worklist: Vec<TreeShakeWork> = Vec::new();
+    let mut called: Vec<IndexInt> = Vec::new();
     for i in 0..c.graph.reachable_files.len() {
         let source_index = c.graph.reachable_files[i].get();
         let id = source_index as usize;
-        let flags = c.graph.meta.items_flags()[id];
-        if flags.wrap != WrapKind::None
-            || !flags.is_async_or_has_async_dependency
+        if !c.graph.meta.items_flags()[id].is_async_or_has_async_dependency
             || !c.graph.files_live.is_set(id)
-            || c.async_wrappers_called_by(source_index).is_empty()
         {
+            continue;
+        }
+        let awaited = c.async_wrappers_awaited_by(source_index);
+        if awaited.len() < 2 {
             continue;
         }
         let part_index = c.graph.parts_live[id]
             .find_first_set()
-            .expect("a live file has a live part");
+            .expect("a live file has a live part") as u32;
+        called.clear();
+        c.for_each_async_wrapper_call(source_index, |wrapper| called.push(wrapper));
+        for &wrapper in awaited.iter().filter(|wrapper| !called.contains(wrapper)) {
+            c.graph.generate_symbol_import_and_use(
+                source_index,
+                part_index,
+                c.graph.ast.items_wrapper_ref()[wrapper as usize],
+                1,
+                Index::source(wrapper),
+            )?;
+            worklist.push(TreeShakeWork::Part {
+                part_index: c.graph.meta.items_wrapper_part_index()[wrapper as usize].get(),
+                source_index: wrapper,
+            });
+        }
         c.graph.generate_symbol_import_and_use(
             source_index,
-            part_index as u32,
-            c.esm_wait_runtime_ref,
+            part_index,
+            c.promise_all_runtime_ref,
             1,
             Index::RUNTIME,
         )?;
+        for &part_index in c.top_level_symbols_to_parts_for_runtime(c.promise_all_runtime_ref) {
+            worklist.push(TreeShakeWork::Part {
+                part_index,
+                source_index: Index::RUNTIME.value(),
+            });
+        }
     }
-
-    if has_new_calls {
-        c.compute_entry_bits()?;
-    }
-    Ok(())
+    let has_new_awaits = !worklist.is_empty();
+    c.mark_live(worklist);
+    Ok(has_new_awaits)
 }

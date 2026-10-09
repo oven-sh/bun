@@ -514,36 +514,37 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         }
     }
 
-    if flags.wrap == WrapKind::None
-        && flags.is_async_or_has_async_dependency
-        && is_range_after_imports(c, chunk, part_range)
-    {
-        let wrappers = c.async_wrappers_called_by(source_index as u32);
-        if !wrappers.is_empty() {
-            append_wait_for_wrappers(c, &mut stmts.inside_wrapper_prefix.stmts, &wrappers);
-            if let Some(module_info) = module_info.as_deref_mut() {
-                module_info.flags.has_tla = true;
-            }
-        }
-    }
-
-    // "__esmAsync" takes what the imports run apart from the rest of the file.
-    let is_async_wrapper = needs_wrapper
-        && flags.wrap == WrapKind::Esm
-        && flags.is_async_or_has_async_dependency
-        && c.options.output_format != OutputFormat::InternalBakeDev;
-    if is_async_wrapper && c.options.minify_syntax {
-        merge_adjacent_local_stmts(&mut stmts.inside_wrapper_prefix.stmts, temp_arena);
-        merge_adjacent_local_stmts(&mut stmts.inside_wrapper_suffix, temp_arena);
-    }
-    let prefix_len = stmts.inside_wrapper_prefix.stmts.len();
-
     // Hoist all import statements before any normal statements. ES6 imports
     // are different than CommonJS imports. All modules imported via ES6 import
     // statements are evaluated before the module doing the importing is
     // evaluated (well, except for cyclic import scenarios). We need to preserve
     // these semantics even when modules imported via ES6 import statements end
     // up being CommonJS modules.
+    if flags.is_async_or_has_async_dependency {
+        let wrapper_refs = c.graph.ast.items_wrapper_ref();
+        let wrappers: Vec<Ref> = c
+            .async_wrappers_awaited_by(source_index as u32)
+            .iter()
+            .map(|&wrapper| wrapper_refs[wrapper as usize])
+            .collect();
+        // The ranges of a file outside of a wrapper have other files between them.
+        let is_after_imports =
+            flags.wrap != WrapKind::None || is_range_after_imports(c, chunk, part_range);
+        if !wrappers.is_empty() {
+            append_await_of_wrappers(
+                c,
+                &mut stmts.inside_wrapper_prefix.stmts,
+                &wrappers,
+                is_after_imports,
+            );
+            if is_after_imports
+                && flags.wrap == WrapKind::None
+                && let Some(module_info) = module_info.as_deref_mut()
+            {
+                module_info.flags.has_tla = true;
+            }
+        }
+    }
     stmts
         .all_stmts
         .reserve(stmts.inside_wrapper_prefix.stmts.len() + stmts.inside_wrapper_suffix.len());
@@ -556,7 +557,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     stmts.inside_wrapper_prefix.reset();
     stmts.inside_wrapper_suffix.clear();
 
-    if c.options.minify_syntax && !is_async_wrapper {
+    if c.options.minify_syntax {
         merge_adjacent_local_stmts(&mut stmts.all_stmts, temp_arena);
     }
 
@@ -764,15 +765,11 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 let mut inner_stmts = bun_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
 
                 // Hoist all top-level "var" and "function" declarations out of the closure
-                let mut imports_len: usize = 0;
                 {
                     let mut end: usize = 0;
                     // Iterate by index since we mutate
                     // `inner_stmts[end]` and call `stmts.append(...)` inside the loop.
                     'hoist: for i in 0..stmts.all_stmts.len() {
-                        if i == prefix_len {
-                            imports_len = end;
-                        }
                         let stmt = stmts.all_stmts[i];
                         let transformed = match stmt.data {
                             StmtData::SLocal(local) => 'stmt: {
@@ -863,9 +860,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         end += 1;
                     }
                     inner_stmts.truncate(end);
-                    if prefix_len >= stmts.all_stmts.len() {
-                        imports_len = end;
-                    }
                 }
 
                 if !hoist.decls.is_empty() {
@@ -890,49 +884,23 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     // is sometimes not generated.
                     debug_assert!(!ast.wrapper_ref.is_empty()); // js_parser's needsWrapperRef thought wrapper was not needed
 
-                    let arrow = |stmts: bun_ast::StoreSlice<Stmt>, is_async: bool| {
-                        Expr::init(
-                            E::Arrow {
-                                is_async,
-                                body: G::FnBody {
-                                    stmts,
-                                    loc: bun_ast::Loc::EMPTY,
-                                },
-                                ..Default::default()
+                    // "__esm(() => { ... })"
+                    let esm_args = Vec::<Expr>::from_slice(&[Expr::init(
+                        E::Arrow {
+                            is_async,
+                            body: G::FnBody {
+                                stmts: inner_stmts,
+                                loc: bun_ast::Loc::EMPTY,
                             },
-                            bun_ast::Loc::EMPTY,
-                        )
-                    };
-                    let esm_args = if is_async_wrapper {
-                        // "__esmAsync(() => { imports }, async () => { ... }, 1)"
-                        let (imports, body) = inner_stmts.slice_mut().split_at_mut(imports_len);
-                        let has_tla = !c.parse_graph().ast.items_top_level_await_keyword()
-                            [source_index]
-                            .is_empty();
-                        let mut args = Vec::<Expr>::from_slice(&[
-                            arrow(bun_ast::StoreSlice::new_mut(imports), false),
-                            arrow(bun_ast::StoreSlice::new_mut(body), has_tla),
-                        ]);
-                        if has_tla {
-                            args.push(Expr::init(E::Number::new(1.0), bun_ast::Loc::EMPTY));
-                        }
-                        args
-                    } else {
-                        // "__esm(() => { ... })"
-                        Vec::<Expr>::from_slice(&[arrow(inner_stmts, is_async)])
-                    };
+                            ..Default::default()
+                        },
+                        bun_ast::Loc::EMPTY,
+                    )]);
 
                     // "var init_foo = __esm(...);"
                     let value = Expr::init(
                         E::Call {
-                            target: Expr::init_identifier(
-                                if is_async_wrapper {
-                                    c.esm_async_runtime_ref
-                                } else {
-                                    c.esm_runtime_ref
-                                },
-                                bun_ast::Loc::EMPTY,
-                            ),
+                            target: Expr::init_identifier(c.esm_runtime_ref, bun_ast::Loc::EMPTY),
                             args: Vec::move_from_list(esm_args),
                             ..Default::default()
                         },
@@ -1139,37 +1107,99 @@ fn is_range_after_imports(c: &LinkerContext, chunk: &Chunk, part_range: PartRang
     begin == part_range.part_index_begin
 }
 
-/// `await __esmWait(init_a, init_b)`. It starts the wrappers too, so the calls that it follows go.
-fn append_wait_for_wrappers(c: &LinkerContext, prefix: &mut Vec<Stmt>, wrappers: &[Ref]) {
-    while let Some(StmtData::SExpr(stmt)) = prefix.last().map(|stmt| stmt.data)
-        && let ExprData::ECall(call) = stmt.value.data
-        && let ExprData::EIdentifier(target) = call.target.data
-        && wrappers.contains(&target.ref_)
-    {
+/// The `import` statements have printed `init_a()` where they are, which starts `a`. After the last of them the
+/// file waits: `await init_a()`, or `await __promiseAll([init_a(), init_b()])`. A wrapper returns the same promise each time.
+fn append_await_of_wrappers(
+    c: &LinkerContext,
+    prefix: &mut Vec<Stmt>,
+    wrappers: &[Ref],
+    is_after_imports: bool,
+) {
+    let is_call_of_wrapper = |stmt: &Stmt| {
+        matches!(stmt.data, StmtData::SExpr(stmt)
+            if matches!(stmt.value.data, ExprData::ECall(call)
+                if matches!(call.target.data, ExprData::EIdentifier(target) if wrappers.contains(&target.ref_))))
+    };
+    // The `await` makes the calls that nothing comes after.
+    while is_after_imports && prefix.last().is_some_and(is_call_of_wrapper) {
         prefix.pop();
     }
-    let mut args = bun_ast::ExprNodeList::init_capacity(wrappers.len());
-    for &wrapper in wrappers {
-        args.append_assume_capacity(Expr::init_identifier(wrapper, bun_ast::Loc::EMPTY));
+    // A later import can throw, and then the `await` is not reached. The promise keeps a handler:
+    // `init_a()?.catch(() => {})`. A wrapper that is called while it starts returns undefined.
+    for stmt in prefix.iter_mut().filter(|stmt| is_call_of_wrapper(stmt)) {
+        let StmtData::SExpr(call) = stmt.data else {
+            unreachable!()
+        };
+        let mut args = bun_ast::ExprNodeList::init_capacity(1);
+        args.append_assume_capacity(Expr::init(
+            E::Arrow::NOOP_RETURN_UNDEFINED,
+            bun_ast::Loc::EMPTY,
+        ));
+        *stmt = Stmt::alloc(
+            S::SExpr {
+                value: Expr::init(
+                    E::Call {
+                        target: Expr::init(
+                            E::Dot {
+                                target: call.value,
+                                name: bun_ast::StoreStr::new(b"catch"),
+                                name_loc: bun_ast::Loc::EMPTY,
+                                optional_chain: Some(bun_ast::OptionalChain::Start),
+                                ..Default::default()
+                            },
+                            bun_ast::Loc::EMPTY,
+                        ),
+                        args,
+                        optional_chain: Some(bun_ast::OptionalChain::Continuation),
+                        ..Default::default()
+                    },
+                    bun_ast::Loc::EMPTY,
+                ),
+                ..Default::default()
+            },
+            stmt.loc,
+        );
     }
-    prefix.push(Stmt::alloc(
-        S::SExpr {
-            value: Expr::init(
-                E::Await {
-                    value: Expr::init(
-                        E::Call {
-                            target: Expr::init_identifier(
-                                c.esm_wait_runtime_ref,
-                                bun_ast::Loc::EMPTY,
-                            ),
-                            args,
-                            ..Default::default()
-                        },
-                        bun_ast::Loc::EMPTY,
-                    ),
+    if !is_after_imports {
+        return;
+    }
+    let call = |wrapper: Ref| {
+        Expr::init(
+            E::Call {
+                target: Expr::init_identifier(wrapper, bun_ast::Loc::EMPTY),
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        )
+    };
+    let promise = match wrappers {
+        &[wrapper] => call(wrapper),
+        _ => {
+            let mut items = bun_ast::ExprNodeList::init_capacity(wrappers.len());
+            for &wrapper in wrappers {
+                items.append_assume_capacity(call(wrapper));
+            }
+            let mut args = bun_ast::ExprNodeList::init_capacity(1);
+            args.append_assume_capacity(Expr::init(
+                E::Array {
+                    items,
+                    ..Default::default()
                 },
                 bun_ast::Loc::EMPTY,
-            ),
+            ));
+            Expr::init(
+                E::Call {
+                    target: Expr::init_identifier(c.promise_all_runtime_ref, bun_ast::Loc::EMPTY),
+                    args,
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            )
+        }
+    };
+    prefix.push(Stmt::alloc(
+        S::SExpr {
+            value: Expr::init(E::Await { value: promise }, bun_ast::Loc::EMPTY),
             ..Default::default()
         },
         bun_ast::Loc::EMPTY,

@@ -5,7 +5,7 @@ use bun_lint::utils::ast_utils::{
 
 /// Disallow expressions where the operation doesn't affect the value.
 pub struct NoConstantBinaryExpression {
-    check_relational_comparisons: bool,
+    check_relational_comparisons: Option<bool>,
 }
 
 const CONSTANT_BINARY_OPERAND: Message = Message::new(
@@ -244,7 +244,11 @@ impl NoConstantBinaryExpression {
                 }
             }
             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
-                if self.check_relational_comparisons && is_static_literal(left) && is_static_literal(right) {
+                // It is on in oxlint unless the option says otherwise.
+                if self.check_relational_comparisons.unwrap_or_else(|| cx.language().is_oxlint)
+                    && is_static_literal(left)
+                    && is_static_literal(right)
+                {
                     cx.report(e, CONSTANT_RELATIONAL_COMPARISON).data("operator", operator);
                 }
             }
@@ -259,7 +263,7 @@ impl Rule for NoConstantBinaryExpression {
 
     fn new(options: &Options) -> Self {
         NoConstantBinaryExpression {
-            check_relational_comparisons: options.object(0).bool_or("checkRelationalComparisons", false),
+            check_relational_comparisons: options.object(0).bool("checkRelationalComparisons"),
         }
     }
 

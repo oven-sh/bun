@@ -77,11 +77,12 @@ impl<M: Eq + Hash> SeenMethods<M> {
     }
 }
 
-/// Calls `report` with each of `members` whose method was seen before, but not just before.
+/// Calls `report` with each of `members` whose method was seen before, but not just before, and with the last member
+/// with that method that was not reported.
 fn check_body_for_overload_methods<'a, T: Handle<'a>, M: Eq + Hash>(
     members: List<'a, T>,
     get_member_method: impl Fn(T) -> Option<M>,
-    report: impl Fn(T, &M),
+    report: impl Fn(T, &M, T),
 ) {
     if members.len() < 3 {
         return;
@@ -90,6 +91,8 @@ fn check_body_for_overload_methods<'a, T: Handle<'a>, M: Eq + Hash>(
         few: SmallVec::new(),
         many: FxHashMap::default(),
     };
+    // The last member with each of them that is where it should be.
+    let mut last_members: SmallVec<[T; 8]> = SmallVec::new();
     // Its number in `seen_methods`.
     let mut last_method = None;
     for member in members {
@@ -98,13 +101,21 @@ fn check_body_for_overload_methods<'a, T: Handle<'a>, M: Eq + Hash>(
             continue;
         };
         let index = seen_methods.position(&method);
-        match index {
-            Some(_) if index != last_method => report(member, &method),
-            Some(_) => {}
-            None => seen_methods.push(method),
+        match index.and_then(|it| last_members.get_mut(it)) {
+            Some(before) if index != last_method => report(member, &method, *before),
+            Some(before) => *before = member,
+            None => {
+                seen_methods.push(method);
+                last_members.push(member);
+            }
         }
         last_method = index.or_else(|| seen_methods.len().checked_sub(1));
     }
+}
+
+/// oxlint points at the one before, which is the name of a function.
+fn place(member: Span, before: Span, cx: &Cx<'_, AdjacentOverloadSignatures>) -> Span {
+    if cx.language().is_oxlint { before } else { member }
 }
 
 fn check_statements<'a>(statements: List<'a, Stmt<'a>>, cx: &Cx<'a, AdjacentOverloadSignatures>) {
@@ -114,16 +125,21 @@ fn check_statements<'a>(statements: List<'a, Stmt<'a>>, cx: &Cx<'a, AdjacentOver
             StmtKind::Fn(func) => func.name().map(Ident::name),
             _ => None,
         },
-        |statement, name| {
-            cx.report(statement, ADJACENT_SIGNATURE).data("name", *name);
+        |statement, name, before| {
+            let before = match before.kind() {
+                StmtKind::Fn(func) => func.name().map_or_else(|| before.span(), |it| it.span()),
+                _ => before.span(),
+            };
+            cx.report(place(statement.span(), before, cx), ADJACENT_SIGNATURE).data("name", *name);
         },
     );
 }
 
 fn check_members<'a>(members: List<'a, Member<'a>>, cx: &Cx<'a, AdjacentOverloadSignatures>) {
-    check_body_for_overload_methods(members, get_member_method, |member, method| {
+    check_body_for_overload_methods(members, get_member_method, |member, method, before| {
         let prefix: &[u8] = if method.is_static == Some(true) { b"static " } else { b"" };
-        cx.report(member, ADJACENT_SIGNATURE).data("name", [prefix, &method.name.name[..]].concat());
+        cx.report(place(member.span(), before.span(), cx), ADJACENT_SIGNATURE)
+            .data("name", [prefix, &method.name.name[..]].concat());
     });
 }
 

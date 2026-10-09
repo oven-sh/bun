@@ -809,6 +809,41 @@ pub(crate) fn keep_git_and_tarball_resolutions(
     }
 }
 
+/// Queues the rows of a folder package for the resolver. A row that kept its
+/// package when the package.json was parsed again
+/// (`keep_git_and_tarball_resolutions`) has nothing to resolve and stays out.
+fn queue_rows_to_resolve(
+    this: &mut PackageManager,
+    rows: Lockfile::DependencySlice,
+) -> crate::Result<()> {
+    let end = rows.off.saturating_add(rows.len);
+    let mut start = rows.off;
+    for id in rows.off..end {
+        let kept = this
+            .lockfile
+            .buffers
+            .resolutions
+            .get(id as usize)
+            .is_some_and(|&resolved| resolved != invalid_package_id);
+        if kept {
+            if id > start {
+                this.lockfile
+                    .scratch
+                    .dependency_list_queue
+                    .write_item(Lockfile::DependencySlice::new(start, id - start))?;
+            }
+            start = id + 1;
+        }
+    }
+    if end > start {
+        this.lockfile
+            .scratch
+            .dependency_list_queue
+            .write_item(Lockfile::DependencySlice::new(start, end - start))?;
+    }
+    Ok(())
+}
+
 /// The integrity that the fetch of a URL or `file:` tarball is verified
 /// against when its dependency has no package yet: the pin of the package the
 /// loaded lockfile holds for the same URL or path.
@@ -1811,10 +1846,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     }
                     // We shouldn't see any dependencies
                     if result.package.dependencies.len > 0 {
-                        this.lockfile
-                            .scratch
-                            .dependency_list_queue
-                            .write_item(result.package.dependencies)?;
+                        queue_rows_to_resolve(this, result.package.dependencies)?;
                     }
                 }
 

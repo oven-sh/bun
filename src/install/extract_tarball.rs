@@ -386,12 +386,14 @@ impl ExtractTarball {
                         },
                     )?;
 
-                    if let Err(err) =
-                        self.verify_github_pin(log, resolved, |pin| pin.verify(tgz_bytes))
-                    {
-                        drop(extract_destination);
-                        let _ = tmpdir.delete_tree(tmpname.as_bytes());
-                        return Err(err);
+                    if self.pinned_by_github_commit {
+                        if let Err(err) =
+                            self.verify_github_pin(log, resolved, |pin| pin.verify(tgz_bytes))
+                        {
+                            drop(extract_destination);
+                            let _ = tmpdir.delete_tree(tmpname.as_bytes());
+                            return Err(err);
+                        }
                     }
 
                     let lockfile_tag = self.github_resolved.slice();
@@ -470,6 +472,7 @@ impl ExtractTarball {
     /// the pinned bytes. `archive_tag` is the root directory of the archive
     /// (`<owner>-<repo>-<hash>`). `matches` compares the archive with a pin.
     /// Both extraction paths call this before the rename into the cache.
+    #[cold]
     pub(crate) fn verify_github_pin(
         &self,
         log: &mut bun_ast::Log,

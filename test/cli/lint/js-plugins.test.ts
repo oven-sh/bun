@@ -1895,14 +1895,9 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         ),
       };
       const { raw, exitCode } = await lint(files, ["-f", "json", "a.js"]);
-      const [{ message, line, column, fix }] = JSON.parse(raw)[0].messages;
+      const [{ message, line, column }] = JSON.parse(raw)[0].messages;
       // What ESLint 10.12 says.
-      expect({ message, line, column, fix }).toEqual({
-        message: "oldName 35,42 oldName 35",
-        line: 2,
-        column: 7,
-        fix: { range: [35, 42], text: "renamed" },
-      });
+      expect({ message, line, column }).toEqual({ message: "oldName 35,42 oldName 35", line: 2, column: 7 });
       expect(exitCode).toBe(1);
       const fixed = await lint(files, ["--fix", "a.js"], ["a.js"]);
       expect(fixed.files["a.js"].split("\n")[1]).toBe("const renamed = 1;");

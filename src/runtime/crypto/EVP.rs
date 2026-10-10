@@ -248,8 +248,7 @@ impl EVP {
         &mut output[..outsize as usize]
     }
 
-    /// Returns `false` when `EVP_DigestUpdate` fails. Read the BoringSSL
-    /// error queue only after a `false`.
+    /// Returns `false` when `EVP_DigestUpdate` fails.
     #[must_use]
     pub(crate) fn update(&mut self, input: &[u8]) -> bool {
         // SAFETY: FFI into BoringSSL; self.ctx is initialized; input.as_ptr() is valid

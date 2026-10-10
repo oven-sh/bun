@@ -16,14 +16,14 @@ it("crypto.subtle setter should not throw", () => {
   expect(globalThis.crypto.subtle).toBe(subtle);
 });
 
-describe("importKey failure", () => {
-  // A failed key parse pushes to BoringSSL's thread-local error queue. The
-  // rejection must drain it so the next failed BoringSSL call reports its own
-  // error and not this one.
-  it.each([
-    ["pkcs8", { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, ["sign"]],
-    ["spki", { name: "ECDSA", namedCurve: "P-256" }, ["verify"]],
-  ] as const)("a failed %s import leaves no BoringSSL error behind", async (format, algorithm, usages) => {
+// A failed key parse pushes to BoringSSL's thread-local error queue. The
+// rejection must drain it so the next failed BoringSSL call reports its own
+// error and not this one.
+describe.each([
+  ["pkcs8", { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, ["sign"]],
+  ["spki", { name: "ECDSA", namedCurve: "P-256" }, ["verify"]],
+] as const)("failed importKey(%s)", (format, algorithm, usages) => {
+  it("leaves no BoringSSL error behind", async () => {
     const rejection = await crypto.subtle
       .importKey(format, new Uint8Array([0, 0, 0]), algorithm, false, usages as KeyUsage[])
       .then(

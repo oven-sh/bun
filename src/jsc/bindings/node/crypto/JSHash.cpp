@@ -15,6 +15,14 @@
 
 namespace Bun {
 
+// The newest queue entry is the one the call that just failed pushed.
+static uint32_t takeLastError()
+{
+    uint32_t err = ERR_peek_last_error();
+    ERR_clear_error();
+    return err;
+}
+
 static const HashTableValue JSHashPrototypeTableValues[] = {
     { "update"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHashProtoFuncUpdate, 1 } },
     { "digest"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsHashProtoFuncDigest, 1 } },
@@ -375,22 +383,21 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
 
     JSHash* hash = JSHash::create(vm, structure);
 
-    // The failed call's entry is the newest. ERR_get_error would return the oldest.
     if (zigHasher) {
         if (!hash->initZig(globalObject, scope, zigHasher.release(), xofLen)) {
-            throwCryptoError(globalObject, scope, ERR_peek_last_error(), "Digest method not supported"_s);
+            throwCryptoError(globalObject, scope, takeLastError(), "Digest method not supported"_s);
             return {};
         }
         return JSValue::encode(hash);
     }
 
     if (!hash->init(globalObject, scope, md, xofLen)) {
-        throwCryptoError(globalObject, scope, ERR_peek_last_error(), "Digest method not supported"_s);
+        throwCryptoError(globalObject, scope, takeLastError(), "Digest method not supported"_s);
         return {};
     }
 
     if (original != nullptr && !original->m_ctx.copyTo(hash->m_ctx)) {
-        throwCryptoError(globalObject, scope, ERR_peek_last_error(), "Digest copy error"_s);
+        throwCryptoError(globalObject, scope, takeLastError(), "Digest copy error"_s);
         return {};
     }
 

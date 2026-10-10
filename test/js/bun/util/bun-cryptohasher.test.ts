@@ -358,8 +358,9 @@ describe("HMAC", () => {
     expect(new Bun.CryptoHasher(algorithm).algorithm).toBe(algorithm);
   });
 
-  // A failed PEM parse leaves ERR_OSSL_PEM_NO_START_LINE in the error queue and
-  // nothing drains it. update() must decide success from HMAC_Update itself.
+  // createSecureContext throws the oldest entry (PEM_NO_START_LINE) and leaves the
+  // SSL-library entry behind it in the queue. update() must decide success from
+  // HMAC_Update itself.
   test("update() after a failed tls.createSecureContext is unaffected", () => {
     const hmac = () => new Bun.CryptoHasher("sha256", "key").update("data").digest("hex");
     const hash = () => new Bun.CryptoHasher("sha256").update("data").digest("hex");

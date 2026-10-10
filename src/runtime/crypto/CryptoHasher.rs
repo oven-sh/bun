@@ -305,10 +305,7 @@ impl CryptoHasher {
         ))
     }
 
-    /// Turns the pending BoringSSL error queue into a thrown JS error and
-    /// empties the queue. Call it only after a BoringSSL call reported
-    /// failure through its return value: the queue on its own is not a
-    /// failure signal, because unrelated earlier calls can leave entries in it.
+    /// Throws the pending BoringSSL error. Call it only after a failed return value.
     fn throw_boring_error(global: &JSGlobalObject) -> JsError {
         let err = boring_ssl::ERR_get_error();
         let instance = create_crypto_error(global, err);

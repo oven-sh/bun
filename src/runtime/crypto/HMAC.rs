@@ -12,9 +12,7 @@ pub(crate) struct HMAC {
 }
 
 impl HMAC {
-    /// `Err(UnsupportedAlgorithm)` when the digest has no HMAC support.
-    /// `Err(BoringSSLError)` when `HMAC_Init_ex` fails: only then does the
-    /// BoringSSL error queue hold the reason.
+    /// `UnsupportedAlgorithm` when the digest has no HMAC support, `BoringSSLError` when `HMAC_Init_ex` fails.
     pub(crate) fn init(algorithm: evp::Algorithm, key: &[u8]) -> crate::Result<Box<HMAC>> {
         let md = algorithm.md().ok_or(crate::Error::UnsupportedAlgorithm)?;
         let mut ctx = MaybeUninit::<boringssl::HMAC_CTX>::uninit();
@@ -42,9 +40,7 @@ impl HMAC {
         Ok(Box::new(HMAC { ctx, algorithm }))
     }
 
-    /// Returns `false` when `HMAC_Update` fails. The BoringSSL error queue
-    /// is only meaningful after a `false`: unrelated earlier calls can leave
-    /// entries in it, so a caller must not read it on its own.
+    /// Returns `false` when `HMAC_Update` fails.
     #[must_use]
     pub(crate) fn update(&mut self, data: &[u8]) -> bool {
         // SAFETY: self.ctx is initialized; data is a valid readable slice.

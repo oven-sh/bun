@@ -1,6 +1,6 @@
 use crate::util_ast::{Property, get_component_properties};
 use crate::util_components::Components;
-use crate::util_pragma::get_create_class_from_context;
+use crate::util_pragma::{get_create_class_from_context, mentions_create_class};
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::regex::SyntaxError;
@@ -311,8 +311,7 @@ impl Rule for SortComp {
     fn start<'a>(&self, file: &'a File<'a>) -> Option<bool> {
         self.methods_order.as_ref()?;
         // The object literals are not looked at before the components are known.
-        let create_class = std::str::from_utf8(get_create_class_from_context(file));
-        let creates_classes = create_class.is_ok_and(|it| file.mentions(it));
+        let creates_classes = mentions_create_class(file, get_create_class_from_context(file));
         ((file.has_classes() || creates_classes) && Components::may_have_any(file)).then_some(creates_classes)
     }
 

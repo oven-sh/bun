@@ -1,16 +1,14 @@
 use crate::util_ast::{get_property_name, name_of_key, unwrap_ts_as_expression};
 use crate::util_component_util::{Pragmas, is_es5_component, is_es6_component};
-use crate::util_pragma::get_create_class_from_context;
+use crate::util_pragma::{get_create_class_from_context, mentions_create_class};
 use bun_core::strings;
 use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use bun_lint::source::mention_bit;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::estree_compat::{Target, TargetKind, estree_parent, estree_type_name};
 use bun_lint::utils::sort;
 use rustc_hash::FxHashSet;
-use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::iter::successors;
 
@@ -18,13 +16,6 @@ use std::iter::successors;
 pub struct NoUnusedState;
 
 const UNUSED_STATE_FIELD: Message = Message::new("unusedStateField", "Unused state field: '{{name}}'");
-
-/// Whether the file can have a call of `createClass`: `pragma.#createClass` is one for upstream.
-fn mentions_create_class(file: &File<'_>, create_class: &[u8]) -> bool {
-    let mut private = SmallVec::<[u8; 32]>::from_slice(b"#");
-    private.extend_from_slice(create_class);
-    file.mentions_bit(mention_bit(create_class)) || file.mentions_bit(mention_bit(&private))
-}
 
 /// `quasis[0].value.raw`, of what is written between the backticks: espree has a `\n` for each line break in it.
 fn raw_of<'a>(file: &File<'a>, written: &'a [u8]) -> Cow<'a, [u8]> {

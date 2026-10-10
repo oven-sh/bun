@@ -740,10 +740,17 @@ impl File<'_> {
 
 /// Where the identifier of JSX that starts at `at` ends. It can contain `-`.
 fn jsx_identifier_end(text: &[u8], at: u32) -> u32 {
-    let rest = text.get(at as usize..).unwrap_or_default();
-    let is_part =
-        |b: &u8| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'$' | b'-') || *b >= 0x80;
-    at + rest.iter().take_while(|b| is_part(b)).count() as u32
+    let mut rest = text.get(at as usize..).unwrap_or_default();
+    let mut end = at;
+    while let [b, after @ ..] = rest
+        && (b.is_ascii_alphanumeric()
+            || matches!(b, b'_' | b'$' | b'-')
+            || (*b >= 0x80 && bun_core::strings::js_whitespace_len(rest) == 0))
+    {
+        rest = after;
+        end += 1;
+    }
+    end
 }
 
 // ───────────────────────────── classes ─────────────────────────────

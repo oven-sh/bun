@@ -8,7 +8,7 @@ use crate::util_ast::{Property, find_return_statement, get_property_name};
 use crate::util_component_util::{get_parent_es6_component, is_es5_component};
 use crate::util_components::{Components, Instructions, Visit};
 use crate::util_components_list::{ComponentId, DeclaredPropType, DeclaredPropTypes, DefaultProps};
-use crate::util_pragma::get_create_class_from_context;
+use crate::util_pragma::{get_create_class_from_context, mentions_create_class};
 use crate::util_prop_wrapper::is_prop_wrapper_function;
 use crate::util_props::is_default_props_declaration;
 use crate::util_variable::{Found, find_variable_by_name};
@@ -310,8 +310,7 @@ impl<'a> Instructions<'a> for DefaultPropsInstructions<'a> {
             }
         }
         // ObjectExpression
-        let create_class = std::str::from_utf8(get_create_class_from_context(file));
-        if !create_class.is_ok_and(|it| file.mentions(it)) {
+        if !mentions_create_class(file, get_create_class_from_context(file)) {
             return;
         }
         let calls = [ExprTag::Call, ExprTag::New].map(|tag| file.exprs_of_kind(tag));

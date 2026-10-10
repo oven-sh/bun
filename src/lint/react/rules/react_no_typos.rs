@@ -4,7 +4,7 @@ use crate::util_components::Components;
 use crate::util_is_create_element::is_member_called;
 use crate::util_jsx::Branches;
 use crate::util_lifecycle_methods::{INSTANCE, STATIC};
-use crate::util_pragma::get_create_class_from_context;
+use crate::util_pragma::{get_create_class_from_context, mentions_create_class};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::sort;
@@ -104,8 +104,7 @@ impl Rule for NoTypos {
         if file.mentions_any(&["prop-types", "react"]) {
             on = on.stmts(&[StmtTag::Import]);
         }
-        let create_class = std::str::from_utf8(get_create_class_from_context(file));
-        if create_class.is_ok_and(|it| file.mentions(it)) {
+        if mentions_create_class(file, get_create_class_from_context(file)) {
             on = on.exprs(&[ExprTag::Call, ExprTag::New]);
         }
         on

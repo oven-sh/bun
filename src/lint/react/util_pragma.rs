@@ -4,6 +4,8 @@
 
 use bun_core::strings;
 use bun_lint::prelude::*;
+use bun_lint::source::mention_bit;
+use smallvec::SmallVec;
 
 /// `JS_IDENTIFIER_REGEX`
 fn is_js_identifier(name: &[u8]) -> bool {
@@ -61,6 +63,13 @@ pub(crate) fn get_create_class_from_context<'a>(file: &'a File<'a>) -> &'a [u8] 
     pragma
         .filter(|it| is_js_identifier(it))
         .unwrap_or(b"createReactClass")
+}
+
+/// Whether the file can have a call of `create_class`: `pragma.#createClass` is one for upstream.
+pub(crate) fn mentions_create_class(file: &File<'_>, create_class: &[u8]) -> bool {
+    let mut private = SmallVec::<[u8; 32]>::from_slice(b"#");
+    private.extend_from_slice(create_class);
+    file.mentions_bit(mention_bit(create_class)) || file.mentions_bit(mention_bit(&private))
 }
 
 /// `getFragmentFromContext`. Where upstream throws, it is the default.

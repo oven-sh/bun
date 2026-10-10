@@ -5,7 +5,7 @@
 //! for the `ChainExpression` around it.
 
 use crate::util_is_create_element::is_member_called;
-use crate::util_pragma::{get_create_class_from_context, get_from_context};
+use crate::util_pragma::{get_create_class_from_context, get_from_context, mentions_create_class};
 use bun_core::strings;
 use bun_lint::language::Parser;
 use bun_lint::prelude::*;
@@ -278,7 +278,7 @@ pub(crate) fn get_parent_es5_component<'a>(
     pragmas: &Pragmas<'_>,
 ) -> Option<Expr<'a>> {
     use ScopeKind::{Catch, ConditionalType, FunctionType, MappedType};
-    if !node.file().mentions(pragmas.create_class_name()) {
+    if !mentions_create_class(node.file(), pragmas.create_class) {
         return None;
     }
     node.scope().chain().find_map(|scope| {

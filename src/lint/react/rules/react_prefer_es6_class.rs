@@ -1,9 +1,8 @@
 use crate::react::{self, is_jsx};
 use crate::util_component_util::{self, Pragmas};
-use crate::util_pragma::get_create_class_from_context;
+use crate::util_pragma::{get_create_class_from_context, mentions_create_class};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use bun_lint::source::mention_bit;
 
 /// Enforce ES5 or ES6 class for React Components
 pub struct PreferEs6Class {
@@ -41,7 +40,7 @@ impl Rule for PreferEs6Class {
             if file.mentions("createReactClass") {
                 on = on.exprs(&[ExprTag::Call]);
             }
-        } else if mentions_create_class(file) {
+        } else if mentions_create_class(file, get_create_class_from_context(file)) {
             on = on.exprs(&[ExprTag::Call, ExprTag::New]);
         }
         on
@@ -83,17 +82,6 @@ impl Rule for PreferEs6Class {
         };
         if matches!(class.owner(), Node::Stmt(_)) && util_component_util::is_es6_component(class, &pragmas) {
             cx.report(class.estree_span(), SHOULD_USE_CREATE_CLASS);
-        }
-    }
-}
-
-/// Whether the file can call `settings.react.createClass`. upstream takes a private name for its text.
-fn mentions_create_class<'a>(file: &'a File<'a>) -> bool {
-    match get_create_class_from_context(file) {
-        b"createReactClass" => file.mentions_any(&["createReactClass", "#createReactClass"]),
-        name => {
-            file.mentions_bit(mention_bit(name))
-                || (file.has_classes() && file.mentions_bit(mention_bit(&[&b"#"[..], name].concat())))
         }
     }
 }

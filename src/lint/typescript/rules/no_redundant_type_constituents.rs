@@ -156,6 +156,11 @@ fn join<'a>(parts: impl Iterator<Item = TypeFlagsWithName<'a>>) -> Vec<u8> {
 }
 
 fn describe_literal_type(ty: Type) -> Vec<u8> {
+    // tsgolint prints the type. What is printed for a string has quotes, and it quotes that.
+    if ty.file().language().is_oxlint {
+        let text = ty.to_text();
+        return if ty.flags().intersects(TypeFlags::STRING_LITERAL) { json_stringify_alloc(&text) } else { text };
+    }
     match ty.value() {
         Some(Literal::String(value)) => return json_stringify_alloc(value),
         Some(Literal::BigInt { negative, base10 }) => {
@@ -377,9 +382,13 @@ impl NoRedundantTypeConstituents {
                 if let Some(primitive) = type_values.last().and_then(primitive_of)
                     && type_values.iter().all(|it| primitive_of(it).is_some())
                 {
-                    cx.report(place(type_ref), PRIMITIVE_OVERRIDDEN)
-                        .data("literal", join(type_values.iter().copied()))
-                        .data("primitive", primitive.name());
+                    let (literal, is_oxlint) = (join(type_values.iter().copied()), cx.language().is_oxlint);
+                    let report = cx.report(place(type_ref), PRIMITIVE_OVERRIDDEN);
+                    // tsgolint has the two the other way round here.
+                    match is_oxlint {
+                        true => report.data("literal", primitive.name()).data("primitive", literal),
+                        false => report.data("literal", literal).data("primitive", primitive.name()),
+                    };
                 }
             }
             return;

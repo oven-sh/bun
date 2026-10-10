@@ -11,6 +11,12 @@ use bun_lint::prelude::*;
 pub(crate) fn get_variable_from_context<'a>(node: Node<'a>, name: Name<'a>) -> Option<Symbol<'a>> {
     node.scope().chain().find_map(|scope| {
         scope.get_name(name).or_else(|| {
+            // For ESLint a class declaration declares its name in its own scope as well.
+            if let Node::Class(class) = scope.node()
+                && class.name().is_some_and(|it| it.name() == name)
+            {
+                return class.symbol();
+            }
             // For ESLint what the configuration defines is a variable of the global scope.
             if scope.parent().is_none() && node.file().global_named(name).is_some() {
                 return None;

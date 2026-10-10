@@ -5156,5 +5156,52 @@
   "b.tsx:6:19+11 typescript(prefer-optional-chain)",
   "b.tsx:7:19+23 typescript(prefer-optional-chain)",
   "b.tsx:8:19+39 typescript(prefer-optional-chain)"
+ ],
+ "no-deprecated/what-tsgolint-takes-for-a-declaration": [
+  "a.ts:10:19+3 typescript(no-deprecated)",
+  "a.ts:11:19+4 typescript(no-deprecated)",
+  "a.ts:12:18+2 typescript(no-deprecated)",
+  "a.ts:13:22+2 typescript(no-deprecated)",
+  "a.ts:14:22+2 typescript(no-deprecated)",
+  "a.ts:16:20+2 typescript(no-deprecated)",
+  "a.ts:17:21+2 typescript(no-deprecated)",
+  "a.ts:18:19+2 typescript(no-deprecated)",
+  "a.ts:4:19+2 typescript(no-deprecated)",
+  "a.ts:5:19+2 typescript(no-deprecated)",
+  "a.ts:6:23+2 typescript(no-deprecated)",
+  "a.ts:7:19+2 typescript(no-deprecated)",
+  "a.ts:8:19+2 typescript(no-deprecated)",
+  "a.ts:9:19+5 typescript(no-deprecated)",
+  "b.ts:12:25+2 typescript(no-deprecated)",
+  "b.ts:13:25+2 typescript(no-deprecated)",
+  "b.ts:15:26+2 typescript(no-deprecated)",
+  "b.ts:16:25+2 typescript(no-deprecated)",
+  "b.ts:3:26+2 typescript(no-deprecated)",
+  "b.ts:4:25+2 typescript(no-deprecated)",
+  "b.ts:5:34+2 typescript(no-deprecated)",
+  "b.ts:8:25+2 typescript(no-deprecated)",
+  "b.ts:9:25+3 typescript(no-deprecated)",
+  "u.ts:19:21+2 typescript(no-deprecated)"
+ ],
+ "places/throw-undefined-and-a-template-with-space": [
+  "template.ts:13:20+19 typescript(no-unnecessary-template-expression)",
+  "template.ts:16:21+8 typescript(no-unnecessary-template-expression)",
+  "template.ts:17:21+10 typescript(no-unnecessary-template-expression)",
+  "template.ts:3:20+4 typescript(no-unnecessary-template-expression)",
+  "template.ts:4:20+5 typescript(no-unnecessary-template-expression)",
+  "template.ts:5:20+7 typescript(no-unnecessary-template-expression)",
+  "template.ts:8:20+29 typescript(no-unnecessary-template-expression)",
+  "throw.ts:1:24+16 typescript(only-throw-error)",
+  "throw.ts:2:24+15 typescript(only-throw-error)",
+  "throw.ts:3:24+18 typescript(only-throw-error)",
+  "throw.ts:4:30+4 typescript(only-throw-error)",
+  "throw.ts:5:30+3 typescript(only-throw-error)",
+  "throw.ts:6:24+13 typescript(only-throw-error)",
+  "throw.ts:7:36+8 typescript(only-throw-error)",
+  "throw.ts:9:3+19 typescript(only-throw-error)"
+ ],
+ "strict-void-return/a-union-has-no-signatures": [
+  "void.tsx:4:32+3 typescript(strict-void-return)",
+  "void.tsx:9:12+3 typescript(strict-void-return)"
  ]
 }

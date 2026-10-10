@@ -28,7 +28,7 @@ use crate::util_is_create_element::is_member_called;
 use crate::util_is_destructured_from_pragma_import::is_destructured_from_pragma_import;
 use crate::util_is_first_letter_capitalized::is_first_letter_capitalized;
 use crate::util_jsx::{self, Branches, Nulls};
-use crate::util_pragma::get_create_class_from_context;
+use crate::util_pragma::{get_create_class_from_context, mentions_create_class};
 use crate::util_props::{is_default_props_declaration, is_prop_types_declaration};
 use bun_core::strings;
 use bun_lint::prelude::*;
@@ -265,7 +265,6 @@ impl<'a> Components<'a> {
             "defaultProps",
             "getDefaultProps",
         ];
-        let create_class = std::str::from_utf8(get_create_class_from_context(file));
         // `@extends React.Component`
         let has_tag = || {
             let mut comments = file.comments().map(|it| it.comment_value());
@@ -273,7 +272,7 @@ impl<'a> Components<'a> {
         };
         file.mentions_any(&NAMES)
             || file.has_exprs([ExprTag::Jsx, ExprTag::Null])
-            || create_class.is_ok_and(|it| file.mentions(it))
+            || mentions_create_class(file, get_create_class_from_context(file))
             || file.settings().get(b"componentWrapperFunctions").is_some()
             || has_tag()
     }
@@ -356,7 +355,7 @@ impl<'a> Components<'a> {
             }
         }
         // ObjectExpression
-        if mentions(pragmas.create_class) {
+        if mentions_create_class(file, pragmas.create_class) {
             let calls = [ExprTag::Call, ExprTag::New].map(|tag| file.exprs_of_kind(tag));
             for call in calls.into_iter().flatten().filter_map(Expr::as_call_like) {
                 for argument in call.args() {

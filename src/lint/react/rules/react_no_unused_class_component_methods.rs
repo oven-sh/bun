@@ -1,6 +1,6 @@
 use crate::util_ast::{get_property_name_node, is_assignment_lhs};
 use crate::util_component_util::{Pragmas, is_es5_component, is_es6_component};
-use crate::util_pragma::get_create_class_from_context;
+use crate::util_pragma::{get_create_class_from_context, mentions_create_class};
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -73,10 +73,6 @@ fn get_name_of_key<'a>(file: &'a File<'a>, key: Key<'a>) -> Option<Cow<'a, [u8]>
         KeyKind::Private(_) => None,
         KeyKind::Computed(e) => get_name(e),
     }
-}
-
-fn mentions(file: &File<'_>, create_class: &[u8]) -> bool {
-    std::str::from_utf8(create_class).is_ok_and(|it| file.mentions(it))
 }
 
 /// A listener of upstream, with the node that it is called with.
@@ -202,7 +198,8 @@ impl Rule for NoUnusedClassComponentMethods {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (file.has_stmts([StmtTag::Class]) || mentions(file, get_create_class_from_context(file))).then_some(())
+        (file.has_stmts([StmtTag::Class]) || mentions_create_class(file, get_create_class_from_context(file)))
+            .then_some(())
     }
 
     /// Upstream has one `classInfo` and no stack: what is in a component can replace it or end it. So the listeners are
@@ -215,7 +212,7 @@ impl Rule for NoUnusedClassComponentMethods {
         for class in file.classes().filter(|it| is_declaration(it) && is_es6_component(*it, &pragmas)) {
             calls.push((entering(class.span()), Listener::Class(class)));
         }
-        if mentions(file, pragmas.create_class) {
+        if mentions_create_class(file, pragmas.create_class) {
             for object in file.exprs_of_kind(ExprTag::Object) {
                 if let ExprKind::Object(properties) = object.kind()
                     && is_es5_component(Node::Expr(object), &pragmas)

@@ -11,7 +11,7 @@ use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::config::{self, Roots};
 use bun_sema::program::{libs_referenced_by, types_of};
-use bun_sema::resolve::{Host, ancestors, inside, is_same_path};
+use bun_sema::resolve::{Host, Options, ancestors, inside, is_same_path};
 use bun_sema::session::Session;
 use bun_sema::util::FxHashMap;
 use bun_threading::Guarded;
@@ -32,8 +32,10 @@ struct Project {
     roots: Roots,
     /// The configuration files.
     references: Vec<Vec<u8>>,
-    /// `None`: what it depends on is not installed, so what its files can use is not known.
-    outline: Option<Arc<Outline>>,
+    options: Options,
+    /// Made when a file of the project asks. `None`: what it depends on is not installed, so what its files can use is
+    /// not known.
+    outline: OnceLock<Option<Arc<Outline>>>,
 }
 
 /// The outlines of the projects of a run. Each is made when a file of it is first asked about.
@@ -65,7 +67,8 @@ impl Outlines {
         let mut config = nearest.or_else(|| self.nearest_to(&self.cwd))?;
         loop {
             if let Some(owner) = self.project_with(&config, &path) {
-                return owner.outline.clone();
+                let outline = || self.outline(&owner.options);
+                return owner.outline.get_or_init(outline).clone();
             }
             // `getAncestorConfigFileName`
             let above = self.nearest_to(ancestors(dirname::<Posix>(&config)).nth(1)?)?;
@@ -136,7 +139,7 @@ impl Outlines {
         let known = self.projects.lock().get(config).cloned();
         let project = known.unwrap_or_else(|| {
             let mut projects = self.projects.lock();
-            projects.entry(config.to_vec()).or_default().clone()
+            Arc::clone(projects.entry(config.to_vec()).or_default())
         });
         // One thread reads it. The others wait: they have nothing to lint before they know.
         let read = || self.read(config).map(Arc::new);
@@ -147,24 +150,25 @@ impl Outlines {
         let host = self.asking(false);
         let over = |_: bool| -> Vec<_> { installed_major(&host, config).into_iter().collect() };
         let project = config::load_overriding(&host, &Session::new(), config, &over).ok()?;
-        let outline = || {
-            let types = types_of(&self.asking(true), &project.options)?;
-            Some(Arc::new(Outline {
-                config_path: config.to_vec(),
-                libs: project.options.libs.clone(),
-                types,
-                checks_javascript: project.options.check_js == Some(true),
-            }))
-        };
         Some(Project {
             roots: project.roots(&host),
             references: (project.references.iter())
                 .map(|it| config::resolve_config_file_name_of_project_reference(&it.path))
                 .collect(),
-            outline: match lacks_its_packages(&host, config) {
-                true => None,
-                false => outline(),
-            },
+            options: project.options,
+            outline: OnceLock::new(),
         })
+    }
+
+    fn outline(&self, options: &Options) -> Option<Arc<Outline>> {
+        if lacks_its_packages(&self.asking(false), &options.config_path) {
+            return None;
+        }
+        Some(Arc::new(Outline {
+            config_path: options.config_path.clone(),
+            libs: options.libs.clone(),
+            types: types_of(&self.asking(true), options)?,
+            checks_javascript: options.check_js == Some(true),
+        }))
     }
 }

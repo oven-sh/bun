@@ -3878,6 +3878,97 @@ describe.concurrent("bun lint", () => {
         expect(reported(untyped.stdout, "no-global-assign")).toEqual([]);
       });
 
+      // No file of the project is read before a name is about to be reported.
+      describe("--infer-globals=fast: the options of the project choose the environments, and its types have the last word", () => {
+        const node = {
+          "node_modules/@types/node/package.json": `{ "name": "@types/node", "version": "1.0.0", "types": "index.d.ts" }`,
+          "node_modules/@types/node/index.d.ts": "declare var process: object;\n",
+        };
+        test.concurrent.each([
+          [
+            "as --infer-globals",
+            { lib: ["es2022"], types: ["a"] },
+            "console.log(fromTypes, alsoFromTypes, mine, window, typo, OnlyAType, Bun);\n",
+            ["console", "window", "typo", "OnlyAType"],
+          ],
+          [
+            "the edition is that of `lib`",
+            { lib: ["es5"], types: [] },
+            "void [Array, Promise, Map];\n",
+            ["Promise", "Map"],
+          ],
+          [
+            "a part of an edition",
+            { lib: ["es5", "es2015.promise"], types: [] },
+            "void [Array, Promise, Map];\n",
+            ["Map"],
+          ],
+          [
+            "`target` without `lib` stands for its edition and a browser",
+            { target: "es2020", types: [] },
+            "void [window, BigInt, process, WeakRef];\n",
+            ["process", "WeakRef"],
+          ],
+          ["a package of types", { lib: ["es2022"], types: ["node"] }, "void [process, window];\n", ["window"]],
+          // Nothing is known then.
+          [
+            "a package of types that is not installed",
+            { lib: ["es2022"], types: ["no"] },
+            "void [window, typo];\n",
+            ["typo"],
+          ],
+          [
+            "a project that does not check its JavaScript",
+            { lib: ["es2022"], types: ["a"], checkJs: false },
+            "void [fromTypes, mine, process, window, typo];\n",
+            ["typo"],
+          ],
+        ])("%s", async (_, options, text, names) => {
+          const all = { ...tree, ...node, "tsconfig.json": tsconfig(options), "a.js": text };
+          const { stdout, exitCode } = await lint(all, ["-f", "unix", "--infer-globals=fast"]);
+          expect(reported(stdout, "no-undef")).toEqual(names.map(it => `a.js ${it}`));
+          expect(exitCode).toBe(1);
+        });
+
+        test("which project has a file is asked of `files`, `include`, `exclude` and `references`", async () => {
+          const text = "void [document, typo];\n";
+          const bare = { lib: ["es2022"], types: [] };
+          const { stdout, exitCode } = await lint(
+            {
+              "tsconfig.json": JSON.stringify({
+                files: [],
+                references: [{ path: "./one" }, { path: "./two/other.json" }],
+              }),
+              "one/tsconfig.json": tsconfig({ ...bare, composite: true }, { include: ["src"], exclude: ["src/not"] }),
+              "one/src/in.js": text,
+              "one/src/deep/er/in.js": text,
+              "one/src/not/out.js": text,
+              "one/out.js": text,
+              // `taken.ts` is in its place.
+              "one/src/taken.js": text,
+              "one/src/taken.ts": "export {};\n",
+              "two/other.json": tsconfig({ ...bare, composite: true }, { files: ["named.js"] }),
+              "two/named.js": text,
+              "two/out.js": text,
+            },
+            ["-f", "unix", "--infer-globals=fast"],
+          );
+          expect(reported(stdout, "no-undef")).toEqual([
+            "one/out.js typo",
+            "one/src/deep/er/in.js document",
+            "one/src/deep/er/in.js typo",
+            "one/src/in.js document",
+            "one/src/in.js typo",
+            "one/src/not/out.js typo",
+            "one/src/taken.js typo",
+            "two/named.js document",
+            "two/named.js typo",
+            "two/out.js typo",
+          ]);
+          expect(exitCode).toBe(1);
+        });
+      });
+
       test("each project has its own, and a file that no project includes has the environments", async () => {
         const text = "void [document, process, typo];\n";
         const { stdout, exitCode } = await lint(

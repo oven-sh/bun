@@ -6,6 +6,7 @@ use crate::util_ast::{get_component_properties, get_property_name};
 use crate::util_component_util::{self, Pragmas};
 use crate::util_components::Components;
 use crate::util_components_list::{At, ComponentId, Queue};
+use crate::util_pragma::mentions_create_class;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
@@ -82,7 +83,7 @@ impl Rule for RequireRenderReturn {
         let pragmas = Pragmas::new(file);
         // Whether something can be reported at all does not take the list of components.
         let has_render = |node| render_of_component(node, &pragmas).is_some();
-        let mentions_create_class = std::str::from_utf8(pragmas.create_class).is_ok_and(|it| file.mentions(it));
+        let mentions_create_class = mentions_create_class(file, pragmas.create_class);
         if !file.classes().map(Node::Class).any(has_render)
             && !(mentions_create_class && file.exprs_of_kind(ExprTag::Object).map(Node::Expr).any(has_render))
         {

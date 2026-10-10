@@ -392,6 +392,40 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
+  // Nothing of it is built in.
+  test.each([
+    [
+      "eslint.config.mjs",
+      `import regexp from "eslint-plugin-regexp";
+       export default [{ plugins: { regexp }, rules: { "regexp/no-dupe-disjunctions": "error" } }];`,
+      "a.js:1:1: of the package [Error/regexp/no-dupe-disjunctions]",
+    ],
+    [
+      ".oxlintrc.json",
+      oxlintrc({ jsPlugins: ["eslint-plugin-regexp"], rules: { "regexp/no-dupe-disjunctions": "error" } }),
+      "a.js:1:1: of the package [Error/regexp(no-dupe-disjunctions)]",
+    ],
+  ])(
+    "eslint-plugin-regexp is a plugin like any other, the package of the project runs: %s",
+    async (name, configuration, printed) => {
+      const { stdout, stderr, exitCode } = await lint(
+        {
+          [name]: configuration,
+          "node_modules/eslint-plugin-regexp/package.json": `{ "name": "eslint-plugin-regexp", "version": "3.0.0", "main": "index.js" }`,
+          "node_modules/eslint-plugin-regexp/index.js": `
+            const rule = { create: context => ({ Program: node => context.report({ node, message: "of the package" }) }) };
+            module.exports = { meta: { name: "eslint-plugin-regexp", version: "3.0.0" }, rules: { "no-dupe-disjunctions": rule } };`,
+          "a.js": "/a|a/;\n",
+        },
+        ["-f", "unix", "a.js"],
+      );
+      expect(stdout.split("\n").filter(it => it.includes("["))).toEqual([expect.stringContaining(printed)]);
+      expect(stderr).not.toContain("note:");
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
   // To oxlint `n`, which a plugin can be called, and `node`, which is built in, are two plugins. What oxlint 1.87 prints, sorted.
   const calledN = {
     "n.js": `const rule = message => ({ create: context => ({ BinaryExpression(node) { context.report({ node, message }); } }) });

@@ -1190,19 +1190,30 @@ impl<'f> Collector<'f, '_> {
                 .map(|(_, e)| e.pos)
                 .collect();
             elements.sort_unstable();
+            // `Some(None)`: the variable that a class declaration has for its name in its own scope.
             let found = elements.iter().find_map(|&pos| {
                 let mut scope = tree.scope_at(pos);
                 while let Some(data) = tree.scopes.get(scope as usize) {
                     // It is in the `set` of its scope from where the Referencer has visited its declaration.
                     let declared = |index: &u32| variables.list[*index as usize].first_pos < pos;
-                    if let Some(index) = variables.get(scope, name).filter(declared) {
-                        return Some(index);
+                    let variable = variables.get(scope, name);
+                    if let Some(index) = variable.filter(declared) {
+                        return Some(Some(index));
+                    }
+                    if variable.is_none()
+                        && let scopes::Block::Class(class) = data.block
+                        && let Some(class) = file.hir.classes.get(class.idx())
+                        && class.name == name
+                    {
+                        // The decorators are visited after the name is declared, outside the class.
+                        let outer = variables.get(data.parent, name);
+                        return Some(outer.filter(|_| pos < class.name_pos));
                     }
                     scope = data.parent;
                 }
                 None
             });
-            if let Some(index) = found {
+            if let Some(Some(index)) = found {
                 let pos = variables.list[index as usize].first_pos;
                 self.push(
                     ReferenceSite::Declaration(index),

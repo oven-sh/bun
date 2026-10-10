@@ -1,7 +1,7 @@
 use crate::util_ast::{Property, get_component_properties};
 use crate::util_components::Components;
 use crate::util_lifecycle_methods::{INSTANCE, STATIC};
-use crate::util_pragma::get_create_class_from_context;
+use crate::util_pragma::{self, get_create_class_from_context};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -15,7 +15,7 @@ const LIFECYCLE: Message = Message::new(
 );
 
 fn mentions_create_class<'a>(file: &'a File<'a>) -> bool {
-    std::str::from_utf8(get_create_class_from_context(file)).is_ok_and(|it| file.mentions(it))
+    util_pragma::mentions_create_class(file, get_create_class_from_context(file))
 }
 
 impl Rule for NoArrowFunctionLifecycle {

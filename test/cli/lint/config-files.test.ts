@@ -728,6 +728,44 @@ test.concurrent(
   },
 );
 
+// What ESLint 10.12 reports with @babel/eslint-parser 8.0.7, which analyzes the scopes itself: the code of a file is in the scope of a
+// function only with `globalReturn`, and not in a module. So in nodejs/node, which is "commonjs", `const { Symbol } = primordials;`
+// defines the global variable: for the rules here and for those in JavaScript.
+test.concurrent("with the parser of Babel, `commonjs` alone puts no function around a file", async () => {
+  const defines = `{ create: context => ({ Program(node) {
+    if (context.sourceCode.scopeManager.globalScope.set.get("Symbol").defs.length > 0) context.report({ node, message: "defined" });
+  } }) }`;
+  const wraps = `{ create: context => ({ Program(node) {
+    if (context.sourceCode.scopeManager.scopes.some(it => it.type === "function")) context.report({ node, message: "wrapped" });
+  } }) }`;
+  const inGlobalScope = ["1:1 mine/defines", "1:9 no-redeclare", "2:5 no-implicit-globals"];
+  const cases: [sourceType: string, globalReturn: boolean, problems: string[]][] = [
+    ["commonjs", false, inGlobalScope],
+    ["commonjs", true, ["1:1 mine/wraps"]],
+    ["script", false, inGlobalScope],
+    ["script", true, ["1:1 mine/wraps"]],
+    ["module", false, []],
+    ["module", true, []],
+  ];
+  const objects = cases.map(
+    ([sourceType, globalReturn], at) => `{
+      files: ["d${at}/*.js"],
+      languageOptions: { sourceType: "${sourceType}", parserOptions: { requireConfigFile: false, ecmaFeatures: { globalReturn: ${globalReturn} } } },
+    }`,
+  );
+  const files = {
+    "eslint.config.mjs": `const parser = { meta: { name: "@babel/eslint-parser", version: "8.0.7" }, parseForESLint() { throw new Error("called"); } };
+    export default [{ ignores: ["eslint.config.mjs"] }, {
+      languageOptions: { parser, globals: { Symbol: "readonly", primordials: "readonly" } },
+      plugins: { mine: { rules: { defines: ${defines}, wraps: ${wraps} } } },
+      rules: { "mine/defines": "error", "mine/wraps": "error", "no-redeclare": "error", "no-implicit-globals": "error" },
+    }, ${objects.join(", ")}];`,
+    ...Object.fromEntries(cases.map((_, at) => [`d${at}/a.js`, "const { Symbol } = primordials;\nvar b;\n"])),
+  };
+  const { problems } = await lint(files);
+  expect(problems).toEqual(cases.flatMap(([, , problems], at) => problems.map(it => `d${at}/a.js:${it}`)));
+});
+
 // The rule here answers only where its text is that of the package, byte for byte. Where it cannot tell, the package's rule runs.
 test.concurrent("prettier/prettier: what the rule here cannot answer for, the rule of the package does", async () => {
   const theirs = `{ create: context => ({ VariableDeclaration(node) { context.report({ node, message: "theirs" }); } }) }`;

@@ -599,8 +599,9 @@ impl<'a> PropTypesInstructions<'a> {
 impl<'a> Instructions<'a> for PropTypesInstructions<'a> {
     fn nodes(&self, file: &'a File<'a>, add: &mut dyn FnMut(Node<'a>, Visit)) {
         let mut add = |node| add(node, Visit::Enter);
-        let mentions_prop_types = file.mentions("propTypes");
-        let mentions_props = file.mentions("props");
+        // The `name` of a `PrivateIdentifier` is without the `#`.
+        let mentions_prop_types = file.mentions_any(&["propTypes", "#propTypes"]);
+        let mentions_props = file.mentions_any(&["props", "#props"]);
         for class in file.classes() {
             if is_super_type_parameter_props_declaration(class) {
                 add(Node::Class(class));

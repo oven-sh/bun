@@ -406,6 +406,7 @@ pub(crate) fn get_key_value(node: Node<'_>) -> Option<Cow<'_, [u8]>> {
 pub(crate) fn is_assignment_lhs(e: Expr<'_>) -> bool {
     matches!(e.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Assign
         && parent.left() == Some(e)
+        && !e.is_chain_root()
         && !parent.is_assignment_target())
 }
 

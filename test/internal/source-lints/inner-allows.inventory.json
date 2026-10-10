@@ -166,45 +166,6 @@
   "src/lint/plugins/module_visitor.rs": [
     "dead_code, until every rule of the plugin is written"
   ],
-  "src/lint/plugins/regexp_ast_utils.rs": [
-    "dead_code, until every rule of the plugin is written"
-  ],
-  "src/lint/plugins/regexp_char_env.rs": [
-    "dead_code, until every rule of the plugin is written"
-  ],
-  "src/lint/plugins/regexp_char_map.rs": [
-    "dead_code, until every rule of the plugin is written"
-  ],
-  "src/lint/plugins/regexp_char_set.rs": [
-    "dead_code, until every rule of the plugin is written"
-  ],
-  "src/lint/plugins/regexp_expression_references.rs": [
-    "dead_code, until every rule of the plugin is written"
-  ],
-  "src/lint/plugins/regexp_pattern_source.rs": [
-    "dead_code, until every rule of the plugin is written"
-  ],
-  "src/lint/plugins/regexp_raa_basic.rs": [
-    "dead_code, until every rule of the plugin is written"
-  ],
-  "src/lint/plugins/regexp_raa_follow.rs": [
-    "dead_code, until every rule of the plugin is written"
-  ],
-  "src/lint/plugins/regexp_refa_ast.rs": [
-    "dead_code, until every rule of the plugin is written"
-  ],
-  "src/lint/plugins/regexp_replacements.rs": [
-    "dead_code, until every rule of the plugin is written"
-  ],
-  "src/lint/plugins/regexp_syntax.rs": [
-    "dead_code, until every rule of the plugin is written"
-  ],
-  "src/lint/plugins/regexp_type_builtins.rs": [
-    "dead_code, until every rule of the plugin is written"
-  ],
-  "src/lint/plugins/regexp_type_data.rs": [
-    "dead_code, until every rule of the plugin is written"
-  ],
   "src/lint/react/util_annotations.rs": [
     "dead_code, until every rule of the plugin is written"
   ],

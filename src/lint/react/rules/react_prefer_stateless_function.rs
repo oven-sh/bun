@@ -3,7 +3,7 @@ use crate::util_component_util::{is_es5_component, is_es6_component, is_pure_com
 use crate::util_components::Components;
 use crate::util_components_list::{At, ComponentId, Queue};
 use crate::util_jsx::Branches;
-use crate::util_pragma::get_create_class_from_context;
+use crate::util_pragma::{self, get_create_class_from_context};
 use crate::util_version::get_react_version_from_context;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -66,7 +66,7 @@ fn has_other_properties(node: Node<'_>) -> bool {
 
 /// Whether something can be in a call of `createClass`.
 fn mentions_create_class<'a>(file: &'a File<'a>) -> bool {
-    std::str::from_utf8(get_create_class_from_context(file)).is_ok_and(|it| file.mentions(it))
+    util_pragma::mentions_create_class(file, get_create_class_from_context(file))
 }
 
 fn is_props_or_context(name: Option<&[u8]>) -> bool {

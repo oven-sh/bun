@@ -260,13 +260,16 @@ impl NoDeprecated {
     }
 
     fn report_at<'a>(at: Span, name: Cow<'a, [u8]>, reason: &'a [u8], cx: &Cx<'a, Self>) {
-        let reason = match cx.language().is_oxlint && strings::contains(reason, b"{@link") {
+        let is_oxlint = cx.language().is_oxlint;
+        let reason = match is_oxlint && strings::contains(reason, b"{@link") {
             true => Cow::Owned(without_names_of_links(reason)),
             false => Cow::Borrowed(reason),
         };
+        // tsgolint trims it once it has seen that there is one.
+        let trimmed = if is_oxlint { strings::trim_js_whitespace(&reason) } else { &reason[..] };
         match reason.is_empty() {
             true => cx.report(at, DEPRECATED).data("name", name),
-            false => cx.report(at, DEPRECATED_WITH_REASON).data("name", name).data("reason", reason),
+            false => cx.report(at, DEPRECATED_WITH_REASON).data("name", name).data("reason", trimmed.to_vec()),
         };
     }
 

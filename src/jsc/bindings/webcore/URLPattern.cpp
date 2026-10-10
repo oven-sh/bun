@@ -342,7 +342,11 @@ ExceptionOr<void> URLPattern::compileAllComponents(ScriptExecutionContext& conte
 
     URLPatternUtilities::URLPatternStringOptions compileOptions { .ignoreCase = options.ignoreCase };
 
-    auto maybePathnameComponent = m_protocolComponent.matchSpecialSchemeProtocol(context.globalObject())
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool protocolMatchesSpecialScheme = m_protocolComponent.matchSpecialSchemeProtocol(context.globalObject());
+    RETURN_IF_EXCEPTION(scope, Exception { ExceptionCode::ExistingExceptionError });
+
+    auto maybePathnameComponent = protocolMatchesSpecialScheme
         ? URLPatternUtilities::URLPatternComponent::compile(vm, processedInit.pathname, EncodingCallbackType::Path, URLPatternUtilities::URLPatternStringOptions { "/"_s, "/"_s, options.ignoreCase })
         : URLPatternUtilities::URLPatternComponent::compile(vm, processedInit.pathname, EncodingCallbackType::OpaquePath, compileOptions);
     if (maybePathnameComponent.hasException())

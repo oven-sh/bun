@@ -270,7 +270,8 @@ const coreModuleRegExp = /^ {4}at (?:[^/\\(]+ \(|)node:(.+):\d+:\d+\)?$/;
 const nodeModulesRegExp = /[/\\]node_modules[/\\](.+?)(?=[/\\])/g;
 
 const classRegExp = /^(\s+[^(]*?)\s*{/;
-const stripCommentsRegExp = /(\/\/.*?\n)|(\/\*(.|\n)*?\*\/)/g;
+// node has `(.|\n)*?` where the class is. The RegExp engine can abandon the search of a group that repeats.
+const stripCommentsRegExp = /(\/\/.*?\n)|(\/\*[^\r\u2028\u2029]*?\*\/)/g;
 
 const kMinLineLength = 16;
 

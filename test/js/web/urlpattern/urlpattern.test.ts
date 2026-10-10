@@ -1,6 +1,7 @@
 // Test data from Web Platform Tests
 // https://github.com/web-platform-tests/wpt/blob/master/LICENSE.md
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import testData from "./urlpatterntestdata.json";
 
 const kComponents = ["protocol", "username", "password", "hostname", "port", "pathname", "search", "hash"] as const;
@@ -204,6 +205,108 @@ describe("URLPattern", () => {
 
     test("complex pathname with regexp", () => {
       expect(new URLPattern({ pathname: "/a/:foo/:baz([a-z]+)?/b/*" }).hasRegExpGroups).toBe(true);
+    });
+  });
+
+  // The RegExp engine abandons a search that takes too many steps or too much backtracking memory.
+  // That is not "no match": exec() returned null and test() returned false for input that matches.
+  describe("a component whose RegExp search is abandoned", () => {
+    const limitError = "RangeError: Regular expression backtracking limit exceeded";
+    const memoryError = "RangeError: Maximum call stack size exceeded.";
+
+    // Runs `body`, which logs one JSON value, in a process with the given engine options.
+    async function run(env: Record<string, string>, body: string) {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const outcome = run => {
+              try {
+                return { value: run() };
+              } catch (e) {
+                return { threw: e.name + ": " + e.message };
+              }
+            };
+            ${body}
+          `,
+        ],
+        env: { ...bunEnv, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { result: stdout.trim() ? JSON.parse(stdout) : undefined, stderr, exitCode };
+    }
+
+    test("exec() throws at the default limit", () => {
+      const pattern = new URLPattern({ pathname: "/((?:a|aa)+b|a+c)" });
+      expect(() => pattern.exec({ pathname: "/" + Buffer.alloc(37, "a").toString() + "c" })).toThrow(
+        new RangeError("Regular expression backtracking limit exceeded"),
+      );
+      expect(pattern.exec({ pathname: "/aac" })?.pathname.groups).toEqual({ "0": "aac" });
+    });
+
+    test.concurrent("exec(), test() and the constructor throw at a lowered limit", async () => {
+      const ran = await run(
+        { BUN_JSC_regExpMatchLimit: "1000" },
+        `
+          const pattern = new URLPattern({ pathname: "/((?:a|aa)+b|a+c)" });
+          const long = "/" + Buffer.alloc(37, "a").toString() + "c";
+          // The constructor runs the protocol's RegExp on "https" and the other special schemes.
+          // This many nested groups take more than 1,000 steps to fail on five characters.
+          const nested = depth => "(" + "(?:".repeat(depth) + "[a-z]+" + ")+".repeat(depth) + "x|https)";
+          console.log(JSON.stringify({
+            exec: outcome(() => pattern.exec({ pathname: long })),
+            test: outcome(() => pattern.test({ pathname: long })),
+            execString: outcome(() => pattern.exec("https://example.com" + long)),
+            short: outcome(() => pattern.test({ pathname: "/aac" })),
+            constructor: outcome(() => new URLPattern({ protocol: nested(6), pathname: "/x" }).protocol),
+            constructorString: outcome(() => new URLPattern(nested(6) + "://example.com/x").protocol),
+            constructorUnderLimit: outcome(() => new URLPattern({ protocol: nested(1), pathname: "/x" }).test("https://example.com/x")),
+          }));
+        `,
+      );
+      expect(ran).toEqual({
+        result: {
+          exec: { threw: limitError },
+          test: { threw: limitError },
+          execString: { threw: limitError },
+          short: { value: true },
+          constructor: { threw: limitError },
+          constructorString: { threw: limitError },
+          constructorUnderLimit: { value: true },
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // The interpreter keeps one context for each iteration of the group in a pool, here of 1 MB.
+    test.concurrent("exec() and test() throw when the backtracking memory runs out", async () => {
+      const ran = await run(
+        { BUN_JSC_useRegExpJIT: "0", BUN_JSC_maxRegExpStackSize: "1048576" },
+        `
+          const pattern = new URLPattern({ pathname: "/((?:a|b)+)" });
+          const path = count => "/" + Buffer.alloc(count, "a").toString();
+          console.log(JSON.stringify({
+            fits: outcome(() => pattern.exec({ pathname: path(5000) }).pathname.groups[0].length),
+            exec: outcome(() => pattern.exec({ pathname: path(20000) })),
+            test: outcome(() => pattern.test({ pathname: path(20000) })),
+            execString: outcome(() => pattern.exec("https://example.com" + path(20000))),
+          }));
+        `,
+      );
+      expect(ran).toEqual({
+        result: {
+          fits: { value: 5000 },
+          exec: { threw: memoryError },
+          test: { threw: memoryError },
+          execString: { threw: memoryError },
+        },
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 });

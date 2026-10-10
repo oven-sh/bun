@@ -27,7 +27,14 @@ extern "C" int Yarr__RegularExpression__matchedLength(RegularExpression* re)
 {
     return re->matchedLength();
 }
-extern "C" int Yarr__RegularExpression__matches(RegularExpression* re, const BunString* string)
+// `MatchStatus` in src/jsc/RegularExpression.rs mirrors the enum this returns.
+static_assert(static_cast<uint8_t>(MatchStatus::NoMatch) == 0);
+static_assert(static_cast<uint8_t>(MatchStatus::Match) == 1);
+static_assert(static_cast<uint8_t>(MatchStatus::Abandoned) == 2);
+
+extern "C" MatchStatus Yarr__RegularExpression__matches(RegularExpression* re, const BunString* string)
 {
-    return re->match(string->toWTFString(BunString::ZeroCopy), 0, 0);
+    int position;
+    int matchLength;
+    return re->match(string->toWTFString(BunString::ZeroCopy), 0, position, matchLength);
 }

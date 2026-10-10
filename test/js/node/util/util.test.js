@@ -413,6 +413,23 @@ describe("util", () => {
       invalidArgType('The "str" argument must be of type string. Received type number (1)'),
     );
   });
+  // The RegExp engine abandons a search that takes too many steps or too much backtracking memory.
+  // node's pattern for comments did that on these sources, and the class was printed as a
+  // function. Results are node v26.3.0's.
+  it("inspect prints a class as a class when its source is slow or too big for node's comment pattern", () => {
+    // A "(" before the class body makes inspect strip the comments from the source.
+    const longComment = new Function("return class Foo /* (" + Buffer.alloc(1500000, "x").toString() + ") */ {}")();
+    expect(util.inspect(longComment)).toBe("[class Foo]");
+
+    // Each "/*" in a string starts a search for a "*/" that is not there.
+    const strings = Array.from({ length: 6000 }, () => '"a/*"').join(",");
+    const manyOpeners = new Function(
+      `return class Foo /* (mixin) */ { static globs() { return [${strings}]; } // tail\n}`,
+    )();
+    expect(util.inspect(manyOpeners)).toBe("[class Foo]");
+    expect(util.inspect({ manyOpeners })).toBe("{ manyOpeners: [class Foo] }");
+  });
+
   // Ported from the validateObject block of node's test/parallel/test-validators.js (v26.3.0).
   it("validateObject honors the kValidateObject* flags like Node", () => {
     const { validateObject, kValidateObjectAllowNullable, kValidateObjectAllowArray, kValidateObjectAllowFunction } =

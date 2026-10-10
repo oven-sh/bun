@@ -888,6 +888,158 @@ it.concurrent("a no-op onResolve that returns args.path unchanged is transparent
   expect(exitCode).toBe(0);
 });
 
+// A filter whose search the RegExp engine abandons has no answer. The plugin used to be skipped, as
+// if the filter did not match.
+describe.concurrent("a filter whose search is abandoned", () => {
+  // Runs main.mjs in a child. It prints one JSON value.
+  async function run(main: string, args: string[], env: Record<string, string> = {}) {
+    using dir = tempDir("plugin-filter-abandoned", { "main.mjs": main });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs", ...args],
+      env: { ...bunEnv, ...env },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { result: stdout.trim() ? JSON.parse(stdout) : undefined, stderr, exitCode };
+  }
+  // The filter in argv[3] is the one of argv[2], onResolve or onLoad. The other one matches everything.
+  const namespacePlugin = `
+    const [kind, source] = process.argv.slice(2);
+    const filter = new RegExp(source);
+    Bun.plugin({
+      name: "abandoned",
+      setup(b) {
+        const resolve = ({ path }) => ({ path, namespace: "ns" });
+        const load = ({ path }) => ({ contents: "export default 'loaded " + path.length + "';", loader: "js" });
+        b.onResolve({ filter: kind === "onResolve" ? filter : /.*/, namespace: "ns" }, resolve);
+        b.onLoad({ filter: kind === "onLoad" ? filter : /.*/, namespace: "ns" }, load);
+      },
+    });
+    const outcome = async run => {
+      try {
+        return await run();
+      } catch (e) {
+        return e.name + ": " + e.message;
+      }
+    };
+  `;
+  const overflow = "RangeError: Maximum call stack size exceeded.";
+
+  // No option is set: JIT code takes about 0.8 s to use up the 100,000,000 steps of a search.
+  it.each(["onResolve", "onLoad"])("in %s rejects the import at the default limit", async kind => {
+    const ran = await run(
+      `${namespacePlugin}
+      const long = "ns:" + Buffer.alloc(40, "a").toString() + "c";
+      console.log(JSON.stringify({
+        short: await outcome(async () => (await import("ns:aaac")).default),
+        long: await outcome(async () => (await import(long)).default),
+      }));`,
+      [kind, "(?:a|aa)+b|c$"],
+    );
+    expect(ran).toEqual({
+      result: { short: "loaded 4", long: "RangeError: Regular expression backtracking limit exceeded" },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The interpreter keeps a context for each iteration of the group in its pool, and 16 KB have
+  // room for about 150. A specifier with "ns:" runs the onLoad filter too when it is resolved.
+  it.each(["onResolve", "onLoad"])("in %s throws from every way to load or resolve a module", async kind => {
+    const ran = await run(
+      `${namespacePlugin}
+      import { join } from "node:path";
+      import { createRequire } from "node:module";
+      const require = createRequire(import.meta.url);
+      const results = {};
+      for (const [label, count] of [["short", 3], ["long", 2000]]) {
+        const specifier = "ns:" + Buffer.alloc(count, "a").toString() + "c";
+        const staticImporter = join(import.meta.dir, "static-" + label + ".mjs");
+        await Bun.write(staticImporter, "import value from " + JSON.stringify(specifier) + ";\\nexport default value;\\n");
+        results[label] = {
+          import: await outcome(async () => (await import(specifier)).default),
+          require: await outcome(() => require(specifier).default),
+          staticImport: await outcome(async () => (await import(staticImporter)).default),
+          requireResolve: await outcome(() => require.resolve(specifier).length),
+          importMetaResolve: await outcome(() => import.meta.resolve(specifier).length),
+          resolveSync: await outcome(() => Bun.resolveSync(specifier, import.meta.dir).length),
+        };
+      }
+      console.log(JSON.stringify(results));`,
+      [kind, "^(?:a|b)+c$"],
+      { BUN_JSC_useRegExpJIT: "0", BUN_JSC_maxRegExpStackSize: "16384" },
+    );
+    expect(ran).toEqual({
+      result: {
+        short: {
+          import: "loaded 4",
+          require: "loaded 4",
+          staticImport: "loaded 4",
+          requireResolve: 7,
+          importMetaResolve: 7,
+          resolveSync: 7,
+        },
+        long: {
+          import: overflow,
+          require: overflow,
+          staticImport: overflow,
+          requireResolve: overflow,
+          importMetaResolve: overflow,
+          resolveSync: overflow,
+        },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // With no namespace the filter runs on the path of a file when the file is loaded. The file used
+  // to be loaded from the disk, without the plugin. 8 KB have room for about 70 iterations.
+  it("in onLoad with no namespace throws when the file is loaded", async () => {
+    const ran = await run(
+      `
+      import { join } from "node:path";
+      import { createRequire } from "node:module";
+      const require = createRequire(import.meta.url);
+      Bun.plugin({
+        name: "abandoned",
+        setup(b) {
+          b.onLoad({ filter: /(?:a|b)+c\\.txt$/ }, () => ({ contents: "export default 'from the plugin';", loader: "js" }));
+        },
+      });
+      const outcome = async run => {
+        try {
+          return await run();
+        } catch (e) {
+          return e.name + ": " + e.message;
+        }
+      };
+      const results = {};
+      for (const [label, count] of [["short", 2], ["long", 200]]) {
+        const file = join(import.meta.dir, Buffer.alloc(count, "a").toString() + "c.txt");
+        await Bun.write(file, "from the disk");
+        results[label] = {
+          import: await outcome(async () => (await import(file)).default),
+          require: await outcome(() => require(file).default),
+        };
+      }
+      console.log(JSON.stringify(results));`,
+      [],
+      { BUN_JSC_useRegExpJIT: "0", BUN_JSC_maxRegExpStackSize: "8192" },
+    );
+    expect(ran).toEqual({
+      result: {
+        short: { import: "from the plugin", require: "from the plugin" },
+        long: { import: overflow, require: overflow },
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 // Spawned in a subprocess because clearAll() would wipe the plugins the rest of this file relies on.
 describe.concurrent("Bun.plugin.clearAll()", () => {
   async function run(src: string) {

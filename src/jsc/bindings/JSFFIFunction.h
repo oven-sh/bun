@@ -32,16 +32,15 @@ using CFFIFunction = FFIFunction;
  * Call a C function with low overhead, modeled after JSC::JSNativeStdFunction
  *
  * The C function is expected to know how to get the arguments out of the JSC::CallFrame and
- * return a JSC::EncodedJSValue. To do that, the argumentOffset is inlined at compile-time
- * into Bun's binary and again inlined into the C function.
+ * return a JSC::EncodedJSValue. The slot indices it needs are defined into it when TinyCC compiles it.
  *
  * This is used by functions compiled with TinyCC
  *
  * It was about 20% faster than using the JavaScriptCore C API for functions with 1 argument
  *
- * There is no wrapper function. It does zero bounds checking on the arguments.
+ * There is no wrapper function. This class does not check the arguments: the C function does.
  * It does not check for exceptions. It does not check for return value.
- * It is the caller's responsibility to not buffer overflow the arguments
+ * A function cc() compiles pads a call that passed too few arguments (LOAD_ARGUMENTS_FROM_CALL_FRAME in src/runtime/ffi/FFI.h).
  * For all those reasons, this shouldn't be used directly.
  */
 class JSFFIFunction final : public JSC::JSFunction {

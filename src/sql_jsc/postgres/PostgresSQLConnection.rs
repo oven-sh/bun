@@ -56,6 +56,10 @@ bun_core::define_scoped_log!(debug, Postgres, visible);
 
 const MAX_PIPELINE_SIZE: usize = u16::MAX as usize; // about 64KB per connection
 
+/// Seconds of silence before the kernel probes the peer of a ref'd connection.
+/// Same as fetch and postgres.js (`keep_alive: 60`).
+const TCP_KEEPALIVE_IDLE_SECS: u32 = 60;
+
 /// `None` only transiently, inside `get_or_put` before the new statement is stored.
 type PreparedStatementsMap = StringHashMap<Option<RefPtr<PostgresSQLStatement>>>;
 
@@ -1374,6 +1378,20 @@ impl PostgresSQLConnection {
         this.update_flags(|f| f.insert(ConnectionFlags::KEEP_ALIVE_REQUESTED));
         this.poll_ref.with_mut(|p| p.ref_(this.vm_ctx()));
         this.update_has_pending_activity();
+        // A ref'd connection waits for the server with nothing in flight, as the
+        // `sql.listen()` connection does. Without TCP keepalive the kernel never
+        // tells it that the peer went away without a FIN or RST. TCP options do
+        // not apply to a unix socket.
+        if this.path.slice().is_empty()
+            && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SQL_TCP_KEEPALIVE
+                .get()
+                .unwrap_or(false)
+        {
+            let _ = match *this.socket.get() {
+                uws::AnySocket::SocketTcp(s) => s.set_keep_alive(true, TCP_KEEPALIVE_IDLE_SECS),
+                uws::AnySocket::SocketTls(s) => s.set_keep_alive(true, TCP_KEEPALIVE_IDLE_SECS),
+            };
+        }
         Ok(JSValue::UNDEFINED)
     }
 

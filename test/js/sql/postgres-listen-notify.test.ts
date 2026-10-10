@@ -8,10 +8,22 @@
 // End-to-end behavior runs against the docker-compose postgres service.
 
 import { SQL } from "bun";
+import { dlopen, ptr } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, describeWithContainer, isDockerEnabled, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  describeWithContainer,
+  isDockerEnabled,
+  isLinux,
+  libcPathForDlopen,
+  tls as localhostTls,
+  tempDir,
+} from "harness";
+import { readdirSync, readFileSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
+import tls from "node:tls";
 import {
   listeningServer,
   neverAnsweringServer,
@@ -23,6 +35,7 @@ import {
   pgRaw,
   pgReadFrontendMessages,
   pgReadyForQuery,
+  pgSSLResponse,
 } from "./wire-frames";
 
 const PID = 4242;
@@ -37,6 +50,7 @@ const pgError = (message: string) =>
 // recorded from their Parse and rejected so they settle.
 async function mockServer() {
   const connections: string[][] = [];
+  const clientPorts: number[] = [];
   const sockets = new Set<net.Socket>();
   const queryWaiters: Array<() => void> = [];
   const closeWaiters: Array<() => void> = [];
@@ -48,6 +62,7 @@ async function mockServer() {
   const { port, server } = await listeningServer(socket => {
     const queries: string[] = [];
     connections.push(queries);
+    clientPorts.push(socket.remotePort!);
     sockets.add(socket);
     let buffered = Buffer.alloc(0);
     const record = (query: string) => {
@@ -99,6 +114,9 @@ async function mockServer() {
 
   return {
     url: `postgres://u@127.0.0.1:${port}/db`,
+    port,
+    /** The client's port of each connection, in accept order. */
+    clientPorts,
     /** Every query received so far, across connections, in arrival order. */
     get queries() {
       return all();
@@ -132,6 +150,68 @@ async function mockServer() {
 }
 
 const client = (url: string) => new SQL(url, { max: 1, connectionTimeout: 5, idleTimeout: 5 });
+
+/**
+ * Seconds until the kernel probes the peer of the client socket `clientPort` -> 127.0.0.1:`serverPort`:
+ * Infinity when TCP keepalive is off for it. Linux: in /proc/net/tcp the `tr` column is 02 while the
+ * keepalive timer of an established socket with nothing to retransmit is armed, and 00 when no timer
+ * is. `tm->when` is the time left in 1/100 s. It counts down from the idle time: 60 s, where the
+ * kernel's default is 7200 s.
+ */
+function keepaliveSeconds(clientPort: number, serverPort: number, table = readFileSync("/proc/self/net/tcp", "utf8")) {
+  const suffix = (port: number) => ":" + port.toString(16).toUpperCase().padStart(4, "0");
+  for (const line of table.split("\n").slice(1)) {
+    const [, local, remote, state, , timer] = line.trim().split(/\s+/);
+    if (state !== "01" || !local.endsWith(suffix(clientPort)) || !remote.endsWith(suffix(serverPort))) continue;
+    const [active, when] = timer.split(":");
+    if (active === "00") return Infinity;
+    if (active === "02") return parseInt(when, 16) / 100;
+    throw new Error(`socket ${clientPort} -> ${serverPort} has data in flight (timer ${timer})`);
+  }
+  throw new Error(`no established socket ${clientPort} -> ${serverPort} in /proc/net/tcp`);
+}
+
+/**
+ * Makes the peer of this process's socket on 127.0.0.1:`clientPort` vanish. A drop-all socket filter
+ * has the kernel discard every segment that arrives for the socket before TCP sees it: no data, no
+ * ACK, no FIN, no RST. The wait is shortened on that socket to 1 s of silence and one unanswered
+ * probe. Keepalive itself is not turned on here. Linux, and bun:ffi because Bun.SQL does not expose
+ * its fd.
+ */
+function vanishPeerOf(clientPort: number) {
+  const libc = dlopen(libcPathForDlopen(), {
+    getsockname: { args: ["int", "ptr", "ptr"], returns: "int" },
+    setsockopt: { args: ["int", "int", "int", "ptr", "u32"], returns: "int" },
+  });
+  try {
+    const address = new Uint8Array(16); // struct sockaddr_in: family, then the port in network order
+    const length = new Uint32Array(1);
+    const fd = readdirSync("/proc/self/fd")
+      .map(Number)
+      .find(fd => {
+        length[0] = address.length;
+        if (libc.symbols.getsockname(fd, ptr(address), ptr(length)) !== 0) return false;
+        return address[0] === 2 /* AF_INET */ && ((address[2] << 8) | address[3]) === clientPort;
+      });
+    if (fd === undefined) throw new Error(`no socket bound to port ${clientPort}`);
+    const set = (level: number, option: number, value: ArrayBufferView, size: number) => {
+      if (libc.symbols.setsockopt(fd, level, option, ptr(value), size) !== 0)
+        throw new Error(`setsockopt(${level}, ${option}) failed`);
+    };
+    set(6 /* IPPROTO_TCP */, 4 /* TCP_KEEPIDLE */, new Int32Array([1]), 4);
+    set(6 /* IPPROTO_TCP */, 6 /* TCP_KEEPCNT */, new Int32Array([1]), 4);
+    // struct sock_fprog { u16 len = 1; struct sock_filter *filter; } and the instruction it points
+    // to: BPF_RET | BPF_K with k = 0, which keeps 0 bytes of every packet.
+    const program = new Uint8Array(24);
+    const view = new DataView(program.buffer);
+    view.setUint16(0, 1, true);
+    view.setBigUint64(8, BigInt(ptr(program)) + 16n, true);
+    view.setUint16(16, 0x06, true);
+    set(1 /* SOL_SOCKET */, 26 /* SO_ATTACH_FILTER */, program, 16);
+  } finally {
+    libc.close();
+  }
+}
 
 /** A promise plus ways to settle it: `open()` now, or `after(n)` on the n-th call of the returned function. */
 function gate() {
@@ -663,6 +743,74 @@ describe("reconnect", () => {
   });
 });
 
+// A peer that goes away without a FIN or RST reaching the client (a NAT, a load balancer or a
+// failover that forgot the flow) closes nothing. A subscribed connection never writes, so only
+// the kernel's keepalive probe ends it and starts the reconnect tested above.
+describe.skipIf(!isLinux)("TCP keepalive", () => {
+  test("is on for the listen connection and for its replacement after a reconnect", async () => {
+    await using server = await mockServer();
+    await using sql = client(server.url);
+    const resubscribed = gate();
+    await sql.listen("ch", () => {}, resubscribed.after(2));
+    expect(keepaliveSeconds(server.clientPorts[0], server.port)).toBeLessThanOrEqual(60);
+
+    server.dropConnections();
+    await resubscribed;
+    expect(keepaliveSeconds(server.clientPorts[1], server.port)).toBeLessThanOrEqual(60);
+  });
+
+  test("is on for a listen connection that upgraded to TLS", async () => {
+    const clientPorts: number[] = [];
+    const { port, server } = await listeningServer(rawSocket => {
+      clientPorts.push(rawSocket.remotePort!);
+      rawSocket.on("error", () => {});
+      // The client sends SSLRequest and nothing more until it has the one-byte answer.
+      rawSocket.once("data", () => {
+        rawSocket.write(pgSSLResponse("S"));
+        rawSocket.pause();
+        const socket = new tls.TLSSocket(rawSocket, { isServer: true, key: localhostTls.key, cert: localhostTls.cert });
+        socket.on("error", () => {});
+        socket.once("data", () => {
+          socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+          let buffered = Buffer.alloc(0);
+          socket.on("data", (data: Buffer) => {
+            buffered = pgReadFrontendMessages(Buffer.concat([buffered, data]), type => {
+              if (type === 0x51) socket.write(Buffer.concat([pgCommandComplete("LISTEN"), pgReadyForQuery()]));
+            });
+          });
+        });
+      });
+    });
+    try {
+      await using sql = new SQL(`postgres://u@127.0.0.1:${port}/db?sslmode=require`, { max: 1, connectionTimeout: 5 });
+      await sql.listen("ch", () => {});
+      expect(keepaliveSeconds(clientPorts[0], port)).toBeLessThanOrEqual(60);
+    } finally {
+      server.close();
+    }
+  });
+
+  // Only the connection that waits for notifications gets the probe. A pooled connection is as before.
+  test("stays off for a pooled connection", async () => {
+    await using server = await mockServer();
+    await using sql = client(server.url);
+    await sql.connect();
+    expect(keepaliveSeconds(server.clientPorts[0], server.port)).toBe(Infinity);
+  });
+
+  // Over 2 s: the kernel's shortest idle time is 1 s, and it waits 1 s for the answer to a probe.
+  test("ends a listen connection whose peer vanished, and the subscription is re-established", async () => {
+    await using server = await mockServer();
+    await using sql = client(server.url);
+    const resubscribed = gate();
+    await sql.listen("ch", () => {}, resubscribed.after(2));
+
+    vanishPeerOf(server.clientPorts[0]);
+    await resubscribed;
+    expect(server.connections).toEqual([['LISTEN "ch"'], ['LISTEN "ch"']]);
+  });
+});
+
 describe("close()", () => {
   test("tears down the listen connection and rejects an in-flight listen()", async () => {
     await using server = await mockServer();
@@ -862,6 +1010,23 @@ describe("in a subprocess", () => {
       console.log("closed");
     `);
     expect(result).toEqual(clean("closed\n"));
+  });
+
+  // The flag is read once per process. The child prints the kernel's socket table and its ports.
+  test.skipIf(!isLinux)("BUN_FEATURE_FLAG_DISABLE_SQL_TCP_KEEPALIVE=1 leaves TCP keepalive off", async () => {
+    const { stdout, ...rest } = await run(
+      `
+        await sql.listen("ch", () => {});
+        const [socket] = sockets;
+        const table = await Bun.file("/proc/self/net/tcp").text();
+        console.log(JSON.stringify({ clientPort: socket.remotePort, serverPort: port, table }));
+        await sql.close();
+      `,
+      { BUN_FEATURE_FLAG_DISABLE_SQL_TCP_KEEPALIVE: "1" },
+    );
+    expect(rest).toEqual({ stderr: "", exitCode: 0, signal: null });
+    const { clientPort, serverPort, table } = JSON.parse(stdout);
+    expect(keepaliveSeconds(clientPort, serverPort, table)).toBe(Infinity);
   });
 
   test("a throwing listener surfaces as uncaughtException; the channel's other listeners and later notifications are unaffected", async () => {

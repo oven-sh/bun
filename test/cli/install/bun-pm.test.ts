@@ -1138,3 +1138,61 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
 });
+
+// A blocked postinstall starts a chain of two hints: the install names `bun pm untrusted`, and that command names
+// `bun pm trust`. For a global install both need `-g`, or the second hint acts on the project in the current directory.
+test.concurrent.each([
+  { scope: "project", add: "bun add", untrusted: "bun pm untrusted", trust: "bun pm trust" },
+  { scope: "global", add: "bun add -g", untrusted: "bun pm -g untrusted", trust: "bun pm -g trust" },
+])("bun pm untrusted names the trust command for the $scope install", async ({ scope, add, untrusted, trust }) => {
+  using dir = tempDir("pm-untrusted-trust-hint", {
+    "app/package.json": JSON.stringify({ name: "app" }),
+    "scripted/package.json": JSON.stringify({
+      name: "scripted",
+      version: "1.0.0",
+      scripts: { postinstall: `"${bunExe()}" -e "require('fs').writeFileSync('postinstall.txt', '')"` },
+    }),
+  });
+  const root = String(dir);
+  const app = join(root, "app");
+  const bunInstall = join(root, "bun-install");
+  const globalDir = join(bunInstall, "install", "global");
+  const postinstallOutput = join(scope === "global" ? globalDir : app, "node_modules", "scripted", "postinstall.txt");
+
+  // Runs a command line as the hints print it, with the bun under test in place of `bun`.
+  const run = async (command: string, ...args: string[]) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...command.split(" ").slice(1), ...args],
+      cwd: app,
+      // Every global-dir variable is set so an inherited one can never point at the developer's real global folder.
+      env: {
+        ...env,
+        BUN_INSTALL: bunInstall,
+        BUN_INSTALL_GLOBAL_DIR: globalDir,
+        BUN_INSTALL_BIN: join(bunInstall, "bin"),
+        BUN_INSTALL_CACHE_DIR: join(root, ".bun-cache"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+  const succeededWith = (stdout: string) => ({
+    stdout: expect.stringContaining(stdout),
+    stderr: expect.not.stringContaining("error:"),
+    exitCode: 0,
+  });
+
+  expect(await run(add, join(root, "scripted"))).toEqual(
+    succeededWith(`Blocked 1 postinstall. Run \`${untrusted}\` for details.`),
+  );
+  expect(await run(untrusted)).toEqual(
+    succeededWith(`If you trust them and wish to run their scripts, use \`${trust}\`.`),
+  );
+
+  // The command the second hint names runs the script that the install blocked.
+  expect(await exists(postinstallOutput)).toBeFalse();
+  expect(await run(trust, "scripted")).toEqual(succeededWith("1 script ran across 1 package"));
+  expect(await exists(postinstallOutput)).toBeTrue();
+});

@@ -187,7 +187,8 @@ impl UntrustedCommand {
         bun_core::pretty!(
             "These dependencies had their lifecycle scripts blocked during install.\n\
              \n\
-             If you trust them and wish to run their scripts, use <d>`<r><blue>bun pm trust<r><d>`<r>.\n"
+             If you trust them and wish to run their scripts, use <d>`<r><blue>bun pm {}trust<r><d>`<r>.\n",
+            if pm.options.global { "-g " } else { "" },
         );
 
         let _ = ctx;

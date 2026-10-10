@@ -247,7 +247,9 @@ fn write_through(real: &[u8], text: &[u8]) -> bun_sys::Result<()> {
 fn repository(cwd: &[u8]) -> Option<Vec<u8>> {
     let cwd = real_path(cwd)?;
     let is_root = |it: &&[u8]| {
-        [&b".git"[..], b".jj"].iter().any(|name| link_kind_and_size(&paths::join(it, name)).is_some())
+        [&b".git"[..], b".jj"]
+            .iter()
+            .any(|name| link_kind_and_size(&paths::join(it, name)).is_some())
     };
     let found = paths::ancestors(&cwd).find(is_root).map(<[u8]>::to_vec);
     Some(found.unwrap_or(cwd))

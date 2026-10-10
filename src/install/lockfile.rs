@@ -1381,10 +1381,14 @@ impl<'a> Cloner<'a> {
 impl Lockfile {
     /// Re-hoists while a pass bound an optional peer late; a reload has that binding up front.
     pub(crate) fn resolve(&mut self, log: &mut bun_ast::Log) -> Result<(), tree::SubtreeError> {
-        while self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)? {}
+        while self
+            .hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)?
+            .late_bound_optional_peer
+        {}
         Ok(())
     }
 
+    /// The install's tree build (`bun prune` calls `hoist` directly).
     pub(crate) fn filter(
         &mut self,
         log: &mut bun_ast::Log,
@@ -1393,17 +1397,21 @@ impl Lockfile {
         workspace_filters: &[WorkspaceFilter],
         packages_to_install: Option<&[PackageID]>,
     ) -> Result<(), tree::SubtreeError> {
-        self.hoist::<{ tree::BuilderMethod::Filter }>(
+        let hoisted = self.hoist::<{ tree::BuilderMethod::Filter }>(
             log,
             Some(manager),
             install_root_dependencies,
             workspace_filters,
             packages_to_install,
         )?;
+        // `Some(packages_to_install)` is the security scanner pre-pass, not the install
+        if packages_to_install.is_none() {
+            tree::warn_unsupported_platform(log, self, manager, &hoisted.unsupported_platform);
+        }
         Ok(())
     }
 
-    /// Sets `buffers.trees`/`hoisted_dependencies`; returns `Builder::late_bound_optional_peer`.
+    /// Sets `buffers.trees`/`hoisted_dependencies`.
     pub(crate) fn hoist<const METHOD: tree::BuilderMethod>(
         &mut self,
         log: &mut bun_ast::Log,
@@ -1413,7 +1421,7 @@ impl Lockfile {
         install_root_dependencies: bool,
         workspace_filters: &[WorkspaceFilter],
         packages_to_install: Option<&[PackageID]>,
-    ) -> Result<bool, tree::SubtreeError> {
+    ) -> Result<tree::Hoisted, tree::SubtreeError> {
         let slice = self.packages.slice();
 
         // Only the install applies the barrier, so the saved tree does not depend on it.
@@ -1446,6 +1454,7 @@ impl Lockfile {
             late_bound_optional_peer: false,
             list: Default::default(),
             sort_buf: Default::default(),
+            unsupported_platform: Default::default(),
         };
 
         Tree::default().process_subtree(tree::ROOT_DEP_ID, tree::INVALID_ID, &mut builder)?;
@@ -1462,10 +1471,13 @@ impl Lockfile {
         }
 
         let cleaned = builder.clean()?;
-        let late_bound_optional_peer = builder.late_bound_optional_peer;
+        let hoisted = tree::Hoisted {
+            late_bound_optional_peer: builder.late_bound_optional_peer,
+            unsupported_platform: core::mem::take(&mut builder.unsupported_platform),
+        };
         self.buffers.trees = cleaned.trees;
         self.buffers.hoisted_dependencies = cleaned.dep_ids;
-        Ok(late_bound_optional_peer)
+        Ok(hoisted)
     }
 }
 

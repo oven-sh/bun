@@ -64,6 +64,36 @@ impl<'a> FilterType<'a> {
     // *NOTE*: name and path are not allocated → no Drop impl needed.
 }
 
+/// Combines the patterns like `--filter` values (`workspace_selection::select`).
+fn package_patterns_select(patterns: &[FilterType<'_>], dep_name: &[u8]) -> bool {
+    let mut has_positive = false;
+    let mut selected = false;
+    for pattern in patterns {
+        match pattern {
+            FilterType::Path => unreachable!(),
+            FilterType::All => {
+                has_positive = true;
+                selected = true;
+            }
+            FilterType::Name(name_pattern) => {
+                if name_pattern.is_empty() {
+                    continue;
+                }
+                let result = glob::r#match(name_pattern, dep_name);
+                if result.is_negated() {
+                    if !result.matches() {
+                        return false;
+                    }
+                } else {
+                    has_positive = true;
+                    selected |= result.matches();
+                }
+            }
+        }
+    }
+    selected || !has_positive
+}
+
 impl OutdatedCommand {
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
         bun_core::prettyln!(
@@ -391,29 +421,10 @@ impl OutdatedCommand {
                 }
 
                 // package patterns match against dependency name (name in package.json)
-                if let Some(patterns) = &package_patterns {
-                    let matched = 'match_: {
-                        for pattern in patterns {
-                            match pattern {
-                                FilterType::Path => unreachable!(),
-                                FilterType::Name(name_pattern) => {
-                                    if name_pattern.is_empty() {
-                                        continue;
-                                    }
-                                    if !glob::r#match(name_pattern, dep.name.slice(string_buf))
-                                        .matches()
-                                    {
-                                        break 'match_ false;
-                                    }
-                                }
-                                FilterType::All => {}
-                            }
-                        }
-                        true
-                    };
-                    if !matched {
-                        continue;
-                    }
+                if let Some(patterns) = &package_patterns
+                    && !package_patterns_select(patterns, dep.name.slice(string_buf))
+                {
+                    continue;
                 }
 
                 let package_name =

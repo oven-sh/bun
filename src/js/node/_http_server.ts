@@ -89,12 +89,11 @@ const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
 const kMaxHeadersCount = Symbol("http.server.maxHeadersCount");
 
 // node.http trace events ('http.server.request' b/e). The agent module is
-// only created on the first request, and emission is gated per-request on the
+// created when a server listens, and emission is gated per-request on the
 // category, so this is near-zero cost when tracing is off.
 const kHttpTraceCat = "node,node.http";
 let traceEvents: typeof import("internal/trace_events").default;
 function traceServerRequestStart(http_res) {
-  traceEvents ??= require("internal/trace_events");
   if (!traceEvents.isCategoryGroupEnabled(kHttpTraceCat)) return;
   traceEvents.emitEvent("b", kHttpTraceCat, "http.server.request");
   http_res.once("finish", traceServerRequestEnd);
@@ -686,6 +685,10 @@ Server.prototype.listen = function () {
 
 Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort) {
   {
+    // What the first connection and the first request need, so that neither waits for it.
+    getNodeHTTPServerSocket();
+    traceEvents ??= require("internal/trace_events");
+
     const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
     const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
     const canUseInternalAssignSocket = ResponseClass?.prototype.assignSocket === ServerResponse.prototype.assignSocket;

@@ -81,8 +81,8 @@ static bool svValueHasToken(std::string_view value, std::string_view lowerToken)
 // One pass over the request: append url, method and jsNumber(dispatch
 // bitfield) to `args`, and capture the raw header bytes into `flatHeaders`
 // as [u32 nameLen][u32 valueLen][name][value]... so req.rawHeaders /
-// req.headers can be materialized lazily (Bun__NodeHTTP__buildRawHeadersArray)
-// only when user code reads them.
+// req.headers can be materialized lazily (Bun__NodeHTTP__buildRawHeadersArray,
+// Bun__NodeHTTP__buildHeadersObject) only when user code reads them.
 static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSValue methodString, MarkedArgumentBuffer& args, WTF::Vector<uint8_t, 1024>& flatHeaders, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
     {
@@ -162,51 +162,137 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
     args.append(jsNumber(bits));
 }
 
+// A known header's value as a string: the one remembered from the last request when it holds the same bytes,
+// which takes no allocation.
+static String headerValueString(NodeHTTPRequestHeaderValues& remembered, HTTPHeaderName name, std::span<const Latin1Character> bytes)
+{
+    // A longer value is one that differs from a request to the next.
+    static constexpr size_t maxRememberedLength = 256;
+    String* slot = bytes.size() <= maxRememberedLength ? remembered.slotFor(name) : nullptr;
+    if (!slot)
+        return String(bytes);
+    if (slot->isNull() || !WTF::equal(slot->impl(), bytes))
+        *slot = String(bytes);
+    return *slot;
+}
+
+// The next [u32 nameLen][u32 valueLen][name][value] of what assignHeadersFromUWebSocketsForCall captured.
+static bool nextCapturedHeader(const uint8_t* data, size_t length, size_t& offset, std::span<const Latin1Character>& name, std::span<const Latin1Character>& value)
+{
+    if (offset + 8 > length)
+        return false;
+    const uint32_t nameLen = static_cast<uint32_t>(data[offset]) | (static_cast<uint32_t>(data[offset + 1]) << 8)
+        | (static_cast<uint32_t>(data[offset + 2]) << 16) | (static_cast<uint32_t>(data[offset + 3]) << 24);
+    const uint32_t valueLen = static_cast<uint32_t>(data[offset + 4]) | (static_cast<uint32_t>(data[offset + 5]) << 8)
+        | (static_cast<uint32_t>(data[offset + 6]) << 16) | (static_cast<uint32_t>(data[offset + 7]) << 24);
+    if (static_cast<uint64_t>(offset) + 8 + nameLen + valueLen > length) [[unlikely]]
+        return false;
+    name = { reinterpret_cast<const Latin1Character*>(data + offset + 8), nameLen };
+    value = { reinterpret_cast<const Latin1Character*>(data + offset + 8 + nameLen), valueLen };
+    offset += 8 + static_cast<size_t>(nameLen) + valueLen;
+    return true;
+}
+
+// req.headers of a request that names no header twice, straight from the captured bytes: what IncomingMessage's
+// _addHeaderLine makes of such a request's rawHeaders is one property per header, named in lowercase, in the
+// order of the request. Answers undefined for the requests where it makes something else, which the caller
+// (NodeHTTPResponse.headersObject, for the `headers` getter) then builds from rawHeaders: a repeated name, a
+// Set-Cookie (an array), a name that Object.prototype has too (it reads through), a name that is an index or
+// has a byte above ASCII.
+extern "C" EncodedJSValue Bun__NodeHTTP__buildHeadersObject(JSC::JSGlobalObject* globalObject, const uint8_t* data, size_t length)
+{
+    auto& vm = JSC::getVM(globalObject);
+    std::span<const Latin1Character> nameBytes, valueBytes;
+
+    // Which known header each one is, and whether a name comes twice, before anything is allocated: a client
+    // or a proxy that repeats a header does so on every request.
+    static constexpr uint8_t otherName = 0xff;
+    static_assert(numHTTPHeaderNames <= otherName);
+    Vector<uint8_t, 32> names;
+    WTF::BitSet<numHTTPHeaderNames> seen;
+    // Past these, the object being built tells that an unknown name is repeated.
+    std::array<std::span<const Latin1Character>, 8> otherNames;
+    size_t otherNameCount = 0;
+    for (size_t offset = 0; nextCapturedHeader(data, length, offset, nameBytes, valueBytes);) {
+        HTTPHeaderName name;
+        if (!WebCore::findHTTPHeaderName(StringView(nameBytes), name)) {
+            if (nameBytes.empty() || !charactersAreAllASCII(nameBytes))
+                return JSValue::encode(jsUndefined());
+            for (size_t i = 0; i < otherNameCount; i++) {
+                if (equalIgnoringASCIICase(otherNames[i], nameBytes))
+                    return JSValue::encode(jsUndefined());
+            }
+            if (otherNameCount < otherNames.size())
+                otherNames[otherNameCount++] = nameBytes;
+            names.append(otherName);
+            continue;
+        }
+        if (name == HTTPHeaderName::SetCookie || seen.testAndSet(static_cast<size_t>(name)))
+            return JSValue::encode(jsUndefined());
+        names.append(static_cast<uint8_t>(name));
+    }
+
+    auto* clientData = WebCore::clientData(vm);
+    HTTPHeaderIdentifiers& identifiers = clientData->httpHeaderIdentifiers();
+    NodeHTTPRequestHeaderValues& remembered = clientData->nodeHTTPRequestHeaderValues();
+    JSObject* objectPrototype = globalObject->objectPrototype();
+    // One of a few capacities, so that requests of different lengths share the structures of their first headers.
+    unsigned inlineCapacity = std::min<unsigned>(std::max<unsigned>(JSFinalObject::defaultInlineCapacity, (names.size() + 7) & ~7u), JSFinalObject::maxInlineCapacity);
+    JSObject* headers = constructEmptyObject(globalObject, objectPrototype, inlineCapacity);
+
+    size_t index = 0;
+    for (size_t offset = 0; nextCapturedHeader(data, length, offset, nameBytes, valueBytes); index++) {
+        Identifier identifier;
+        JSValue value;
+        if (names[index] == otherName) {
+            identifier = Identifier::fromString(vm, StringView(nameBytes).convertToASCIILowercaseAtom());
+            if (parseIndex(identifier) || headers->getDirect(vm, identifier))
+                return JSValue::encode(jsUndefined());
+            value = jsString(vm, String(valueBytes));
+        } else {
+            HTTPHeaderName name = static_cast<HTTPHeaderName>(names[index]);
+            identifier = identifiers.identifierFor(vm, name);
+            value = jsString(vm, headerValueString(remembered, name, valueBytes));
+        }
+        if (objectPrototype->getDirect(vm, identifier)) [[unlikely]]
+            return JSValue::encode(jsUndefined());
+        headers->putDirect(vm, identifier, value, 0);
+    }
+
+    return JSValue::encode(headers);
+}
+
 // Builds the rawHeaders flat array [name, value, ...] from the bytes captured
 // by assignHeadersFromUWebSocketsForCall. Runs only when user code first
-// touches req.rawHeaders / req.headers (via NodeHTTPResponse.takeRawHeaders).
+// touches req.rawHeaders, or req.headers of a request that Bun__NodeHTTP__buildHeadersObject
+// leaves to JS (via NodeHTTPResponse.takeRawHeaders).
 extern "C" EncodedJSValue Bun__NodeHTTP__buildRawHeadersArray(JSC::JSGlobalObject* globalObject, const uint8_t* data, size_t length)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     MarkedArgumentBuffer arrayValues;
-    HTTPHeaderIdentifiers& identifiers = WebCore::clientData(vm)->httpHeaderIdentifiers();
+    auto* clientData = WebCore::clientData(vm);
+    HTTPHeaderIdentifiers& identifiers = clientData->httpHeaderIdentifiers();
+    NodeHTTPRequestHeaderValues& remembered = clientData->nodeHTTPRequestHeaderValues();
 
-    size_t offset = 0;
-    while (offset + 8 <= length) {
-        const uint32_t nameLen = static_cast<uint32_t>(data[offset]) | (static_cast<uint32_t>(data[offset + 1]) << 8)
-            | (static_cast<uint32_t>(data[offset + 2]) << 16) | (static_cast<uint32_t>(data[offset + 3]) << 24);
-        const uint32_t valueLen = static_cast<uint32_t>(data[offset + 4]) | (static_cast<uint32_t>(data[offset + 5]) << 8)
-            | (static_cast<uint32_t>(data[offset + 6]) << 16) | (static_cast<uint32_t>(data[offset + 7]) << 24);
-        offset += 8;
-        if (offset + nameLen + valueLen > length) [[unlikely]]
-            break;
-        StringView nameView = StringView(std::span { reinterpret_cast<const Latin1Character*>(data + offset), nameLen });
-        offset += nameLen;
-
-        std::span<Latin1Character> valueData;
-        auto value = String::createUninitialized(valueLen, valueData);
-        if (valueLen > 0)
-            memcpy(valueData.data(), data + offset, valueLen);
-        offset += valueLen;
-
+    std::span<const Latin1Character> nameBytes, valueBytes;
+    for (size_t offset = 0; nextCapturedHeader(data, length, offset, nameBytes, valueBytes);) {
         HTTPHeaderName name;
-        JSString* jsValue = jsString(vm, value);
+        JSString* jsValue = nullptr;
         JSString* nameString = nullptr;
 
-        if (WebCore::findHTTPHeaderName(nameView, name)) {
+        if (WebCore::findHTTPHeaderName(StringView(nameBytes), name)) {
+            jsValue = jsString(vm, headerValueString(remembered, name, valueBytes));
             // rawHeaders keeps the wire casing; reuse the cached (lowercase)
             // string only when the client already sent it lowercased.
-            const auto& cachedName = WTF::httpHeaderNameStringImpl(name);
-            if (nameView == StringView(cachedName)) {
+            if (WTF::equal(WTF::httpHeaderNameStringImpl(name).impl(), nameBytes))
                 nameString = identifiers.stringFor(globalObject, name);
-            } else {
-                nameString = jsString(vm, nameView.toString());
-            }
         } else {
-            nameString = jsString(vm, nameView.toString());
+            jsValue = jsString(vm, String(valueBytes));
         }
+        if (!nameString)
+            nameString = jsString(vm, String(nameBytes));
 
         arrayValues.append(nameString);
         arrayValues.append(jsValue);
@@ -230,7 +316,8 @@ extern "C" EncodedJSValue Bun__NodeHTTP__buildRawHeadersArray(JSC::JSGlobalObjec
 }
 
 // Defined in Rust (NodeHTTPResponse.rs): moves the captured raw header bytes
-// onto the native response so takeRawHeaders can materialize them on demand.
+// onto the native response so takeRawHeaders / headersObject can materialize
+// them on demand.
 extern "C" void NodeHTTPResponse__adoptRawRequestHeaders(void* nodeHttpResponse, const uint8_t* data, size_t length);
 
 template<bool isSSL>

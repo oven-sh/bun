@@ -21,6 +21,33 @@ test("bun builtins can be used in macros", async () => {
   expect(escapeHTML("abc!")).toBe("abc!");
 });
 
+// `macro:path` is the builtin, as `"path" with { type: "macro" }` is: not the package of that name.
+test("a macro: import of a builtin's name does not run the package of that name in node_modules", async () => {
+  using dir = tempDir("macro-builtin-name", {
+    "node_modules/path/package.json": JSON.stringify({ name: "path", version: "1.0.0", main: "index.js" }),
+    "node_modules/path/index.js": `exports.basename = () => "node_modules/path";`,
+    "index.js": `
+      import { basename } from "macro:path";
+      import { basename as withAttribute } from "path" with { type: "macro" };
+      console.log(basename("/a/b.txt"), withAttribute("/a/b.txt"));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Debug builds print "[macro] call basename" to stdout first, so only the tail of stdout is matched.
+  expect({ stdout, stderr, exitCode }).toMatchObject({
+    stdout: expect.stringMatching(/(^|\n)b\.txt b\.txt\n$/),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 test("latin1 string", () => {
   expect(identity("©")).toBe("©");
 });

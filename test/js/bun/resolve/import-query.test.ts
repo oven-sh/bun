@@ -1,4 +1,4 @@
-import { beforeEach, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 globalThis.importQueryFixtureOrder = [];
 const resolvedPath = require.resolve("./import-query-fixture.ts");
@@ -233,4 +233,161 @@ test("Bun.resolveSync with non-ASCII specifier and query string", async () => {
   const resolved = JSON.parse(stdout.trim());
   expect(resolved).toEndWith("target.js?v=caf\u00e9-\u65e5\u672c\u8a9e");
   expect(exitCode).toBe(0);
+});
+
+// A builtin takes no query: Node reports `path?v=2` as a module that does not exist. The name that is left when
+// the query is cut is the builtin's, so it is not a package to look up in node_modules or in the registry either.
+describe("a builtin's name with a ?query", () => {
+  const specifiers = ["path?v=2", "path?", "fs/promises?x", "ws?x", "bun?x"];
+  const every = (code: string) => specifiers.map(() => code);
+  const notFound = {
+    "static import": every("ERR_MODULE_NOT_FOUND"),
+    "export from": every("ERR_MODULE_NOT_FOUND"),
+    "import() of a literal": every("ERR_MODULE_NOT_FOUND"),
+    "require() of a literal": every("MODULE_NOT_FOUND"),
+    "import()": every("ERR_MODULE_NOT_FOUND"),
+    "require()": every("MODULE_NOT_FOUND"),
+    "require.resolve()": every("MODULE_NOT_FOUND"),
+    "createRequire()": every("MODULE_NOT_FOUND"),
+    "import.meta.resolve()": every("ERR_MODULE_NOT_FOUND"),
+    "Bun.resolveSync()": every("ERR_MODULE_NOT_FOUND"),
+  };
+
+  // What naming a module gives: the code of the error, or what it loaded. A package of these fixtures exports its
+  // own path.
+  const outcome = `async run => {
+    try {
+      const value = await run();
+      const exported = typeof value === "string" ? value : value.default;
+      return typeof exported === "string" ? "loaded " + exported : "loaded a builtin";
+    } catch (e) {
+      return e.code;
+    }
+  }`;
+
+  // Every way to name a module, with each specifier: as a literal (an import record of the file) and as a value.
+  const files: Record<string, string> = {
+    "forms.cjs": `module.exports = { require: s => require(s), resolve: s => require.resolve(s) };`,
+    "run.mjs": `
+      import { createRequire } from "node:module";
+      import cjs from "./forms.cjs";
+      const specifiers = ${JSON.stringify(specifiers)};
+      const forms = {
+        "static import": i => import("./static-" + i + ".mjs"),
+        "export from": i => import("./reexport-" + i + ".mjs"),
+        "import() of a literal": i => cjs.require("./literal-" + i + ".cjs").imp(),
+        "require() of a literal": i => cjs.require("./literal-" + i + ".cjs").req(),
+        "import()": i => import(specifiers[i]),
+        "require()": i => cjs.require(specifiers[i]),
+        "require.resolve()": i => cjs.resolve(specifiers[i]),
+        "createRequire()": i => createRequire(import.meta.url)(specifiers[i]),
+        "import.meta.resolve()": i => import.meta.resolve(specifiers[i]),
+        "Bun.resolveSync()": i => Bun.resolveSync(specifiers[i], import.meta.dir),
+      };
+      const outcome = ${outcome};
+      const out = {};
+      for (const [form, run] of Object.entries(forms)) {
+        out[form] = [];
+        for (let i = 0; i < specifiers.length; i++) out[form].push(await outcome(() => run(i)));
+      }
+      const controls = {};
+      for (const specifier of process.argv.slice(2)) controls[specifier] = await outcome(() => cjs.require(specifier));
+      console.log(JSON.stringify({ out, controls }));
+    `,
+    "entry.mjs": `import "path?v=2"; console.log("entry ran");`,
+  };
+  specifiers.forEach((specifier, i) => {
+    const literal = JSON.stringify(specifier);
+    files[`static-${i}.mjs`] = `import * as m from ${literal}; export default m.default;`;
+    files[`reexport-${i}.mjs`] = `export { default } from ${literal};`;
+    files[`literal-${i}.cjs`] = `exports.req = () => require(${literal}); exports.imp = () => import(${literal});`;
+  });
+
+  // Nothing listens on the default registry: a test that expects no install does not reach the network if it fails.
+  async function run(cwd: string, args: string[], registry = "http://127.0.0.1:1/") {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: { ...bunEnv, BUN_CONFIG_REGISTRY: registry, NPM_CONFIG_REGISTRY: registry },
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent("does not load the package of that name in node_modules", async () => {
+    const packages: Record<string, string> = {};
+    for (const name of ["path", "fs", "ws", "bun", "lodashy"]) {
+      packages[`node_modules/${name}/package.json`] = JSON.stringify({ name, version: "1.0.0", main: "index.js" });
+      packages[`node_modules/${name}/index.js`] = `module.exports = "node_modules/${name}";`;
+    }
+    packages["node_modules/fs/promises.js"] = `module.exports = "node_modules/fs/promises.js";`;
+    using dir = tempDir("import-query-builtin-node-modules", { ...files, ...packages });
+
+    const controls = ["path", "node:path?v=2", "lodashy?v=1", "path/"];
+    const { stdout, stderr, exitCode } = await run(String(dir), ["run.mjs", ...controls]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      out: notFound,
+      controls: {
+        "path": "loaded a builtin",
+        // Bun's code for this was already Node's.
+        "node:path?v=2": "ERR_UNKNOWN_BUILTIN_MODULE",
+        // A package that is no builtin still takes a query.
+        "lodashy?v=1": "loaded node_modules/lodashy",
+        // As in Node, a trailing slash names the package and not the builtin.
+        "path/": "loaded node_modules/path",
+      },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("does not ask the registry for a package of that name", async () => {
+    using dir = tempDir("import-query-builtin-autoinstall", files);
+    const requests: string[] = [];
+    await using registry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        requests.push(new URL(req.url).pathname);
+        return new Response("{}", { status: 404, headers: { "content-type": "application/json" } });
+      },
+    });
+
+    // `--install=force` installs whatever the resolver takes for a package, with or without a node_modules.
+    const imported = await run(String(dir), ["--install=force", "run.mjs"], registry.url.href);
+    expect(imported.stderr).toBe("");
+    expect(JSON.parse(imported.stdout)).toEqual({ out: notFound, controls: {} });
+
+    const entry = await run(String(dir), ["--install=force", "entry.mjs"], registry.url.href);
+    expect(entry.stdout).toBe("");
+    expect(entry.stderr).toContain("Cannot find package 'path?v=2'");
+
+    expect(requests).toEqual([]);
+    expect({ imported: imported.exitCode, entry: entry.exitCode }).toEqual({ imported: 0, entry: 1 });
+  });
+
+  // Under `--expose-internals` an `internal/` module is a builtin too, and `internal` is a package's name.
+  test.concurrent("does not load node_modules/internal for an internal/ module under --expose-internals", async () => {
+    using dir = tempDir("import-query-builtin-expose-internals", {
+      "node_modules/internal/package.json": JSON.stringify({ name: "internal", version: "1.0.0" }),
+      "node_modules/internal/validators.js": `module.exports = "node_modules/internal/validators.js";`,
+      "run.cjs": `
+        const outcome = ${outcome};
+        (async () => {
+          console.log(
+            JSON.stringify([
+              await outcome(() => require("internal/validators")),
+              await outcome(() => require("internal/validators?x")),
+              await outcome(() => import("internal/validators?x")),
+            ]),
+          );
+        })();
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--expose-internals", "run.cjs"]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["loaded a builtin", "MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND"]);
+    expect(exitCode).toBe(0);
+  });
 });

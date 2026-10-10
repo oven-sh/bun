@@ -990,6 +990,19 @@ booga"
           expect(out.trim().replaceAll("\\", "/").split(/\s+/)).toEqual(["views/a.html", "public/js/b.js", ".env"]),
         )
         .runAsTest("echo views/** public/**/*.js .env");
+
+      // `**` is recursive in Bun Shell. sh, and bash without globstar, read it as `*`.
+      TestBuilder.command`echo src/** dst`
+        .ensureTempDir()
+        .directory("src/nested")
+        .file("src/a.txt", "")
+        .file("src/nested/b.txt", "")
+        .stdout(out => {
+          const words = out.trim().replaceAll("\\", "/").split(/\s+/);
+          expect(words.at(-1)).toBe("dst");
+          expect(words.sort()).toEqual(["dst", "src/a.txt", "src/nested", "src/nested/b.txt"]);
+        })
+        .runAsTest("echo src/** dst");
     });
 
     describe("interpolated values cannot inject glob syntax", () => {

@@ -498,6 +498,11 @@ describe("lex shell", () => {
       ["echo **2>f", [...echo, { DoubleAsterisk: {} }, text("2"), delimit, stdout, ...toFile]],
       // Bun Shell has no fd numbers above 2. bash reads `12>` as fd 12.
       ["echo 12>f", [...echo, text("12"), delimit, stdout, ...toFile]],
+      // Bun Shell reads `<<` as `<` (https://github.com/oven-sh/bun/issues/10465).
+      [
+        "cat x1<<f",
+        [text("cat"), delimit, text("x1"), delimit, { Redirect: redirect({ stdin: true, append: true }) }, ...toFile],
+      ],
     ])("%s: a digit inside a word stays in the word", (script, expected) => {
       expect(tokens(script)).toEqual(expected);
     });
@@ -538,6 +543,8 @@ describe("lex shell", () => {
       ["cat 0<f", [text("cat"), delimit, stdin, ...toFile]],
       ["echo z 1<f", [...echo, text("z"), delimit, text("1"), delimit, stdin, ...toFile]],
       ["echo z 2<f", [...echo, text("z"), delimit, text("2"), delimit, stdin, ...toFile]],
+      // Two redirects in a row: the parser rejects `0<<f`, as before.
+      ["cat 0<<f", [text("cat"), delimit, stdin, stdin, ...toFile]],
     ])("%s: only 0 is an fd number before `<`", (script, expected) => {
       expect(tokens(script)).toEqual(expected);
     });

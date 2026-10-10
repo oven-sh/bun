@@ -1850,7 +1850,11 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
   endedAt.push(performance.now());
 
   // Three reads of at most 512 KiB ahead of the deadline: progress that does not put it off, and well short of what is left.
-  const drip = setInterval(() => peers[DRIPPING].resume(), 3000);
+  const drip = setInterval(() => {
+    peers[DRIPPING].resume();
+    // Nor does what a peer sends in place of its close_notify.
+    peers[LATE].write("still here");
+  }, 3000);
   try {
     const before = { fdIsOpen: openAfterDestroy, wrote: probeBatching(probe) };
     const waitedFrom = performance.now();

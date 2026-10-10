@@ -2109,7 +2109,7 @@ static int ssl_handle_shutdown(struct us_socket_t *s) {
   return 1;
 }
 
-/* Seconds a close waits for the peer to take the spill (at most one flush unit, so 13 KB/s), then for a sign of it: Bun.serve's default idleTimeout. */
+/* Seconds a close waits for the peer to take the spill (at most one flush unit, so 13 KB/s), then for its close_notify: Bun.serve's default idleTimeout. */
 #define US_SSL_CLOSE_AFTER_SPILL_TIMEOUT 10
 
 struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void *reason) {
@@ -2200,7 +2200,7 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
   }
   /* Only a read delivers the peer's reply, and the owner that paused let go with this close. */
   us_socket_resume(s);
-  /* So nobody else bounds the wait for a peer that neither reads nor answers (us_internal_ssl_on_timeout). */
+  /* So nobody else bounds the wait for a peer that does not answer, whatever else it sends (us_internal_ssl_on_timeout). */
   us_socket_timeout(s, US_SSL_CLOSE_AFTER_SPILL_TIMEOUT);
   us_socket_long_timeout(s, 0);
   return s;
@@ -2566,10 +2566,6 @@ struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *socket, char *da
   if (!s->ssl || !s_ssl(s) || s->ssl_fatal_error) {
     ssl_close(s, 0, NULL);
     return NULL;
-  }
-  /* close_notify without the FIN: a close waits for the peer's reply, and a peer that is still sending is on its way there. */
-  if ((SSL_get_shutdown(s_ssl(s)) & SSL_SENT_SHUTDOWN) && us_internal_socket_can_raw_write(s)) {
-    us_socket_timeout(s, US_SSL_CLOSE_AFTER_SPILL_TIMEOUT);
   }
 
   /* DO NOT call ssl_update_handshake() before the SSL_read loop. SSL_read

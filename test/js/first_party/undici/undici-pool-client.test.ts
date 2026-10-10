@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import net from "node:net";
 import tls from "node:tls";
 import { Readable, Transform, Writable } from "stream";
@@ -217,7 +217,7 @@ describe("undici", () => {
         await pool.request({ method: "GET", path: "/get" });
         throw new Error("Should have thrown");
       } catch (e: any) {
-        expect(e.message).toContain("closed");
+        expect(e.code).toBe("UND_ERR_DESTROYED");
       }
     });
 
@@ -1054,5 +1054,323 @@ describe("undici", () => {
       expect(typeof undici.upgrade).toBe("function");
       expect(typeof undici.dispatch).toBe("function");
     });
+  });
+});
+
+// Lifecycle (close/destroy, in-flight tracking) and the full dispatch() path used by
+// @elastic/transport and miniflare.
+describe("undici dispatcher lifecycle and dispatch()", () => {
+  let server: ReturnType<typeof Bun.serve>;
+  let origin: string;
+  let release: (() => void) | undefined;
+  let gate: Promise<void>;
+
+  beforeAll(() => {
+    server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === "/slow") {
+          return gate.then(() => new Response("slow-done"));
+        }
+        if (url.pathname === "/chunks") {
+          return new Response(
+            new ReadableStream({
+              async start(controller) {
+                for (const part of ["a", "b", "c"]) {
+                  controller.enqueue(new TextEncoder().encode(part));
+                  await Bun.sleep(5);
+                }
+                controller.close();
+              },
+            }),
+            { headers: { "x-test": "yes" } },
+          );
+        }
+        if (url.pathname === "/product") {
+          return Response.json({ ok: true }, { headers: { "x-elastic-product": "Elasticsearch" } });
+        }
+        return new Response("hello", { headers: { "x-test": "yes" } });
+      },
+    });
+    origin = `http://localhost:${server.port}`;
+  });
+  afterAll(() => {
+    server.stop(true);
+  });
+  beforeEach(() => {
+    gate = new Promise<void>(resolve => (release = resolve));
+  });
+
+  function collect(dispatcher: any, opts: any, kind: "legacy" | "controller", pauseOnce = false) {
+    return new Promise<{ status: number; headers: Record<string, string>; body: string; events: string[] }>(
+      (resolve, reject) => {
+        const chunks: Buffer[] = [];
+        const events: string[] = [];
+        let status = 0;
+        let headers: Record<string, string> = {};
+        let paused = false;
+        const finish = () => resolve({ status, headers, body: Buffer.concat(chunks).toString(), events });
+        const handler: any =
+          kind === "legacy"
+            ? {
+                onConnect: (abort: Function) => {
+                  events.push("connect");
+                  expect(typeof abort).toBe("function");
+                },
+                onHeaders: (code: number, raw: Buffer[], _resume: Function, statusText: string) => {
+                  events.push("headers");
+                  status = code;
+                  expect(Buffer.isBuffer(raw[0])).toBe(true);
+                  expect(typeof statusText).toBe("string");
+                  for (let i = 0; i < raw.length; i += 2) headers[raw[i].toString()] = raw[i + 1].toString();
+                  return true;
+                },
+                onData: function (chunk: Buffer) {
+                  events.push("data");
+                  chunks.push(chunk);
+                  if (pauseOnce && !paused) {
+                    paused = true;
+                    setTimeout(() => handler.__resume(), 20);
+                    return false;
+                  }
+                  return true;
+                },
+                onComplete: () => (events.push("complete"), finish()),
+                onError: reject,
+              }
+            : {
+                onRequestStart: (c: any) => {
+                  events.push("start");
+                  expect(typeof c.abort).toBe("function");
+                },
+                onResponseStart: (_c: any, code: number, h: Record<string, string>) => {
+                  events.push("headers");
+                  status = code;
+                  headers = h;
+                },
+                onResponseData: (_c: any, chunk: Buffer) => {
+                  events.push("data");
+                  chunks.push(chunk);
+                },
+                onResponseEnd: () => (events.push("end"), finish()),
+                onResponseError: (_c: any, err: Error) => reject(err),
+              };
+        if (kind === "legacy") {
+          handler.onHeaders = ((orig: Function) => (code: number, raw: Buffer[], resume: Function, st: string) => {
+            handler.__resume = resume;
+            return orig(code, raw, resume, st);
+          })(handler.onHeaders);
+        }
+        dispatcher.dispatch(opts, handler);
+      },
+    );
+  }
+
+  it("Dispatcher base class is abstract, concrete dispatchers are Dispatchers", () => {
+    expect(() => new undici.Dispatcher().dispatch({} as any, {} as any)).toThrow();
+    for (const d of [new Pool(origin), new Client(origin), new Agent(), new undici.BalancedPool(origin)]) {
+      expect(d).toBeInstanceOf(undici.Dispatcher);
+      expect(typeof d.dispatch).toBe("function");
+      expect(typeof d.close).toBe("function");
+      expect(typeof d.destroy).toBe("function");
+    }
+    expect(undici.getGlobalDispatcher()).toBeInstanceOf(Agent);
+  });
+
+  it("errors carry undici's name and code", () => {
+    const { errors } = undici as any;
+    expect(new errors.ClientClosedError("x")).toMatchObject({ name: "ClientClosedError", code: "UND_ERR_CLOSED" });
+    expect(new errors.ClientDestroyedError("x")).toMatchObject({ code: "UND_ERR_DESTROYED" });
+    expect(new errors.RequestAbortedError("x")).toMatchObject({ code: "UND_ERR_ABORTED" });
+    expect(new errors.InvalidArgumentError("x")).toMatchObject({ code: "UND_ERR_INVALID_ARG" });
+  });
+
+  for (const Ctor of [Pool, Client, undici.BalancedPool] as any[]) {
+    it(`${Ctor.name}.close() waits for in-flight requests and then rejects new ones`, async () => {
+      const d = new Ctor(origin);
+      const inflight = d.request({ method: "GET", path: "/slow" });
+      let closed = false;
+      const closing = d.close().then(() => (closed = true));
+      expect(d.closed).toBe(true);
+      await Bun.sleep(30);
+      expect(closed).toBe(false);
+      await expect(d.request({ method: "GET", path: "/" })).rejects.toMatchObject({ code: "UND_ERR_CLOSED" });
+      release!();
+      const res = await inflight;
+      expect(await res.body.text()).toBe("slow-done");
+      await closing;
+      expect(closed).toBe(true);
+    });
+  }
+
+  it("close() supports the callback form", async () => {
+    const d = new Pool(origin);
+    const result = await new Promise((resolve, reject) => {
+      const ret = d.close((err: any, value: any) => (err ? reject(err) : resolve(value)));
+      expect(ret).toBeUndefined();
+    });
+    expect(result).toBeNull();
+  });
+
+  it("destroy() aborts in-flight requests with the given error and rejects new ones", async () => {
+    const d = new Pool(origin);
+    const inflight = d.request({ method: "GET", path: "/slow" });
+    const boom = new Error("boom");
+    await Bun.sleep(20);
+    await d.destroy(boom);
+    expect(d.destroyed).toBe(true);
+    await expect(inflight).rejects.toBe(boom);
+    await expect(d.request({ method: "GET", path: "/" })).rejects.toMatchObject({ code: "UND_ERR_DESTROYED" });
+    release!();
+  });
+
+  it("destroy() without an error uses ClientDestroyedError, and supports callbacks", async () => {
+    const d = new Client(origin);
+    const inflight = d.request({ method: "GET", path: "/slow" });
+    await Bun.sleep(20);
+    await new Promise<void>(resolve => d.destroy(() => resolve()));
+    await expect(inflight).rejects.toMatchObject({ code: "UND_ERR_DESTROYED" });
+    release!();
+  });
+
+  it("dispatch() on a closed or destroyed dispatcher reports through onError", async () => {
+    for (const [method, code] of [
+      ["close", "UND_ERR_CLOSED"],
+      ["destroy", "UND_ERR_DESTROYED"],
+    ] as const) {
+      const d = new Pool(origin);
+      await d[method]();
+      const err = await new Promise<any>(resolve => {
+        expect(d.dispatch({ method: "GET", path: "/" }, { onError: resolve } as any)).toBe(false);
+      });
+      expect(err.code).toBe(code);
+    }
+  });
+
+  it("dispatch() validates its arguments synchronously", () => {
+    const d = new Pool(origin);
+    expect(() => d.dispatch(null as any, {} as any)).toThrow(/opts/);
+    expect(() => d.dispatch({ method: "GET", path: "/" }, null as any)).toThrow(/handler/);
+  });
+
+  for (const kind of ["legacy", "controller"] as const) {
+    it(`dispatch() drives the ${kind} handler interface`, async () => {
+      for (const d of [new Pool(origin), new Client(origin)]) {
+        const r = await collect(d, { method: "GET", path: "/" }, kind);
+        expect(r.status).toBe(200);
+        expect(r.headers["x-test"]).toBe("yes");
+        expect(r.body).toBe("hello");
+        expect(r.events[0]).toBe(kind === "legacy" ? "connect" : "start");
+        expect(r.events.at(-1)).toBe(kind === "legacy" ? "complete" : "end");
+      }
+      const agent = await collect(new Agent(), { origin, method: "GET", path: "/" }, kind);
+      expect(agent.body).toBe("hello");
+    });
+
+    it(`dispatch() streams chunks to the ${kind} handler`, async () => {
+      const r = await collect(new Pool(origin), { method: "GET", path: "/chunks" }, kind);
+      expect(r.body).toBe("abc");
+      expect(r.events.filter(e => e === "data").length).toBeGreaterThanOrEqual(1);
+    });
+  }
+
+  it("legacy onData returning false pauses until resume() is called", async () => {
+    const r = await collect(new Pool(origin), { method: "GET", path: "/chunks" }, "legacy", true);
+    expect(r.body).toBe("abc");
+  });
+
+  it("aborting from onConnect reports RequestAbortedError and cancels the request", async () => {
+    const d = new Pool(origin);
+    const err: any = await new Promise(resolve => {
+      d.dispatch({ method: "GET", path: "/slow" }, {
+        onConnect: (abort: Function) => abort(),
+        onError: resolve,
+      } as any);
+    });
+    expect(err.code).toBe("UND_ERR_ABORTED");
+    release!();
+    await d.close();
+  });
+
+  it("aborting from a controller callback stops the body", async () => {
+    const d = new Pool(origin);
+    let data = 0;
+    const err: any = await new Promise(resolve => {
+      d.dispatch({ method: "GET", path: "/chunks" }, {
+        onRequestStart() {},
+        onResponseStart() {},
+        onResponseData(c: any) {
+          data++;
+          c.abort();
+        },
+        onResponseEnd() {
+          resolve(new Error("should not complete"));
+        },
+        onResponseError(_c: any, e: Error) {
+          resolve(e);
+        },
+      } as any);
+    });
+    expect(err.code).toBe("UND_ERR_ABORTED");
+    expect(data).toBe(1);
+  });
+
+  it("opts.signal aborts dispatch() and request(), including a synthetic 'abort' event", async () => {
+    const d = new Pool(origin);
+    const ac = new AbortController();
+    const p = d.request({ method: "GET", path: "/slow", signal: ac.signal });
+    await Bun.sleep(10);
+    ac.abort();
+    await expect(p).rejects.toBeDefined();
+
+    // @elastic/transport implements per-request timeouts by dispatching a bare Event, which does
+    // not flip signal.aborted; undici still reacts to the event.
+    const synthetic = new AbortController();
+    const p2 = d.request({ method: "GET", path: "/slow", signal: synthetic.signal });
+    await Bun.sleep(10);
+    synthetic.signal.dispatchEvent(new Event("abort"));
+    await expect(p2).rejects.toBeDefined();
+    release!();
+    await d.close();
+  });
+
+  it("an in-flight dispatch() keeps close() pending until the handler completes", async () => {
+    const d = new Pool(origin);
+    const done = collect(d, { method: "GET", path: "/slow" }, "legacy");
+    let closed = false;
+    const closing = d.close().then(() => (closed = true));
+    await Bun.sleep(30);
+    expect(closed).toBe(false);
+    release!();
+    expect((await done).body).toBe("slow-done");
+    await closing;
+    expect(closed).toBe(true);
+  });
+
+  it("stream() on a closed dispatcher rejects with UND_ERR_CLOSED", async () => {
+    const d = new Pool(origin);
+    await d.close();
+    await expect(d.stream({ method: "GET", path: "/" }, () => new Writable())).rejects.toMatchObject({
+      code: "UND_ERR_CLOSED",
+    });
+  });
+
+  // Mirrors how @elastic/transport's UndiciConnection uses undici: one Pool per node, request()
+  // with a signal, body.setEncoding("utf8") + for-await, and Pool.close() on shutdown.
+  it("supports the @elastic/transport usage pattern", async () => {
+    const pool = new Pool(origin, { keepAliveTimeout: 1000, connections: 4 });
+    const res = await pool.request({
+      method: "GET",
+      path: "/product",
+      headers: { accept: "application/json" },
+      signal: new AbortController().signal,
+    } as any);
+    expect(res.headers["x-elastic-product"]).toBe("Elasticsearch");
+    res.body.setEncoding("utf8");
+    let payload = "";
+    for await (const chunk of res.body) payload += chunk;
+    expect(JSON.parse(payload)).toEqual({ ok: true });
+    await pool.close();
   });
 });

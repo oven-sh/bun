@@ -800,10 +800,20 @@ class MockAgent {
 
 function mockErrors() {}
 
-class Dispatcher extends EventEmitter {}
+class Dispatcher extends EventEmitter {
+  // Abstract in undici; concrete dispatchers (Agent, Pool, Client, ...) override these.
+  dispatch() {
+    throw new Error("not implemented");
+  }
+  close() {
+    throw new Error("not implemented");
+  }
+  destroy() {
+    throw new Error("not implemented");
+  }
+}
 
-// Body stream for Pool/Client responses.
-// Shared helpers for Pool/Client
+// Shared helpers for Pool/Client/Agent
 function _parseOrigin(originInput) {
   if (typeof originInput === "string") return originInput;
   if (originInput instanceof URL) return originInput.origin;
@@ -819,7 +829,7 @@ function _parseOrigin(originInput) {
   return String(originInput);
 }
 
-async function _doRequest(origin, opts) {
+function _buildUrl(origin, opts) {
   const resolvedOrigin = _parseOrigin(opts.origin ?? origin).replace(/\/$/, "");
   const path = opts.path || "/";
   let url = resolvedOrigin + path;
@@ -835,11 +845,37 @@ async function _doRequest(origin, opts) {
     parsedUrl.search = existingParams.toString();
     url = parsedUrl.toString();
   }
+  return url;
+}
 
+// Forwards an abort from `signal` (an AbortSignal or any EventTarget/EventEmitter that emits
+// "abort") to `controller`. Matches undici, which only listens for the event, so a synthetic
+// `signal.dispatchEvent(new Event("abort"))` (used by @elastic/transport for per-request
+// timeouts) cancels the request even though `signal.aborted` stays false.
+function _linkSignal(signal, controller) {
+  if (!signal) return;
+  if (signal.aborted) {
+    controller.abort(signal.reason ?? new RequestAbortedError("Request aborted"));
+    return;
+  }
+  const onAbort = () => controller.abort(signal.reason ?? new RequestAbortedError("Request aborted"));
+  if ($isCallable(signal.addEventListener)) signal.addEventListener("abort", onAbort, { once: true });
+  else if ($isCallable(signal.once)) signal.once("abort", onAbort);
+  controller.signal.addEventListener(
+    "abort",
+    () => {
+      if ($isCallable(signal.removeEventListener)) signal.removeEventListener("abort", onAbort);
+      else if ($isCallable(signal.removeListener)) signal.removeListener("abort", onAbort);
+    },
+    { once: true },
+  );
+}
+
+async function _doRequest(origin, opts, signal) {
+  const url = _buildUrl(origin, opts);
   const method = (opts.method || "GET").toUpperCase();
   const inputHeaders = opts.headers || kEmptyObject;
-  let inputBody = opts.body ?? null;
-  const signal = opts.signal || undefined;
+  const inputBody = opts.body ?? null;
 
   if (inputBody != null && (method === "GET" || method === "HEAD")) {
     throw new Error("Body not allowed for GET or HEAD requests");
@@ -884,271 +920,324 @@ async function _doRequest(origin, opts) {
   };
 }
 
-async function _doDispatch(origin, opts, handler) {
-  if (!handler || typeof handler !== "object") {
-    throw new InvalidArgumentError("handler must be an object");
-  }
+// Drives `handler` for one request over fetch(). Supports both handler shapes undici accepts:
+//   - legacy: onConnect(abort) / onHeaders(status, rawHeaders, resume, statusText) / onData(chunk)
+//     / onComplete(trailers) / onError(err). onHeaders/onData returning `false` pauses the body
+//     until the `resume` callback is called.
+//   - undici v7 controller: onRequestStart(controller) / onResponseStart(controller, status,
+//     headers, statusText) / onResponseData(controller, chunk) / onResponseEnd(controller, trailers)
+//     / onResponseError(controller, err), where controller has abort(reason)/pause()/resume().
+// Aborting (from the handler, `opts.signal`, or `abortController`) reports a RequestAbortedError
+// (or the abort reason) through the error callback, and the in-flight fetch is cancelled.
+async function _doDispatch(origin, opts, handler, abortController) {
+  const modern = $isCallable(handler.onRequestStart) || $isCallable(handler.onResponseStart);
+  let finished = false;
+  let paused = false;
+  let resumeWaiter = null;
 
-  const resolvedOrigin = _parseOrigin(opts.origin ?? origin).replace(/\/$/, "");
-  const path = opts.path || "/";
-  let url = resolvedOrigin + path;
+  const controller = {
+    abort(reason) {
+      if (!abortController.signal.aborted) {
+        abortController.abort(reason ?? new RequestAbortedError("Request aborted"));
+      }
+      if (resumeWaiter) resumeWaiter();
+    },
+    pause() {
+      paused = true;
+    },
+    resume() {
+      paused = false;
+      if (resumeWaiter) resumeWaiter();
+    },
+    get paused() {
+      return paused;
+    },
+    get aborted() {
+      return abortController.signal.aborted;
+    },
+    get reason() {
+      return abortController.signal.reason ?? null;
+    },
+  };
 
-  if (opts.query) {
-    const parsedUrl = new URL(url);
-    const existingParams = new URLSearchParams(parsedUrl.search);
-    const newParams = new URLSearchParams(opts.query);
-    for (const [key, value] of newParams) {
-      existingParams.set(key, value);
+  const fail = err => {
+    if (finished) return;
+    finished = true;
+    if (modern) {
+      if ($isCallable(handler.onResponseError)) handler.onResponseError(controller, err);
+      else if ($isCallable(handler.onError)) handler.onError(err);
+    } else if ($isCallable(handler.onError)) {
+      handler.onError(err);
     }
-    parsedUrl.search = existingParams.toString();
-    url = parsedUrl.toString();
-  }
+  };
 
-  const method = (opts.method || "GET").toUpperCase();
-  const inputHeaders = opts.headers || kEmptyObject;
-  let inputBody = opts.body ?? null;
-
-  if (inputBody != null && (method === "GET" || method === "HEAD")) {
-    const err = new Error("Body not allowed for GET or HEAD requests");
-    if ($isCallable(handler.onError)) handler.onError(err);
-    return false;
-  }
-
-  const abortController = new AbortController();
-  if (opts.signal) {
-    if (opts.signal.aborted) {
-      const err = new RequestAbortedError("Request aborted");
-      if ($isCallable(handler.onError)) handler.onError(err);
-      return false;
+  // Resolves once the body should keep flowing (not paused) or the request was aborted.
+  const waitWhilePaused = async () => {
+    while (paused && !abortController.signal.aborted) {
+      await new Promise(resolve => (resumeWaiter = resolve));
+      resumeWaiter = null;
     }
-    opts.signal.addEventListener?.("abort", () => abortController.abort());
-  }
-
-  if ($isCallable(handler.onConnect)) {
-    handler.onConnect(err => abortController.abort(err));
-  }
-
-  const maxRedirections = opts.maxRedirections;
-  const followRedirects = maxRedirections != null && maxRedirections > 0;
+  };
 
   try {
+    const method = (opts.method || "GET").toUpperCase();
+    if (opts.body != null && (method === "GET" || method === "HEAD")) {
+      throw new InvalidArgumentError("Body not allowed for GET or HEAD requests");
+    }
+    const url = _buildUrl(origin, opts);
+
+    if (modern) {
+      if ($isCallable(handler.onRequestStart))
+        handler.onRequestStart(controller, { origin: _parseOrigin(opts.origin ?? origin) });
+    } else if ($isCallable(handler.onConnect)) {
+      handler.onConnect(reason => controller.abort(reason));
+    }
+    if (abortController.signal.aborted) throw _abortReason(abortController.signal);
+
+    const maxRedirections = opts.maxRedirections;
+    const followRedirects = maxRedirections != null && maxRedirections > 0;
     const resp = await fetch(url, {
       method,
-      headers: inputHeaders,
-      body: inputBody,
+      headers: opts.headers || kEmptyObject,
+      body: opts.body ?? null,
       signal: abortController.signal,
       redirect: followRedirects ? "follow" : "manual",
       maxRedirects: followRedirects ? maxRedirections : undefined,
       keepalive: !opts.reset,
     });
 
-    const rawHeaders = [];
-    for (const [key, value] of resp.headers.entries()) {
-      rawHeaders.push($Buffer.from(key), $Buffer.from(value));
+    // fetch() transparently decompresses, so these headers no longer describe the bytes delivered.
+    const responseHeaders = resp.headers.toJSON();
+    if (method !== "HEAD" && responseHeaders["content-encoding"]) {
+      delete responseHeaders["content-encoding"];
+      delete responseHeaders["content-length"];
     }
 
-    let resumeFn = () => {};
-    if ($isCallable(handler.onHeaders)) {
-      const proceed = handler.onHeaders(resp.status, rawHeaders, resumeFn, resp.statusText);
-      if (proceed === false) {
-        // backpressure
+    if (modern) {
+      if ($isCallable(handler.onResponseStart))
+        handler.onResponseStart(controller, resp.status, responseHeaders, resp.statusText);
+    } else if ($isCallable(handler.onHeaders)) {
+      const rawHeaders = [];
+      for (const key in responseHeaders) {
+        const value = responseHeaders[key];
+        if (Array.isArray(value)) for (const v of value) rawHeaders.push($Buffer.from(key), $Buffer.from(v));
+        else rawHeaders.push($Buffer.from(key), $Buffer.from(String(value)));
       }
+      const proceed = handler.onHeaders(resp.status, rawHeaders, () => controller.resume(), resp.statusText);
+      if (proceed === false) paused = true;
     }
+    if (abortController.signal.aborted) throw _abortReason(abortController.signal);
 
     if (resp.body) {
       for await (const chunk of resp.body) {
-        if ($isCallable(handler.onData)) {
-          const chunkBuf = $Buffer.isBuffer(chunk) ? chunk : $Buffer.from(chunk);
-          const proceed = handler.onData(chunkBuf);
-          if (proceed === false) {
-            // backpressure
-          }
+        await waitWhilePaused();
+        if (abortController.signal.aborted) throw _abortReason(abortController.signal);
+        const buf = $Buffer.isBuffer(chunk) ? chunk : $Buffer.from(chunk);
+        if (modern) {
+          if ($isCallable(handler.onResponseData)) handler.onResponseData(controller, buf);
+        } else if ($isCallable(handler.onData)) {
+          if (handler.onData(buf) === false) paused = true;
         }
+        if (abortController.signal.aborted) throw _abortReason(abortController.signal);
       }
     }
+    await waitWhilePaused();
+    if (abortController.signal.aborted) throw _abortReason(abortController.signal);
 
-    if ($isCallable(handler.onComplete)) {
+    finished = true;
+    if (modern) {
+      if ($isCallable(handler.onResponseEnd)) handler.onResponseEnd(controller, kEmptyObject);
+    } else if ($isCallable(handler.onComplete)) {
       handler.onComplete([]);
     }
-    return true;
   } catch (err) {
-    if ($isCallable(handler.onError)) {
-      handler.onError(err);
-    }
-    return false;
+    fail(abortController.signal.aborted ? _abortReason(abortController.signal) : err);
   }
 }
 
-class Agent extends Dispatcher {
-  #closed;
+function _abortReason(signal) {
+  const reason = signal.reason;
+  return reason instanceof Error && reason.name !== "AbortError" ? reason : new RequestAbortedError("Request aborted");
+}
 
-  constructor(_options = {}) {
-    super();
-    this.#closed = false;
+// Shared lifecycle for Agent/Pool/Client/BalancedPool: dispatch()/request()/stream() are rejected
+// with UND_ERR_CLOSED after close() and UND_ERR_DESTROYED after destroy(); close() waits for
+// in-flight requests, destroy() aborts them.
+class DispatcherBase extends Dispatcher {
+  #closed = false;
+  #destroyed = false;
+  #inflight = new Set();
+  #drained = [];
+
+  get closed() {
+    return this.#closed;
+  }
+
+  get destroyed() {
+    return this.#destroyed;
+  }
+
+  // Resolve the origin a request goes to; Pool/Client are bound to one, Agent reads opts.origin.
+  _origin(_opts) {
+    return undefined;
+  }
+
+  #state() {
+    if (this.#destroyed) return new ClientDestroyedError("The client is destroyed");
+    if (this.#closed) return new ClientClosedError("The client is closed");
+    return null;
+  }
+
+  // Runs `fn(signal)` as a tracked in-flight operation.
+  async #track(opts, fn) {
+    const ac = new AbortController();
+    _linkSignal(opts?.signal, ac);
+    this.#inflight.add(ac);
+    try {
+      return await fn(ac);
+    } finally {
+      this.#inflight.delete(ac);
+      if (this.#inflight.size === 0) {
+        const waiters = this.#drained;
+        this.#drained = [];
+        for (const w of waiters) w();
+      }
+    }
   }
 
   dispatch(opts, handler) {
-    if (this.#closed) {
-      const err = new ClientClosedError("The agent is closed");
-      if (handler && $isCallable(handler.onError)) handler.onError(err);
+    if (!opts || typeof opts !== "object") throw new InvalidArgumentError("opts must be an object.");
+    if (!handler || typeof handler !== "object") throw new InvalidArgumentError("handler must be an object.");
+    const state = this.#state();
+    if (state) {
+      _reportError(handler, state);
       return false;
     }
-    const origin = opts.origin;
-    if (!origin) {
-      const err = new InvalidArgumentError("opts.origin is required for Agent.dispatch");
-      if (handler && $isCallable(handler.onError)) handler.onError(err);
+    let origin;
+    try {
+      origin = this._origin(opts);
+    } catch (err) {
+      _reportError(handler, err);
       return false;
     }
-    _doDispatch(origin, opts, handler);
+    this.#track(opts, ac => _doDispatch(origin, opts, handler, ac));
     return true;
   }
 
-  async close() {
-    this.#closed = true;
+  request(opts, callback) {
+    const run = () => {
+      const state = this.#state();
+      if (state) return Promise.reject(state);
+      let origin;
+      try {
+        origin = this._origin(opts);
+      } catch (err) {
+        return Promise.reject(err);
+      }
+      return this.#track(opts, ac => _doRequest(origin, opts, ac.signal));
+    };
+    return _maybeCallback(run(), callback);
   }
 
-  async destroy() {
+  stream(opts, factory, callback) {
+    const state = this.#state();
+    if (state) return _maybeCallback(Promise.reject(state), callback);
+    let origin;
+    try {
+      origin = this._origin(opts);
+    } catch (err) {
+      return _maybeCallback(Promise.reject(err), callback);
+    }
+    // The tracked controller's signal replaces opts.signal (it is linked to it).
+    return _maybeCallback(
+      this.#track(opts, ac => stream(origin, { ...opts, signal: ac.signal }, factory)),
+      callback,
+    );
+  }
+
+  pipeline(opts, handler) {
+    const state = this.#state();
+    if (state) throw state;
+    return pipeline(this._origin(opts), opts, handler);
+  }
+
+  close(callback) {
     this.#closed = true;
+    const done =
+      this.#inflight.size === 0
+        ? Promise.resolve(null)
+        : new Promise(resolve => this.#drained.push(() => resolve(null)));
+    return _maybeCallback(done, callback);
+  }
+
+  destroy(err, callback) {
+    if ($isCallable(err)) {
+      callback = err;
+      err = null;
+    }
+    this.#closed = true;
+    this.#destroyed = true;
+    const reason = err ?? new ClientDestroyedError("The client is destroyed");
+    for (const ac of this.#inflight) ac.abort(reason);
+    return _maybeCallback(Promise.resolve(null), callback);
   }
 }
 
-class Pool extends Dispatcher {
+function _reportError(handler, err) {
+  if ($isCallable(handler.onResponseError)) handler.onResponseError({ abort() {}, aborted: true, reason: err }, err);
+  else if ($isCallable(handler.onError)) handler.onError(err);
+}
+
+// Promise-or-callback: with a callback, results go to it (Node-style) and nothing is returned.
+function _maybeCallback(promise, callback) {
+  if ($isCallable(callback)) {
+    promise.then(
+      value => callback(null, value),
+      err => callback(err, null),
+    );
+    return;
+  }
+  return promise;
+}
+
+class Agent extends DispatcherBase {
+  constructor(_options = {}) {
+    super();
+  }
+
+  _origin(opts) {
+    if (!opts || !opts.origin) throw new InvalidArgumentError("opts.origin is required for Agent.dispatch");
+    return opts.origin;
+  }
+}
+
+class Pool extends DispatcherBase {
   #origin;
-  #closed;
 
   constructor(origin, _options = {}) {
     super();
     this.#origin = _parseOrigin(origin);
-    this.#closed = false;
   }
 
-  dispatch(opts, handler) {
-    if (this.#closed) {
-      const err = new ClientClosedError("The pool is closed");
-      if (handler && $isCallable(handler.onError)) handler.onError(err);
-      return false;
-    }
-    _doDispatch(this.#origin, opts, handler);
-    return true;
-  }
-
-  async request(opts, callback) {
-    if (this.#closed) {
-      const err = new ClientClosedError("The pool is closed");
-      if ($isCallable(callback)) {
-        callback(err, null);
-        return;
-      }
-      throw err;
-    }
-    if ($isCallable(callback)) {
-      _doRequest(this.#origin, opts).then(
-        data => callback(null, data),
-        err => callback(err, null),
-      );
-      return;
-    }
-    return _doRequest(this.#origin, opts);
-  }
-
-  stream(opts, factory, callback) {
-    if (this.#closed) {
-      const err = new ClientClosedError("The pool is closed");
-      if ($isCallable(callback)) {
-        callback(err, null);
-        return;
-      }
-      return Promise.reject(err);
-    }
-    return stream(this.#origin, opts, factory, callback);
-  }
-
-  pipeline(opts, handler) {
-    if (this.#closed) {
-      throw new ClientClosedError("The pool is closed");
-    }
-    return pipeline(this.#origin, opts, handler);
-  }
-
-  async close() {
-    this.#closed = true;
-  }
-
-  async destroy() {
-    this.#closed = true;
+  _origin(_opts) {
+    return this.#origin;
   }
 }
 
 class BalancedPool extends Pool {}
 
-class Client extends Dispatcher {
+class Client extends DispatcherBase {
   #origin;
-  #closed;
 
   constructor(origin, _options = {}) {
     super();
     this.#origin = _parseOrigin(origin);
-    this.#closed = false;
   }
 
-  dispatch(opts, handler) {
-    if (this.#closed) {
-      const err = new ClientClosedError("The client is closed");
-      if (handler && $isCallable(handler.onError)) handler.onError(err);
-      return false;
-    }
-    _doDispatch(this.#origin, opts, handler);
-    return true;
-  }
-
-  async request(opts, callback) {
-    if (this.#closed) {
-      const err = new ClientClosedError("The client is closed");
-      if ($isCallable(callback)) {
-        callback(err, null);
-        return;
-      }
-      throw err;
-    }
-    if ($isCallable(callback)) {
-      _doRequest(this.#origin, opts).then(
-        data => callback(null, data),
-        err => callback(err, null),
-      );
-      return;
-    }
-    return _doRequest(this.#origin, opts);
-  }
-
-  stream(opts, factory, callback) {
-    if (this.#closed) {
-      const err = new ClientClosedError("The client is closed");
-      if ($isCallable(callback)) {
-        callback(err, null);
-        return;
-      }
-      return Promise.reject(err);
-    }
-    return stream(this.#origin, opts, factory, callback);
-  }
-
-  pipeline(opts, handler) {
-    if (this.#closed) {
-      throw new ClientClosedError("The client is closed");
-    }
-    return pipeline(this.#origin, opts, handler);
-  }
-
-  async close() {
-    this.#closed = true;
-  }
-
-  async destroy() {
-    this.#closed = true;
+  _origin(_opts) {
+    return this.#origin;
   }
 }
-
-class DispatcherBase extends EventEmitter {}
 
 class ProxyAgent extends DispatcherBase {
   constructor() {
@@ -1191,28 +1280,154 @@ const interceptors = {
 };
 
 // Error classes
-class UndiciError extends Error {}
-class AbortError extends UndiciError {}
+class UndiciError extends Error {
+  constructor(message, options) {
+    super(message, options);
+    this.name = new.target.name;
+    this.code = "UND_ERR";
+  }
+}
+class AbortError extends UndiciError {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "AbortError";
+    this.code = "UND_ERR_ABORT";
+  }
+}
 class HTTPParserError extends Error {}
-class HeadersTimeoutError extends UndiciError {}
-class HeadersOverflowError extends UndiciError {}
-class BodyTimeoutError extends UndiciError {}
-class RequestContentLengthMismatchError extends UndiciError {}
-class ConnectTimeoutError extends UndiciError {}
-class ResponseStatusCodeError extends UndiciError {}
-class InvalidArgumentError extends UndiciError {}
-class InvalidReturnValueError extends UndiciError {}
-class RequestAbortedError extends AbortError {}
-class ClientDestroyedError extends UndiciError {}
-class ClientClosedError extends UndiciError {}
-class InformationalError extends UndiciError {}
-class SocketError extends UndiciError {}
-class NotSupportedError extends UndiciError {}
-class ResponseContentLengthMismatchError extends UndiciError {}
-class BalancedPoolMissingUpstreamError extends UndiciError {}
-class ResponseExceededMaxSizeError extends UndiciError {}
-class RequestRetryError extends UndiciError {}
-class SecureProxyConnectionError extends UndiciError {}
+class HeadersTimeoutError extends UndiciError {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "HeadersTimeoutError";
+    this.code = "UND_ERR_HEADERS_TIMEOUT";
+  }
+}
+class HeadersOverflowError extends UndiciError {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "HeadersOverflowError";
+    this.code = "UND_ERR_HEADERS_OVERFLOW";
+  }
+}
+class BodyTimeoutError extends UndiciError {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "BodyTimeoutError";
+    this.code = "UND_ERR_BODY_TIMEOUT";
+  }
+}
+class RequestContentLengthMismatchError extends UndiciError {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "RequestContentLengthMismatchError";
+    this.code = "UND_ERR_REQ_CONTENT_LENGTH_MISMATCH";
+  }
+}
+class ConnectTimeoutError extends UndiciError {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "ConnectTimeoutError";
+    this.code = "UND_ERR_CONNECT_TIMEOUT";
+  }
+}
+class ResponseStatusCodeError extends UndiciError {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "ResponseStatusCodeError";
+    this.code = "UND_ERR_RESPONSE_STATUS_CODE";
+  }
+}
+class InvalidArgumentError extends UndiciError {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "InvalidArgumentError";
+    this.code = "UND_ERR_INVALID_ARG";
+  }
+}
+class InvalidReturnValueError extends UndiciError {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "InvalidReturnValueError";
+    this.code = "UND_ERR_INVALID_RETURN_VALUE";
+  }
+}
+class RequestAbortedError extends AbortError {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "RequestAbortedError";
+    this.code = "UND_ERR_ABORTED";
+  }
+}
+class ClientDestroyedError extends UndiciError {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "ClientDestroyedError";
+    this.code = "UND_ERR_DESTROYED";
+  }
+}
+class ClientClosedError extends UndiciError {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "ClientClosedError";
+    this.code = "UND_ERR_CLOSED";
+  }
+}
+class InformationalError extends UndiciError {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "InformationalError";
+    this.code = "UND_ERR_INFO";
+  }
+}
+class SocketError extends UndiciError {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "SocketError";
+    this.code = "UND_ERR_SOCKET";
+  }
+}
+class NotSupportedError extends UndiciError {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "NotSupportedError";
+    this.code = "UND_ERR_NOT_SUPPORTED";
+  }
+}
+class ResponseContentLengthMismatchError extends UndiciError {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "ResponseContentLengthMismatchError";
+    this.code = "UND_ERR_RES_CONTENT_LENGTH_MISMATCH";
+  }
+}
+class BalancedPoolMissingUpstreamError extends UndiciError {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "BalancedPoolMissingUpstreamError";
+    this.code = "UND_ERR_BPL_MISSING_UPSTREAM";
+  }
+}
+class ResponseExceededMaxSizeError extends UndiciError {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "ResponseExceededMaxSizeError";
+    this.code = "UND_ERR_RES_EXCEEDED_MAX_SIZE";
+  }
+}
+class RequestRetryError extends UndiciError {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "RequestRetryError";
+    this.code = "UND_ERR_REQ_RETRY";
+  }
+}
+class SecureProxyConnectionError extends UndiciError {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "SecureProxyConnectionError";
+    this.code = "UND_ERR_PRX_TLS";
+  }
+}
 
 const errors = {
   AbortError,
@@ -1292,7 +1507,7 @@ function setGlobalDispatcher(dispatcher) {
 }
 
 function getGlobalDispatcher() {
-  return (globalDispatcher ??= new Dispatcher());
+  return (globalDispatcher ??= new Agent());
 }
 
 // Add missing origin functions

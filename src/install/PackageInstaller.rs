@@ -1735,7 +1735,14 @@ impl<'a> PackageInstaller<'a> {
             // above checks if unpatched package is in cache, if not null apply patch in temp directory, copy
             // into cache, then install into node_modules
             if let Some(patch_contents_hash) = installer.patch.as_ref().map(|p| p.contents_hash) {
-                if installer.patched_package_missing_from_cache(self.manager_mut(), package_id) {
+                // Workspace, folder and link packages have no patched cache entry to build.
+                if resolution.tag.can_enqueue_install_task()
+                    && installer.patched_package_missing_from_cache(
+                        self.manager_mut(),
+                        package_id,
+                        patch_contents_hash,
+                    )
+                {
                     let mut task = PatchTask::new_apply_patch_hash(
                         self.manager_mut(),
                         package_id,

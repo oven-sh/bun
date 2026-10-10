@@ -158,8 +158,12 @@ impl PackageManager {
                     return PreinstallState::Extract;
                 }
 
-                let in_cache = if patch_hash.is_some() {
-                    directories::is_folder_in_cache(self, folder_path)
+                let in_cache = if let Some(patch_hash) = patch_hash {
+                    directories::is_patched_package_in_cache_at(
+                        directories::get_cache_directory(self),
+                        folder_path,
+                        patch_hash,
+                    )
                 } else {
                     directories::is_package_in_cache(self, folder_path, pkg.resolution.tag)
                 };

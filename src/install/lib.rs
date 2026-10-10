@@ -995,7 +995,6 @@ pub use bun_install_types::{
 // Phase-A drafts use the field-style lowercase names; alias both spellings.
 pub(crate) const invalid_package_id: PackageID = INVALID_PACKAGE_ID;
 pub(crate) const invalid_dependency_id: DependencyID = INVALID_DEPENDENCY_ID;
-pub(crate) const bun_hash_tag: &[u8] = BUN_HASH_TAG;
 
 pub(crate) type PackageNameAndVersionHash = u64;
 

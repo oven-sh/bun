@@ -294,22 +294,35 @@ impl<'a> Installer<'a> {
         let node_id = entry_node_ids[entry_id.get() as usize];
         let node_pkg_ids = store.nodes.items_pkg_id();
         let pkg_id = node_pkg_ids[node_id.get() as usize];
+
+        // Peer variants share one patched cache dir. Reuse a complete one: a rebuild replaces it under earlier entries' running hardlink tasks.
+        {
+            let lockfile = self.lockfile();
+            let pkg_name = lockfile.packages.items_name()[pkg_id as usize];
+            let resolution = lockfile.packages.items_resolution()[pkg_id as usize];
+            let mut folder_path_buf = bun_paths::path_buffer_pool::get();
+            let patched = crate::package_manager::compute_cache_dir_and_subpath(
+                self.manager_mut(),
+                pkg_name.slice(lockfile.buffers.string_bytes.as_slice()),
+                &resolution,
+                &mut folder_path_buf,
+                Some(patch.contents_hash),
+            );
+            if crate::package_manager::directories::is_patched_package_in_cache_at(
+                patched.cache_dir,
+                patched.cache_dir_subpath,
+                patch.contents_hash,
+            ) {
+                return;
+            }
+        }
+
         let mut patch_task = install::PatchTask::new_apply_patch_hash(
             self.manager_mut(),
             pkg_id,
             patch.contents_hash,
             patch.name_and_version_hash,
         );
-        // Every peer variant shares one patched cache dir (named by the patch
-        // contents hash, not the peer set). Once it exists, reuse it: rebuilding
-        // it replaces the directory under earlier entries' running hardlink tasks.
-        if let crate::patch_install::Callback::Apply(apply) = &patch_task.callback {
-            if sys::directory_exists_at(apply.cache_dir, apply.cache_dir_subpath.as_zstr())
-                .unwrap_or(false)
-            {
-                return;
-            }
-        }
         bun_core::handle_oom(patch_task.apply());
 
         if let crate::patch_install::Callback::Apply(apply) = &mut patch_task.callback {

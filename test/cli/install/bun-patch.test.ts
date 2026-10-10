@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { lstatSync, readFileSync } from "fs";
+import { lstatSync, readdirSync, readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
 import { isAbsolute, join, sep } from "path";
 
@@ -1232,5 +1232,132 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
     // name-only argument exercises the name-and-version lookup path
     const patchKey = await expectPatchFlowWorks(String(dir), env, "pkg-to-patch");
     expect(patchKey).toBe("pkg-to-patch@./dep.tgz");
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/33520
+// `bun patch <pkg>` replaces `node_modules/<pkg>` with the folder of the package in the
+// cache, and it cannot build that folder. A folder that is not a cache hit ends the
+// command before `node_modules/<pkg>` is deleted.
+describe("bun patch <pkg> when the cache folder of the package is not a cache hit", () => {
+  const registry = new VerdaccioRegistry();
+
+  beforeAll(async () => {
+    await registry.start();
+  });
+
+  afterAll(() => {
+    registry.stop();
+  });
+
+  // Adds a file, so a patched folder is one that has `patched.txt`.
+  const addFilePatch = `diff --git a/patched.txt b/patched.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e728b8dad
+--- /dev/null
++++ b/patched.txt
+@@ -0,0 +1 @@
++hello world
+`;
+
+  // CI exports BUN_INSTALL_CACHE_DIR, which overrides the cache in bunfig.toml.
+  async function runBun(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  async function installedProject(packageJson: Record<string, unknown>) {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: { "package.json": JSON.stringify(packageJson), patches: { "no-deps@1.0.0.patch": addFilePatch } },
+    });
+    const { stderr, exitCode } = await runBun(packageDir, "install");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return packageDir;
+  }
+
+  const cacheFolders = (packageDir: string) =>
+    readdirSync(join(packageDir, ".bun-cache"))
+      .filter(name => name.startsWith("no-deps@"))
+      .map(name => join(packageDir, ".bun-cache", name));
+
+  const installedFile = (packageDir: string, file: string) =>
+    Bun.file(join(packageDir, "node_modules", "no-deps", file))
+      .text()
+      .catch(() => "missing");
+
+  // What the command reports, and what it left in node_modules.
+  async function patch(packageDir: string, arg: string, file: string) {
+    const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", arg);
+    return {
+      refused: stderr.includes("the cache folder of no-deps is missing or incomplete"),
+      remedy: stderr.includes("bun install --force"),
+      prepared: stdout.includes("To patch no-deps, edit the following folder:"),
+      installed: await installedFile(packageDir, file),
+      exitCode,
+    };
+  }
+
+  describe.each(["no-deps", "node_modules/no-deps"])("bun patch %s", arg => {
+    test.concurrent("a patched folder without its .bun-tag marker", async () => {
+      const packageDir = await installedProject({
+        name: "patch-again",
+        dependencies: { "no-deps": "1.0.0" },
+        patchedDependencies: { "no-deps@1.0.0": "patches/no-deps@1.0.0.patch" },
+      });
+      const [patchedFolder] = cacheFolders(packageDir).filter(folder => folder.includes("_patch_hash="));
+      for (const entry of readdirSync(patchedFolder)) {
+        if (entry.startsWith(".bun-tag-")) rmSync(join(patchedFolder, entry));
+      }
+      rmSync(join(patchedFolder, "patched.txt"));
+
+      expect(await patch(packageDir, arg, "patched.txt")).toEqual({
+        refused: true,
+        remedy: true,
+        prepared: false,
+        installed: "hello world\n",
+        exitCode: 1,
+      });
+
+      expect(await runBun(packageDir, "install", "--force")).toMatchObject({ exitCode: 0 });
+      expect(await patch(packageDir, arg, "patched.txt")).toEqual({
+        refused: false,
+        remedy: false,
+        prepared: true,
+        installed: "hello world\n",
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("an unpatched folder that is gone", async () => {
+      const packageDir = await installedProject({ name: "patch-first", dependencies: { "no-deps": "1.0.0" } });
+      const packageJson = await installedFile(packageDir, "package.json");
+      for (const folder of cacheFolders(packageDir)) rmSync(folder, { recursive: true });
+
+      expect(await patch(packageDir, arg, "package.json")).toEqual({
+        refused: true,
+        remedy: true,
+        prepared: false,
+        installed: packageJson,
+        exitCode: 1,
+      });
+
+      expect(await runBun(packageDir, "install", "--force")).toMatchObject({ exitCode: 0 });
+      expect(await patch(packageDir, arg, "package.json")).toEqual({
+        refused: false,
+        remedy: false,
+        prepared: true,
+        installed: packageJson,
+        exitCode: 0,
+      });
+    });
   });
 });

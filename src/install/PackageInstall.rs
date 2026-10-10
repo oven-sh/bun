@@ -2293,9 +2293,13 @@ impl<'a> PackageInstall<'a> {
         &mut self,
         manager: &mut PackageManager,
         package_id: PackageID,
+        patch_hash: u64,
     ) -> bool {
-        let exists =
-            sys::directory_exists_at(self.cache_dir, self.cache_dir_subpath).unwrap_or(false);
+        let exists = crate::package_manager::directories::is_patched_package_in_cache_at(
+            self.cache_dir,
+            self.cache_dir_subpath,
+            patch_hash,
+        );
         if exists {
             manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
         }

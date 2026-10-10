@@ -1,12 +1,38 @@
 use bun_core::strings;
 use bun_paths;
+use bun_paths::path_options::AssumeOk as _;
 use bun_sys::{self, Errno, Fd, FdDirExt, FdExt};
+
+use crate::package_manager_real::patch_package::PATCH_COPY_MARKER;
 
 pub(crate) struct Symlinker {
     pub(crate) dest: bun_paths::Path,
     pub(crate) target: bun_paths::RelPath,
     #[cfg(windows)]
     pub(crate) fallback_junction_target: bun_paths::AbsPath,
+}
+
+/// What stands at `dest` when it is not a link.
+enum Occupant {
+    /// A directory that the strategy keeps.
+    KeptDirectory,
+    Directory,
+    File,
+}
+
+/// A directory that was where a link belongs, and where it is now.
+pub(crate) struct Displaced {
+    pub(crate) link: Box<[u8]>,
+    pub(crate) moved_to: Box<[u8]>,
+}
+
+/// Tasks on any thread add to it. The main thread reports it.
+pub(crate) type DisplacedList = bun_core::Mutex<Vec<Displaced>>;
+
+/// The name beside a link for the directory that was in its place. It has no random part, so
+/// one link keeps one directory at most: the last one.
+pub(crate) fn displaced_name(link_name: &[u8]) -> Vec<u8> {
+    [b".old_", link_name].concat()
 }
 
 impl Symlinker {
@@ -32,7 +58,11 @@ impl Symlinker {
     }
 
     // Ok(true) when a link was written.
-    pub(crate) fn ensure_symlink(&mut self, strategy: Strategy) -> bun_sys::Result<bool> {
+    pub(crate) fn ensure_symlink(
+        &mut self,
+        strategy: Strategy,
+        displaced: &DisplacedList,
+    ) -> bun_sys::Result<bool> {
         match strategy {
             Strategy::ExpectMissing => {
                 return match self.symlink() {
@@ -54,7 +84,7 @@ impl Symlinker {
                     },
                 };
             }
-            Strategy::ExpectExisting => {
+            Strategy::ExpectExisting | Strategy::ExpectExistingKeepDirectory => {
                 let mut current_link_buf = bun_paths::path_buffer_pool::get();
                 let current_link_len =
                     match bun_sys::readlink(self.dest.slice_z(), &mut current_link_buf) {
@@ -75,36 +105,7 @@ impl Symlinker {
                                         _ => Err(symlink_err),
                                     },
                                 },
-                                // readlink failed for a reason other than NOENT —
-                                // dest exists but isn't a symlink. If it's a real
-                                // directory, leave it: this is the `bun patch <pkg>`
-                                // workspace (a detached copy the user is editing
-                                // before `--commit`), and `deleteTree` here would
-                                // silently destroy their in-progress edits. If it's
-                                // a regular file, replace it.
-                                _ => {
-                                    #[cfg(windows)]
-                                    let is_dir = if let Some(a) =
-                                        bun_sys::get_file_attributes(self.dest.slice_z())
-                                    {
-                                        a.is_directory && !a.is_reparse_point
-                                    } else {
-                                        false
-                                    };
-                                    #[cfg(not(windows))]
-                                    let is_dir = if let Ok(st) = bun_sys::lstat(self.dest.slice_z())
-                                    {
-                                        // `mode_t` is `u16` on darwin/freebsd/android, `u32` on linux.
-                                        bun_sys::posix::s_isdir(st.st_mode as u32)
-                                    } else {
-                                        false
-                                    };
-                                    if is_dir {
-                                        return Ok(false);
-                                    }
-                                    let _ = bun_sys::unlink(self.dest.slice_z());
-                                    return self.symlink().map(|()| true);
-                                }
+                                _ => self.replace_occupant(strategy, displaced),
                             };
                         }
                     };
@@ -147,10 +148,117 @@ impl Symlinker {
             }
         }
     }
+
+    /// `dest` exists and is not a link. Only a directory that `bun patch` marked stays
+    /// (the user edits it until `bun patch --commit`), and with
+    /// `ExpectExistingKeepDirectory` every directory stays.
+    #[cold]
+    fn replace_occupant(
+        &mut self,
+        strategy: Strategy,
+        displaced: &DisplacedList,
+    ) -> bun_sys::Result<bool> {
+        let removed = match self.occupant(strategy)? {
+            Occupant::KeptDirectory => return Ok(false),
+            Occupant::File => bun_sys::unlink(self.dest.slice_z()),
+            Occupant::Directory => bun_sys::rmdir(self.dest.slice_z()),
+        };
+        match removed {
+            Ok(()) => {}
+            Err(err) => match err.get_errno() {
+                Errno::ENOENT => {}
+                // A directory that is not empty.
+                Errno::ENOTEMPTY | Errno::EEXIST => {
+                    return self.replace_directory(displaced).map(|()| true);
+                }
+                _ => return Err(err),
+            },
+        }
+        self.symlink().map(|()| true)
+    }
+
+    fn occupant(&mut self, strategy: Strategy) -> bun_sys::Result<Occupant> {
+        let keep_every_directory = matches!(strategy, Strategy::ExpectExistingKeepDirectory);
+
+        #[cfg(windows)]
+        {
+            let is_directory = bun_sys::get_file_attributes(self.dest.slice_z())
+                .is_some_and(|a| a.is_directory && !a.is_reparse_point);
+            if !is_directory {
+                return Ok(Occupant::File);
+            }
+            if keep_every_directory {
+                return Ok(Occupant::KeptDirectory);
+            }
+            let mut marker = self.dest.save();
+            let _ = marker.append(PATCH_COPY_MARKER);
+            if bun_sys::get_file_attributes(marker.slice_z()).is_some_and(|a| a.is_directory) {
+                return Ok(Occupant::KeptDirectory);
+            }
+            Ok(Occupant::Directory)
+        }
+        #[cfg(not(windows))]
+        {
+            // `mode_t` is `u16` on darwin/freebsd/android, `u32` on linux.
+            if keep_every_directory {
+                return Ok(match bun_sys::lstat(self.dest.slice_z()) {
+                    Ok(st) if bun_sys::posix::s_isdir(st.st_mode as u32) => Occupant::KeptDirectory,
+                    _ => Occupant::File,
+                });
+            }
+            let mut marker = self.dest.save();
+            let _ = marker.append(PATCH_COPY_MARKER);
+            match bun_sys::lstat(marker.slice_z()) {
+                Ok(st) if bun_sys::posix::s_isdir(st.st_mode as u32) => Ok(Occupant::KeptDirectory),
+                // A file with the name of the marker is a file of the package.
+                Ok(_) => Ok(Occupant::Directory),
+                Err(err) => match err.get_errno() {
+                    Errno::ENOENT => Ok(Occupant::Directory),
+                    // `dest` is not a directory.
+                    Errno::ENOTDIR => Ok(Occupant::File),
+                    _ => Err(err),
+                },
+            }
+        }
+    }
+
+    /// Moves the directory at `dest` to `displaced_name` beside it, then writes the link. The
+    /// directory can hold files that exist nowhere else, so it is not deleted.
+    fn replace_directory(&mut self, displaced: &DisplacedList) -> bun_sys::Result<()> {
+        let name = displaced_name(self.dest.basename());
+        let mut aside = bun_paths::Path::<u8>::from(&*match self.dest.dirname() {
+            Some(parent) => [parent, &[bun_paths::SEP], &name].concat(),
+            None => name,
+        })
+        .assume_ok();
+
+        if let Err(err) = Fd::cwd().delete_tree(aside.slice()).and_then(|()| {
+            bun_sys::renameat(Fd::cwd(), self.dest.slice_z(), Fd::cwd(), aside.slice_z())
+        }) {
+            return Err(err.with_path_dest(self.dest.slice(), aside.slice()));
+        }
+        if let Err(err) = self.symlink() {
+            // When the directory cannot move back, this error names where it is.
+            bun_sys::renameat(Fd::cwd(), aside.slice_z(), Fd::cwd(), self.dest.slice_z())?;
+            return Err(err);
+        }
+
+        displaced.lock().push(Displaced {
+            link: Box::from(self.dest.slice()),
+            moved_to: Box::from(aside.slice()),
+        });
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy)]
 pub enum Strategy {
+    /// A link with another target is written again. A file is replaced. A directory that
+    /// `bun patch` did not mark moves aside.
     ExpectExisting,
+    /// `ExpectExisting`, but every directory stays where it is.
+    ExpectExistingKeepDirectory,
     ExpectMissing,
 }
+
+const _: () = assert!(core::mem::size_of::<Strategy>() == 1);

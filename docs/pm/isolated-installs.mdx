@@ -204,6 +204,8 @@ rm -rf node_modules package-lock.json yarn.lock
 bun install --linker isolated
 ```
 
+In a workspace, npm and Yarn also install packages into `packages/*/node_modules`. If such a folder is where Bun links a dependency of the root or of a workspace, `bun install` moves it to `.old_<name>` beside the link and writes the link. You can delete `.old_<name>`.
+
 ### From pnpm
 
 Isolated installs are conceptually similar to pnpm, so migration is direct:

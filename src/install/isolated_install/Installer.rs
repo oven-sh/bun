@@ -117,6 +117,9 @@ pub struct Installer<'a> {
     /// Main-thread only: `waiters_head[dep]` starts the intrusive list of blocked entries waiting on `dep`, linked through `next_waiter`.
     pub(crate) waiters_head: Box<[StoreEntryId]>,
     pub(crate) next_waiter: Box<[StoreEntryId]>,
+
+    /// The directories that the tasks moved away from a link of the root or of a workspace.
+    pub(crate) displaced: symlinker::DisplacedList,
 }
 
 impl<'a> Installer<'a> {
@@ -359,6 +362,16 @@ impl<'a> Installer<'a> {
                         pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
                     ),
                 );
+                if !symlink_err.dest.is_empty() {
+                    // Only `Symlinker::replace_directory` names two paths.
+                    bun_core::note!(
+                        "{} is where this link belongs, and it did not move to {}. Remove it, then install again",
+                        bun_core::fmt::quote(&symlink_err.path),
+                        bun_core::fmt::quote(&symlink_err.dest),
+                    );
+                } else if !symlink_err.path.is_empty() {
+                    bun_core::pretty_errorln!("  <d>{}<r>", bstr::BStr::new(&symlink_err.path));
+                }
             }
             TaskError::Patching(patch_log) => {
                 Output::err_generic(
@@ -1479,8 +1492,9 @@ impl Task {
                 Step::SymlinkDependencies => {
                     let current_step = Step::SymlinkDependencies;
                     let relinking = self.relink != Relink::Off;
-                    let strategy = if relinking
-                        || matches!(pkg_res.tag, ResolutionTag::Root | ResolutionTag::Workspace)
+                    let strategy = if relinking {
+                        symlinker::Strategy::ExpectExistingKeepDirectory
+                    } else if matches!(pkg_res.tag, ResolutionTag::Root | ResolutionTag::Workspace)
                     {
                         symlinker::Strategy::ExpectExisting
                     } else {
@@ -2121,6 +2135,33 @@ impl<'a> Installer<'a> {
         Ok(PatchInfo::None)
     }
 
+    /// Main thread, after the tasks.
+    pub(crate) fn report_displaced_folders(&self) {
+        let displaced = core::mem::take(&mut *self.displaced.lock());
+        // The tasks add in any order, and the example has to be the same in each run.
+        let Some(first) = displaced.iter().min_by(|a, b| a.link.cmp(&b.link)) else {
+            return;
+        };
+        if self.manager().options.log_level.is_silent() {
+            return;
+        }
+        if displaced.len() == 1 {
+            bun_core::note!(
+                "{} was a folder, not a link. Moved it to {}",
+                bun_core::fmt::quote(&first.link),
+                bun_core::fmt::quote(&first.moved_to),
+            );
+        } else {
+            bun_core::note!(
+                "{} folders were where dependency links belong. Moved each to <b>.old_\\<name\\><r> beside its link, for example {} to {}",
+                displaced.len(),
+                bun_core::fmt::quote(&first.link),
+                bun_core::fmt::quote(&first.moved_to),
+            );
+        }
+        Output::flush();
+    }
+
     pub(crate) fn link_to_hidden_node_modules(&self, entry_id: StoreEntryId) {
         let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
@@ -2174,10 +2215,10 @@ impl<'a> Installer<'a> {
         let link_strategy: symlinker::Strategy = if self.is_new_bun_modules {
             symlinker::Strategy::ExpectMissing
         } else {
-            symlinker::Strategy::ExpectExisting
+            symlinker::Strategy::ExpectExistingKeepDirectory
         };
 
-        let _ = symlinker.ensure_symlink(link_strategy);
+        let _ = symlinker.ensure_symlink(link_strategy, &self.displaced);
     }
 
     fn maybe_replace_node_modules_path(
@@ -2289,7 +2330,7 @@ impl<'a> Installer<'a> {
                 #[cfg(windows)]
                 fallback_junction_target: dep_store_path.into_sep::<{ PathSeparators::ANY }>(),
             };
-            let result = symlinker.ensure_symlink(strategy);
+            let result = symlinker.ensure_symlink(strategy, &self.displaced);
             dest = symlinker.dest.into_sep::<{ PathSeparators::AUTO }>();
             changed |= result?;
         }

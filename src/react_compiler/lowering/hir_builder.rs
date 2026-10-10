@@ -12,10 +12,10 @@ use crate::diagnostics::CompilerError;
 use crate::diagnostics::CompilerErrorDetail;
 use crate::diagnostics::ErrorCategory;
 use crate::diagnostics::Position;
-use crate::hir::cfg_utils::mark_instruction_ids;
+use crate::hir::cfg_utils::{
+    get_reverse_postordered_blocks, mark_instruction_ids, mark_predecessors,
+};
 use crate::hir::environment::Environment;
-use crate::hir::visitors::each_terminal_successor;
-use crate::hir::visitors::terminal_fallthrough;
 use crate::hir::*;
 use bun_ast::{self as ast, E, G, Loc, Ref, Symbol, symbol};
 
@@ -1065,103 +1065,6 @@ impl<'h> HirBuilder<'h> {
 // Post-build helper functions
 // ---------------------------------------------------------------------------
 
-fn get_reverse_postordered_blocks(
-    hir: &HIR,
-    _instructions: &[Instruction],
-) -> IndexMap<BlockId, BasicBlock> {
-    let mut visited: IndexSet<BlockId> = IndexSet::new();
-    let mut used: IndexSet<BlockId> = IndexSet::new();
-    let mut used_fallthroughs: IndexSet<BlockId> = IndexSet::new();
-    let mut postorder: Vec<BlockId> = Vec::new();
-
-    fn visit(
-        hir: &HIR,
-        block_id: BlockId,
-        is_used: bool,
-        visited: &mut IndexSet<BlockId>,
-        used: &mut IndexSet<BlockId>,
-        used_fallthroughs: &mut IndexSet<BlockId>,
-        postorder: &mut Vec<BlockId>,
-    ) {
-        let was_used = used.contains(&block_id);
-        let was_visited = visited.contains(&block_id);
-        visited.insert(block_id);
-        if is_used {
-            used.insert(block_id);
-        }
-        if was_visited && (was_used || !is_used) {
-            return;
-        }
-
-        let block = hir
-            .blocks
-            .get(&block_id)
-            .unwrap_or_else(|| panic!("[HIRBuilder] expected block {:?} to exist", block_id));
-
-        let mut successors = each_terminal_successor(&block.terminal);
-        successors.reverse();
-
-        let fallthrough = terminal_fallthrough(&block.terminal);
-
-        if let Some(ft) = fallthrough {
-            if is_used {
-                used_fallthroughs.insert(ft);
-            }
-            visit(hir, ft, false, visited, used, used_fallthroughs, postorder);
-        }
-        for successor in successors {
-            visit(
-                hir,
-                successor,
-                is_used,
-                visited,
-                used,
-                used_fallthroughs,
-                postorder,
-            );
-        }
-
-        if !was_visited {
-            postorder.push(block_id);
-        }
-    }
-
-    visit(
-        hir,
-        hir.entry,
-        true,
-        &mut visited,
-        &mut used,
-        &mut used_fallthroughs,
-        &mut postorder,
-    );
-
-    let mut blocks = IndexMap::new();
-    for block_id in postorder.into_iter().rev() {
-        let block = hir.blocks.get(&block_id).unwrap();
-        if used.contains(&block_id) {
-            blocks.insert(block_id, block.clone());
-        } else if used_fallthroughs.contains(&block_id) {
-            blocks.insert(
-                block_id,
-                BasicBlock {
-                    kind: block.kind,
-                    id: block_id,
-                    instructions: AstAlloc::vec(),
-                    terminal: Terminal::Unreachable {
-                        id: block.terminal.evaluation_order(),
-                        loc: block.terminal.loc().copied(),
-                    },
-                    preds: block.preds.clone(),
-                    phis: AstAlloc::vec(),
-                },
-            );
-        }
-    }
-
-    blocks
-}
-
 fn remove_unreachable_for_updates(hir: &mut HIR) {
     let block_ids: IndexSet<BlockId> = hir.blocks.keys().copied().collect();
     for block in hir.blocks.values_mut() {
@@ -1248,46 +1151,6 @@ fn remove_unnecessary_try_catch(hir: &mut HIR) {
             }
         }
     }
-}
-
-fn mark_predecessors(hir: &mut HIR) {
-    for block in hir.blocks.values_mut() {
-        block.preds.clear();
-    }
-
-    let mut visited: IndexSet<BlockId> = IndexSet::new();
-
-    fn visit(
-        hir: &mut HIR,
-        block_id: BlockId,
-        prev_block_id: Option<BlockId>,
-        visited: &mut IndexSet<BlockId>,
-    ) {
-        if let Some(prev_id) = prev_block_id {
-            if let Some(block) = hir.blocks.get_mut(&block_id) {
-                block.preds.insert(prev_id);
-            } else {
-                return;
-            }
-        }
-
-        if visited.contains(&block_id) {
-            return;
-        }
-        visited.insert(block_id);
-
-        let successors = if let Some(block) = hir.blocks.get(&block_id) {
-            each_terminal_successor(&block.terminal)
-        } else {
-            return;
-        };
-
-        for successor in successors {
-            visit(hir, successor, Some(block_id), visited);
-        }
-    }
-
-    visit(hir, hir.entry, None, &mut visited);
 }
 
 // ---------------------------------------------------------------------------

@@ -59,8 +59,27 @@ impl<K: Copy + Eq + Hash> DisjointSet<K> {
         if parent == item {
             return item;
         }
-        let root = self.find(parent);
-        self.entries.insert(item, root);
+        // Upstream recurses here. A chain of unions is as long as the source, so this walks it twice instead.
+        let mut root = parent;
+        loop {
+            match self.entries.get(&root) {
+                Some(&next) if next != root => root = next,
+                Some(_) => break,
+                None => {
+                    self.entries.insert(root, root);
+                    break;
+                }
+            }
+        }
+        let (mut current, mut next) = (item, parent);
+        loop {
+            self.entries.insert(current, root);
+            if next == root {
+                break;
+            }
+            current = next;
+            next = self.entries[&current];
+        }
         root
     }
 

@@ -116,6 +116,9 @@ fn pre_resolve_globals_recursive(
     env: &mut Environment,
     global_types: &mut HashMap<(u32, InstructionId), Type>,
 ) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     // Collect LoadGlobal bindings and child function IDs in one pass to avoid
     // borrow conflicts (we need &env.functions to read, then &mut env for
     // get_global_declaration).
@@ -280,21 +283,27 @@ fn is_ref_like_name(object_name: &[u8], property_name: &PropertyNameKind) -> boo
 /// because the TS `phiTypeEquals` has a bug where `return false` is outside the
 /// `if` block, so it unconditionally returns false.
 fn type_equals(a: &Type, b: &Type) -> bool {
-    match (a, b) {
-        (Type::TypeVar { id: id_a }, Type::TypeVar { id: id_b }) => id_a == id_b,
-        (Type::Primitive, Type::Primitive) => true,
-        (Type::Poly, Type::Poly) => true,
-        (Type::ObjectMethod, Type::ObjectMethod) => true,
-        (Type::Object { shape_id: sa }, Type::Object { shape_id: sb }) => sa == sb,
-        (
-            Type::Function {
-                return_type: ra, ..
-            },
-            Type::Function {
-                return_type: rb, ..
-            },
-        ) => type_equals(ra, rb),
-        _ => false,
+    let (mut a, mut b) = (a, b);
+    loop {
+        return match (a, b) {
+            (Type::TypeVar { id: id_a }, Type::TypeVar { id: id_b }) => id_a == id_b,
+            (Type::Primitive, Type::Primitive) => true,
+            (Type::Poly, Type::Poly) => true,
+            (Type::ObjectMethod, Type::ObjectMethod) => true,
+            (Type::Object { shape_id: sa }, Type::Object { shape_id: sb }) => sa == sb,
+            (
+                Type::Function {
+                    return_type: ra, ..
+                },
+                Type::Function {
+                    return_type: rb, ..
+                },
+            ) => {
+                (a, b) = (ra, rb);
+                continue;
+            }
+            _ => false,
+        };
     }
 }
 
@@ -469,6 +478,7 @@ fn generate_for_function_id(
     shapes: &ShapeRegistry,
     unifier: &mut Unifier,
 ) -> Result<(), CompilerDiagnostic> {
+    crate::stack_guard::check()?;
     // Take the function out temporarily to avoid borrow conflicts
     let inner = std::mem::replace(&mut functions[func_id.0 as usize], placeholder_function());
 
@@ -989,6 +999,9 @@ fn apply_function(
     types: &mut HirVec<Type>,
     unifier: &Unifier,
 ) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     for (_block_id, block) in &func.body.blocks {
         // Phi places
         for phi in &block.phis {
@@ -1090,6 +1103,7 @@ impl Unifier {
         t_b: Type,
         shapes: &ShapeRegistry,
     ) -> Result<(), CompilerDiagnostic> {
+        crate::stack_guard::check()?;
         // Handle Property in the RHS position
         if let Type::Property {
             ref object_type,
@@ -1253,6 +1267,9 @@ impl Unifier {
     }
 
     fn try_resolve_type(&mut self, v: &Type, ty: &Type) -> Option<Type> {
+        if !crate::stack_guard::is_safe_to_recurse() {
+            return None;
+        }
         match ty {
             Type::Phi { operands } => {
                 let mut new_operands = AstAlloc::vec();
@@ -1314,6 +1331,9 @@ impl Unifier {
     }
 
     fn occurs_check(&self, v: &Type, ty: &Type) -> bool {
+        if Self::has_inner_type(ty) && !crate::stack_guard::is_safe_to_recurse() {
+            return false;
+        }
         if type_equals(v, ty) {
             return true;
         }
@@ -1335,7 +1355,18 @@ impl Unifier {
         false
     }
 
+    /// Whether `get` and `occurs_check` can descend into `ty`.
+    fn has_inner_type(ty: &Type) -> bool {
+        matches!(
+            ty,
+            Type::TypeVar { .. } | Type::Phi { .. } | Type::Function { .. }
+        )
+    }
+
     fn get(&self, ty: &Type) -> Type {
+        if Self::has_inner_type(ty) && !crate::stack_guard::is_safe_to_recurse() {
+            return Type::Poly;
+        }
         if let Type::TypeVar { id } = ty {
             if let Some(sub) = self.substitutions.get(id) {
                 return self.get(sub);

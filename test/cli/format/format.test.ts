@@ -1217,7 +1217,10 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     [{ ".prettierrc": `{ "printWidth": 100000 }` }, []],
     [{ ".prettierrc.mjs": `export default { printWidth: Infinity };` }, []],
     [{ "prettier.config.cjs": `module.exports = { printWidth: Infinity };` }, []],
-    [{ ".prettierrc.mjs": `export default { overrides: [{ files: "*.js", options: { printWidth: Infinity } }] };` }, []],
+    [
+      { ".prettierrc.mjs": `export default { overrides: [{ files: "*.js", options: { printWidth: Infinity } }] };` },
+      [],
+    ],
     [{ ".prettierrc.mjs": `export default { printWidth: Infinity, rangeStart: 0, rangeEnd: Infinity };` }, []],
     [{ "bunfig.toml": `[format]\nprintWidth = 100000\n` }, []],
     [{}, ["--print-width", "65536"]],
@@ -1235,9 +1238,13 @@ ${packages["node_modules/prettier/index.cjs"]}`;
 
   // oxfmt 0.72: "Failed to load configuration file.", 1.
   test("an infinite printWidth is none that oxfmt takes", async () => {
-    const result = await format({ "oxfmt.config.ts": `export default { printWidth: Infinity };`, "a.js": ugly }, ["a.js"], {
-      reads: ["a.js"],
-    });
+    const result = await format(
+      { "oxfmt.config.ts": `export default { printWidth: Infinity };`, "a.js": ugly },
+      ["a.js"],
+      {
+        reads: ["a.js"],
+      },
+    );
     expect(result.files["a.js"]).toBe(ugly);
     expect(result.stderr).toContain("Invalid printWidth: The line width should be between 1 and 320");
     expect(result.exitCode).toBe(1);
@@ -3004,13 +3011,16 @@ describe.concurrent("what an ignore file has is not written, however it is come 
     expect(result.exitCode).toBe(0);
   });
 
-  test.each([["src"], ["src/*.js"], ["src", "src/*.js"]])("%s, of which every file is ignored, is no error", async (...args) => {
-    const files = { ".prettierignore": "src/a.js\nsrc/b.js\n", "src/a.js": ugly, "src/b.js": ugly };
-    const result = await format(files, ["--check", ...args], { reads: ["src/a.js"] });
-    expect(result.stderr).not.toContain("[error]");
-    expect(result.files).toEqual({ "src/a.js": ugly });
-    expect(result.exitCode).toBe(0);
-  });
+  test.each([["src"], ["src/*.js"], ["src", "src/*.js"]])(
+    "%s, of which every file is ignored, is no error",
+    async (...args) => {
+      const files = { ".prettierignore": "src/a.js\nsrc/b.js\n", "src/a.js": ugly, "src/b.js": ugly };
+      const result = await format(files, ["--check", ...args], { reads: ["src/a.js"] });
+      expect(result.stderr).not.toContain("[error]");
+      expect(result.files).toEqual({ "src/a.js": ugly });
+      expect(result.exitCode).toBe(0);
+    },
+  );
 
   test("a pattern that matches nothing is an error beside a directory of which every file is ignored", async () => {
     const files = { ".prettierignore": "src/a.js\n", "src/a.js": ugly };

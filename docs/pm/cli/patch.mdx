@@ -64,6 +64,20 @@ bun patch --commit react --patches-dir=mypatches
 bun patch-commit react
 ```
 
+#### Removing a patch
+
+To remove a patch, run `bun patch-remove <pkg>`:
+
+```bash terminal icon="terminal"
+# you can supply the package name
+bun patch-remove react
+
+# ...or the name and version when multiple versions are patched
+bun patch-remove react@17.0.2
+```
+
+Bun deletes the patch file, removes the matching `"patchedDependencies"` entry from `package.json`, and reinstalls the package unpatched. When the last patch is removed, Bun also removes the `"patchedDependencies"` field and deletes the now-empty `patches/` directory.
+
 ---
 
 <Patch />

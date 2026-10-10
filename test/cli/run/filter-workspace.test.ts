@@ -1027,6 +1027,87 @@ describe("selectors", () => {
       antipattern: [/malformed1/],
     });
   });
+
+  // A path selector is resolved against the directory that the command runs in. A `[` or `{` in
+  // the name of that directory is a character of the name and not part of the pattern.
+  describe.each(["[ws]", "{a,b}"])("path selectors under a directory named %s", parent => {
+    const root = join(
+      tempDirWithFiles("filter-directory-name", {
+        [parent]: {
+          "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+          packages: {
+            a: { "package.json": JSON.stringify({ name: "a", scripts: { present: "echo out-a" } }) },
+            b: { "package.json": JSON.stringify({ name: "b", scripts: { present: "echo out-b" } }) },
+          },
+        },
+      }),
+      parent,
+    );
+    const inA = join(root, "packages", "a");
+
+    test.each([
+      { title: "./packages/a", from: root, pattern: "./packages/a", runs: ["a"] },
+      { title: "./packages/*", from: root, pattern: "./packages/*", runs: ["a", "b"] },
+      { title: "{packages}", from: root, pattern: "{packages}", runs: ["a", "b"] },
+      { title: "{./packages}", from: root, pattern: "{./packages}", runs: ["a", "b"] },
+      { title: "../b from packages/a", from: inA, pattern: "../b", runs: ["b"] },
+      { title: "{..} from packages/a", from: inA, pattern: "{..}", runs: ["a", "b"] },
+      { title: "!./packages/a", from: root, pattern: "!./packages/a", runs: ["b"] },
+      // The selector is resolved with a POSIX join, which does not take a drive letter for a root.
+      ...(isWindows
+        ? []
+        : [{ title: "{<absolute path>/packages}", from: root, pattern: `{${root}/packages}`, runs: ["a", "b"] }]),
+    ])("$title", ({ from, pattern, runs }) => {
+      const output = (name: string) => new RegExp(`out-${name}`);
+      runInCwdSuccess({
+        cwd: from,
+        pattern,
+        target_pattern: runs.map(output),
+        antipattern: ["a", "b"].filter(name => !runs.includes(name)).map(output),
+      });
+    });
+  });
+
+  // A selector that spells a workspace directory selects that directory. What the user types is
+  // also a glob, so `[x]` typed from another directory selects a directory named `x` as well. The
+  // directory that the command runs in is only a name.
+  describe.each([
+    { title: "no directory named x", sibling: [] },
+    { title: "a directory named x", sibling: ["sibling"] },
+  ])("path selectors for a workspace directory named [x], with $title", ({ sibling }) => {
+    const workspace = (name: string) => ({
+      "package.json": JSON.stringify({ name, scripts: { present: `echo out-${name}` } }),
+    });
+    const root = tempDirWithFiles("filter-workspace-directory-name", {
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      packages: {
+        "[x]": workspace("bracket"),
+        y: workspace("other"),
+        ...(sibling.length ? { x: workspace("sibling") } : {}),
+      },
+    });
+    const inBracket = join(root, "packages", "[x]");
+    const inOther = join(root, "packages", "y");
+
+    test.each([
+      { title: "./ from packages/[x]", from: inBracket, pattern: "./", runs: ["bracket"] },
+      { title: "{.} from packages/[x]", from: inBracket, pattern: "{.}", runs: ["bracket"] },
+      { title: "../[x] from packages/[x]", from: inBracket, pattern: "../[x]", runs: ["bracket"] },
+      { title: "../[x] from packages/y", from: inOther, pattern: "../[x]", runs: ["bracket", ...sibling] },
+      { title: "./packages/[x]", from: root, pattern: "./packages/[x]", runs: ["bracket", ...sibling] },
+      { title: "{packages/[x]}", from: root, pattern: "{packages/[x]}", runs: ["bracket", ...sibling] },
+      { title: "...{./packages/[x]}", from: root, pattern: "...{./packages/[x]}", runs: ["bracket", ...sibling] },
+      { title: "!./packages/[x]", from: root, pattern: "!./packages/[x]", runs: ["other"] },
+    ])("$title", ({ from, pattern, runs }) => {
+      const output = (name: string) => new RegExp(`out-${name}`);
+      runInCwdSuccess({
+        cwd: from,
+        pattern,
+        target_pattern: runs.map(output),
+        antipattern: ["bracket", "other", "sibling"].filter(name => !runs.includes(name)).map(output),
+      });
+    });
+  });
 });
 
 // #20319: on Windows, `bun --filter` / `bun run --parallel` spawn each script

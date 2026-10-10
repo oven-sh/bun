@@ -31,19 +31,28 @@ type Workspace = "root" | "api" | "web" | "pkg-a" | "pkg-b";
 type Linker = "hoisted" | "isolated";
 
 // A string value is written verbatim, so a test can detect a rewrite that would otherwise be byte-identical.
-async function makeMonorepo(extra: Partial<Record<Workspace, object | string>> = {}, linker: Linker = "hoisted") {
+// With `parent`, the monorepo is one level down, in a directory of that name.
+async function makeMonorepo(
+  extra: Partial<Record<Workspace, object | string>> = {},
+  linker: Linker = "hoisted",
+  parent?: string,
+) {
   const text = (value: object | string) => (typeof value === "string" ? value : JSON.stringify(value, null, 2));
+  const root = parent ? `${parent}/` : "";
   const { packageDir } = await registry.createTestDir({
     files: {
-      "package.json": text(extra.root ?? ROOT),
-      "packages/api/package.json": text(extra.api ?? API),
-      "packages/web/package.json": text(extra.web ?? WEB),
-      "packages/pkg-a/package.json": text(extra["pkg-a"] ?? PKG_A),
-      "packages/pkg-b/package.json": text(extra["pkg-b"] ?? PKG_B),
+      [`${root}package.json`]: text(extra.root ?? ROOT),
+      [`${root}packages/api/package.json`]: text(extra.api ?? API),
+      [`${root}packages/web/package.json`]: text(extra.web ?? WEB),
+      [`${root}packages/pkg-a/package.json`]: text(extra["pkg-a"] ?? PKG_A),
+      [`${root}packages/pkg-b/package.json`]: text(extra["pkg-b"] ?? PKG_B),
     },
     bunfigOpts: { linker },
   });
-  return packageDir;
+  if (!parent) return packageDir;
+  const dir = join(packageDir, parent);
+  await registry.writeBunfig(dir, { linker });
+  return dir;
 }
 
 // CI exports BUN_INSTALL_CACHE_DIR (one per test file), which overrides the per-test-dir bunfig `cache`; concurrent cases racing on one cache fail on Windows.
@@ -844,6 +853,75 @@ test.concurrent("path filter, run from inside another workspace", async () => {
     expect(await pkg(dir, "root")).toStrictEqual(ROOT);
     expect(await pkg(dir, "web")).toStrictEqual(WEB);
   }
+});
+
+// A path selector is resolved against the directory that the command runs in. A `[` or `{` in
+// the name of that directory is a character of the name and not part of the pattern.
+test.concurrent.each(["[ws]", "{a,b}"])("path selectors under a directory named %s", async parent => {
+  const dir = await makeMonorepo({}, "hoisted", parent);
+  const before = await allPackageJsonTexts(dir);
+
+  {
+    const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "./packages/api"], dir);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    await expectAddedOnlyTo(dir, before, ["api"]);
+  }
+
+  // A negated selector that matches nothing excludes nothing, and the command then edits the
+  // workspace that it names.
+  {
+    const apiBefore = await pkgText(dir, "api");
+    const { stderr, exitCode } = await run(["add", "a-dep", "--filter", "!../api"], dir, {
+      cwd: join(dir, "packages", "web"),
+    });
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(await declaring(dir, "a-dep")).toStrictEqual(["web", "pkg-a", "pkg-b"]);
+    expect(await pkgText(dir, "api")).toBe(apiBefore);
+  }
+
+  {
+    const pkgABefore = await pkgText(dir, "pkg-a");
+    const { stderr, exitCode } = await run(["remove", "a-dep", "--filter", "!{./packages/pkg-a}"], dir);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(await declaring(dir, "a-dep")).toStrictEqual(["pkg-a"]);
+    expect(await pkgText(dir, "pkg-a")).toBe(pkgABefore);
+  }
+});
+
+// A selector that spells a workspace directory selects that directory. What the user types is
+// also a glob, so `[x]` typed from another directory selects a directory named `x` as well. The
+// directory that the command runs in is only a name.
+test.concurrent("path selectors for a workspace directory named [x]", async () => {
+  const files = {
+    "package.json": JSON.stringify(ROOT),
+    "packages/[x]/package.json": JSON.stringify({ name: "bracket" }),
+    "packages/x/package.json": JSON.stringify({ name: "sibling" }),
+    "packages/y/package.json": JSON.stringify({ name: "other", dependencies: { "no-deps": "^2.0.0" } }),
+  };
+  const { packageDir: dir } = await registry.createTestDir({ files, bunfigOpts: { linker: "hoisted" } });
+  const manifests = () => Promise.all(Object.keys(files).map(path => file(join(dir, path)).json()));
+  const inBracket = join(dir, "packages", "[x]");
+
+  for (const [args, cwd] of [
+    [["add", "no-deps", "--filter", "./"], inBracket],
+    [["add", "a-dep", "--filter", "{.}"], inBracket],
+    [["remove", "no-deps", "--filter", "!./packages/[x]"], dir],
+    [["add", "basic-1", "--filter", "./packages/[x]"], dir],
+  ] as const) {
+    const { stderr, exitCode } = await run([...args], dir, { cwd });
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+
+  expect(await manifests()).toStrictEqual([
+    ROOT,
+    { name: "bracket", dependencies: { "a-dep": "^1.0.10", "basic-1": "^1.0.0", "no-deps": "^2.0.0" } },
+    { name: "sibling", dependencies: { "basic-1": "^1.0.0" } },
+    { name: "other" },
+  ]);
 });
 
 test.concurrent("no match is an error and nothing is written", async () => {

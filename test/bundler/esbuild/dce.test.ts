@@ -822,6 +822,199 @@ describe("bundler", () => {
       stdout: "lib side effect\nlib",
     },
   });
+  // A "sideEffects" glob is relative to the package directory. A `[` or `{` in the name of that
+  // directory, or of a directory above it, is a character of the name and not part of the glob.
+  for (const [id, parent, backend] of [
+    ["Bracket", "[client]", "api"],
+    ["BracketCLI", "[client]", "cli"],
+    ["Brace", "{old,new}", "api"],
+    ["BraceCLI", "{old,new}", "cli"],
+    ["OpenBracket", "a[b", "api"],
+    ["OpenBrace", "a{b", "api"],
+  ] as const) {
+    itBundled(`dce/PackageJsonSideEffectsGlobUnder${id}Directory`, {
+      backend,
+      files: {
+        [`/${parent}/app/entry.js`]: /* js */ `
+          import "./src/polyfill.js";
+          import "./src/unlisted.js";
+          import "dep/lib/setup.js";
+          import "dep/lib/unlisted.js";
+          console.log("entry");
+        `,
+        [`/${parent}/app/package.json`]: /* json */ `
+          { "name": "app", "sideEffects": ["./src/poly*.js"] }
+        `,
+        [`/${parent}/app/src/polyfill.js`]: `console.log("glob of the package");`,
+        [`/${parent}/app/src/unlisted.js`]: `console.log("REMOVE");`,
+        [`/${parent}/app/node_modules/dep/package.json`]: /* json */ `
+          { "name": "dep", "sideEffects": ["./lib/set*.js"] }
+        `,
+        [`/${parent}/app/node_modules/dep/lib/setup.js`]: `console.log("glob of a dependency");`,
+        [`/${parent}/app/node_modules/dep/lib/unlisted.js`]: `console.log("REMOVE");`,
+      },
+      dce: true,
+      run: {
+        stdout: "glob of the package\nglob of a dependency\nentry",
+      },
+    });
+  }
+  itBundled("dce/PackageJsonSideEffectsMixedUnderBracketDirectory", {
+    files: {
+      "/[client]/app/entry.js": /* js */ `
+        import "./src/exact.js";
+        import "./src/polyfill.js";
+        import "./src/unlisted.js";
+        console.log("entry");
+      `,
+      "/[client]/app/package.json": /* json */ `
+        { "name": "app", "sideEffects": ["./src/exact.js", "./src/poly*.js"] }
+      `,
+      "/[client]/app/src/exact.js": `console.log("exact entry");`,
+      "/[client]/app/src/polyfill.js": `console.log("glob entry");`,
+      "/[client]/app/src/unlisted.js": `console.log("REMOVE");`,
+    },
+    dce: true,
+    run: {
+      stdout: "exact entry\nglob entry\nentry",
+    },
+  });
+  itBundled("dce/PackageJsonSideEffectsGlobInBracketPackageDirectory", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./apps/[tenant]/src/polyfill.js";
+        import "./apps/[tenant]/src/unlisted.js";
+        console.log("entry");
+      `,
+      "/apps/[tenant]/package.json": /* json */ `
+        { "name": "tenant", "sideEffects": ["./src/poly*.js"] }
+      `,
+      "/apps/[tenant]/src/polyfill.js": `console.log("glob entry");`,
+      "/apps/[tenant]/src/unlisted.js": `console.log("REMOVE");`,
+    },
+    dce: true,
+    run: {
+      stdout: "glob entry\nentry",
+    },
+  });
+  // An entry that leaves the package directory and names it again is under it again, as a name:
+  // the `[client]` that the second entry spells out is the directory, not a character class.
+  itBundled("dce/PackageJsonSideEffectsGlobReentersBracketDirectory", {
+    files: {
+      "/[client]/app/entry.js": /* js */ `
+        import "./src/polyfill.js";
+        import "./lib/setup.js";
+        import "./src/unlisted.js";
+        console.log("entry");
+      `,
+      "/[client]/app/package.json": /* json */ `
+        { "name": "app", "sideEffects": ["../app/src/poly*.js", "../../[client]/app/lib/set*.js"] }
+      `,
+      "/[client]/app/src/polyfill.js": `console.log("through the package directory");`,
+      "/[client]/app/lib/setup.js": `console.log("through the directory above it");`,
+      "/[client]/app/src/unlisted.js": `console.log("REMOVE");`,
+    },
+    dce: true,
+    run: {
+      stdout: "through the package directory\nthrough the directory above it\nentry",
+    },
+  });
+  // Lists that name `<package>/src/<file>`, where `<name>` is the directory of the package. Each
+  // one keeps the file in a plain directory, and the directory above the package does not change
+  // that.
+  for (const [id, parent] of [
+    ["", ""],
+    ["UnderBracketDirectory", "/[client]"],
+  ]) {
+    const lists: { sideEffects: string[]; file?: string }[] = [
+      { sideEffects: ["src/poly*.js"] },
+      { sideEffects: ["./src/./poly*.js"] },
+      { sideEffects: ["./lib/../src/poly*.js"] },
+      { sideEffects: ["/src/poly*.js"] },
+      // An entry with `..` is under a directory above the package.
+      { sideEffects: ["../<name>/src/poly*.js"] },
+      { sideEffects: ["../*/src/poly*.js"] },
+      { sideEffects: ["../<name>*/src/poly*.js"] },
+      { sideEffects: ["../{<name>,zzz}/src/poly*.js"] },
+      { sideEffects: ["../zzz/*.js", "./src/poly*.js"] },
+      { sideEffects: ["./src/poly*.js", "../zzz/*.js"] },
+      // A bracket in an entry is a glob. This is the spelling of a file whose name has one.
+      { sideEffects: ["./src/[[]id].js"], file: "[id].js" },
+    ];
+    const label = (list: (typeof lists)[number]) => list.sideEffects.join(" and ");
+    itBundled(`dce/PackageJsonSideEffectsGlobSpellings${id}`, {
+      files: {
+        [`${parent}/entry.js`]:
+          lists
+            .map(({ file = "polyfill.js" }, i) => `import "pkg${i}/src/${file}";\nimport "pkg${i}/src/unlisted.js";\n`)
+            .join("") + `console.log("entry");`,
+        ...Object.fromEntries(
+          lists.flatMap((list, i) => [
+            [
+              `${parent}/node_modules/pkg${i}/package.json`,
+              JSON.stringify({
+                name: `pkg${i}`,
+                sideEffects: list.sideEffects.map(entry => entry.replace("<name>", `pkg${i}`)),
+              }),
+            ],
+            [
+              `${parent}/node_modules/pkg${i}/src/${list.file ?? "polyfill.js"}`,
+              `console.log(${JSON.stringify(label(list))});`,
+            ],
+            [`${parent}/node_modules/pkg${i}/src/unlisted.js`, `console.log("REMOVE");`],
+          ]),
+        ),
+      },
+      dce: true,
+      run: {
+        stdout: [...lists.map(label), "entry"].join("\n"),
+      },
+    });
+    // A package.json is also asked about a file outside its directory: here, its "main".
+    itBundled(`dce/PackageJsonSideEffectsGlobOutsidePackage${id}`, {
+      files: {
+        [`${parent}/entry.js`]: /* js */ `
+          import "listed";
+          import "unlisted";
+          console.log("entry");
+        `,
+        [`${parent}/node_modules/listed/package.json`]: /* json */ `
+          { "name": "listed", "main": "../shared/index.js", "sideEffects": ["./lib/*.js", "../shared/ind*.js"] }
+        `,
+        [`${parent}/node_modules/unlisted/package.json`]: /* json */ `
+          { "name": "unlisted", "main": "../shared/other.js", "sideEffects": ["./lib/*.js", "../shared/ind*.js"] }
+        `,
+        [`${parent}/node_modules/shared/index.js`]: `console.log("main outside the package");`,
+        [`${parent}/node_modules/shared/other.js`]: `console.log("REMOVE");`,
+      },
+      dce: true,
+      run: {
+        stdout: "main outside the package\nentry",
+      },
+    });
+  }
+  // An absolute specifier keeps the separators that it was written with. On Windows they are not
+  // all the separators of the package.json's path.
+  itBundled("dce/PackageJsonSideEffectsGlobAbsoluteSpecifier", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import "{{root}}/lib/polyfill";
+        import "{{root}}/lib/setup.js";
+        import "{{root}}/lib/unlisted";
+        console.log("entry");
+      `,
+      "/lib/package.json": /* json */ `
+        { "name": "lib", "sideEffects": ["./poly*.js", "./set*.ts"] }
+      `,
+      "/lib/polyfill.js": `console.log("extension added");`,
+      "/lib/setup.ts": `console.log("extension rewritten");`,
+      "/lib/unlisted.js": `console.log("REMOVE");`,
+    },
+    dce: true,
+    run: {
+      stdout: "extension added\nextension rewritten\nentry",
+    },
+  });
   itBundled("dce/PackageJsonSideEffectsGlobNoMatches", {
     todo: true,
     files: {

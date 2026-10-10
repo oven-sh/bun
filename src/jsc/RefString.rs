@@ -15,7 +15,11 @@ pub(crate) type Hash = u32;
 // `bun.IdentityContext` is an identity hasher (key is already a hash). The `80`
 // max-load-percentage has no direct knob on the Rust side.
 pub type Map =
-    bun_collections::HashMap<Hash, *mut RefString, bun_collections::IdentityContext<Hash>>;
+    bun_collections::HashMap<Hash, NonNull<RefString>, bun_collections::IdentityContext<Hash>>;
+
+/// The bytes are longer than [`bun_core::String::max_length`], so they were not interned.
+#[derive(Debug)]
+pub struct StringTooLong;
 
 pub type Callback = unsafe fn(ctx: *mut c_void, str: *mut RefString);
 

@@ -322,9 +322,25 @@ describe("built-in modules keep their own setImmediate, clearImmediate and queue
     expect({ result: stdout && JSON.parse(stdout), ...exit }).toEqual({ result: expected, ...exitedCleanly });
   });
 
-  // The next three children load node:test, node:net and node:http2. A debug
-  // build needs 2.5 to 5 s for each of them alone, so they run one at a time.
-  it("node:test's mock.timers for setImmediate does not hold back a PerformanceObserver", async () => {
+  it("the public globals keep their name, length and attributes", () => {
+    const shape = {};
+    for (const name of ["setImmediate", "clearImmediate", "queueMicrotask"]) {
+      const { value, ...attributes } = Object.getOwnPropertyDescriptor(globalThis, name);
+      shape[name] = { name: value.name, length: value.length, ...attributes };
+    }
+    const attributes = { length: 1, writable: true, enumerable: true, configurable: true };
+    expect(shape).toEqual({
+      setImmediate: { name: "setImmediate", ...attributes },
+      clearImmediate: { name: "clearImmediate", ...attributes },
+      queueMicrotask: { name: "queueMicrotask", ...attributes },
+    });
+  });
+
+  // The next three children load node:test, node:net and node:http2, which
+  // takes a debug build 2.5 to 5 s each. The test above is not concurrent, so
+  // these three run as a group of their own: with the four children above at
+  // the same time, a debug build goes over the default timeout.
+  it.concurrent("node:test's mock.timers for setImmediate does not hold back a PerformanceObserver", async () => {
     const result = await run(
       "entry.cjs",
       /* js */ `
@@ -341,7 +357,7 @@ describe("built-in modules keep their own setImmediate, clearImmediate and queue
 
   // A socket's 'close' is scheduled with setImmediate. The two close orders
   // are the tests of https://github.com/oven-sh/bun/pull/44366.
-  it("a net.Socket emits 'close' with setImmediate replaced before node:net is loaded", async () => {
+  it.concurrent("a net.Socket emits 'close' with setImmediate replaced before node:net is loaded", async () => {
     const { stdout, ...exit } = await run(
       "entry.cjs",
       /* js */ `
@@ -386,91 +402,81 @@ describe("built-in modules keep their own setImmediate, clearImmediate and queue
     });
   });
 
-  it("http2 sessions over TCP and over a Duplex close with setImmediate replaced", async () => {
-    // A session whose close was handed to the replaced function never closes
-    // and keeps the process alive, so the child has a deadline. Over a Duplex
-    // the session also defers each write callback by one setImmediate. The
-    // test has its own timeout because a debug build needs 3 s to load
-    // node:http2 and about 5 s for the whole child.
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        /* js */ `
-          const http2 = require("node:http2");
-          const { duplexPair } = require("node:stream");
-          globalThis.setImmediate = () => {};
-          const respond = stream => {
-            stream.respond({ ":status": 200 });
-            stream.end("ok");
-          };
+  it.concurrent(
+    "http2 sessions over TCP and over a Duplex close with setImmediate replaced",
+    async () => {
+      // A session whose close was handed to the replaced function never closes
+      // and keeps the process alive, so the child has a deadline. Over a Duplex
+      // the session also defers each write callback by one setImmediate. The
+      // test has its own timeout because a debug build needs 3 s to load
+      // node:http2 and about 5 s for the whole child.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
+            const http2 = require("node:http2");
+            const { duplexPair } = require("node:stream");
+            globalThis.setImmediate = () => {};
+            const respond = stream => {
+              stream.respond({ ":status": 200 });
+              stream.end("ok");
+            };
 
-          const overTcp = http2.createServer().on("stream", respond);
-          overTcp.on("close", () => console.log("tcp: server closed"));
-          overTcp.listen(0, "127.0.0.1", () => {
-            const client = http2.connect("http://127.0.0.1:" + overTcp.address().port);
-            client.on("close", () => console.log("tcp: session closed"));
-            const req = client.request({ ":path": "/" });
-            req.resume();
-            req.on("close", () => {
-              console.log("tcp: stream closed");
-              client.close();
-              overTcp.close();
+            const overTcp = http2.createServer().on("stream", respond);
+            overTcp.on("close", () => console.log("tcp: server closed"));
+            overTcp.listen(0, "127.0.0.1", () => {
+              const client = http2.connect("http://127.0.0.1:" + overTcp.address().port);
+              client.on("close", () => console.log("tcp: session closed"));
+              const req = client.request({ ":path": "/" });
+              req.resume();
+              req.on("close", () => {
+                console.log("tcp: stream closed");
+                client.close();
+                overTcp.close();
+              });
             });
-          });
 
-          const [clientSide, serverSide] = duplexPair();
-          http2.createServer().on("stream", respond).emit("connection", serverSide);
-          const client = http2.connect("http://localhost", { createConnection: () => clientSide });
-          client.on("close", () => console.log("duplex: session closed"));
-          const req = client.request({ ":path": "/", ":method": "POST" });
-          req.end("hello", () => console.log("duplex: request body written"));
-          req.resume();
-          req.on("end", () => console.log("duplex: response ended"));
-          req.on("close", () => {
-            console.log("duplex: stream closed");
-            client.close();
-          });
-        `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 20_000,
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({
-      events: stdout.split(/\r?\n/).filter(Boolean).sort(),
-      stderr: stderr.trim(),
-      exitCode,
-      signalCode: proc.signalCode,
-    }).toEqual({
-      events: [
-        "duplex: request body written",
-        "duplex: response ended",
-        "duplex: session closed",
-        "duplex: stream closed",
-        "tcp: server closed",
-        "tcp: session closed",
-        "tcp: stream closed",
-      ],
-      ...exitedCleanly,
-    });
-  }, 30_000);
-
-  it("the public globals keep their name, length and attributes", () => {
-    const shape = {};
-    for (const name of ["setImmediate", "clearImmediate", "queueMicrotask"]) {
-      const { value, ...attributes } = Object.getOwnPropertyDescriptor(globalThis, name);
-      shape[name] = { name: value.name, length: value.length, ...attributes };
-    }
-    const attributes = { length: 1, writable: true, enumerable: true, configurable: true };
-    expect(shape).toEqual({
-      setImmediate: { name: "setImmediate", ...attributes },
-      clearImmediate: { name: "clearImmediate", ...attributes },
-      queueMicrotask: { name: "queueMicrotask", ...attributes },
-    });
-  });
+            const [clientSide, serverSide] = duplexPair();
+            http2.createServer().on("stream", respond).emit("connection", serverSide);
+            const client = http2.connect("http://localhost", { createConnection: () => clientSide });
+            client.on("close", () => console.log("duplex: session closed"));
+            const req = client.request({ ":path": "/", ":method": "POST" });
+            req.end("hello", () => console.log("duplex: request body written"));
+            req.resume();
+            req.on("end", () => console.log("duplex: response ended"));
+            req.on("close", () => {
+              console.log("duplex: stream closed");
+              client.close();
+            });
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 20_000,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({
+        events: stdout.split(/\r?\n/).filter(Boolean).sort(),
+        stderr: stderr.trim(),
+        exitCode,
+        signalCode: proc.signalCode,
+      }).toEqual({
+        events: [
+          "duplex: request body written",
+          "duplex: response ended",
+          "duplex: session closed",
+          "duplex: stream closed",
+          "tcp: server closed",
+          "tcp: session closed",
+          "tcp: stream closed",
+        ],
+        ...exitedCleanly,
+      });
+    },
+    30_000,
+  );
 });
 
 it("self is a getter", () => {

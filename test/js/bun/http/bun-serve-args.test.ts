@@ -201,6 +201,41 @@ describe("Bun.serve websocket options", () => {
     server.stop();
   });
 
+  // idleTimeout was narrowed to 16 bits before the range check, so 65537
+  // became 1 second and 2 ** 31 became 0 (no timeout at all).
+  test("websocket idleTimeout outside 0..960 throws", () => {
+    for (const idleTimeout of [65537, 2 ** 31, 961, -1]) {
+      expect(() =>
+        serve({
+          port: 0,
+          websocket: {
+            message(ws, message) {},
+            idleTimeout,
+          },
+          fetch() {
+            return new Response("ok");
+          },
+        }),
+      ).toThrow("websocket expects idleTimeout to be between 0 and 960");
+    }
+  });
+
+  test("websocket idleTimeout accepts 0 and 960", () => {
+    for (const idleTimeout of [0, 960]) {
+      using server = serve({
+        port: 0,
+        websocket: {
+          message(ws, message) {},
+          idleTimeout,
+        },
+        fetch() {
+          return new Response("ok");
+        },
+      });
+      server.stop();
+    }
+  });
+
   test("websocket with compression options", () => {
     using server = serve({
       port: 0,

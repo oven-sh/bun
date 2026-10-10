@@ -69,7 +69,10 @@ void* WebWorker__create(
     StringImpl** execArgvPtr,
     size_t execArgvLen,
     BunString* preloadModulesPtr,
-    size_t preloadModulesLen);
+    size_t preloadModulesLen,
+    bool hasEnv,
+    const BunString* envPairsPtr,
+    size_t envPairsLen);
 // Raise a TerminationException in the worker VM at its next safepoint and wake its loop. Any thread.
 void WebWorker__requestTermination(void*);
 // Toggle the keep-alive this worker holds on the parent event loop. Parent thread.
@@ -141,6 +144,21 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
                                                })
                                                .value_or(std::span<WTF::StringImpl*> {});
 
+    // A SHARE_ENV worker's native env map starts from the store as it is now.
+    if (m_options.sharedEnvStore)
+        m_options.env = m_options.sharedEnvStore->entries();
+
+    // [key, value, ...]; WebWorker__create copies the bytes, so these only live across the call.
+    Vector<BunString> envPairs;
+    bool hasEnv = m_options.env.has_value();
+    if (hasEnv) {
+        envPairs.reserveInitialCapacity(m_options.env->size() * 2);
+        for (auto& [key, value] : *m_options.env) {
+            envPairs.append(Bun::toString(key));
+            envPairs.append(Bun::toString(value));
+        }
+    }
+
     // The thread holds a ref on the proxy until releaseWorkerThread().
     ref();
     BunString errorMessage = BunStringEmpty;
@@ -166,8 +184,12 @@ ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(const String& scr
         execArgv.data(),
         execArgv.size(),
         preloadModules.begin(),
-        preloadModules.size());
+        preloadModules.size(),
+        hasEnv,
+        envPairs.begin(),
+        envPairs.size() / 2);
     m_options.preloadModules.clear();
+    m_options.env = std::nullopt;
 
     if (!m_workerThread) {
         m_state.store(State::Closed);

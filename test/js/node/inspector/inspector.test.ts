@@ -642,6 +642,74 @@ test("the method-specific event fires before inspectorNotification, like Node", 
   }
 });
 
+// Node's Session#[onMessageSymbol] emits every server notification under both
+// its method name and the generic "inspectorNotification" firehose. Bun only
+// emitted the method-named event for NodeTracing.*.
+test("NodeTracing notifications also arrive on inspectorNotification", async () => {
+  const session = new inspector.Session();
+  session.connect();
+  try {
+    const specific: any[] = [];
+    const generic: any[] = [];
+    session.on("NodeTracing.dataCollected", m => specific.push(m));
+    session.on("NodeTracing.tracingComplete", m => specific.push(m));
+    session.on("inspectorNotification", m => generic.push(m));
+    const post = (method: string, params?: object) =>
+      new Promise<void>((resolve, reject) => session.post(method, params, err => (err ? reject(err) : resolve())));
+    await post("NodeTracing.start", { traceConfig: { includedCategories: ["node.perf"] } });
+    performance.mark("inspectorNotification-probe");
+    await post("NodeTracing.stop");
+    expect(specific.map(m => m.method)).toEqual([
+      "NodeTracing.dataCollected",
+      "NodeTracing.dataCollected",
+      "NodeTracing.tracingComplete",
+    ]);
+    // Both listeners must receive the identical {method, params} payloads.
+    expect(generic).toEqual(specific);
+    expect(generic.at(-1)).toEqual({ method: "NodeTracing.tracingComplete", params: {} });
+  } finally {
+    session.disconnect();
+  }
+});
+
+// NodeWorker.enable only emits from inside a worker, so run the session there
+// and send both captured messages back to the parent for assertion.
+test("NodeWorker.attachedToWorker also arrives on inspectorNotification with a method field", async () => {
+  using dir = tempDir("inspector-nodeworker", {
+    "entry.mjs": `
+      import { Worker } from "node:worker_threads";
+      const w = new Worker(new URL("./worker.mjs", import.meta.url));
+      w.on("message", seen => { console.log(JSON.stringify(seen)); process.exit(0); });
+      w.on("error", err => { console.error(err); process.exit(1); });
+    `,
+    "worker.mjs": `
+      import { Session } from "node:inspector";
+      import { parentPort } from "node:worker_threads";
+      const s = new Session();
+      s.connectToMainThread();
+      const seen = { specific: null, generic: null };
+      s.on("NodeWorker.attachedToWorker", m => (seen.specific = m));
+      s.on("inspectorNotification", m => { if (m.method === "NodeWorker.attachedToWorker") seen.generic = m; });
+      s.post("NodeWorker.enable", () => queueMicrotask(() => parentPort.postMessage(seen)));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+  const seen = JSON.parse(stdout.trim());
+  const expected = {
+    method: "NodeWorker.attachedToWorker",
+    params: { sessionId: expect.any(String), workerInfo: expect.any(Object) },
+  };
+  expect(seen.specific).toEqual(expected);
+  expect(seen.generic).toEqual(seen.specific);
+});
+
 test("a consoleAPICalled listener that logs does not recurse", () => {
   const session = new inspector.Session();
   session.connect();

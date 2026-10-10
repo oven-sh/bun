@@ -219,6 +219,8 @@ bun_lint::rules! {
     react_no_unknown_property::NoUnknownProperty,
     react_no_unsafe::NoUnsafe,
     react_no_unstable_nested_components::NoUnstableNestedComponents,
+    react_no_unused_class_component_methods::NoUnusedClassComponentMethods,
+    react_no_unused_prop_types::NoUnusedPropTypes,
     react_no_will_update_set_state::NoWillUpdateSetState,
     react_only_export_components::OnlyExportComponents,
     react_perf_jsx_no_jsx_as_prop::JsxNoJsxAsProp,

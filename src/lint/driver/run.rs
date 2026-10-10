@@ -919,11 +919,9 @@ impl Run<'_> {
         let handed_back = Guarded::new(Vec::new());
         let unread = Guarded::new(Vec::new());
         let formatter = crate::fmt::ForRules::new(environment, options.of_bun_format.as_deref());
-        // Beside a configuration file only if it is asked for.
-        let has_no_file = of_cwd
-            .as_ref()
-            .is_none_or(|it| it.flavor == Flavor::BuiltIn);
-        let inferred = (options.infer_globals.unwrap_or(has_no_file))
+        // Only if it is asked for: to load the libraries and the types takes longer than to lint a small project. A file that
+        // is linted with types has them anyway: `typed::OfFile`.
+        let inferred = (options.infer_globals == Some(true))
             .then(|| Inferred::new(environment, pool.threads()));
         let invalid_tsconfigs = Guarded::new(Default::default());
         let context = Context {

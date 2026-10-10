@@ -58,8 +58,8 @@ impl Rule for NoDirectMutationState {
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         let is_oxlint = file.language().is_oxlint;
         // upstream takes `this.#state` for `this.state`.
-        let is_candidate = file.has_exprs([ExprTag::This])
-            && (file.mentions("state") || (!is_oxlint && file.mentions("#state")))
+        let is_candidate = (file.mentions("state") || (!is_oxlint && file.mentions("#state")))
+            && file.has_exprs([ExprTag::This])
             && if is_oxlint { is_jsx(file) } else { Components::may_have_any(file) };
         is_candidate.then(State::default)
     }
@@ -91,8 +91,8 @@ impl Rule for NoDirectMutationState {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let mutations = std::mem::take(&mut cx.state.mutations);
-        if !mutations.is_empty() {
-            walk(&mutations, cx);
+        if !mutations.is_empty() && !walk(&mutations, false, cx) {
+            walk(&mutations, true, cx);
         }
     }
 }
@@ -128,27 +128,23 @@ fn should_ignore_component<'a>(e: Expr<'a>, cx: &mut Cx<'a, NoDirectMutationStat
 }
 
 /// upstream's listeners, in the order of ESLint's walk, in a file that has `mutations`. Then its `Program:exit`.
-fn walk<'a>(mutations: &[Expr<'a>], cx: &Cx<'a, NoDirectMutationState>) {
+/// `false`, and nothing is reported: `inCallExpression` is asked for, which only a walk `with_calls` knows.
+fn walk<'a>(mutations: &[Expr<'a>], with_calls: bool, cx: &Cx<'a, NoDirectMutationState>) -> bool {
     let file = cx.file();
     let mut queue = Queue::default();
     for &e in mutations {
         queue.push(At::enter(Node::Expr(e)), 0, Node::Expr(e));
     }
-    let mut listen = |node: Node<'a>| {
-        queue.push(At::enter(node), 0, node);
-        queue.push(At::exit(node), 0, node);
-    };
     let members = file.classes().flat_map(|class| class.members());
-    let mut constructors = members
+    let constructors = members
         .filter(|it| it.is_constructor())
         .map(Node::Member)
-        .filter(|&it| estree_type_name(it) == "MethodDefinition")
-        .peekable();
-    // `inCallExpression` is asked for in a constructor only.
-    if constructors.peek().is_some() {
-        file.exprs_of_kind(ExprTag::Call).map(Node::Expr).for_each(&mut listen);
+        .filter(|&it| estree_type_name(it) == "MethodDefinition");
+    let calls = with_calls.then(|| file.exprs_of_kind(ExprTag::Call).map(Node::Expr));
+    for node in constructors.chain(calls.into_iter().flatten()) {
+        queue.push(At::enter(node), 0, node);
+        queue.push(At::exit(node), 0, node);
     }
-    constructors.for_each(listen);
 
     let mut components = Components::new(file);
     let mut known: FxHashMap<ComponentId, Component> = FxHashMap::default();
@@ -173,6 +169,9 @@ fn walk<'a>(mutations: &[Expr<'a>], cx: &Cx<'a, NoDirectMutationState>) {
         let Some(component) = parent.map(|id| known.get(&id).copied().unwrap_or_default()) else {
             continue;
         };
+        if component.in_constructor && !with_calls {
+            return false;
+        }
         if component.in_constructor && !component.in_call_expression {
             continue;
         }
@@ -201,4 +200,5 @@ fn walk<'a>(mutations: &[Expr<'a>], cx: &Cx<'a, NoDirectMutationState>) {
             cx.report(mutation, NO_DIRECT_MUTATION).at_the_end();
         }
     }
+    true
 }

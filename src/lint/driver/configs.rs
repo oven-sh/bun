@@ -864,10 +864,11 @@ impl<'l> Loader<'l> {
         let text = strings::replace_owned(BUILT_IN, b"TYPESCRIPT", preset);
         // Every file is in it, on whatever drive.
         let mut config = self.flat(b"/", bun_lint::json::parse(&text).unwrap_or(Json::Null))?;
+        // Without a word: where the run has types, which then cost nothing more.
         config.infer_globals(match self.options.infer_globals {
             Some(true) => InferGlobals::Instead,
-            Some(false) => InferGlobals::No,
-            None => InferGlobals::InsteadForJavaScript,
+            None if self.options.type_aware == Some(true) => InferGlobals::Instead,
+            Some(false) | None => InferGlobals::No,
         });
         Ok(Arc::new(Loaded {
             config,

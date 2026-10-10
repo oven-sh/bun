@@ -304,6 +304,14 @@ impl<'h> Graph<'h> {
         self.known.get_or_init(Box::default)
     }
 
+    /// The path of a module as it is kept here: in the form of the checker, in which the root of a drive is `/C:`.
+    fn own_path(&self, module: ModuleId) -> &[u8] {
+        self.complete
+            .get()
+            .and_then(|it| it.paths.get(module.0 as usize))
+            .map_or(&[], |it| &it[..])
+    }
+
     fn load_project(&self, config: &[u8], directory: &[u8]) -> Project {
         let flag = |name: &[u8]| (name.to_vec(), Json::Bool(true));
         // Whatever the project says: what is linted is also JavaScript.
@@ -495,7 +503,7 @@ impl<'h> Graph<'h> {
             return None;
         }
         if let (Flavor::EslintPluginImport, Some(by)) = (self.flavor(), self.resolver.get()) {
-            let found = (by.resolve)(self, from, specifier, is_require)?;
+            let found = (by.resolve)(self, typescript_path(from), specifier, is_require)?;
             return Some((Cow::Owned(join(&self.store.cwd, &found)), false));
         }
         self.resolve_any_path(from, specifier, is_require)
@@ -708,7 +716,7 @@ impl<'h> Graph<'h> {
     fn read(&self, path: &[u8]) -> Option<Recorded<'h>> {
         let text = self.store.disk().read(path)?;
         if let (Flavor::EslintPluginImport, Some(by)) = (self.flavor(), self.resolver.get())
-            && !(by.is_known)(path, &text)
+            && !(by.is_known)(typescript_path(path), &text)
         {
             return Some(self.make_record(path.to_vec(), &[], false, None));
         }
@@ -980,7 +988,7 @@ impl Modules for Graph<'_> {
     }
 
     fn record_of(&self, module: ModuleId) -> Option<&Record> {
-        let (path, records) = (self.path(module), &self.known().records);
+        let (path, records) = (self.own_path(module), &self.known().records);
         // Of a file with several scripts oxlint knows the last that can be parsed.
         let of_later_script = || records.get_ref(&[path, b"\0"].concat()[..])?.as_ref();
         let has_scripts = ScriptKind::from_file_name(path).is_none();
@@ -1080,14 +1088,11 @@ impl Modules for Graph<'_> {
     }
 
     fn is_path_of(&self, module: ModuleId, path: &[u8]) -> bool {
-        self.path(module) == self.store.disk().as_written(&from_native(path))
+        self.own_path(module) == self.store.disk().as_written(&from_native(path))
     }
 
     fn path(&self, module: ModuleId) -> &[u8] {
-        self.complete
-            .get()
-            .and_then(|it| it.paths.get(module.0 as usize))
-            .map_or(&[], |it| &it[..])
+        typescript_path(self.own_path(module))
     }
 
     fn imports(&self, module: ModuleId) -> &[Import] {

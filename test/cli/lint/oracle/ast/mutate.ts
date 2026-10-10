@@ -10,7 +10,13 @@ const [estree, inputs, output, seedText = "1", shareText = "0.5"] = process.argv
 const { parse } = require(join(resolve(estree), "dist/index.js"));
 const share = Number(shareText);
 
-let state = Number(seedText) >>> 0 || 1;
+let state = 1;
+/** Where the numbers start for `text`: the same, whatever else is in the list. */
+const seedOf = (text: string) => {
+  let hash = (2166136261 ^ Number(seedText)) >>> 0;
+  for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 16777619) >>> 0;
+  return hash || 1;
+};
 const random = () => {
   state ^= state << 13;
   state ^= state >>> 17;
@@ -35,6 +41,7 @@ for (const line of readFileSync(inputs, "utf8").split("\n").filter(Boolean)) {
   } catch {
     continue;
   }
+  state = seedOf(input.code);
   let code = "", at = 0;
   for (const token of tokens) {
     code += input.code.slice(at, token.range[0]);

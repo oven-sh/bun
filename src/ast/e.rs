@@ -2364,20 +2364,9 @@ pub struct RegExp {
 }
 impl RegExp {
     pub fn pattern(&self) -> &[u8] {
-        // rewind until we reach the /foo/gim
-        //                               ^
-        // should only ever be a single character
-        // but we're being cautious
-        if let Some(i_) = self.flags_offset {
-            let mut i = i_;
-            while i > 0 && self.value[i as usize] != b'/' {
-                i -= 1;
-            }
-
-            return bun_core::trim(&self.value[..i as usize], b"/");
-        }
-
-        bun_core::trim(&self.value, b"/")
+        // Between the first slash and the last: flags have none. Not `trim`: a pattern can end in `\/`.
+        let end = bun_core::strings::last_index_of_char(&self.value, b'/').unwrap_or(0);
+        self.value.get(1..end).unwrap_or_default()
     }
 
     pub fn flags(&self) -> &[u8] {

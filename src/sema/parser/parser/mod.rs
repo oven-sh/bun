@@ -310,7 +310,7 @@ pub(crate) fn run<'a>(
     lx.is_typescript_5 = options.dialect.typescript_5;
     lx.is_babel = options.dialect.babel;
     lx.is_oxc = options.dialect.oxc;
-    lx.is_script = is_ecmascript && options.dialect.script;
+    lx.is_script = (is_ecmascript || options.dialect.oxc) && options.dialect.script;
     let is_general = options.recovers || jsdoc.wanted != 0;
     let seed = Seed {
         lx,

@@ -110,6 +110,48 @@ fn file_of(
     text: &[u8],
     atoms: Option<&dyn Intern>,
 ) -> FileBuilder {
+    let file = file_read_as(scratch, how, text, atoms, false);
+    let is_refused = |file: &FileBuilder| file.has_errors || file.has_parse_diagnostics;
+    if !how.dialect.oxc || how.dialect.script || !is_refused(&file) {
+        return file;
+    }
+    // For oxc a file is a script if nothing in it says that it is a module, or if its name says so. Here only these are
+    // read otherwise in one.
+    let is_named = |names: [&[u8]; 2]| names.iter().any(|it| how.path.ends_with(it));
+    let is_script_by_name = is_named([b".cjs", b".cts"]);
+    let words: [&[u8]; 3] = [b"await", b"<!--", b"-->"];
+    if !words.iter().any(|it| bun_core::strings::contains(text, it))
+        || is_named([b".mjs", b".mts"])
+        || file.has_module_syntax && !is_script_by_name
+    {
+        return file;
+    }
+    scratch.recycle(file);
+    let as_script = Reading {
+        dialect: Dialect {
+            script: true,
+            ..how.dialect
+        },
+        every_file_is_a_module: false,
+        ..how
+    };
+    let script = file_read_as(scratch, as_script, text, atoms, true);
+    if !is_refused(&script) && (is_script_by_name || !script.has_module_syntax) {
+        return script;
+    }
+    // Atoms of its own are those of the last reading.
+    scratch.recycle(script);
+    file_read_as(scratch, how, text, atoms, false)
+}
+
+/// `file_of`, in the dialect that `how` has. `refuses_await`: an `await` expression at the top level is an error.
+fn file_read_as(
+    scratch: &mut Scratch,
+    how: Reading<'_>,
+    text: &[u8],
+    atoms: Option<&dyn Intern>,
+    refuses_await: bool,
+) -> FileBuilder {
     let Reading { dialect, path, .. } = how;
     let by_name = how.script_kind.is_none();
     let script_kind = how.script_kind.or_else(|| ScriptKind::from_file_name(path));
@@ -127,7 +169,8 @@ fn file_of(
         is_json,
         // `flow-parser` reads it as a name outside an async function, in a module too.
         await_is_a_name: is_json
-            || is_ecmascript && (dialect.script || dialect.flow && !dialect.babel),
+            || (is_ecmascript || dialect.oxc) && dialect.script
+            || is_ecmascript && dialect.flow && !dialect.babel,
         recovers: false,
         reads_jsdoc: how.jsdoc == JsDoc::Read,
         dialect,
@@ -139,6 +182,10 @@ fn file_of(
     };
     let attempt = |mut options: Options, scratch: &mut Scratch| {
         let first = once(options, scratch).map_err(|it| (it.why, it.at, it.after))?;
+        if refuses_await && first.has_top_level_await {
+            scratch.recycle(first.file);
+            return Err((Refusal::Reported, 0, 0));
+        }
         // `parseSourceFileWorker`: only a file with an `ExternalModuleIndicator` has an [Await]
         // context at its top level.
         let parse_again = first.has_top_level_await

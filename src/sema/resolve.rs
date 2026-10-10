@@ -408,7 +408,9 @@ pub struct Dialect {
     /// JavaScript has the types and the declarations of Flow, as `flow-parser` reads them.
     pub flow: bool,
     /// What oxc accepts and the parsers of ESLint do not, in JavaScript and in TypeScript: `import source x from "a"`,
-    /// `import.source("a")`, and in TypeScript too something between the `<` and the `/` of a closing tag.
+    /// `import.source("a")`, and in TypeScript too something between the `<` and the `/` of a closing tag. A file that is
+    /// refused as a module is read as a script, if nothing in it says that it is a module: `await` is a name there, and
+    /// `<!--` and `-->` start comments, in TypeScript too.
     pub oxc: bool,
 }
 

@@ -101,6 +101,20 @@ const LIFE_CYCLE_METHODS: [u32; 6] = [
     mention_bit(b"#componentWillUpdate"),
 ];
 
+/// What a file with something else that is deprecated mentions, if not the pragma: an object, a module, `require`.
+const ABOUT_REACT: [u32; 10] = [
+    mention_bit(b"ReactPerf"),
+    mention_bit(b"Perf"),
+    mention_bit(b"ReactDOM"),
+    mention_bit(b"ReactDOMServer"),
+    mention_bit(b"transferPropsTo"),
+    mention_bit(b"react"),
+    mention_bit(b"react-addons-perf"),
+    mention_bit(b"react-dom"),
+    mention_bit(b"react-dom/server"),
+    mention_bit(b"require"),
+];
+
 /// The values of `MODULES`.
 const MODULE_NAMES: [&str; 5] = ["React", "ReactPerf", "Perf", "ReactDOM", "ReactDOMServer"];
 
@@ -138,10 +152,19 @@ impl Rule for NoDeprecated {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        if !ALL_DEPRECATED.iter().any(|it| file.mentions_bit(it.bit)) && !mentions_life_cycle_methods(file) {
+        let has_methods = mentions_life_cycle_methods(file);
+        if !has_methods && !ALL_DEPRECATED.iter().any(|it| file.mentions_bit(it.bit)) {
             return None;
         }
         let pragmas = Pragmas::new(file);
+        // What is imported from a module that is called as something of `Object.prototype` is a member of `undefined`.
+        if !has_methods
+            && !ABOUT_REACT.iter().any(|&bit| file.mentions_bit(bit))
+            && !file.mentions_bit(mention_bit(pragmas.pragma))
+            && pragmas.pragma != b"undefined"
+        {
+            return None;
+        }
         let mut objects = MODULE_NAMES.map(|it| file.name_of(it));
         objects[0] = file.name_of(std::str::from_utf8(pragmas.pragma).unwrap_or_default());
         Some(State { pragmas, objects, version: None })
@@ -149,13 +172,21 @@ impl Rule for NoDeprecated {
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(object) = e.object() else {
-            return self.check_life_cycle_methods(Node::Expr(e), cx);
+            // `isES5Component` is for what is in a call.
+            if matches!(e.parent(), Node::Expr(parent) if parent.callee().is_some()) {
+                self.check_life_cycle_methods(Node::Expr(e), cx);
+            }
+            return;
         };
         // The keys have three names at most.
         let first = object.object().filter(|_| object.tag() == ExprTag::Dot).unwrap_or(object);
         let can_be_deprecated = match first.as_ident() {
             Some(name) => cx.state.objects.contains(&name),
-            None => first.tag() == ExprTag::This && e.member_name().is_some_and(|it| it.name().is("transferPropsTo")),
+            None => {
+                first.tag() == ExprTag::This
+                    && (e.member_name().is_some_and(|it| it.name().is("transferPropsTo"))
+                        || cx.state.pragmas.pragma == b"this")
+            }
         };
         if can_be_deprecated && ast_utils::is_member_expression(e) {
             self.check_member_expression(e.span(), cx);

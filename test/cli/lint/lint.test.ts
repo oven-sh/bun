@@ -202,10 +202,10 @@ describe.concurrent("bun lint", () => {
         .flatMap(line => /^<dir>\/(\S+?:\d+:\d+): .*?'(\w+)'.* \[Error\/(.*)\]$/.exec(line)?.slice(1).join(" ") ?? []);
     const union = ["a/a.js:1:35 nothing no-undef", "d/build.js:1:39 nothing no-undef"];
 
-    test("without a configuration file, unless --no-infer-globals", async () => {
+    test("without a configuration file, with --infer-globals", async () => {
       const [inferred, not] = await Promise.all([
+        lint(files, ["-f", "unix", "--infer-globals"]),
         lint(files, ["-f", "unix"]),
-        lint(files, ["-f", "unix", "--no-infer-globals"]),
       ]);
       expect(reports(inferred.stdout).sort()).toEqual(
         [
@@ -244,7 +244,7 @@ describe.concurrent("bun lint", () => {
           "a.js": "module.exports = require('x');\nexports.a = __dirname;\n",
           "b.js": "export default require('x');\nmodule;\n",
         },
-        ["-f", "unix"],
+        ["-f", "unix", "--infer-globals"],
       );
       expect(reports(stdout).sort()).toEqual([
         "a.js:2:13 __dirname no-undef",
@@ -395,6 +395,45 @@ describe.concurrent("bun lint", () => {
     ]);
     expect(lines(oxlint.stdout).map(line => /no-debugger/.test(line))).toEqual([true, true, true, true]);
     expect(lines(eslint.stdout).map(line => /Parsing error: /.test(line))).toEqual([true, true, true, true]);
+  });
+
+  // Each row is what oxlint 1.87 does.
+  test("with .oxlintrc.json a file is a script if nothing in it says that it is a module", async () => {
+    const name = "var await = 1; f(await);\n";
+    const comments = "var a; <!-- c\n--> d\n";
+    const linted = {
+      "a.js": name,
+      "a.ts": name,
+      "a.tsx": name,
+      "a.cjs": name,
+      "a.cts": name,
+      "b.js": comments,
+      "b.ts": comments,
+      "b.cts": comments,
+    };
+    const refused = {
+      "c.mjs": name,
+      "c.mts": name,
+      "d.mjs": comments,
+      "d.mts": comments,
+      "e.js": `export {};\nf(await);\n`,
+      "e.ts": `export {};\nf(await);\n`,
+      "f.js": `export {};\n${comments}`,
+      // A module by its `await`, and no script with it.
+      "g.js": `await f();\n${comments}`,
+      "g.ts": `await f();\n${comments}`,
+      "h.js": "var await = 1; let x = ;\n",
+    };
+    const settings = JSON.stringify({ categories: { correctness: "off" }, rules: {} });
+    const files = { ...linted, ...refused };
+    const { stdout, exitCode } = await lint({ ".oxlintrc.json": settings, ...files }, [
+      "-f",
+      "unix",
+      ...Object.keys(files),
+    ]);
+    const reported = stdout.split("\n").flatMap(line => line.match(/^([a-h]\.\w+):\d+:\d+: .* \[Error\]$/)?.[1] ?? []);
+    expect([...new Set(reported)].sort()).toEqual(Object.keys(refused).sort());
+    expect(exitCode).toBe(1);
   });
 
   // Each is what ESLint says with espree. At the `<` of the first two the parser went round until its stack was used up.
@@ -3556,6 +3595,49 @@ describe.concurrent("bun lint", () => {
   });
 
   // The same.
+  test("`declare` in what is ambient already, and `for await` where nothing waits, are refused as oxc refuses them", async () => {
+    const declared = "A 'declare' modifier cannot be used in an already ambient context.";
+    const waits = "`for await` loops are only allowed within async functions and at the top levels of modules";
+    const cases: Record<string, [code: string, refusal?: string]> = {
+      "a0.ts": ["declare namespace A { declare const b: 1; }", `1:23: ${declared}`],
+      "a1.ts": ['declare module "m" { declare function f(): void; }', `1:22: ${declared}`],
+      "a2.d.ts": ["declare namespace A { declare const b: 1; }", `1:23: ${declared}`],
+      "a3.d.ts": ["namespace A { declare const b: 1; }", `1:15: ${declared}`],
+      "a4.ts": ["declare namespace A { namespace B { declare let c; } }", `1:37: ${declared}`],
+      "a5.ts": ["declare global { declare var x: 1; }\nexport {};", `1:18: ${declared}`],
+      "a6.ts": ["declare namespace A { declare class B {} }", `1:23: ${declared}`],
+      "a7.ts": ["declare namespace A { declare interface I {} }", `1:23: ${declared}`],
+      "a8.ts": ["declare namespace A { const a: 1; declare const b: 1; }", `1:35: ${declared}`],
+      "a9.d.ts": ["export namespace A { declare const b: 1; }", `1:22: ${declared}`],
+      "b0.d.ts": ["declare const a: 1;"],
+      "b1.ts": ["namespace A { declare const b: 1; }"],
+      "b2.ts": ["declare namespace A { export declare const b: 1; }"],
+      "b3.ts": ["declare class A { declare x: 1; }"],
+      "b4.d.ts": ["export declare const a: 1;"],
+      "b5.d.ts": ['declare module "m" { export declare const a: 1; }'],
+      "c0.ts": ["for await (const x of y) {}", `1:5: ${waits}`],
+      "c1.js": ["for await (const x of y) {}", `1:5: ${waits}`],
+      "c2.cjs": ["for await (const x of y) {}", `1:5: ${waits}`],
+      "c3.ts": ["function f() { for await (const x of y) {} }", `1:20: ${waits}`],
+      "c4.ts": ["{ for await (const x of y) {} }", `1:7: ${waits}`],
+      "c5.js": ["const f = () => { for await (const x of y) {} };", `1:23: ${waits}`],
+      "d0.ts": ["for await (const x of y) {}\nexport {};"],
+      "d1.mjs": ["for await (const x of y) {}"],
+      "d2.ts": ["async function f() { for await (const x of y) {} }"],
+      "d3.ts": ["for await (const x of y) {}\nawait z;"],
+    };
+    const files = Object.fromEntries(Object.entries(cases).map(([name, [code]]) => [name, code + "\n"]));
+    const oxlintrc = JSON.stringify({ categories: { correctness: "off" } });
+    const { stdout } = await lint({ ".oxlintrc.json": oxlintrc, ...files }, ["-f", "unix"]);
+    expect(
+      stdout
+        .split("\n")
+        .filter(line => line.endsWith("]"))
+        .sort(),
+    ).toEqual(Object.entries(cases).flatMap(([name, [, refusal]]) => (refusal ? [`${name}:${refusal} [Error]`] : [])));
+  });
+
+  // The same.
   test("`with` is refused where the code is strict for oxc, and in TypeScript", async () => {
     const cases: Record<string, [code: string, at?: string]> = {
       "a0.mjs": ["with (a) {}", "1:1"],
@@ -3724,8 +3806,8 @@ describe.concurrent("bun lint", () => {
 
       test.concurrent.each([
         // In the place of the environments: the project has neither the DOM's library nor the types of Node. `Bun` stays.
-        ["without a configuration file", {}, [], ["console", "window", "typo", "OnlyAType"]],
-        ["--no-infer-globals", {}, ["--no-infer-globals"], ["fromTypes", "alsoFromTypes", "mine", "typo", "OnlyAType"]],
+        ["--infer-globals", {}, ["--infer-globals"], ["console", "window", "typo", "OnlyAType"]],
+        ["without it", {}, [], ["fromTypes", "alsoFromTypes", "mine", "typo", "OnlyAType"]],
         // As ESLint.
         [
           "with a configuration file",
@@ -3754,7 +3836,7 @@ describe.concurrent("bun lint", () => {
               "declare var mine: string;\ndeclare let mineLet: 1;\ndeclare const mineConst: 1;\ndeclare function mineFn(): void;\ndeclare class MineClass {}\n",
             "a.js": "fromTypes = mine = mineLet = mineConst = mineFn = MineClass = Array = 1;\n",
           },
-          ["-f", "unix"],
+          ["-f", "unix", "--infer-globals"],
         );
         expect(reported(stdout, "no-global-assign")).toEqual(
           ["fromTypes", "mineConst", "mineFn", "MineClass", "Array"].map(it => `a.js ${it}`),
@@ -3766,7 +3848,7 @@ describe.concurrent("bun lint", () => {
       test("a project in which no file can declare a global has its libraries and its types", async () => {
         const { "globals.d.ts": _, ...rest } = tree;
         const text = "export {};\nvoid [Array, fromTypes, typo];\n";
-        const { stdout, exitCode } = await lint({ ...rest, "a.js": text }, ["-f", "unix"]);
+        const { stdout, exitCode } = await lint({ ...rest, "a.js": text }, ["-f", "unix", "--infer-globals"]);
         expect(reported(stdout, "no-undef")).toEqual(["a.js typo"]);
         expect(exitCode).toBe(1);
       });
@@ -3779,10 +3861,21 @@ describe.concurrent("bun lint", () => {
             "tsconfig.json": tsconfig({ lib: ["es2022"], types: ["a"], checkJs: false }),
             "a.js": "void [fromTypes, mine, process, window, typo];\n",
           },
-          ["-f", "unix"],
+          ["-f", "unix", "--infer-globals"],
         );
         expect(reported(stdout, "no-undef")).toEqual(["a.js typo"]);
         expect(exitCode).toBe(1);
+      });
+
+      // The program is loaded for the rules that need types, so what it declares costs nothing more.
+      test("a file that is linted with types has them without --infer-globals", async () => {
+        const all = { ...tree, "a.ts": "fromTypes = mine = '';\nexport {};\n" };
+        const [typed, untyped] = await Promise.all([
+          lint(all, ["-f", "unix", "--type-aware", "a.ts"]),
+          lint(all, ["-f", "unix", "a.ts"]),
+        ]);
+        expect(reported(typed.stdout, "no-global-assign")).toEqual(["a.ts fromTypes"]);
+        expect(reported(untyped.stdout, "no-global-assign")).toEqual([]);
       });
 
       test("each project has its own, and a file that no project includes has the environments", async () => {
@@ -3802,7 +3895,7 @@ describe.concurrent("bun lint", () => {
             "old/second.js": text,
             "none/a.js": text,
           },
-          ["-f", "unix"],
+          ["-f", "unix", "--infer-globals"],
         );
         expect(reported(stdout, "no-undef")).toEqual([
           "cli/a.js document",

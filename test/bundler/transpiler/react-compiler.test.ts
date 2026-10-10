@@ -1056,6 +1056,46 @@ describe("bundler", () => {
     },
   });
 
+  // The pattern was what is left when all slashes are taken off both ends: `/^https?:\/\//` lost the one that closes it.
+  itBundled("react-compiler/RegExpThatEndsInASlash", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function Link(props) {
+          const href = /^https?:\\/\\//.test(props.to) ? props.to : "https://" + props.to;
+          const parts = [
+            props.to.replace(/\\//g, "|"),
+            /a\\/\\//i.test(props.to),
+            props.to.split(/[/]/).length,
+            /\\/$/u.test(props.to),
+          ];
+          return <a href={href}>{parts}</a>;
+        }
+        for (const to of ["a.b", "http://a.b", "A//", "a.b"]) {
+          const it = Link({ to });
+          console.log(it.p.href, it.p.children.join(" "));
+        }
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `let cache; exports.c = n => (cache ??= new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: [
+        "https://a.b a.b false 1 false",
+        "http://a.b http:||a.b false 3 false",
+        "https://A// A|| true 3 true",
+        "https://a.b a.b false 1 false",
+      ].join("\\n"),
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
   // Sibling of the above: `WAS_ORIGINALLY_TYPEOF_IDENTIFIER` was also dropped,
   // so the printer wrapped `typeof undeclared` as `typeof (0, undeclared)`,
   // which throws ReferenceError instead of returning "undefined" — breaking

@@ -2826,8 +2826,9 @@ pub fn target_builtins(
     };
     match find_section(&file).and_then(|section| Builtins::parse(section).map(|_| section)) {
         Ok(section) => Ok(Some(std::sync::Arc::from(section))),
-        // No section (a bun from before there was one), a newer layout than this bun reads, or a container this reader
-        // doesn't handle: its internal modules load from source. A section that is there but malformed is an error.
+        // No section (a bun from before there was one), a format version this bun does not read (an older or a newer
+        // bun), or a container this reader doesn't handle: its internal modules load from source. A section that is
+        // there but malformed is an error.
         Err(
             BuiltinsError::MissingSection
             | BuiltinsError::UnsupportedVersion

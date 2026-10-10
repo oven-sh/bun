@@ -421,7 +421,18 @@ writeIfNotChanged(
 //
 // A debug build's runtime reads the module sources from disk instead (BUN_DYNAMIC_JS_LOAD_PATH), but they are still
 // here so that a debug bun works as a `--compile` target like any other.
-const BUILTINS_FORMAT_VERSION = 1;
+//
+// A bun compiles the modules of a section only if the section has the version that this bun writes. A section with
+// any other version gets no builtin bytecode, and the build succeeds. So the version also says which buns are kept
+// away from these sources, and a new number can be needed when the layout does not change:
+//   1: bun 1.4.1 and 1.4.2. Their JavaScriptCore writes through a null pointer when a module uses a private name
+//      (`@name`) that it does not have. Those releases cannot be repaired.
+//   2: the layout of 1. It keeps the readers of 1 away from every module written after them. A reader of 2 has the
+//      same defect until bun's JavaScriptCore has oven-sh/WebKit#786. Until then, take the next number in a commit
+//      that adds a private name for the internal modules to use, or that removes one they used (a row of
+//      BunBuiltinNames.h, or a name of JavaScriptCore through a WebKit update). Nothing checks this rule.
+// The two header words after dataLength are 0. They are reserved.
+const BUILTINS_FORMAT_VERSION = 2;
 const BUILTINS_HEADER_SIZE = 48;
 
 // Identifies these module sources to bytecode generated from them ahead of time (bun build --compile embeds bytecode for

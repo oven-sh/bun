@@ -316,7 +316,7 @@ describe("a builtin's name with a ?query", () => {
     return { stdout, stderr, exitCode };
   }
 
-  test.concurrent("does not load the package of that name in node_modules", async () => {
+  test("does not load the package of that name in node_modules", async () => {
     const packages: Record<string, string> = {};
     for (const name of ["path", "fs", "ws", "bun", "lodashy"]) {
       packages[`node_modules/${name}/package.json`] = JSON.stringify({ name, version: "1.0.0", main: "index.js" });
@@ -343,7 +343,7 @@ describe("a builtin's name with a ?query", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("does not ask the registry for a package of that name", async () => {
+  test("does not ask the registry for a package of that name", async () => {
     using dir = tempDir("import-query-builtin-autoinstall", files);
     const requests: string[] = [];
     await using registry = Bun.serve({
@@ -355,20 +355,34 @@ describe("a builtin's name with a ?query", () => {
     });
 
     // `--install=force` installs whatever the resolver takes for a package, with or without a node_modules.
-    const imported = await run(String(dir), ["--install=force", "run.mjs"], registry.url.href);
-    expect(imported.stderr).toBe("");
-    expect(JSON.parse(imported.stdout)).toEqual({ out: notFound, controls: {} });
-
-    const entry = await run(String(dir), ["--install=force", "entry.mjs"], registry.url.href);
-    expect(entry.stdout).toBe("");
-    expect(entry.stderr).toContain("Cannot find package 'path?v=2'");
-
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--install=force", "run.mjs"], registry.url.href);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ out: notFound, controls: {} });
     expect(requests).toEqual([]);
-    expect({ imported: imported.exitCode, entry: entry.exitCode }).toEqual({ imported: 0, entry: 1 });
+    expect(exitCode).toBe(0);
+  });
+
+  // The entry file is always transpiled on the JS thread, unlike the files that run.mjs imports.
+  test("does not ask the registry when the entry file imports it", async () => {
+    using dir = tempDir("import-query-builtin-autoinstall-entry", files);
+    const requests: string[] = [];
+    await using registry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        requests.push(new URL(req.url).pathname);
+        return new Response("{}", { status: 404, headers: { "content-type": "application/json" } });
+      },
+    });
+
+    const { stdout, stderr, exitCode } = await run(String(dir), ["--install=force", "entry.mjs"], registry.url.href);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Cannot find package 'path?v=2'");
+    expect(requests).toEqual([]);
+    expect(exitCode).toBe(1);
   });
 
   // Under `--expose-internals` an `internal/` module is a builtin too, and `internal` is a package's name.
-  test.concurrent("does not load node_modules/internal for an internal/ module under --expose-internals", async () => {
+  test("does not load node_modules/internal for an internal/ module under --expose-internals", async () => {
     using dir = tempDir("import-query-builtin-expose-internals", {
       "node_modules/internal/package.json": JSON.stringify({ name: "internal", version: "1.0.0" }),
       "node_modules/internal/validators.js": `module.exports = "node_modules/internal/validators.js";`,

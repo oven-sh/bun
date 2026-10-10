@@ -196,4 +196,100 @@ describe("bunfig.toml test options", () => {
     // 2 tests * 2 reruns = 4 total test runs
     expect(output).toContain("4 pass");
   });
+
+  test.concurrent("test.parallel option runs test files across worker processes", async () => {
+    const fixture = `import { test } from "bun:test"; test("t", async () => { console.log("PID=" + process.pid); await Bun.sleep(200); });`;
+    using dir = tempDir("bunfig-test-parallel", {
+      "bunfig.toml": `[test]\nparallel = 2`,
+      "a.test.ts": fixture,
+      "b.test.ts": fixture,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      // Spawn both workers eagerly so the two files run on distinct PIDs.
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+      cwd: dir,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const output = stdout + stderr;
+
+    // The coordinator banner shows the configured parallelism.
+    expect(output).toContain("2x PARALLEL");
+    // Each file ran in its own worker process.
+    const pids = [...output.matchAll(/PID=(\d+)/g)].map(m => m[1]);
+    expect(new Set(pids).size).toBe(2);
+    expect(output).toContain("2 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("test.parallel = true uses the CPU thread count", async () => {
+    using dir = tempDir("bunfig-test-parallel-true", {
+      "bunfig.toml": `[test]\nparallel = true`,
+      "a.test.ts": `import { test, expect } from "bun:test"; test("a", () => expect(1).toBe(1));`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: dir,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("PARALLEL");
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("CLI --parallel overrides test.parallel", async () => {
+    using dir = tempDir("bunfig-test-parallel-cli", {
+      "bunfig.toml": `[test]\nparallel = 2`,
+      "a.test.ts": `import { test, expect } from "bun:test"; test("a", () => expect(1).toBe(1));`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=8"],
+      env: bunEnv,
+      cwd: dir,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The CLI flag wins over the bunfig value.
+    expect(stdout).toContain("8x PARALLEL");
+    expect(stdout).not.toContain("2x PARALLEL");
+    expect(stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.each(["0", "1.5", "-1", "inf", "nan", "4294967296"])(
+    "test.parallel rejects invalid value %s",
+    async value => {
+      using dir = tempDir("bunfig-test-parallel-invalid", {
+        "bunfig.toml": `[test]\nparallel = ${value}`,
+        "a.test.ts": `import { test, expect } from "bun:test"; test("a", () => expect(1).toBe(1));`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test"],
+        env: bunEnv,
+        cwd: dir,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout + stderr).toContain("parallel");
+      expect(exitCode).toBe(1);
+    },
+  );
 });

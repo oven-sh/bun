@@ -166,7 +166,6 @@ cluster.fork = function (env) {
   });
 
   worker.process.once("disconnect", () => {
-    worker.process.channel = null;
     /*
      * Now is a good time to remove the handles
      * associated with this worker because it is

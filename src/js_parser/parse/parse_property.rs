@@ -652,6 +652,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                         // `nextTokenIsOnSameLineAndCanFollowModifier`: a name before a line break.
                                         if opts.is_class
                                             && Self::IS_TYPESCRIPT_ENABLED
+                                            && !p.lexer.has_newline_before
                                             && PropertyModifierKeyword::find(raw) == Some(keyword)
                                             && !(p.lexer.has_newline_before && p.is_tolerant())
                                         {

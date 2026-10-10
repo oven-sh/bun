@@ -84,7 +84,13 @@ public:
     }
 
     StrongRootBlock* next() const { return m_next.get(); }
-    void setNext(JSC::VM& vm, StrongRootBlock* next) { m_next.setMayBeNull(vm, this, next); }
+
+    // Not setMayBeNull(): its GC validation reads next->classInfo(), which JSC forbids during the sweep that finalizers release Strongs from.
+    void setNext(JSC::VM& vm, StrongRootBlock* next)
+    {
+        m_next.setWithoutWriteBarrier(next);
+        vm.writeBarrier(this, next);
+    }
 
     static StrongRootBlock* acquire(WebCore::JSVMClientData* clientData, JSC::VM& vm, unsigned& outFreeSlot);
     static void release(WebCore::JSVMClientData* clientData, JSC::VM& vm, StrongRootBlock* block);

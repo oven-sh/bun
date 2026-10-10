@@ -382,7 +382,7 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsiz
     if (consoleCallback) view->m_onConsole.set(vm, view, consoleCallback);
     // Navigate promise lands in m_pendingNavigate; the user's first await
     // (including the next navigate()) serializes behind it. If it rejects
-    // (bad URL), the next op's checkSlot sees the slot cleared and proceeds.
+    // (bad URL), the next op's checkReady sees the slot cleared and proceeds.
     // No user code ever holds this promise; handled, so a rejection cannot
     // surface as unhandledRejection.
     if (!initialUrl.isEmpty()) {

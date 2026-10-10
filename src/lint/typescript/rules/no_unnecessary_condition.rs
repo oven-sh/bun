@@ -453,11 +453,26 @@ fn check_node<'a>(expression: Expr<'a>, cx: &mut Context<'a>) {
 
 /// tsgolint's `typeNameForDiagnostic`: no more than 120 characters.
 fn tsgolint_type_name(ty: Type) -> String {
+    tsgolint_truncated(&ty.to_text())
+}
+
+/// tsgolint's `truncateTypeNameForDiagnostic`
+fn tsgolint_truncated(text: &[u8]) -> String {
     use bstr::ByteSlice;
-    let text = ty.to_text();
     match text.chars().count() > 120 {
         true => text.chars().take(117).chain("...".chars()).collect(),
         false => text.chars().collect(),
+    }
+}
+
+/// Of a union of which two parts are written the same, each text once: tsgolint names what each key of `a?.[k]` gives.
+fn tsgolint_distinct_type_names(ty: Type) -> String {
+    let mut names: Vec<Vec<u8>> = union_constituents(ty).iter().map(|it| it.to_text()).collect();
+    let (count, mut seen) = (names.len(), rustc_hash::FxHashSet::default());
+    names.retain(|it| seen.insert(it.clone()));
+    match names.len() == count {
+        true => tsgolint_type_name(ty),
+        false => tsgolint_truncated(&names.join(&b" | "[..])),
     }
 }
 
@@ -751,7 +766,7 @@ fn check_optional_chain<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
         .labels_with(|labels| {
             // The type that it goes by, without the `undefined` of a `?.` further left.
             let ty = goes_by(node_to_check).unwrap_or_else(|| get_constrained_type_at_location(node_to_check));
-            labels.first(format!("Type: {}", tsgolint_type_name(ty.get_non_nullable_type())));
+            labels.first(format!("Type: {}", tsgolint_distinct_type_names(ty.get_non_nullable_type())));
             labels.push(question_dot_operator, "");
         })
         .suggest(SUGGEST_REMOVE_OPTIONAL_CHAIN, |fixer| fixer.replace(question_dot_operator, fix));

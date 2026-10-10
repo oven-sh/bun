@@ -24,50 +24,12 @@ pub(crate) type Version = (u64, u64, u64);
 
 pub(crate) const ULTIMATE_LATEST_SEMVER: Version = (999, 999, 999);
 
-/// semver's `MAX_SAFE_COMPONENT_LENGTH`
-const MAX_SAFE_COMPONENT_LENGTH: usize = 16;
-
-/// The digits that `source` starts with, as a number, and the rest. `None` if there are none, or
-/// too many for `\d{1,16}`, which is followed by what is no digit.
-fn component(source: &[u8]) -> Option<(u64, &[u8])> {
-    let length = source.iter().take_while(|it| it.is_ascii_digit()).count();
-    let (digits, rest) = source.split_at_checked(length)?;
-    let is_component = (1..=MAX_SAFE_COMPONENT_LENGTH).contains(&length);
-    let number = bun_core::fmt::parse_decimal::<u64>(digits).filter(|_| is_component)?;
-    Some((number, rest))
-}
-
-/// `(?:\.(\d{1,16}))?`
-fn next_component(source: &[u8]) -> Option<(u64, &[u8])> {
-    component(source.strip_prefix(b".")?)
-}
-
-/// `semver.coerce(source)`
-fn coerce(mut source: &[u8]) -> Option<Version> {
-    const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
-    loop {
-        // A component begins where no digit is before it.
-        let start = source.iter().take_while(|it| !it.is_ascii_digit()).count();
-        source = source.get(start..).filter(|it| !it.is_empty())?;
-        let Some((major, rest)) = component(source) else {
-            let digits = source.iter().take_while(|it| it.is_ascii_digit()).count();
-            source = source.get(digits..)?;
-            continue;
-        };
-        let (minor, rest) = next_component(rest).unwrap_or((0, &[]));
-        let patch = next_component(rest).map_or(0, |it| it.0);
-        let is_safe = [major, minor, patch]
-            .iter()
-            .all(|it| *it <= MAX_SAFE_INTEGER);
-        return is_safe.then_some((major, minor, patch));
-    }
-}
-
 /// `convertConfVerToSemver`
 fn convert_conf_ver_to_semver(conf_ver: &[u8]) -> Option<Version> {
     let numbers = strings::split(conf_ver, b".").map(bun_core::fmt::js_string_to_number);
     let numbers: Vec<Vec<u8>> = numbers.map(text::number_to_string).collect();
-    coerce(&numbers.join(&b"."[..]))
+    let version = bun_semver::Version::coerce(&numbers.join(&b"."[..]))?;
+    Some((version.major, version.minor, version.patch))
 }
 
 /// `String(value)`, if `value` is truthy and no array or object.

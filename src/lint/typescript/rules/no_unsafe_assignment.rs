@@ -730,7 +730,14 @@ impl Rule for NoUnsafeAssignment {
             && !value.is_missing()
         {
             let target = node.key().map_or_else(|| node.span(), |it| it.span(cx.file()));
-            check_assignment(cx, &|| NameOf(node).ty(), value, value.span(), target, true);
+            // tsgolint asks for the contextual type of the value, and its diagnostic is at the `=`.
+            let is_oxlint = cx.language().is_oxlint;
+            let receiver_type = || {
+                let contextual_type = if is_oxlint { value.contextual_type() } else { None };
+                contextual_type.unwrap_or_else(|| NameOf(node).ty())
+            };
+            let whole = if is_oxlint { node.span() } else { value.span() };
+            check_assignment(cx, &receiver_type, value, whole, target, true);
         }
     }
 }

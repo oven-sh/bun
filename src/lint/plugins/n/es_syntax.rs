@@ -118,6 +118,8 @@ pub(crate) struct Active {
     bits: [u64; FEATURES.len().div_ceil(64)],
     /// A method, the feature that it is, and the class that has it. Those of a feature follow each other.
     pub(crate) methods: Vec<(&'static str, usize, &'static str)>,
+    /// Each name of a method once, with its [`mention_bit`].
+    pub(crate) method_names: Vec<(&'static str, u32)>,
     /// The features that are global variables or properties of them. For each variable [`mention_bit`] of its name and of the
     /// names of its properties.
     globals: Vec<(usize, Vec<(u32, Vec<u32>)>)>,
@@ -129,6 +131,7 @@ impl Active {
             version,
             bits: [0; FEATURES.len().div_ceil(64)],
             methods: Vec::new(),
+            method_names: Vec::new(),
             globals: Vec::new(),
         };
         for (index, feature) in FEATURES.iter().enumerate() {
@@ -154,6 +157,12 @@ impl Active {
                 active
                     .methods
                     .extend(methods.map(|method| (method.name(), index, class.name())));
+            }
+        }
+        for &(method, ..) in &active.methods {
+            if !active.method_names.iter().any(|it| it.0 == method) {
+                let bit = mention_bit(method.as_bytes());
+                active.method_names.push((method, bit));
             }
         }
         active

@@ -3267,6 +3267,38 @@ describe.concurrent("bun lint", () => {
     ).toEqual(Object.entries(cases).flatMap(([name, [, at]]) => (at ? [`${name}:${at}: ${refused} [Error]`] : [])));
   });
 
+  // The same.
+  test("`with` is refused where the code is strict for oxc, and in TypeScript", async () => {
+    const cases: Record<string, [code: string, at?: string]> = {
+      "a0.mjs": ["with (a) {}", "1:1"],
+      "a1.ts": ["with (a) {}", "1:1"],
+      "a2.js": ["with (a) {} export {};", "1:1"],
+      "a3.js": ["'use strict'; with (a) {}", "1:15"],
+      "a4.js": ["function f() { 'use strict'; with (a) {} }", "1:30"],
+      "a5.js": ["class A { m() { with (a) {} } }", "1:17"],
+      "a6.cts": ["with (a) {}", "1:1"],
+      "a7.js": ["with (a) {} import.meta;", "1:1"],
+      "a8.js": ["with (a) {} await b;", "1:1"],
+      "a9.ts": ["function f() { with (a) {} }", "1:16"],
+      "b0.js": ["with (a) {}"],
+      "b1.cjs": ["with (a) {}"],
+      "b2.jsx": ["with (a) {}"],
+    };
+    const files = Object.fromEntries(Object.entries(cases).map(([name, [code]]) => [name, code + "\n"]));
+    const oxlintrc = JSON.stringify({ categories: { correctness: "off" } });
+    const { stdout } = await lint({ ".oxlintrc.json": oxlintrc, ...files }, ["-f", "unix"]);
+    expect(
+      stdout
+        .split("\n")
+        .filter(line => line.endsWith("]"))
+        .sort(),
+    ).toEqual(
+      Object.entries(cases).flatMap(([name, [, at]]) =>
+        at ? [`${name}:${at}: 'with' statements are not allowed [Error]`] : [],
+      ),
+    );
+  });
+
   test("in a file that oxc refuses for an early error, the rules that need types go on", async () => {
     const files = {
       "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, noEmit: true, lib: ["es2022"], types: [] } }),

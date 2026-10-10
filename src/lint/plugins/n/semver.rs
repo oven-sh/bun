@@ -58,14 +58,6 @@ impl Range {
         Some(Range { raw, group })
     }
 
-    /// `>=version`
-    pub(crate) fn at_least(version: [u8; 3]) -> Range {
-        Range {
-            raw: format!(">={}.{}.{}", version[0], version[1], version[2]).into_bytes(),
-            group: any_of(std::iter::once(gte(version_of(version)))),
-        }
-    }
-
     /// `^a || ^b || >=latest`, for `versions` of which the first is the latest.
     pub(crate) fn since(versions: &[[u8; 3]]) -> Option<Range> {
         let latest = gte(version_of(*versions.first()?));

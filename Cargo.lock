@@ -1135,6 +1135,7 @@ dependencies = [
  "bun_lint",
  "bun_lint_oxlint",
  "bun_lint_react_compiler",
+ "bun_semver",
  "rustc-hash",
  "smallvec",
 ]

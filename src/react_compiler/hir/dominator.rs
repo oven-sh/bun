@@ -30,16 +30,11 @@ pub struct PostDominator {
 impl PostDominator {
     /// Returns the immediate post-dominator of the given block, or None if
     /// the block post-dominates itself (i.e., it is the exit node).
-    pub fn get(&self, id: BlockId) -> Option<BlockId> {
-        let dominator = self
-            .nodes
-            .get(id)
-            .expect("Unknown node in post-dominator tree");
-        if *dominator == id {
-            None
-        } else {
-            Some(*dominator)
-        }
+    pub fn get(&self, id: BlockId) -> Result<Option<BlockId>, CompilerDiagnostic> {
+        let dominator = self.nodes.get(id).ok_or_else(|| {
+            crate::diagnostics::cold_invariant("Unknown node in post-dominator tree", None, None)
+        })?;
+        Ok((*dominator != id).then_some(*dominator))
     }
 }
 
@@ -293,23 +288,23 @@ fn no_processed_pred(id: BlockId) -> CompilerDiagnostic {
 pub fn post_dominator_frontiers(
     func: &HirFunction,
     post_dominators: &PostDominator,
-) -> IdMap<BlockId, HashSet<BlockId>> {
+) -> Result<IdMap<BlockId, HashSet<BlockId>>, CompilerDiagnostic> {
     let mut frontiers: IdMap<BlockId, HashSet<BlockId>> = IdMap::default();
     for (&block_id, block) in &func.body.blocks {
         for &pred in &block.preds {
             // `pred` is in the frontier of `block_id` and its post-dominators that are not `pred`'s.
-            let end = post_dominators.get(pred).unwrap_or(pred);
+            let end = post_dominators.get(pred)?.unwrap_or(pred);
             let mut target_id = block_id;
             while target_id != end {
                 frontiers.entry(target_id).or_default().insert(pred);
-                match post_dominators.get(target_id) {
+                match post_dominators.get(target_id)? {
                     Some(next) if next != post_dominators.exit => target_id = next,
                     _ => break,
                 }
             }
         }
     }
-    frontiers
+    Ok(frontiers)
 }
 
 // =============================================================================
@@ -339,7 +334,7 @@ pub fn compute_unconditional_blocks(
             "Internal error: non-terminating loop in ComputeUnconditionalBlocks",
         )?;
         unconditional.insert(block_id);
-        current = dominators.get(block_id);
+        current = dominators.get(block_id)?;
     }
 
     Ok(unconditional)

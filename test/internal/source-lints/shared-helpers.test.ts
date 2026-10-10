@@ -110,7 +110,7 @@ const FAMILIES: [family: string, names: string, use: string, note?: string][] = 
   [
     "versions",
     "coerce parse_version compare_versions parse_range valid_range min_version satisfies",
-    "bun_semver::{parse, satisfies, intersects, is_subset_of}",
+    "bun_semver::{coerce, parse, satisfies, intersects, is_subset_of}",
     "the semver of `bun install`; what node-semver has and it lacks goes there",
   ],
   [

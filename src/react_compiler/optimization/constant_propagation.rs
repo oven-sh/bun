@@ -26,6 +26,7 @@
 
 use crate::collections::IdMap;
 use crate::diagnostics::JsString;
+use crate::hir::assert_terminal_blocks_exist::assert_terminal_successors_exist;
 use crate::hir::cfg_utils::{
     get_reverse_postordered_blocks, mark_instruction_ids, mark_predecessors,
     remove_dead_do_while_statements, remove_unnecessary_try_catch, remove_unreachable_for_updates,
@@ -127,9 +128,11 @@ fn constant_propagation_impl(
             break;
         }
 
-        // TODO: port assertConsistentIdentifiers(fn) and assertTerminalSuccessorsExist(fn)
-        // from TS HIR validation. These are debug assertions that verify structural
-        // invariants after the CFG cleanup helpers run.
+        // TODO: port assertConsistentIdentifiers(fn).
+        if let Err(invariant) = assert_terminal_successors_exist(func) {
+            env.record_diagnostic(invariant);
+            break;
+        }
     }
 }
 

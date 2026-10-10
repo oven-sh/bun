@@ -1,6 +1,7 @@
 use crate::bun::{is_end_of_path, list_option};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::source::mention_bit;
 use bun_lint_oxlint::ast_util::static_string;
 
 /// Require a package to be imported through the module of the project that wraps it.
@@ -102,8 +103,17 @@ impl Rule for PreferLocalModule {
         PreferLocalModule { modules: modules.collect(), exempt_files: list_option(options, "exemptFiles", &[]) }
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new()
+            .stmts(&[StmtTag::Import, StmtTag::ExportNamed, StmtTag::ExportStar])
+            .exprs(&[ExprTag::ImportCall]);
+        if file.mentions("require") { on.exprs(&[ExprTag::Call]) } else { on }
+    }
+
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        if self.exempt_files.iter().any(|it| is_end_of_path(file.path(), it)) {
+        if !self.modules.iter().any(|it| file.mentions_bit(mention_bit(&it.package)))
+            || self.exempt_files.iter().any(|it| is_end_of_path(file.path(), it))
+        {
             return None;
         }
         Some(())

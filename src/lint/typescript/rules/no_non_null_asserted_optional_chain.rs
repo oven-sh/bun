@@ -12,7 +12,7 @@ const SUGGEST_REMOVING_NON_NULL: Message =
 
 /// Where that ends which the last `?.` of the chain `e` comes after.
 fn end_before_optional_link(e: Expr) -> Option<u32> {
-    let mut at = e;
+    let mut at = e.skip_type_wrappers();
     loop {
         let (is_optional, before) = match at.kind() {
             ExprKind::Call(call) => (call.is_optional(), call.callee()),

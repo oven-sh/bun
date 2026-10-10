@@ -577,9 +577,6 @@
     "src/lint/react/util_ast.rs": {
       "without_hash": 1
     },
-    "src/lint/react/util_version.rs": {
-      "coerce": 1
-    },
     "src/lint/regex/validator.rs": {
       "combine_surrogate_pair": 1,
       "digit_to_int": 1,

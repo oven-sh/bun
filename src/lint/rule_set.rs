@@ -32,26 +32,6 @@ impl RuleBits {
         }
         self
     }
-
-    #[inline]
-    pub const fn and(mut self, other: &RuleBits) -> RuleBits {
-        let mut word = 0;
-        while word < RuleBits::WORDS {
-            self.0[word] &= other.0[word];
-            word += 1;
-        }
-        self
-    }
-
-    #[inline]
-    pub const fn is_empty(&self) -> bool {
-        let (mut any, mut word) = (0, 0);
-        while word < RuleBits::WORDS {
-            any |= self.0[word];
-            word += 1;
-        }
-        any == 0
-    }
 }
 
 /// An instance of one of the rules that a linter has.
@@ -61,7 +41,7 @@ pub trait RuleSet: Starts + Sized + 'static {
     /// For each row of [`On::ROWS`], the rules whose [`Rule::ON`](crate::rule::Rule::ON) names it.
     const LISTENS: &'static [RuleBits; On::ROWS];
     /// For each of [`On::KINDS`], the rules that name a row of it.
-    const LISTENS_TO_KINDS: [RuleBits; On::KINDS.len()] = of_kinds(Self::LISTENS);
+    const LISTENS_TO_KINDS: &'static [RuleBits; On::KINDS.len()] = &of_kinds(Self::LISTENS);
 
     /// [`Rule::new`](crate::rule::Rule::new). `None`: no rule has the number.
     fn build(rule: u16, options: &Options) -> Option<Self>;

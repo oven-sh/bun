@@ -1106,12 +1106,28 @@ fn sorted(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
 /// Those of `enabled` for which `file` has something: all others would not be started.
 pub fn listening<'a, S: RuleSet>(file: &'a File<'a>, enabled: &RuleBits) -> RuleBits {
     let rows = S::LISTENS;
-    let mut all = rows[On::ALWAYS];
+    let mut all = RuleBits::EMPTY;
+    // Only the words in which a rule is enabled are looked at: with a few rules that is one of them.
+    let Some(first) = enabled.0.iter().position(|word| *word != 0) else {
+        return all;
+    };
+    let last = enabled.0.iter().rposition(|word| *word != 0);
+    let words = first..last.unwrap_or(first) + 1;
+    let is_wanted = |row: &RuleBits| {
+        let both = enabled.0[words.clone()].iter().zip(&row.0[words.clone()]);
+        both.fold(0, |any, (a, b)| any | (a & b)) != 0
+    };
+    let mut add = |row: &RuleBits| {
+        for (to, from) in all.0[words.clone()].iter_mut().zip(&row.0[words.clone()]) {
+            *to |= from;
+        }
+    };
+    add(&rows[On::ALWAYS]);
     // What groups the nodes of a sort is called only if a rule wants that sort.
     macro_rules! kinds {
         ($($sort:literal $present:ident;)*) => {
-            $(if !enabled.and(&S::LISTENS_TO_KINDS[$sort]).is_empty() {
-                each_bit(file.$present(), |kind| all = all.or(&rows[On::KINDS[$sort].0 + kind]));
+            $(if is_wanted(&S::LISTENS_TO_KINDS[$sort]) {
+                each_bit(file.$present(), |kind| add(&rows[On::KINDS[$sort].0 + kind]));
             })*
         };
     }
@@ -1123,14 +1139,14 @@ pub fn listening<'a, S: RuleSet>(file: &'a File<'a>, enabled: &RuleBits) -> Rule
         4 present_types;
         5 present_pats;
     }
-    if !enabled.and(&rows[On::SORTS]).is_empty() && file.present_chained() != 0 {
-        all = all.or(&rows[On::SORTS]);
+    if is_wanted(&rows[On::SORTS]) && file.present_chained() != 0 {
+        add(&rows[On::SORTS]);
     }
     // After `optional_chains`, in the order of the bits of `On`.
     macro_rules! sorts {
         ($($bit:literal $field:ident;)*) => {
             $(if !file.hir.$field.is_empty() {
-                all = all.or(&rows[On::SORTS + $bit]);
+                add(&rows[On::SORTS + $bit]);
             })*
         };
     }
@@ -1147,7 +1163,10 @@ pub fn listening<'a, S: RuleSet>(file: &'a File<'a>, enabled: &RuleBits) -> Rule
         10 import_specs;
         11 export_specs;
     }
-    enabled.and(&all)
+    for (to, from) in all.0[words.clone()].iter_mut().zip(&enabled.0[words]) {
+        *to &= from;
+    }
+    all
 }
 
 fn run_rules<'r, 'a: 'r, S: Starts>(file: &'a File<'a>, rules: &'r [Enabled<'r, S>]) {

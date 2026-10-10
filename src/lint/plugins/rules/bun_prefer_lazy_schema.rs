@@ -1,6 +1,7 @@
 use crate::bun::{RunsLater, chain_start, is_listed, list_option, runs_while_module_is_evaluated};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::source::mention_bit;
 use bun_lint_oxlint::ast_util::get_declaration_of_variable;
 
 /// Disallow building a validation schema while the module is evaluated.
@@ -70,8 +71,10 @@ impl Rule for PreferLazySchema {
         }
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some((0, RunsLater::default()))
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        let mut names = self.roots.iter().chain(self.methods.iter());
+        let may_build_one = self.factory_suffix.is_some() || names.any(|it| file.mentions_bit(mention_bit(it)));
+        may_build_one.then(|| (0, RunsLater::default()))
     }
 
     fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {

@@ -36,6 +36,7 @@ mod regexp_refa_ast;
 mod regexp_replacements;
 mod regexp_syntax;
 mod regexp_type_builtins;
+mod regexp_type_data;
 
 bun_lint::rules! {
     bun_consistent_directive_prefix::ConsistentDirectivePrefix,

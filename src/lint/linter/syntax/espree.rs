@@ -19,6 +19,7 @@ use crate::ast::{
 use crate::language::SourceType;
 use crate::semantic::{Declaration, Scope, ScopeKind};
 use crate::tokens::{skip_trivia, token_len};
+use crate::utils::oxlint::{is_script, is_strict_mode};
 use bun_core::strings;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::{
@@ -414,8 +415,7 @@ pub(super) fn first_error<'a>(
     checks.first.map(|it| it.1)
 }
 
-/// `using a = b;` at the top level of a script, in the words of OXC. To it a file is a module if its name says so, or if it has
-/// an `import`, an `export`, an `import.meta` or an `await` outside of all functions. What CommonJS has is in a function.
+/// `using a = b;` at the top level of a script, in the words of OXC. What CommonJS has is in a function.
 pub(super) fn using_in_script<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     let is_using = |it: &Stmt| match it.kind() {
         StmtKind::Var(list) => {
@@ -424,19 +424,25 @@ pub(super) fn using_in_script<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
         _ => false,
     };
     let first = file.body().iter().find(is_using)?;
-    let is_module = matches!(file.path(), [.., b'.', b'c' | b'm', b'j' | b't', b's'])
-        || file.is_declaration_file()
-        || has_module_syntax(file)
-        || file
-            .body()
-            .iter()
-            .any(|it| it.tag() == StmtTag::ExportAssign)
-        || file.exprs_of_kind(ExprTag::ImportMeta).next().is_some()
-        || (file.exprs_of_kind(ExprTag::Await))
-            .any(|it| Node::Expr(it).enclosing_function().is_none());
-    (!is_module).then(|| SyntaxError {
+    (is_script(file) && !file.is_declaration_file()).then(|| SyntaxError {
         at: first.span().start,
         message: b"'using' declarations are not allowed at the top level of a script".to_vec(),
+    })
+}
+
+/// `with` where the code is strict for OXC, and anywhere in TypeScript, in its words.
+pub(super) fn with_in_strict_code<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+    if file.hir.with_bodies.is_empty() {
+        return None;
+    }
+    let is_refused = |it: &Stmt<'a>| {
+        matches!(it.kind(), StmtKind::With { .. })
+            && (!file.is_javascript() || is_strict_mode(Node::Stmt(*it).scope(), file))
+    };
+    let refused = file.stmts_of_kind(StmtTag::Block).filter(is_refused);
+    Some(SyntaxError {
+        at: refused.map(|it| it.span().start).min()?,
+        message: b"'with' statements are not allowed".to_vec(),
     })
 }
 

@@ -13,6 +13,7 @@
 
 use crate::collections::IdMap;
 use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
+use crate::hir::assert_terminal_blocks_exist::assert_terminal_successors_exist;
 use crate::hir::cfg_utils::{
     get_reverse_postordered_blocks, mark_instruction_ids, remove_dead_do_while_statements,
     remove_unnecessary_try_catch, remove_unreachable_for_updates,
@@ -78,6 +79,7 @@ pub(crate) fn prune_maybe_throws(
                 }
             }
         }
+        assert_terminal_successors_exist(func)?;
     }
     Ok(())
 }

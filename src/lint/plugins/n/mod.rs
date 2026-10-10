@@ -73,12 +73,11 @@ pub(crate) fn version_range(option: Option<&Json>) -> Option<Range> {
     Range::parse(version_text(option)?)
 }
 
-/// `getConfiguredNodeVersion`, after the options of the rule.
-pub(crate) fn configured_node_version(file: &File) -> Range {
-    configured_node_version_as(file, Range::parse).unwrap_or_else(|| Range::at_least([16, 0, 0]))
-}
+/// What `getConfiguredNodeVersion` returns where nothing is configured.
+pub(crate) const DEFAULT_NODE_VERSION: &[u8] = b">=16.0.0";
 
-/// The same with `parse` for `new Range(text)`, which is `None` where that throws. `None`: `>=16.0.0`.
+/// `getConfiguredNodeVersion`, after the options of the rule. `parse`: `new Range(text)`, which is `None` where that throws.
+/// `None`: [`DEFAULT_NODE_VERSION`].
 pub(crate) fn configured_node_version_as<T>(
     file: &File,
     mut parse: impl FnMut(&[u8]) -> Option<T>,
@@ -231,11 +230,18 @@ pub(crate) struct Builtins {
     globals: Part,
     modules: Part,
     import_meta: Part,
-    version: Option<Range>,
+    /// That of the options, as it is written.
+    version: Option<Vec<u8>>,
     ignores: Vec<Box<[u8]>>,
     allows_experimental: bool,
-    /// For the first range of versions that was asked for: that of the options, or else what the first file has.
-    first: OnceLock<Tables>,
+    /// The tables for a range of versions, by the text of the range. `None`: the text is no range.
+    known: [OnceLock<(Box<[u8]>, Option<Tables>)>; 8],
+}
+
+/// The tables for a file: of [`Builtins::known`], or made for it.
+enum Found<'s> {
+    Known(&'s Tables),
+    Own(Box<Tables>),
 }
 
 struct Tables {
@@ -256,7 +262,7 @@ impl Builtins {
             globals,
             modules,
             import_meta,
-            version: version_range(options.get(0)),
+            version: version_range(options.get(0)).map(|it| it.raw),
             ignores: options
                 .object(0)
                 .strings("ignores")
@@ -264,7 +270,7 @@ impl Builtins {
                 .map(|it| it.as_bytes().into())
                 .collect(),
             allows_experimental: options.object(0).bool_or("allowExperimental", false),
-            first: OnceLock::new(),
+            known: Default::default(),
         }
     }
 
@@ -278,21 +284,29 @@ impl Builtins {
         }
     }
 
+    /// The tables for the range of versions that `text` is, if it is one.
+    fn tables_for(&self, text: &[u8]) -> Option<Found<'_>> {
+        let tables = || Range::parse(text).map(|it| self.tables(it));
+        for known in &self.known {
+            let (range, found) = known.get_or_init(|| (text.into(), tables()));
+            if **range == *text {
+                return found.as_ref().map(Found::Known);
+            }
+        }
+        tables().map(|it| Found::Own(Box::new(it)))
+    }
+
     /// Calls `then` with the tables for the file.
     fn with_tables<'a>(&self, file: &'a File<'a>, then: impl FnOnce(&Tables)) {
-        let version = || {
-            self.version
-                .clone()
-                .unwrap_or_else(|| configured_node_version(file))
+        let found = match &self.version {
+            Some(version) => self.tables_for(version),
+            None => configured_node_version_as(file, |text| self.tables_for(text))
+                .or_else(|| self.tables_for(DEFAULT_NODE_VERSION)),
         };
-        let first = self.first.get_or_init(|| self.tables(version()));
-        if self.version.is_some() {
-            return then(first);
-        }
-        let version = version();
-        match version.raw == first.unsupported.version.raw {
-            true => then(first),
-            false => then(&self.tables(version)),
+        match found {
+            Some(Found::Known(tables)) => then(tables),
+            Some(Found::Own(tables)) => then(&tables),
+            None => {}
         }
     }
 

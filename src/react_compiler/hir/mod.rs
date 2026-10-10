@@ -33,6 +33,7 @@
     reason = "ported verbatim from facebook/react upstream; not maintained for Rust idioms"
 )]
 
+pub(crate) mod assert_terminal_blocks_exist;
 pub mod cfg_utils;
 pub mod default_module_type_provider;
 pub mod dominator;

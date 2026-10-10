@@ -402,6 +402,7 @@ pub(crate) fn run_analysis_passes(
             &mut env.functions,
         )
     )?;
+    crate::hir::assert_terminal_blocks_exist::assert_terminal_successors_exist(hir)?;
 
     timed!("EnterSSA", crate::ssa::enter_ssa(hir, env)).map_err(ssa_diag_to_error)?;
 
@@ -635,6 +636,7 @@ pub(crate) fn run_reactive_scope_passes(
         "FlattenScopesWithHooksOrUseHIR",
         crate::inference::flatten_scopes_with_hooks_or_use_hir(hir, env)
     )?;
+    crate::hir::assert_terminal_blocks_exist::assert_terminal_successors_exist(hir)?;
 
     timed!(
         "PropagateScopeDependenciesHIR",

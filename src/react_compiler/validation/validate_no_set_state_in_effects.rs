@@ -303,7 +303,7 @@ fn create_ref_controlled_block_checker(
     types: &[Type],
 ) -> Result<HashMap<BlockId, bool>, CompilerDiagnostic> {
     let post_dominators = compute_post_dominator_tree(func, next_block_id_counter, false)?;
-    let frontiers = post_dominator_frontiers(func, &post_dominators);
+    let frontiers = post_dominator_frontiers(func, &post_dominators)?;
     let mut cache: HashMap<BlockId, bool> = HashMap::new();
 
     for (block_id, _block) in &func.body.blocks {

@@ -3,7 +3,7 @@ use crate::n::es_syntax_data::*;
 use crate::n::object_type::ExpressionTypes;
 use crate::n::semver::Range;
 use crate::n::table::Roots;
-use crate::n::{configured_node_version_as, version_range};
+use crate::n::{DEFAULT_NODE_VERSION, configured_node_version_as, version_range};
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::regex::{self, Handler, Mode as RegexMode};
@@ -214,13 +214,8 @@ const fn listener_of(feature: usize) -> u64 {
 
 /// [`State::methods`]
 fn methods_in<'a>(active: &Active, file: &'a File<'a>) -> smallvec::SmallVec<[Name<'a>; 8]> {
-    let mut methods = smallvec::SmallVec::new();
-    for (at, &(method, ..)) in active.methods.iter().enumerate() {
-        if active.methods.get(at.wrapping_sub(1)).is_none_or(|it| it.0 != method) && file.mentions(method) {
-            methods.push(file.name_of(method));
-        }
-    }
-    methods
+    let mentioned = active.method_names.iter().filter(|it| file.mentions_bit(it.1));
+    mentioned.map(|it| file.name_of(it.0)).collect()
 }
 
 impl Rule for EsSyntax {
@@ -316,7 +311,7 @@ impl Rule for EsSyntax {
             on = on.exprs(&[ExprTag::Call, ExprTag::New]);
         }
         if any(&[OPTIONAL_CHAINING, KEYWORD_PROPERTIES, CLASS_FIELDS, LEGACY_OBJECT_PROTOTYPE_ACCESSOR_METHODS])
-            || active.methods.iter().any(|it| file.mentions(it.0))
+            || active.method_names.iter().any(|it| file.mentions_bit(it.1))
         {
             on = on.exprs(&[ExprTag::Dot, ExprTag::Index]);
         }
@@ -678,7 +673,8 @@ impl EsSyntax {
     fn active_in(&self, file: &File) -> Option<(usize, Option<Box<Active>>)> {
         match &self.version {
             Some(version) => self.with_range(version),
-            None => configured_node_version_as(file, |text| self.with_range(text)).or_else(|| self.with_range(b">=16.0.0")),
+            None => configured_node_version_as(file, |text| self.with_range(text))
+                .or_else(|| self.with_range(DEFAULT_NODE_VERSION)),
         }
     }
 

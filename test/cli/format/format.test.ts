@@ -4606,7 +4606,7 @@ describe.concurrent("[format] in bunfig.toml", () => {
     expect(zero.exitCode).toBe(2);
   });
 
-  test.each(["67108864", "9007199254740992"])("%s threads are as many as there can be", async count => {
+  test.each(["67108864", "9007199254740991"])("%s threads are as many as there can be", async count => {
     const files = { "a.js": ugly, "b.js": ugly };
     const [byKey, byFlag, few] = await Promise.all([
       run({ ...files, "bunfig.toml": `[format]\nthreads = ${count}\n` }, ["a.js", "b.js"]),

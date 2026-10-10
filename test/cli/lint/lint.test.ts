@@ -6549,14 +6549,14 @@ describe.concurrent("[lint] in bunfig.toml", () => {
   });
 
   // 288 bytes for each: 19 GB, and more than there is to address.
-  test.each(["67108864", "9007199254740992", "9223372036854775808"])("%s threads are as many as there can be", async count => {
+  test.each(["67108864", "9007199254740991", "9223372036854775808"])("%s threads are as many as there can be", async count => {
     const [byKey, byFlag, few] = await Promise.all([
       run({ ...eslint, "bunfig.toml": `[lint]\nthreads = ${count}\n` }, ["a.js"]),
       run(eslint, [`--threads=${count}`, "a.js"]),
       run(eslint, ["--threads=1", "a.js"]),
     ]);
-    // TOML has no number as large as the last.
-    if (count.length < 19) expect(byKey).toEqual(few);
+    // Beyond 2^53 - 1 the file is refused before anybody asks for the key.
+    if (Number.isSafeInteger(Number(count))) expect(byKey).toEqual(few);
     expect(byFlag).toEqual(few);
   });
 

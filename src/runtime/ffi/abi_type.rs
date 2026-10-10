@@ -190,20 +190,6 @@ impl ABIType {
         })
     }
 
-    /// Types that we can directly pass through as an `int64_t`
-    pub(crate) fn needs_a_cast_in_c(self) -> bool {
-        !matches!(
-            self,
-            ABIType::Char
-                | ABIType::Int8T
-                | ABIType::Uint8T
-                | ABIType::Int16T
-                | ABIType::Uint16T
-                | ABIType::Int32T
-                | ABIType::Uint32T
-        )
-    }
-
     pub(crate) fn is_floating_point(self) -> bool {
         matches!(self, ABIType::Double | ABIType::Float)
     }

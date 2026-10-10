@@ -84,7 +84,8 @@ BUN_FFI_IMPORT extern struct NapiEnv Bun__thisFFIModuleNapiEnv;
 #define TagValueNull             (OtherTag)
 #define NotCellMask  (int64_t)(NumberTag | OtherTag)
 
-#define MAX_INT32 2147483648
+#define MAX_INT32 2147483647
+#define MIN_INT32 (-MAX_INT32 - 1)
 #define MAX_INT52 9007199254740991
 
 // If all bits in the mask are set, this indicates an integer number,
@@ -250,16 +251,32 @@ static EncodedJSValue DOUBLE_TO_JSVALUE(double val) {
    return res;
 }
 
+// ECMAScript ToInt32, ported from JSC's toIntImpl<int32_t> (MathCommon.h); ToUint32 is the same bits.
 static int32_t JSVALUE_TO_INT32(EncodedJSValue val) {
   if (JSVALUE_IS_INT32(val)) {
     return (int32_t)val.asInt64;
   }
-  // Decode a double-encoded integer (JIT tier-up, Math.* provenance, etc.);
-  // int64_t intermediate keeps u32 callers (uint32_t)JSVALUE_TO_INT32(...) defined.
+  if (val.asInt64 == TagValueTrue) {
+    return 1;
+  }
   val.asInt64 -= DoubleEncodeOffset;
-  // NaN check also catches undefined/null/bool, whose decoded bits are all NaNs.
-  if (val.asDouble != val.asDouble) return 0;
-  return (int32_t)(int64_t)val.asDouble;
+  uint64_t bits = (uint64_t)val.asInt64;
+  int32_t exp = (int32_t)((bits >> 52) & 0x7ff) - 0x3ff;
+  // Also 0, NaN, +-Infinity, and false/undefined/null/cells, whose decoded bits are NaNs.
+  if (exp < 0 || exp > 83) {
+    return 0;
+  }
+  uint32_t result = exp > 52 ? (uint32_t)(bits << (exp - 52)) : (uint32_t)(bits >> (52 - exp));
+  if (exp < 32) {
+    // Reinsert the implicit leading 1; mask off the shifted-in sign/exponent bits.
+    uint32_t implicit_one = (uint32_t)1 << exp;
+    result &= implicit_one - 1;
+    result += implicit_one;
+  }
+  if (bits >> 63) {
+    result = -result;
+  }
+  return (int32_t)result;
 }
 
 static EncodedJSValue INT32_TO_JSVALUE(int32_t val) {
@@ -341,7 +358,7 @@ static int64_t JSVALUE_TO_INT64(EncodedJSValue value) {
 }
 
 static EncodedJSValue UINT64_TO_JSVALUE(void* jsGlobalObject, uint64_t val) {
-  if (val < MAX_INT32) {
+  if (val <= MAX_INT32) {
     return INT32_TO_JSVALUE((int32_t)val);
   }
 
@@ -353,7 +370,7 @@ static EncodedJSValue UINT64_TO_JSVALUE(void* jsGlobalObject, uint64_t val) {
 }
 
 static EncodedJSValue INT64_TO_JSVALUE(void* jsGlobalObject, int64_t val) {
-  if (val >= -MAX_INT32 && val <= MAX_INT32) {
+  if (val >= MIN_INT32 && val <= MAX_INT32) {
     return INT32_TO_JSVALUE((int32_t)val);
   }
 

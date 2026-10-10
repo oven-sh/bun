@@ -133,6 +133,30 @@ impl Project {
         )
     }
 
+    pub fn roots(&self, host: &dyn Host) -> Roots {
+        let case_sensitive = host.is_case_sensitive();
+        let specs = self.options.include_specs.iter();
+        let include: Vec<Vec<u8>> = specs.map(|it| it.1.clone()).collect();
+        let base = join(b"", &self.base);
+        let more = extra_supported_extensions(host, &self.options);
+        Roots {
+            literal: (self.options.file_specs.iter())
+                .map(|it| it.1.clone())
+                .collect(),
+            has_include: !include.is_empty(),
+            patterns: GlobMatcher::new(
+                &include,
+                &self.exclude,
+                &base,
+                case_sensitive,
+                Usage::Files,
+            ),
+            groups: supported_extensions(&self.options),
+            more: more.map(<[u8]>::to_vec).collect(),
+            case_sensitive,
+        }
+    }
+
     /// `GetBuildInfoFileName` under `tsc -b` (`options.Build`), where every project has one, incremental or not.
     pub fn get_build_info_file_name(&self) -> Vec<u8> {
         let specified = (self.raw_compiler_options.iter())
@@ -158,6 +182,66 @@ impl Project {
         };
         name.extend_from_slice(b".tsbuildinfo");
         name
+    }
+}
+
+/// Which files are the root files of a project, asked of `files`, `include` and `exclude` and not of the directories:
+/// for who has a file and wants to know whether it is one, of a project that was read by a host that lists nothing.
+pub struct Roots {
+    /// `files`, as paths.
+    literal: Vec<Vec<u8>>,
+    has_include: bool,
+    patterns: GlobMatcher,
+    /// `supported_extensions`, `extra_supported_extensions`
+    groups: &'static [&'static [&'static [u8]]],
+    more: Vec<Vec<u8>>,
+    case_sensitive: bool,
+}
+
+impl Roots {
+    /// Whether `getFileNamesFromConfigSpecs` finds the file at `path`, which is there and is no JSON file. `is_file`:
+    /// asked about the files beside it with the same name and another extension: `a.ts` takes the place of `a.js`.
+    pub fn has(&self, path: &[u8], is_file: &dyn Fn(&[u8]) -> bool) -> bool {
+        let is_literal = |path: &[u8]| {
+            (self.literal.iter()).any(|it| is_same_path(it, path, self.case_sensitive))
+        };
+        if is_literal(path) {
+            return true;
+        }
+        if !self.matches(path) {
+            return false;
+        }
+        // `hasFileWithHigherPriorityExtension`
+        for extension in extension_group(path, self.groups) {
+            if path.ends_with(extension) && (extension != b".ts" || !path.ends_with(b".d.ts")) {
+                break;
+            }
+            // A declaration file has always been loaded alongside its JavaScript.
+            if extension == b".d.ts" && (path.ends_with(b".js") || path.ends_with(b".jsx")) {
+                continue;
+            }
+            let other = change_extension(path, extension);
+            if (is_literal(&other) || self.matches(&other)) && is_file(&other) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// `include` has it, and `exclude` has not.
+    fn matches(&self, path: &[u8]) -> bool {
+        let has_extension = |it: &[u8]| path.len() > it.len() && path.ends_with(it);
+        let is_supported = self
+            .groups
+            .iter()
+            .any(|group| group.iter().any(|it| has_extension(it)))
+            || self.more.iter().any(|it| has_extension(it));
+        let directory = &PathParts::of_directory(typescript_path(path));
+        let whole = PathParts {
+            directory,
+            name: b"",
+        };
+        self.has_include && is_supported && self.patterns.matches_file(whole).is_some()
     }
 }
 

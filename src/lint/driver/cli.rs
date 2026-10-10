@@ -320,6 +320,9 @@ pub struct Options {
     pub has_type_aware_flag: bool,
     /// `--infer-globals`, `--no-infer-globals`. `None`: only without a configuration file.
     pub infer_globals: Option<bool>,
+    /// `--infer-globals=fast`: `InferGlobals::ByOptions` without a configuration file. It is to become what is done there
+    /// without a flag, once it costs a project that reports no name next to nothing.
+    pub infers_globals_by_options: bool,
     pub project: Option<Vec<u8>>,
     /// `0`: the number of cores.
     pub threads: usize,
@@ -407,6 +410,7 @@ impl Default for Options {
             plugins: Vec::new(),
             type_aware: None,
             infer_globals: None,
+            infers_globals_by_options: false,
             has_type_aware_flag: false,
             project: None,
             threads: 0,
@@ -710,6 +714,7 @@ impl Options {
         for (at, arg) in args.iter().copied().enumerate() {
             match arg {
                 b"-V" => rewritten.push(b"--version"),
+                b"--infer-globals=fast" => options.infers_globals_by_options = true,
                 // The opposite of a flag that takes a value.
                 b"--no-native-plugin-rules" => rewritten.push(b"--native-plugin-rules=false"),
                 _ if arg.starts_with(b"--debug=") => {

@@ -6,6 +6,7 @@
 
 pub mod format;
 pub mod host;
+pub mod outline;
 
 pub use bun_sema::check::explain::MessageChain;
 pub use bun_sema::messages::Category;
@@ -818,6 +819,11 @@ fn defaults_of_the_installed_typescript(
     if !request.plan_options.prefers_the_library_of_the_project {
         return None;
     }
+    installed_major(host, config)
+}
+
+/// `resolve::INSTALLED_MAJOR`
+fn installed_major(host: &dyn Host, config: &[u8]) -> Option<(Vec<u8>, Json)> {
     let package = installed_typescript(host, config)?;
     let text = host.read(&inside(&package, b"package.json"))?;
     let fields = host.parse_package_json(Session::new().arena(), &text)?;
@@ -3324,10 +3330,9 @@ fn lacks_its_packages(host: &dyn Host, config: &[u8]) -> bool {
         b"peerDependencies",
     ];
     let mut names = (fields.into_iter().filter_map(packages_in).flatten()).map(|it| &it.0);
-    let is_installed = |name: &Vec<u8>| {
-        let package = [b"node_modules/", &name[..]].concat();
-        above().any(|it| host.is_dir(&inside(it, &package)))
-    };
+    let all = above().map(|it| inside(it, b"node_modules"));
+    let all: Vec<Vec<u8>> = all.filter(|it| host.is_dir(it)).collect();
+    let is_installed = |name: &Vec<u8>| all.iter().any(|it| host.is_dir(&inside(it, name)));
     let Some(first) = names.next() else {
         return false;
     };

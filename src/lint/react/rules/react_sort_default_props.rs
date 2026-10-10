@@ -31,69 +31,89 @@ fn right_of_parent(e: Expr<'_>) -> Option<Expr<'_>> {
     }
 }
 
+/// `checkNode`: the `ObjectExpression` whose properties `checkSorted` is called with.
+fn check_node(node: Expr<'_>) -> Option<Expr<'_>> {
+    let object = match node.as_ident() {
+        Some(name) => match find_variable_by_name(node.into(), name)? {
+            Found::Init(init) => init,
+            Found::Import(_) => return None,
+        },
+        None => node,
+    };
+    (object.tag() == ExprTag::Object).then_some(object)
+}
+
+/// The listener for `MemberExpression`: as [`check_node`].
+pub(super) fn member_expression(e: Expr<'_>) -> Option<Expr<'_>> {
+    if is_default_props_declaration(e.into()) { check_node(right_of_parent(e)?) } else { None }
+}
+
+/// The listener for `PropertyDefinition`: as [`check_node`].
+pub(super) fn property_definition(member: Member<'_>) -> Option<Expr<'_>> {
+    let is_declaration = ast_utils::is_property_definition(member) && is_default_props_declaration(member.into());
+    if is_declaration { check_node(member.init()?) } else { None }
+}
+
 impl Rule for SortDefaultProps {
     const META: Meta = Meta::plugin(Plugin::React, "sort-default-props", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]).members();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]).members().finish();
+    /// What `checkSorted` is called with, once for each call.
+    type State<'a> = Vec<Expr<'a>>;
 
     fn new(options: &Options) -> Self {
         SortDefaultProps { ignore_case: options.object(0).bool_or("ignoreCase", false) }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Vec<Expr<'a>>> {
         // upstream takes a private name for its text.
-        file.mentions_any(&["defaultProps", "getDefaultProps", "#defaultProps", "#getDefaultProps"]).then_some(())
+        let is_candidate = file.mentions("defaultProps")
+            || file.mentions("getDefaultProps")
+            || file.mentions("#defaultProps")
+            || file.mentions("#getDefaultProps");
+        is_candidate.then(Vec::new)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        self.member_expression(e, &mut |unsorted| {
-            cx.report(unsorted, PROPS_NOT_SORTED);
-        });
+        cx.state.extend(member_expression(e));
     }
 
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
-        self.property_definition(member, &mut |unsorted| {
+        cx.state.extend(property_definition(member));
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let mut objects = std::mem::take(&mut cx.state);
+        self.check_sorted(&mut objects, &mut |unsorted| {
             cx.report(unsorted, PROPS_NOT_SORTED);
+            !cx.has_reported_too_much()
         });
     }
 }
 
 impl SortDefaultProps {
-    /// The listener for `MemberExpression`. `report` is called with each property that is to be reported.
-    pub(super) fn member_expression<'a>(&self, e: Expr<'a>, report: &mut dyn FnMut(Prop<'a>)) {
-        if is_default_props_declaration(e.into())
-            && let Some(right) = right_of_parent(e)
-        {
-            self.check_node(right, report);
+    /// `checkSorted`, for each of `objects`. One that many variables lead to is looked at once, and reported as often.
+    /// `report` says whether to go on.
+    pub(super) fn check_sorted<'a>(&self, objects: &mut [Expr<'a>], report: &mut dyn FnMut(Prop<'a>) -> bool) {
+        objects.sort_unstable_by_key(|it| it.span().start);
+        for same in objects.chunk_by(|a, b| a == b) {
+            let unsorted = same.first().map_or_else(Vec::new, |&object| self.unsorted(object));
+            for _ in same {
+                for &property in &unsorted {
+                    if !report(property) {
+                        return;
+                    }
+                }
+            }
         }
     }
 
-    /// The listener for `PropertyDefinition`.
-    pub(super) fn property_definition<'a>(&self, member: Member<'a>, report: &mut dyn FnMut(Prop<'a>)) {
-        if ast_utils::is_property_definition(member)
-            && is_default_props_declaration(member.into())
-            && let Some(value) = member.init()
-        {
-            self.check_node(value, report);
-        }
-    }
-
-    /// `checkNode`
-    fn check_node<'a>(&self, node: Expr<'a>, report: &mut dyn FnMut(Prop<'a>)) {
-        let object = match node.as_ident() {
-            Some(name) => match find_variable_by_name(node.into(), name) {
-                Some(Found::Init(init)) => init,
-                _ => return,
-            },
-            None => node,
+    /// What `checkSorted` reports of the properties of `object`.
+    fn unsorted<'a>(&self, object: Expr<'a>) -> Vec<Prop<'a>> {
+        let ExprKind::Object(declarations) = object.kind() else {
+            return Vec::new();
         };
-        if let ExprKind::Object(declarations) = object.kind() {
-            self.check_sorted(declarations, report);
-        }
-    }
-
-    /// `checkSorted`
-    fn check_sorted<'a>(&self, declarations: List<'a, Prop<'a>>, report: &mut dyn FnMut(Prop<'a>)) {
+        let file = object.file();
+        let mut unsorted = Vec::new();
         // `getKey` of the last property that is in its place. None at the start and after a spread.
         let mut prev: Option<Cow<'a, [u8]>> = None;
         for curr in declarations {
@@ -101,13 +121,14 @@ impl SortDefaultProps {
                 prev = None;
                 continue;
             };
-            let written = curr.file().slice(key.inner_span(curr.file()));
+            let written = file.slice(key.inner_span(file));
             let name = if self.ignore_case { text::to_lower_case(written) } else { Cow::Borrowed(written) };
             if prev.as_ref().is_some_and(|prev| strings::order_utf16(&name, prev) == Ordering::Less) {
-                report(curr);
+                unsorted.push(curr);
             } else {
                 prev = Some(name);
             }
         }
+        unsorted
     }
 }

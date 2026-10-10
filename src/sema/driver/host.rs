@@ -1222,6 +1222,77 @@ impl Disk {
     }
 }
 
+/// The disk, for a few questions in many directories: each is a call of the system, and no directory is listed for it
+/// or kept. A `Disk` lists the directory of whatever it is asked about, which pays where most of it is asked for.
+pub(crate) struct Asking<'d> {
+    pub(crate) disk: &'d Disk,
+    /// Or else every directory is empty: the `include` of a configuration file finds nothing.
+    pub(crate) lists: bool,
+}
+
+impl Asking<'_> {
+    fn is_directory(path: &[u8]) -> Option<bool> {
+        is_directory(Fd::cwd(), for_the_system(&with_root(path))?)
+    }
+}
+
+impl Host for Asking<'_> {
+    fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
+        read_at(path, false)
+    }
+    fn is_file(&self, path: &[u8]) -> bool {
+        Self::is_directory(path) == Some(false)
+    }
+    fn is_dir(&self, path: &[u8]) -> bool {
+        Self::is_directory(path) == Some(true)
+    }
+    fn realpath(&self, path: &[u8]) -> Vec<u8> {
+        Disk::ask_for_real_path(path)
+    }
+    fn list_dir(&self, path: &[u8]) -> Vec<Vec<u8>> {
+        match self.lists.then(|| list(path)) {
+            Some(Directory::Listed(listing)) => {
+                let Listing {
+                    mut files,
+                    directories,
+                    ..
+                } = listing;
+                files.extend(directories);
+                files
+            }
+            _ => Vec::new(),
+        }
+    }
+    fn is_case_sensitive(&self) -> bool {
+        self.disk.is_case_sensitive()
+    }
+    fn script_kind(&self, path: &[u8]) -> Option<ScriptKind> {
+        self.disk.script_kind(path)
+    }
+    fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)] {
+        self.disk.extra_file_extensions()
+    }
+    fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>> {
+        self.disk.scripts_of_page(page)
+    }
+    fn parse<'s>(
+        &self,
+        arena: &'s Arena,
+        path: &[u8],
+        text: &[u8],
+        atoms: &Interner<'s>,
+        options: ParseOptions,
+    ) -> hir::File<'s> {
+        self.disk.parse(arena, path, text, atoms, options)
+    }
+    fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
+        self.disk.parse_package_json(arena, text)
+    }
+    fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
+        (0..count).for_each(work);
+    }
+}
+
 impl Host for Disk {
     fn spent(&self, phase: Phase, time: Duration) {
         self.times[phase as usize].fetch_add(time.as_nanos() as u64, Ordering::Relaxed);

@@ -30,6 +30,8 @@ With `--infer-globals`, or `inferGlobals = true` in `bunfig.toml`, the globals o
 
 Loading the libraries and the types takes 40 to 450 ms, more than linting a small project. A file that is linted with `--type-aware` has them anyway, so there it is the default.
 
+`--infer-globals=fast` is for JavaScript without a configuration file, and reads only the compiler options at first. `lib`, `target` and `types` choose among the environments that `bun lint` knows: `dom` is `browser`, `webworker` is `worker`, `es2022` is `es2022`, and the types of `node`, `bun`, `jest`, `mocha`, `jasmine`, `jquery` and `vitest/globals` are the environments of those names. The types are loaded only when `no-undef` is about to report a name, and then they decide. Every other rule knows the names of those environments only.
+
 To change a rule, add a configuration file:
 
 ```js eslint.config.js icon="/icons/javascript.svg"

@@ -36,6 +36,9 @@ impl Rule for NoUndef {
             {
                 continue;
             }
+            if cx.file().is_declared_by_types(reference.name().bytes()) {
+                continue;
+            }
             cx.report(reference, UNDEF).data("name", reference.name());
         }
     }

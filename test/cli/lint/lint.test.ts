@@ -1954,11 +1954,11 @@ describe.concurrent("bun lint", () => {
         // Of several the last is the one that is asked about.
         const before = (index: number) => messagesOf(raw, messages)[index].slice(0, messages[index].index ?? 0);
         expect(said).toEqual(messages.map((it, index) => `${it.rule} ${[...before(index), it.message].join(" | ")}`));
-        // A help that is printed is oxlint's. Not all are there yet.
+        // A help that is printed is oxlint's, and none is lacking.
         const helps = helpsOf(raw, messages).map((it, index) => ({ ...messages[index], said: it }));
         const wrong = helps.filter(it => it.said !== undefined && it.said !== it.help);
         expect(wrong.map(it => [it.rule, it.id])).toEqual([]);
-        expect(helps.filter(it => it.said === undefined && it.help !== undefined).length).toBeLessThanOrEqual(1);
+        expect(helps.filter(it => it.said === undefined && it.help !== undefined).length).toBeLessThanOrEqual(0);
       });
 
       // The table has no texts of messages, only numbers that are made of them: a message that is reworded would lose its help.

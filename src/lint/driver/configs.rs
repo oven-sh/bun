@@ -868,6 +868,7 @@ impl<'l> Loader<'l> {
         config.infer_globals(match self.options.infer_globals {
             Some(true) => InferGlobals::Instead,
             None if self.options.type_aware == Some(true) => InferGlobals::Instead,
+            None if self.options.infers_globals_by_options => InferGlobals::ByOptions,
             Some(false) | None => InferGlobals::No,
         });
         Ok(Arc::new(Loaded {

@@ -69,8 +69,10 @@ pub enum InferGlobals {
     Besides,
     /// They, and of the configuration what `globals` itself has. For a file that is in no program: the configuration.
     Instead,
-    /// The same for JavaScript. For TypeScript: the configuration.
-    InsteadForJavaScript,
+    /// For JavaScript. The options of the project say which tables of the linter are in the place of the configuration:
+    /// no file of the project is read for it. The types are asked when a name is about to be reported that no table
+    /// has: [`File::is_declared_by_types`](crate::ast::File). For TypeScript: the configuration.
+    ByOptions,
 }
 
 impl InferGlobals {
@@ -79,7 +81,7 @@ impl InferGlobals {
         match self {
             InferGlobals::No => false,
             InferGlobals::Besides | InferGlobals::Instead => true,
-            InferGlobals::InsteadForJavaScript => is_javascript,
+            InferGlobals::ByOptions => is_javascript,
         }
     }
 }

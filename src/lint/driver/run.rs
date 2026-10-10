@@ -921,8 +921,9 @@ impl Run<'_> {
         let formatter = crate::fmt::ForRules::new(environment, options.of_bun_format.as_deref());
         // Only if it is asked for: to load the libraries and the types takes longer than to lint a small project. A file that
         // is linted with types has them anyway: `typed::OfFile`.
-        let inferred = (options.infer_globals == Some(true))
-            .then(|| Inferred::new(environment, pool.threads()));
+        let by_options = options.infer_globals.is_none() && options.infers_globals_by_options;
+        let inferred = (options.infer_globals == Some(true) || by_options)
+            .then(|| Inferred::new(environment, pool.threads(), by_options));
         let invalid_tsconfigs = Guarded::new(Default::default());
         let context = Context {
             skipped_in_comments: &skipped_in_comments,

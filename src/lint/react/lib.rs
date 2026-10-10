@@ -248,6 +248,7 @@ bun_lint::rules! {
     react_set_state_in_render::SetStateInRender,
     react_sort_comp::SortComp,
     react_sort_default_props::SortDefaultProps,
+    react_sort_prop_types::SortPropTypes,
     react_state_in_constructor::StateInConstructor,
     react_static_components::StaticComponents,
     react_static_property_placement::StaticPropertyPlacement,

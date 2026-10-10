@@ -39,7 +39,14 @@ impl Rule for RequireOptimization {
         // what is in one of these can have something to tell.
         let mut components = Components::new(file);
         components.finish();
-        let list = components.list();
+        let mut list = components.list();
+        // Stateless Functional Components cannot be optimized (yet): a function is a component from where it begins,
+        // which is where upstream's listener for functions marks it.
+        let has_classes = file.has_classes();
+        list.retain(|&id| match components.component(id).node {
+            Node::Func(func) => has_classes && is_function_in_class(func),
+            _ => true,
+        });
         if list.is_empty() {
             return;
         }
@@ -55,8 +62,6 @@ impl Rule for RequireOptimization {
         let pragmas = *components.pragmas();
         let mut queue = Queue::default();
         let mut mark_scu_as_declared = |node| queue.push(At::enter(node), 0, node);
-        // Stateless Functional Components cannot be optimized (yet)
-        let has_classes = file.has_classes();
         for func in file.funcs().filter(|it| ast_utils::is_function_with_body(*it) && is_in_component(it.span())) {
             if !(has_classes && is_function_in_class(func)) {
                 mark_scu_as_declared(Node::Func(func));

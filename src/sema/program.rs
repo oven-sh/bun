@@ -2769,6 +2769,19 @@ fn uses_wildcard_types(options: &Options) -> bool {
     (options.types.iter().flatten()).any(|it| it == b"*")
 }
 
+/// The packages of types that `options` bring into a program with a root file. `None`: one is not installed (2688).
+pub fn types_of(host: &dyn Host, options: &Options) -> Option<Vec<Vec<u8>>> {
+    let session = Session::new();
+    let resolver = Resolver::new(&session, host, options);
+    let from = inside(&options.base_dir, INFERRED_TYPES_CONTAINING_FILE);
+    let names = automatic_type_directives(host, &resolver, options);
+    let is_installed = |name: &Vec<u8>| {
+        let found = resolver.resolve_type_reference(name, &from, ResolutionMode::None, None);
+        found.is_some() || name == b"*"
+    };
+    names.iter().all(is_installed).then_some(names)
+}
+
 /// `GetAutomaticTypeDirectiveNames`: the entries of `compilerOptions.types`. A `*` in it represents
 /// every package under the type roots.
 fn automatic_type_directives(

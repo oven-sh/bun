@@ -62,6 +62,26 @@ const PROPERTIES_TO_CHECK: [fn(Node<'_>) -> bool; 6] = [
     is_display_name,
 ];
 
+/// What a declaration can be called. upstream takes a private name for its text, but for `displayName`.
+const NAMES: [&str; 13] = [
+    "propTypes",
+    "defaultProps",
+    "getDefaultProps",
+    "childContextTypes",
+    "contextTypes",
+    "contextType",
+    "displayName",
+    "#propTypes",
+    "#defaultProps",
+    "#getDefaultProps",
+    "#childContextTypes",
+    "#contextTypes",
+    "#contextType",
+];
+
+/// With a type, these fields count as `propTypes` and `contextTypes`.
+const ANNOTATED_FIELDS: [&str; 4] = ["props", "context", "#props", "#context"];
+
 /// What `reportNodeIncorrectlyPositioned` reports.
 struct Misplaced {
     name: &'static str,
@@ -86,36 +106,21 @@ impl Rule for StaticPropertyPlacement {
         }
     }
 
-    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if !file.has_classes() {
+            return On::new();
+        }
         // Where all are to be assigned, no assignment is wrong.
-        match self.config.iter().all(|it| *it == Placement::PropertyAssignment) {
-            true => On::new().members(),
-            false => Self::ON,
+        let is_any_in_the_class = self.config.iter().any(|it| *it != Placement::PropertyAssignment);
+        match is_any_in_the_class && file.mentions_any(&NAMES) {
+            true => Self::ON,
+            false => On::new().members(),
         }
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        // A field `props` or `context` with a type counts. upstream takes a private name for its text.
-        const NAMES: [&str; 17] = [
-            "propTypes",
-            "defaultProps",
-            "getDefaultProps",
-            "childContextTypes",
-            "contextTypes",
-            "contextType",
-            "displayName",
-            "props",
-            "context",
-            "#propTypes",
-            "#defaultProps",
-            "#getDefaultProps",
-            "#childContextTypes",
-            "#contextTypes",
-            "#contextType",
-            "#props",
-            "#context",
-        ];
-        (file.has_classes() && file.mentions_any(&NAMES)).then(|| State { components: Components::new(file) })
+        (file.mentions_any(&NAMES) || file.mentions_any(&ANNOTATED_FIELDS))
+            .then(|| State { components: Components::new(file) })
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -141,14 +146,12 @@ impl Rule for StaticPropertyPlacement {
     }
 
     fn member<'a>(&self, node: Member<'a>, cx: &mut Cx<'a, Self>) {
-        let is_static = node.is_static();
-        let expected_rule = if ast_utils::is_property_definition(node) {
-            Placement::StaticPublicField
-        } else if is_static && is_getter(node) {
-            Placement::StaticGetter
-        } else {
-            return;
+        let expected_rule = match node.kind() {
+            MemberKind::Property if ast_utils::is_property_definition(node) => Placement::StaticPublicField,
+            MemberKind::Getter if is_static_getter(node) => Placement::StaticGetter,
+            _ => return,
         };
+        let is_static = node.is_static();
         if let Some(misplaced) = self.misplaced(Node::Member(node), expected_rule, is_static)
             && get_parent_es6_component(Node::Member(node), cx.state.components.pragmas()).is_some()
         {
@@ -181,9 +184,10 @@ fn is_display_name(node: Node<'_>) -> bool {
     }
 }
 
-/// A `MethodDefinition` with `kind === "get"`.
-fn is_getter(member: Member<'_>) -> bool {
-    member.kind() == MemberKind::Getter && !member.flags().contains(Flags::ABSTRACT) && !member.is_signature()
+/// Whether a getter is a `MethodDefinition` with `static`.
+fn is_static_getter(member: Member<'_>) -> bool {
+    let flags = member.flags();
+    flags.contains(Flags::STATIC) && !flags.contains(Flags::ABSTRACT) && !member.is_signature()
 }
 
 /// Whether there is a `node.parent.right`, which can be `node` itself.

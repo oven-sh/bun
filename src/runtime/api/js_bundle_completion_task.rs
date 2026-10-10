@@ -243,7 +243,7 @@ fn executable_path(config: &JSBundlerConfig, compile: &CompileOptions) -> Box<[u
     let mut outbuf = paths::path_buffer_pool::get();
     // SAFETY: `FileSystem::instance()` is the process-lifetime singleton
     // initialized during VM startup before any `Bun.build` is reachable.
-    let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
     let outdir_slice = &config.outdir.list;
     let outfile_slice = &compile.outfile.list;
     let joined: &[u8] = if !outdir_slice.is_empty() {
@@ -765,7 +765,7 @@ impl JSBundleCompletionTask {
                 let dir = this.config.dir.list.clone();
                 // SAFETY: `FileSystem::instance()` is the process-lifetime singleton
                 // initialized during VM startup before any `Bun.build` is reachable.
-                let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+                let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
 
                 let mut to_assign_on_sourcemap = JSValue::ZERO;
                 for (i, output_file) in output_files.iter_mut().enumerate() {
@@ -1279,7 +1279,7 @@ impl CompletionStruct for JSBundleCompletionTask {
             // Relative to where the entry points are relative to, as for `--tsconfig-override`.
             tsconfig_override: (!config.tsconfig_override.list.is_empty()).then(|| {
                 let cwd = match config.dir.list.is_empty() {
-                    true => bun_resolver::fs::FileSystem::instance().top_level_dir,
+                    true => bun_resolver::fs::FileSystem::instance().top_level_dir(),
                     false => config.dir.list.as_slice(),
                 };
                 let path = config.tsconfig_override.list.as_slice();

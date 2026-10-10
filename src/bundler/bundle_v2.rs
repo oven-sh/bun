@@ -1005,7 +1005,7 @@ pub mod bv2_impl {
                             {
                                 b"/"
                             } else {
-                                bun_resolver::fs::FileSystem::instance().top_level_dir
+                                bun_resolver::fs::FileSystem::instance().top_level_dir()
                             }
                         } else {
                             source_dir
@@ -2565,7 +2565,7 @@ pub mod bv2_impl {
                 })
                 .map(|((source, loader), _)| (source.path.text, source.contents(), *loader));
             let checked = options::TypeChecked {
-                cwd: self.transpiler.fs().top_level_dir,
+                cwd: self.transpiler.fs().top_level_dir(),
                 tsconfig: self.transpiler.options.tsconfig_override.as_deref(),
                 conditions: &self.transpiler.options.custom_conditions,
                 loaders: &self.transpiler.options.loaders,
@@ -2921,7 +2921,8 @@ pub mod bv2_impl {
                     bun_paths::resolve_path::platform::Loose,
                     false,
                 >(
-                    bun_resolver::fs::FileSystem::get().top_level_dir, path.text
+                    bun_resolver::fs::FileSystem::get().top_level_dir(),
+                    path.text,
                 );
                 // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
                 // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`.
@@ -6351,7 +6352,7 @@ pub mod bv2_impl {
             let out = generic_path_with_pretty_initialized(
                 path,
                 target,
-                self.transpiler.fs().top_level_dir,
+                self.transpiler.fs().top_level_dir(),
                 bump,
             )?;
             Ok(out)
@@ -6966,12 +6967,12 @@ pub mod bv2_impl {
                                     } else {
                                         #[cfg(windows)]
                                         let mut buf = bun_paths::path_buffer_pool::get();
+                                        let top_level_dir = Fs::FileSystem::get().top_level_dir();
                                         let specifier_to_use: &[u8] = if loader == Loader::Html
-                                            && import_record.path.text.starts_with(
-                                                Fs::FileSystem::instance().top_level_dir,
-                                            ) {
-                                            let specifier_to_use = &import_record.path.text
-                                                [Fs::FileSystem::instance().top_level_dir.len()..];
+                                            && import_record.path.text.starts_with(top_level_dir)
+                                        {
+                                            let specifier_to_use =
+                                                &import_record.path.text[top_level_dir.len()..];
                                             #[cfg(windows)]
                                             {
                                                 &*bun_paths::resolve_path::path_to_posix_buf::<u8>(
@@ -7092,7 +7093,7 @@ pub mod bv2_impl {
                                 bun_paths::resolve_path::platform::Loose,
                                 false,
                             >(
-                                self.transpiler.fs().top_level_dir, path.text
+                                self.transpiler.fs().top_level_dir(), path.text
                             );
                             if loader == Loader::Html && entry.kind == bake_types::CacheKind::Asset
                             {

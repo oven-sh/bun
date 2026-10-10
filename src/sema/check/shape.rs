@@ -2352,9 +2352,9 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(members) = members else { return };
         let mapper = members.mapper;
         b.reserve(members.shape().props.len());
-        // The mapper of the most recent property that had its own, and its composition with
-        // `mapper`.
-        let mut composed = (MapperId::IDENTITY, mapper);
+        // The mapper of the most recent property that had its own, whether that is a member, and
+        // the composition with `mapper`.
+        let mut composed = (MapperId::IDENTITY, true, mapper);
         for prop in &members.shape().props {
             if b.has(prop.name) {
                 continue;
@@ -2371,11 +2371,23 @@ impl<'p, 's> Checker<'p, 's> {
                 {
                     prop.flags |= PropFlags::THISLESS;
                 }
-                _ => {
-                    if prop.mapper != composed.0 {
-                        composed = (prop.mapper, self.compose(prop.mapper, mapper));
+                source => {
+                    let is_member = matches!(source, PropSource::Symbol(_));
+                    if prop.mapper == MapperId::IDENTITY {
+                        prop.mapper = mapper;
+                    } else {
+                        if (prop.mapper, is_member) != (composed.0, composed.1) {
+                            // The mapper of a member maps the type parameters of the class or the
+                            // interface that declares it, and `mapper` those of `base`, which the
+                            // declaration cannot mention: it would grow with every level.
+                            let both = match is_member {
+                                true => self.map_mapper(prop.mapper, mapper),
+                                false => self.compose(prop.mapper, mapper),
+                            };
+                            composed = (prop.mapper, is_member, both);
+                        }
+                        prop.mapper = composed.2;
                     }
-                    prop.mapper = composed.1;
                 }
             }
             b.add_new(prop);

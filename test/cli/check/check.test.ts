@@ -759,6 +759,32 @@ describe.concurrent("bun check", () => {
     expect(exitCode).toBe(1);
   });
 
+  // Cubic too: over 25 s for 1,000 generic interfaces in a release build, where it now takes 0.5 s.
+  test("a long chain whose members mention `this` or a type parameter, or have no annotation", async () => {
+    const n = isDebug || isASAN ? 150 : 1000;
+    const chain = (kind: string, member: (i: number) => string, parameters = "", argument = "") =>
+      `${kind} I0${parameters} { ${member(0)} }\n` +
+      Array.from(
+        { length: n - 1 },
+        (_, i) => `${kind} I${i + 1}${parameters} extends I${i}${parameters} { ${member(i + 1)} }\n`,
+      ).join("") +
+      `declare const last: I${n - 1}${argument};\n`;
+    using dir = project({
+      "classes.ts": chain("class", i => `m${i}() { return ${i}; }`) + `export const probe: never = last.m0;\n`,
+      "generic.ts": chain("interface", i => `k${i}: T`, "<T>", "<string>") + `export const probe: never = last.k0;\n`,
+      "this.ts": chain("interface", i => `k${i}: this`) + `export const probe: never = last.k0;\n`,
+    });
+    const { stdout, exitCode } = await check(dir);
+    expect(stdout).toBe(
+      [
+        `classes.ts(${n + 2},14): error TS2322: Type '() => number' is not assignable to type 'never'.`,
+        `generic.ts(${n + 2},14): error TS2322: Type 'string' is not assignable to type 'never'.`,
+        `this.ts(${n + 2},14): error TS2322: Type 'I${n - 1}' is not assignable to type 'never'.`,
+      ].join("\n"),
+    );
+    expect(exitCode).toBe(1);
+  });
+
   // One thread checks the files in program order, like `tsc --singleThreaded`: see differential.test.ts.
   test("modules that enter the same cycles produce the same output on any number of threads above one", async () => {
     const n = isDebug || isASAN ? 24 : 60;

@@ -554,6 +554,10 @@ export const arrayBufferViewHasBuffer = $newCppFunction(
 
 export const timerInternals = {
   timerClockMs: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.timerClockMs", 0),
+  // Moves the timer id counter of this thread forward: its next timer gets `id`.
+  setNextTimerId: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.setNextTimerId", 1) as (
+    id: number,
+  ) => void,
 };
 
 // Raw datagram descriptor helpers for tests that need an unbound fd (which

@@ -2511,7 +2511,11 @@ it("should add local tarball dependency", async () => {
   expect(await exited).toBe(0);
   expect(urls.sort()).toBeEmpty();
   expect(requested).toBe(0);
-  expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toEqual([
+    ".bun-tag",
+    "index.js",
+    "package.json",
+  ]);
   const package_json = await file(join(package_dir, "node_modules", "baz", "package.json")).json();
   expect(package_json.name).toBe("baz");
   expect(package_json.version).toBe("0.0.3");
@@ -2938,7 +2942,11 @@ it("should add an uncompressed .tar local tarball", async () => {
   expect(await exited).toBe(0);
   expect(urls).toBeEmpty();
   expect(requested).toBe(0);
-  expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toStrictEqual(["index.js", "package.json"]);
+  expect(await readdirSorted(join(package_dir, "node_modules", "baz"))).toStrictEqual([
+    ".bun-tag",
+    "index.js",
+    "package.json",
+  ]);
   const package_json = await file(join(package_dir, "node_modules", "baz", "package.json")).json();
   expect(package_json.name).toBe("baz");
   expect(package_json.version).toBe("0.0.3");

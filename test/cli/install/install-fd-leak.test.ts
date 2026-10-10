@@ -1,4 +1,4 @@
-import { Archive, spawn, write } from "bun";
+import { Archive, spawn } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { rm } from "fs/promises";
 import { bunEnv, bunExe, isMacOS, isWindows, readdirSorted, tempDir } from "harness";
@@ -84,7 +84,7 @@ describe.skipIf(isWindows)("install does not leak file descriptors", () => {
           expect(exitCode).toBe(0);
           // Confirm the copy actually happened — every file must land.
           const files = await readdirSorted(await installed());
-          expect(files.length).toBe(NUM_FILES + 1); // + package.json
+          expect(files.length).toBe(NUM_FILES + 2); // + package.json + .bun-tag
         };
 
         // Cold install: extract tarball → cache → node_modules.
@@ -96,10 +96,7 @@ describe.skipIf(isWindows)("install does not leak file descriptors", () => {
         if (linker === "isolated") {
           await rm(join(String(projDir), "node_modules", ".bun"), { recursive: true, force: true });
         } else {
-          await write(
-            join(await installed(), "package.json"),
-            JSON.stringify({ name: "many-files-pkg", version: "0.0.0-stale" }),
-          );
+          await rm(join(await installed(), ".bun-tag"));
         }
 
         // Warm reinstall: cache → uninstall → node_modules.

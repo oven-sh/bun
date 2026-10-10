@@ -278,7 +278,11 @@ describe.concurrent("tarball integrity", () => {
       expect(err).not.toContain("error:");
       expect(await proc.exited).toBe(0);
       // Package should be installed
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual([
+        ".bun-tag",
+        "index.js",
+        "package.json",
+      ]);
     });
   });
 
@@ -488,7 +492,11 @@ describe.concurrent("tarball integrity", () => {
       expect(err).not.toContain("Integrity check failed");
       expect(err).not.toContain("error:");
       expect(await proc.exited).toBe(0);
-      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual(["index.js", "package.json"]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules", "baz"))).toEqual([
+        ".bun-tag",
+        "index.js",
+        "package.json",
+      ]);
     });
   });
 });

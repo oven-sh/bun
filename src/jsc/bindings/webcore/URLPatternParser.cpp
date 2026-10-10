@@ -387,23 +387,44 @@ std::pair<String, Vector<String>> generateRegexAndNameList(const Vector<Part>& p
         else
             regexpValue = part.value;
 
-        if (part.prefix.isEmpty() && part.suffix.isEmpty()) {
-            if (part.modifier == Modifier::None || part.modifier == Modifier::Optional)
-                result.append('(', regexpValue, ')', convertModifierToString(part.modifier));
+        auto modifier = part.modifier;
+        bool isRepeated = modifier == Modifier::ZeroOrMore || modifier == Modifier::OneOrMore;
+        bool hasAffix = !part.prefix.isEmpty() || !part.suffix.isEmpty();
+
+        // The spec wraps the regexp of a repeated part in a second quantifier. Around a wildcard, which is a quantifier
+        // itself, the matcher then tries every split of the input between the two: exponential time when the match
+        // fails or comes late (https://github.com/whatwg/urlpattern/issues/237). One quantifier matches the same text
+        // in the same order (longest first), so the match and its groups stay.
+        if (isRepeated && part.type == PartType::FullWildcard) {
+            // `.*` also matches the suffix and prefix between two repeats. Zero repeats are "" with no affix, as in
+            // the spec's `((?:.*)*)`, and an absent group with one.
+            modifier = hasAffix && modifier == Modifier::ZeroOrMore ? Modifier::Optional : Modifier::None;
+        } else if (isRepeated && part.type == PartType::SegmentWildcard && !hasAffix) {
+            // `(?:[^/]+?)+` is `[^/]+`. A repeat with an affix keeps the spec's form. That form is linear when the
+            // suffix and prefix hold the delimiter (`/:path+`). When they do not (`{-:x}+`), `[^/]+?` also matches
+            // them, the form is still exponential, and its match order is not that of one quantifier.
+            ASSERT(regexpValue.endsWith("+?"_s));
+            regexpValue = makeString(StringView { regexpValue }.left(regexpValue.length() - 2), convertModifierToString(modifier));
+            modifier = Modifier::None;
+        }
+
+        if (!hasAffix) {
+            if (modifier == Modifier::None || modifier == Modifier::Optional)
+                result.append('(', regexpValue, ')', convertModifierToString(modifier));
             else
-                result.append("((?:"_s, regexpValue, ')', convertModifierToString(part.modifier), ')');
+                result.append("((?:"_s, regexpValue, ')', convertModifierToString(modifier), ')');
 
             continue;
         }
 
-        if (part.modifier == Modifier::None || part.modifier == Modifier::Optional) {
-            result.append("(?:"_s, escapeRegexString(part.prefix), '(', regexpValue, ')', escapeRegexString(part.suffix), ')', convertModifierToString(part.modifier));
+        if (modifier == Modifier::None || modifier == Modifier::Optional) {
+            result.append("(?:"_s, escapeRegexString(part.prefix), '(', regexpValue, ')', escapeRegexString(part.suffix), ')', convertModifierToString(modifier));
 
             continue;
         }
 
-        ASSERT(part.modifier == Modifier::ZeroOrMore || part.modifier == Modifier::OneOrMore);
-        ASSERT(!part.prefix.isEmpty() || !part.suffix.isEmpty());
+        ASSERT(modifier == Modifier::ZeroOrMore || modifier == Modifier::OneOrMore);
+        ASSERT(hasAffix);
 
         result.append("(?:"_s,
             escapeRegexString(part.prefix),
@@ -418,7 +439,7 @@ std::pair<String, Vector<String>> generateRegexAndNameList(const Vector<Part>& p
             escapeRegexString(part.suffix),
             ')');
 
-        if (part.modifier == Modifier::ZeroOrMore)
+        if (modifier == Modifier::ZeroOrMore)
             result.append('?');
     }
 

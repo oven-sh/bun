@@ -1,6 +1,6 @@
 #![allow(dead_code)] // until every rule of the plugin is written
 //! refa's `ast/nodes`, `ast/visit`, `ast/transform` and `ast/set-source`. A node owns its children
-//! and does not know its parent (upstream's `NoParent<..>`); `a === b` is `std::ptr::eq`.
+//! and does not know its parent (upstream's `NoParent<..>`); `a === b` is `==` of two `NodeRef`.
 
 use crate::regexp_char_set::{Char, CharSet};
 use std::any::Any;
@@ -146,6 +146,24 @@ impl<'n> From<&'n mut Element> for NodeMut<'n> {
         }
     }
 }
+
+/// upstream's `===`: the same node, not one like it.
+impl PartialEq for NodeRef<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        match (*self, *other) {
+            (NodeRef::Expression(a), NodeRef::Expression(b)) => std::ptr::eq(a, b),
+            (NodeRef::Concatenation(a), NodeRef::Concatenation(b)) => std::ptr::eq(a, b),
+            (NodeRef::Alternation(a), NodeRef::Alternation(b)) => std::ptr::eq(a, b),
+            (NodeRef::Assertion(a), NodeRef::Assertion(b)) => std::ptr::eq(a, b),
+            (NodeRef::Quantifier(a), NodeRef::Quantifier(b)) => std::ptr::eq(a, b),
+            (NodeRef::CharacterClass(a), NodeRef::CharacterClass(b)) => std::ptr::eq(a, b),
+            (NodeRef::Unknown(a), NodeRef::Unknown(b)) => std::ptr::eq(a, b),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for NodeRef<'_> {}
 
 impl ParentMut<'_> {
     pub(crate) fn alternatives(&mut self) -> &mut Vec<Concatenation> {

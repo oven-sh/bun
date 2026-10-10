@@ -188,6 +188,12 @@ unsafe extern "C" fn mi_malloc_usable_size(block: *const c_void) -> usize {
     // SAFETY: one of these blocks, as mimalloc requires.
     unsafe { (*block.cast::<Header>().sub(1)).size }
 }
+/// No area is shown, so an arena says that nothing is allocated in it.
+#[unsafe(no_mangle)]
+extern "C" fn mi_heap_visit_blocks(_heap: *const c_void, _all: bool, _visitor: *const c_void, _arg: *mut c_void) -> bool {
+    true
+}
+
 #[unsafe(no_mangle)]
 extern "C" fn mi_is_in_heap_region(_block: *const c_void) -> bool {
     true

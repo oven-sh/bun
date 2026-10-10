@@ -200,14 +200,22 @@ impl Rule for Complexity {
         let Some(threshold) = self.threshold else {
             return;
         };
-        for (&owner, &complexity) in &cx.state.complexities {
+        // oxlint reports an initializer that is a function and the function at one place: the initializer first.
+        let is_member = |it: &(&Node<'_>, &usize)| matches!(it.0, Node::Member(_));
+        let all = cx.state.complexities.iter();
+        for (&owner, &complexity) in all.clone().filter(is_member).chain(all.filter(|it| !is_member(it))) {
             if complexity <= threshold {
                 continue;
             }
             let is_oxlint = cx.language().is_oxlint;
             let (name, loc) = match owner {
+                // oxlint points at the parentheses too.
+                Node::Member(member) if is_oxlint => (
+                    b"class field initializer".to_vec(),
+                    member.init().map_or_else(|| member.span(), Expr::outer_span),
+                ),
                 Node::Member(member) => (
-                    if is_oxlint { b"class field initializer".to_vec() } else { b"Class field initializer".to_vec() },
+                    b"Class field initializer".to_vec(),
                     member.init().map_or_else(|| member.span(), Expr::span),
                 ),
                 Node::Func(func) if func.kind() == FnKind::StaticBlock => {

@@ -71,8 +71,16 @@ fn report<'a>(cx: &Context<'a>, conversion: &Conversion<'a>) {
         }
         _ => None,
     };
+    // For tsgolint parentheses are a part of the operand, and a `+` goes up to it.
+    let operand = inner_node.outer_span();
+    let loc = match (cx.language().is_oxlint, node.kind()) {
+        (true, ExprKind::Unary { op: UnOp::Plus, .. }) => Span::new(loc.start, operand.start),
+        (true, ExprKind::Binary { .. }) if loc.start < operand.start => Span::new(loc.start, operand.start),
+        (true, ExprKind::Binary { .. }) => Span::new(operand.end, loc.end),
+        _ => loc,
+    };
     // oxlint points at what is converted.
-    cx.report(if cx.language().is_oxlint { inner_node.outer_span() } else { loc }, UNNECESSARY_TYPE_CONVERSION)
+    cx.report(if cx.language().is_oxlint { operand } else { loc }, UNNECESSARY_TYPE_CONVERSION)
         .comments_apply_at(loc)
         .data("type", type_string)
         .data("violation", violation)

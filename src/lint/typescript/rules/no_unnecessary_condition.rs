@@ -753,7 +753,9 @@ fn check_optional_chain<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
     cx.report(place, NEVER_OPTIONAL_CHAIN)
         .comments_apply_at(question_dot_operator)
         .labels_with(|labels| {
-            labels.first(format!("Type: {}", tsgolint_type_name(get_constrained_type_at_location(node_to_check))));
+            // The type that it goes by, without the `undefined` of a `?.` further left.
+            let ty = goes_by(node_to_check).unwrap_or_else(|| get_constrained_type_at_location(node_to_check));
+            labels.first(format!("Type: {}", tsgolint_type_name(ty.get_non_nullable_type())));
             labels.push(question_dot_operator, "");
         })
         .suggest(SUGGEST_REMOVE_OPTIONAL_CHAIN, |fixer| fixer.replace(question_dot_operator, fix));

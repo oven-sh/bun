@@ -7,6 +7,7 @@ use crate::js_plugin::{self, Route};
 use crate::language::{LanguageOptions, Parser};
 use crate::options::Json;
 use crate::rule::{Meta, Plugin};
+use crate::rule_set::RuleBits;
 use crate::runner::RuleEntry;
 use std::sync::{Arc, OnceLock};
 
@@ -147,6 +148,27 @@ pub(crate) fn find_js_rule<'p>(
     }
 }
 
+/// What is the same for all files that have a configuration.
+#[derive(Clone)]
+pub(super) struct Prepared {
+    /// The rules that are on.
+    pub(super) on: RuleBits,
+    /// They, in the order of the configuration.
+    pub(super) order: Box<[Slot]>,
+    /// What the first of them that refuses its options throws.
+    pub(super) refusal: Option<Arc<[u8]>>,
+    /// Those that need types.
+    pub(super) typed: Box<[&'static Meta]>,
+}
+
+#[derive(Copy, Clone)]
+pub(super) struct Slot {
+    /// Where it is in [`ResolvedConfig::rules`].
+    pub(super) at: u32,
+    /// In the set of the rules of the linter.
+    pub(super) number: u16,
+}
+
 /// Whether the rule finds the files that imports name as `settings["import/resolver"]` says.
 pub(crate) fn needs_resolver(meta: &Meta) -> bool {
     meta.plugin == Plugin::Import && meta.needs_modules
@@ -160,6 +182,8 @@ pub struct ResolvedConfig {
     pub linter: LinterOptions,
     /// In the order of the configuration, which is the order the rules run in.
     pub(super) rules: Vec<ConfiguredRule>,
+    /// What a linter has made of them, the first time that it has linted with the configuration, which is for one linter.
+    pub(super) prepared: OnceLock<Prepared>,
     /// One of them has a [name](ConfiguredRule::name).
     pub has_named_rules: bool,
     /// The file that the plugin was loaded from whose rule one of them [stands in for](ConfiguredRule::or_else), if it is on and
@@ -442,5 +466,6 @@ impl ResolvedConfig {
         self.validate(entry, None, severity, &options);
         self.rules
             .push(ConfiguredRule::new(entry, severity, options));
+        self.prepared = OnceLock::new();
     }
 }

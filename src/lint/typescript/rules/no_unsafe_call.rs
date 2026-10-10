@@ -100,13 +100,30 @@ impl Rule for NoUnsafeCall {
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        match node.kind() {
-            ExprKind::Call(call) => check_call(call.callee(), call.callee(), Use::Call, cx),
-            ExprKind::New(call) => check_call(call.callee(), node, Use::New, cx),
-            ExprKind::TaggedTemplate(call) => {
-                check_call(call.callee(), call.callee(), Use::TemplateTag, cx);
+        let (how, call) = match node.kind() {
+            ExprKind::Call(call) => (Use::Call, call),
+            ExprKind::TaggedTemplate(call) => (Use::TemplateTag, call),
+            ExprKind::New(call) => {
+                check_call(call.callee(), node, Use::New, cx);
+                // What is made can be called or be a tag: two reports at one place. typescript-eslint listens for callees and
+                // tags, with selectors that are more specific than `NewExpression` and so come after it; tsgolint for calls.
+                if !cx.language().is_oxlint
+                    && let Node::Expr(parent) = node.parent()
+                {
+                    match parent.kind() {
+                        ExprKind::Call(outer) if outer.callee() == node => check_call(node, node, Use::Call, cx),
+                        ExprKind::TaggedTemplate(outer) if outer.callee() == node => {
+                            check_call(node, node, Use::TemplateTag, cx);
+                        }
+                        _ => {}
+                    }
+                }
+                return;
             }
-            _ => {}
+            _ => return,
+        };
+        if cx.language().is_oxlint || call.callee().tag() != ExprTag::New {
+            check_call(call.callee(), call.callee(), how, cx);
         }
     }
 }

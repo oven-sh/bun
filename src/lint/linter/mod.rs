@@ -63,6 +63,7 @@ pub use registry::{
     plugin_of_oxlint,
 };
 pub use resolved::{ConfiguredJsRule, ConfiguredRule, LinterOptions, ResolvedConfig, severity_of};
+use resolved::{Prepared, Slot};
 pub use syntax::{
     Refusal, TypesInJavaScript, goes_to_flow, may_be_misread, not_in_a_project, parse_error,
     refusal_of_oxfmt, refusal_of_prettier, refused_by_prettier, refused_by_prettier_with,
@@ -352,6 +353,34 @@ impl<S: RuleSet> Linter<S> {
         rule.refusal.get_or_init(ask).as_deref()
     }
 
+    /// [`ResolvedConfig::prepared`]
+    fn prepare(&self, config: &ResolvedConfig) -> Prepared {
+        let mut on = RuleBits::EMPTY;
+        let (mut order, mut typed, mut refusal) = (Vec::new(), Vec::new(), None);
+        for (at, rule) in config.rules.iter().enumerate() {
+            let Some(number) = self.instance(rule).map(S::number) else {
+                continue;
+            };
+            on.0[number as usize / 64] |= 1 << (number % 64);
+            order.push(Slot {
+                at: at as u32,
+                number,
+            });
+            if rule.entry.meta.requires_types {
+                typed.push(rule.entry.meta);
+            }
+            if refusal.is_none() {
+                refusal = self.refusal(rule).map(Arc::from);
+            }
+        }
+        Prepared {
+            on,
+            order: order.into(),
+            refusal,
+            typed: typed.into(),
+        }
+    }
+
     /// `rule` made from its options. `None` if it is off.
     fn instance(&self, rule: &ConfiguredRule) -> Option<&S> {
         if rule.severity == Severity::Off {
@@ -400,20 +429,6 @@ impl<S: RuleSet> Linter<S> {
         }
         let is_refused = !problems.is_empty();
         let mut result = LintResult::default();
-        let mut running: Vec<Running<S>> = Vec::with_capacity(config.rules.len());
-        for rule in (config.rules.iter()).filter(|it| !is_refused || it.entry.meta.requires_types) {
-            if let Some(instance) = self.instance(rule) {
-                running.push(Running {
-                    entry: rule.entry,
-                    reported_as: rule.reported_as(),
-                    name: rule.name(),
-                    or_else: rule.or_else(),
-                    severity: rule.severity,
-                    rule: RuleRef::Shared(instance),
-                    refusal: self.refusal(rule).map(Cow::Borrowed),
-                });
-            }
-        }
         let enabled_js =
             (config.js_rules.iter()).filter(|it| it.severity != Severity::Off && !is_refused);
         let mut running_js: Vec<RunningJs> = enabled_js
@@ -442,6 +457,41 @@ impl<S: RuleSet> Linter<S> {
                 false => !is_called_oxlint && !it.is_only_of_oxlint,
             }
         };
+        let prepared = config.prepared.get_or_init(|| self.prepare(config));
+        // Nothing but the configuration says which rules run, and how: then a rule for which the file has nothing is left out from
+        // the start.
+        let is_plain = !is_refused
+            && options.rule_filter.is_none()
+            && options.again.is_none()
+            && (config.linter.no_inline_config
+                || !configures_in_comments
+                || !(comments.iter().filter(is_understood)).any(|it| it.label == Label::Rules));
+        let listening = is_plain.then(|| crate::runner::listening::<S>(file, &prepared.on));
+        let mut running: Vec<Running<S>> = Vec::new();
+        for slot in &prepared.order {
+            if listening.as_ref().is_some_and(|it| !it.has(slot.number)) {
+                continue;
+            }
+            let Some(rule) = config.rules.get(slot.at as usize) else {
+                continue;
+            };
+            if let Some(instance) = self.instance(rule)
+                && (!is_refused || rule.entry.meta.requires_types)
+            {
+                running.push(Running {
+                    entry: rule.entry,
+                    reported_as: rule.reported_as(),
+                    name: rule.name(),
+                    or_else: rule.or_else(),
+                    severity: rule.severity,
+                    rule: RuleRef::Shared(instance),
+                    refusal: match is_plain {
+                        true => None,
+                        false => self.refusal(rule).map(Cow::Borrowed),
+                    },
+                });
+            }
+        }
         let (mut parents, mut disable_directives) = (Vec::new(), Vec::new());
         if config.linter.no_inline_config {
             for comment in comments.iter().filter(is_understood) {
@@ -517,14 +567,20 @@ impl<S: RuleSet> Linter<S> {
         // ESLint makes the rules that run, and one of them throws.
         let mut refusals = (running.iter().filter(|it| it.severity != Severity::Off))
             .filter_map(|it| it.refusal.as_deref());
-        if let Some(refusal) = refusals.next() {
+        let refusal = match is_plain {
+            true => prepared.refusal.as_deref(),
+            false => refusals.next(),
+        };
+        if let Some(refusal) = refusal {
             return LintResult {
                 thrown: Some([refusal, b"\nOccurred while linting ", file.path()].concat()),
                 ..LintResult::default()
             };
         }
         // Nor can what disables a rule that does not run for lack of types be called unused.
-        if file.types.is_none() && !options.again.is_some_and(|it| it.had_types) {
+        if file.types.is_none() && is_plain {
+            rules_to_ignore.extend(prepared.typed.iter().copied().map(RuleId::Known));
+        } else if file.types.is_none() && !options.again.is_some_and(|it| it.had_types) {
             let without_types = running
                 .iter()
                 .filter(|it| it.severity != Severity::Off && it.entry.meta.requires_types);
@@ -617,15 +673,17 @@ impl<S: RuleSet> Linter<S> {
             })
             .collect();
         // A rule for which the file has nothing is not started.
-        let mut on = RuleBits::EMPTY;
-        for it in enabled.iter().filter(|it| it.severity != Severity::Off) {
-            let number = it.rule.number();
-            on.0[number as usize / 64] |= 1 << (number % 64);
-        }
-        let listening = crate::runner::listening::<S>(file, &on);
-        for it in &mut enabled {
-            if !listening.has(it.rule.number()) {
-                it.severity = Severity::Off;
+        if !is_plain {
+            let mut on = RuleBits::EMPTY;
+            for it in enabled.iter().filter(|it| it.severity != Severity::Off) {
+                let number = it.rule.number();
+                on.0[number as usize / 64] |= 1 << (number % 64);
+            }
+            let listening = crate::runner::listening::<S>(file, &on);
+            for it in &mut enabled {
+                if !listening.has(it.rule.number()) {
+                    it.severity = Severity::Off;
+                }
             }
         }
         let of_js = problems.len() - before_js;

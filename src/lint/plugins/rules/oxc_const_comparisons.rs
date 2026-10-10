@@ -43,12 +43,14 @@ impl Rule for ConstComparisons {
             }
             return;
         }
+        if op == BinOp::Or {
+            return check_redundant_logical_expression(left, right, true, cx);
+        }
         // All the `&&` of `a && b && c` are looked at together, from the outermost.
         let is_and = |it: Node| matches!(it, Node::Expr(parent) if parent.binary_op() == Some(BinOp::And));
-        if op == BinOp::And && !iter_outer_expressions(e).next().is_some_and(is_and) {
-            check_const_literal_comparisons(e, cx);
+        if !iter_outer_expressions(e).next().is_some_and(is_and) {
+            check_logical_expressions(e, cx);
         }
-        check_redundant_logical_expression(left, right, op == BinOp::Or, cx);
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
@@ -82,15 +84,24 @@ struct ComparisonToConst<'a> {
 
 enum Step<'a> {
     Visit(Expr<'a>),
-    /// Between the operands of an `&&`. `start`: how many comparisons were found before its left operand.
-    CheckRight { right: Expr<'a>, start: usize },
+    /// Between the operands of the `&&` with this index.
+    EndOfLeft(usize),
 }
 
-/// `x < 42 && x < 42`, `x < 42 && x > 42`: for each `&&` in `root`, which is one, its right operand against all the comparisons that
-/// are connected by `&&` in its left operand. These are a part of the list of those in `root`, which is made on the way.
-fn check_const_literal_comparisons<'a>(root: Expr<'a>, cx: &Cx<'a, ConstComparisons>) {
+struct And<'a> {
+    left: Expr<'a>,
+    right: Expr<'a>,
+    /// Which of the comparisons in the root are connected by `&&` in `left`.
+    on_the_left: std::ops::Range<usize>,
+}
+
+/// For each `&&` in `root`, which is one. `x < 42 && x < 42`, `x < 42 && x > 42`: its right operand against all the comparisons that
+/// are connected by `&&` in its left operand. These are a part of the list of those in `root`, which is made first.
+fn check_logical_expressions<'a>(root: Expr<'a>, cx: &Cx<'a, ConstComparisons>) {
     let mut steps: SmallVec<[Step<'a>; 8]> = smallvec![Step::Visit(root)];
     let mut found: SmallVec<[ComparisonToConst<'a>; 4]> = SmallVec::new();
+    // An outer one before an inner one, as oxlint comes to them: several can report at one place.
+    let mut ands: SmallVec<[And<'a>; 4]> = SmallVec::new();
     while let Some(step) = steps.pop() {
         match step {
             Step::Visit(e) => {
@@ -98,21 +109,28 @@ fn check_const_literal_comparisons<'a>(root: Expr<'a>, cx: &Cx<'a, ConstComparis
                 match e.kind() {
                     ExprKind::Binary { op: BinOp::And, left, right } => {
                         steps.push(Step::Visit(right));
-                        steps.push(Step::CheckRight { right, start: found.len() });
+                        steps.push(Step::EndOfLeft(ands.len()));
                         steps.push(Step::Visit(left));
+                        ands.push(And { left, right, on_the_left: found.len()..found.len() });
                     }
                     _ => found.extend(comparison_to_const(e)),
                 }
             }
-            Step::CheckRight { right, start } => {
-                if let Some(on_the_left) = found.get(start..)
-                    && !on_the_left.is_empty()
-                    && let Some(comparison) = comparison_to_const(get_inner_expression(right))
-                {
-                    check_right_operand(on_the_left, comparison, right, cx);
+            Step::EndOfLeft(index) => {
+                if let Some(and) = ands.get_mut(index) {
+                    and.on_the_left.end = found.len();
                 }
             }
         }
+    }
+    for and in &ands {
+        if let Some(on_the_left) = found.get(and.on_the_left.clone())
+            && !on_the_left.is_empty()
+            && let Some(comparison) = comparison_to_const(get_inner_expression(and.right))
+        {
+            check_right_operand(on_the_left, comparison, and.right, cx);
+        }
+        check_redundant_logical_expression(and.left, and.right, false, cx);
     }
 }
 

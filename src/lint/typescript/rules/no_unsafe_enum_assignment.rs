@@ -53,6 +53,11 @@ pub struct State<'a> {
     /// The array and object literals that have something to report, unless they turn out to be
     /// among `checked_nodes`.
     pending: Vec<Expr<'a>>,
+    /// Whether what is looked at is an assignment, a mutation or an assertion.
+    is_about_itself: bool,
+    /// What is reported about those, with the names of the enums. One can also be reported, at the same place, as a part
+    /// of what is around it, which ESLint has first and which is known only at the end for a part of a literal.
+    about_themselves: Vec<(Span, Message, Vec<u8>)>,
     types: TypeCache<'a>,
     /// [`describe_enum_types`] of one type.
     descriptions: FxHashMap<Type<'a>, Vec<u8>>,
@@ -312,6 +317,9 @@ fn report<'a>(cx: &mut Context<'a>, node: Span, message: Message, receiver_types
             .clone(),
         _ => describe_enum_types(receiver_types),
     };
+    if cx.state.is_about_itself {
+        return cx.state.about_themselves.push((node, message, enum_names));
+    }
     cx.report(node, message).data("enumNames", enum_names);
 }
 
@@ -818,6 +826,7 @@ impl Rule for NoUnsafeEnumAssignment {
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        cx.state.is_about_itself = matches!(node.tag(), ExprTag::Assign | ExprTag::Unary | ExprTag::As);
         match node.tag() {
             // As an expression, so that it comes before its body: both can be reported at the same
             // place, and ESLint has what is about the arrow function first.
@@ -865,6 +874,7 @@ impl Rule for NoUnsafeEnumAssignment {
             }
             _ => {}
         }
+        cx.state.is_about_itself = false;
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -960,6 +970,9 @@ impl Rule for NoUnsafeEnumAssignment {
             if !cx.state.checked_nodes.contains(&literal) {
                 check_literal(cx, literal, true);
             }
+        }
+        for (node, message, enum_names) in std::mem::take(&mut cx.state.about_themselves) {
+            cx.report(node, message).data("enumNames", enum_names);
         }
     }
 }

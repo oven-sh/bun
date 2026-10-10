@@ -2569,11 +2569,15 @@ describe.concurrent("bun lint", () => {
         const link = (dir: string) =>
           symlinkSync(join(dir, "shared"), join(dir, "packages", "a", "shared"), "junction");
         const options = { cwd: "packages/a", before: link, reads: ["shared/d.js"] };
-        const [linked, named] = await Promise.all([
+        // Jujutsu has one without a `.git`.
+        const { ".git/HEAD": _, ...rest } = files;
+        const [linked, named, ofJujutsu] = await Promise.all([
           lint(files, ["--fix", "shared/d.js"], options),
           lint(files, ["--fix", "../../shared/d.js"], options),
+          lint({ ...rest, ".jj/working_copy/type": "local" }, ["--fix", "shared/d.js"], options),
         ]);
-        expect([linked.files, named.files]).toEqual([{ "shared/d.js": fixed }, { "shared/d.js": fixed }]);
+        const written = { "shared/d.js": fixed };
+        expect([linked.files, named.files, ofJujutsu.files]).toEqual([written, written, written]);
       });
 
       // In a container, say, with the project of a user mounted into it.

@@ -486,6 +486,86 @@ fn place(value: Expr) -> Span {
     }
 }
 
+/// Where in this file a function that returns nothing is asked for, and as what type.
+type Expectation<'a> = Option<(Span, Type<'a>)>;
+
+/// tsgolint's `expectationRange`: the type annotation of a declaration, or its name, or all of it.
+fn tsgolint_expectation_range(declaration: TsNode) -> Span {
+    declaration.type_node().or_else(|| declaration.name()).unwrap_or(declaration).span()
+}
+
+/// tsgolint's `localExpectationForSymbol`: for the first declaration that is in this file.
+fn tsgolint_expectation_for_symbol<'a>(symbol: Option<TsSymbol<'a>>, ty: Type<'a>) -> Expectation<'a> {
+    let symbol = symbol?;
+    let mut declarations = symbol.value_declaration().into_iter().chain(symbol.declarations());
+    Some((tsgolint_expectation_range(declarations.find(|it| it.is_in_linted_file())?), ty))
+}
+
+/// What tsgolint's `voidFunctionArguments` keeps for the argument at `index`: the last parameter in this file whose
+/// type is that of a function that returns nothing, or else the first of which the contextual type of the argument is.
+fn tsgolint_expectation_for_argument<'a>(node: Expr<'a>, call: Call<'a>, index: usize) -> Expectation<'a> {
+    let expression = call.callee().ts_node();
+    let contextual_type = node.ts_node().get_contextual_type_for_argument_at_index(index);
+    let accepts_void = |ty: Type<'a>| {
+        !is_thenable_returning_function_type(expression, ty) && is_void_returning_function_type(expression, ty)
+    };
+    let (mut of_parameter, mut of_context) = (None, None);
+    for sub_type in union_constituents(expression.get_type_at_location()) {
+        let signatures = match node.tag() == ExprTag::New {
+            true => sub_type.get_construct_signatures(),
+            false => sub_type.get_call_signatures(),
+        };
+        for signature in signatures {
+            for (at, parameter) in signature.parameters().iter().enumerate() {
+                let Some(declaration) = parameter.value_declaration().filter(|it| it.is_in_linted_file()) else {
+                    continue;
+                };
+                let ty = parameter.get_type_at_location(expression);
+                let ty = match is_rest_parameter_declaration(declaration) {
+                    false => Some(ty).filter(|_| at == index),
+                    true if index < at => None,
+                    true if ty.is_array_type() => ty.get_type_arguments().first(),
+                    true if ty.is_tuple_type() => ty.get_type_arguments().get(index - at),
+                    true => None,
+                };
+                let Some(ty) = ty else {
+                    continue;
+                };
+                if accepts_void(ty) {
+                    of_parameter = Some((tsgolint_expectation_range(declaration), ty));
+                }
+                if let Some(contextual_type) = contextual_type.filter(|it| *it != ty && accepts_void(*it)) {
+                    of_context = of_context.or(Some((tsgolint_expectation_range(declaration), contextual_type)));
+                }
+            }
+        }
+    }
+    of_parameter.or(of_context)
+}
+
+/// What tsgolint says: the type of what is reported, what is expected, and the place of the diagnostic.
+fn tsgolint_labels<'a>(
+    labels: &mut Details,
+    ty: Type<'a>,
+    is_function: bool,
+    primary: Span,
+    expectation: Expectation<'a>,
+) {
+    let is_callback = is_function || !ty.get_call_signatures().is_empty();
+    let what = if is_callback { "This callback" } else { "This expression" };
+    labels.first(format!("{what} has type `{}`.", bstr::BStr::new(&ty.to_text())));
+    if let Some((at, ty)) = expectation {
+        let ty = ty.to_text();
+        let ty = bstr::BStr::new(&ty);
+        labels.push(at, format!("This context accepts a `void`-returning callback through type `{ty}`."));
+    }
+    labels.push(primary, "");
+}
+
+fn tsgolint_labels_of_value<'a>(labels: &mut Details, value: Expr<'a>, expectation: Expectation<'a>) {
+    tsgolint_labels(labels, value.ty(), value.as_fn().is_some(), place(value), expectation);
+}
+
 impl NoMisusedPromises {
     // ───────────────────────────── conditionals ─────────────────────────────
 
@@ -502,7 +582,7 @@ impl NoMisusedPromises {
                 Some(FlagUnions::None) | None => false,
             };
         if is_misused {
-            cx.report(node, CONDITIONAL);
+            cx.report(node, CONDITIONAL).labels_with(|labels| tsgolint_labels_of_value(labels, node, None));
         }
     }
 
@@ -565,7 +645,8 @@ impl NoMisusedPromises {
         let is_member_expression =
             |it: &Expr| matches!(it.tag(), ExprTag::Dot | ExprTag::Index) && !it.is_chain_root();
         for _ in 0..=call.args().iter().filter(is_member_expression).count() {
-            cx.report(place(callback), PREDICATE);
+            cx.report(place(callback), PREDICATE)
+                .labels_with(|labels| tsgolint_labels_of_value(labels, callback, None));
         }
     }
 
@@ -595,7 +676,10 @@ impl NoMisusedPromises {
         void_function_arguments(node, call, &mut arguments, &mut cx.state.parameters);
         for argument in arguments {
             if argument.accepted.void_return && !argument.accepted.thenable_return {
-                cx.report(place(argument.node), VOID_RETURN_ARGUMENT);
+                cx.report(place(argument.node), VOID_RETURN_ARGUMENT).labels_with(|labels| {
+                    let expectation = tsgolint_expectation_for_argument(node, call, argument.index);
+                    tsgolint_labels_of_value(labels, argument.node, expectation);
+                });
             }
         }
     }
@@ -610,7 +694,10 @@ impl NoMisusedPromises {
         }
         let left = target.ts_node();
         if returns_thenable(value.ts_node()) && is_void_returning_function_type(left, left.get_type_at_location()) {
-            cx.report(place(value), VOID_RETURN_VARIABLE);
+            cx.report(place(value), VOID_RETURN_VARIABLE).labels_with(|labels| {
+                let expectation = tsgolint_expectation_for_symbol(target.ts_symbol(), left.get_type_at_location());
+                tsgolint_labels_of_value(labels, value, expectation);
+            });
         }
     }
 
@@ -627,7 +714,8 @@ impl NoMisusedPromises {
             has_dispose_method(initializer, initializer.get_type_at_location(), is_thenable_returning_function_type)
         };
         if is_using && disposes_asynchronously() {
-            cx.report(place(init), VOID_RETURN_VARIABLE);
+            cx.report(place(init), VOID_RETURN_VARIABLE)
+                .labels_with(|labels| tsgolint_labels_of_value(labels, init, None));
         }
         let Some(annotation) = annotation else {
             return;
@@ -646,26 +734,34 @@ impl NoMisusedPromises {
         let name = node.pat().ts_node();
         let variable_type = name.get_type_at_location();
         if has_dispose_method(name, variable_type, is_void_returning_function_type) && disposes_asynchronously() {
-            cx.report(place(init), VOID_RETURN_VARIABLE);
+            cx.report(place(init), VOID_RETURN_VARIABLE)
+                .labels_with(|labels| tsgolint_labels_of_value(labels, init, None));
         }
         if is_possibly_function_type(annotation)
             && can_be_function(init, &cx.state.callable_literals)
             && is_void_returning_function_type(initializer, variable_type)
             && returns_thenable(initializer)
         {
-            cx.report(place(init), VOID_RETURN_VARIABLE);
+            cx.report(place(init), VOID_RETURN_VARIABLE).labels_with(|labels| {
+                tsgolint_labels_of_value(labels, init, Some((annotation.outer_span(), variable_type)));
+            });
         }
     }
 
     /// Reports a function that is the value of a property.
-    fn report_property_function<'a>(function_node: Func<'a>, cx: &Cx<'a, Self>) {
-        match function_node.return_type() {
-            Some(return_type) => cx.report(return_type, VOID_RETURN_PROPERTY),
-            None if cx.language().is_oxlint => {
-                cx.report(tsgolint_promise_range(function_node), VOID_RETURN_PROPERTY)
-            }
-            None => cx.report(get_function_head_loc(function_node), VOID_RETURN_PROPERTY),
+    fn report_property_function<'a>(
+        function_node: Func<'a>,
+        expectation: impl FnOnce() -> Expectation<'a>,
+        cx: &Cx<'a, Self>,
+    ) {
+        let place = match function_node.return_type() {
+            Some(return_type) => return_type.span(),
+            None if cx.language().is_oxlint => tsgolint_promise_range(function_node),
+            None => get_function_head_loc(function_node),
         };
+        cx.report(place, VOID_RETURN_PROPERTY).labels_with(|labels| {
+            tsgolint_labels(labels, function_node.type_at_location(), true, place, expectation());
+        });
     }
 
     /// `key: value` and `key`
@@ -681,10 +777,22 @@ impl NoMisusedPromises {
         {
             return;
         }
+        // tsgolint's `localPropertyExpectation`
+        let expectation = || {
+            let Node::Prop(property) = value.parent() else {
+                return None;
+            };
+            let Node::Expr(object) = property.parent() else {
+                return None;
+            };
+            let symbol = object.contextual_type()?.get_property(property.key()?.name()?.bytes());
+            tsgolint_expectation_for_symbol(symbol, initializer.get_contextual_type()?)
+        };
         match value.as_fn() {
-            Some(function_node) => Self::report_property_function(function_node, cx),
+            Some(function_node) => Self::report_property_function(function_node, expectation, cx),
             None => {
-                cx.report(value, VOID_RETURN_PROPERTY);
+                cx.report(value, VOID_RETURN_PROPERTY)
+                    .labels_with(|labels| tsgolint_labels_of_value(labels, value, expectation()));
             }
         }
     }
@@ -705,8 +813,10 @@ impl NoMisusedPromises {
             return;
         };
         let name = NameOf(node).ts_node();
-        if is_void_returning_function_type(name, property_symbol.get_type_at_location(name)) {
-            Self::report_property_function(function_node, cx);
+        let contextual_type = property_symbol.get_type_at_location(name);
+        if is_void_returning_function_type(name, contextual_type) {
+            let expectation = || tsgolint_expectation_for_symbol(Some(property_symbol), contextual_type);
+            Self::report_property_function(function_node, expectation, cx);
         }
     }
 
@@ -725,7 +835,7 @@ impl NoMisusedPromises {
                 .is_some_and(|contextual_type| is_void_returning_function_type(expression, contextual_type))
         {
             let at = if cx.language().is_oxlint { place(value) } else { expression_container };
-            cx.report(at, VOID_RETURN_ATTRIBUTE);
+            cx.report(at, VOID_RETURN_ATTRIBUTE).labels_with(|labels| tsgolint_labels_of_value(labels, value, None));
         }
     }
 
@@ -749,7 +859,10 @@ impl NoMisusedPromises {
                 .get_contextual_type()
                 .is_some_and(|contextual_type| is_void_returning_function_type(expression, contextual_type))
         {
-            cx.report(place(argument), VOID_RETURN_RETURN_VALUE);
+            cx.report(place(argument), VOID_RETURN_RETURN_VALUE).labels_with(|labels| {
+                let at = function_node.return_type().map(|it| it.outer_span());
+                tsgolint_labels_of_value(labels, argument, at.zip(expression.get_contextual_type()));
+            });
         }
     }
 
@@ -790,7 +903,14 @@ impl NoMisusedPromises {
                         Some(func) => tsgolint_promise_range(func),
                         None => member.span(),
                     };
-                    cx.report(place, VOID_RETURN_INHERITED_METHOD).data("heritageTypeName", heritage_type.ty.to_text());
+                    cx.report(place, VOID_RETURN_INHERITED_METHOD)
+                        .data("heritageTypeName", heritage_type.ty.to_text())
+                        .labels_with(|labels| {
+                            let member_type = heritage_member.get_type_at_location(node_member);
+                            let expectation = tsgolint_expectation_for_symbol(Some(heritage_member), member_type);
+                            let ty = node_member.get_type_at_location();
+                            tsgolint_labels(labels, ty, member.func().is_some(), place, expectation);
+                        });
                 }
             }
         }
@@ -801,7 +921,9 @@ impl NoMisusedPromises {
     fn check_spread_argument<'a>(argument: Expr<'a>, cx: &Cx<'a, Self>) {
         if is_sometimes_thenable(argument.ts_node()) {
             let dots = Span::before(argument.parent().span().start, argument.outer_span());
-            cx.report(argument, SPREAD).comments_apply_at(dots);
+            cx.report(argument, SPREAD).comments_apply_at(dots).labels_with(|labels| {
+                tsgolint_labels(labels, argument.ty(), argument.as_fn().is_some(), dots, None);
+            });
         }
     }
 

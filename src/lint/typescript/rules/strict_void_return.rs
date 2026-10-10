@@ -432,10 +432,10 @@ impl Rule for StrictVoidReturn {
     const ON: On = On::new()
         .exprs(&[ExprTag::Array, ExprTag::Assign, ExprTag::Call, ExprTag::New])
         .stmts(&[StmtTag::Return])
-        .funcs()
         .members()
         .props()
-        .var_decls();
+        .var_decls()
+        .finish();
     type State<'a> = ExpectedByCallee<'a>;
 
     fn new(options: &Options) -> Self {
@@ -487,14 +487,6 @@ impl Rule for StrictVoidReturn {
         }
     }
 
-    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        if func.is_arrow()
-            && let FnBody::Expr(body) = func.body()
-        {
-            self.check_expression_node(body, cx);
-        }
-    }
-
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         self.check_member(member, cx);
     }
@@ -506,6 +498,20 @@ impl Rule for StrictVoidReturn {
     fn var_decl<'a>(&self, node: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(init) = node.init() {
             self.check_expression_node(init, cx);
+        }
+    }
+
+    // The body of an arrow function can be reported twice at one place: for what is around the function, and for the type
+    // that the function says it returns. The originals come to the function after what is around it.
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let bodies = cx.file().funcs().filter_map(|func| match func.body() {
+            FnBody::Expr(body) if func.is_arrow() && may_be_function(body) => Some(body),
+            _ => None,
+        });
+        let mut bodies: Vec<_> = bodies.collect();
+        utils::sort::sort_unstable_by_key(&mut bodies, |body| body.span().start);
+        for body in bodies {
+            self.check_expression_node(body, cx);
         }
     }
 }

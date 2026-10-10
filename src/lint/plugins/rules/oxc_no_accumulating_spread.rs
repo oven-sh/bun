@@ -72,7 +72,7 @@ impl Rule for NoAccumulatingSpread {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        cx.state.in_loops.sort_unstable_by_key(|it| it.spread.start);
+        utils::sort::sort_unstable_by_key(&mut cx.state.in_loops, |it| it.spread.start);
         for it in &cx.state.in_loops {
             let report = cx
                 .report(it.accumulator, LOOP_SPREAD)

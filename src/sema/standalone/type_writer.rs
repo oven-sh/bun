@@ -27,7 +27,7 @@ impl Checker<'_, '_> {
     /// `typeWriterWalker.getTypes`. The file must have been checked, as in the harness.
     pub fn types_at_locations(&mut self, file: FileId) -> Vec<TypeAtLocation> {
         if self.is_flow_analysis_left_disabled(file) {
-            self.flow_analysis_disabled = Some(file);
+            self.disable_flow_analysis(file);
         }
         let hir = self.hir(file);
         let mut walk = TypeWalk {
@@ -53,7 +53,7 @@ impl Checker<'_, '_> {
             return Vec::new();
         }
         if self.is_flow_analysis_left_disabled(file) {
-            self.flow_analysis_disabled = Some(file);
+            self.disable_flow_analysis(file);
         }
         let mut found = Vec::new();
         for node in self.visited_nodes(file) {

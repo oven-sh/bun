@@ -5517,7 +5517,7 @@ impl<'p, 's> Checker<'p, 's> {
         start: Start,
         of_name: Crossing,
     ) -> TypeId {
-        if self.flow_analysis_disabled == Some(file) {
+        if self.flow_analysis_disabled.contains(&file) {
             return TypeId::ERROR;
         }
         let bound = self.bound(file);
@@ -5573,10 +5573,17 @@ impl<'p, 's> Checker<'p, 's> {
         ty
     }
 
+    /// `c.flowAnalysisDisabled = true`, for the references in `file`.
+    pub(crate) fn disable_flow_analysis(&mut self, file: FileId) {
+        if !self.flow_analysis_disabled.contains(&file) {
+            self.flow_analysis_disabled.push(file);
+        }
+    }
+
     /// `getFlowTypeOfReferenceEx`, once the `FlowState` is set up.
     fn get_flow_type_of_reference(&mut self, mut walk: Walk, flow: FlowId) -> TypeId {
         let (file, e, declared) = (walk.reference.file, walk.reference.at, walk.declared);
-        if self.flow_analysis_disabled == Some(file) {
+        if self.flow_analysis_disabled.contains(&file) {
             return TypeId::ERROR;
         }
         self.flow_invocation_count += 1;
@@ -5593,7 +5600,7 @@ impl<'p, 's> Checker<'p, 's> {
         let evolved = evolved.ty;
         // errorType, and `reportFlowControlError`
         if walk.too_deep {
-            self.flow_analysis_disabled = Some(file);
+            self.disable_flow_analysis(file);
             self.report_flow_control_error(&walk.reference);
             return TypeId::ERROR;
         }
@@ -5821,7 +5828,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `getFlowNodeOfNode(reference) == nil`: `declaredType`. `expr_flow` has the unreachable
         // node for that too.
         if flow == UNREACHABLE
-            && self.flow_analysis_disabled != Some(file)
+            && !self.flow_analysis_disabled.contains(&file)
             && !is_narrowable_reference(self.hir(file), e)
         {
             return TypeId::AUTO;
@@ -8214,7 +8221,7 @@ impl<'p, 's> Checker<'p, 's> {
         test: ExprId,
         sense: bool,
     ) -> TypeId {
-        if self.flow_analysis_disabled == Some(reference.file) {
+        if self.flow_analysis_disabled.contains(&reference.file) {
             return TypeId::ERROR;
         }
         self.flow_invocation_count += 1;
@@ -8226,7 +8233,7 @@ impl<'p, 's> Checker<'p, 's> {
             walk.depth = 1;
             let ty = self.flow_type(&mut walk, before).ty;
             if walk.too_deep {
-                self.flow_analysis_disabled = Some(reference.file);
+                self.disable_flow_analysis(reference.file);
                 self.report_flow_control_error(reference);
                 return TypeId::ERROR;
             }

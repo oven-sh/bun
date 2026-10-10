@@ -688,6 +688,31 @@ describe.concurrent("bun check", () => {
         expect(exitCode).toBe(1);
       }
     });
+
+    test("nor does another file that is too long switch it on again", async () => {
+      using dir = project({
+        "a-generated.ts":
+          `import { last } from "./c-generated";\n` +
+          long(
+            `data[0] = last;\nexport const f = (p: string | number) => {\n  const n: number = p;\n  return [n, data];\n};\n`,
+          ),
+        "c-generated.ts": "const rows = [];\n" + repeat("rows[0] = 0;\n", 3000) + "export const last = rows;\n",
+        "wrong.ts": wrong,
+      });
+      const tooLong = (file: string) =>
+        `${file}(1,1): error TS2563: The containing function or module body is too large for control flow analysis.`;
+      for (const { stdout, exitCode } of await Promise.all(
+        [1, 2, 8].map(threads => check(dir, ["--threads", String(threads)])),
+      )) {
+        // In a debug build the stack can run out before the 2,000 levels of TS2563.
+        if (isDebug || isASAN) {
+          expect(stdout.split("\n").filter(line => line.startsWith("wrong.ts"))).toEqual(errors);
+        } else {
+          expect(stdout).toBe([tooLong("a-generated.ts"), tooLong("c-generated.ts"), ...errors].join("\n"));
+        }
+        expect(exitCode).toBe(1);
+      }
+    });
   });
 
   // The time was cubic and worse: 16 s for 1,000 lines in a release build, where it now takes 0.2 s.

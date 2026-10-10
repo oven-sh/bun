@@ -146,6 +146,7 @@ pub fn enqueue_dependency_list(
     this.drain_dependency_list();
 }
 
+/// `is_required` is `RequiredPackages::contains`, not the behavior of `dependency_id` alone.
 pub fn enqueue_tarball_for_download(
     this: &mut PackageManager,
     dependency_id: DependencyID,
@@ -153,15 +154,13 @@ pub fn enqueue_tarball_for_download(
     url: &[u8],
     task_context: TaskCallbackContext,
     patch_name_and_version_hash: Option<u64>,
+    is_required: bool,
 ) -> Result<(), EnqueueTarballForDownloadError> {
     let task_id = Task::Id::for_tarball(url);
-    if this.network_task_has_failed(task_id) {
+    if download_already_failed(this, task_id, is_required) {
         return Err(EnqueueTarballForDownloadError::AlreadyFailed);
     }
     if this.options.offline == crate::package_manager_real::options::OfflineMode::Offline {
-        let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
-            .behavior
-            .is_required();
         let name = this
             .lockfile
             .str(&this.lockfile.packages.get(package_id as usize).name)
@@ -181,9 +180,6 @@ pub fn enqueue_tarball_for_download(
         return Ok(());
     }
 
-    let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
-        .behavior
-        .is_required();
     let package = *this.lockfile.packages.get(package_id as usize);
     if let Some(task) = run_tasks::generate_network_task_for_tarball(
         this,
@@ -261,6 +257,7 @@ pub enum GitEnqueueResult {
     OfflineMiss,
 }
 
+/// `is_required`: see `enqueue_tarball_for_download`.
 pub fn enqueue_git_for_checkout(
     this: &mut PackageManager,
     dependency_id: DependencyID,
@@ -268,6 +265,7 @@ pub fn enqueue_git_for_checkout(
     resolution: &Resolution,
     task_context: TaskCallbackContext,
     patch_name_and_version_hash: Option<u64>,
+    is_required: bool,
 ) -> GitEnqueueResult {
     // SAFETY: caller passes `resolution.tag == Git`; the `git` arm is the
     // active union field. Copy out so the value no longer borrows
@@ -285,13 +283,10 @@ pub fn enqueue_git_for_checkout(
     let checkout_id = Task::Id::for_git_checkout(url, resolved);
     // --offline: decide before any queue registration, so an optional miss leaves
     // nothing behind and a later required edge still reaches the report
-    if this.git_repositories.get(&clone_id).is_none() {
-        let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
-            .behavior
-            .is_required();
-        if offline_git_miss(this, clone_id, alias, is_required) {
-            return GitEnqueueResult::OfflineMiss;
-        }
+    if this.git_repositories.get(&clone_id).is_none()
+        && offline_git_miss(this, clone_id, alias, is_required)
+    {
+        return GitEnqueueResult::OfflineMiss;
     }
     let checkout_queue = this
         .task_queue
@@ -338,6 +333,28 @@ pub fn enqueue_git_for_checkout(
         this.enqueue_git_task(task);
     }
     GitEnqueueResult::Queued
+}
+
+/// An optional-only failure was reported as a warning, so a required request downloads again.
+fn download_already_failed(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    is_required: bool,
+) -> bool {
+    let Some(entry) = this.network_dedupe_map.get_mut(&task_id) else {
+        return false;
+    };
+    if !entry.failed {
+        entry.is_required |= is_required;
+        return false;
+    }
+    if entry.is_required || !is_required {
+        return true;
+    }
+    let _ = this.network_dedupe_map.remove(&task_id);
+    // No task runs for this id, so nothing would call the callbacks left in its queue.
+    let _ = this.task_queue.remove(&task_id);
+    false
 }
 
 /// Under `--offline`, an install-phase request for a package that is not in the cache
@@ -452,6 +469,7 @@ pub unsafe fn enqueue_parse_npm_package(
     unsafe { &raw mut (*task.as_ptr()).threadpool_task }
 }
 
+/// `is_required`: see `enqueue_tarball_for_download`.
 pub fn enqueue_package_for_download(
     this: &mut PackageManager,
     name: &[u8],
@@ -461,18 +479,14 @@ pub fn enqueue_package_for_download(
     url: &[u8],
     task_context: TaskCallbackContext,
     patch_name_and_version_hash: Option<u64>,
+    is_required: bool,
 ) -> Result<(), EnqueuePackageForDownloadError> {
     let task_id = Task::Id::for_npm_package(name, version);
-    if this.network_task_has_failed(task_id) {
+    if download_already_failed(this, task_id, is_required) {
         return Err(EnqueuePackageForDownloadError::AlreadyFailed);
     }
-    {
-        let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
-            .behavior
-            .is_required();
-        if offline_tarball_miss(this, task_id, name, is_required) {
-            return Err(EnqueuePackageForDownloadError::Offline);
-        }
+    if offline_tarball_miss(this, task_id, name, is_required) {
+        return Err(EnqueuePackageForDownloadError::Offline);
     }
     let task_queue = this.task_queue.get_or_put(task_id)?;
     if !task_queue.found_existing {
@@ -485,9 +499,6 @@ pub fn enqueue_package_for_download(
         return Ok(());
     }
 
-    let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
-        .behavior
-        .is_required();
     let package = *this.lockfile.packages.get(package_id as usize);
 
     if let Some(task) = run_tasks::generate_network_task_for_tarball(
@@ -3201,6 +3212,7 @@ impl PackageManager {
         url: &[u8],
         task_context: TaskCallbackContext,
         patch_name_and_version_hash: Option<u64>,
+        is_required: bool,
     ) -> Result<(), EnqueueTarballForDownloadError> {
         enqueue_tarball_for_download(
             self,
@@ -3209,6 +3221,7 @@ impl PackageManager {
             url,
             task_context,
             patch_name_and_version_hash,
+            is_required,
         )
     }
 
@@ -3239,6 +3252,7 @@ impl PackageManager {
         resolution: &Resolution,
         task_context: TaskCallbackContext,
         patch_name_and_version_hash: Option<u64>,
+        is_required: bool,
     ) -> GitEnqueueResult {
         enqueue_git_for_checkout(
             self,
@@ -3247,6 +3261,7 @@ impl PackageManager {
             resolution,
             task_context,
             patch_name_and_version_hash,
+            is_required,
         )
     }
 
@@ -3260,6 +3275,7 @@ impl PackageManager {
         url: &[u8],
         task_context: TaskCallbackContext,
         patch_name_and_version_hash: Option<u64>,
+        is_required: bool,
     ) -> Result<(), EnqueuePackageForDownloadError> {
         enqueue_package_for_download(
             self,
@@ -3270,6 +3286,7 @@ impl PackageManager {
             url,
             task_context,
             patch_name_and_version_hash,
+            is_required,
         )
     }
 }

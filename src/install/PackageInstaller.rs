@@ -91,6 +91,7 @@ pub struct PackageInstaller<'a> {
     pub(crate) destination_dir_subpath_buf: PathBuffer,
     pub(crate) folder_path_buf: PathBuffer,
     pub(crate) successfully_installed: Bitset,
+    pub(crate) required_packages: lockfile::tree::RequiredPackages<'a>,
     pub(crate) command_ctx: Command::Context<'a>,
     pub(crate) current_tree_id: lockfile::tree::Id,
     /// Trees that live under a self-contained workspace: packages there are copied
@@ -1604,6 +1605,9 @@ impl<'a> PackageInstaller<'a> {
                 } else {
                     patch_name_and_version_hash
                 };
+                let is_required =
+                    self.required_packages
+                        .contains(self.manager(), dependency_id, package_id);
                 match resolution.tag {
                     resolution::Tag::Git => {
                         if package_manager::enqueue_git_for_checkout(
@@ -1613,6 +1617,7 @@ impl<'a> PackageInstaller<'a> {
                             resolution,
                             context,
                             download_patch_hash,
+                            is_required,
                         ) == package_manager::GitEnqueueResult::OfflineMiss
                         {
                             self.increment_tree_install_count(
@@ -1632,6 +1637,7 @@ impl<'a> PackageInstaller<'a> {
                             &url,
                             context,
                             download_patch_hash,
+                            is_required,
                         ) {
                             Ok(()) => {}
                             Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
@@ -1664,6 +1670,7 @@ impl<'a> PackageInstaller<'a> {
                             resolution.remote_tarball().slice(string_buf!()),
                             context,
                             download_patch_hash,
+                            is_required,
                         ) {
                             Ok(()) => {}
                             Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
@@ -1702,6 +1709,7 @@ impl<'a> PackageInstaller<'a> {
                             npm.url.slice(string_buf!()),
                             context,
                             download_patch_hash,
+                            is_required,
                         ) {
                             Ok(()) => {}
                             Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),

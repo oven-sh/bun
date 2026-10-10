@@ -352,6 +352,9 @@ impl hooks::AutoInstaller for PackageManager {
         // preserves the tag/union pairing.
         let npm = *r.npm();
         let url = self.lockfile.str(&npm.url).to_vec();
+        let is_required = self.lockfile.buffers.dependencies[dependency_id as usize]
+            .behavior
+            .is_required();
         enqueue::enqueue_package_for_download(
             self,
             name,
@@ -361,6 +364,7 @@ impl hooks::AutoInstaller for PackageManager {
             &url,
             crate::TaskCallbackContext::RootRequestId(ctx.root_request_id),
             patch_name_and_version_hash,
+            is_required,
         )
         .map_err(|e| crate::Error::from(e).into())
     }

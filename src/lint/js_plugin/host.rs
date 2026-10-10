@@ -1,6 +1,6 @@
 //! What the linter talks to: loads plugins, and runs their rules on a file.
 
-use super::engine::{Engine, Vm};
+use super::engine::{Cost, Engine, Vm};
 use super::offsets::Offsets;
 use super::rules::{Configured, FileSettings, Plugin, Rule, Schema};
 use super::wire::{self, ask, call, result};
@@ -258,6 +258,16 @@ impl<'e> Host<'e> {
     /// [`Engine::expect`]
     pub fn expect(&self, files: usize, size: u64, most: usize) {
         self.engine.expect(files, size, most);
+    }
+
+    /// [`Engine::remember`]
+    pub fn remember(&self, cost: Cost) {
+        self.engine.remember(cost);
+    }
+
+    /// [`Engine::cost`]
+    pub fn cost(&self) -> Option<Cost> {
+        self.engine.cost()
     }
 
     /// [`Engine::keep_vm`]

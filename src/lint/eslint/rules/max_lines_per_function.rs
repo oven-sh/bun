@@ -130,7 +130,12 @@ impl MaxLinesPerFunction {
             true => ([&b"The "[..], &utils::oxlint::get_function_name_with_kind(func)].concat(), func.estree_span()),
             false => {
                 let name = ast_utils::get_function_name_with_kind(func);
-                (text::upper_case_first(&name).into_owned(), ast_utils::get_function_head_loc(func))
+                // Before ESLint 10 it is all whose lines are counted.
+                let place = match cx.language().eslint_major < 10 {
+                    true => span,
+                    false => ast_utils::get_function_head_loc(func),
+                };
+                (text::upper_case_first(&name).into_owned(), place)
             }
         };
         cx.report(place, EXCEED)

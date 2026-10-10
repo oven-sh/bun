@@ -22,6 +22,8 @@ impl Rule for RequireYield {
             {
                 // oxlint points at the name of the function, if it has one of its own.
                 let place = match func.name() {
+                    // Before ESLint 10 it is the whole function.
+                    _ if cx.language().eslint_major < 10 => func.estree_span(),
                     _ if !cx.language().is_oxlint => ast_utils::get_function_head_loc(func),
                     Some(name) => name.span(),
                     None => func.estree_span(),

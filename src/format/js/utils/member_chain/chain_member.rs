@@ -1,3 +1,4 @@
+use crate::js::comments::inner_of_link;
 use crate::js::format::{
     FormatNonNullMarks, identifier, no_comment_trails_what_is_before_another,
     write_trailing_comments_of,
@@ -51,6 +52,20 @@ impl<'a> ChainMember<'a> {
             | Self::Node(e) => e,
         }
     }
+
+    /// Where what the link follows ends. `None` for what the chain starts with.
+    pub(super) fn inner_end(&self) -> Option<u32> {
+        match *self {
+            Self::Node(_) => None,
+            _ => inner_of_link(self.expr()).map(|inner| inner.span().end),
+        }
+    }
+}
+
+/// Prettier attaches every comment between the links of a chain to one of them, which it leads or trails: see
+/// `attach_in_link`. oxfmt goes by what is around a comment when it comes to it.
+pub(super) fn comments_are_attached_to_links(f: &Formatter<'_>) -> bool {
+    !f.options().flavor.is_oxfmt()
 }
 
 /// The call that `callee` is the callee of.
@@ -71,9 +86,6 @@ fn comment_that_starts_line_leads_next_link(f: &Formatter<'_>) -> bool {
 
 /// The comments behind a link of the chain.
 fn write_trailing_comments_of_member<'a>(member: Expr<'a>, f: &mut Formatter<'a>) {
-    if f.is_quiet() {
-        return;
-    }
     match call_of_callee(member) {
         Some(call) => {
             write_callee_trailing_comments(call, member.span().end, f);
@@ -127,84 +139,85 @@ pub(super) fn comments_lead_a_later_link<'a>(link: Expr<'a>, f: &Formatter<'a>) 
 
 impl<'a> Format<'a> for ChainMember<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        if f.is_quiet() || !comments_lead_a_later_link(self.expr(), f) {
-            return self.write(f);
+        if f.is_quiet() {
+            return self.write_without_comments(f);
+        }
+        if comments_are_attached_to_links(f) {
+            return self.write_with_attached_comments(f);
+        }
+        if !comments_lead_a_later_link(self.expr(), f) {
+            return self.write_with_comments_around(f);
         }
         // No comment is seen while this link is written.
         let previous_limit = f.comments_mut().limit_comments_up_to(0);
-        self.write(f);
+        self.write_with_comments_around(f);
         f.comments_mut().restore_view_limit(previous_limit);
     }
 }
 
 impl<'a> ChainMember<'a> {
-    fn write(&self, f: &mut Formatter<'a>) {
+    /// What the link adds to what it follows.
+    fn write_without_comments(&self, f: &mut Formatter<'a>) {
         match *self {
+            Self::StaticMember(member) if f.is_quiet() => write_lookup_without_comments(member, f),
             Self::StaticMember(member) => {
-                if f.is_quiet() {
-                    return write_lookup_without_comments(member, f);
-                }
-                let ExprKind::Dot { obj, name, .. } = member.kind() else {
+                let ExprKind::Dot { name, .. } = member.kind() else {
                     return;
                 };
-                let lookup = format_args!(
-                    member.is_optional().then_some("?"),
-                    ".",
-                    identifier(name, member.as_chain_element())
-                );
-                // The comments after the `.` lead the name. For oxfmt they are before the `.` too.
-                let object_end = obj.span().end;
-                let end = match f.options().flavor.is_oxfmt() {
-                    true => name.span().start,
-                    false => f
-                        .comments()
-                        .comments_before_character(object_end, b'.')
-                        .last()
-                        .map_or(object_end, |it| it.span.end),
-                };
                 write!(
                     f,
                     [
-                        FormatLeadingComments::Comments(f.comments().comments_before(end)),
-                        lookup
+                        member.is_optional().then_some("?"),
+                        ".",
+                        identifier(name, member.as_chain_element())
                     ]
                 );
-                write_trailing_comments_of_member(member, f);
             }
-            Self::TSNonNullExpression(e) => {
-                write!(
-                    f,
-                    [format_leading_comments(e.span()), FormatNonNullMarks(e)]
-                );
-                write_trailing_comments_of_member(e, f);
+            Self::TSNonNullExpression(e) => write!(f, FormatNonNullMarks(e)),
+            Self::CallExpression { expression, .. } => write_call_without_callee(expression, f),
+            Self::ComputedMember(member) => {
+                write!(f, FormatComputedMemberExpressionWithoutObject(member));
+            }
+            Self::Node(node) => write!(f, FormatNodeWithoutTrailingComments(&node)),
+        }
+    }
+
+    /// See [`comments_are_attached_to_links`].
+    fn write_with_attached_comments(&self, f: &mut Formatter<'a>) {
+        // The comments around the last call are around the chain.
+        if let Self::CallExpression {
+            position: CallExpressionPosition::End,
+            ..
+        } = self
+        {
+            return self.write_without_comments(f);
+        }
+        if let Some(inner_end) = self.inner_end() {
+            FormatLeadingComments::Comments(f.comments().comments_leading_link(inner_end)).fmt(f);
+        }
+        self.write_without_comments(f);
+        let end = self.expr().span().end;
+        FormatTrailingComments::Comments(f.comments().comments_trailing_link(end)).fmt(f);
+    }
+
+    fn write_with_comments_around(&self, f: &mut Formatter<'a>) {
+        match *self {
+            Self::StaticMember(member) => {
+                // Those after the `.` are before it too.
+                let name_start = member.member_name_start().unwrap_or(member.span().end);
+                let comments = f.comments().comments_before(name_start);
+                FormatLeadingComments::Comments(comments).fmt(f);
             }
             Self::CallExpression {
-                expression,
-                position,
-            } => match position {
-                CallExpressionPosition::Middle => {
-                    format_leading_comments(expression.span()).fmt(f);
-                    write_call_without_callee(expression, f);
-                    write_trailing_comments_of_member(expression, f);
-                }
-                CallExpressionPosition::End => write_call_without_callee(expression, f),
-            },
-            Self::ComputedMember(member) => {
-                write!(
-                    f,
-                    [
-                        format_leading_comments(member.span()),
-                        FormatComputedMemberExpressionWithoutObject(member)
-                    ]
-                );
-                write_trailing_comments_of_member(member, f);
-            }
-            Self::Node(node) if f.is_quiet() || call_of_callee(node).is_none() => write!(f, node),
-            Self::Node(node) => {
-                write!(f, FormatNodeWithoutTrailingComments(&node));
-                write_trailing_comments_of_member(node, f);
-            }
+                position: CallExpressionPosition::End,
+                ..
+            } => return self.write_without_comments(f),
+            Self::Node(node) if call_of_callee(node).is_none() => return write!(f, node),
+            Self::Node(_) => {}
+            _ => format_leading_comments(self.expr().span()).fmt(f),
         }
+        self.write_without_comments(f);
+        write_trailing_comments_of_member(self.expr(), f);
     }
 }
 

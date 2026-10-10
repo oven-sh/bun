@@ -54,7 +54,8 @@ impl Rule for NoInvalidRemoveEventListener {
                             FnBody::Expr(body) => Some(body.outer_span().start),
                             _ => func.body_span().map(|it| it.start),
                         };
-                        Span::new(listener.span().start, end.unwrap_or(listener.span().end))
+                        let whole = listener.span();
+                        Span::new(whole.start, end.unwrap_or(whole.end))
                     }
                     _ => listener.span(),
                 };

@@ -895,7 +895,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             // `parseAmbientExternalModuleDeclaration`
             T::Global => {
                 (name, name_pos, specifies_module) = (ModuleName::Global, self.pos(), false);
-                self.next();
+                // `parseIdentifier`
+                self.next_after_name();
             }
             keyword => {
                 self.next();
@@ -1000,7 +1001,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if !self.expect(T::OpenBrace) {
             return IdList::EMPTY;
         }
-        let saved = self.enter_context(0, ctx::TOP_LEVEL | ctx::AWAIT | ctx::YIELD);
+        // It stays in the context of the function around it.
+        let saved = match self.has_context(ctx::TOP_LEVEL) {
+            true => self.enter_context(0, ctx::TOP_LEVEL | ctx::AWAIT | ctx::YIELD),
+            false => self.context,
+        };
         let list = self.statements_until_close_brace();
         self.context = saved;
         self.expect(T::CloseBrace);

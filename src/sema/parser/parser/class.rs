@@ -469,6 +469,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         let name_token = self.token();
         let name_end = self.lx.end;
+        let is_name_escaped = self.recovers() && self.lx.has_escape;
         let has_name = kind != MemberKind::Property
             || is_generator
             || name_token == T::OpenBracket
@@ -544,6 +545,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 MemberKind::Getter => FnKind::Getter,
                 MemberKind::Setter => FnKind::Setter,
                 _ if is_constructor => {
+                    // `parseExpected(KindConstructorKeyword)`
+                    if is_name_escaped && name_token == T::Constructor {
+                        self.error(1260, (name_pos, name_end), &[]);
+                    }
                     member.kind = MemberKind::Constructor;
                     FnKind::Constructor
                 }

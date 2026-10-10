@@ -44,8 +44,8 @@ impl MaxNestedCallbacks {
         });
         let depth = around + 1;
         if depth > max {
-            // oxlint points at the whole function.
-            let place = match cx.language().is_oxlint {
+            // oxlint points at the whole function, and so does ESLint before 10.
+            let place = match cx.language().is_oxlint || cx.language().eslint_major < 10 {
                 true => func.estree_span(),
                 false => ast_utils::get_function_head_loc(func),
             };

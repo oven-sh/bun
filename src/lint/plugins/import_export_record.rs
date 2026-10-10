@@ -2,7 +2,6 @@
 //! What `ExportMapBuilder.parse` of eslint-plugin-import 2.32.0 reads out of one file, without what it asks the context: the
 //! resolver, `esModuleInterop` and `import/docstyle` are applied by who asks. And `unambiguous` of eslint-module-utils.
 
-use crate::import_doctrine;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -186,20 +185,47 @@ pub(crate) fn recursive_pattern_capture<'a>(pattern: Pat<'a>, callback: &mut dyn
 fn capture_doc<'a>(file: &'a File<'a>, node: u32) -> Option<Docs> {
     let comments: SmallVec<[Token<'a>; 4]> = file.comments_before(Span::empty(node)).collect();
     (!comments.is_empty()).then(|| Docs {
-        jsdoc: capture_js_doc(&comments),
+        jsdoc: capture_js_doc(file, &comments),
         tomdoc: capture_tom_doc(&comments),
     })
 }
 
-/// The last that does not throw.
-fn capture_js_doc(comments: &[Token]) -> Option<Doc> {
-    let mut blocks = comments
-        .iter()
-        .rev()
-        .filter(|it| it.kind() == TokenKind::Block);
-    let parsed = blocks.find_map(|it| import_doctrine::parse(it.comment_value()))?;
+/// What is read of the tags of a comment.
+struct Tags {
+    /// The first whose title is `deprecated`: its description.
+    deprecated: Option<Option<Arc<[u8]>>>,
+    /// The title of one is `module`.
+    has_module: bool,
+}
+
+/// `doctrine.parse(comment.value, { unwrap: true })`, as far as it is asked. doctrine ends at the first tag that it
+/// cannot parse, and reads a comment that starts with one `*` too. Not so here.
+fn tags_of<'a>(file: &'a File<'a>, comment: Token<'a>) -> Tags {
+    let mut tags = Tags {
+        deprecated: None,
+        has_module: false,
+    };
+    let doc = file.jsdoc().at(comment.start());
+    for tag in doc.into_iter().flat_map(|it| it.tags()) {
+        match tag.kind.parsed() {
+            b"deprecated" if tags.deprecated.is_none() => {
+                let description = tag.comment().parsed_preserving_whitespace();
+                let description = strings::trim_js_whitespace(&description);
+                tags.deprecated = Some((!description.is_empty()).then(|| description.into()));
+            }
+            b"module" => tags.has_module = true,
+            _ => {}
+        }
+    }
+    tags
+}
+
+/// The last counts.
+fn capture_js_doc<'a>(file: &'a File<'a>, comments: &[Token<'a>]) -> Option<Doc> {
+    let mut blocks = comments.iter().rev();
+    let last = blocks.find(|it| it.kind() == TokenKind::Block)?;
     Some(Doc {
-        deprecated: parsed.deprecated,
+        deprecated: tags_of(file, *last).deprecated,
     })
 }
 
@@ -575,7 +601,7 @@ pub(crate) fn read<'a>(file: &'a File<'a>) -> ExportRecord {
     // "attempt to collect module doc"
     let blocks = file.comments().filter(|it| it.kind() == TokenKind::Block);
     let with_tag = blocks.filter(|it| strings::contains(it.text(), b"@module"));
-    let mut docs = with_tag.filter_map(|it| import_doctrine::parse(it.comment_value()));
+    let mut docs = with_tag.map(|it| tags_of(file, it));
     export_map.doc = docs.find(|it| it.has_module).map(|it| Doc {
         deprecated: it.deprecated,
     });

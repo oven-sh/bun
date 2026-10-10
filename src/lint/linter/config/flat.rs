@@ -775,6 +775,7 @@ impl Reader<'_> {
             keeps_options: semantics.keeps_options,
             accepts_all_plugins: semantics.accepts_all_plugins,
             is_legacy: semantics.is_legacy,
+            eslint_major: if semantics.is_legacy { 8 } else { 10 },
             lints_all_that_is_named: false,
             dot_patterns: None,
             prefers_typescript_rules: self.prefers_typescript_rules,

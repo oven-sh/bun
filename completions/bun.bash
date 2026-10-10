@@ -89,7 +89,7 @@ _bun_completions() {
     declare -A PACKAGE_OPTIONS;
     declare -A PM_OPTIONS;
 
-    local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update audit dedupe prune outdated link unlink build check";
+    local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update audit dedupe prune outdated link unlink build check lint format";
 
     GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port";
     GLOBAL_OPTIONS[SHORT_OPTIONS]="-c -v -d -e -h -i -l -u -p";
@@ -193,6 +193,12 @@ _bun_completions() {
             return;;
         check)
             COMPREPLY=( $(compgen -f -W "--project --pretty --no-pretty --all --threads --timing --cwd --help -p -h" -- "${cur_word}") );
+            return;;
+        lint)
+            COMPREPLY=( $(compgen -f -W "--config --no-config-lookup --flavor --no-config-cache --rule --global --parser-options --ext --fix --fix-dry-run --fix-type --ignore-pattern --no-ignore --no-warn-ignored --stdin --stdin-filename --quiet --max-warnings --format --all --output-file --color --no-color --no-inline-config --report-unused-disable-directives --report-unused-disable-directives-severity --report-unused-inline-configs --suppress-all --suppress-rule --suppressions-location --prune-suppressions --pass-on-unpruned-suppressions --no-error-on-unmatched-pattern --pass-on-no-patterns --exit-on-fatal-error --allow-unsupported --print-config --type-aware --no-type-aware --project --type-check --allow --warn --deny --deny-warnings --silent --ignore-path --disable-nested-config --fix-suggestions --fix-dangerously --init --rules --threads --timing --cwd --help -c -f -o -p -A -W -D -h" -- "${cur_word}") );
+            return;;
+        format)
+            COMPREPLY=( $(compgen -f -W "--check --list-different --stdin-filepath --config --no-config --disable-nested-config --no-editorconfig --config-precedence --ignore-path --with-node-modules --no-error-on-unmatched-pattern --ignore-unknown --find-config-path --log-level --print-width --tab-width --use-tabs --no-semi --single-quote --jsx-single-quote --quote-props --trailing-comma --no-bracket-spacing --bracket-same-line --arrow-parens --object-wrap --single-attribute-per-line --html-whitespace-sensitivity --vue-indent-script-and-style --prose-wrap --embedded-language-formatting --end-of-line --require-pragma --check-ignore-pragma --insert-pragma --range-start --range-end --threads --allow-unsupported --flavor --init --timing --cwd --help -c -l -u -h" -- "${cur_word}") );
             return;;
         create|c)
             COMPREPLY=( $(compgen -W "--force --no-install --help --no-git --verbose --no-package-json --open next react" -- "${cur_word}") );

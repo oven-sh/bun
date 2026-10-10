@@ -95,6 +95,8 @@ pub fn check<'a, R: Rule>(member: Member<'a>, cx: &Cx<'a, R>) {
     let place = match (cx.language().is_oxlint, member.constructor_keyword()) {
         (true, Some(name)) if has_super_class => name.span(),
         (true, _) => member.span(),
+        // Before ESLint 10 it is the whole constructor.
+        (false, _) if cx.language().eslint_major < 10 => member.span(),
         (false, _) => Span::new(member.span().start, name_end),
     };
     let message = match (cx.language().is_oxlint, has_super_class) {

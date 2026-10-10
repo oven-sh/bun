@@ -665,13 +665,18 @@ impl<'l> Loader<'l> {
         }
         let mut load_plugin =
             |location: &Json, prefix: &[u8]| self.js_plugins.load_located(location, prefix);
-        Config::from_flat_json_with_plugins(
+        let mut config = Config::from_flat_json_with_plugins(
             self.linter.registry(),
             base_path,
             &all,
             &mut load_plugin,
         )
-        .map_err(|error| Fatal(error.message))
+        .map_err(|error| Fatal(error.message))?;
+        let installed = installed_version(base_path, b"eslint");
+        if installed.is_some_and(|it| minor_of(&it).is_some_and(|it| it.0 < 10)) {
+            config.follow_eslint(9);
+        }
+        Ok(config)
     }
 
     /// An `.oxlintrc.json`, with what the command line adds.

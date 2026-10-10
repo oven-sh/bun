@@ -376,15 +376,16 @@ impl Context<'_, '_> {
         // What the other files export is known now, so all rules can run on what the fixes make of the text. Its types are gone.
         let mut fixable = linted.messages.iter().filter(|it| it.fix.is_some());
         *result = match self.fixes() && !had_types && fixable.any(|it| self.should_fix(it)) {
-            true => self.verify_text_by(shown, &path, text, &config, &|_| (), &mut |text| {
-                match framework {
+            true => {
+                let mut verify = |text: &[u8]| match framework {
                     Some(framework) => self.verify_scripts(framework, &path, text, &config),
                     None => self.verify(&path, text, &config),
-                }
-            }),
+                };
+                let text = (text, was_fixed);
+                self.verify_text_by(shown, &path, text, &config, &|_| (), &mut verify)
+            }
             false => self.result(shown, linted, text, was_fixed, &config),
         };
-        result.is_fixed |= was_fixed;
         result.fixed_text = result.fixed_text.take().or(fixed_text);
         result.had_types = had_types;
         Ok(())
@@ -472,19 +473,20 @@ impl Context<'_, '_> {
         self.verify_text_by(
             path,
             path_to_verify,
-            text,
+            (text, false),
             config,
             on_circular_fixes,
             &mut |text| self.verify(path_to_verify, text, config),
         )
     }
 
-    /// The same. `verify`: lints a text.
+    /// The same. `verify`: lints a text. `was_fixed`: `text` is not what is in the file, but what fixes have made of it: it is to
+    /// be written, whatever becomes of the fixes that are tried now.
     pub(crate) fn verify_text_by(
         &self,
         path: Vec<u8>,
         path_to_verify: &[u8],
-        text: Vec<u8>,
+        (text, was_fixed): (Vec<u8>, bool),
         config: &Arc<ResolvedConfig>,
         on_circular_fixes: &dyn Fn(&[u8]),
         verify: &mut dyn FnMut(&[u8]) -> LintResult,
@@ -499,14 +501,15 @@ impl Context<'_, '_> {
                 if fixed.output.len() > max_fixed_len(text.len()) {
                     let mut result = verify(&text);
                     result.messages.insert(0, grows_too_much(text.len()));
-                    return self.result(path, result, text, false, config);
+                    return self.result(path, result, text, was_fixed, config);
                 }
                 if fixed.is_fixed && !self.parses(path_to_verify, &fixed.output, config) {
                     self.note_broken_fixes(path_to_verify, fixed.applied);
-                    return self.result(path, verify(&text), text, false, config);
+                    return self.result(path, verify(&text), text, was_fixed, config);
                 }
                 result.messages = fixed.remaining;
-                let mut result = self.result(path, result, text, fixed.is_fixed, config);
+                let is_fixed = fixed.is_fixed || was_fixed;
+                let mut result = self.result(path, result, text, is_fixed, config);
                 result.fixed_text = fixed.is_fixed.then_some(fixed.output);
                 return result;
             }
@@ -525,7 +528,7 @@ impl Context<'_, '_> {
                 (report.result, report.output, report.is_fixed)
             }
         };
-        self.result(path, result, text, is_fixed, config)
+        self.result(path, result, text, is_fixed || was_fixed, config)
     }
 
     pub(crate) fn result(
@@ -610,7 +613,7 @@ impl Context<'_, '_> {
             return Ok(Some(self.verify_text_by(
                 shown,
                 &target.path,
-                text,
+                (text, false),
                 config,
                 on_circular_fixes,
                 &mut |text| self.verify_scripts(framework, &target.path, text, config),

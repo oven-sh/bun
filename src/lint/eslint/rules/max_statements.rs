@@ -92,7 +92,12 @@ impl MaxStatements {
             (true, None) => (b"function".to_vec(), func.estree_span()),
             (false, _) => {
                 let name = ast_utils::get_function_name_with_kind(func);
-                (text::upper_case_first(&name).into_owned(), ast_utils::get_function_head_loc(func))
+                // Before ESLint 10 it is the whole function.
+                let place = match cx.language().eslint_major < 10 {
+                    true => func.estree_span(),
+                    false => ast_utils::get_function_head_loc(func),
+                };
+                (text::upper_case_first(&name).into_owned(), place)
             }
         };
         cx.report(place, EXCEED)

@@ -19,7 +19,9 @@ impl Rule for NoWith {
         on.stmts([StmtTag::Block], |_, stmt, cx| {
             if let StmtKind::With { .. } = stmt.kind() {
                 let start = stmt.span().start;
-                cx.report(Span::new(start, start + "with".len() as u32), UNEXPECTED_WITH);
+                // Before ESLint 10 it is the whole statement.
+                let end = if cx.language().eslint_major < 10 { stmt.span().end } else { start + "with".len() as u32 };
+                cx.report(Span::new(start, end), UNEXPECTED_WITH);
             }
         });
     }

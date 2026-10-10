@@ -708,6 +708,10 @@ fn is_like_a_short_name(name: &[u8]) -> bool {
 
 /// Reads the entries of the directory at `path` from the system.
 fn list(path: &[u8]) -> Directory {
+    // The system has no name for it: an import can name a path of any number of segments.
+    if path.len() >= bun_paths::MAX_PATH_BYTES {
+        return Directory::Missing;
+    }
     let directory = match bun_sys::open_dir_absolute(to_native(&with_root(path))) {
         Ok(directory) => bun_sys::Dir::from_fd(directory),
         Err(error) if matches!(error.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => {

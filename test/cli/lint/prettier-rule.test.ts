@@ -8,9 +8,13 @@ import { endChildren, spawn } from "../children";
 
 afterAll(endChildren);
 
-// The rule of the package, to tell which of the two has answered.
-const theirs = `{ create: context => ({ Program(node) { context.report({ node, message: "theirs" }); } }) }`;
+// The rule of the package, to tell which of the two has answered. Its options are validated by its own schema too.
+const theirs = `{
+  meta: { schema: [{ type: "object" }, { type: "object" }] },
+  create: context => ({ Program(node) { context.report({ node, message: "theirs" }); } }),
+}`;
 const config = (blocks: unknown[] = []) => `export default [
+  { ignores: ["eslint.config.mjs"] },
   { files: ["**/*.ts"], languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } } },
   {
     files: ["**/*.{js,mjs,ts}"],
@@ -37,18 +41,22 @@ type Message = {
   fix?: { range: [number, number]; text: string };
 };
 
-async function lint(files: Record<string, string>, ...flags: string[]) {
+async function run(files: Record<string, string>, ...flags: string[]) {
   using dir = tempDir("prettier-rule", files);
   await using proc = spawn({
-    cmd: [bunExe(), "lint", "-f", "json", ...flags, "."],
+    cmd: [bunExe(), "lint", ...flags, "."],
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { root: realpathSync(String(dir)), stdout, stderr, exitCode };
+}
+
+async function lint(files: Record<string, string>, ...flags: string[]) {
+  const { root, stdout, stderr, exitCode } = await run(files, "-f", "json", ...flags);
   const results: { filePath: string; messages: Message[]; output?: string }[] = JSON.parse(stdout);
-  const root = realpathSync(String(dir));
   const name = (path: string) => relative(root, path).replaceAll("\\", "/");
   const shown = (it: Message) =>
     it.fix
@@ -167,8 +175,18 @@ describe.concurrent("prettier/prettier", () => {
   });
 
   test.each([
-    ["another minor version of prettier", installed("3.3.3"), {}, "the prettier that is installed is not 3.9"],
-    ["another major version of prettier", installed("2.8.8"), {}, "the prettier that is installed is not 3.9"],
+    [
+      "another minor version of prettier",
+      installed("3.3.3"),
+      {},
+      "the prettier that is installed is not 3.9, which bun format follows",
+    ],
+    [
+      "another major version of prettier",
+      installed("2.8.8"),
+      {},
+      "the prettier that is installed is not 3.9, which bun format follows",
+    ],
     [
       "no prettier",
       {
@@ -176,7 +194,7 @@ describe.concurrent("prettier/prettier", () => {
           installed()["node_modules/eslint-plugin-prettier/package.json"],
       },
       {},
-      "the prettier that is installed is not 3.9",
+      "the prettier that is installed is not 3.9, which bun format follows",
     ],
     [
       "another major version of the plugin",
@@ -188,17 +206,14 @@ describe.concurrent("prettier/prettier", () => {
       "a plugin of Prettier that is not built in",
       installed(),
       { ".prettierrc": `{ "plugins": ["prettier-plugin-of-theirs"] }` },
-      "a plugin of Prettier",
+      "a plugin of Prettier that bun format does not have may print them",
     ],
   ])("the rule of the package is asked: %s", async (_, packages, more, why) => {
-    const { reports, stderr } = await lint({
-      "a.js": "const a = {b:1}\n",
-      ...packages,
-      ...more,
-      "eslint.config.mjs": config(),
-    });
+    const files = { "a.js": "const a = {b:1}\n", ...packages, ...more, "eslint.config.mjs": config() };
+    // A note is for people.
+    const [{ reports }, { stderr }] = await Promise.all([lint(files), run(files, "-f", "stylish")]);
     expect(reports).toEqual({ "a.js": ["theirs"] });
-    expect(stderr).toContain(why);
+    expect(stderr.split("\n")).toContain(`note: prettier/prettier ran in JavaScript for 1 file: ${why}.`);
   });
 
   // It is `bun format`, which also leaves alone what `.gitignore` names. The comment in off.js is for the other rule.
@@ -214,11 +229,11 @@ describe.concurrent("prettier/prettier", () => {
 
   test("the rule of the package is asked: an option that is not Prettier's", async () => {
     const blocks = [{ rules: { "prettier/prettier": ["error", { optionOfTheirs: true }] } }];
-    const { reports } = await lint({
-      "a.js": "const a = {b:1}\n",
-      ...installed(),
-      "eslint.config.mjs": config(blocks),
-    });
+    const files = { "a.js": "const a = {b:1}\n", ...installed(), "eslint.config.mjs": config(blocks) };
+    const [{ reports }, { stderr }] = await Promise.all([lint(files), run(files, "-f", "stylish")]);
     expect(reports).toEqual({ "a.js": ["theirs"] });
+    expect(stderr.split("\n")).toContain(
+      "note: prettier/prettier ran in JavaScript for 1 file: bun format does not know one of the options.",
+    );
   });
 });

@@ -1,6 +1,5 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
-use bun_lint::utils::fix_tracker::FixTracker;
 use bun_lint::utils::oxlint::AmbientAncestors;
 use rustc_hash::FxHashMap;
 use smallvec::{SmallVec, smallvec};
@@ -305,8 +304,7 @@ impl NoVar {
                 return fix_as_oxlint(fixer, statement, declarations);
             }
             let var = var_keyword(statement)?;
-            (cx.state.can_fix(statement, declarations))
-                .then(|| FixTracker::new(fixer).retain_range(span).replace_text_range(var, "let"))
+            cx.state.can_fix(statement, declarations).then(|| fixer.replace(var, "let"))
         });
     }
 }

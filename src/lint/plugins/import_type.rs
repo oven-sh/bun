@@ -1,10 +1,14 @@
+#![allow(dead_code)] // until every rule of the plugin is written
 //! `core/importType.js` of eslint-plugin-import: what kind of module a file means by a name.
 
+use crate::import_package_path::file_package_path;
 use crate::import_resolve::{Resolved, Resolvers};
+use crate::import_settings::Settings;
 use bun_core::strings;
 use bun_lint::paths;
 use bun_lint::prelude::*;
 use bun_lint::utils::node::is_builtin_module;
+use std::borrow::Cow;
 use std::cell::OnceCell;
 
 /// In the order of `types` in `import/order`. `Object` and `Type` are only known there.
@@ -40,152 +44,189 @@ impl ImportType {
     }
 }
 
-/// `/^@[^/]+\/?[^/]+/.test(name)`
-fn is_scoped(name: &[u8]) -> bool {
+/// `isScoped`: `/^@[^/]+\/?[^/]+/.test(name)`, which counts units of UTF-16.
+pub(crate) fn is_scoped(name: &[u8]) -> bool {
     let Some(rest) = name.strip_prefix(b"@") else {
         return false;
     };
     let scope = strings::index_of_char_usize(rest, b'/').unwrap_or(rest.len());
-    scope >= 2 || scope == 1 && rest.get(2).is_some_and(|it| *it != b'/')
+    match strings::wtf8_len_utf16(&rest[..scope]) {
+        0 => false,
+        1 => rest.get(scope + 1).is_some_and(|it| *it != b'/'),
+        _ => true,
+    }
 }
 
-/// `/^\w/.test(name) || isScoped(name)`
-fn is_external_looking_name(name: &[u8]) -> bool {
+/// `baseModule`
+fn base_module(name: &[u8]) -> Cow<'_, [u8]> {
+    let slash = strings::index_of_char_usize(name, b'/');
+    if is_scoped(name) {
+        let Some(slash) = slash else {
+            // `pkg` is `undefined`.
+            return Cow::Owned([name, b"/undefined"].concat());
+        };
+        let rest = &name[slash + 1..];
+        let pkg = strings::index_of_char_usize(rest, b'/').unwrap_or(rest.len());
+        return Cow::Borrowed(&name[..slash + 1 + pkg]);
+    }
+    Cow::Borrowed(&name[..slash.unwrap_or(name.len())])
+}
+
+/// `isModule`: `/^\w/.test(name)`
+fn is_module(name: &[u8]) -> bool {
     name.first()
-        .is_some_and(|it| it.is_ascii_alphanumeric() || *it == b'_')
-        || is_scoped(name)
+        .is_some_and(|it| strings::is_regexp_word_byte(*it))
 }
 
-/// `baseModule`: the package. `None`: a scope alone, which is no name of anything.
-fn base_module(name: &[u8]) -> Option<&[u8]> {
-    let first = strings::index_of_char_usize(name, b'/');
-    if !is_scoped(name) {
-        return Some(&name[..first.unwrap_or(name.len())]);
-    }
-    let rest = name.get(first? + 1..)?;
-    let second = strings::index_of_char_usize(rest, b'/').unwrap_or(rest.len());
-    name.get(..first? + 1 + second)
+/// `isRelativeToParent`
+fn is_relative_to_parent(name: &[u8]) -> bool {
+    matches!(name, b".." | [b'.', b'.', b'\\' | b'/', ..])
 }
 
-fn strings_of(json: Option<&Json>) -> Vec<&[u8]> {
-    json.and_then(Json::as_array)
-        .unwrap_or_default()
-        .iter()
-        .filter_map(Json::as_str)
-        .collect()
+/// `isIndex`
+fn is_index(name: &[u8]) -> bool {
+    matches!(name, b"." | b"./" | b"./index" | b"./index.js")
 }
 
-/// The directory that `directory` is in.
-fn parent_of(directory: &[u8]) -> Option<&[u8]> {
-    match strings::last_index_of_char(directory, b'/')? {
-        0 if directory.len() > 1 => Some(b"/"),
-        0 => None,
-        slash => directory.get(..slash),
-    }
+/// `isRelativeToSibling`
+fn is_relative_to_sibling(name: &[u8]) -> bool {
+    matches!(name, [b'.', b'\\' | b'/', ..])
 }
 
-/// `!path.relative(directory, file).startsWith("..")`
-fn is_below(directory: &[u8], file: &[u8]) -> bool {
-    !paths::relative(directory, file).starts_with(b"..")
+/// `isExternalLookingName`
+fn is_external_looking_name(name: &[u8]) -> bool {
+    is_module(name) || is_scoped(name)
 }
 
 /// What is the same for all the names in a file.
 pub(crate) struct ImportTypes<'a> {
     file: &'a File<'a>,
     resolvers: Resolvers<'a>,
-    /// `import/internal-regex`
-    internal: Option<Regex>,
-    /// `import/core-modules`
-    core_modules: Vec<&'a [u8]>,
-    /// `import/external-module-folders`
-    folders: Vec<&'a [u8]>,
-    /// `getContextPackagePath`: where the closest `package.json` is.
-    package: OnceCell<Option<Vec<u8>>>,
+    settings: Settings<'a>,
+    /// `getContextPackagePath(context)`
+    package_path: OnceCell<Option<Vec<u8>>>,
 }
 
 impl<'a> ImportTypes<'a> {
-    /// `None`: `import/resolver` names a resolver that is not known here.
+    /// `None`: as [`Resolvers::of`].
     pub(crate) fn of(file: &'a File<'a>) -> Option<ImportTypes<'a>> {
-        let settings = file.settings();
-        let folders = settings.get(b"import/external-module-folders");
         Some(ImportTypes {
             file,
-            resolvers: Resolvers::of(settings)?,
-            internal: (settings
-                .get(b"import/internal-regex")
-                .and_then(Json::as_str))
-            .filter(|it| !it.is_empty())
-            .and_then(|it| Regex::from_bytes(it, b"").ok()),
-            core_modules: strings_of(settings.get(b"import/core-modules")),
-            folders: match folders.and_then(Json::as_array) {
-                Some(_) => strings_of(folders),
-                None => vec![&b"node_modules"[..]],
-            },
-            package: OnceCell::new(),
+            resolvers: Resolvers::of(file.settings())?,
+            settings: Settings::new(file.settings()),
+            package_path: OnceCell::new(),
         })
     }
 
-    fn exists(&self, path: &[u8]) -> bool {
-        self.file.modules().is_some_and(|it| it.exists(path))
+    pub(crate) fn resolvers(&self) -> &Resolvers<'a> {
+        &self.resolvers
     }
 
-    fn package(&self) -> Option<&[u8]> {
-        let found = self.package.get_or_init(|| {
-            let file = paths::portable(self.file.path(), self.file.path());
-            let mut directories = std::iter::successors(parent_of(&file), |it| parent_of(it));
-            let found = directories.find(|it| self.exists(&paths::resolve(it, b"package.json")));
-            found.map(<[u8]>::to_vec)
-        });
+    /// `isBuiltIn(name, settings, path)`. `None`: it is called without a path.
+    pub(crate) fn is_built_in(&self, name: &[u8], path: Option<&Resolved>) -> bool {
+        if path.is_some_and(|it| it.file().is_some()) || name.is_empty() {
+            return false;
+        }
+        let base = base_module(name);
+        is_builtin_module(&base) || self.settings.is_core_module(&base)
+    }
+
+    /// Where the closest `package.json` is. `None`: there is none, and upstream throws.
+    fn package_path(&self) -> Option<&[u8]> {
+        let found = self
+            .package_path
+            .get_or_init(|| file_package_path(self.file.modules()?, self.file.path()));
         found.as_deref()
     }
 
+    /// `path.resolve(path)`, which is what `path.relative` begins with.
+    fn absolute<'p>(&self, path: &'p [u8]) -> Cow<'p, [u8]> {
+        match self.file.modules() {
+            Some(modules) if !paths::is_absolute(path) => {
+                Cow::Owned(paths::resolve(modules.cwd(), path))
+            }
+            _ => Cow::Borrowed(path),
+        }
+    }
+
     /// `isExternalPath`
-    fn is_external_path(&self, found: &[u8], package: &[u8]) -> bool {
-        let mut folders = self.folders.iter();
-        !is_below(package, found)
-            || folders.any(|folder| is_below(&paths::resolve(package, folder), found))
+    fn is_external_path(&self, path: Option<&[u8]>) -> bool {
+        let Some(path) = path else {
+            return false;
+        };
+        let Some(package_path) = self.package_path() else {
+            return false;
+        };
+        if paths::relative(package_path, path).starts_with(b"..") {
+            return true;
+        }
+        let folders = self.settings.external_module_folders();
+        folders.iter().any(|folder| {
+            let folder_path = paths::resolve(package_path, folder);
+            let relative_path = paths::relative(&folder_path, path);
+            !relative_path.starts_with(b"..")
+        })
+    }
+
+    /// `isInternalPath`
+    fn is_internal_path(&self, path: Option<&[u8]>) -> bool {
+        let Some(path) = path else {
+            return false;
+        };
+        let Some(package_path) = self.package_path() else {
+            return true;
+        };
+        !paths::relative(package_path, path).starts_with(b"../")
+    }
+
+    /// `typeTest`. `path` is only asked for where it decides: to resolve a name costs the most.
+    fn type_test<'p>(&self, name: &[u8], path: &dyn Fn() -> &'p Resolved) -> ImportType {
+        if self.settings.is_internal_regex_match(name) {
+            return ImportType::Internal;
+        }
+        if paths::is_absolute(name) {
+            return ImportType::Absolute;
+        }
+        if self.is_built_in(name, None) && path().file().is_none() {
+            return ImportType::Builtin;
+        }
+        if is_relative_to_parent(name) {
+            return ImportType::Parent;
+        }
+        if is_index(name) {
+            return ImportType::Index;
+        }
+        if is_relative_to_sibling(name) {
+            return ImportType::Sibling;
+        }
+        let path = path().file().map(|it| self.absolute(it));
+        if self.is_external_path(path.as_deref()) {
+            return ImportType::External;
+        }
+        if self.is_internal_path(path.as_deref()) {
+            return ImportType::Internal;
+        }
+        if is_external_looking_name(name) {
+            return ImportType::External;
+        }
+        ImportType::Unknown
+    }
+
+    /// `typeTest(name, context, path)`
+    pub(crate) fn of_resolved(&self, name: &[u8], path: &Resolved) -> ImportType {
+        self.type_test(name, &|| path)
+    }
+
+    /// `isExternalModule(name, path, context)`
+    pub(crate) fn is_external_module(&self, name: &[u8], path: &Resolved) -> bool {
+        (is_module(name) || is_scoped(name)) && self.of_resolved(name, path) == ImportType::External
     }
 
     /// `importType(name, context)`
     pub(crate) fn of_name(&self, name: &[u8], is_require: bool) -> ImportType {
-        if self.internal.as_ref().is_some_and(|it| it.test(name)) {
-            return ImportType::Internal;
-        }
-        if name.starts_with(b"/") {
-            return ImportType::Absolute;
-        }
-        let relative = match name {
-            b".." | [b'.', b'.', b'/' | b'\\', ..] => Some(ImportType::Parent),
-            b"." | b"./" | b"./index" | b"./index.js" => Some(ImportType::Index),
-            [b'.', b'/' | b'\\', ..] => Some(ImportType::Sibling),
-            _ => None,
-        };
-        let is_core = base_module(name)
-            .filter(|_| !name.is_empty())
-            .is_some_and(|base| is_builtin_module(base) || self.core_modules.contains(&base));
-        // Only here does it matter what the name is resolved to.
-        if let Some(relative) = relative.filter(|_| !is_core) {
-            return relative;
-        }
-        let Resolved::File(found) = self.resolvers.resolve(self.file, name, is_require) else {
-            return match (is_core, relative) {
-                (true, _) => ImportType::Builtin,
-                (false, Some(relative)) => relative,
-                (false, None) if is_external_looking_name(name) => ImportType::External,
-                (false, None) => ImportType::Unknown,
-            };
-        };
-        if let Some(relative) = relative {
-            return relative;
-        }
-        // Without a `package.json` above the file the original throws.
-        let Some(package) = self.package() else {
-            return ImportType::Internal;
-        };
-        if self.is_external_path(&found, package) {
-            ImportType::External
-        } else {
-            ImportType::Internal
-        }
+        let path = OnceCell::new();
+        self.type_test(name, &|| {
+            path.get_or_init(|| self.resolvers.resolve(self.file, name, is_require))
+        })
     }
 }

@@ -8,7 +8,8 @@ mod groups;
 pub(crate) mod simple_argument;
 
 use self::chain_member::{
-    CallExpressionPosition, ChainMember, call_of_callee, comments_lead_a_later_link,
+    CallExpressionPosition, ChainMember, call_of_callee, comments_are_attached_to_links,
+    comments_lead_a_later_link,
 };
 use self::groups::{FormatMemberChainGroup, should_insert_empty_line_after};
 use self::simple_argument::SimpleArgument;
@@ -16,7 +17,6 @@ use super::call_expression::{callee_trailing_comments, is_call_expression, is_me
 use super::is_long_curried_call;
 use super::typecast::is_cast_target;
 use crate::js::parentheses::expression::expression_needs_parentheses;
-use crate::js::trivia::comments_stay_between_head_and_body;
 use crate::prelude::*;
 use crate::{best_fitting, write};
 use smallvec::SmallVec;
@@ -333,9 +333,14 @@ impl<'a> Format<'a> for MemberChain<'a, '_> {
     }
 }
 
-/// Whether a comment leads `member`: it is on a line of its own before the `.`, or before the `[` of
-/// `[name]`. Prettier's `handleMemberExpressionComments`.
+/// Whether a comment leads `member`. For oxfmt: it is on a line of its own before the `.`, or before the `[` of
+/// `[name]`.
 fn has_leading_comment<'a>(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool {
+    if comments_are_attached_to_links(f) {
+        return member
+            .inner_end()
+            .is_some_and(|end| f.comments().has_comment_leading_link(end));
+    }
     if matches!(member, ChainMember::Node(node) if comments_lead_a_later_link(*node, f)) {
         return true;
     }
@@ -363,24 +368,21 @@ fn comment_behind_brackets_breaks_no_chain(f: &Formatter<'_>) -> bool {
 /// Whether a comment trails `expression`, a link of a chain that is not the last.
 fn has_trailing_comment<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> bool {
     let end = expression.span().end;
+    if comments_are_attached_to_links(f) {
+        return f.comments().has_comment_trailing_link(end);
+    }
     // See `comments_trailing_computed_callee`: those behind the `(` are among them, and separate nothing.
-    if expression.tag() == ExprTag::Index && f.options().flavor.is_oxfmt() {
+    if expression.tag() == ExprTag::Index {
         return (f.comments().comments_after(end).first()).is_some_and(|comment| {
             (f.source_text())
                 .all_bytes(Span::before(end, comment.span), |b| b.is_ascii_whitespace())
         });
     }
     match call_of_callee(expression) {
-        Some(call) => {
-            let comments = callee_trailing_comments(call, end, f);
-            match comments_stay_between_head_and_body(f) {
-                // All before the `(` are among them. A block comment on its line separates nothing.
-                true => comments
-                    .iter()
-                    .any(|comment| comment.preceded_by_newline() || comment.followed_by_newline()),
-                false => !comments.is_empty(),
-            }
-        }
+        // All before the `(` are among them. A block comment on its line separates nothing.
+        Some(call) => callee_trailing_comments(call, end, f)
+            .iter()
+            .any(|comment| comment.preceded_by_newline() || comment.followed_by_newline()),
         // A comment on its own line leads the next member, or what is in its brackets.
         None => f
             .comments()

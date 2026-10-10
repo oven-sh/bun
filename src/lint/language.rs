@@ -104,6 +104,10 @@ pub struct LanguageOptions {
     /// The configuration is one of ESLint 8: what only that has a say about. There `/* eslint-env mocha */` defines the variables of
     /// an environment, and espree reads the edition of the language that is configured and no later one.
     pub eslint_8: Option<Arc<crate::linter::config::Eslint8>>,
+    /// The major version of ESLint whose defaults, places and texts those of its rules are: 8 with the configuration files of
+    /// ESLint 8; 9 with an `eslint.config.js` for which an `eslint` before 10 is installed; else 10, also with a configuration of
+    /// oxlint, where [`is_oxlint`](Self::is_oxlint) decides.
+    pub eslint_major: u8,
     /// All of `languageOptions.parserOptions`.
     pub parser_options: Json,
     /// ESLint's `settings`.
@@ -338,6 +342,7 @@ impl LanguageOptions {
             refuses_what_parser_refuses: true,
             is_oxlint: false,
             eslint_8: None,
+            eslint_major: 10,
             parser_options,
             settings: settings.clone(),
             config_globals: OnceLock::new(),
@@ -431,6 +436,7 @@ impl Default for LanguageOptions {
             refuses_what_parser_refuses: true,
             is_oxlint: false,
             eslint_8: None,
+            eslint_major: 10,
             parser_options: Json::Null,
             settings: Json::Null,
             config_globals: OnceLock::new(),

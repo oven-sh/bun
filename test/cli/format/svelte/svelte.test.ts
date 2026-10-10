@@ -132,6 +132,53 @@ describe.concurrent("Svelte", () => {
     expect(result.exitCode).toBe(1);
   });
 
+  // What Prettier 3.9.9 names: the last list of plugins that applies to a file is its list.
+  test.each([
+    [
+      "only in an override",
+      { overrides: [{ files: "*.svelte", options: { plugins } }] },
+      ["App.svelte", "legacy/Old.svelte"],
+    ],
+    [
+      "in an override for a directory",
+      { overrides: [{ files: "legacy/**", options: { plugins } }] },
+      ["legacy/Old.svelte", "legacy/old.md"],
+    ],
+    [
+      "in an override for Markdown",
+      { overrides: [{ files: "*.md", options: { plugins } }] },
+      ["README.md", "legacy/old.md"],
+    ],
+    [
+      "that an override empties",
+      { plugins, overrides: [{ files: "legacy/**", options: { plugins: [] } }] },
+      ["App.svelte", "Doc.mdx", "README.md"],
+    ],
+    [
+      "by its path",
+      { plugins: ["./node_modules/prettier-plugin-svelte/plugin.js"] },
+      ["App.svelte", "Doc.mdx", "README.md", "legacy/Old.svelte", "legacy/old.md"],
+    ],
+  ])("Prettier's plugin %s", async (_, config, named) => {
+    const block = `# a\n\n\`\`\`svelte\n${input}\`\`\`\n`;
+    const files = {
+      ".prettierrc": JSON.stringify(config),
+      "App.svelte": input,
+      "legacy/Old.svelte": input,
+      "README.md": block,
+      "Doc.mdx": block,
+      "legacy/old.md": block,
+    };
+    const result = await format(files, [], ["--log-level=log", "--list-different"]);
+    expect(
+      result.stdout
+        .split("\n")
+        .filter(it => /\.(svelte|mdx?)$/.test(it))
+        .sort(),
+    ).toEqual(named);
+    expect(result.exitCode).toBe(1);
+  });
+
   test("oxfmt gives a component on standard input back if it is not to format it", async () => {
     using dir = tempDir("bun-format-svelte", { ".oxfmtrc.json": "{}" });
     await using proc = spawn({

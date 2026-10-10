@@ -11,10 +11,11 @@
 //! Where Prettier attaches a comment to a node that it is not next to, so that it is printed
 //! somewhere else, the comment is moved before anything is printed: see [`Comment::start`].
 
+use super::ast_nodes::is_chain_root;
 use super::source_text::SourceText;
 use crate::options::Flavor;
 use bun_lint::ast::{
-    BinOp, Expr, ExprKind, File, FnBody, Func, Node, PropKind, StmtKind, TypeKind,
+    BinOp, Expr, ExprKind, ExprTag, File, FnBody, Func, Node, PropKind, StmtKind, TypeKind,
 };
 use bun_lint::span::{Span, Spanned};
 use bun_lint::tokens::TokenKind;
@@ -37,21 +38,26 @@ pub(crate) struct Comment {
     /// See [`Comment::start`].
     moved_to: u32,
     pub(crate) kind: CommentKind,
-    flags: u8,
+    flags: u16,
 }
 
 const NOT_MOVED: u32 = u32::MAX;
 
-const PRECEDED_BY_NEWLINE: u8 = 1 << 0;
-const FOLLOWED_BY_NEWLINE: u8 = 1 << 1;
-const INDENTABLE: u8 = 1 << 2;
-const TYPE_CAST: u8 = 1 << 3;
+const PRECEDED_BY_NEWLINE: u16 = 1 << 0;
+const FOLLOWED_BY_NEWLINE: u16 = 1 << 1;
+const INDENTABLE: u16 = 1 << 2;
+const TYPE_CAST: u16 = 1 << 3;
 /// Prettier's `isTypeCastComment`, which is asked of the comment alone.
-const LOOKS_LIKE_TYPE_CAST: u8 = 1 << 4;
+const LOOKS_LIKE_TYPE_CAST: u16 = 1 << 4;
 /// See [`Flavor::is_ignore_comment`].
-const SUPPRESSION: u8 = 1 << 5;
+const SUPPRESSION: u16 = 1 << 5;
 /// It is between the two sides of a declarator or an assignment and trails the left one.
-const TRAILS_LEFT_SIDE: u8 = 1 << 6;
+const TRAILS_LEFT_SIDE: u16 = 1 << 6;
+/// It trails a link of a member chain, or what the chain starts with, and has been moved to the end of that.
+const TRAILS_LINK: u16 = 1 << 7;
+/// It leads a link of a member chain: it is written before the `.b`, `[b]`, `(..)` or `!`, and has been moved to the
+/// end of what that follows.
+const LEADS_LINK: u16 = 1 << 8;
 
 impl Comment {
     /// Without the delimiters.
@@ -207,7 +213,13 @@ pub(crate) fn collect<'a>(
             flags,
         });
     }
-    move_comments(file, flavor, comments.get_mut(first..).unwrap_or_default());
+    let has_tree_of_babel = parsed_by == ParsedBy::Babel || file.is_javascript();
+    move_comments(
+        file,
+        flavor,
+        has_tree_of_babel,
+        comments.get_mut(first..).unwrap_or_default(),
+    );
 }
 
 /// Only Babel, which Prettier parses JavaScript with, tells it about the parentheses after
@@ -220,6 +232,8 @@ fn type_casts_are_kept_in_typescript(flavor: Flavor) -> bool {
 struct NodeFinder<'a> {
     file: &'a File<'a>,
     flavor: Flavor,
+    /// Babel has no `ChainExpression`: all of an optional chain is a member expression or a call like any other.
+    has_tree_of_babel: bool,
     /// The nodes that the last position was in, from the statement of the file inwards. The next one
     /// is likely to be in most of them too, and a chain of operators can be deep.
     path: Vec<Node<'a>>,
@@ -246,6 +260,14 @@ impl<'a> NodeFinder<'a> {
             && e.parens().any(|it| {
                 it.end >= comment.span.end && self.cast_parentheses.binary_search(&it.start).is_ok()
             })
+    }
+
+    /// Whether `e` is in parentheses that follow a type cast comment.
+    fn is_cast_target(&self, e: Expr<'a>) -> bool {
+        !self.cast_parentheses.is_empty()
+            && e.is_parenthesized()
+            && e.parens()
+                .any(|it| self.cast_parentheses.binary_search(&it.start).is_ok())
     }
 
     /// Where `e` starts, with the parentheses around it that follow a type cast comment.
@@ -276,50 +298,264 @@ impl<'a> NodeFinder<'a> {
     }
 }
 
-/// Prettier's `handleMemberExpressionComments`: a comment on a line of its own before the property
-/// of a member expression, if that is a name, leads the member expression.
+/// The object of a member access, what a call calls, what a `!` follows. `None` if `link` is none of these.
+pub(crate) fn inner_of_link(link: Expr<'_>) -> Option<Expr<'_>> {
+    match link.kind() {
+        ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => Some(obj),
+        ExprKind::Call(call) => Some(call.callee()),
+        ExprKind::NonNull(operand) => Some(operand),
+        _ => None,
+    }
+}
+
+/// What `utils/member_chain` makes of the tree.
+impl<'a> NodeFinder<'a> {
+    /// Whether `e`, which is in a link, is written in parentheses: a chain starts with it.
+    fn stays_in_parentheses(&self, e: Expr<'a>) -> bool {
+        self.is_cast_target(e)
+            || (is_chain_root(e)
+                && matches!(e.parent(), Node::Expr(parent) if match parent.tag() {
+                    ExprTag::NonNull => true,
+                    _ => !parent.is_optional(),
+                }))
+    }
+
+    /// Whether the call `e` is written as a member chain, unless it is a link of one itself.
+    fn ends_member_chain(&self, e: Expr<'a>) -> bool {
+        let ExprKind::Call(call) = e.kind() else {
+            return false;
+        };
+        let callee = call.callee();
+        matches!(callee.tag(), ExprTag::Dot | ExprTag::Index)
+            && (!is_chain_root(callee)
+                || (self.has_tree_of_babel && !self.stays_in_parentheses(callee)))
+    }
+
+    /// Whether `e` is a link of a member chain, and neither what the chain starts with nor the call that it ends with.
+    fn is_link_of_member_chain(&self, e: Expr<'a>) -> bool {
+        let mut link = e;
+        loop {
+            let can_be_link = match link.kind() {
+                ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::NonNull(_) => true,
+                ExprKind::Call(call) => {
+                    let callee = call.callee();
+                    matches!(
+                        callee.tag(),
+                        ExprTag::Dot | ExprTag::Index | ExprTag::Call
+                    ) && (self.has_tree_of_babel || !is_chain_root(callee))
+                }
+                _ => false,
+            };
+            if !can_be_link || self.stays_in_parentheses(link) {
+                return false;
+            }
+            match link.parent() {
+                Node::Expr(parent) if inner_of_link(parent) == Some(link) => {
+                    if self.ends_member_chain(parent) {
+                        return true;
+                    }
+                    link = parent;
+                }
+                _ => return false,
+            }
+        }
+    }
+}
+
+/// `<a.b />`
+fn is_name_of_jsx_element(mut member: Expr<'_>) -> bool {
+    loop {
+        match member.parent() {
+            Node::Expr(parent) => match parent.kind() {
+                ExprKind::Dot { obj, .. } if obj == member => member = parent,
+                ExprKind::Jsx(_) => return true,
+                _ => return false,
+            },
+            _ => return false,
+        }
+    }
+}
+
+/// What a comment in a link, and in nothing in it, is attached to.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum AttachedTo {
+    /// It trails what is before it in the link.
+    Preceding,
+    /// It leads what is after it in the link.
+    Following,
+    /// It leads the link.
+    Link,
+}
+
+/// Where the comments belong that are in a member access, a call or an `a!`, before the property or the first
+/// argument, if `comments[index]` is one of them. Returns the index of the first comment after them.
 ///
-/// In a chain of calls Prettier prints the comments of a member expression before its `.b`, which is
-/// where they are, unless they are behind the `.`: `is_after_dot`.
-fn moved_out_of_member_expression<'a>(
+/// Prettier's `attachComments`, for which parentheses are nothing: `(a /* here */).b` is in `a.b`, after `a`. A comment
+/// that starts its line leads what follows it, one that ends its line trails what is before it, one with code on both
+/// sides leads what follows it if only blanks and `(` are in between. With `handleMemberExpressionComments`: one that
+/// starts its line before a name, be it the object or the property, leads the member access. And with
+/// `handleCallExpressionComments`: one that ends its line behind the `(` leads the first argument.
+///
+/// Prettier writes what leads a node before all of it. In a member chain all that is written for a link is the `.b`,
+/// so what leads `a.b` is between the `a` and the `.b`, wherever it is in the source: `(/* here */ a.b)()`.
+fn attach_in_link<'a>(
     nodes: &mut NodeFinder<'a>,
-    comment: Comment,
-    is_after_dot: bool,
-) -> Option<u32> {
+    comments: &mut [Comment],
+    index: usize,
+) -> Option<usize> {
     if comments_stay_in_member_expressions(nodes.flavor) {
         return None;
     }
-    let Node::Expr(member) = nodes.innermost_node_at(comment.span.start) else {
+    let first = *comments.get(index)?;
+    let Node::Expr(link) = nodes.innermost_node_at(first.span.start) else {
         return None;
     };
-    let (object, property_start) = match member.kind() {
-        ExprKind::Dot { obj, name, .. } if !name.bytes().starts_with(b"#") => {
-            (obj, name.span().start)
+    let inner = inner_of_link(link).filter(|inner| !nodes.is_cast_target(*inner))?;
+    let is_member = matches!(link.tag(), ExprTag::Dot | ExprTag::Index);
+    let is_name = |e: Expr<'a>| e.tag() == ExprTag::Ident && !nodes.is_cast_target(e);
+
+    // What follows the comments, if anything does: where it starts, and whether it is a name. If nothing does, the
+    // token that they are before.
+    let has_preceding = inner.span().end <= first.span.start;
+    let (start, following, opener) = match (has_preceding, link.kind()) {
+        (false, _) => (
+            link.span().start,
+            Some((inner.span().start, is_name(inner))),
+            None,
+        ),
+        (true, ExprKind::Dot { name, .. }) => {
+            let is_private = name.bytes().starts_with(b"#");
+            (
+                inner.span().end,
+                Some((name.span().start, !is_private)),
+                None,
+            )
         }
-        ExprKind::Index { obj, index, .. } if matches!(index.kind(), ExprKind::Ident(_)) => {
-            (obj, index.span().start)
+        (true, ExprKind::Index { index, .. }) => (
+            inner.span().end,
+            Some((nodes.start_with_cast_parentheses(index), is_name(index))),
+            None,
+        ),
+        (true, ExprKind::Call(call)) => {
+            let next = (call.type_args().angle_brackets_span())
+                .map(|it| it.start)
+                .or_else(|| {
+                    let argument = call.args().first()?;
+                    Some(nodes.start_with_cast_parentheses(argument))
+                });
+            (inner.span().end, next.map(|it| (it, false)), Some(b'('))
         }
-        _ => return None,
+        (true, _) => (inner.span().end, None, Some(b'!')),
     };
-    if comment.span.start < object.span().end
-        || property_start < comment.span.end
-        || nodes.is_in_cast_parentheses_of(object, comment)
-    {
+    let end = following.map_or(link.span().end, |it| it.0);
+    if first.span.start < start || end < first.span.end {
         return None;
     }
-    let mut top: Expr<'a> = member;
-    while let Node::Expr(parent) = top.parent() {
-        match parent.kind() {
-            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == top => top = parent,
-            ExprKind::NonNull(inner) if inner == top => top = parent,
-            ExprKind::Call(call) if call.callee() == top => {
-                return is_after_dot.then(|| object.span().end);
+    let mut from = index;
+    while from > 0 && comments[from - 1].span.start >= start {
+        from -= 1;
+    }
+    let count = comments[from..]
+        .iter()
+        .take_while(|comment| comment.span.end <= end)
+        .count();
+    let source = SourceText::new(nodes.file.text());
+
+    // How many are before the `(` or the `!`.
+    let mut position = start;
+    let before_opener = opener.map_or(count, |opener| {
+        (comments[from..from + count].iter())
+            .take_while(|comment| {
+                let is_before = !source.contains_byte(Span::before(position, comment.span), opener);
+                position = comment.span.end;
+                is_before
+            })
+            .count()
+    });
+    // In `()` and behind the `!` they are not between two things.
+    let count = match following {
+        Some(_) => count,
+        None => before_opener,
+    };
+    let gap = comments.get_mut(from..from + count)?;
+    if index >= from + count || gap.iter().any(|comment| comment.is_moved()) {
+        return None;
+    }
+
+    let is_on_same_line = |a: &Comment, b: &Comment| {
+        source.all_bytes(a.span.between(b.span), |b| {
+            matches!(b, b' ' | b'\t' | 0x0B | 0x0C)
+        })
+    };
+    // Whether it starts its line, or follows one that does on the same line.
+    let mut starts_line: SmallVec<[bool; 8]> = SmallVec::with_capacity(gap.len());
+    for (at, comment) in gap.iter().enumerate() {
+        let follows_one_that_does = has_preceding
+            && at.checked_sub(1).is_some_and(|previous| {
+                starts_line.get(previous) == Some(&true)
+                    && gap
+                        .get(previous)
+                        .is_some_and(|it| is_on_same_line(it, comment))
+            });
+        starts_line.push(comment.preceded_by_newline() || follows_one_that_does);
+    }
+
+    let is_link_of_chain = nodes.is_link_of_member_chain(link);
+    let is_in_chain = is_link_of_chain || nodes.ends_member_chain(link);
+    // Where what is written for `inner` starts in a chain, if that is not all of it.
+    let inner_link_start = (!has_preceding && is_in_chain && nodes.is_link_of_member_chain(inner))
+        .then(|| inner_of_link(inner).map(|it| it.span().end))
+        .flatten();
+
+    // From the end: whether it ends its line, and how far what leads the next thing reaches back.
+    let (mut ends_line, mut leading_start) = (false, end);
+    for at in (0..gap.len()).rev() {
+        let comment = gap[at];
+        ends_line = comment.followed_by_newline()
+            || (ends_line
+                && following.is_some()
+                && gap
+                    .get(at + 1)
+                    .is_some_and(|next| is_on_same_line(&comment, next)));
+        let attached_to = match following {
+            None => AttachedTo::Preceding,
+            Some((_, true)) if is_member && starts_line.get(at) == Some(&true) => AttachedTo::Link,
+            Some(_) if !has_preceding || starts_line.get(at) == Some(&true) => {
+                AttachedTo::Following
             }
-            ExprKind::Jsx(_) => return None,
-            _ => break,
-        }
+            Some(_) if ends_line => {
+                match comment.flags & LOOKS_LIKE_TYPE_CAST != 0 || at >= before_opener {
+                    true => AttachedTo::Following,
+                    false => AttachedTo::Preceding,
+                }
+            }
+            Some(_) => {
+                let is_adjacent = source.all_bytes(Span::after(comment.span, leading_start), |b| {
+                    b.is_ascii_whitespace() || b == b'('
+                });
+                match is_adjacent {
+                    true => {
+                        leading_start = comment.span.start;
+                        AttachedTo::Following
+                    }
+                    false => AttachedTo::Preceding,
+                }
+            }
+        };
+        let (moved_to, flag) = match attached_to {
+            AttachedTo::Preceding if is_in_chain => (inner.span().end, TRAILS_LINK),
+            AttachedTo::Link if is_link_of_chain => (inner.span().end, LEADS_LINK),
+            AttachedTo::Link if !is_name_of_jsx_element(link) => (link.span().start, 0),
+            AttachedTo::Following => match inner_link_start {
+                Some(start) => (start, LEADS_LINK),
+                None => continue,
+            },
+            _ => continue,
+        };
+        gap[at].moved_to = moved_to;
+        gap[at].flags |= flag;
     }
-    Some(member.span().start)
+    Some(from + count)
 }
 
 /// Where the comments between the two sides of a declarator, an assignment or a binary expression
@@ -544,12 +780,18 @@ fn moved_over_parenthesis<'a>(
 ///
 /// What is around a comment tells that this is not one, for nearly all of them. The tree is only
 /// looked at for the rest. Apart from that it is linear in the number of comments.
-fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment]) {
+fn move_comments<'a>(
+    file: &'a File<'a>,
+    flavor: Flavor,
+    has_tree_of_babel: bool,
+    comments: &mut [Comment],
+) {
     let text = file.text();
     let is_typescript = !file.is_javascript();
     let mut nodes = NodeFinder {
         file,
         flavor,
+        has_tree_of_babel,
         path: Vec::new(),
         cast_parentheses: (comments.iter())
             .filter(|comment| comment.flags & TYPE_CAST != 0)
@@ -633,9 +875,10 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
                     | b'!'
             )
         };
-        let mut before = bun_core::strings::trim_js_whitespace_end(
+        let before_run = bun_core::strings::trim_js_whitespace_end(
             text.get(..run_start as usize).unwrap_or_default(),
         );
+        let mut before = before_run;
         while let [rest @ .., b'('] = before {
             before = bun_core::strings::trim_js_whitespace_end(rest);
         }
@@ -652,6 +895,26 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
                     })))
             && let Some(end) = attach_between_sides_of_assignment(&mut nodes, comments, index)
         {
+            has_moved = has_moved
+                || comments[..end]
+                    .iter()
+                    .rev()
+                    .take_while(|it| it.span.start >= run_start)
+                    .any(|it| it.is_moved());
+            attached_until = end;
+            continue;
+        }
+        let is_next_to_link = match after {
+            [b'.', b'.', ..] => false,
+            [b'.' | b'[' | b'(' | b')', ..] | [b'?', b'.', ..] => true,
+            [b'!' | b'<', ..] => is_typescript,
+            _ => false,
+        } || match before_run {
+            [.., b'.', b'.'] => false,
+            [.., b'.' | b'[' | b'('] => true,
+            _ => false,
+        };
+        if is_next_to_link && let Some(end) = attach_in_link(&mut nodes, comments, index) {
             has_moved = has_moved
                 || comments[..end]
                     .iter()
@@ -693,35 +956,7 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
                     _ => None,
                 }
             }
-            _ if !is_own_line => None,
-            [b'.', b'.', ..] => None,
-            [b'.', ..] | [b'?', b'.', ..] | [b'[', ..] => {
-                moved_out_of_member_expression(&mut nodes, comment, false)
-            }
-            // `(a + b // comment ⏎ ).c`
-            [b')', ..] => {
-                let after_parentheses = after
-                    .iter()
-                    .position(|b| *b != b')' && !b.is_ascii_whitespace());
-                match after_parentheses.and_then(|at| after.get(at..)) {
-                    Some([b'.', b'.', ..]) => None,
-                    Some([b'.', ..] | [b'?', b'.', ..]) => {
-                        moved_out_of_member_expression(&mut nodes, comment, false)
-                    }
-                    _ => None,
-                }
-            }
-            _ => match text
-                .get(..run_start as usize)
-                .unwrap_or_default()
-                .trim_ascii_end()
-            {
-                [.., b'.', b'.'] => None,
-                [.., last @ (b'.' | b'[')] => {
-                    moved_out_of_member_expression(&mut nodes, comment, *last == b'.')
-                }
-                _ => None,
-            },
+            _ => None,
         };
         if let Some(moved_to) = moved_to {
             comments[index].moved_to = moved_to;
@@ -729,8 +964,15 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
         }
     }
     if has_moved {
-        // A moved comment comes before one that starts where it is.
-        crate::sort::sort_by_key(comments, |comment| (comment.start(), !comment.is_moved()));
+        // A moved comment comes before one that starts where it is, what trails a link before what leads the next.
+        crate::sort::sort_by_key(comments, |comment| {
+            let rank = match (comment.is_moved(), comment.flags & TRAILS_LINK != 0) {
+                (true, true) => 0,
+                (true, false) => 1,
+                (false, _) => 2,
+            };
+            (comment.start(), rank)
+        });
     }
 }
 
@@ -997,6 +1239,41 @@ impl<'a> Comments<'a> {
         &comments[..count]
     }
 
+    /// The next comments, as far as they trail what ends at `end`: a link of a member chain, or what the chain starts
+    /// with.
+    pub(crate) fn comments_trailing_link(&self, end: u32) -> &'a [Comment] {
+        self.next_comments_moved_to(end, TRAILS_LINK)
+    }
+
+    /// The next comments, as far as they lead the link of a member chain that follows what ends at `inner_end`.
+    pub(crate) fn comments_leading_link(&self, inner_end: u32) -> &'a [Comment] {
+        self.next_comments_moved_to(inner_end, LEADS_LINK)
+    }
+
+    fn next_comments_moved_to(&self, position: u32, flag: u16) -> &'a [Comment] {
+        let comments = self.unprinted_comments();
+        let count = (comments.iter())
+            .take_while(|comment| comment.moved_to == position && comment.flags & flag != 0)
+            .count();
+        &comments[..count]
+    }
+
+    /// Whether there are [`Comments::comments_trailing_link`], whatever is to be written before them.
+    pub(crate) fn has_comment_trailing_link(&self, end: u32) -> bool {
+        self.has_comment_moved_to(end, TRAILS_LINK)
+    }
+
+    /// Whether there are [`Comments::comments_leading_link`], whatever is to be written before them.
+    pub(crate) fn has_comment_leading_link(&self, inner_end: u32) -> bool {
+        self.has_comment_moved_to(inner_end, LEADS_LINK)
+    }
+
+    fn has_comment_moved_to(&self, position: u32, flag: u16) -> bool {
+        (self.comments_after(position).iter())
+            .take_while(|comment| comment.start() == position)
+            .any(|comment| comment.flags & flag != 0)
+    }
+
     /// Prettier's `handlePropertyComments`: the comments between the key of a property, which ends at
     /// `key_end`, and its value, which starts at `value_start`, that lead the property: those that end
     /// their line. None if one before them does not.
@@ -1172,7 +1449,7 @@ impl<'a> Comments<'a> {
             if comment.end() > following_span_start || comment.end() > enclosing_span.end {
                 break;
             }
-            if comment.is_moved() && comment.flags & TRAILS_LEFT_SIDE != 0 {
+            if comment.is_moved() && comment.flags & (TRAILS_LEFT_SIDE | TRAILS_LINK) != 0 {
                 // It has been moved to here because it does.
                 trailing_count = comment_index + 1;
             } else if following_span_start > enclosing_span.end

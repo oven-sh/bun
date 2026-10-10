@@ -590,9 +590,14 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             T::True => return self.token_type(TypeNodeKind::BoolLit(true)),
             T::False => return self.token_type(TypeNodeKind::BoolLit(false)),
             T::String => return self.token_type(TypeNodeKind::StringLit(self.lx.atom)),
+            // `parseLiteralExpression` does not scan it again: an invalid escape passes.
             T::NoSubstitutionTemplate => {
-                self.piece_of_template_without_tag();
                 return self.token_type(TypeNodeKind::StringLit(self.lx.atom));
+            }
+            // It may be the keyword, which is an error.
+            T::EscapedReservedWord => {
+                self.refuse(Refusal::EscapedKeyword);
+                return TypeNodeId::NONE;
             }
             T::Number => {
                 let number = self.f.number(self.lx.number);

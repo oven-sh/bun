@@ -212,6 +212,11 @@ impl FileSettings {
         ]);
         let settings = match &language.settings {
             Json::Null => Json::Object(Vec::new()),
+            // A key that begins with `$` is this program's own.
+            Json::Object(entries) => {
+                let of_the_user = entries.iter().filter(|it| !it.0.starts_with(b"$"));
+                Json::Object(of_the_user.cloned().collect())
+            }
             settings => settings.clone(),
         };
         // ESLint's `configGlobals`.

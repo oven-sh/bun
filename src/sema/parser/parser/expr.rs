@@ -583,7 +583,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                         return left;
                     }
                     self.next();
-                    let kind = if token == T::As && self.token() == T::Const {
+                    let kind = if token == T::As && self.token() == T::Const && self.is_at_const_alone()
+                    {
                         self.js_error((self.lx.start, self.lx.end), 8016, b"");
                         self.const_assertion_type();
                         ExprKind::AsConst(left)
@@ -663,9 +664,39 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         ) && !self.f.parens.iter().rev().take(2).any(|it| it.0 == e)
     }
 
+    /// `IsConstTypeReference`, at a `const` that is a type: nothing of a type follows it but an empty
+    /// list of type arguments. Without recovery: see `const_assertion_type`.
+    #[inline(always)]
+    fn is_at_const_alone(&mut self) -> bool {
+        !self.recovers() || self.is_at_const_alone_slowly()
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn is_at_const_alone_slowly(&mut self) -> bool {
+        self.look_ahead(|p| {
+            p.next();
+            match p.token() {
+                T::Dot => false,
+                T::OpenBracket => p.newline_before(),
+                T::LessThan => {
+                    p.next();
+                    p.token() == T::GreaterThan
+                }
+                _ => true,
+            }
+        })
+    }
+
     /// The `const` of `e as const` and of `<const>e`.
     fn const_assertion_type(&mut self) {
         self.next();
+        // `const<>`
+        if self.recovers() && self.token() == T::LessThan {
+            self.next();
+            self.next();
+            return;
+        }
         // `const` goes on as a type.
         if matches!(self.token(), T::Dot | T::LessThan | T::OpenBracket) && !self.newline_before()
             || matches!(self.token(), T::Dot | T::LessThan)
@@ -794,7 +825,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let start = self.pos();
         self.expect(T::LessThan);
         let ty = match self.token() {
-            T::Const => {
+            T::Const if self.is_at_const_alone() => {
                 self.const_assertion_type();
                 None
             }
@@ -1002,10 +1033,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
     }
 
-    /// `meta`, `defer` or `source`, or nothing. A name is what it is with an escape too: who follows
-    /// acorn or Babel finds the escape in the text.
+    /// `meta`, `defer` or `source`, or nothing. For TypeScript's parser a name is what it is with an
+    /// escape too. For acorn and Babel it is another name, which is reported with what it spells.
     fn name_after_import_and_dot(&self) -> &'static [u8] {
-        let name = match self.lx.has_escape {
+        let name = match self.lx.has_escape && !self.is_ecmascript {
             true => self.lx.text_of(self.lx.atom),
             false => self.lx.text(),
         };

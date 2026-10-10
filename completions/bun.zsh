@@ -764,6 +764,132 @@ _bun_check_completion() {
         ret=0
 }
 
+_bun_lint_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '*: :_files' \
+        '--config[Use this configuration file instead of looking for one]:config:_files' \
+        '-c[Use this configuration file instead of looking for one]:config:_files' \
+        '--no-config-lookup[Do not look for a configuration file]' \
+        '--flavor[Whose configuration files count where there are both\: eslint or oxlint]:flavor' \
+        '--no-config-cache[Run eslint.config.js again even if nothing that it depends on has changed]' \
+        '--rule[Configure a rule\: --rule '"'"'eqeqeq\: \[error, smart\]'"'"']:rule' \
+        '--global[Define global variables\: --global a,b\:true]:global' \
+        '--parser-options[Set parser options\: --parser-options projectService\:true]:parser-options' \
+        '--ext[Lint files with these extensions too]:ext' \
+        '--fix[Fix what can be fixed, and write the files]' \
+        '--fix-dry-run[Fix without writing. The json format has the fixed code]' \
+        '--fix-type[Only apply fixes of rules of these types\: directive, problem, suggestion, layout]:fix-type' \
+        '--ignore-pattern[Ignore the files that match]:ignore-pattern' \
+        '--no-ignore[Lint ignored files too]' \
+        '--no-warn-ignored[Do not warn about an ignored file that is named as an argument]' \
+        '--stdin[Lint the code on standard input]' \
+        '--stdin-filename[The file name that the code on standard input is linted as]:stdin-filename:_files' \
+        '--quiet[Report errors only]' \
+        '--max-warnings[Exit with 1 if there are more warnings than this]:max-warnings' \
+        '--format[stylish (default), pretty, json, json-with-metadata, unix, github, agent, checkstyle, junit, gitlab, sarif]:format' \
+        '-f[stylish (default), pretty, json, json-with-metadata, unix, github, agent, checkstyle, junit, gitlab, sarif]:format' \
+        '--all[Show every problem (pretty and agent group identical problems above 50)]' \
+        '--output-file[Write the report to a file]:output-file:_files' \
+        '-o[Write the report to a file]:output-file:_files' \
+        '--color[Always use colors]' \
+        '--no-color[Never use colors]' \
+        '--no-inline-config[Ignore eslint-disable and other configuration comments]' \
+        '--report-unused-disable-directives[Report eslint-disable comments that disable nothing, as errors]' \
+        '--report-unused-disable-directives-severity[The same, as off, warn or error]:report-unused-disable-directives-severity' \
+        '--report-unused-inline-configs[Report configuration comments that change nothing]:report-unused-inline-configs' \
+        '--suppress-all[Tolerate the errors that there are now\: write them to eslint-suppressions.json]' \
+        '--suppress-rule[The same for the errors of a rule]:suppress-rule' \
+        '--suppressions-location[Another file than eslint-suppressions.json]:suppressions-location:_files' \
+        '--prune-suppressions[Remove from that file what no longer occurs]' \
+        '--pass-on-unpruned-suppressions[Do not fail if that file has what no longer occurs]' \
+        '--no-error-on-unmatched-pattern[Do not fail if an argument matches no file]' \
+        '--pass-on-no-patterns[Exit with 0 if there are no arguments, instead of linting .]' \
+        '--exit-on-fatal-error[Exit with 2 if a file cannot be parsed]' \
+        '--allow-unsupported[Only warn about rules and files of the configuration that cannot be linted yet]' \
+        '--print-config[Print the configuration of a file, and lint nothing]:print-config:_files' \
+        '--type-aware[Run the rules that need types, whatever the configuration says]' \
+        '--no-type-aware[Skip the rules that need types]' \
+        '--project[The tsconfig.json for the rules that need types]:project:_files' \
+        '-p[The tsconfig.json for the rules that need types]:project:_files' \
+        '--type-check[With --type-aware\: report type errors too]' \
+        '--allow[With an .oxlintrc.json\: turn a rule or a category off]:allow' \
+        '-A[With an .oxlintrc.json\: turn a rule or a category off]:allow' \
+        '--warn[The same\: make it a warning]:warn' \
+        '-W[The same\: make it a warning]:warn' \
+        '--deny[The same\: make it an error]:deny' \
+        '-D[The same\: make it an error]:deny' \
+        '--deny-warnings[Exit with 1 if there are warnings]' \
+        '--silent[Print no problems]' \
+        '--ignore-path[A file with patterns to ignore, in place of .eslintignore]:ignore-path:_files' \
+        '--disable-nested-config[Use the configuration file of the working directory for every file]' \
+        '--fix-suggestions[Apply suggestions, as oxlint does]' \
+        '--fix-dangerously[Apply every fix and suggestion, as oxlint does]' \
+        '--init[Write an .oxlintrc.json with the defaults of oxlint]' \
+        '--rules[List the rules that are built in]' \
+        '--threads[Number of threads (default\: one per CPU core)]:threads' \
+        '--timing[Print how long each phase took]' \
+        '--cwd[Set the working directory]:cwd:_files -/' \
+        '--help[Print this help menu]' \
+        '-h[Print this help menu]' &&
+        ret=0
+}
+
+_bun_format_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '*: :_files' \
+        '--check[Do not write. Exit with 1 if a file is not formatted]' \
+        '-c[Do not write. Exit with 1 if a file is not formatted]' \
+        '--list-different[Do not write. Print the files that are not formatted, and exit with 1 if there are any]' \
+        '-l[Do not write. Print the files that are not formatted, and exit with 1 if there are any]' \
+        '--stdin-filepath[Format standard input as that file, and print the result]:stdin-filepath:_files' \
+        '--config[Use this configuration file instead of looking for one]:config:_files' \
+        '--no-config[Do not look for a configuration file]' \
+        '--disable-nested-config[Use the configuration file of the working directory for every file]' \
+        '--no-editorconfig[Do not read .editorconfig]' \
+        '--config-precedence[cli-override (default), file-override, or prefer-file]:config-precedence' \
+        '--ignore-path[Files with patterns to ignore (default\: .gitignore and .prettierignore)]:ignore-path:_files' \
+        '--with-node-modules[Format files in node_modules too]' \
+        '--no-error-on-unmatched-pattern[Do not fail if an argument matches no file]' \
+        '--ignore-unknown[Say nothing about a file that there is no parser for]' \
+        '-u[Say nothing about a file that there is no parser for]' \
+        '--find-config-path[Print the configuration file of a file, and format nothing]:find-config-path:_files' \
+        '--log-level[silent, error, warn, log (default), or debug]:log-level' \
+        '--print-width[The line length to wrap at (default\: 80)]:print-width' \
+        '--tab-width[Spaces per indentation level (default\: 2)]:tab-width' \
+        '--use-tabs[Indent with tabs]' \
+        '--no-semi[Only print semicolons where they are needed]' \
+        '--single-quote[Use single quotes]' \
+        '--jsx-single-quote[Use single quotes in JSX]' \
+        '--quote-props[as-needed (default), consistent, or preserve]:quote-props' \
+        '--trailing-comma[all (default), es5, or none]:trailing-comma' \
+        '--no-bracket-spacing[No spaces between the braces of an object literal]' \
+        '--bracket-same-line[Put the closing bracket of a multi-line element at the end of the last line]' \
+        '--arrow-parens[always (default) or avoid]:arrow-parens' \
+        '--object-wrap[preserve (default) or collapse]:object-wrap' \
+        '--single-attribute-per-line[One attribute per line in HTML, Vue, and JSX]' \
+        '--html-whitespace-sensitivity[css (default), strict, or ignore]:html-whitespace-sensitivity' \
+        '--vue-indent-script-and-style[Indent what is in the script and style tags of Vue files]' \
+        '--prose-wrap[preserve (default), always, or never]:prose-wrap' \
+        '--embedded-language-formatting[auto (default) or off]:embedded-language-formatting' \
+        '--end-of-line[lf (default), crlf, cr, or auto]:end-of-line' \
+        '--require-pragma[Only format files that start with a comment that has @format or @prettier]' \
+        '--check-ignore-pragma[Do not format files that start with a comment that has @noformat or @noprettier]' \
+        '--insert-pragma[Put a comment with @format at the top of the files that are formatted]' \
+        '--range-start[Only format the statements from this offset on]:range-start' \
+        '--range-end[Only format the statements up to this offset]:range-end' \
+        '--threads[Number of threads (default\: one per CPU core)]:threads' \
+        '--allow-unsupported[Only warn about files in a language that is not supported]' \
+        '--flavor[Without a configuration file, format like prettier or like oxfmt]:flavor' \
+        '--init[Write an .oxfmtrc.json, with which files are formatted like oxfmt does]' \
+        '--timing[Print how long each phase took]' \
+        '--cwd[Set the working directory]:cwd:_files -/' \
+        '--help[Print this help menu]' \
+        '-h[Print this help menu]' &&
+        ret=0
+}
+
 _bun_audit_completion() {
     _arguments -s -C \
         '1: :->cmd1' \
@@ -899,6 +1025,8 @@ _bun() {
             'update\:"Update outdated dependencies & save to package.json" '
             'audit\:"Check installed packages for vulnerabilities" '
             'check\:"Type check a TypeScript project" '
+            'lint\:"Lint JavaScript and TypeScript" '
+            'format\:"Format code the way Prettier does" '
             'dedupe\:"Remove duplicate versions from the lockfile" '
             'prune\:"Remove packages that are not in the lockfile from node_modules" '
             'outdated\:"Display the latest versions of outdated dependencies" '
@@ -988,6 +1116,14 @@ _bun() {
             ;;
         check)
             _bun_check_completion
+
+            ;;
+        lint)
+            _bun_lint_completion
+
+            ;;
+        format)
+            _bun_format_completion
 
             ;;
         dedupe)
@@ -1091,6 +1227,14 @@ _bun() {
                     ;;
                 check)
                     _bun_check_completion
+
+                    ;;
+                lint)
+                    _bun_lint_completion
+
+                    ;;
+                format)
+                    _bun_format_completion
 
                     ;;
                 dedupe)

@@ -7,7 +7,7 @@
 /// depends on the algorithm. This is what V8 14, of Node.js 25, does for fewer than 64 items: from 8
 /// items on the run that the array starts with, reversed if it descends, and binary insertion of the
 /// rest. With more items it still sorts, and is stable for a consistent `compare`.
-pub fn array_sort_by<T: Copy>(items: &mut [T], is_before: impl Fn(T, T) -> bool) {
+pub fn array_sort_by<T: Copy>(items: &mut [T], mut is_before: impl FnMut(T, T) -> bool) {
     let mut run = 1;
     if items.len() >= 8 {
         let is_descending = is_before(items[1], items[0]);

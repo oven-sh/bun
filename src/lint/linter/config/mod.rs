@@ -337,6 +337,8 @@ pub struct Config {
     accepts_all_plugins: bool,
     /// It is made of the files of ESLint 8.
     is_legacy: bool,
+    /// [`LanguageOptions::eslint_major`]
+    eslint_major: u8,
     /// `--no-ignore` of ESLint 8: a file that is named is linted, whatever ignores it. What is found in a directory is not.
     lints_all_that_is_named: bool,
     /// Which object has the patterns with which ESLint 8 ignores what starts with a dot.
@@ -397,6 +399,11 @@ impl Config {
     /// What could not be taken over from the configuration, for the user to read.
     pub fn notes(&self) -> &[Vec<u8>] {
         &self.notes
+    }
+
+    /// Sets [`LanguageOptions::eslint_major`] for all files. To be called before the configuration of a file is asked for.
+    pub fn follow_eslint(&mut self, major: u8) {
+        self.eslint_major = major;
     }
 
     /// What the user may want to know, and nothing is wrong: a line for each.
@@ -835,6 +842,7 @@ impl Config {
         config.language.refuses_what_parser_refuses = !self.prefers_typescript_rules;
         config.language.is_oxlint = self.prefers_typescript_rules;
         config.language.eslint_8 = eslint_8;
+        config.language.eslint_major = self.eslint_major;
         let parser_location = (indices.iter().rev())
             .find_map(|index| self.objects.get(*index as usize)?.parser_location.as_ref());
         config.linter = linter;

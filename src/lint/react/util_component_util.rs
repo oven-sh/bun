@@ -39,7 +39,7 @@ impl<'a> Pragmas<'a> {
 }
 
 /// A node of ESTree on the way up from an expression or a statement: upstream counts parents.
-/// Not all that are no nodes here are counted: no `Decorator`, no `TSModuleBlock`, none of a type.
+/// What is in a type is not counted as ESTree has it.
 #[derive(Copy, Clone)]
 enum Above<'a> {
     /// One that is a node here, [`normalize`]d.
@@ -51,27 +51,56 @@ enum Above<'a> {
 }
 
 impl<'a> Above<'a> {
+    /// What is in `parent`: a node that is none here and starts at `start`, or `parent` itself.
+    fn part(start: Option<u32>, parent: Node<'a>) -> Above<'a> {
+        match start {
+            Some(start) => Above::Part(start, parent),
+            None => Above::Node(parent),
+        }
+    }
+
     /// What `e`, with the `ChainExpression` around it, is in.
     fn of_expr(e: Expr<'a>) -> Above<'a> {
         let parent = estree_parent(Node::Expr(e));
-        match e.jsx_container_span() {
+        let modifiers = match parent {
+            Node::Class(class) => Some(class.modifiers()),
+            Node::Member(member) => Some(member.modifiers()),
+            Node::Param(param) => Some(param.modifiers()),
+            _ => None,
+        };
+        let decorator = modifiers.and_then(|it| it.iter().find(|it| it.decorator() == Some(e)));
+        let start = match parent {
+            _ if decorator.is_some() => decorator.map(|it| it.span().start),
+            // The `AssignmentPattern` in a `TSParameterProperty` or in a `Property`.
+            Node::Param(param) if param.is_parameter_property() => {
+                Some(param.span_without_modifiers().start)
+            }
+            Node::PatProp(prop) if prop.default() == Some(e) => Some(prop.value().span().start),
+            // The inner `TSNonNullExpression` of `e!!`.
+            Node::Expr(above) if above.inner_non_null_spans().len() > 0 => Some(above.span().start),
             // The braces of `{...e}` are the `JSXSpreadChild` that the `Spread` is.
-            Some(braces) if e.tag() != ExprTag::Spread => Above::Part(braces.start, parent),
-            _ => Above::Node(parent),
-        }
+            _ if e.tag() == ExprTag::Spread => None,
+            _ => e.jsx_container_span().map(|it| it.start),
+        };
+        Above::part(start, parent)
     }
 
     /// What `statement`, with the `export` before it, is in.
     fn of_stmt(statement: Stmt<'a>) -> Above<'a> {
         let parent = statement.parent();
-        match parent {
-            Node::Func(func) if func.kind() == FnKind::StaticBlock => Above::Node(func.owner()),
-            Node::Func(func) => match func.body_span() {
-                Some(block) => Above::Part(block.start, parent),
-                None => Above::Node(parent),
+        // The `BlockStatement` of a function, the `TSModuleBlock`.
+        let block = match parent {
+            Node::Func(func) if func.kind() == FnKind::StaticBlock => {
+                return Above::Node(func.owner());
+            }
+            Node::Func(func) => func.body_span(),
+            Node::Stmt(above) => match above.kind() {
+                StmtKind::Module(module) => module.innermost().body_span(),
+                _ => None,
             },
-            _ => Above::Node(parent),
-        }
+            _ => None,
+        };
+        Above::part(block.map(|it| it.start), parent)
     }
 
     /// `node.parent`
@@ -99,9 +128,15 @@ impl<'a> Above<'a> {
                 Some(export) => Above::Part(export.start, statement.parent()),
                 None => Above::of_stmt(statement),
             },
+            // The `ClassBody`.
             Node::Member(member) => match member.parent() {
                 Node::Class(class) => Above::Part(class.body_span().start, Node::Class(class)),
                 parent => Above::Node(parent),
+            },
+            // The `TSEnumBody`.
+            Node::EnumMember(member) => match member.parent().as_stmt().map(Stmt::kind) {
+                Some(StmtKind::Enum(it)) => Above::Part(it.body_span().start, member.parent()),
+                _ => Above::Node(member.parent()),
             },
             // The `JSXOpeningElement`.
             Node::Prop(prop) if prop.is_jsx_attribute() => {

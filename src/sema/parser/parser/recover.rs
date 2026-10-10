@@ -632,7 +632,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             ListKind::EnumMembers => 1132,
             ListKind::HeritageClauseElement => 1109,
             ListKind::VariableDeclarations if self.is_at_keyword() => {
-                return self.error_at_token(1389, &[word]);
+                // `TokenToString`
+                let word = self.lx.text_of(self.lx.atom).to_vec();
+                return self.error_at_token(1389, &[&word]);
             }
             ListKind::VariableDeclarations => 1134,
             ListKind::ObjectBindingElements => 1180,

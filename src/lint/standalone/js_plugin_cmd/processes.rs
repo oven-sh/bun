@@ -5,7 +5,7 @@
 //! the program ([`PROGRAM`]), a call (its kind), the answer to what it asked for (0). From a process: what it asks for (its
 //! kind), what a call returns ([`RESULT`]).
 
-use bun_lint::js_plugin::{Demand, Engine, HEAVY, Serve, Vm};
+use bun_lint::js_plugin::{Cost, Demand, Engine, HEAVY, Serve, Vm};
 use bun_threading::{Condition, Guarded};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::ThreadId;
@@ -241,6 +241,21 @@ impl Engine for Processes<'_> {
             self.is_idle.notify_all();
             then();
             self.state.lock().kept -= 1;
+        })
+    }
+
+    fn remember(&self, cost: Cost) {
+        self.demand.remember(cost.start);
+    }
+
+    fn cost(&self) -> Option<Cost> {
+        let (size, start) = self.demand.cost()?;
+        // Not known: it is in other processes.
+        let memory = 0;
+        Some(Cost {
+            size,
+            start,
+            memory,
         })
     }
 

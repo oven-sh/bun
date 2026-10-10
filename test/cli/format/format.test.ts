@@ -1253,6 +1253,27 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     expect(flag.exitCode).toBe(2);
   });
 
+  test("such a plugin in an override: the files that the override is for are left as they are", async () => {
+    const overrides = [{ files: "legacy/**", options: { plugins: ["prettier-plugin-brace-style"] } }];
+    const files = { ".prettierrc": JSON.stringify({ overrides }), "a.js": ugly, "legacy/b.js": ugly };
+    const result = await format(files, [], { reads: ["a.js", "legacy/b.js"] });
+    expect(result.files).toEqual({ "a.js": formatted, "legacy/b.js": ugly });
+    expect(result.stderr).toContain(
+      "[error] 1 file is left as they are: the configuration names plugins that bun format does not have, and that may print them in another way: prettier-plugin-brace-style.",
+    );
+    expect(result.exitCode).toBe(2);
+    // An override that empties the list takes its files out.
+    const emptied = {
+      plugins: ["prettier-plugin-brace-style"],
+      overrides: [{ files: "legacy/**", options: { plugins: [] } }],
+    };
+    const other = await format({ ...files, ".prettierrc": JSON.stringify(emptied) }, ["a.js", "legacy"], {
+      reads: ["a.js", "legacy/b.js"],
+    });
+    expect(other.files).toEqual({ "a.js": ugly, "legacy/b.js": formatted });
+    expect(other.exitCode).toBe(2);
+  });
+
   test("a plugin that only adds a language: the rest is formatted, and the files of that language are counted", async () => {
     const files = {
       ".prettierrc": '{ "plugins": ["prettier-plugin-astro"] }\n',
@@ -2430,17 +2451,18 @@ try {
     test("requirePragma and checkIgnorePragma", async () => {
       const files = {
         "none.js": ugly,
-        "format.js": `/** @format */\n${ugly}`,
+        // Not `format.js`: that is what `bun format` would run.
+        "at-format.js": `/** @format */\n${ugly}`,
         "prettier.js": `#!/usr/bin/env bun\n/**\n * Text.\n * @prettier\n */\n${ugly}`,
         "in-text.js": `/** see @format */\n${ugly}`,
         "noformat.js": `/** @noformat */\n${ugly}`,
       };
       expect(await different({ ...files, ".prettierrc": `{ "requirePragma": true }` }, [])).toEqual([
-        "format.js",
+        "at-format.js",
         "prettier.js",
       ]);
       expect(await different(files, ["--check-ignore-pragma"])).toEqual([
-        "format.js",
+        "at-format.js",
         "in-text.js",
         "none.js",
         "prettier.js",

@@ -499,7 +499,7 @@ impl Run<'_> {
             let result = context.verify_text_by(
                 shown,
                 &path,
-                text,
+                (text, false),
                 config,
                 &on_circular_fixes,
                 &mut |text| context.verify_scripts(framework, &path, text, config),
@@ -1091,8 +1091,16 @@ impl Run<'_> {
             let mut failure = Guarded::new(None);
             pool.for_each(changed.len(), 1, &|index| {
                 let result = changed[index];
-                let text = result.written().unwrap_or_default();
-                if let Err(why) = fs::write_atomically(&environment.cwd, &result.path, text) {
+                // A file is not emptied: neither for a text that is not there, nor by fixes that leave nothing of it.
+                let has_text = |path: &[u8]| fs::read(path).is_ok_and(|it| !it.is_empty());
+                let written = match result.written() {
+                    None => Err(b"The fixed text is lost. This is a bug in bun lint.".to_vec()),
+                    Some(b"") if has_text(&paths::from_native(&result.path)) => {
+                        Err(b"The fixes leave nothing of it.".to_vec())
+                    }
+                    Some(text) => fs::write_atomically(&environment.cwd, &result.path, text),
+                };
+                if let Err(why) = written {
                     failure
                         .lock()
                         .get_or_insert([b"Cannot write ", &result.path[..], b": ", &why].concat());

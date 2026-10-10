@@ -1181,7 +1181,7 @@ impl<'c> Configs<'c> {
         &'s self,
         scope: &'s Scope,
         path: &[u8],
-    ) -> impl Iterator<Item = &'static [u8]> + use<'s> {
+    ) -> impl Iterator<Item = &'static [u8]> + use<'s, 'c> {
         let of_flags = (self.options.plugins.iter())
             .filter_map(|it| endings_of_plugin(it))
             .flatten();
@@ -1231,7 +1231,7 @@ impl<'c> Configs<'c> {
         &'s self,
         scope: &'s Scope,
         path: &[u8],
-    ) -> impl Iterator<Item = &'s [u8]> + use<'s> {
+    ) -> impl Iterator<Item = &'s [u8]> + use<'s, 'c> {
         (self.plugins_for(scope, path).into_iter())
             .flat_map(|it| &it.packages)
             .chain(&self.options.plugins)

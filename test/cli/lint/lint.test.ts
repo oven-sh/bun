@@ -2068,6 +2068,55 @@ describe.concurrent("bun lint", () => {
   });
 
   describe("--fix", () => {
+    // The file is fixed, and linted again when all files are known, for the rule about several files. There the fix that breaks it
+    // is tried once more and taken back.
+    test.each(["stylish", "unix", "json", "pretty"])(
+      "what the first fixes made of a file is written if later ones are taken back: -f %s",
+      async format => {
+        const breaks = `{
+          meta: { fixable: "code", messages: { bad: "bad" } },
+          create: context => ({
+            'VariableDeclaration[kind="let"]'(node) {
+              context.report({ node, messageId: "bad", fix: fixer => fixer.insertTextAfter(node, " ((") });
+            },
+          }),
+        }`;
+        const files = {
+          "eslint.config.mjs": `export default [{
+            plugins: { import: { meta: { name: "eslint-plugin-import" }, rules: {} }, mine: { rules: { breaks: ${breaks} } } },
+            rules: { "import/no-cycle": "error", "no-var": "error", "mine/breaks": "error" },
+          }];`,
+          "a.js": `import { b } from "./b.js";\nvar a = b;\na = 2;\nexport { a };\n`,
+          "b.js": `import { a } from "./a.js";\nexport const b = 1;\nexport const c = a;\n`,
+        };
+        const result = await lint(files, ["--fix", "-f", format, "."], { reads: ["a.js", "b.js"] });
+        expect(result.files).toEqual({ "a.js": files["a.js"].replace("var", "let"), "b.js": files["b.js"] });
+        expect(result.stderr).toContain(
+          "Fixes of mine/breaks would leave a.js with a syntax error. They are not applied.",
+        );
+        expect(result.exitCode).toBe(1);
+      },
+    );
+
+    test("a file is not emptied", async () => {
+      const removes = `{
+        meta: { fixable: "code" },
+        create: context => ({
+          Program(node) {
+            if (node.body.length) context.report({ node, message: "all", fix: fixer => fixer.removeRange([0, context.sourceCode.text.length]) });
+          },
+        }),
+      }`;
+      const files = {
+        "eslint.config.mjs": `export default [{ files: ["a.js"], plugins: { mine: { rules: { removes: ${removes} } } }, rules: { "mine/removes": "error" } }];`,
+        "a.js": "export const a = 1;\n",
+      };
+      const result = await lint(files, ["--fix", "a.js"], { reads: ["a.js"] });
+      expect(result.files["a.js"]).toBe(files["a.js"]);
+      expect(result.stderr).toContain("a.js: The fixes leave nothing of it.");
+      expect(result.exitCode).toBe(2);
+    });
+
     const files = { "eslint.config.js": basic, "a.js": bad, "b.js": "export const b = 1;\n" };
 
     test("writes the files and reports what is left", async () => {

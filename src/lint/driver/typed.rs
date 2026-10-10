@@ -493,6 +493,8 @@ pub(crate) fn lint(
                 continue;
             }
             let mut finish = |result: LintResult, text: Option<Vec<u8>>, is_fixed: bool| {
+                // What is not there is not written.
+                let is_fixed = is_fixed && text.is_some();
                 let mut result = context.result(
                     crate::paths::to_native(file.path.to_vec()),
                     result,

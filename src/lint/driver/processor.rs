@@ -287,7 +287,7 @@ impl Context<'_, '_> {
         let mut result = self.verify_text_by(
             path,
             path_to_verify,
-            text,
+            (text, false),
             config,
             on_circular_fixes,
             &mut verify,

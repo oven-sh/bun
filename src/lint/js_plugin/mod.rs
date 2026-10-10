@@ -30,7 +30,7 @@ mod scopes;
 mod tokens;
 mod wire;
 
-pub use engine::{Demand, Engine, HEAVY, Serve, Vm};
+pub use engine::{Cost, Demand, Engine, HEAVY, Serve, Vm};
 pub use eslint::{Configuration, Linted, Refusal, Text};
 pub use host::{Failure, Host, Loading, Report, Suggested};
 pub use processor::{Block, Processor, Route, read_messages, write_messages};

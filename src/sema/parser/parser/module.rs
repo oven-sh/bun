@@ -246,8 +246,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         while self.is_in_list(T::CloseBrace) && self.is_at_element(ListKind::ImportAttributes) {
             // `parseImportAttribute`
             let (pos, element, token) = (self.pos(), self.full_start(), self.token());
+            // `tokenIsIdentifierOrKeyword` is true of a private name.
             if token != T::String
-                && (!token.is_identifier_or_keyword() || token == T::PrivateIdentifier)
+                && (!token.is_identifier_or_keyword()
+                    || token == T::PrivateIdentifier && self.is_read_as_by_other_parsers())
             {
                 self.fail();
                 break;

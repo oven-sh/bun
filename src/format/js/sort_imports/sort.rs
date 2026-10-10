@@ -12,32 +12,5 @@ pub(super) fn stable_sort_by<T: Copy>(
     items: &mut [T],
     mut compare: impl FnMut(&T, &T) -> Ordering,
 ) {
-    let mut run = 1;
-    // `CountAndMakeRun`, which V8 leaves out for a few items.
-    if items.len() >= 8 {
-        let is_descending = compare(&items[1], &items[0]) == Ordering::Less;
-        run = 2;
-        while run < items.len()
-            && (compare(&items[run], &items[run - 1]) == Ordering::Less) == is_descending
-        {
-            run += 1;
-        }
-        if is_descending {
-            items[..run].reverse();
-        }
-    }
-    // `BinaryInsertionSort`
-    for start in run..items.len() {
-        let pivot = items[start];
-        let (mut left, mut right) = (0, start);
-        while left < right {
-            let middle = left + (right - left) / 2;
-            match compare(&pivot, &items[middle]) {
-                Ordering::Less => right = middle,
-                _ => left = middle + 1,
-            }
-        }
-        items.copy_within(left..start, left + 1);
-        items[left] = pivot;
-    }
+    bun_lint::utils::array_sort_by(items, |a, b| compare(&a, &b) == Ordering::Less);
 }

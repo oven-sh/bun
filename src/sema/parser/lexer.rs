@@ -876,6 +876,7 @@ impl<'a> Lexer<'a> {
                 }
                 false => {
                     is_identifier_part(c)
+                        || bun_core::lexer::is_type_script_identifier_part(c as i32)
                         || self.is_ecmascript
                             && bun_core::lexer::is_recent_identifier_part(c as i32)
                 }
@@ -2268,7 +2269,7 @@ fn fix_whitespace_and_decode_jsx_entities(text: &str) -> Vec<u8> {
                 decode_jsx_entities(&text[start..end], &mut decoded);
             }
             first_non_whitespace = None;
-        } else if !bun_core::lexer::is_whitespace(c as i32) {
+        } else if !bun_core::lexer::is_white_space_single_line(c as i32) {
             after_last_non_whitespace = Some(at + c.len_utf8());
             first_non_whitespace.get_or_insert(at);
         }

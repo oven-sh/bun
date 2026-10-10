@@ -17,8 +17,8 @@ commits, and `licenses/` has the license of each (all MIT).
 
 The rules of `react-hooks` follow eslint-plugin-react-hooks 7.1.1, which reports the same for all of these cases of 7.0.0.
 
-The commits of eslint and typescript-eslint are `main`, a few commits after the release. The rules and their tests come
-from the same commit. The cases of a plugin's rule are those of the plugin, of eslint-plugin-import-x for `import`, and
+The commits of eslint and typescript-eslint are `main`, a few commits after the release: the tests come from there. What is
+recorded is what the release reports: `lib` of eslint 10.12.0 and the rules of typescript-eslint 8.71.1 as they are published. The cases of a plugin's rule are those of the plugin, of eslint-plugin-import-x for `import`, and
 of oxlint's port of the rule: see `extract-plugins.ts`.
 
 `more/` has cases from elsewhere in the same format, each with what the same ESLint reports for it:

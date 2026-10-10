@@ -275,7 +275,9 @@ fn span_at(
         && can_start_with_check
         && let [b'[', value, b']', after, ..] = *bytes
         && matches!(value, b' ' | b'\t' | b'x' | b'X')
-        && (after == b'\n' || (is_space(after) && bytes[3..].iter().any(|&byte| !is_space(byte))))
+        // remark-parse 7, which reads MDX: a blank is behind it.
+        && ((after == b'\n' && syntax != Syntax::Mdx)
+            || (is_space(after) && bytes[3..].iter().any(|&byte| !is_space(byte))))
     {
         return Some(ExtensionSpan {
             beg: 0,

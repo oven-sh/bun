@@ -5,7 +5,6 @@ use crate::util_props::{
     is_child_context_types_declaration, is_context_types_declaration, is_prop_types_declaration, is_required_prop_type,
 };
 use crate::util_variable::{Found, find_variable_by_name};
-use bun_lint::context::MAX_REPORTS;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::source::mention_bit;
@@ -275,7 +274,6 @@ impl ForbidPropTypes {
     ) {
         if let Some(target) = target
             && self.forbid.iter().any(|it| target == &**it)
-            && cx.state.forbidden.len() <= MAX_REPORTS as usize
         {
             cx.state.forbidden.push(Forbidden { listened: listened.span, declaration: declaration.span(), target });
         }
@@ -325,12 +323,10 @@ impl ForbidPropTypes {
             cx.state.known.insert(key, first..cx.state.forbidden.len());
             return;
         };
-        if cx.state.forbidden.len() <= MAX_REPORTS as usize {
-            cx.state.forbidden.extend_from_within(known.clone());
-            let added = cx.state.forbidden.len() - known.len();
-            for it in cx.state.forbidden.iter_mut().skip(added) {
-                it.listened = listened.span;
-            }
+        cx.state.forbidden.extend_from_within(known.clone());
+        let added = cx.state.forbidden.len() - known.len();
+        for it in cx.state.forbidden.iter_mut().skip(added) {
+            it.listened = listened.span;
         }
     }
 

@@ -234,9 +234,6 @@ impl SortPropTypes {
         };
         let mut prev: Option<Checked<'a>> = None;
         for node in declarations.iter() {
-            if cx.has_reported_too_much() {
-                return;
-            }
             // After a spread the next one is compared with itself.
             if Declarations::is_spread(node) {
                 prev = None;

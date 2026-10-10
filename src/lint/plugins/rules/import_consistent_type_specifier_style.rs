@@ -96,9 +96,6 @@ impl Rule for ConsistentTypeSpecifierStyle {
             if each_has_it || index == 0 {
                 report.fix(|fixer| made.get_or_insert_with(|| fix(fixer)).clone());
             }
-            if cx.has_reported_too_much() {
-                break;
-            }
         }
     }
 }

@@ -22,69 +22,27 @@ use bun_ast::{
 use bun_lint::ast::{
     BinOp, Call, Chain, Class, Expr, ExprKind, File, FnBody, FnKind, Func, Ident, Jsx, Key,
     KeyKind, List, Member, MemberKind, Name, Node, Param, Pat, PatKind, Prop, PropKind, Stmt,
-    StmtKind, StmtTag, Template, UnOp, VarDecl, VarKind,
+    StmtKind, Template, UnOp, VarDecl, VarKind,
 };
 use bun_lint::semantic::{Declaration, Symbol};
 use bun_lint::span::Span;
 use bun_react_compiler::hir::VariableBinding;
 use rustc_hash::FxHashMap;
 
-/// How deep the tree can be. The compiler calls itself along the nesting of what it is given, and
-/// along chains such as `a + b + c`, which the parser reads in a loop.
-const MAX_DEPTH: u32 = 192;
-
 /// How much stack the compiler can take for a level of the tree: twice what its lowering, which
-/// takes the most, was seen to take. A build that is not optimized takes ten times as much.
+/// takes the most, was seen to take. A build that is not optimized takes ten times as much. It calls itself
+/// along the nesting of what it is given, and along chains such as `a + b + c`, which the parser reads in a loop.
 const STACK_FOR_A_LEVEL: usize = if cfg!(any(debug_assertions, bun_asan)) {
     80 << 10
 } else {
     8 << 10
 };
 
-/// How much of each the tree can have. Passes of the compiler take time and memory that grow with the
-/// square or the cube of what a function has: of its instructions, of the blocks of its control
-/// flow graph, of the functions in it, of the arguments of a call. A function in a function is
-/// analysed on its own, so what counts is the sum of the squares.
-const MAX_NODES: usize = 1 << 17;
-/// One function with 11,585 nodes that are not in a function in it.
-const MAX_SQUARED_NODES: u64 = 1 << 27;
-/// One function with 512 branches.
-const MAX_SQUARED_BRANCHES: u64 = 1 << 18;
-/// One function with 1,024 calls.
-const MAX_SQUARED_CALLS: u64 = 1 << 20;
-/// One function that declares 512 variables.
-const MAX_SQUARED_DECLARATIONS: u64 = 1 << 18;
-const MAX_FUNCTIONS: u32 = 1024;
-const MAX_ARGUMENTS: usize = 64;
-
-/// What is counted for each function, without the functions in it.
-#[derive(Copy, Clone, Default)]
-struct Counts {
-    nodes: u64,
-    branches: u64,
-    calls: u64,
-    declarations: u64,
-}
-
-/// One more `here`, where `squares` is the sum for the functions before.
-fn count(here: &mut u64, squares: u64, max: u64, refusal: Refusal) -> Converts<()> {
-    *here += 1;
-    match squares + *here * *here > max {
-        true => Err(refusal),
-        false => Ok(()),
-    }
-}
-
 /// Why there is no tree.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Refusal {
+    /// The thread has not the stack for it.
     TooDeep,
-    TooManyNodes,
-    TooManyBranches,
-    TooManyCalls,
-    TooManyDeclarations,
-    TooManyFunctions,
-    TooManyArguments,
     /// Upstream's lowering throws an error without a place for one, which the plugin for ESLint drops.
     ThisParameter,
     /// `using`, which oxlint's compiler leaves alone without a word.
@@ -160,13 +118,8 @@ pub(crate) struct Converter<'a, 'x> {
     casts: Vec<(Loc, Loc)>,
     defaults: Vec<(Loc, Loc)>,
     clock_reads: Vec<Span>,
-    /// Of the function that is being converted.
-    here: Counts,
-    /// The sums of the squares of the counts of the functions that are converted.
-    squares: Counts,
-    functions: u32,
     depth: u32,
-    /// [`MAX_DEPTH`], or less if the thread has not the stack for that.
+    /// How many levels the thread has the stack for.
     max_depth: u32,
     stack: bun_core::StackCheck,
 }
@@ -179,7 +132,7 @@ pub(crate) fn convert<'a>(
     flavor: Flavor,
 ) -> Converts<Converted> {
     let stack = bun_core::StackCheck::init();
-    let max_depth = (stack.remaining() / STACK_FOR_A_LEVEL).min(MAX_DEPTH as usize) as u32;
+    let max_depth = (stack.remaining() / STACK_FOR_A_LEVEL) as u32;
     let mut converter = Converter {
         file,
         arena,
@@ -197,9 +150,6 @@ pub(crate) fn convert<'a>(
         casts: Vec::new(),
         defaults: Vec::new(),
         clock_reads: Vec::new(),
-        here: Counts::default(),
-        squares: Counts::default(),
-        functions: 0,
         depth: 0,
         max_depth,
         stack,
@@ -238,31 +188,10 @@ fn leak<T>(list: AstVec<T>) -> StoreSlice<T> {
 impl<'a> Converter<'a, '_> {
     // ───────────────────────────── places ─────────────────────────────
 
-    fn loc(&mut self, span: Span) -> Converts<Loc> {
-        let squares = self.squares.nodes;
-        count(
-            &mut self.here.nodes,
-            squares,
-            MAX_SQUARED_NODES,
-            Refusal::TooManyNodes,
-        )?;
-        if self.spans.len() >= MAX_NODES {
-            return Err(Refusal::TooManyNodes);
-        }
+    fn loc(&mut self, span: Span) -> Loc {
         let index = self.spans.len() as i32;
         self.spans.push(span);
-        Ok(Loc { start: index })
-    }
-
-    /// Counts what makes blocks in the control flow graph.
-    fn branch(&mut self) -> Converts<()> {
-        let (here, squares) = (&mut self.here.branches, self.squares.branches);
-        count(
-            here,
-            squares,
-            MAX_SQUARED_BRANCHES,
-            Refusal::TooManyBranches,
-        )
+        Loc { start: index }
     }
 
     /// Calls `then` one level further down.
@@ -495,29 +424,13 @@ impl<'a> Converter<'a, '_> {
             && func.estree_span() != self.root
     }
 
-    /// Calls `then`, which converts a function, one level further down.
-    fn in_function<T>(&mut self, then: impl FnOnce(&mut Self) -> Converts<T>) -> Converts<T> {
-        self.functions += 1;
-        if self.functions > MAX_FUNCTIONS {
-            return Err(Refusal::TooManyFunctions);
-        }
-        let outer = std::mem::take(&mut self.here);
-        let result = self.nested(then);
-        self.squares.nodes += self.here.nodes * self.here.nodes;
-        self.squares.branches += self.here.branches * self.here.branches;
-        self.squares.calls += self.here.calls * self.here.calls;
-        self.squares.declarations += self.here.declarations * self.here.declarations;
-        self.here = outer;
-        result
-    }
-
     fn function(&mut self, func: Func<'a>) -> Converts<G::Fn> {
-        self.in_function(|this| {
-            let loc = this.loc(func.estree_span())?;
+        self.nested(|this| {
+            let loc = this.loc(func.estree_span());
             let name = match func.name() {
                 Some(_) if this.is_without_its_name(func) => None,
                 Some(name) => Some(LocRef {
-                    loc: this.loc(name.span())?,
+                    loc: this.loc(name.span()),
                     ref_: this.declared(func.symbol(), name.name()),
                 }),
                 None => None,
@@ -546,8 +459,8 @@ impl<'a> Converter<'a, '_> {
     }
 
     fn arrow(&mut self, func: Func<'a>) -> Converts<E::Arrow> {
-        self.in_function(|this| {
-            let loc = this.loc(func.estree_span())?;
+        self.nested(|this| {
+            let loc = this.loc(func.estree_span());
             let (args, has_rest_arg, first) = this.args(func)?;
             let (body, prefer_expr) = this.body(func, loc, first)?;
             Ok(E::Arrow {
@@ -563,7 +476,7 @@ impl<'a> Converter<'a, '_> {
 
     /// A function expression, an arrow function, or the value of a method, at `span`.
     fn function_expr(&mut self, func: Func<'a>, span: Span) -> Converts<JsExpr> {
-        let loc = self.loc(span)?;
+        let loc = self.loc(span);
         Ok(match func.is_arrow() {
             true => JsExpr::init(self.arrow(func)?, loc),
             false => JsExpr::init(
@@ -586,8 +499,7 @@ impl<'a> Converter<'a, '_> {
         let Some(value) = value else {
             return Ok(None);
         };
-        self.branch()?;
-        let whole = self.loc(Span::new(target.span().start, value.span().end))?;
+        let whole = self.loc(Span::new(target.span().start, value.span().end));
         self.defaults.push((binding.loc, whole));
         if let ExprKind::Jsx(jsx) = value.skip_type_wrappers().kind() {
             self.recorded.push(Recorded::DefaultIsJsx {
@@ -600,16 +512,13 @@ impl<'a> Converter<'a, '_> {
 
     fn binding(&mut self, pat: Pat<'a>) -> Converts<Binding> {
         self.nested(|this| {
-            let loc = this.loc(pat.span())?;
+            let loc = this.loc(pat.span());
             Ok(match pat.kind() {
                 PatKind::Missing => Binding {
                     loc,
                     data: B::B::BMissing(B::Missing {}),
                 },
                 PatKind::Ident(name) => {
-                    let (here, squares) = (&mut this.here.declarations, this.squares.declarations);
-                    let refusal = Refusal::TooManyDeclarations;
-                    count(here, squares, MAX_SQUARED_DECLARATIONS, refusal)?;
                     let r#ref = this.declared(pat.symbol(), name);
                     Binding::alloc(this.arena, B::Identifier { r#ref }, loc)
                 }
@@ -627,7 +536,7 @@ impl<'a> Converter<'a, '_> {
                                 (binding, default_value)
                             }
                             None => {
-                                let loc = this.loc(element.span())?;
+                                let loc = this.loc(element.span());
                                 let data = B::B::BMissing(B::Missing {});
                                 (Binding { loc, data }, None)
                             }
@@ -677,7 +586,7 @@ impl<'a> Converter<'a, '_> {
     // ───────────────────────────── keys and properties ─────────────────────────────
 
     fn string(&mut self, value: &[u8], span: Span) -> Converts<JsExpr> {
-        Ok(JsExpr::init(E::EString::init(value), self.loc(span)?))
+        Ok(JsExpr::init(E::EString::init(value), self.loc(span)))
     }
 
     /// `at`: the place to give a key that is not computed, in place of its own.
@@ -691,7 +600,7 @@ impl<'a> Converter<'a, '_> {
             }
             KeyKind::Number(name) => match number(name) {
                 Some(value) => (
-                    JsExpr::init(E::Number::new(value), self.loc(span)?),
+                    JsExpr::init(E::Number::new(value), self.loc(span)),
                     flags::PROPERTY_NONE,
                 ),
                 None => (self.string(name.bytes(), span)?, flags::PROPERTY_NONE),
@@ -699,7 +608,7 @@ impl<'a> Converter<'a, '_> {
             KeyKind::Private(name) => {
                 let ref_ = self.ref_of_name(Named::Private, name);
                 (
-                    JsExpr::init(E::PrivateIdentifier { ref_ }, self.loc(span)?),
+                    JsExpr::init(E::PrivateIdentifier { ref_ }, self.loc(span)),
                     flags::PROPERTY_NONE,
                 )
             }
@@ -711,7 +620,7 @@ impl<'a> Converter<'a, '_> {
                 let span = key.inner_span(self.file);
                 match number(name) {
                     Some(value) => (
-                        JsExpr::init(E::Number::new(value), self.loc(span)?),
+                        JsExpr::init(E::Number::new(value), self.loc(span)),
                         computed,
                     ),
                     None => (self.string(name.bytes(), span)?, computed),
@@ -776,7 +685,7 @@ impl<'a> Converter<'a, '_> {
         self.nested(|this| {
             let class_name = match class.name() {
                 Some(name) => Some(LocRef {
-                    loc: this.loc(name.span())?,
+                    loc: this.loc(name.span()),
                     ref_: this.declared(class.symbol(), name.name()),
                 }),
                 None => None,
@@ -807,7 +716,7 @@ impl<'a> Converter<'a, '_> {
             let Some(FnBody::Block(statements)) = member.func().map(Func::body) else {
                 return Ok(None);
             };
-            let loc = self.loc(member.span())?;
+            let loc = self.loc(member.span());
             let mut stmts: AstVec<JsStmt> = AstAlloc::vec_with_capacity(statements.len());
             for statement in statements {
                 stmts.push(self.stmt(statement)?);
@@ -884,7 +793,7 @@ impl<'a> Converter<'a, '_> {
         | ExprKind::Satisfies { expr: inner, .. }
         | ExprKind::AsConst(inner) = expr.kind()
         {
-            let cast = self.loc(span)?;
+            let cast = self.loc(span);
             let operand = self.expr(inner)?;
             self.casts.push((operand.loc, cast));
             return Ok(operand);
@@ -892,26 +801,7 @@ impl<'a> Converter<'a, '_> {
         if let ExprKind::Fn(func) = expr.kind() {
             return self.function_expr(func, span);
         }
-        let loc = self.loc(span)?;
-        let is_branch = match expr.kind() {
-            ExprKind::Cond { .. } => true,
-            ExprKind::Binary { op, .. } | ExprKind::Assign { op: Some(op), .. } => {
-                matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish)
-            }
-            ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => chain == Chain::Start,
-            ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => {
-                if call.args().len() > MAX_ARGUMENTS {
-                    return Err(Refusal::TooManyArguments);
-                }
-                let (here, squares) = (&mut self.here.calls, self.squares.calls);
-                count(here, squares, MAX_SQUARED_CALLS, Refusal::TooManyCalls)?;
-                call.chain() == Chain::Start
-            }
-            _ => false,
-        };
-        if is_branch {
-            self.branch()?;
-        }
+        let loc = self.loc(span);
         Ok(match expr.kind() {
             ExprKind::Missing => JsExpr::init(E::Missing {}, loc),
             ExprKind::Ident(name) => {
@@ -959,9 +849,6 @@ impl<'a> Converter<'a, '_> {
                     Some(ExprKind::Template(template))
                         if self.flavor == Flavor::Oxlint && !template.exprs().is_empty() =>
                     {
-                        if template.exprs().len() > MAX_ARGUMENTS {
-                            return Err(Refusal::TooManyArguments);
-                        }
                         JsExpr::init(
                             E::Call {
                                 target: tag,
@@ -1133,7 +1020,7 @@ impl<'a> Converter<'a, '_> {
 
     fn dot(&mut self, obj: Expr<'a>, name: Ident<'a>, chain: Chain, loc: Loc) -> Converts<JsExpr> {
         let target = self.expr(obj)?;
-        let name_loc = self.loc(name.span())?;
+        let name_loc = self.loc(name.span());
         let optional_chain = Self::chain(chain);
         if name.bytes().starts_with(b"#") {
             let ref_ = self.ref_of_name(Named::Private, name.name());
@@ -1176,7 +1063,7 @@ impl<'a> Converter<'a, '_> {
         for (i, value) in template.exprs().iter().enumerate() {
             parts.push(E::TemplatePart {
                 value: self.expr(value)?,
-                tail_loc: self.loc(template.quasi_span(i + 1))?,
+                tail_loc: self.loc(template.quasi_span(i + 1)),
                 tail: contents(i + 1),
             });
         }
@@ -1204,10 +1091,10 @@ impl<'a> Converter<'a, '_> {
         let mut args: bun_ast::ExprNodeList = AstAlloc::vec_with_capacity(children.len() + 2);
         args.push(match jsx.tag() {
             Some(tag) => self.jsx_tag(tag)?,
-            None => JsExpr::init_identifier(self.fragment, self.loc(jsx.opening_span())?),
+            None => JsExpr::init_identifier(self.fragment, self.loc(jsx.opening_span())),
         });
         let attrs = jsx.attrs();
-        let props_loc = self.loc(jsx.opening_span())?;
+        let props_loc = self.loc(jsx.opening_span());
         args.push(match attrs.is_empty() {
             true => JsExpr::init(E::Null {}, props_loc),
             false => {
@@ -1215,7 +1102,7 @@ impl<'a> Converter<'a, '_> {
                 for attr in attrs {
                     let mut property = self.property(attr)?;
                     if property.kind != G::PropertyKind::Spread && property.value.is_none() {
-                        let loc = self.loc(attr.span())?;
+                        let loc = self.loc(attr.span());
                         property.value = Some(JsExpr::init(E::Boolean { value: true }, loc));
                     }
                     properties.push(property);
@@ -1235,7 +1122,7 @@ impl<'a> Converter<'a, '_> {
             }
         }
         let close_paren_loc = match jsx.closing_span() {
-            Some(span) => self.loc(span)?,
+            Some(span) => self.loc(span),
             None => Loc::EMPTY,
         };
         Ok(JsExpr::init(
@@ -1280,7 +1167,7 @@ impl<'a> Converter<'a, '_> {
     fn label(&mut self, stmt: Stmt<'a>) -> Converts<Option<LocRef>> {
         Ok(match stmt.label() {
             Some(label) => Some(LocRef {
-                loc: self.loc(label.span())?,
+                loc: self.loc(label.span()),
                 ref_: self.ref_of_name(Named::Label, label.name()),
             }),
             None => None,
@@ -1316,22 +1203,10 @@ impl<'a> Converter<'a, '_> {
     }
 
     fn stmt_here(&mut self, stmt: Stmt<'a>) -> Converts<JsStmt> {
-        let loc = self.loc(stmt.span())?;
+        let loc = self.loc(stmt.span());
         if let Some(value) = stmt.directive() {
             let value = StoreStr::new(value);
             return Ok(JsStmt::alloc(S::Directive { value }, loc));
-        }
-        if matches!(
-            stmt.tag(),
-            StmtTag::If
-                | StmtTag::For
-                | StmtTag::ForIn
-                | StmtTag::ForOf
-                | StmtTag::While
-                | StmtTag::DoWhile
-                | StmtTag::Try
-        ) {
-            self.branch()?;
         }
         Ok(match stmt.kind() {
             StmtKind::Empty => JsStmt::alloc(S::Empty {}, loc),
@@ -1365,7 +1240,7 @@ impl<'a> Converter<'a, '_> {
             StmtKind::Enum(it) => JsStmt::alloc(
                 S::Enum {
                     name: LocRef {
-                        loc: self.loc(it.name().span())?,
+                        loc: self.loc(it.name().span()),
                         ref_: Ref::NONE,
                     },
                     arg: Ref::NONE,
@@ -1377,7 +1252,7 @@ impl<'a> Converter<'a, '_> {
             StmtKind::Module(it) => JsStmt::alloc(
                 S::Namespace {
                     name: LocRef {
-                        loc: self.loc(it.name_span())?,
+                        loc: self.loc(it.name_span()),
                         ref_: Ref::NONE,
                     },
                     arg: Ref::NONE,
@@ -1476,9 +1351,8 @@ impl<'a> Converter<'a, '_> {
                 let test = self.expr(expr)?;
                 let mut converted: AstVec<Case> = AstAlloc::vec_with_capacity(cases.len());
                 for case in cases {
-                    self.branch()?;
                     converted.push(Case {
-                        loc: self.loc(case.span())?,
+                        loc: self.loc(case.span()),
                         value: case.test().map(|it| self.expr(it)).transpose()?,
                         body: self.stmts(case.body())?,
                     });
@@ -1498,12 +1372,12 @@ impl<'a> Converter<'a, '_> {
                 handler,
                 finalizer,
             } => {
-                let body_loc = self.loc(block.span())?;
+                let body_loc = self.loc(block.span());
                 let body = self.block(block)?;
                 let catch = match handler {
                     Some(handler) => {
                         let loc =
-                            self.loc(stmt.catch_clause_span().unwrap_or_else(|| handler.span()))?;
+                            self.loc(stmt.catch_clause_span().unwrap_or_else(|| handler.span()));
                         let mut binding = param.map(|it| self.binding(it.pat())).transpose()?;
                         let mut first: AstVec<JsStmt> = AstAlloc::vec();
                         // Upstream's compiler fails on a parameter that a function refers to. oxc's does not.
@@ -1516,7 +1390,7 @@ impl<'a> Converter<'a, '_> {
                         Some(Catch {
                             loc,
                             binding,
-                            body_loc: self.loc(handler.span())?,
+                            body_loc: self.loc(handler.span()),
                             body: match handler.as_block() {
                                 Some(statements) => self.stmts_after(first, statements)?,
                                 None => leak(first),
@@ -1527,7 +1401,7 @@ impl<'a> Converter<'a, '_> {
                 };
                 let finally = match finalizer {
                     Some(finalizer) => Some(Finally {
-                        loc: self.loc(finalizer.span())?,
+                        loc: self.loc(finalizer.span()),
                         stmts: self.block(finalizer)?,
                     }),
                     None => None,

@@ -664,9 +664,6 @@ impl UnifiedSignatures {
         let candidates = (signatures.len() > 8).then(|| self.candidates(&signatures));
         let mut later: Vec<u32> = Vec::new();
         for (i, a) in signatures.iter().enumerate() {
-            if cx.has_reported_too_much() {
-                return;
-            }
             match &candidates {
                 Some(candidates) => candidates.after(i as u32, &mut later),
                 None => {
@@ -687,7 +684,7 @@ impl UnifiedSignatures {
     ) where
         'a: 's,
     {
-        for b in later.take_while(|_| !cx.has_reported_too_much()) {
+        for b in later {
             match self.compare_signatures(a, b) {
                 None => {}
                 Some(Unify::SingleParameterDifference { p0, p1 }) => {

@@ -3,8 +3,7 @@
 // thing n deep in `deep(n)`. Its passes work on instructions, on the blocks of a control flow graph, on the variables and on the
 // functions in a function, so there is a shape for what makes many of each.
 //
-// And the cases of cases.ts for these rules. The passes take time and memory in proportion to the square or the cube of some of
-// these numbers, so a function that is above a limit is not compiled, and react/todo says so.
+// And the cases of cases.ts for these rules.
 import { RULE_NAMES } from "../react-compiler/shared";
 import type { Case } from "./cases";
 
@@ -173,7 +172,7 @@ export const deep = (n: number) => shapesOf(deepShapes, n);
 
 const rules = Object.fromEntries(RULE_NAMES.map(rule => [rule, "error"]));
 
-/** It is compiled, in a small part of a second. The sizes are about half of what is refused, or less. */
+/** It is compiled, in a small part of a second. */
 const compiled = (name: string, text: () => string, reports: Record<string, number> = {}): Case => ({
   name: `a component with ${name}`,
   file: "a.jsx",
@@ -185,18 +184,7 @@ const compiled = (name: string, text: () => string, reports: Record<string, numb
 
 const heavy = (it: Case): Case => ({ ...it, isHeavy: true });
 
-/** It would take minutes or gigabytes to compile, or overflow the stack. */
-const refused = (name: string, text: () => string): Case => ({
-  name: `a component with ${name} is not compiled`,
-  file: "a.jsx",
-  text,
-  rules,
-  reports: { "react/todo": 1 },
-  matches: /Support functions of this size/,
-  exitCode: 1,
-});
-
-/** The same, with the reason: how deep is too deep depends on the stack that is left, but this is in every build. */
+/** It would overflow the stack. How deep is too deep depends on the stack that is left, but this is in every build. */
 const tooDeep = (name: string, text: () => string): Case => ({
   name: `a component with ${name} is not compiled`,
   file: "a.jsx",
@@ -210,23 +198,14 @@ const tooDeep = (name: string, text: () => string): Case => ({
 
 export const cases: Case[] = [
   compiled("a call that has 48 arguments", () => wideShapes["rc-arguments-of-a-call.jsx"](48)),
-  refused("a call that has 20,000 arguments", () => wideShapes["rc-arguments-of-a-call.jsx"](20_000)),
   heavy(compiled("a variable that 250 ifs assign", () => wideShapes["rc-one-phi.jsx"](250))),
-  refused("a variable that 20,000 ifs assign", () => wideShapes["rc-one-phi.jsx"](20_000)),
   heavy(compiled("150 for-of loops", () => wideShapes["rc-for-of.jsx"](150))),
-  refused("20,000 for-of loops", () => wideShapes["rc-for-of.jsx"](20_000)),
   heavy(compiled("a pattern that has 150 defaults", () => wideShapes["rc-pattern-defaults.jsx"](150))),
-  refused("a pattern that has 20,000 defaults", () => wideShapes["rc-pattern-defaults.jsx"](20_000)),
   heavy(compiled("250 blocks that declare the same name", () => wideShapes["rc-same-name-in-blocks.jsx"](250))),
-  refused("20,000 blocks that declare the same name", () => wideShapes["rc-same-name-in-blocks.jsx"](20_000)),
   heavy(compiled("250 try statements", () => wideShapes["rc-trys.jsx"](250))),
-  refused("20,000 try statements", () => wideShapes["rc-trys.jsx"](20_000)),
   heavy(compiled("300 new Date()", () => wideShapes["rc-new-dates.jsx"](300), { "react/purity": 300 })),
-  refused("20,000 new Date()", () => wideShapes["rc-new-dates.jsx"](20_000)),
   compiled("250 closures", () => wideShapes["rc-closures.jsx"](250)),
-  refused("20,000 closures", () => wideShapes["rc-closures.jsx"](20_000)),
   compiled("250 useMemo", () => wideShapes["rc-memos.jsx"](250)),
-  refused("20,000 useMemo", () => wideShapes["rc-memos.jsx"](20_000)),
   // A debug build has frames ten times as large, and refuses what is a tenth as deep.
   compiled("ifs 8 deep", () => deepShapes["rc-ifs.jsx"](8)),
   heavy(compiled("ifs 60 deep", () => deepShapes["rc-ifs.jsx"](60))),
@@ -244,7 +223,7 @@ export const cases: Case[] = [
     name: "60 comments that disable the rules of hooks, each reported for each of 60 components",
   },
   {
-    // 160,000, of which not all are reported.
+    // 160,000.
     name: "400 comments that disable the rules of hooks and 400 components",
     isHeavy: true,
     file: "a.jsx",

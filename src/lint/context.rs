@@ -58,11 +58,6 @@ pub struct Details {
 }
 
 impl Details {
-    fn len(&self) -> usize {
-        let labels = self.labels.iter().map(|it| it.1.len());
-        self.first_label.len() + self.help.len() + self.note.len() + labels.sum::<usize>()
-    }
-
     /// What is said at the place of the report.
     pub fn first(&mut self, text: impl Into<Cow<'static, str>>) {
         self.first_label = text.into();
@@ -93,8 +88,6 @@ pub(crate) struct Sink {
     pub(crate) wants_fixes: Cell<bool>,
     /// Whether anything reads the help of oxlint. If not, it is not looked up.
     pub(crate) wants_help: Cell<bool>,
-    /// By `Diagnostic::rule`: how many bytes the messages, fixes and suggestions of the rule have.
-    pub(crate) bytes: RefCell<Vec<u64>>,
     /// What a rule has thrown: of all the first in the text, which ESLint comes to first.
     pub(crate) thrown: RefCell<Option<Thrown>>,
 }
@@ -120,28 +113,7 @@ pub(crate) struct CxBase<'a> {
     pub(crate) meta: &'static Meta,
     pub(crate) rule: u16,
     pub(crate) severity: Severity,
-    /// How often the rule has reported in this file.
-    pub(crate) reports: Cell<u32>,
-    /// [`Cx::has_reported_too_much`]
-    pub(crate) is_capped: Cell<bool>,
 }
-
-/// How many problems a rule can report in one file. A few rules report each pair of n things, as they do in ESLint, which takes
-/// more memory than there is for an n that a generated file can have.
-pub const MAX_REPORTS: u32 = 65_536;
-
-/// How many bytes the messages, fixes and suggestions of a rule can have in one file. A few rules quote in each of n messages,
-/// or replace in each of n fixes, a text whose length grows with n.
-pub const MAX_REPORTED_BYTES: u64 = 256 << 20;
-
-const TOO_MANY_PROBLEMS: Message = Message::new(
-    "tooManyProblems",
-    "This rule reported more than 65,536 problems in this file. The rest are not shown.",
-);
-const TOO_LARGE_PROBLEMS: Message = Message::new(
-    "tooLargeProblems",
-    "The problems that this rule reported in this file take more than 256 MB with their fixes. The rest are not shown.",
-);
 
 impl<'a, R: Rule> std::ops::Deref for Cx<'a, R> {
     type Target = File<'a>;
@@ -166,9 +138,6 @@ impl<'a, R: Rule> Cx<'a, R> {
     ///     .data("name", ident.name())
     ///     .fix(|fixer| fixer.remove(declaration));
     /// ```
-    ///
-    /// After [`MAX_REPORTS`] reports, or [`MAX_REPORTED_BYTES`] bytes, one more says so where the next would be, and nothing is
-    /// made of the rest.
     #[inline]
     pub fn report(&self, at: impl Spanned, message: Message) -> Report<'a> {
         self.base.report(at.span(), message)
@@ -178,13 +147,6 @@ impl<'a, R: Rule> Cx<'a, R> {
     /// that ends the run. `at`: the node that ESLint is at. The rules of oxlint do not throw. The text itself: [`Fixer::repeat`].
     pub fn repeat_count(&self, count: f64, at: impl Spanned) -> Option<u64> {
         self.base.repeat_count(count, at.span().start)
-    }
-
-    /// Whether the rule has reported as much as it can in this file: whatever else it finds is not shown. For a rule that can
-    /// find many times as much, to stop looking.
-    #[inline]
-    pub fn has_reported_too_much(&self) -> bool {
-        self.base.is_capped.get()
     }
 
     /// Reports `message` at a position: where ESLint's `loc` is a `{ line, column }` and not a
@@ -222,7 +184,7 @@ impl<'a> CxBase<'a> {
             true => oxlint_help::of(self.meta, message),
             false => None,
         };
-        let diagnostic = |message: Message, constant_help: Option<Help>| Diagnostic {
+        let diagnostic = Diagnostic {
             rule: self.rule,
             severity: self.severity,
             message_id: message.id,
@@ -231,41 +193,15 @@ impl<'a> CxBase<'a> {
             has_no_end: false,
             when: self.meta.reports,
             details: None,
-            constant_help,
+            constant_help: help,
             fix: None,
             suggestions: Vec::new(),
         };
-        if !self.is_capped.get() {
-            let bytes = self
-                .file
-                .sink
-                .bytes
-                .borrow()
-                .get(self.rule as usize)
-                .copied();
-            let closing = match self.reports.get() {
-                MAX_REPORTS => Some(TOO_MANY_PROBLEMS),
-                _ if bytes.is_some_and(|it| it > MAX_REPORTED_BYTES) => Some(TOO_LARGE_PROBLEMS),
-                reports => {
-                    self.reports.set(reports + 1);
-                    None
-                }
-            };
-            if let Some(closing) = closing {
-                self.is_capped.set(true);
-                drop(Report {
-                    file: self.file,
-                    message: closing,
-                    data: SmallVec::new(),
-                    diagnostic: Some(diagnostic(closing, None)),
-                });
-            }
-        }
         Report {
             file: self.file,
             message,
             data: SmallVec::new(),
-            diagnostic: (!self.is_capped.get()).then(|| diagnostic(message, help)),
+            diagnostic: Some(diagnostic),
         }
     }
 
@@ -636,19 +572,6 @@ impl Drop for Report<'_> {
                     suggestion.message.clone_from(&diagnostic.message);
                 }
             }
-            let suggested = diagnostic
-                .suggestions
-                .iter()
-                .map(|it| it.message.len() + it.fix.text.len());
-            let size = diagnostic.message.len()
-                + diagnostic.details.as_deref().map_or(0, Details::len)
-                + diagnostic.fix.as_ref().map_or(0, |it| it.text.len())
-                + suggested.sum::<usize>();
-            let mut bytes = self.file.sink.bytes.borrow_mut();
-            if bytes.len() <= diagnostic.rule as usize {
-                bytes.resize(diagnostic.rule as usize + 1, 0);
-            }
-            bytes[diagnostic.rule as usize] += size as u64;
             self.file.sink.diagnostics.borrow_mut().push(diagnostic);
         }
     }

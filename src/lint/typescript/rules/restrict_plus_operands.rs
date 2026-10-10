@@ -72,9 +72,6 @@ impl RestrictPlusOperands {
         }
         let mut had_individual_complaint = false;
         for sub_base_type in union_constituents(base_type) {
-            if cx.has_reported_too_much() {
-                return true;
-            }
             let is_invalid = match is_named_reg_exp(sub_base_type) {
                 true => !self.allow_reg_exp || other_type.has_flags(TypeFlags::NUMBER_LIKE),
                 false => (!self.allow_any && is_type_any_type(sub_base_type)) || is_deeply_object_type(sub_base_type),

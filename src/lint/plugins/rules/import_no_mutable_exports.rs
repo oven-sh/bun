@@ -60,7 +60,7 @@ fn check_declaration<'a>(declaration: Stmt<'a>, cx: &Cx<'a, NoMutableExports>) {
 }
 
 fn check_declarations_in_scope<'a>(export: Stmt<'a>, name: Name<'a>, cx: &Cx<'a, NoMutableExports>) {
-    let Some(symbol) = Node::Stmt(export).scope().get_name(name).filter(|_| !cx.has_reported_too_much()) else {
+    let Some(symbol) = Node::Stmt(export).scope().get_name(name) else {
         return;
     };
     for declaration in symbol.declarations() {

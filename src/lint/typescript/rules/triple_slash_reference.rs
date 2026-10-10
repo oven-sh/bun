@@ -78,7 +78,7 @@ impl TripleSlashReference {
         };
         // For oxlint an import in a `declare module` does not count.
         let is_passed_over = cx.language().is_oxlint && !matches!(stmt.parent(), Node::File(_));
-        if is_passed_over || cx.has_reported_too_much() {
+        if is_passed_over {
             return;
         }
         let report = |directive: &Directive<'a>| {

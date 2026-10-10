@@ -80,9 +80,6 @@ impl Rule for NoMapSpread {
             _ => callee.span(),
         };
         while let Some(found) = spreads.pop() {
-            if cx.has_reported_too_much() {
-                return;
-            }
             let spread = match found {
                 Found::One(spread) => spread,
                 Found::Many(list) => {

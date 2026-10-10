@@ -97,7 +97,7 @@ impl<'a> Compiler<'a> {
             Ok(converted) => converted,
             Err(Refusal::Using) => return Ok(()),
             Err(Refusal::ThisParameter) => return Err(Vec::new()),
-            Err(refusal) => return Err(vec![refused(refusal)]),
+            Err(Refusal::TooDeep) => return Err(vec![too_deep()]),
         };
         let host = LintHost::new(&converted, &arena, self.file.text());
         let node = match &converted.root {
@@ -209,21 +209,13 @@ fn todo(reason: String, span: Span) -> Finding {
     }
 }
 
-fn refused(refusal: Refusal) -> Finding {
-    let description = match refusal {
-        Refusal::TooDeep => "What is in it is nested too deeply",
-        Refusal::TooManyNodes | Refusal::Using | Refusal::ThisParameter => "It is too long",
-        Refusal::TooManyBranches => "It has too many branches",
-        Refusal::TooManyCalls => "It has too many calls",
-        Refusal::TooManyDeclarations => "It declares too many variables",
-        Refusal::TooManyFunctions => "It has too many functions in it",
-        Refusal::TooManyArguments => "A call in it has too many arguments",
-    };
+/// What the compiler says where it has not the stack for a function.
+fn too_deep() -> Finding {
     // Without a place of its own: it is reported where the function starts.
     Finding {
         category: ErrorCategory::Todo,
         reason: "Support functions of this size".to_owned(),
-        description: Some(description.to_owned()),
+        description: Some("What is in it is nested too deeply".to_owned()),
         details: Vec::new(),
         suggestions: Vec::new(),
         is_error_detail: true,

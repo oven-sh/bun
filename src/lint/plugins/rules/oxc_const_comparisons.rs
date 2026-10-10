@@ -141,10 +141,6 @@ fn check_right_operand<'a>(
     cx: &Cx<'a, ConstComparisons>,
 ) {
     for left in on_the_left {
-        // Of n comparisons of one expression every other pair is reported.
-        if cx.has_reported_too_much() {
-            return;
-        }
         let Some(ordering) = left.constant.partial_cmp(&right.constant) else {
             return;
         };

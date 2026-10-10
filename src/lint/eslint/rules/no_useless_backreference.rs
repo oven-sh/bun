@@ -223,9 +223,6 @@ fn check_regex<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &Cx<'a, NoU
         let RegexKind::Backreference { resolved, .. } = bref.kind() else {
             continue;
         };
-        if cx.has_reported_too_much() {
-            return;
-        }
         let groups_of_name = (resolved.first().filter(|_| resolved.len() > MANY_GROUPS))
             .and_then(|first| groups_of_names.entry(first.start()).or_insert_with(|| GroupsOfName::new(resolved)).as_ref());
         let found = match groups_of_name {

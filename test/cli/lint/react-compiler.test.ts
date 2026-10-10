@@ -187,28 +187,30 @@ describe.concurrent(`bun lint: the rules of the React Compiler report what oxlin
     expect(exit).toBe(1);
   });
 
-  // oxlint and eslint-plugin-react-hooks take all the memory there is for functions like these, so the words are ours.
   test(
-    "a small function whose types or refs are made of each other takes no time to speak of",
+    "a long component is compiled",
+    async () => {
+      const { diagnostics, exit } = await report(small.long);
+      expect(diagnostics).toEqual(expected.reports.long.diagnostics);
+      for (const path of ["statements.tsx", "states.tsx", "callbacks.tsx", "children.tsx"])
+        expect([path, rulesIn({ it: diagnostics[path] })]).toEqual([path, ["react(refs)"]]);
+      expect(exit).toBe(1);
+    },
+    slow,
+  );
+
+  // oxlint and eslint-plugin-react-hooks take all the memory there is for functions like these.
+  test(
+    "a small function whose types are made of each other takes no time to speak of",
     async () => {
       const { diagnostics, exit } = await report({
         ".oxlintrc.json": rc(),
         "types.jsx": `function Component(props) { let a, b, c, d, e; l1: for (let i2 = 0; i2 < 0; i2++) {  try {  do { try { switch (props.x) { case 0: { }  case 1: { [a = 3, b = b] = props.l;  }  case 2: { } default: { } case 3: { b = a; }  } } catch (err) { }  } while (props.x); } catch (err) { } } return <div>{a}{b}{c}{d}{e}</div>; }`,
         "cycle.jsx": `function Component(props) { let a, b, c, d, e; while (props.x) { switch (c?.p) { case 0: { while (props.y) { switch (f0) { default: {   try { } catch (err) { } for (const x3 of 0) {  e = ((props.x && (props.x ?? d)) || { });  } ({p: a = e, q: c} = props.o); } case 0: { if (fprops.x) {  d = (props.y && (fprops.x ? a : f0)); } }  case 1: { }  }  while ((f((props.x ? null : a)) < props.x)) { if ((0 === 0)) { ({p: e = b, q: a} = props.o); d = d;  }  } } } case 1: { } default: { } }   }    a = { };  return <div>{a}{b}{c}{d}{e}</div>; }`,
-        "refs.jsx": `function Component(props) { let {a = 1, b = a, c = b, d = c, e = d} = props; { } l2: { for (let i3 = 0; i3 < (c ?? a); i3++) { try { { while ((() => (f(b) - null))) { c += f0;  } } } catch (err) {  for (const x4 of props.x) {  const g5 = () => { f(a, d); c = d; }; f(g5); switch (0) { case 0: { } default: {  c = {k: d}; } case 1: { } case 2: { }  } } try { } catch (err) { } if (props.x) { for (const k12 in props.x) {  c = (() => c); }  } }   }  }  b = [props.y, c];  d++;  c -= d; return <div>{a}{b}{c}{d}{e}</div>; }`,
       });
-      const said = (path: string) =>
-        (diagnostics[path] as { code: string; message: string; help: string }[]).map(it => [
-          it.code,
-          it.message,
-          it.help,
-        ]);
-      // Nothing is wrong in the two whose types are made of each other.
-      expect(Object.keys(diagnostics)).toEqual(["refs.jsx"]);
-      expect(said("refs.jsx")).toEqual([
-        ["react(todo)", "Support functions of this size", "Its refs are too complex to follow"],
-      ]);
-      expect(exit).toBe(1);
+      // Nothing is wrong in them.
+      expect(diagnostics).toEqual({});
+      expect(exit).toBe(0);
     },
     slow,
   );

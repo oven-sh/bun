@@ -191,9 +191,6 @@ fn check_element_or_fragment<'a>(e: Expr<'a>, cx: &mut Cx<'a, JsxKey>) {
         if checks.key_must_before_spread {
             let keys: usize = children().filter_map(as_jsx_element).map(count_keys_if_one_is_after_spread).sum();
             for _ in 0..times.saturating_mul(keys) {
-                if cx.has_reported_too_much() {
-                    break;
-                }
                 cx.report(e, KEY_BEFORE_SPREAD);
             }
         }

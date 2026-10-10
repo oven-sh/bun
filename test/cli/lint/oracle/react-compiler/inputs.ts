@@ -226,6 +226,20 @@ const order = `export default function Component(props) {
 }
 `;
 
+/** A ref is read in render at the top, and then there are `n` of one thing. */
+const long = (n: number, unit: (k: number) => string, result: (units: string) => [body: string, returns: string]) => {
+  const [body, returns] = result(Array.from({ length: n }, (_, k) => unit(k)).join("\n"));
+  return `import { useCallback, useRef, useState } from "react";
+
+export function Long(props: { a: number }) {
+  const ref = useRef(0);
+  const bad = ref.current;
+${body}
+  return ${returns};
+}
+`;
+};
+
 /** A type cast is an instruction of its own to the compiler, with a place of its own. `x!` is not. */
 const casts = `function Hidden(props: Props) {
   const Dynamic = useComponent(props.kind) as any;
@@ -399,6 +413,29 @@ function Component(props) {
 `,
   },
   casts: { ".oxlintrc.json": rc(), "casts.tsx": casts },
+  long: {
+    ".oxlintrc.json": rc(),
+    "statements.tsx": long(
+      2000,
+      k => `  const v${k} = props.a + ${k};`,
+      units => [units, "<div>{bad + v0 + v1999}</div>"],
+    ),
+    "states.tsx": long(
+      1000,
+      k => `  const [s${k}, setS${k}] = useState(${k});`,
+      units => [units, "<div>{bad + s0 + s999 + (setS0 === setS999 ? 0 : 1)}</div>"],
+    ),
+    "callbacks.tsx": long(
+      2000,
+      k => `  const f${k} = useCallback(() => props.a + ${k}, [props.a]);`,
+      units => [units, "<div>{bad + f0() + f1999()}</div>"],
+    ),
+    "children.tsx": long(
+      2000,
+      k => `      <span>{props.a + ${k}}</span>`,
+      units => ["", `(\n    <div>\n      {bad}\n${units}\n    </div>\n  )`],
+    ),
+  },
   order: { ".oxlintrc.json": rc(), "order.jsx": order },
   lowering: { ".oxlintrc.json": rc(), "forever.tsx": forever, "defaults.tsx": defaults },
   node_modules: {

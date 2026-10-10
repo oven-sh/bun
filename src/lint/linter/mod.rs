@@ -813,14 +813,6 @@ impl<S: RuleSet> Linter<S> {
         }
         LintMessage::sort(&mut problems);
 
-        // Of a rule that has reported as much as it can, the rest is missing. So it cannot be told whether a comment that
-        // disables it does nothing, and no comment of the file is removed: one that is in use would be damage to the source.
-        let cut: Vec<RuleId> = (problems.iter().filter(|it| is_closing(it)))
-            .filter_map(|it| it.rule_id.clone())
-            .collect();
-        rules_to_ignore.extend(cut.iter().cloned());
-        let fixes_comments = options.wants_fixes && cut.is_empty();
-
         let report_unused = (options.report_unused_disable_directives)
             .unwrap_or(config.linter.report_unused_disable_directives);
         let understands_oxlint_comments =
@@ -881,43 +873,11 @@ impl<S: RuleSet> Linter<S> {
             };
         apply_comments(
             report_unused,
-            fixes_comments,
+            options.wants_fixes,
             options.wants_suppressions,
             &mut problems,
         );
 
-        // What is missing of a rule is not known. The reports that are kept can all be in a part of the file in which the rule is
-        // disabled, and the missing ones after the `eslint-enable`. So a message of the rule is tried wherever there is code.
-        let mut off_everywhere = if has_directives {
-            cut.clone()
-        } else {
-            Vec::new()
-        };
-        // Only then: to ask for the tokens of a file splits it into tokens.
-        let mut places = (!off_everywhere.is_empty())
-            .then(|| places_to_probe(file))
-            .into_iter()
-            .flatten();
-        while !off_everywhere.is_empty() {
-            let places = places
-                .by_ref()
-                .take(PROBES_AT_A_TIME)
-                .map(|it| (locator.position(it.start), locator.position(it.end)));
-            let mut probes: Vec<LintMessage> = places
-                .flat_map(|at| off_everywhere.iter().map(move |rule| probe(rule, at)))
-                .collect();
-            if probes.is_empty() {
-                break;
-            }
-            apply_comments(Severity::Off, false, false, &mut probes);
-            off_everywhere.retain(|rule| {
-                let mut of_rule = probes.iter().filter(|it| it.rule_id.as_ref() == Some(rule));
-                of_rule.all(|it| !it.suppressions.is_empty())
-            });
-        }
-        for rule in &cut {
-            suppress_closing_like_the_rest(&mut problems, rule, off_everywhere.contains(rule));
-        }
         if !has_directives {
             result.messages = problems;
         } else {
@@ -928,72 +888,6 @@ impl<S: RuleSet> Linter<S> {
             result.suppressed = suppressed;
         }
         result
-    }
-}
-
-/// Whether it says that a rule has reported as much as it can in the file: see [`Cx::report`](crate::context::Cx::report).
-fn is_closing(message: &LintMessage) -> bool {
-    matches!(message.rule_id, Some(RuleId::Known(_)))
-        && matches!(
-            message.message_id.as_deref(),
-            Some("tooManyProblems" | "tooLargeProblems")
-        )
-}
-
-/// How many places are tried in one go whether comments switch a rule off there.
-const PROBES_AT_A_TIME: usize = 1 << 16;
-
-/// The tokens at which what the comments do with a message can be something else than at the token before: the first of a line,
-/// and one after a comment.
-fn places_to_probe<'a>(file: &'a File<'a>) -> impl Iterator<Item = Span> + 'a {
-    let mut end_of_the_last = None;
-    file.tokens().filter_map(move |token| {
-        let span = token.span();
-        let is_next_to_the_last = end_of_the_last.replace(span.end).is_some_and(|end| {
-            file.slice(Span::before(end, span))
-                .iter()
-                .all(|it| matches!(it, b' ' | b'\t'))
-        });
-        (!is_next_to_the_last).then_some(span)
-    })
-}
-
-/// A message of `rule` from a line and a column to another, for the comments to suppress or not. It is not reported.
-///
-/// It has an end: for oxlint a comment is about what overlaps its range, which nothing without a length does at the start of it.
-fn probe(rule: &RuleId, ((line, column), end): ((u32, u32), (u32, u32))) -> LintMessage {
-    LintMessage {
-        rule_id: Some(rule.clone()),
-        line,
-        column,
-        end: Some(end),
-        ..LintMessage::default()
-    }
-}
-
-/// That reports of `rule` are missing is not shown if and only if none of those that are kept is shown and comments switch the rule
-/// off wherever there is code. Which comment happens to be where the first missing report would be does not count.
-fn suppress_closing_like_the_rest(
-    problems: &mut [LintMessage],
-    rule: &RuleId,
-    is_off_everywhere: bool,
-) {
-    let mut kept = problems
-        .iter()
-        .filter(|it| it.rule_id.as_ref() == Some(rule) && !is_closing(it));
-    let suppressions = match is_off_everywhere && kept.clone().all(|it| !it.suppressions.is_empty())
-    {
-        true => kept
-            .next_back()
-            .map(|it| it.suppressions.clone())
-            .unwrap_or_default(),
-        false => Vec::new(),
-    };
-    for closing in problems
-        .iter_mut()
-        .filter(|it| it.rule_id.as_ref() == Some(rule) && is_closing(it))
-    {
-        closing.suppressions.clone_from(&suppressions);
     }
 }
 

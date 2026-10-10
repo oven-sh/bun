@@ -51,8 +51,6 @@ pub fn get_static_value<'a>(expr: Expr<'a>, scope: Option<Scope<'a>>) -> Option<
     }
     let mut evaluator = Evaluator {
         resolves: scope.is_some(),
-        depth: 0,
-        budget: 20_000,
         symbols: SmallVec::new(),
     };
     evaluator.eval(expr).ok()
@@ -61,11 +59,6 @@ pub fn get_static_value<'a>(expr: Expr<'a>, scope: Option<Scope<'a>>) -> Option<
 struct Evaluator<'a> {
     /// Whether identifiers are resolved.
     resolves: bool,
-    /// How deep the recursion is.
-    depth: u32,
-    /// How many more expressions are evaluated. A variable is evaluated anew each time it is
-    /// read, which takes exponential time for `const b = [a, a], c = [b, b], ..`.
-    budget: u32,
     /// The variables that are being evaluated.
     symbols: SmallVec<[Symbol<'a>; 4]>,
 }
@@ -88,19 +81,15 @@ impl<'a> Evaluator<'a> {
     }
 
     fn eval_link(&mut self, e: Expr<'a>) -> Eval<Link<'a>> {
-        if self.depth >= 500 || self.budget == 0 {
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
             return Err(Stop::Abort);
         }
-        self.depth += 1;
-        self.budget -= 1;
-        let result = match e.kind() {
+        match e.kind() {
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => self.member(e, obj),
             ExprKind::Call(call) => self.call(e, call),
             ExprKind::NonNull(inner) => self.eval_object(inner),
             _ => self.eval_other(e).map(|value| (value, false)),
-        };
-        self.depth -= 1;
-        result
+        }
     }
 
     fn eval_other(&mut self, e: Expr<'a>) -> Eval<StaticValue<'a>> {
@@ -199,9 +188,6 @@ impl<'a> Evaluator<'a> {
                 ExprKind::Missing => values.push(StaticValue::Hole),
                 ExprKind::Spread(spread) => values.extend(iterate(&self.eval(spread)?)?),
                 _ => values.push(self.eval(element)?),
-            }
-            if values.len() > MAX_LEN {
-                return Err(Stop::Abort);
             }
         }
         Ok(values)

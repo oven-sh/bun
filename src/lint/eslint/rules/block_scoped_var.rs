@@ -62,9 +62,6 @@ impl Rule for BlockScopedVar {
         let StmtKind::Var(declarations) = statement.kind() else {
             return;
         };
-        if cx.has_reported_too_much() {
-            return;
-        }
         let Some(first) = declarations.first().filter(|it| it.var_kind() == VarKind::Var) else {
             return;
         };
@@ -88,8 +85,7 @@ impl Rule for BlockScopedVar {
                     Node::Pat(name) => utils::estree_span(name.into()),
                     _ => reference.span(),
                 };
-                // Each of n declarations can have n references outside its block.
-                if context.contains(identifier) || cx.has_reported_too_much() {
+                if context.contains(identifier) {
                     return true;
                 }
                 let definition = *definition.get_or_insert_with(|| cx.position(pat.span().start));
@@ -126,7 +122,7 @@ impl Rule for BlockScopedVar {
                 // The parameters of a function are in the scope of its body.
                 let is_parameter_there = matches!(declaration, Declaration::Param(_))
                     && matches!(declaration.node(), Some(Node::Func(func)) if func.body_span() == Some(context));
-                if context.contains(name) || is_parameter_there || cx.has_reported_too_much() {
+                if context.contains(name) || is_parameter_there {
                     return true;
                 }
                 if cx.file().reference_at(name.start).is_none() {

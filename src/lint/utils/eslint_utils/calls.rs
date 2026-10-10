@@ -711,9 +711,6 @@ fn array_method<'a>(
                     }
                     more => all.push(more.clone()),
                 }
-                if all.len() > MAX_LEN {
-                    return Err(Stop::Abort);
-                }
             }
             Ok(StaticValue::Array(all))
         }

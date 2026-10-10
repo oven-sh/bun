@@ -23,17 +23,5 @@ pub(crate) fn nested_too_deeply() -> crate::diagnostics::CompilerDiagnostic {
     )
 }
 
-bun_core::declare_scope!(ReactCompilerBudget, hidden);
-
-/// Why a function on which a pass would take time or memory without measure is not compiled.
-#[cold]
-pub(crate) fn too_complex(description: &str) -> crate::diagnostics::CompilerDiagnostic {
-    crate::diagnostics::CompilerDiagnostic::new(
-        crate::diagnostics::ErrorCategory::Todo,
-        "Support functions of this size",
-        Some(description.to_string()),
-    )
-}
-
 pub use hir_builder::FunctionNode;
 pub(crate) use hir_builder::convert_loc;

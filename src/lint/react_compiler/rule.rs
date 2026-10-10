@@ -20,9 +20,6 @@ pub fn report<'a, R: Rule>(cx: &Cx<'a, R>, category: ErrorCategory) {
         .iter()
         .filter(|finding| finding.category == category);
     for (_, rendered) in render_all(file, findings) {
-        if cx.has_reported_too_much() {
-            break;
-        }
         let Rendered {
             message,
             help,
@@ -57,9 +54,6 @@ pub fn report_as_eslint<'a, R: Rule>(cx: &Cx<'a, R>, category: ErrorCategory) {
         .iter()
         .filter(|finding| finding.category == category);
     for finding in findings {
-        if cx.has_reported_too_much() {
-            break;
-        }
         let Some(rendered) = eslint::render(file, finding) else {
             continue;
         };

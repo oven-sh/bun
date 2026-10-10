@@ -172,21 +172,9 @@ impl RefAccessType {
 
 // --- Join operations ---
 
-/// What is nested in a type grows with each round of the fixpoint, and a join goes into all of it.
-const MAX_JOINS: u32 = 1 << 22;
-
 struct Joins {
     /// `EnvironmentConfig::joined_ref_values_keep_their_place`
     keeps_place: bool,
-    count: std::cell::Cell<u32>,
-}
-
-impl Joins {
-    /// Counts one. After [`MAX_JOINS`] each join is its first argument, and the validation fails.
-    fn may_join(&self) -> bool {
-        self.count.set(self.count.get().saturating_add(1));
-        self.count.get() <= MAX_JOINS
-    }
 }
 
 fn join_ref_access_ref_types(
@@ -194,9 +182,6 @@ fn join_ref_access_ref_types(
     b: &RefAccessRefType,
     joins: &Joins,
 ) -> RefAccessRefType {
-    if !joins.may_join() {
-        return a.clone();
-    }
     let keeps_place = joins.keeps_place;
     match (a, b) {
         (
@@ -274,9 +259,6 @@ fn join_ref_access_ref_types(
 }
 
 fn join_ref_access_types(a: &RefAccessType, b: &RefAccessType, joins: &Joins) -> RefAccessType {
-    if !joins.may_join() {
-        return a.clone();
-    }
     match (a, b) {
         (RefAccessType::None, other) | (other, RefAccessType::None) => other.clone(),
         (RefAccessType::Guard { ref_id: a_id }, RefAccessType::Guard { ref_id: b_id }) => {
@@ -322,10 +304,7 @@ struct Env {
 impl Env {
     fn new(keeps_place: bool, looks_into_functions: bool) -> Self {
         Self {
-            joins: Joins {
-                keeps_place,
-                count: std::cell::Cell::new(0),
-            },
+            joins: Joins { keeps_place },
             looks_into_functions,
             changed: false,
             data: IdMap::default(),
@@ -550,10 +529,7 @@ fn guard_check(errors: &mut Vec<CompilerDiagnostic>, operand: &Place, env: &Env)
 
 // --- Main entry point ---
 
-pub(crate) fn validate_no_ref_access_in_render(
-    func: &HirFunction,
-    env: &mut Environment,
-) -> Result<(), CompilerDiagnostic> {
+pub(crate) fn validate_no_ref_access_in_render(func: &HirFunction, env: &mut Environment) {
     let mut ref_env = Env::new(
         env.config.joined_ref_values_keep_their_place,
         env.config.captured_refs_are_known_in_functions,
@@ -575,17 +551,9 @@ pub(crate) fn validate_no_ref_access_in_render(
         &mut ref_env,
         &mut errors,
     );
-    let joins = ref_env.joins.count.get();
-    bun_core::scoped_log!(crate::lowering::ReactCompilerBudget, "refs {}", joins);
-    if joins > MAX_JOINS {
-        return Err(crate::lowering::too_complex(
-            "Its refs are too complex to follow",
-        ));
-    }
     for diagnostic in errors {
         env.record_diagnostic(diagnostic);
     }
-    Ok(())
 }
 
 fn collect_temporaries_sidemap(

@@ -186,40 +186,12 @@ export const cases: Case[] = [
     exitCode: 0,
   },
 
-  // ── what a rule can report ──
-  {
-    name: "a rule that reports each pair stops at 65,536 problems and says so",
-    isHeavy: true,
-    file: "a.js",
-    text: () => fn(rep("for (var i = 0; i < 10; i++) { b(() => i); }\n", 2_000)),
-    rules: { "block-scoped-var": "error" },
-    reports: { "block-scoped-var": 65_537 },
-    matches: /This rule reported more than 65,536 problems in this file\. The rest are not shown\./,
-    exitCode: 1,
-  },
-
-  // ── what is cut, and the comments that disable ──
+  // ── the comments that disable ──
   ...[false, true].flatMap((eslint): Case[] => {
     const flavor = eslint ? "ESLint" : "oxlint";
     const disabled = "a == b; // eslint-disable-line eqeqeq\n";
-    // Each line has 4,000 array types in each other, whose messages quote them: 30 MB. 16 lines have fewer than 65,536 reports.
-    const arrays = `let a: T${rep("[]", 4_000)}; // eslint-disable-line @typescript-eslint/array-type\n`;
-    const arrayType = {
-      [eslint ? "@typescript-eslint/array-type" : "typescript/array-type"]: ["error", { default: "generic" }],
-    };
     const common = { eslint, reportsUnusedDirectives: true, lacks: /Unused eslint-disable/ };
     return [
-      {
-        ...common,
-        name: `${flavor}: that reports are missing is said, whatever comment is where the first of them would be`,
-        isHeavy: true,
-        file: "a.js",
-        text: () => rep(`${disabled}c == d;\n`, 40_000),
-        rules: { eqeqeq: "error" },
-        reports: { eqeqeq: 32_769 },
-        matches: /This rule reported more than 65,536 problems/,
-        exitCode: 1,
-      },
       {
         ...common,
         name: `${flavor}: 70,000 comments that each disable a problem are all in use`,
@@ -240,82 +212,6 @@ export const cases: Case[] = [
         args: ["--fix", "-f", "unix"],
         reports: {},
         keeps: [/eslint-disable-line eqeqeq/g, 70_000],
-        exitCode: 0,
-      },
-      {
-        ...common,
-        name: `${flavor}: that reports are missing is said if those that are kept are all in a part in which the rule is disabled`,
-        isHeavy: eslint,
-        file: "a.js",
-        text: () =>
-          `/* eslint-disable eqeqeq */\n${rep("a == b;\n", 70_000)}/* eslint-enable eqeqeq */\n${rep("c == d;\n", 10)}`,
-        rules: { eqeqeq: "error" },
-        reports: { eqeqeq: 1 },
-        matches: /This rule reported more than 65,536 problems/,
-        exitCode: 1,
-      },
-      {
-        ...common,
-        // Whether anything is wrong with the rest is not known.
-        name: `${flavor}: and also if nothing is wrong with the rest`,
-        isHeavy: eslint,
-        file: "a.js",
-        text: () => `/* eslint-disable eqeqeq */\n${rep("a == b;\n", 70_000)}/* eslint-enable eqeqeq */\nc === d;\n`,
-        rules: { eqeqeq: "error" },
-        reports: { eqeqeq: 1 },
-        matches: /This rule reported more than 65,536 problems/,
-        exitCode: 1,
-      },
-      {
-        ...common,
-        name: `${flavor}: and also if there is code before the comment that disables the rule`,
-        isHeavy: eslint,
-        file: "a.js",
-        text: () => `"use strict";\n/* eslint-disable eqeqeq */\n${rep("a == b;\n", 70_000)}`,
-        rules: { eqeqeq: "error" },
-        reports: { eqeqeq: 1 },
-        matches: /This rule reported more than 65,536 problems/,
-        exitCode: 1,
-      },
-      {
-        ...common,
-        name: `${flavor}: it is not said if the rule is disabled from the first token to the last`,
-        isHeavy: eslint,
-        file: "a.js",
-        text: () => `// A comment.\n\n/* eslint-disable eqeqeq */\n${rep("a == b;\n", 70_000)}\n// Another.\n`,
-        rules: { eqeqeq: "error" },
-        reports: {},
-        exitCode: 0,
-      },
-      {
-        ...common,
-        name: `${flavor}: by bytes: that reports are missing is said`,
-        file: "a.ts",
-        text: () => rep(`${arrays}let b: U[];\n`, 16),
-        rules: arrayType,
-        isHeavy: true,
-        matches: /take more than 256 MB with their fixes/,
-        exitCode: 1,
-      },
-      {
-        ...common,
-        name: `${flavor}: by bytes: 16 comments that each disable 4,000 problems are all in use`,
-        file: "a.ts",
-        text: () => rep(arrays, 16),
-        rules: arrayType,
-        isHeavy: true,
-        reports: {},
-        exitCode: 0,
-      },
-      {
-        ...common,
-        name: `${flavor}: by bytes: --fix removes none of 16 comments that are in use`,
-        file: "a.ts",
-        text: () => rep(arrays, 16),
-        rules: arrayType,
-        isHeavy: true,
-        args: ["--fix", "-f", "unix"],
-        keeps: [/eslint-disable-line/g, 16],
         exitCode: 0,
       },
     ];
@@ -1070,39 +966,6 @@ export const cases: Case[] = [
     exitCode: 1,
   },
   // ── eslint-plugin-react: what many components share, and what is asked once for each of them ──
-  {
-    name: "5,000 components with one object of 5,000 prop types",
-    isHeavy: true,
-    file: "a.jsx",
-    text: () =>
-      `import T from "prop-types";\nconst t = {${seq(5_000, i => `a${i}: T.any`, ",")}};\n` +
-      seq(5_000, i => `function C${i}(props) { return <a/>; }\nC${i}.propTypes = t;\n`),
-    rules: { "react/no-unused-prop-types": "error" },
-    reports: { "react/no-unused-prop-types": 65_537 },
-    exitCode: 1,
-  },
-  {
-    name: "5,000 components with one interface of 5,000 members",
-    isHeavy: true,
-    file: "a.tsx",
-    text: () =>
-      `interface P {${seq(5_000, i => `a${i}?: string`, ";")}}\n` +
-      seq(5_000, i => `function C${i}(props: P) { return <a/>; }\n`),
-    rules: { "react/prefer-read-only-props": "error" },
-    reports: { "react/prefer-read-only-props": 65_537 },
-    exitCode: 1,
-  },
-  {
-    name: "5,000 components with one object of 5,000 default props",
-    isHeavy: true,
-    file: "a.jsx",
-    text: () =>
-      `import T from "prop-types";\nconst d = {${seq(5_000, i => `a${i}: 1`, ",")}};\n` +
-      seq(5_000, i => `function C${i}(props) { return <a/>; }\nC${i}.propTypes = { x: T.any };\nC${i}.defaultProps = d;\n`),
-    rules: { "react/default-props-match-prop-types": "error" },
-    reports: { "react/default-props-match-prop-types": 65_537 },
-    exitCode: 1,
-  },
   {
     name: "5,000 prop types that are one shape of 5,000",
     isHeavy: true,

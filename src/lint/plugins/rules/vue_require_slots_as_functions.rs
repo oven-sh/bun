@@ -102,9 +102,6 @@ fn verify<'a>(node: Expr<'a>, report_span: Span, cx: &mut Cx<'a, RequireSlotsAsF
         Use::Fine => 0,
     };
     for _ in 0..count {
-        if cx.has_reported_too_much() {
-            break;
-        }
         cx.report(report_span, REQUIRE_SLOTS_AS_FUNCTIONS);
     }
 }

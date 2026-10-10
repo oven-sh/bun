@@ -817,9 +817,6 @@ impl Order {
                 continue;
             };
             let first = highest.partition_point(|it| it <= rank);
-            if cx.has_reported_too_much() {
-                return;
-            }
             Self::report_pair(&mut imported, (first, second), is_reversed, category, &can_reorder, cx);
         }
     }

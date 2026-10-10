@@ -1,6 +1,5 @@
 use crate::react::is_jsx;
 use crate::util_variable::get_variable_from_context;
-use bun_lint::context::MAX_REPORTS;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use rustc_hash::FxHashMap;
@@ -106,9 +105,6 @@ impl Rule for JsxMaxDepth {
                     continue;
                 };
                 let (start, before) = (element.opening_span().start, found.len());
-                if before > MAX_REPORTS as usize {
-                    break;
-                }
                 // Where nothing is found in an element, nothing is found with less around it.
                 if fine.get(&start).is_some_and(|it| base_depth <= *it) {
                     continue;

@@ -19,8 +19,8 @@ pub(super) enum Stop {
 
 pub(super) type Eval<T> = Result<T, Stop>;
 
-/// No string or array that is computed is longer.
-pub(super) const MAX_LEN: usize = 1 << 20;
+/// The longest string that JavaScript has. Upstream computes with JavaScript, and has no value where that throws.
+pub(super) const MAX_LEN: usize = crate::fix::MAX_STRING_LENGTH as usize;
 
 /// A symbol whose identity is known.
 #[derive(Clone, PartialEq, Eq, Debug)]

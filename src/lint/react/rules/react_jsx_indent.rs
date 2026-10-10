@@ -217,9 +217,6 @@ impl JsxIndent {
             return;
         }
         for node_indent in self.node_indents_per_line(value) {
-            if cx.has_reported_too_much() {
-                break;
-            }
             self.report(node, indent, node_indent, cx).fix(|fixer| {
                 Some(fixer.replace(
                     node,

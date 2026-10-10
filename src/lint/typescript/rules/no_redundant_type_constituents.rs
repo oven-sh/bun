@@ -409,9 +409,6 @@ impl NoRedundantTypeConstituents {
                 if !type_part_flags.iter().any(|it| it.type_flags == primitive.flag()) {
                     continue;
                 }
-                if cx.has_reported_too_much() {
-                    return;
-                }
                 cx.report(place(type_node), PRIMITIVE_OVERRIDDEN)
                     .data("literal", matched_literal_types.clone())
                     .data("primitive", primitive.name());

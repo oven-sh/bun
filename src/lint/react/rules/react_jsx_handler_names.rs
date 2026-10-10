@@ -252,7 +252,6 @@ impl JsxHandlerNames {
                 },
             };
             if is_handler_name_correct != Some(!prop_is_event_handler)
-                || cx.has_reported_too_much()
                 || *is_ignored.get_or_insert_with(|| self.is_ignored_component(jsx, is_oxlint))
             {
                 continue;

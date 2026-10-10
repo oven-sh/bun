@@ -108,9 +108,7 @@ impl Entities {
         let raw = cx.slice(node);
         for Entity { char, alternatives } in &self.list {
             let mut from = 0;
-            while let Some(found) = raw.get(from..).and_then(|rest| strings::index_of(rest, char))
-                && !cx.has_reported_too_much()
-            {
+            while let Some(found) = raw.get(from..).and_then(|rest| strings::index_of(rest, char)) {
                 let index = from + found;
                 from = index + char.len();
                 let start = node.start + index as u32;

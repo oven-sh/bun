@@ -30,7 +30,6 @@ impl Rule for JsxSortDefaultProps {
         let mut objects = std::mem::take(&mut cx.state);
         self.0.check_sorted(&mut objects, &mut |unsorted| {
             cx.report(unsorted, PROPS_NOT_SORTED);
-            !cx.has_reported_too_much()
         });
     }
 }

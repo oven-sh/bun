@@ -1,7 +1,6 @@
 use crate::util_ast::{get_property_name, get_property_name_node};
 use crate::util_component_util::{Pragmas, get_parent_es5_component, get_parent_es6_component};
 use crate::util_is_create_element::is_member_called;
-use bun_lint::context::MAX_REPORTS;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
@@ -256,8 +255,6 @@ fn follow_methods<'a>(
     events.extend(cx.file().exprs_of_kind(ExprTag::Call).filter(is_asking).map(Event::Call));
     sort::sort_by_key(&mut events, |it| (it.span().start, Reverse(it.span().end)));
     let mut methods: FxHashMap<Option<&'a [u8]>, Vec<Span>> = FxHashMap::default();
-    // How many more a call can add: upstream's list can double with each call.
-    let mut room = MAX_REPORTS as usize;
     let mut method_around = AncestorMemo::default();
     for event in events {
         let node = match event {
@@ -276,21 +273,16 @@ fn follow_methods<'a>(
             continue;
         }
         if name.is_some()
-            && room > 0
             && let Some(method_name) = method_around.find(Node::Expr(node), |_, current| {
                 (matches!(current, Node::Member(_)) && estree_type_name(current) == "MethodDefinition")
                     .then(|| get_property_name(current))
             })
         {
-            let found = methods.get(&name).map_or(&[][..], |it| it.get(..room).unwrap_or(it)).to_vec();
-            room -= found.len();
+            let found = methods.get(&name).cloned().unwrap_or_default();
             methods.entry(method_name).or_default().extend(found);
         }
         if is_in_set_state {
             for node in methods.get(&name).into_iter().flatten() {
-                if cx.has_reported_too_much() {
-                    return;
-                }
                 cx.report(*node, USE_CALLBACK);
             }
         }
@@ -320,15 +312,12 @@ fn follow_vars<'a>(
         }
         let named = Variable::named(vars, node.as_ident());
         if !named.is_empty() && known.find(Node::Expr(node), is_value_or_object) == Some(true) {
-            if cx.has_reported_too_much() {
-                return;
-            }
             report(named, Node::Expr(node));
         }
     }
     // What a pattern binds is no expression. A parameter comes before all that is added in its scope.
     for statement in cx.file().stmts_of_kind(StmtTag::Var) {
-        if first_arguments.around(statement.span().start) == 0 || cx.has_reported_too_much() {
+        if first_arguments.around(statement.span().start) == 0 {
             continue;
         }
         let StmtKind::Var(declarators) = statement.kind() else {

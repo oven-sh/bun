@@ -386,7 +386,7 @@ impl ResolvedConfig<'_> {
         let is_child_of_element = matches!(container, Container::ChildOfElement);
         let ignore_props = if is_oxlint { options.ignore_props } else { self.ignore_props_of_all };
         let mut pending: SmallVec<[Expr<'a>; 8]> = smallvec![expr];
-        while let Some(expr) = pending.pop().filter(|_| !cx.has_reported_too_much()) {
+        while let Some(expr) = pending.pop() {
             // oxlint has a node for parentheses.
             if is_oxlint && expr.is_parenthesized() {
                 continue;

@@ -73,9 +73,6 @@ fn check<'a>(_: &JsxPropsNoSpreadMulti, e: Expr<'a>, cx: &mut Cx<'a, JsxPropsNoS
     for alike in member_expressions.values() {
         for (i, &(left, left_span)) in alike.iter().enumerate() {
             for &(right, right_span) in alike.iter().skip(i + 1) {
-                if cx.has_reported_too_much() {
-                    return;
-                }
                 if is_same_member_expression(left, right) {
                     cx.report(left_span, MULTIPLE_MEMBER_EXPRESSIONS)
                         .data("member_name", left.text())

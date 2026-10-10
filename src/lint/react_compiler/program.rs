@@ -46,10 +46,6 @@ const OPT_OUT_DIRECTIVES: [&str; 2] = ["use no forget", "use no memo"];
 /// oxc's `get_react_compiler_runtime_module`
 const REACT_COMPILER_RUNTIME_MODULE: &str = "react/compiler-runtime";
 
-/// After this many diagnostics no other function is compiled. Each function is reported for each comment that suppresses it, which
-/// is more than there is memory for in a file that has many of both.
-const MAX_DIAGNOSTICS: usize = 1 << 16;
-
 /// A function found in the program that should be compiled.
 struct CompileSource<'a> {
     fn_type: ReactFunctionType,
@@ -1311,8 +1307,7 @@ pub(crate) fn compile_program<'a>(
         diagnostics: Vec::new(),
     };
     for source in &queue {
-        if process_fn(source, &mut context).is_err() || context.diagnostics.len() >= MAX_DIAGNOSTICS
-        {
+        if process_fn(source, &mut context).is_err() {
             break;
         }
     }

@@ -85,23 +85,19 @@ impl Rule for SortDefaultProps {
         let mut objects = std::mem::take(&mut cx.state);
         self.check_sorted(&mut objects, &mut |unsorted| {
             cx.report(unsorted, PROPS_NOT_SORTED);
-            !cx.has_reported_too_much()
         });
     }
 }
 
 impl SortDefaultProps {
     /// `checkSorted`, for each of `objects`. One that many variables lead to is looked at once, and reported as often.
-    /// `report` says whether to go on.
-    pub(super) fn check_sorted<'a>(&self, objects: &mut [Expr<'a>], report: &mut dyn FnMut(Prop<'a>) -> bool) {
+    pub(super) fn check_sorted<'a>(&self, objects: &mut [Expr<'a>], report: &mut dyn FnMut(Prop<'a>)) {
         objects.sort_unstable_by_key(|it| it.span().start);
         for same in objects.chunk_by(|a, b| a == b) {
             let unsorted = same.first().map_or_else(Vec::new, |&object| self.unsorted(object));
             for _ in same {
                 for &property in &unsorted {
-                    if !report(property) {
-                        return;
-                    }
+                    report(property);
                 }
             }
         }

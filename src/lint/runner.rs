@@ -582,8 +582,6 @@ impl<'a> Start<'a> {
             meta: self.meta,
             rule: self.rule,
             severity: self.severity,
-            reports: std::cell::Cell::new(0),
-            is_capped: std::cell::Cell::new(false),
         }
     }
 }
@@ -1081,7 +1079,6 @@ pub fn run_in_order<'a, S: Starts>(
     when: &[When],
 ) -> Vec<Diagnostic> {
     file.sink.wants_fixes.set(wants_fixes);
-    file.sink.bytes.borrow_mut().clear();
     file.sink.thrown.take();
     run_rules(file, rules);
     sorted(file.sink.diagnostics.take(), when)

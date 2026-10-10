@@ -154,9 +154,6 @@ impl Rule for JsxSortProps {
             Element { rule: self, opening: jsx.opening_span(), attributes, reserved_list, fix: OnceCell::new() };
         let mut memo: Option<Attribute<'a>> = None;
         for decl in attributes {
-            if cx.has_reported_too_much() {
-                return;
-            }
             // After a spread the next one is compared with itself.
             let Some(current) = Attribute::new(decl, self) else {
                 memo = None;

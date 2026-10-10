@@ -59,9 +59,6 @@ impl Rule for ValidDefineOptions {
             let options_span = first_arg_expr.outer_span();
             let inside = identifiers.iter().skip(identifiers.partition_point(|it| it.0.span().start < options_span.start));
             for (ident, declared_at) in inside.take_while(|it| it.0.span().start < options_span.end) {
-                if cx.has_reported_too_much() {
-                    break;
-                }
                 if !declared_at.is_some_and(|it| options_span.contains(it)) {
                     cx.report(ident, REFERENCING_LOCALLY);
                 }

@@ -51,7 +51,6 @@ pub(crate) fn infer_types(
     );
     let generated = generate(func, env, &mut unifier);
     if let Some(why) = unifier.gave_up() {
-        bun_core::scoped_log!(crate::lowering::ReactCompilerBudget, "types over");
         return Err(why);
     }
     generated?;
@@ -63,8 +62,6 @@ pub(crate) fn infer_types(
         &mut env.types,
         &mut unifier,
     );
-    let steps = unifier.steps.get();
-    bun_core::scoped_log!(crate::lowering::ReactCompilerBudget, "types {}", steps);
     match unifier.gave_up() {
         Some(why) => Err(why),
         None => Ok(()),
@@ -1066,9 +1063,6 @@ fn resolve_identifier(
 // Unifier
 // =============================================================================
 
-/// A fence. The largest of 157,000 real functions takes 57,000, and no source is known that comes near this.
-const MAX_STEPS: u32 = 1 << 22;
-
 /// What was made of a phi, by the address of its operands, which are held so that the address stays theirs.
 type OfPhis<T> = FxHashMap<*const Type, (Arc<[Type]>, T)>;
 
@@ -1081,8 +1075,6 @@ struct Unifier {
     custom_hook_type: Option<Type>,
     stack: bun_core::StackCheck,
     is_out_of_stack: std::cell::Cell<bool>,
-    /// How many parts of types were gone into.
-    steps: std::cell::Cell<u32>,
 }
 
 impl Unifier {
@@ -1099,7 +1091,6 @@ impl Unifier {
             custom_hook_type,
             stack: bun_core::StackCheck::init(),
             is_out_of_stack: std::cell::Cell::new(false),
-            steps: std::cell::Cell::new(0),
         }
     }
 
@@ -1117,26 +1108,10 @@ impl Unifier {
         self.resolved.get_mut().clear();
     }
 
-    /// `has_stack`, and within [`MAX_STEPS`], which is the same on every platform.
-    fn may_go_into(&self, parts: usize) -> bool {
-        let steps = self.steps.get().saturating_add(parts as u32);
-        self.steps.set(steps);
-        steps <= MAX_STEPS && self.has_stack()
-    }
-
     /// Something was left out, and `infer_types` fails.
     #[inline]
     fn gave_up(&self) -> Option<CompilerDiagnostic> {
-        (!self.may_go_into(0)).then(|| self.why_it_gave_up())
-    }
-
-    #[cold]
-    fn why_it_gave_up(&self) -> CompilerDiagnostic {
-        if self.steps.get() > MAX_STEPS {
-            crate::lowering::too_complex("Its types are too complex to infer")
-        } else {
-            crate::lowering::nested_too_deeply()
-        }
+        (!self.has_stack()).then(crate::lowering::nested_too_deeply)
     }
 
     fn unify(
@@ -1326,7 +1301,7 @@ impl Unifier {
         ty: &Type,
         done: &mut OfPhis<Arc<[Type]>>,
     ) -> Option<Type> {
-        if !self.may_go_into(1) {
+        if !self.has_stack() {
             return None;
         }
         match ty {
@@ -1410,7 +1385,7 @@ impl Unifier {
         match ty {
             Type::Phi { operands } => {
                 let seen = &mut FxHashSet::default();
-                let may_go_on = self.may_go_into(operands.len());
+                let may_go_on = self.has_stack();
                 may_go_on && operands.iter().any(|o| self.occurs_in(v, o, seen))
             }
             Type::Function { .. } | Type::TypeVar { .. } => {
@@ -1428,17 +1403,17 @@ impl Unifier {
 
         if let Type::TypeVar { id } = ty {
             if let Some(sub) = self.substitutions.get(id) {
-                return self.may_go_into(1) && self.occurs_in(v, sub, seen);
+                return self.has_stack() && self.occurs_in(v, sub, seen);
             }
         }
 
         if let Type::Phi { operands } = ty {
-            let may_go_on = seen.insert(operands.as_ptr()) && self.may_go_into(operands.len());
+            let may_go_on = seen.insert(operands.as_ptr()) && self.has_stack();
             return may_go_on && operands.iter().any(|o| self.occurs_in(v, o, seen));
         }
 
         if let Type::Function { return_type, .. } = ty {
-            return self.may_go_into(1) && self.occurs_in(v, return_type, seen);
+            return self.has_stack() && self.occurs_in(v, return_type, seen);
         }
 
         false
@@ -1460,7 +1435,7 @@ impl Unifier {
                 is_constructor,
                 shape_id,
                 return_type,
-            } if self.may_go_into(1) => Type::Function {
+            } if self.has_stack() => Type::Function {
                 is_constructor: *is_constructor,
                 shape_id: *shape_id,
                 return_type: Box::new(self.get(return_type)),
@@ -1480,7 +1455,7 @@ impl Unifier {
                 is_constructor,
                 shape_id,
                 return_type,
-            } if self.may_go_into(1) => {
+            } if self.has_stack() => {
                 self.get_if_changed(return_type)
                     .map(|return_type| Type::Function {
                         is_constructor: *is_constructor,
@@ -1496,7 +1471,7 @@ impl Unifier {
         if let Some((_, known)) = self.resolved.borrow().get(&operands.as_ptr()) {
             return known.clone();
         }
-        if !self.may_go_into(operands.len()) {
+        if !self.has_stack() {
             return None;
         }
         let mut changed: Option<Vec<Type>> = None;

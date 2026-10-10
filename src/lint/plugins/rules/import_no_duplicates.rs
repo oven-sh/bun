@@ -153,9 +153,7 @@ impl NoDuplicates {
         let mut keyed: Vec<(u32, u8, &[u8], Import<'a>)> = imports().filter_map(key).collect();
         utils::sort::sort_unstable_by_key(&mut keyed, |it| (it.0, it.1, it.2, it.3.span().start));
         for group in keyed.chunk_by(|a, b| (a.0, a.1, a.2) == (b.0, b.1, b.2)) {
-            if let [(_, _, module, _), _, ..] = group
-                && !cx.has_reported_too_much()
-            {
+            if let [(_, _, module, _), _, ..] = group {
                 let imports: Imports<'a> = group.iter().map(|it| it.3).collect();
                 self.check_duplicates(&imports, Some(*module), cx);
             }

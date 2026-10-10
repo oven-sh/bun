@@ -1,6 +1,18 @@
 import { describe } from "bun:test";
 import { itBundled } from "../../expectBundled";
 
+// https://github.com/web-platform-tests/wpt/blob/master/css/css-color/parsing/relative-color-out-of-gamut.html
+//
+// The WPT asserts that a relative rgb()/hsl()/hwb() color whose origin is outside the sRGB
+// gamut computes to the unclamped out-of-gamut color (browsers clip it when painting), so the
+// bundler must not resolve these: gamut mapping the origin gives a different color (the
+// display-p3 green below used to come out as #00f942, browsers paint it as #00ff00). The
+// declaration is left for the browser. What the bundler does do is its usual handling of a
+// wide-gamut color literal inside a value it does not resolve: under the default browser
+// targets the origin gets an sRGB fallback plus an `@supports` tier with the color as written.
+//
+// The lab()/lch()/oklab()/oklch() origins below are written with a number lightness, which
+// does not parse yet (#16727), so those declarations are emitted as written for that reason.
 let i = 0;
 const testname = () => `test-${i++}`;
 describe("relative_color_out_of_gamut", () => {
@@ -18,7 +30,13 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
 /* a.css */
 h1 {
-    color: #00f942;
+  color: rgb(from #00f942 r g b / alpha);
+}
+
+@supports (color: color(display-p3 0 0 0)) {
+  h1 {
+    color: rgb(from color(display-p3 0 1 0) r g b / alpha);
+  }
 }
 `);
     },
@@ -198,7 +216,13 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
   /* a.css */
   h1 {
-      color: #00f942;
+    color: hsl(from #00f942 h s l / alpha);
+  }
+
+  @supports (color: color(display-p3 0 0 0)) {
+    h1 {
+      color: hsl(from color(display-p3 0 1 0) h s l / alpha);
+    }
   }
   `);
     },
@@ -378,7 +402,13 @@ h1 {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
   /* a.css */
   h1 {
-      color: #00f942;
+    color: hwb(from #00f942 h w b / alpha);
+  }
+
+  @supports (color: color(display-p3 0 0 0)) {
+    h1 {
+      color: hwb(from color(display-p3 0 1 0) h w b / alpha);
+    }
   }
   `);
     },

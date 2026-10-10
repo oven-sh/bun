@@ -332,6 +332,19 @@ To clear Bun's global module cache:
 bun pm cache rm
 ```
 
+To snapshot the cache entries the current lockfile needs into a single file, and restore them elsewhere:
+
+```bash terminal icon="terminal"
+# after an install, with a warm cache
+bun pm cache pack .ci/bun-cache.pack
+
+# on another machine / CI runner, before installing
+bun pm cache unpack .ci/bun-cache.pack
+bun install --frozen-lockfile
+```
+
+This exists for CI caches: object-store caches move one large sequential file much faster than tens of thousands of small ones, and restoring a directory cache pays a create+write per file before `bun install` even starts. The pack is uncompressed (CI cache layers already compress) and contains every package referenced by `bun.lock` that is present in the local cache; a package that is missing locally is left out — with a warning, unless it is an optional package for another platform, which is expected to be absent. `unpack` recreates only the entries missing from the target cache, so it is cheap to run unconditionally, and it refuses entries with absolute or traversing paths.
+
 ## migrate
 
 To migrate another package manager's lockfile without installing anything:

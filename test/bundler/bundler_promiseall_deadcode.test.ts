@@ -2,7 +2,7 @@ import { describe, expect } from "bun:test";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
-  itBundled("bundler/__promiseAll is tree-shaken when only one async import exists but __esm remains", {
+  itBundled("bundler/async dependencies are joined with Promise.all when the wrapper has several", {
     files: {
       "/entry.ts": `
         const { AsyncEntryPoint } = await import("./AsyncEntryPoint");
@@ -86,7 +86,6 @@ describe("bundler", () => {
             throw err[0];
           return res;
         };
-        var __promiseAll = (args) => Promise.all(args);
 
         // StoreDependencyAsync.ts
         var somePromise;
@@ -127,7 +126,7 @@ describe("bundler", () => {
         }
         var depValue, formValue, listValue;
         var init_BaseElement = __esm(async () => {
-          await __promiseAll([
+          await Promise.all([
             init_StoreDependency(),
             init_BaseElementImport()
           ]);
@@ -142,7 +141,7 @@ describe("bundler", () => {
 
         // AsyncEntryPoint.ts
         async function AsyncEntryPoint() {
-          await init_BaseElement();
+          await (init_BaseElement() || Promise.resolve().then(() => init_BaseElement()));
           console.log("Launching AsyncEntryPoint", BaseElement());
         }
 
@@ -150,7 +149,7 @@ describe("bundler", () => {
         await Promise.resolve();
         AsyncEntryPoint();
 
-        //# debugId=B9EF7E5F2ACBD11D64756E2164756E21
+        //# debugId=721434D005877A6764756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);
@@ -159,17 +158,14 @@ describe("bundler", () => {
       expect(bundled).toContain("__esm");
       expect(bundled).toContain("var init_");
 
-      // Should have __promiseAll because BaseElement has multiple dependencies
-      // even though only one is async (due to circular deps both need to be awaited)
-      expect(bundled).toContain("__promiseAll");
-      expect(bundled).toContain("var __promiseAll = ");
-
-      // Verify it's used with both dependencies
-      expect(bundled).toMatch(/await\s+__promiseAll\s*\(\s*\[/);
+      // BaseElement has two dependencies after its first async one, so both
+      // are joined, without a runtime helper.
+      expect(bundled).not.toContain("__promiseAll");
+      expect(bundled).toMatch(/await\s+Promise\.all\s*\(\s*\[/);
     },
   });
 
-  itBundled("bundler/__promiseAll is included when multiple async imports exist with __esm", {
+  itBundled("bundler/several async imports are joined with Promise.all", {
     files: {
       "/entry.ts": `
         const { AsyncEntryPoint } = await import("./AsyncEntryPoint");
@@ -257,16 +253,13 @@ describe("bundler", () => {
       expect(bundled).toContain("__esm");
       expect(bundled).toContain("var init_");
 
-      // MUST have __promiseAll since there are TWO async dependencies
-      expect(bundled).toContain("__promiseAll");
-      expect(bundled).toContain("var __promiseAll = ");
-
-      // Verify it's actually used in the code with multiple async deps
-      expect(bundled).toMatch(/await\s+__promiseAll\s*\(\s*\[/);
+      // There are TWO async dependencies
+      expect(bundled).not.toContain("__promiseAll");
+      expect(bundled).toMatch(/await\s+Promise\.all\s*\(\s*\[/);
     },
   });
 
-  itBundled("bundler/__promiseAll is tree-shaken when no async imports despite circular deps with __esm", {
+  itBundled("bundler/no Promise.all when no async imports despite circular deps with __esm", {
     files: {
       "/entry.ts": `
         const { AsyncEntryPoint } = await import("./AsyncEntryPoint");
@@ -388,13 +381,8 @@ describe("bundler", () => {
       expect(bundled).toContain("__esm");
       expect(bundled).toContain("var init_");
 
-      // Currently __promiseAll is always included with ESM wrappers (not tree-shaken)
-      // but it shouldn't be used since there are no async dependencies
-      expect(bundled).not.toContain("__promiseAll");
-      expect(bundled).not.toContain("var __promiseAll = ");
-
-      // Verify it's NOT actually used in any init functions
-      expect(bundled).not.toMatch(/await\s+__promiseAll\s*\(/);
+      // Nothing is awaited since there are no async dependencies
+      expect(bundled).not.toMatch(/await\s+Promise\.all\s*\(/);
     },
   });
 });

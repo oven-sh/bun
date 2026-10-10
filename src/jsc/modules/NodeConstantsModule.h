@@ -670,6 +670,8 @@ DEFINE_NATIVE_MODULE(NodeConstants)
 #endif
 #ifdef O_NOFOLLOW
         { "O_NOFOLLOW", static_cast<double>(O_NOFOLLOW) },
+#elif OS(WINDOWS)
+        { "O_NOFOLLOW", static_cast<double>(UV_FS_O_NOFOLLOW) },
 #endif
 #ifdef O_SYNC
         { "O_SYNC", static_cast<double>(O_SYNC) },

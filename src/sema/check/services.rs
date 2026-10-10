@@ -169,7 +169,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     /// Whether the control flow analysis was disabled when the file had been checked, or a question
     /// has disabled it since: there are references in the file that have the error type.
     pub fn was_flow_analysis_ever_disabled(&self) -> bool {
-        !self.flow_analysis_was_disabled.is_empty() || !self.c.flow_analysis_disabled.is_empty()
+        self.flow_analysis_was_disabled.contains(&self.file)
+            || self.c.flow_analysis_disabled.contains(&self.file)
     }
 
     #[inline]

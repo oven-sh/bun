@@ -213,10 +213,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[cold]
     #[inline(never)]
     pub(crate) fn top_level_statement(&mut self) -> StmtId {
-        self.has_await_in_name = false;
+        (self.has_await_in_name, self.has_await_identifier) = (false, false);
         let before = self.checkpoint();
         let statement = self.statement();
-        if !(self.has_await_in_name && self.has_await_in_statement) || self.has_failed() {
+        if !(self.has_await_in_name && self.has_await_identifier) || self.has_failed() {
             return statement;
         }
         self.rollback(&before);
@@ -611,6 +611,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             && self.has_context(ctx::AWAIT)
         {
             self.note_await();
+            self.has_await_identifier = true;
             self.was_await_refused = true;
         }
         if self.has_await_in_statement {

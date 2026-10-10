@@ -6,17 +6,17 @@
 //! line. Nothing is computed before a rule asks.
 //!
 //! ```ignore
-//! fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-//!     on.exprs([ExprTag::Await], |_, expr, cx| {
-//!         let ExprKind::Await(operand) = expr.kind() else { return };
-//!         let ty = operand.ty();                       // services.getTypeAtLocation(node.argument)
-//!         if is_type_any_type(ty) || is_type_unknown_type(ty) {
-//!             return;
-//!         }
-//!         if !tsutils::is_thenable_type(operand, ty) {
-//!             cx.report(expr, AWAIT).data("type", ty.to_text());
-//!         }
-//!     });
+//! const ON: On = On::new().exprs(&[ExprTag::Await]);
+//!
+//! fn expr<'a>(&self, expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
+//!     let ExprKind::Await(operand) = expr.kind() else { return };
+//!     let ty = operand.ty();                           // services.getTypeAtLocation(node.argument)
+//!     if is_type_any_type(ty) || is_type_unknown_type(ty) {
+//!         return;
+//!     }
+//!     if !tsutils::is_thenable_type(operand, ty) {
+//!         cx.report(expr, AWAIT).data("type", ty.to_text());
+//!     }
 //! }
 //! ```
 //!

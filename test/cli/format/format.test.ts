@@ -2997,15 +2997,16 @@ describe.concurrent("how a path is written", () => {
       { root, config: "C:/p/tailwind.config.js", classes: ["a"] },
       { root, stylesheet: "C:/p/app.css", classes: ["b"] },
     ];
-    using dir = tempDir("bun-format", { "question.json": JSON.stringify({ groups }) });
+    using dir = tempDir("bun-format", {});
     const source = ["evaluate-start.js", "fmt/tailwind.js"]
       .map(it => readFileSync(join(import.meta.dir, "../../../src/lint/driver", it), "utf8"))
       .join("")
       .replaceAll('require("node:path")', 'require("node:path").win32');
     await using proc = spawn({
-      cmd: [bunExe(), "-e", source, "<marker>", join(String(dir), "question.json")],
+      cmd: [bunExe(), "-e", source, "<marker>", join(String(dir), "-")],
       env,
       cwd: String(dir),
+      stdin: Buffer.from(JSON.stringify({ groups })),
       stdout: "pipe",
       stderr: "inherit",
     });

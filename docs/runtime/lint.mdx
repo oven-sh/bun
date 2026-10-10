@@ -1016,7 +1016,7 @@ These differences are intentional:
 - **`--init` is oxlint's.** It writes an `.oxlintrc.json`. In a project with a configuration file of ESLint it is an error.
 - **One parser.** Bun's parser reads all files. The wording of a syntax error can differ from espree's.
 - **A rule that needs types never stops the run.** If the configuration does not ask for types, typescript-eslint throws. `bun lint` skips the rule and says so.
-- **`parserOptions.project` is a switch.** Any value turns types on. Each file is checked with its nearest `tsconfig.json`, and a file that no `tsconfig.json` includes is still linted.
+- **A file that no project includes is still linted.** If `parserOptions.project` is a path, a pattern or a list of them, each file is checked with the first of these `tsconfig.json` that includes it, as typescript-eslint does with `--fix` and in an editor. A file that none includes is checked with its nearest `tsconfig.json`; ESLint stops there. Without `--fix`, ESLint also accepts a listed project that only imports the file.
 - **Types are those of TypeScript 7**, as in `bun check`, whichever version of `typescript` you have installed.
 - **`--cache` and `--stats` have no effect.** Every run lints every file.
 - **`--print-config` leaves out the default options of rules.**

@@ -172,11 +172,6 @@ fn temporary_suffix() -> String {
     format!(".{:016x}{count:x}.tmp", bun_core::fast_random())
 }
 
-/// A name next to `path` that no other file has, in this run or in another.
-pub(crate) fn temporary_name(path: &[u8]) -> Vec<u8> {
-    [path, temporary_suffix().as_bytes()].concat()
-}
-
 /// Gives the file at `from` the name `to`, in place of what has it.
 fn rename(from: &[u8], to: &[u8]) -> bun_sys::Result<()> {
     let (from, to) = (
@@ -199,7 +194,7 @@ fn rename(from: &[u8], to: &[u8]) -> bun_sys::Result<()> {
     })
 }
 
-pub(crate) fn remove(path: &[u8]) {
+fn remove(path: &[u8]) {
     let path = paths::to_native(path.to_vec());
     let _ = bun_sys::unlinkat(Fd::cwd(), terminated(&path, &mut path_buffer_pool::get()));
 }

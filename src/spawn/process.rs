@@ -2358,6 +2358,8 @@ mod spawn_process_body {
             Inherit,
             Ignore,
             Buffer,
+            /// The child gets this descriptor. It stays the caller's to close.
+            Pipe(Fd),
         }
 
         impl SyncStdio {
@@ -2365,6 +2367,7 @@ mod spawn_process_body {
                 match self {
                     SyncStdio::Inherit => SpawnOptionsStdio::inherit(),
                     SyncStdio::Ignore => SpawnOptionsStdio::ignore(),
+                    SyncStdio::Pipe(fd) => SpawnOptionsStdio::Pipe(fd),
                     SyncStdio::Buffer => {
                         #[cfg(windows)]
                         {

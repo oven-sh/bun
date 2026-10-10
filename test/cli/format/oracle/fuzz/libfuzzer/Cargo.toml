@@ -55,6 +55,8 @@ bun_lint_driver = { path = "../../../../../../src/lint/driver" }
 bun_sema = { path = "../../../../../../src/sema" }
 bun_sema_driver = { path = "../../../../../../src/sema/driver" }
 bun_sema_parser = { path = "../../../../../../src/sema/parser" }
+# src/sema/standalone/native.rs, which lib.rs includes, names a type of it.
+bun_js_parser = { path = "../../../../../../src/js_parser" }
 bun_threading = { path = "../../../../../../src/threading" }
 bun_core = { path = "../../../../../../src/bun_core" }
 bstr = { version = "1", default-features = false, features = ["alloc"] }

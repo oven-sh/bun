@@ -5,7 +5,7 @@
 //! turn, one script answers for all those classes, and the files that were put aside are formatted again.
 
 use super::files::Kind;
-use crate::evaluate::evaluate;
+use crate::evaluate::evaluate_input;
 use crate::run::{Environment, Fatal};
 use crate::{fs, paths};
 use bun_core::strings;
@@ -183,15 +183,13 @@ impl Orders for OfGroup {
     }
 }
 
-/// Where the script reads what it is asked, while it runs: with the packages, of which Tailwind is one. Another `bun format`
-/// can be asking at the same time.
-fn question_file(environment: &Environment) -> Option<Vec<u8>> {
+/// Where the script runs: with the packages, of which Tailwind is one.
+fn packages(environment: &Environment) -> Option<Vec<u8>> {
     let has_packages = |directory: &&[u8]| {
         fs::kind(&paths::join(directory, b"node_modules")) == Some(fs::Kind::Directory)
     };
     let root = paths::ancestors(&environment.cwd).find(has_packages)?;
-    let name = paths::join(root, b"node_modules/.tailwind-classes.json");
-    Some(fs::temporary_name(&name))
+    Some(paths::join(root, b"node_modules"))
 }
 
 impl Known {
@@ -356,7 +354,7 @@ impl Classes {
         };
         let mut known = self.known.lock();
         let without_package = known.without_package.as_deref().map(needs_package);
-        let Some(question) = question_file(environment) else {
+        let Some(packages) = packages(environment) else {
             return Err(without_package.unwrap_or_else(|| needs_package(&environment.cwd)));
         };
         if !known.groups.values().any(|it| !it.missing.is_empty()) {
@@ -380,10 +378,8 @@ impl Classes {
             &mut text,
             &Json::Object(vec![(b"groups".to_vec(), Json::Array(groups.collect()))]),
         );
-        fs::write_new(&question, &text).map_err(|error| fail(&fs::describe(&error)))?;
-        let answer = evaluate(environment, SCRIPT, &question);
-        fs::remove(&question);
-        let answer = answer.map_err(|Fatal(error)| error)?;
+        let answer =
+            evaluate_input(environment, SCRIPT, &packages, &text).map_err(|why| fail(&why))?;
         let failures: Vec<Vec<u8>> = (without_package.into_iter())
             .chain(known.take_in(&answer).iter().map(|it| fail(it)))
             .collect();

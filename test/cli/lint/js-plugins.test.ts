@@ -1277,7 +1277,8 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
             ];`,
           "plugin.mjs": `export default { rules: { seen: { create: context => ({ Program(node) { context.report({ node, message: "seen" }); } }) } } };`,
         };
-        const text = "foo;\n" + Buffer.alloc(size, "// comment\n").toString();
+        // One comment: thousands of them take a debug build minutes.
+        const text = `foo;\n/*${Buffer.alloc(size, "x")}*/\n`;
         for (let i = 0; i < count; i++) files[`src/${i}.${extension}`] = text;
         const { stdout, stderr, exitCode } = await lint(files, ["-f", "unix", "--timing", "--threads", threads, "src"]);
         expect(exitCode).toBe(1);

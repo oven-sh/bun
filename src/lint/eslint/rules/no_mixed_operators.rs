@@ -63,11 +63,16 @@ fn bit_of_text(text: &[u8]) -> u32 {
         return TERNARY;
     }
     let mut operators = OPERATORS.iter();
-    operators.find(|op| bin_op_text(**op).as_bytes() == text).map_or(0, |op| bit(*op))
+    operators
+        .find(|op| bin_op_text(**op).as_bytes() == text)
+        .map_or(0, |op| bit(*op))
 }
 
-/// Where the operator of a binary or a conditional expression is written, and its text.
-fn operator_of(e: Expr) -> Option<(Span, &'static str)> {
+/// Where an operator is written, and its text.
+type Operator = (Span, &'static str);
+
+/// That of a binary or a conditional expression.
+fn operator_of(e: Expr) -> Option<Operator> {
     match e.kind() {
         ExprKind::Binary { op, .. } => Some((e.operator_span()?, bin_op_text(op))),
         ExprKind::Cond { test, .. } => {
@@ -80,25 +85,36 @@ fn operator_of(e: Expr) -> Option<(Span, &'static str)> {
 
 impl Rule for NoMixedOperators {
     const META: Meta = Meta::eslint("no-mixed-operators", Kind::Suggestion).deprecated();
-    const ON: On = On::new().exprs(&[ExprTag::Binary]);
-    no_state!();
+    const ON: On = On::new().exprs(&[ExprTag::Binary]).finish();
+    /// The expressions that are mixed with their parents, each with the left and the right operator.
+    type State<'a> = Vec<(Span, Operator, Operator)>;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
         let mut groups: Vec<u32> = (options.array("groups").iter())
             .map(|group| {
                 let operators = group.as_array().unwrap_or_default().iter();
-                operators.filter_map(Json::as_str).fold(0, |all, it| all | bit_of_text(it))
+                operators
+                    .filter_map(Json::as_str)
+                    .fold(0, |all, it| all | bit_of_text(it))
             })
             .collect();
         if groups.is_empty() {
-            let set = |group: &&[&str]| group.iter().fold(0, |all, it| all | bit_of_text(it.as_bytes()));
+            let set = |group: &&[&str]| {
+                group
+                    .iter()
+                    .fold(0, |all, it| all | bit_of_text(it.as_bytes()))
+            };
             groups = DEFAULT_GROUPS.iter().map(set).collect();
         }
         NoMixedOperators {
             groups,
             allows_same_precedence: options.bool_or("allowSamePrecedence", true),
         }
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        file.has_exprs([ExprTag::Binary]).then(Vec::new)
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -113,7 +129,9 @@ impl Rule for NoMixedOperators {
         }
         let (parent_bit, first_child) = match parent.kind() {
             ExprKind::Binary {
-                op: parent_op, left, ..
+                op: parent_op,
+                left,
+                ..
             } if parent_op != BinOp::Comma && parent_op != op => (bit(parent_op), left),
             ExprKind::Cond { test, .. } => (TERNARY, test),
             _ => return,
@@ -126,14 +144,27 @@ impl Rule for NoMixedOperators {
         {
             return;
         }
-        let (left, right) = if first_child == node { (node, parent) } else { (parent, node) };
+        let (left, right) = if first_child == node {
+            (node, parent)
+        } else {
+            (parent, node)
+        };
         let (Some(left), Some(right)) = (operator_of(left), operator_of(right)) else {
             return;
         };
-        for at in [left.0, right.0] {
-            cx.report(at, UNEXPECTED_MIXED_OPERATOR)
-                .data("leftOperator", left.1)
-                .data("rightOperator", right.1);
+        cx.state.push((node.span(), left, right));
+    }
+
+    /// An operator can be reported for its own expression and for an operand: ESLint has the outer expression first.
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let mut mixed = std::mem::take(&mut cx.state);
+        mixed.sort_by_key(|it| (it.0.start, std::cmp::Reverse(it.0.end)));
+        for (_, left, right) in mixed {
+            for at in [left.0, right.0] {
+                cx.report(at, UNEXPECTED_MIXED_OPERATOR)
+                    .data("leftOperator", left.1)
+                    .data("rightOperator", right.1);
+            }
         }
     }
 }

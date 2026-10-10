@@ -78,6 +78,10 @@ test.skipIf(!hasRunner).each(suites)(
     // Nor do more messages lack the help that oxlint has.
     const lacking = (text: string) => Number(/\n(\d+) messages lack the help/.exec(text)?.[1] ?? 0);
     expect(lacking(stdout)).toBeLessThanOrEqual(lacking(expected));
+    // Nor do more cases have their messages in another order than the original has them.
+    const inAnotherOrder = (text: string) =>
+      Number(/\n(\d+) cases have their messages in another order/.exec(text)?.[1]);
+    expect(inAnotherOrder(stdout)).toBeLessThanOrEqual(inAnotherOrder(expected));
     expect(exitCode).toBe(0);
   },
   10 * 60_000,

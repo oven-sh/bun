@@ -8,6 +8,7 @@ use bstr::BStr;
 use bun_core::{Global, Output, ZStr};
 use bun_lint_driver::cli::{Options, UsageError};
 use bun_lint_driver::{Environment, Outcome, Script, Stream};
+use bun_sys::File;
 
 use super::check_command::working_directory;
 
@@ -97,7 +98,7 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     argv.push(Box::from(&b"-e"[..]));
     argv.push(Box::from(script.source.concat().as_bytes()));
     argv.extend(script.arguments.iter().map(|it| Box::<[u8]>::from(*it)));
-    let spawned = spawn(&SpawnOptions {
+    let mut options = SpawnOptions {
         argv,
         stdout: SyncStdio::Buffer,
         stderr: SyncStdio::Buffer,
@@ -112,7 +113,29 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
             ..Default::default()
         },
         ..Default::default()
-    });
+    };
+    let spawned = match script.stdin {
+        b"" => spawn(&options),
+        input => match bun_sys::pipe() {
+            Ok([read, written]) => {
+                let (read, written) = (File::from_fd(read), File::from_fd(written));
+                // The process is not to have the end that is written to: it would wait for itself to close it.
+                #[cfg(unix)]
+                for end in [&read, &written] {
+                    let _ = bun_sys::set_close_on_exec(end.handle());
+                }
+                options.stdin = SyncStdio::Pipe(read.handle());
+                std::thread::scope(|scope| {
+                    scope.spawn(move || written.write_all(input));
+                    let spawned = spawn(&options);
+                    // Who still writes is told that nobody reads any more.
+                    drop(read);
+                    spawned
+                })
+            }
+            Err(error) => Ok(Err(error)),
+        },
+    };
     match spawned {
         Ok(Ok(result)) if result.is_ok() => Ok(result.stdout),
         Ok(Ok(result)) => Err(result.stderr),

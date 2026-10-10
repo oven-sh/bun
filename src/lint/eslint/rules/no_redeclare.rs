@@ -140,7 +140,7 @@ fn report<'a, R: Rule>(cx: &Cx<'a, R>, name: &'a [u8], declarations: &[(Declarat
     }
 }
 
-/// For [`Listeners::symbols`].
+/// For [`Rule::symbol`].
 pub fn check_symbol<'a, R: Rule>(config: Config, symbol: Symbol<'a>, cx: &Cx<'a, R>) {
     let count = symbol.declaration_count();
     let scope = symbol.scope();
@@ -184,7 +184,7 @@ pub fn check_symbol<'a, R: Rule>(config: Config, symbol: Symbol<'a>, cx: &Cx<'a,
     report(cx, name, &declarations);
 }
 
-/// For [`Listeners::finish`]: the variables that `/* global */` comments define and the file does
+/// For [`Rule::finish`]: the variables that `/* global */` comments define and the file does
 /// not declare.
 pub fn check_globals_in_comments<'a, R: Rule>(config: Config, cx: &Cx<'a, R>) {
     let file = cx.file();

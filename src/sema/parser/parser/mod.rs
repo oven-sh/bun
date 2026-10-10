@@ -197,6 +197,8 @@ pub(crate) struct Parser<'a, const GENERAL: bool> {
     /// A computed name in the top-level statement that is being parsed has an `await`, which was read outside the await
     /// context.
     pub(crate) has_await_in_name: bool,
+    /// `statementHasAwaitIdentifier`: an `await` at the top level is a name unless the context makes it a keyword.
+    pub(crate) has_await_identifier: bool,
     /// `reparseTopLevelAwait` parses the statement again, its names too.
     pub(crate) names_are_in_await_context: bool,
     /// It was an `await` that recovery met where no name can be.
@@ -414,6 +416,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             end: 0,
             has_await_in_statement: false,
             has_await_in_name: false,
+            has_await_identifier: false,
             names_are_in_await_context: false,
             was_await_refused: false,
             reparses_rest_of_file: false,
@@ -1012,10 +1015,6 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
     pub(crate) fn note_stray_decorators(&mut self, base: usize, end: u32) {
         if !self.recovers() {
             return self.fail();
-        }
-        // Only the list of the file takes them.
-        if self.lists & 1 << ListKind::BlockStatements as u32 != 0 {
-            return self.refuse(Refusal::Unsupported);
         }
         for index in base..self.s.modifiers.len() {
             if let Some(&Modifier {

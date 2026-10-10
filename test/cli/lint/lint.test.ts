@@ -3321,6 +3321,49 @@ describe.concurrent("bun lint", () => {
       expect(exitCode).toBe(1);
     });
 
+    // Which project a file is checked in is seen from `strictNullChecks`: without it the rule reports, and says at 0:1 that it
+    // needs it. As ESLint 10.12 with typescript-eslint 8.71.1 under `--fix` or in an editor.
+    describe("parserOptions.project names the projects", () => {
+      const tsconfig = (strict: boolean, include?: string[]) =>
+        JSON.stringify({ compilerOptions: { ...JSON.parse(files["tsconfig.json"]).compilerOptions, strict }, include });
+      const text = "declare const o: { b: number } | null;\nexport const x = o ? 1 : 2;\n";
+      const tree = {
+        "tsconfig.json": tsconfig(true),
+        "tsconfig.loose.json": tsconfig(false, ["a.ts", "sub"]),
+        "tsconfig.strict.json": tsconfig(true, ["a.ts"]),
+        "g/a/tsconfig.json": tsconfig(false, ["../x.ts"]),
+        "g/b/tsconfig.json": tsconfig(true, ["../x.ts"]),
+        "g/node_modules/c/tsconfig.json": tsconfig(false, ["../../y.ts"]),
+        ...Object.fromEntries(["a.ts", "b.ts", "sub/s.ts", "g/x.ts", "g/y.ts"].map(it => [it, text])),
+      };
+      test.concurrent.each([
+        [`{ projectService: true }`, []],
+        [`{ project: true }`, []],
+        // Not the nearest. What it does not include is checked with the nearest.
+        [`{ project: "./tsconfig.loose.json" }`, ["a.ts", "sub/s.ts"]],
+        // The first that includes the file.
+        [`{ project: ["./tsconfig.loose.json", "./tsconfig.strict.json"] }`, ["a.ts", "sub/s.ts"]],
+        [`{ project: ["./tsconfig.strict.json", "./tsconfig.loose.json"] }`, ["sub/s.ts"]],
+        [`{ project: ["./g/*/tsconfig.json"] }`, ["g/x.ts"]],
+        // A name comes before what a pattern finds, wherever it stands.
+        [`{ project: ["./g/*/tsconfig.json", "./g/b/tsconfig.json"] }`, []],
+        [`{ project: ["./g/**/tsconfig.json"] }`, ["g/x.ts"]],
+        [`{ project: ["./g/**/tsconfig.json"], projectFolderIgnoreList: [] }`, ["g/x.ts", "g/y.ts"]],
+        [`{ project: ["./*/tsconfig.json"], tsconfigRootDir: "g" }`, ["g/x.ts"]],
+        [`{ project: "./tsconfig.loose.json", projectService: true }`, []],
+      ])("%s", async (parserOptions, loose) => {
+        const config = files["eslint.config.js"]
+          .replace("{ projectService: true }", parserOptions)
+          .replace(/rules: \{.*\}/, `rules: { "@typescript-eslint/no-unnecessary-condition": "error" }`);
+        const { stdout, exitCode } = await lint({ ...tree, "eslint.config.js": config }, ["-f", "unix"]);
+        const places = stdout.split("\n").filter(it => it.includes("[Error/"));
+        expect(places.map(it => it.split(": ")[0])).toEqual(
+          loose.flatMap(it => [`<dir>/${it}:0:1`, `<dir>/${it}:2:18`]),
+        );
+        expect(exitCode).toBe(loose.length > 0 ? 1 : 0);
+      });
+    });
+
     // The defaults of compiler options that TypeScript 6.0 has changed and that a rule can see, each in a project of its own.
     // What is expected is what ESLint 10.12 with typescript-eslint 8.71.1 reports with TypeScript 5.9.3 and with 6.0.3 installed.
     describe("the defaults of compiler options are those of the typescript that is installed for the project", () => {

@@ -7,6 +7,7 @@ use crate::host::{self, error_line, os_text, output_line};
 use bun_lint_driver::cli::{Options, PARAMS, UsageError};
 use bun_lint_driver::{Environment, Script, Stream};
 use std::io::{IsTerminal, Write};
+use std::process::Stdio;
 
 fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     let mut command = host::command("bun");
@@ -20,9 +21,18 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     for name in Script::NOT_INHERITED {
         command.env_remove(os_text(name));
     }
-    let output = command
-        .output()
-        .map_err(|error| format!("Cannot run bun: {error}").into_bytes())?;
+    let fail = |error: std::io::Error| format!("Cannot run bun: {error}").into_bytes();
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().map_err(fail)?;
+    let (pipe, input) = (child.stdin.take(), script.stdin);
+    let output = std::thread::scope(|scope| {
+        scope.spawn(move || pipe.map(|mut pipe| pipe.write_all(input)));
+        child.wait_with_output()
+    });
+    let output = output.map_err(fail)?;
     match output.status.success() {
         true => Ok(output.stdout),
         false => Err(output.stderr),

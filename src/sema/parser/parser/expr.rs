@@ -809,6 +809,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             T::LessThan if !self.is_ecmascript => return self.jsx_elements(true),
             T::Await if self.is_await_expression() => {
                 self.note_await();
+                // Outside the context it is a name, but before a word or a literal.
+                if self.has_context(ctx::TOP_LEVEL) && !self.next_is_word_or_literal_on_same_line()
+                {
+                    self.has_await_identifier = true;
+                }
                 self.next();
                 let operand = self.simple_unary_expression();
                 return self.finish_expr(ExprKind::Await(operand), start);
@@ -1969,6 +1974,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     ) -> ExprId {
         let backtick = self.pos();
         let head = self.lx.atom;
+        if self.token() == T::NoSubstitutionTemplate && self.is_at_unterminated_piece() {
+            self.unterminated_template_again();
+        }
         // `checkTaggedTemplateExpression`: `checkGrammarTypeArguments` is not asked after the error below.
         let is_of_list = |it: &Diagnostic| it.code == 1099 && (start..backtick).contains(&it.start);
         if is_in_chain && type_args.is_empty() && self.f.diagnostics.last().is_some_and(is_of_list)
@@ -2003,6 +2011,22 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             template,
         });
         self.finish_expr(ExprKind::TaggedTemplate(call), start)
+    }
+
+    /// `reScanTemplateToken(true)` in `parseTaggedTemplateRest`: the scanner says again that the template does not end. It is
+    /// the last error then, and no other is reported at the end of the text.
+    #[cold]
+    #[inline(never)]
+    fn unterminated_template_again(&mut self) {
+        if self.options.dialect != Default::default() {
+            return;
+        }
+        self.take_errors_of_scanner();
+        let is_it = |it: &Diagnostic| it.code == 1160 && it.kind == DiagnosticKind::Parse;
+        if let Some(at) = self.f.diagnostics.iter().rposition(is_it) {
+            let error = self.f.diagnostics.remove(at);
+            self.f.diagnostics.push(error);
+        }
     }
 
     /// `parseNewExpressionOrNewDotTarget`
@@ -2124,7 +2148,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 // `parseComputedPropertyName`
                 self.next();
                 let parens = self.f.parens.len();
-                let had_await = std::mem::take(&mut self.has_top_level_await);
+                let had_identifier = std::mem::take(&mut self.has_await_identifier);
                 let left = self.await_context_of_module();
                 let saved = self.enter_context(0, ctx::DISALLOW_IN | ctx::TYPE | left);
                 // "We parse any expression (including a comma expression)."
@@ -2137,15 +2161,15 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     self.computed_name_outside_await_context(pos);
                 }
                 // `parsePropertyName` of the native parser restores `statementHasAwaitIdentifier`, so
-                // that no statement is parsed again for an `await` in a name.
-                if self.has_top_level_await
+                // that no statement is parsed again for an `await` in a name: see `top_level_statement`.
+                if self.has_await_identifier
                     && !self.options.dialect.typescript_5
                     && !self.is_ecmascript
-                    && !self.names_are_in_await_context
+                    && !self.recovers()
                 {
                     self.refuse(Refusal::Unsupported);
                 }
-                self.has_top_level_await |= had_await;
+                self.has_await_identifier = had_identifier;
                 self.expect(T::CloseBracket);
                 // `IsDynamicName`: only a bare literal is a name.
                 let is_bare = self.f.parens.len() == parens;
@@ -2278,7 +2302,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
         }
         let is_generator = kind == PropKind::Init && self.eat(T::Asterisk);
-        let is_identifier = self.is_identifier();
+        let mut is_identifier = self.is_identifier();
+        // As in a computed name.
+        if self.token() == T::Await && self.await_context_of_module() != 0 {
+            (is_identifier, self.has_await_in_name) = (true, true);
+        }
         let is_bigint = self.token() == T::BigInt;
         let name_end = self.lx.end;
         let (mut key, name_kind, pos) = self.property_name();

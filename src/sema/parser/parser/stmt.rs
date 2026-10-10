@@ -1022,8 +1022,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let was_module = self.f.has_module_syntax;
         let lists = self.enter_list(ListKind::BlockStatements);
         let reparsed = self.jsdoc.reparsed.len();
+        let strays = self.s.stray_decorators.len();
         while self.is_in_list(T::CloseBrace) && self.is_at_element(ListKind::BlockStatements) {
             let statement = self.statement();
+            self.take_stray_decorators(strays);
             if self.reads_jsdoc() {
                 self.statement_jsdoc(statement);
                 self.list_reparsed(reparsed);

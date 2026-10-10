@@ -1,4 +1,4 @@
-// Prints where Tailwind CSS puts the classes that it is asked about. The file at `path` has the question:
+// Prints where Tailwind CSS puts the classes that it is asked about. The question is read from standard input:
 // { groups: [{ root, config, stylesheet, classes }] }. `root`: the directory of the package.
 //
 // Where it puts a class does not depend on what else it is asked about. The numbers that it answers with do.
@@ -132,7 +132,7 @@ function ranks(orders) {
 }
 
 const groups = [];
-for (const group of JSON.parse(read(path)).groups) {
+for (const group of JSON.parse(await Bun.stdin.text()).groups) {
   const { classes, ...which } = group;
   try {
     const orders = (await orderFor(which))(classes);

@@ -47,19 +47,51 @@ pub(crate) fn evaluate_with(
         source,
         arguments: &arguments[usize::from(argument.is_empty())..],
         cwd: paths::dirname(path),
+        stdin: b"",
     };
-    let fail = |why: &[u8]| {
+    run(environment, &script).map_err(|why| {
+        Fatal(
+            [
+                b"Cannot load the configuration file ",
+                path,
+                b":\n",
+                &why[..],
+            ]
+            .concat(),
+        )
+    })
+}
+
+/// What the script `source`, which runs in the directory `cwd`, makes of `input`, which it reads from standard input. `Err`: why
+/// it failed.
+pub(crate) fn evaluate_input(
+    environment: &Environment,
+    source: Source,
+    cwd: &[u8],
+    input: &[u8],
+) -> Result<Json, Vec<u8>> {
+    // There is no such file.
+    let path = paths::join(cwd, b"-");
+    let script = Script {
+        source,
+        arguments: &[MARKER, &path],
+        cwd,
+        stdin: input,
+    };
+    run(environment, &script)
+}
+
+/// What `script` hands to `finish`. `Err`: why it failed.
+fn run(environment: &Environment, script: &Script) -> Result<Json, Vec<u8>> {
+    const SILENT: &[u8] = b"It could not be evaluated.";
+    let printed = (environment.run_script)(script).map_err(|why| match why.trim_ascii_end() {
         // It has left without a word: `process.exit(1)`.
-        let why: &[u8] = match why.trim_ascii_end() {
-            b"" => b"It could not be evaluated.",
-            why => why,
-        };
-        Fatal([b"Cannot load the configuration file ", path, b":\n", why].concat())
-    };
-    let printed = (environment.run_script)(&script).map_err(|error| fail(&error))?;
+        b"" => SILENT.to_vec(),
+        why => why.to_vec(),
+    })?;
     let json = strings::last_index_of(&printed, MARKER).map(|at| &printed[at + MARKER.len()..]);
     let Some(Json::Object(entries)) = json.and_then(bun_lint::json::parse) else {
-        return Err(fail(b"It could not be evaluated."));
+        return Err(SILENT.to_vec());
     };
     let config = entries.into_iter().find(|it| it.0 == b"config");
     Ok(config.map_or(Json::Null, |it| it.1))

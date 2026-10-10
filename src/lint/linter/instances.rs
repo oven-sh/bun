@@ -27,10 +27,21 @@ struct Made {
     len: u32,
 }
 
-/// The chunk that has the place `at`, and where it is in it.
-fn place(at: u32) -> (usize, usize) {
-    let chunk = (at / FIRST + 1).ilog2();
-    (chunk as usize, (at - FIRST * ((1 << chunk) - 1)) as usize)
+/// Where an [`Instance`] is.
+struct Place {
+    chunk: usize,
+    /// In the chunk.
+    at: usize,
+}
+
+impl Instance {
+    fn place(self) -> Place {
+        let chunk = (self.0 / FIRST + 1).ilog2();
+        Place {
+            chunk: chunk as usize,
+            at: (self.0 - FIRST * ((1 << chunk) - 1)) as usize,
+        }
+    }
 }
 
 impl<R> Instances<R> {
@@ -42,7 +53,7 @@ impl<R> Instances<R> {
     }
 
     pub(super) fn get(&self, it: Instance) -> Option<&R> {
-        let (chunk, at) = place(it.0);
+        let Place { chunk, at } = it.place();
         self.chunks.get(chunk)?.get()?.get(at)?.get()
     }
 
@@ -62,7 +73,7 @@ impl<R> Instances<R> {
         }
         let rule = make()?;
         let it = Instance(made.len);
-        let (chunk, at) = place(it.0);
+        let Place { chunk, at } = it.place();
         let places = self.chunks[chunk]
             .get_or_init(|| (0..FIRST << chunk).map(|_| OnceLock::new()).collect());
         // Nobody else has this place.

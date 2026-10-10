@@ -46,6 +46,8 @@ pub struct Script<'s> {
     pub arguments: &'s [&'s [u8]],
     /// The working directory.
     pub cwd: &'s [u8],
+    /// What it reads from standard input. It is written while what the program prints is read, so neither waits for the other.
+    pub stdin: &'s [u8],
 }
 
 impl Script<'_> {

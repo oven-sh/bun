@@ -75,6 +75,7 @@ import {
   uploadArtifact,
   type JunitFileSuite,
 } from "./buildkite.ts";
+import { getVendorTestArgs, isVendorTestSkipped, type VendorSkipTests } from "./vendor-skips.ts";
 
 const isX64 = process.arch === "x64";
 
@@ -1345,7 +1346,7 @@ async function runTests(): Promise<TestResult[]> {
   }
 
   if (vendorTests?.length) {
-    for (const { cwd: vendorPath, packageManager, testRunner, testPaths } of vendorTests) {
+    for (const { cwd: vendorPath, packageManager, testRunner, testPaths, testArgs } of vendorTests) {
       if (!testPaths.length) {
         continue;
       }
@@ -1372,10 +1373,11 @@ async function runTests(): Promise<TestResult[]> {
 
       for (const testPath of testPaths) {
         const title = join(relative(cwd, vendorPath), testPath).replace(/\\/g, "/");
+        const args = testArgs[testPath] ?? [];
 
         if (testRunner === "bun") {
           await runTest(title, index =>
-            spawnBunTest(execPath, testPath, { cwd: vendorPath, env: { TEST_SERIAL_ID: String(index) } }),
+            spawnBunTest(execPath, testPath, { cwd: vendorPath, args, env: { TEST_SERIAL_ID: String(index) } }),
           );
         } else {
           const testRunnerPath = join(cwd, "test", "runners", `${testRunner}.ts`);
@@ -1385,7 +1387,7 @@ async function runTests(): Promise<TestResult[]> {
           await runTest(title, () =>
             spawnBunTest(execPath, testPath, {
               cwd: vendorPath,
-              args: ["--preload", testRunnerPath],
+              args: ["--preload", testRunnerPath, ...args],
             }),
           );
         }
@@ -2527,7 +2529,7 @@ interface Vendor {
   testPath?: string;
   testRunner?: string;
   testExtensions?: string[];
-  skipTests?: boolean | Record<string, boolean | string>;
+  skipTests?: VendorSkipTests;
 }
 
 interface VendorTest {
@@ -2535,6 +2537,8 @@ interface VendorTest {
   packageManager: string;
   testRunner: string;
   testPaths: string[];
+  /** extra `bun test` arguments, by entry of testPaths */
+  testArgs: Record<string, string[]>;
 }
 
 async function getVendorTests(cwd: string): Promise<VendorTest[]> {
@@ -2603,31 +2607,12 @@ async function getVendorTests(cwd: string): Promise<VendorTest[]> {
           throw new Error(`Vendor '${name}' does not have a test directory: ${testParentPath}`);
         }
 
-        const isTest = (path: string) => {
-          if (!isJavaScriptTest(path)) {
-            return false;
-          }
-
-          if (typeof skipTests === "boolean") {
-            return !skipTests;
-          }
-
-          if (typeof skipTests === "object") {
-            for (const [glob, reason] of Object.entries(skipTests)) {
-              const pattern = new RegExp(`^${glob.replace(/\*/g, ".*")}$`);
-              if (pattern.test(path) && reason) {
-                return false;
-              }
-            }
-          }
-
-          return true;
-        };
+        const isTest = (path: string) =>
+          (testExtensions ? testExtensions.some(ext => path.endsWith(`.${ext}`)) : isJavaScriptTest(path)) &&
+          !isVendorTestSkipped(skipTests, path);
 
         const testPaths = readdirSync(testParentPath, { encoding: "utf-8", recursive: true })
-          .filter(filename =>
-            testExtensions ? testExtensions.some(ext => filename.endsWith(`.${ext}`)) : isTest(filename),
-          )
+          .filter(isTest)
           .map(filename => join(testPathPrefix, filename))
           .filter(
             filename =>
@@ -2640,6 +2625,9 @@ async function getVendorTests(cwd: string): Promise<VendorTest[]> {
           packageManager: packageManager || "bun",
           testRunner: testRunner || "bun",
           testPaths,
+          testArgs: Object.fromEntries(
+            testPaths.map(path => [path, getVendorTestArgs(skipTests, relative(testPathPrefix, path))]),
+          ),
         };
       },
     ),

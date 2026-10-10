@@ -701,6 +701,20 @@ describe("Decipheriv", () => {
   });
 });
 
+// Node's alias of utf16le, as an output encoding.
+it.each(["utf-16le", "UTF-16LE"])("crypto.hash and cipher output accept the %s encoding", encoding => {
+  const digest = crypto.createHash("sha1").update("hi").digest();
+  expect(crypto.hash("sha1", "hi", encoding)).toBe(digest.toString("utf16le"));
+
+  const key = Buffer.alloc(16, 1);
+  const iv = Buffer.alloc(16, 2);
+  const encrypted = crypto.createCipheriv("aes-128-ctr", key, iv).update("hi", "utf16le");
+  const cipher = crypto.createCipheriv("aes-128-ctr", key, iv);
+  expect(cipher.update("hi", "utf16le", encoding) + cipher.final(encoding)).toBe(encrypted.toString("utf16le"));
+  const decipher = crypto.createDecipheriv("aes-128-ctr", key, iv);
+  expect(decipher.update(encrypted, undefined, encoding) + decipher.final(encoding)).toBe("hi");
+});
+
 describe("DiffieHellman", () => {
   it("should have correct method names", () => {
     const dh = crypto.createDiffieHellman(512);

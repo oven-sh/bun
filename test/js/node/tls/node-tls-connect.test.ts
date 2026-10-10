@@ -2245,6 +2245,26 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("%s: getSession() / getTLSTicket(
   });
 });
 
+// Node's alias of utf16le. A TLS socket shares the native write path of net.Socket.
+it.concurrent.each(["utf-16le", "UTF-16LE"] as BufferEncoding[])("end(string, %s) sends UTF-16LE", async encoding => {
+  const { promise, resolve } = Promise.withResolvers<string>();
+  await using server = tls.createServer({ ...COMMON_CERT_ }, peer => {
+    const chunks: Buffer[] = [];
+    peer.on("data", (chunk: Buffer) => chunks.push(chunk));
+    peer.on("end", () => resolve(Buffer.concat(chunks).toString("hex")));
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+
+  const client = tlsConnect({
+    port: (server.address() as AddressInfo).port,
+    host: "127.0.0.1",
+    rejectUnauthorized: false,
+  });
+  await once(client, "secureConnect");
+  client.end("hi", encoding);
+  expect(await promise).toBe("68006900");
+});
+
 it("a write before 'secureConnect' still reports the handshake's own failure", async () => {
   // An early write drives the handshake from inside SSL_write. The fatal
   // reason that write hit used to be dropped, so the handshake dispatch had

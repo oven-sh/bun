@@ -83,22 +83,6 @@ describe("node:http", () => {
         server!.close();
       }
     });
-    it("res.end accepts the utf-16le encoding alias", async () => {
-      try {
-        var server = createServer((req, res) => {
-          res.writeHead(200, { "Content-Type": "text/plain" });
-          res.end("Hello World", req.url === "/upper" ? "UTF-16LE" : "utf-16le");
-        });
-        const url = await listen(server);
-        const expected = Buffer.from("Hello World", "utf16le");
-        for (const pathname of ["/", "/upper"]) {
-          const res = await fetch(new URL(pathname, url));
-          expect(Buffer.from(await res.arrayBuffer())).toEqual(expected);
-        }
-      } finally {
-        server.close();
-      }
-    });
     it("request & response body streaming (large)", async () => {
       const input = Buffer.alloc("hello world, hello world".length * 9000, "hello world, hello world");
       try {
@@ -438,6 +422,38 @@ describe("node:http", () => {
       const response = await fetch(`http://127.0.0.1:${port}/`);
       expect(await response.text()).toBe(body);
       expect(response.status).toBe(200);
+    });
+
+    test.each(["write", "end"])("res.%s encodes a string as utf-16le, node's alias of utf16le", async method => {
+      await using server = http.createServer((req, res) => {
+        const encoding = req.url!.slice(1) as BufferEncoding;
+        try {
+          if (method === "write") {
+            res.write("hi", encoding);
+            res.end();
+          } else {
+            res.end("hi", encoding);
+          }
+        } catch (e: any) {
+          res.statusCode = 500;
+          res.end(`${e.code}: ${e.message}`);
+        }
+      });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address() as AddressInfo;
+
+      const responses: Record<string, unknown> = {};
+      for (const encoding of ["utf-16le", "UTF-16LE"]) {
+        const response = await fetch(`http://127.0.0.1:${port}/${encoding}`);
+        responses[encoding] = {
+          status: response.status,
+          body: Buffer.from(await response.arrayBuffer()).toString("latin1"),
+        };
+      }
+      expect(responses).toEqual({
+        "utf-16le": { status: 200, body: "h\0i\0" },
+        "UTF-16LE": { status: 200, body: "h\0i\0" },
+      });
     });
 
     test.each(["write", "end"])("res.%s throws ERR_UNKNOWN_ENCODING for an unknown encoding", async method => {

@@ -1457,21 +1457,26 @@ describe("promises.readFile", async () => {
     using dir = tempDir("fs-utf-16le-alias", {});
     const file = join(String(dir), "a.txt");
     const bytes = Buffer.from("hi 👍", "utf16le");
-    writeFileSync(file, bytes);
+    // readdir and Dir#read decode the raw name bytes with the encoding, like node does.
+    const name = Buffer.from("a.txt").toString("utf16le");
 
-    for (const encoding of ["utf-16le", "UTF-16LE"] as const) {
+    for (const encoding of ["utf-16le", "UTF-16LE"] as BufferEncoding[]) {
+      writeFileSync(file, bytes);
       expect(fs.readFileSync(file, encoding)).toBe("hi 👍");
       expect(await promises.readFile(file, encoding)).toBe("hi 👍");
-      // readdir decodes the raw name bytes with the encoding, like node does.
-      expect(fs.readdirSync(String(dir), encoding)).toEqual(
-        fs.readdirSync(String(dir)).map(name => Buffer.from(name).toString("utf16le")),
-      );
+      expect(fs.readdirSync(String(dir), encoding)).toEqual([name]);
+      const opened = fs.opendirSync(String(dir), { encoding });
+      try {
+        expect(opened.readSync()?.name).toBe(name);
+      } finally {
+        opened.closeSync();
+      }
 
-      const out = join(String(dir), `out-${encoding}.txt`);
-      writeFileSync(out, "hi 👍", encoding);
-      expect(fs.readFileSync(out)).toEqual(bytes);
-      await promises.writeFile(out, "ok", encoding);
-      expect(fs.readFileSync(out)).toEqual(Buffer.from("ok", "utf16le"));
+      writeFileSync(file, "hi ", encoding);
+      fs.appendFileSync(file, "👍", encoding);
+      expect(fs.readFileSync(file)).toEqual(bytes);
+      await promises.writeFile(file, "ok", encoding);
+      expect(fs.readFileSync(file)).toEqual(Buffer.from("ok", "utf16le"));
     }
 
     expect(() => fs.readFileSync(file, "utf16-le" as BufferEncoding)).toThrow(
@@ -2552,6 +2557,8 @@ describe("writeSync", () => {
       // always the following argument.
       [["abc", null, "ucs2"], Buffer.from("abc", "utf16le")],
       [["abc", undefined, "utf16le"], Buffer.from("abc", "utf16le")],
+      [["abc", 0, "utf-16le"], Buffer.from("abc", "utf16le")],
+      [["abc", 0, "UTF-16LE"], Buffer.from("abc", "utf16le")],
       [["61626364", 0, "hex"], Buffer.from("abcd")],
       [["aGk=", null, "base64"], Buffer.from("hi")],
       [["\u00ff", 0, "latin1"], Buffer.from([0xff])],

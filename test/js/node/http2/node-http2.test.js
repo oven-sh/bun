@@ -3,6 +3,7 @@ import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
+import { once } from "node:events";
 import fs from "node:fs";
 import http2 from "node:http2";
 import https from "node:https";
@@ -2596,6 +2597,32 @@ it("http2 server handles multiple concurrent requests", async () => {
       }
     });
   });
+});
+
+// Node's alias of utf16le, in the spellings that only the native write resolves.
+it.each(["UTF-16LE", "Utf-16le"])("http2 stream.end(string, %s) sends UTF-16LE", async encoding => {
+  const { promise, resolve } = Promise.withResolvers();
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    const chunks = [];
+    stream.on("data", chunk => chunks.push(chunk));
+    stream.on("end", () => {
+      resolve(Buffer.concat(chunks).toString("hex"));
+      stream.respond({ ":status": 200 });
+      stream.end();
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  try {
+    const request = client.request({ ":method": "POST", ":path": "/" });
+    request.resume();
+    request.end("hi", encoding);
+    expect(await promise).toBe("68006900");
+  } finally {
+    client.close();
+    server.close();
+  }
 });
 
 it("http2 connect supports various URL formats", async done => {

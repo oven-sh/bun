@@ -181,6 +181,27 @@ describe.concurrent("socket", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Node's alias of utf16le. The types do not declare the encoding argument, so the names are `any`.
+  it.each(["utf-16le", "UTF-16LE"] as any[])("write() and end() encode a string as %s", async encoding => {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const chunks: Buffer[] = [];
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(socket, chunk) {
+          chunks.push(Buffer.from(chunk));
+        },
+        close() {
+          resolve(Buffer.concat(chunks).toString("hex"));
+        },
+      },
+    });
+    const client = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { data() {} } });
+    const written = [client.write("hi", encoding), client.end("yo", encoding)];
+    expect({ written, received: await promise }).toEqual({ written: [4, 4], received: "6800690079006f00" });
+  });
+
   it("listen() should throw connection error for invalid host", () => {
     expect(() => {
       const handlers: SocketHandler = {

@@ -480,6 +480,83 @@ describe("net.Socket write", () => {
     }),
   );
 
+  // Node's alias of utf16le. Writable checks the name, then the native socket encodes the string.
+  describe.concurrent.each(["utf-16le", "UTF-16LE"] as BufferEncoding[])("a string written as %s", encoding => {
+    // Resolves to the bytes the peer received, as hex.
+    async function received(
+      write: (socket: Socket, connected: Promise<unknown>) => unknown,
+      // Socket hands its options to Duplex, as in node. The types do not declare that.
+      options?: ConstructorParameters<typeof Socket>[0] & { defaultEncoding?: BufferEncoding },
+    ) {
+      const { promise, resolve } = Promise.withResolvers<string>();
+      const server = createServer(peer => {
+        const chunks: Buffer[] = [];
+        peer.on("data", (chunk: Buffer) => chunks.push(chunk));
+        peer.on("end", () => {
+          resolve(Buffer.concat(chunks).toString("hex"));
+          peer.end();
+        });
+      });
+      try {
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const socket = new Socket(options);
+        const connected = once(socket, "connect");
+        socket.connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
+        await write(socket, connected);
+        return await promise;
+      } finally {
+        server.close();
+      }
+    }
+
+    it("end() before 'connect'", async () => {
+      expect(await received(socket => socket.end("hi", encoding))).toBe("68006900");
+    });
+
+    it("write() after 'connect'", async () => {
+      let bytesWritten = -1;
+      const sent = await received(async (socket, connected) => {
+        await connected;
+        socket.write("hi", encoding);
+        bytesWritten = socket.bytesWritten;
+        socket.end();
+      });
+      expect({ sent, bytesWritten }).toEqual({ sent: "68006900", bytesWritten: 4 });
+    });
+
+    it("setDefaultEncoding() then end()", async () => {
+      const sent = await received(socket => {
+        socket.setDefaultEncoding(encoding);
+        socket.end("hi");
+      });
+      expect(sent).toBe("68006900");
+    });
+
+    it("the defaultEncoding option", async () => {
+      expect(await received(socket => socket.end("hi"), { defaultEncoding: encoding })).toBe("68006900");
+    });
+
+    it("three writes before 'connect'", async () => {
+      const sent = await received(socket => {
+        socket.write("hi", encoding);
+        socket.write("yo", encoding);
+        socket.end("ab", encoding);
+      });
+      expect(sent).toBe("6800690079006f0061006200");
+    });
+
+    it("cork() and one write()", async () => {
+      const sent = await received(async (socket, connected) => {
+        await connected;
+        socket.cork();
+        socket.write("hi", encoding);
+        socket.uncork();
+        socket.end();
+      });
+      expect(sent).toBe("68006900");
+    });
+  });
+
   it("should allow reconnecting after end()", async () => {
     const server = new Server(socket => socket.end());
     const port = await new Promise<number>(resolve => {

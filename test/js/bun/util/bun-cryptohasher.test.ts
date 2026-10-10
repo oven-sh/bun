@@ -82,6 +82,64 @@ test("update(str, 'hex') decodes two-byte strings from the low byte of each code
     expect(createHash("sha1").update(input, "hex").digest("hex"), JSON.stringify(input)).toBe(expected);
   }
 });
+
+// Node's alias of utf16le.
+describe.each(["utf-16le", "UTF-16LE"])("the %s encoding", name => {
+  // The types list only the canonical names.
+  const encoding = name as Bun.DigestEncoding;
+  const bytes = Buffer.from("hi", "utf16le");
+
+  test("update(string) hashes the UTF-16LE bytes", () => {
+    expect({
+      hash: new Bun.CryptoHasher("sha1").update("hi", encoding).digest("hex"),
+      hmac: new Bun.CryptoHasher("sha1", "key").update("hi", encoding).digest("hex"),
+    }).toEqual({
+      hash: createHash("sha1").update(bytes).digest("hex"),
+      hmac: createHmac("sha1", "key").update(bytes).digest("hex"),
+    });
+  });
+
+  test("digest() and hash() return a UTF-16LE string", () => {
+    const text = createHash("sha1").update(bytes).digest().toString("utf16le");
+    expect({
+      digest: new Bun.CryptoHasher("sha1").update(bytes).digest(encoding),
+      hash: Bun.CryptoHasher.hash("sha1", bytes, encoding),
+      classDigest: new Bun.SHA1().update(bytes).digest(encoding),
+      classHash: Bun.SHA1.hash(bytes, encoding),
+    }).toEqual({ digest: text, hash: text, classDigest: text, classHash: text });
+  });
+});
+
+// Node has no such name, and its hash.update() reads an unknown name as utf8.
+test("update(string, 'utf16-le') hashes the UTF-8 bytes", () => {
+  expect(new Bun.CryptoHasher("sha1").update("hi", "utf16-le" as any).digest("hex")).toBe(
+    createHash("sha1").update(Buffer.from("hi")).digest("hex"),
+  );
+});
+
+// Bun.CryptoHasher.hash looks the output encoding up in the Rust name table, Buffer.isEncoding in the C++ one.
+test("the two native encoding-name tables accept the same names", () => {
+  const names: string[] = [];
+  for (const base of ["utf8", "ucs2", "utf16le", "latin1", "binary", "base64", "base64url", "hex", "ascii", "buffer"]) {
+    for (const name of [base, base.toUpperCase()]) {
+      names.push(name);
+      // Every one-hyphen spelling: utf-8, ucs-2 and utf-16le are names, utf16-le and the rest are not.
+      for (let i = 1; i < name.length; i++) names.push(name.slice(0, i) + "-" + name.slice(i));
+    }
+  }
+  const accepts = (name: string) => {
+    try {
+      Bun.CryptoHasher.hash("sha1", "", name as any);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  // "buffer" is the one name that only the Rust table has.
+  const disagree = names.filter(name => name.toLowerCase() !== "buffer" && accepts(name) !== Buffer.isEncoding(name));
+  expect(disagree).toEqual([]);
+});
+
 test("CryptoHasher throws on non-latin1 algorithm names instead of crashing", () => {
   const unsupported = (message: string) =>
     expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message });

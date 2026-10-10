@@ -182,6 +182,9 @@ impl<'a> Exports<'a, '_> {
             StmtKind::Enum(it) => (Some(it.name()), ParentType::TsEnumDeclaration, false),
             StmtKind::Module(it) => match it.name() {
                 ModuleName::Ident(id) if it.nested().is_none() => (Some(id), ParentType::TsModuleDeclaration, false),
+                ModuleName::Global => {
+                    return self.add_named(b"global", it.name_span(), ParentType::TsModuleDeclaration, parent, false);
+                }
                 // A `TSQualifiedName` and a `Literal` have no `name`.
                 _ => return,
             },

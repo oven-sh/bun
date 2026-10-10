@@ -165,6 +165,9 @@ pub struct Listed {
 pub type ListFiles<'h> =
     Box<dyn Fn(&[&[u8]], &[&[u8]]) -> Result<Vec<Listed>, Vec<u8>> + Send + Sync + 'h>;
 
+/// [`Modules::resolve_by`]: the file that has the specifier, the specifier, whether it is in a `require`: the path.
+pub type ResolveBy = Box<dyn Fn(&dyn Modules, &[u8], &[u8], bool) -> Option<Vec<u8>> + Send + Sync>;
+
 /// How a plugin reads a file that is not the one that is linted.
 #[derive(Copy, Clone)]
 pub struct Reader {
@@ -182,6 +185,10 @@ pub trait Modules: Sync {
     /// `is_always_checked`: it is linted again whatever it imports. Otherwise only if it is in a cycle of modules that import
     /// values from each other. Once is enough.
     fn record(&self, path: &[u8], requests: &[Request], is_always_checked: bool, flavor: Flavor);
+
+    /// With [`Flavor::EslintPluginImport`]: who says what a specifier means, in the files that are linted and in what
+    /// they import: the resolvers of the settings. Before [`Modules::record`]. `make` is called if nobody has said so yet.
+    fn resolve_by(&self, make: &dyn Fn() -> ResolveBy);
 
     /// Takes note of the [`Record`] of `file`, which is linted: `make(file)`, unless it is known. The records of the files that are
     /// not linted are made by `make` too, also of those in a `node_modules`.

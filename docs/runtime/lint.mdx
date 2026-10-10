@@ -158,7 +158,8 @@ nativePluginRules = false
 ```
 
 - Write the name that the configuration has for the plugin, before the `/` of its rules.
-- The package has to be installed. With an `.eslintrc`, a built-in plugin otherwise needs no package.
+- A plugin goes to its package only where the configuration loads that package. Everywhere else, as without a configuration file, the built-in rules stay.
+- With an `.eslintrc` that names the plugin, the package has to be installed. A built-in plugin otherwise needs no package there.
 - The rules of `@typescript-eslint` that need types do not run in JavaScript. The run says which, and fails. Keep `@typescript-eslint` in the list for them.
 - With an `.oxlintrc.json` the option changes nothing. `plugins` names the plugins that are built into oxlint, and what `jsPlugins` names runs in JavaScript.
 - `bun lint --print-config <file>` names the rules that run in JavaScript for that file, on stderr.

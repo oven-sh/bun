@@ -1,7 +1,10 @@
 use bun_core::strings;
+use crate::import_resolve::Resolvers;
+use crate::import_settings::Settings;
+use crate::import_type::ImportTypes;
 use crate::module_visitor::{self, Systems};
 use crate::oxlint;
-use bun_lint::modules::{Declaration, Flavor, ModuleId, Modules, Request, RequestKind, requests_of, set_lines};
+use bun_lint::modules::{Declaration, Flavor, Import, ModuleId, Modules, Request, RequestKind, requests_of, set_lines};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use rustc_hash::FxHashSet;
@@ -32,7 +35,7 @@ struct Check<'a> {
     /// What is reported.
     importer: Span,
     is_require: bool,
-    /// `import()`
+    /// `import(..)`, or a call of something else than `require`.
     is_dynamic: bool,
 }
 
@@ -70,6 +73,15 @@ impl Rule for NoCycle {
             modules.record(file.path(), &requests, false, flavor);
             return None;
         }
+        // What a name means is a matter of the settings, in every file that the graph comes to.
+        Resolvers::of(file.settings())?;
+        modules.resolve_by(&|| {
+            let settings = file.settings().clone();
+            Box::new(move |modules, from, specifier, is_require| {
+                let found = Resolvers::of(&settings)?.resolve_from(modules, from, specifier, is_require);
+                found.file().map(<[u8]>::to_vec)
+            })
+        });
         let checks = if self.commonjs || self.amd { self.checks(file) } else { Vec::new() };
         let known = requests.len();
         requests.extend(checks.iter().filter(|it| it.is_require).map(|it| Request {
@@ -81,59 +93,15 @@ impl Rule for NoCycle {
             may_be_itself: false,
         }));
         set_lines(file.text(), &mut requests[known..]);
-        // Where the components do not tell.
-        let is_always_checked = requests.len() > known || self.disable_scc || !self.ignore_types;
+        // Where the components do not tell: they are made of the imports of values.
+        let imports_no_value = known > 0 && requests[..known].iter().all(|it| it.is_only_importing_types);
+        let is_always_checked = requests.len() > known || self.disable_scc || !self.ignore_types || imports_no_value;
         modules.record(file.path(), &requests, is_always_checked, flavor);
         None
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         if oxlint::flavor_of_modules(cx.file()) == Flavor::Oxlint { self.check_as_oxlint(cx) } else { self.check(cx) }
-    }
-}
-
-/// `settings["import/.."]`
-struct Settings {
-    /// `import/extensions` and those of `import/parsers`. `None`: all of JavaScript and TypeScript.
-    extensions: Option<Vec<Box<[u8]>>>,
-    ignore: Vec<Regex>,
-    internal_regex: Option<Regex>,
-    external_module_folders: Vec<Box<[u8]>>,
-}
-
-fn strings_of(json: Option<&Json>) -> Vec<&[u8]> {
-    json.and_then(Json::as_array).unwrap_or_default().iter().filter_map(Json::as_str).collect()
-}
-
-impl Settings {
-    fn new(settings: &Json) -> Settings {
-        let (extensions, parsers) = (settings.get(b"import/extensions"), settings.get(b"import/parsers"));
-        let of_parsers = parsers.and_then(Json::as_object).unwrap_or_default().iter().flat_map(|it| strings_of(Some(&it.1)));
-        let folders = settings.get(b"import/external-module-folders");
-        Settings {
-            extensions: (extensions.is_some() || parsers.is_some()).then(|| {
-                let own = match extensions {
-                    Some(_) => strings_of(extensions),
-                    None => vec![&b".js"[..], b".mjs", b".cjs"],
-                };
-                own.into_iter().chain(of_parsers).map(Box::from).collect()
-            }),
-            ignore: strings_of(settings.get(b"import/ignore")).iter().filter_map(|it| Regex::from_bytes(it, b"").ok()).collect(),
-            internal_regex: (settings.get(b"import/internal-regex").and_then(Json::as_str))
-                .and_then(|it| Regex::from_bytes(it, b"").ok()),
-            external_module_folders: strings_of(folders).into_iter().map(Box::from).collect(),
-        }
-    }
-
-    /// eslint-plugin-import has no `ExportMap` for the file at `path`.
-    fn is_ignored(&self, path: &[u8]) -> bool {
-        let name = bun_lint::paths::file_name(path);
-        let extension = strings::last_index_of_char(name, b'.').filter(|&at| at > 0).map_or(&b""[..], |at| &name[at..]);
-        let is_valid = match &self.extensions {
-            Some(extensions) => extensions.iter().any(|it| **it == *extension),
-            None => matches!(extension, b".js" | b".mjs" | b".cjs" | b".jsx" | b".ts" | b".mts" | b".cts" | b".tsx"),
-        };
-        !is_valid || self.ignore.iter().any(|it| it.test(path))
     }
 }
 
@@ -163,47 +131,21 @@ fn oxlint_allows_self_reference<'a>(file: &'a File<'a>, specifier: &[u8]) -> boo
     })
 }
 
-/// `/^\w/.test(name) || /^@[^/]+\/?[^/]+/.test(name)`
-fn is_external_looking_name(name: &[u8]) -> bool {
-    match name {
-        [b'@', rest @ ..] => {
-            let scope = strings::index_of_char_usize(rest, b'/').unwrap_or(rest.len());
-            scope >= 2 || scope == 1 && rest.get(2).is_some_and(|it| *it != b'/')
-        }
-        [first, ..] => first.is_ascii_alphanumeric() || *first == b'_',
-        [] => false,
-    }
-}
-
 /// What is the same for all the imports of a file.
-struct Search<'s> {
+struct Search<'s, 'a> {
     rule: &'s NoCycle,
-    modules: &'s dyn Modules,
-    settings: Settings,
-    path: &'s [u8],
+    modules: &'a dyn Modules,
+    settings: Settings<'a>,
+    types: ImportTypes<'a>,
+    file: &'a File<'a>,
     me: ModuleId,
 }
 
-impl Search<'_> {
+impl Search<'_, '_> {
     /// `ignoreModule`. As upstream, the name is resolved in the file that is linted, also where another file has it.
     fn ignores(&self, name: &[u8], is_require: bool) -> bool {
-        if !self.rule.ignore_external
-            || !is_external_looking_name(name)
-            || self.settings.internal_regex.as_ref().is_some_and(|it| it.test(name))
-        {
-            return false;
-        }
-        let Some(resolved) = self.modules.resolve(self.path, name, is_require) else {
-            return true;
-        };
-        let path = self.modules.path(resolved.module);
-        match &self.settings.external_module_folders[..] {
-            [] => resolved.is_external || strings::contains(path, b"/node_modules/"),
-            folders => folders.iter().any(|folder| {
-                let folder = folder.strip_suffix(b"/").unwrap_or(folder);
-                strings::contains(path, &[b"/", folder, b"/"].concat())
-            }),
-        }
+        self.rule.ignore_external
+            && (self.types).is_external_module(name, &self.types.resolvers().resolve(self.file, name, is_require))
     }
 
     fn is_in_my_component(&self, module: ModuleId, uses_components: bool) -> bool {
@@ -361,7 +303,13 @@ impl NoCycle {
             specifier: it.specifier,
             importer: it.importer.span(),
             is_require: it.is_require,
-            is_dynamic: matches!(it.importer, Node::Expr(e) if e.tag() == ExprTag::ImportCall),
+            is_dynamic: match it.importer {
+                Node::Expr(e) => match e.kind() {
+                    ExprKind::Call(call) => !call.callee().is_ident("require"),
+                    _ => true,
+                },
+                _ => false,
+            },
         });
         checks.collect()
     }
@@ -374,13 +322,15 @@ impl NoCycle {
         let Some(me) = modules.find(file.path()) else {
             return;
         };
-        let search = Search {
-            rule: self,
-            modules,
-            settings: Settings::new(file.settings()),
-            path: file.path(),
-            me,
+        let Some(types) = ImportTypes::of(file) else {
+            return;
         };
+        let search = Search { rule: self, modules, settings: Settings::new(file.settings()), types, file, me };
+        // `scc` has the modules that imports of values lead to from here. Without any it is empty: all are alike in it.
+        let imports_values = |it: &Import| !it.declarations.iter().all(|it| it.is_only_importing_types);
+        let has_components =
+            !search.settings.is_ignored(modules.path(me)) && modules.imports(me).iter().any(imports_values);
+        let uses_components = !self.disable_scc && self.ignore_types && has_components;
         let mut traversed = FxHashSet::default();
         for check in self.checks(file) {
             if search.ignores(check.specifier, check.is_require)
@@ -392,8 +342,6 @@ impl NoCycle {
                 continue;
             };
             let imported = imported.module;
-            // What `require` leads to is not among the imports that the components are made of.
-            let uses_components = !self.disable_scc && self.ignore_types && !check.is_require;
             if imported == me || search.settings.is_ignored(modules.path(imported)) || !search.is_in_my_component(imported, uses_components) {
                 continue;
             }

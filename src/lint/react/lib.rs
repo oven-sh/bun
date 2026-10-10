@@ -165,6 +165,8 @@ bun_lint::rules! {
     react_jsx_indent_props::JsxIndentProps,
     react_jsx_key::JsxKey,
     react_jsx_max_depth::JsxMaxDepth,
+    react_jsx_max_props_per_line::JsxMaxPropsPerLine,
+    react_jsx_newline::JsxNewline,
     react_jsx_no_comment_textnodes::JsxNoCommentTextnodes,
     react_jsx_no_constructed_context_values::JsxNoConstructedContextValues,
     react_jsx_no_duplicate_props::JsxNoDuplicateProps,

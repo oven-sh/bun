@@ -23,7 +23,7 @@ use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser};
 use bun_lint::modules::{
     Declaration, Flavor, Import, ListFiles, Listed, Lookup, MakeRecord, ModuleId, Modules, Reader,
-    Record, Request, RequestKind, Resolved, requests_of,
+    Record, Request, RequestKind, ResolveBy, Resolved, requests_of,
 };
 use bun_lint::paths::{is_absolute, relative};
 use bun_sema::atom::Interner;
@@ -132,6 +132,8 @@ pub struct Graph<'h> {
     recorded: Guarded<Vec<Recorded<'h>>>,
     record_maker: OnceLock<MakeRecord>,
     lister: OnceLock<ListFiles<'h>>,
+    /// [`Modules::resolve_by`]
+    resolver: OnceLock<ResolveBy>,
     /// [`Modules::follow_packages`]
     follows_packages: AtomicBool,
     /// [`Flavor::Oxlint`]
@@ -286,6 +288,7 @@ impl<'h> Graph<'h> {
             recorded: Guarded::new(Vec::new()),
             record_maker: OnceLock::new(),
             lister: OnceLock::new(),
+            resolver: OnceLock::new(),
             follows_packages: AtomicBool::new(false),
             follows_oxlint: AtomicBool::new(false),
             complete: OnceLock::new(),
@@ -490,6 +493,10 @@ impl<'h> Graph<'h> {
         // No system has a path that long, and what looks for one goes up directory by directory.
         if specifier.len() > 4096 {
             return None;
+        }
+        if let (Flavor::EslintPluginImport, Some(resolve)) = (self.flavor(), self.resolver.get()) {
+            let found = resolve(self, from, specifier, is_require)?;
+            return Some((Cow::Owned(join(&self.store.cwd, &found)), false));
         }
         self.resolve_any_path(from, specifier, is_require)
             .filter(|it| !self.flavor().resolves_as_node() || is_read_by_oxlint(&it.0))
@@ -929,6 +936,10 @@ impl Modules for Graph<'_> {
         self.recorded.lock().push(record);
     }
 
+    fn resolve_by(&self, make: &dyn Fn() -> ResolveBy) {
+        self.resolver.get_or_init(make);
+    }
+
     fn record_exports<'a>(&self, file: &'a File<'a>, make: MakeRecord) {
         let _ = self.record_maker.set(make);
         let mut real = self.store.disk().realpath(&from_native(file.path()));
@@ -973,11 +984,11 @@ impl Modules for Graph<'_> {
     ) -> Option<Vec<u8>> {
         let from = from_native(from);
         let found = match lookup {
+            _ if specifier.len() > 4096 => return None,
             Lookup::TypeScript => {
                 let from = self.store.disk().realpath(&from);
-                (self.resolve_path(&from, specifier, is_require)?.0).into_owned()
+                (self.resolve_any_path(&from, specifier, is_require)?.0).into_owned()
             }
-            _ if specifier.len() > 4096 => return None,
             Lookup::Node(extensions) => {
                 self.resolve_as_require((specifier, &from), extensions, &[], &[b"node_modules"])?
             }

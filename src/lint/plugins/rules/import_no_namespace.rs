@@ -1,5 +1,6 @@
 use crate::import_minimatch::Glob;
 use bun_lint_oxlint::text::{file_name, glob_match};
+use bun_core::fmt::parse_decimal;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -151,12 +152,6 @@ fn has_variable<'a>(file: &'a File<'a>, scope: Scope<'a>, name: &[u8]) -> bool {
         }
 }
 
-/// The index that the name of a property is for an array.
-fn array_index(name: &[u8]) -> Option<u32> {
-    let index: u32 = std::str::from_utf8(name).ok()?.parse().ok()?;
-    (index != u32::MAX && index.to_string().as_bytes() == name).then_some(index)
-}
-
 /// One name of upstream's `generateLocalNames`. `has`: `nameConflicts[name].has(..)`
 fn generate_local_name(
     name: &[u8],
@@ -223,7 +218,10 @@ impl<'a> State<'a> {
             }
         }
         // `Object.keys` has the names that are indices of an array first, by their value.
-        let place = |it: &&[u8]| array_index(it).map_or((true, 0), |index| (false, index));
+        let place = |it: &&[u8]| {
+            let is_canonical = |index: &u32| *index != u32::MAX && index.to_string().as_bytes() == *it;
+            parse_decimal::<u32>(it).filter(is_canonical).map_or((true, 0), |index| (false, index))
+        };
         utils::sort::sort_by_cached_key(&mut import_names, place);
 
         let mut lookups = MAX_LOOKUPS;

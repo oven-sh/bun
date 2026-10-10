@@ -2,23 +2,49 @@ use bun_lint_oxlint::ast_util::{
     as_function, as_member_expression, as_object_property, callee_name, get_inner_expression, static_property_info,
     static_property_name,
 };
-use crate::jsx::{AttributeValue, as_jsx_element, get_prop_value};
+use crate::jsx::{AttributeValue, as_jsx_element, get_prop_value, has_jsx_prop_ignore_case};
 use crate::react::{AncestorWalk, is_jsx};
+use crate::util_is_create_element::is_member_called;
+use crate::util_pragma::{get_fragment_from_context, get_from_context};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
+use bun_lint::utils::sort;
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::cell::OnceCell;
 use std::ops::ControlFlow;
 
-/// Enforce `key` prop for elements in an array.
+/// Disallow missing `key` props in iterators/collection literals
 pub struct JsxKey {
-    check_key_must_before_spread: bool,
-    warn_on_duplicates: bool,
-    check_fragment_shorthand: bool,
+    eslint: Checks,
+    oxlint: Checks,
 }
+
+/// The options.
+#[derive(Copy, Clone, Default)]
+struct Checks {
+    key_must_before_spread: bool,
+    warn_on_duplicates: bool,
+    fragment_shorthand: bool,
+}
+
+const MISSING_ITER_KEY: Message = Message::new("missingIterKey", "Missing \"key\" prop for element in iterator");
+const MISSING_ITER_KEY_USE_PRAG: Message = Message::new(
+    "missingIterKeyUsePrag",
+    "Missing \"key\" prop for element in iterator. Shorthand fragment syntax does not support providing keys. Use {{reactPrag}}.{{fragPrag}} instead",
+);
+const MISSING_ARRAY_KEY: Message = Message::new("missingArrayKey", "Missing \"key\" prop for element in array");
+const MISSING_ARRAY_KEY_USE_PRAG: Message = Message::new(
+    "missingArrayKeyUsePrag",
+    "Missing \"key\" prop for element in array. Shorthand fragment syntax does not support providing keys. Use {{reactPrag}}.{{fragPrag}} instead",
+);
+const KEY_BEFORE_SPREAD: Message = Message::new(
+    "keyBeforeSpread",
+    "`key` prop must be placed before any `{...spread}, to avoid conflicting with React’s new JSX transform: https://reactjs.org/blog/2020/09/22/introducing-the-new-jsx-transform.html`",
+);
+const NON_UNIQUE_KEYS: Message = Message::new("nonUniqueKeys", "`key` prop must be unique");
 
 const MISSING_KEY_PROP_FOR_ELEMENT_IN_ARRAY: Message = Message::new("", "Missing \"key\" prop for element in array.");
 const MISSING_KEY_PROP_FOR_ELEMENT_IN_ITERATOR: Message =
@@ -29,19 +55,36 @@ const DUPLICATE_KEY_PROP: Message = Message::new("", "Duplicate key '{{key_value
 
 #[derive(Copy, Clone)]
 enum InsideArrayOrIterator {
-    Array,
-    /// Where the name of the method is.
+    Array(Span),
+    /// Where the name of the method is. For ESLint: the call.
     Iterator(Span),
 }
 
 const OUTSIDE_CONTAINING_FUNCTION: u8 = 1 << 0;
 const EXPLICIT_RETURN: u8 = 1 << 1;
 
+/// What the walk up for ESLint has come to: the element,
+const ELEMENT: u8 = 0;
+/// the `?:`, `&&`, `||` or `??` that it is a result of,
+const BRANCH: u8 = 1;
+/// the `return` of it, or an `if` around that,
+const RETURNED: u8 = 2;
+/// a block around that, which has to be a branch of an `if`,
+const BLOCK: u8 = 3;
+/// the function, and the expression that it is.
+const FUNCTION: u8 = 4;
+const ARGUMENT: u8 = 5;
+
 #[derive(Default)]
 pub struct State<'a> {
     in_array_or_iter: AncestorWalk<'a, u8, Option<InsideArrayOrIterator>>,
     within_children_to_array: AncestorMemo<'a, ()>,
     imports: OnceCell<Imports<'a>>,
+    /// Where upstream's `isWithinChildrenToArray` changes, in order: twice the end of a call, twice the start plus 1.
+    children_to_array_changes: OnceCell<Vec<u64>>,
+    pragma: OnceCell<&'a [u8]>,
+    checks: Checks,
+    is_oxlint: bool,
     /// The file mentions `key`, `toArray`.
     mentions_key: bool,
     mentions_to_array: bool,
@@ -56,33 +99,37 @@ struct Imports<'a> {
 }
 
 impl Rule for JsxKey {
-    const META: Meta = Meta::oxlint(Plugin::React, "jsx-key", Kind::Problem);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-key", Kind::Problem).recommended();
     const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Array]);
     type State<'a> = State<'a>;
 
-    /// Without options nothing is on. In an object of options, what is missing is on.
     fn new(options: &Options) -> Self {
         let (is_given, options) = (options.get(0).is_some_and(|it| it.as_object().is_some()), options.object(0));
-        JsxKey {
-            check_key_must_before_spread: is_given && options.bool_or("checkKeyMustBeforeSpread", true),
-            warn_on_duplicates: is_given && options.bool_or("warnOnDuplicates", true),
-            check_fragment_shorthand: is_given && options.bool_or("checkFragmentShorthand", true),
-        }
+        let checks = |default| Checks {
+            key_must_before_spread: options.bool_or("checkKeyMustBeforeSpread", default),
+            warn_on_duplicates: options.bool_or("warnOnDuplicates", default),
+            fragment_shorthand: options.bool_or("checkFragmentShorthand", default),
+        };
+        // oxlint: without options nothing is on. In an object of options, what is missing is on.
+        JsxKey { eslint: checks(false), oxlint: checks(is_given) }
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new().exprs(&[ExprTag::Jsx]);
-        if self.warn_on_duplicates && file.mentions("key") {
+        if self.checks(file).warn_on_duplicates && file.mentions("key") {
             on = on.exprs(&[ExprTag::Array]);
         }
         on
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        if !is_jsx(file) || !file.has_exprs([ExprTag::Jsx]) {
+        let is_oxlint = file.language().is_oxlint;
+        if (is_oxlint && !is_jsx(file)) || !file.has_exprs([ExprTag::Jsx]) {
             return None;
         }
         Some(State {
+            checks: self.checks(file),
+            is_oxlint,
             mentions_key: file.mentions("key"),
             mentions_to_array: file.mentions("toArray"),
             ..State::default()
@@ -91,10 +138,14 @@ impl Rule for JsxKey {
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.tag() {
-            ExprTag::Jsx => self.jsx(e, cx),
+            ExprTag::Jsx => check_element_or_fragment(e, cx),
             ExprTag::Array => {
-                if let ExprKind::Array(elements) = e.kind() {
-                    check_duplicate_keys(&mut elements.iter().filter(|it| !it.is_parenthesized()), cx);
+                let is_oxlint = cx.state.is_oxlint;
+                if let ExprKind::Array(elements) = e.kind()
+                    && (is_oxlint || !cx.state.is_within_children_to_array(cx.file(), e.span()))
+                {
+                    // oxlint takes what is in parentheses for no element.
+                    check_duplicate_keys(&mut elements.iter().filter(|it| !is_oxlint || !it.is_parenthesized()), cx);
                 }
             }
             _ => {}
@@ -103,25 +154,52 @@ impl Rule for JsxKey {
 }
 
 impl JsxKey {
-    fn jsx<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Jsx(jsx) = e.kind() else {
-            return;
+    fn checks(&self, file: &File) -> Checks {
+        if file.language().is_oxlint { self.oxlint } else { self.eslint }
+    }
+}
+
+fn check_element_or_fragment<'a>(e: Expr<'a>, cx: &mut Cx<'a, JsxKey>) {
+    let ExprKind::Jsx(jsx) = e.kind() else {
+        return;
+    };
+    let (checks, is_oxlint) = (cx.state.checks, cx.state.is_oxlint);
+    if jsx.is_fragment() {
+        if checks.fragment_shorthand {
+            check_missing_key(e, jsx, cx);
+        }
+        return;
+    }
+    if !jsx.attrs().iter().any(is_key) {
+        check_missing_key(e, jsx, cx);
+    } else if checks.key_must_before_spread {
+        check_jsx_element_is_key_before_spread(e, jsx, cx);
+    }
+    if !cx.state.mentions_key || !(checks.warn_on_duplicates || (checks.key_must_before_spread && !is_oxlint)) {
+        return;
+    }
+    let children = || jsx.children().iter().filter(|it| it.jsx_container_span().is_none());
+    if !is_oxlint {
+        // Upstream goes through all children once for each child that is an element.
+        let is_listened = |it: &Expr<'a>| {
+            as_jsx_element(*it).is_some() && !cx.state.is_within_children_to_array(cx.file(), it.span())
         };
-        let Some(name) = jsx.tag() else {
-            if self.check_fragment_shorthand {
-                check_missing_key(e, jsx.opening_span(), cx);
+        let times = children().filter(is_listened).count();
+        if times == 0 {
+            return;
+        }
+        if checks.key_must_before_spread {
+            let keys: usize = children().filter_map(as_jsx_element).map(count_keys_if_one_is_after_spread).sum();
+            for _ in 0..times.saturating_mul(keys) {
+                if cx.has_reported_too_much() {
+                    break;
+                }
+                cx.report(e, KEY_BEFORE_SPREAD);
             }
-            return;
-        };
-        if !jsx.attrs().iter().any(is_key) {
-            check_missing_key(e, name.span(), cx);
         }
-        if self.check_key_must_before_spread {
-            check_jsx_element_is_key_before_spread(jsx, cx);
-        }
-        if self.warn_on_duplicates && cx.state.mentions_key {
-            check_duplicate_keys(&mut jsx.children().iter().filter(|it| it.jsx_container_span().is_none()), cx);
-        }
+    }
+    if checks.warn_on_duplicates {
+        check_duplicate_keys(&mut children(), cx);
     }
 }
 
@@ -129,24 +207,93 @@ fn is_key(attribute: Prop) -> bool {
     attribute.key().is_some_and(|key| key.is("key"))
 }
 
-/// `e`: an element without a `key`, or a fragment. `span`: its name, or the `<>`.
-fn check_missing_key<'a>(e: Expr<'a>, span: Span, cx: &mut Cx<'a, JsxKey>) {
-    let Some(outer) = cx.state.in_array_or_iter.run(Node::Expr(e), 0, is_in_array_or_iter) else {
-        return;
-    };
+/// The array or the iterator that `e` is an element of, unless that is within `Children.toArray(..)`.
+fn array_or_iterator_of<'a>(e: Expr<'a>, jsx: Jsx<'a>, cx: &mut Cx<'a, JsxKey>) -> Option<InsideArrayOrIterator> {
+    if !cx.state.is_oxlint {
+        let outer = cx.state.in_array_or_iter.run(Node::Expr(e), ELEMENT, is_element_of_array_or_iter)?;
+        // Upstream listens for arrays, calls and fragments.
+        let listened = match outer {
+            InsideArrayOrIterator::Array(_) if jsx.is_fragment() => e.span(),
+            InsideArrayOrIterator::Array(span) | InsideArrayOrIterator::Iterator(span) => span,
+        };
+        return (!cx.state.is_within_children_to_array(cx.file(), listened)).then_some(outer);
+    }
+    let outer = cx.state.in_array_or_iter.run(Node::Expr(e), 0, is_in_array_or_iter)?;
     if cx.state.mentions_to_array {
         let State { within_children_to_array, imports, .. } = &mut cx.state;
         if within_children_to_array.find(Node::Expr(e), |_, parent| is_children_to_array(parent, imports)).is_some() {
-            return;
+            return None;
         }
     }
+    Some(outer)
+}
+
+/// `e`: an element without a `key`, or a fragment.
+fn check_missing_key<'a>(e: Expr<'a>, jsx: Jsx<'a>, cx: &mut Cx<'a, JsxKey>) {
+    let Some(outer) = array_or_iterator_of(e, jsx, cx) else {
+        return;
+    };
+    if !cx.state.is_oxlint {
+        let message = match (outer, jsx.is_fragment()) {
+            (InsideArrayOrIterator::Array(_), false) => MISSING_ARRAY_KEY,
+            (InsideArrayOrIterator::Array(_), true) => MISSING_ARRAY_KEY_USE_PRAG,
+            // `hasProp` ignores the case.
+            (InsideArrayOrIterator::Iterator(_), false) if has_jsx_prop_ignore_case(jsx, "key").is_some() => return,
+            (InsideArrayOrIterator::Iterator(_), false) => MISSING_ITER_KEY,
+            (InsideArrayOrIterator::Iterator(_), true) => MISSING_ITER_KEY_USE_PRAG,
+        };
+        let report = cx.report(e, message);
+        if jsx.is_fragment() {
+            report.data("reactPrag", cx.state.pragma(cx.file())).data("fragPrag", get_fragment_from_context(cx.file()));
+        }
+        return;
+    }
+    // oxlint points at the name, or at the `<>`.
+    let span = jsx.tag().map_or_else(|| jsx.opening_span(), |name| name.span());
     match outer {
-        InsideArrayOrIterator::Array => cx.report(span, MISSING_KEY_PROP_FOR_ELEMENT_IN_ARRAY),
+        InsideArrayOrIterator::Array(_) => cx.report(span, MISSING_KEY_PROP_FOR_ELEMENT_IN_ARRAY),
         InsideArrayOrIterator::Iterator(iter_span) => cx
             .report(iter_span, MISSING_KEY_PROP_FOR_ELEMENT_IN_ITERATOR)
             .first_label("Iterator starts here.")
             .label(span, "Element generated here."),
     };
+}
+
+/// One step of the way up from an element, to where upstream comes down from: `checkArrowFunctionWithJSX`,
+/// `checkFunctionsBlockStatement`, `getReturnStatements`.
+fn is_element_of_array_or_iter<'a>(
+    child: Node<'a>,
+    parent: Node<'a>,
+    state: u8,
+) -> ControlFlow<Option<InsideArrayOrIterator>, u8> {
+    let next = match (state, parent) {
+        (ELEMENT, Node::Expr(e)) => match e.kind() {
+            ExprKind::Array(_) => return ControlFlow::Break(Some(InsideArrayOrIterator::Array(e.span()))),
+            ExprKind::Cond { test, .. } => (Node::Expr(test) != child).then_some(BRANCH),
+            ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, right, .. } => {
+                (Node::Expr(right) == child).then_some(BRANCH)
+            }
+            _ => None,
+        },
+        (ELEMENT | BRANCH, Node::Func(func)) => {
+            matches!(func.body(), FnBody::Expr(body) if Node::Expr(body) == child).then_some(FUNCTION)
+        }
+        (ELEMENT, Node::Stmt(statement)) => (statement.tag() == StmtTag::Return).then_some(RETURNED),
+        (RETURNED, Node::Stmt(statement)) => match statement.tag() {
+            StmtTag::If => Some(RETURNED),
+            StmtTag::Block => Some(BLOCK),
+            _ => None,
+        },
+        (BLOCK, Node::Stmt(statement)) => (statement.tag() == StmtTag::If).then_some(RETURNED),
+        (RETURNED, Node::Func(_)) => Some(FUNCTION),
+        (FUNCTION, Node::Expr(_)) => Some(ARGUMENT),
+        (ARGUMENT, Node::Expr(e)) => return ControlFlow::Break(iterator_of_argument(e, child)),
+        _ => None,
+    };
+    match next {
+        Some(next) => ControlFlow::Continue(next),
+        None => ControlFlow::Break(None),
+    }
 }
 
 /// One step of the way up from an element.
@@ -169,7 +316,7 @@ fn is_in_array_or_iter<'a>(
         }
         Node::Expr(e) => match e.tag() {
             ExprTag::Array => {
-                ControlFlow::Break((!is_outside_containing_function).then_some(InsideArrayOrIterator::Array))
+                ControlFlow::Break((!is_outside_containing_function).then(|| InsideArrayOrIterator::Array(e.span())))
             }
             ExprTag::Call => ControlFlow::Break(iterator_of_argument(e, child)),
             ExprTag::Jsx => ControlFlow::Break(None),
@@ -182,16 +329,56 @@ fn is_in_array_or_iter<'a>(
 }
 
 /// `argument` is what `a.map(..)`, `a.flatMap(..)` or `Array.from(a, ..)` calls for each element.
-fn iterator_of_argument<'a>(call: Expr<'a>, argument: Node<'a>) -> Option<InsideArrayOrIterator> {
-    let call = call.as_call()?;
+fn iterator_of_argument<'a>(e: Expr<'a>, argument: Node<'a>) -> Option<InsideArrayOrIterator> {
+    let call = e.as_call()?;
     let callee = Some(call.callee()).filter(|it| !it.is_chain_root())?;
-    let (span, name) = static_property_info(callee)?;
-    let target_arg_index = match name.bytes() {
-        b"from" => 1,
-        b"map" | b"flatMap" => 0,
-        _ => return None,
+    let (span, target_arg_index) = if e.file().language().is_oxlint {
+        let (span, name) = static_property_info(callee)?;
+        match name.bytes() {
+            b"from" => (span, 1),
+            b"map" | b"flatMap" => (span, 0),
+            _ => return None,
+        }
+    } else if is_member_called(callee, "map") {
+        (e.span(), 0)
+    } else if is_member_called(callee, "from") {
+        (e.span(), 1)
+    } else {
+        return None;
     };
     (Node::Expr(call.args().get(target_arg_index)?) == argument).then_some(InsideArrayOrIterator::Iterator(span))
+}
+
+impl<'a> State<'a> {
+    fn pragma(&self, file: &'a File<'a>) -> &'a [u8] {
+        *self.pragma.get_or_init(|| get_from_context(file))
+    }
+
+    /// `childrenToArraySelector`
+    fn matches_children_to_array_selector(&self, call: Expr<'a>) -> bool {
+        let Some(object) = call.callee().filter(|it| is_member_called(*it, "toArray")).and_then(Expr::object) else {
+            return false;
+        };
+        object.is_ident("Children")
+            || (is_member_called(object, "Children")
+                && (object.object().and_then(Expr::as_ident))
+                    .is_some_and(|name| name.bytes() == self.pragma(call.file())))
+    }
+
+    /// Upstream's `isWithinChildrenToArray` when ESLint enters `node`: it is set where such a call is entered, and
+    /// reset where one is left, also inside of another.
+    fn is_within_children_to_array(&self, file: &'a File<'a>, node: Span) -> bool {
+        let changes = self.children_to_array_changes.get_or_init(|| {
+            let mut changes = Vec::new();
+            for call in file.exprs_of_kind(ExprTag::Call).filter(|it| self.matches_children_to_array_selector(*it)) {
+                changes.extend([u64::from(call.span().start) * 2 + 1, u64::from(call.span().end) * 2]);
+            }
+            sort::sort_unstable(&mut changes);
+            changes
+        });
+        let before = changes.partition_point(|it| *it <= u64::from(node.start) * 2);
+        before.checked_sub(1).and_then(|last| changes.get(last)).is_some_and(|it| it % 2 == 1)
+    }
 }
 
 /// `Children.toArray(..)`, `React.Children.toArray(..)`
@@ -269,7 +456,31 @@ fn is_children<'a>(call: Call<'a>, imports: &Imports<'a>) -> bool {
             .is_some_and(|name| imports.is_import(name))
 }
 
-fn check_jsx_element_is_key_before_spread<'a>(jsx: Jsx<'a>, cx: &Cx<'a, JsxKey>) {
+/// How many `key`s an element has for which `isKeyAfterSpread` holds, else 0.
+fn count_keys_if_one_is_after_spread(jsx: Jsx) -> usize {
+    match jsx.attrs().iter().skip_while(|it| it.kind() != PropKind::Spread).any(is_key) {
+        true => jsx.attrs().iter().filter(|it| is_key(*it)).count(),
+        false => 0,
+    }
+}
+
+fn check_jsx_element_is_key_before_spread<'a>(e: Expr<'a>, jsx: Jsx<'a>, cx: &mut Cx<'a, JsxKey>) {
+    if !cx.state.is_oxlint {
+        let keys = count_keys_if_one_is_after_spread(jsx);
+        if keys == 0 {
+            return;
+        }
+        // Upstream reports the array, once for each `key`, or the element of the iterator.
+        let (at, times) = match array_or_iterator_of(e, jsx, cx) {
+            Some(InsideArrayOrIterator::Array(array)) => (array, keys),
+            Some(InsideArrayOrIterator::Iterator(_)) => (e.span(), 1),
+            None => return,
+        };
+        for _ in 0..times {
+            cx.report(at, KEY_BEFORE_SPREAD);
+        }
+        return;
+    }
     let (mut key, mut has_spread) = (None, false);
     for attribute in jsx.attrs() {
         if attribute.kind() == PropKind::Spread {
@@ -307,17 +518,41 @@ fn get_jsx_element_key_value(e: Expr<'_>) -> Option<(Cow<'_, [u8]>, Prop<'_>)> {
     })
 }
 
+/// `getText(context, attr.value)`. Empty without a value, where upstream has the text of the file.
+fn text_of_value(attribute: Prop<'_>) -> &[u8] {
+    let span = attribute.value().map(|it| it.jsx_container_span().unwrap_or_else(|| it.span()));
+    span.map(|it| attribute.file().slice(it)).unwrap_or_default()
+}
+
 /// `elements`: of an array, or the children of an element.
 fn check_duplicate_keys<'a>(elements: &mut dyn Iterator<Item = Expr<'a>>, cx: &Cx<'a, JsxKey>) {
-    let keys: SmallVec<[(Cow<'a, [u8]>, Prop<'a>); 4]> =
-        elements.filter(|it| it.tag() == ExprTag::Jsx).filter_map(get_jsx_element_key_value).collect();
+    let is_oxlint = cx.state.is_oxlint;
+    let mut keys: SmallVec<[(Cow<'a, [u8]>, Prop<'a>); 4]> = SmallVec::new();
+    for element in elements.filter(|it| it.tag() == ExprTag::Jsx) {
+        if is_oxlint {
+            keys.extend(get_jsx_element_key_value(element));
+        } else if let Some(jsx) = as_jsx_element(element) {
+            // Upstream compares the texts of all of them.
+            let attributes = jsx.attrs().iter().filter(|it| is_key(*it));
+            keys.extend(attributes.map(|it| (Cow::Borrowed(text_of_value(it)), it)));
+        }
+    }
     if keys.len() < 2 {
         return;
     }
-    let mut seen_keys = FxHashSet::default();
+    let (mut seen_keys, mut repeated) = (FxHashSet::default(), FxHashSet::default());
     for (key_value, attribute) in &keys {
-        if !seen_keys.insert(&**key_value) {
-            cx.report(attribute, DUPLICATE_KEY_PROP).data("key_value", key_value.clone());
+        if seen_keys.insert(&**key_value) {
+            continue;
         }
+        if is_oxlint {
+            cx.report(attribute, DUPLICATE_KEY_PROP).data("key_value", key_value.clone());
+        } else {
+            repeated.insert(&**key_value);
+        }
+    }
+    // Upstream reports the first one too.
+    for (_, attribute) in keys.iter().filter(|it| repeated.contains(&*it.0)) {
+        cx.report(attribute, NON_UNIQUE_KEYS);
     }
 }

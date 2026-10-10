@@ -568,8 +568,8 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
     expect(sent).toEqual([beginCommand, ...sentByEnd]);
   });
 
-  // execute() starts a query at once. then() starts it one job later, and a first await calls then() one job
-  // later still: both start after close() ran, and the pool rejects them in the same way.
+  // execute() starts a query at once and then() starts it one job later: close({ timeout }) waits for both, as end()
+  // does in postgres.js. A first await calls then() one job later still, after close({ timeout }) stopped the handle.
   test("reserved.close({ timeout }) waits for a query in flight and rejects one that starts later", async () => {
     const { result, sent } = await withServer(async sql => {
       const reserved = await sql.reserve();
@@ -582,8 +582,34 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
       reserved.release();
       return Promise.all([inFlight, thenBefore, sameTick, during]);
     });
-    expect(result).toEqual([null, closedCode, closedCode, closedCode]);
-    expect(sent).toEqual(["SELECT 'in flight'"]);
+    expect(result).toEqual([null, null, closedCode, closedCode]);
+    expect(sent).toEqual(["SELECT 'in flight'", "SELECT 'then before'"]);
+  });
+
+  // bun:test fails this test if the wait of close({ timeout }) reports the failed query as an unhandled rejection.
+  test("reserved.close({ timeout }) does not report a query that fails during its wait", async () => {
+    const { result, sent } = await withServer(async sql => {
+      const reserved = await sql.reserve();
+      const dropped = code(reserved.unsafe("SELECT 'KILL'").execute());
+      await reserved.close({ timeout: 60 });
+      return dropped;
+    });
+    expect(result).toBe(closedCode);
+    expect(sent).toEqual(["SELECT 'KILL'"]);
+  });
+
+  // release() runs in the job that close({ timeout }) gives to statements that already called then().
+  test("a reserved.close({ timeout }) that release() overtakes leaves the released connection alone", async () => {
+    const { result, sent } = await withServer(async sql => {
+      const reserved = await sql.reserve();
+      const closed = reserved.close({ timeout: 60 });
+      reserved.release();
+      const next = code(sql.unsafe("SELECT 'next'").execute());
+      await closed;
+      return next;
+    });
+    expect(result).toBeNull();
+    expect(sent).toEqual(["SELECT 'next'"]);
   });
 
   test("tx.close() lets a query in flight finish and rejects one that starts later", async () => {
@@ -603,13 +629,38 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
   test("tx.close({ timeout }) rolls back at once when nothing is in flight", async () => {
     const { result, sent } = await withServer(sql =>
       inTransaction(sql, async tx => {
-        const thenBefore = code(tx.unsafe("SELECT 'then before'").then(rows => rows));
         const sameTick = code(tx.unsafe("SELECT 'same tick'"));
         await tx.close({ timeout: 60 });
-        return Promise.all([thenBefore, sameTick]);
+        return [await sameTick];
       }),
     );
-    expect(result).toEqual([closedCode, closedCode, closedCode]);
+    expect(result).toEqual([closedCode, closedCode]);
+    expect(sent).toEqual([beginCommand, "ROLLBACK"]);
+  });
+
+  test("tx.close({ timeout }) waits for a statement whose then() ran before it", async () => {
+    const { result, sent } = await withServer(sql =>
+      inTransaction(sql, async tx => {
+        const thenBefore = code(tx.unsafe("SELECT 'then before'").then(rows => rows));
+        await tx.close({ timeout: 60 });
+        return [await thenBefore];
+      }),
+    );
+    // How begin() settles after close({ timeout }) is not the subject here.
+    expect(result.slice(1)).toEqual([null]);
+    expect(sent.slice(0, 2)).toEqual([beginCommand, "SELECT 'then before'"]);
+  });
+
+  test("a second close() in the job after tx.close({ timeout }) sends one ROLLBACK", async () => {
+    const { result, sent } = await withServer(sql =>
+      inTransaction(sql, async tx => {
+        const first = tx.close({ timeout: 60 });
+        await tx.close();
+        await first;
+        return [];
+      }),
+    );
+    expect(result).toEqual([closedCode]);
     expect(sent).toEqual([beginCommand, "ROLLBACK"]);
   });
 

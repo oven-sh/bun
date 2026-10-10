@@ -493,13 +493,17 @@ const SQL = function SQL(
     };
     reserved_sql.close = async (options?: { timeout?: number }) => {
       const reserveQueries = state.queries;
+      let timeout = options?.timeout;
+      if (timeout) {
+        // Like end() in postgres.js: a statement whose then() ran before this call starts one job later.
+        await Promise.$resolve();
+      }
       if (
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
       ) {
         return Promise.$resolve(undefined);
       }
-      let timeout = options?.timeout;
       if (timeout) {
         timeout = Number(timeout);
         if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
@@ -524,10 +528,12 @@ const SQL = function SQL(
             resolve();
           }, timeout * 1000);
           timer.unref(); // dont block the event loop
-          Promise.all([Promise.all(pending_queries), Promise.all(pending_transactions)]).finally(() => {
+          const finish = () => {
             clearTimeout(timer);
             resolve();
-          });
+          };
+          // Not finally(): its promise rejects when a pending query does, and nothing handles it.
+          Promise.all([Promise.all(pending_queries), Promise.all(pending_transactions)]).$then(finish, finish);
           return promise;
         }
       }
@@ -779,6 +785,11 @@ const SQL = function SQL(
     };
     transaction_sql.close = async function (options?: { timeout?: number }) {
       // we dont actually close the connection here, we just set the state to closed and rollback the transaction
+      let timeout = options?.timeout;
+      if (timeout) {
+        // Like end() in postgres.js: a statement whose then() ran before this call starts one job later.
+        await Promise.$resolve();
+      }
       if (
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
@@ -786,7 +797,6 @@ const SQL = function SQL(
         return Promise.$resolve(undefined);
       }
       const transactionQueries = state.queries;
-      let timeout = options?.timeout;
       if (timeout) {
         timeout = Number(timeout);
         if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
@@ -816,7 +826,7 @@ const SQL = function SQL(
             clearTimeout(timer);
             resolve();
           };
-          // Not finally(): its promise rejects with a savepoint that this close() stopped, and nothing handles it.
+          // Not finally(): its promise rejects when a pending query or savepoint does, and nothing handles it.
           Promise.all([Promise.all(pending_queries), Promise.all(pending_savepoints)]).$then(finish, finish);
           return promise;
         }

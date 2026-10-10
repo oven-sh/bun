@@ -629,7 +629,7 @@ bun_core::comptime_string_map! {
         b"latin1" => Encoding::Latin1,
         b"buffer" => Encoding::Buffer,
         b"utf16le" => Encoding::Utf16le,
-        b"utf16-le" => Encoding::Utf16le,
+        b"utf-16le" => Encoding::Utf16le,
         b"base64url" => Encoding::Base64url,
     };
 }

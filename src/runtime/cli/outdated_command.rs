@@ -490,7 +490,7 @@ impl OutdatedCommand {
                     write!(version_buf, "{}", uv.version.fmt(&manifest.string_buf))
                         .expect("OOM writing version");
                 } else {
-                    write!(version_buf, "{}", current_version.fmt(&manifest.string_buf))
+                    write!(version_buf, "{}", current_version.fmt(string_buf))
                         .expect("OOM writing version");
                 }
                 let update_version_len =
@@ -504,7 +504,7 @@ impl OutdatedCommand {
                     write!(version_buf, "{}", lv.version.fmt(&manifest.string_buf))
                         .expect("OOM writing version");
                 } else {
-                    write!(version_buf, "{}", current_version.fmt(&manifest.string_buf))
+                    write!(version_buf, "{}", current_version.fmt(string_buf))
                         .expect("OOM writing version");
                 }
                 let latest_version_len =

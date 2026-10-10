@@ -4502,6 +4502,9 @@ impl VirtualMachine {
 
         if self.hot_reload_deferred {
             self.reload(None);
+            // No tick follows this reload, as one does a reload that a task starts. Pre-arm the
+            // waker so the run loop runs what the reload queued before it parks.
+            self.wakeup();
         }
         self.add_main_to_watcher_if_needed();
     }

@@ -25,7 +25,6 @@ use crate::{
     BuntagHashBuf, DependencyID, Features, PackageID, Resolution, buntaghashbuf_make,
     initialize_store, invalid_package_id,
 };
-use bun_collections::VecExt;
 
 #[inline]
 fn string_hash(s: &[u8]) -> u64 {
@@ -672,26 +671,21 @@ pub fn do_patch_remove(manager: &mut PackageManager, log_level: LogLevel) -> Pat
             Output::flush();
             Global::crash();
         };
-        let bun_ast::ExprData::EObject(obj) = &query.data else {
+        // a directly parsed package.json is EObjectJSON, not EObject
+        if !query.is_object() {
             bun_core::pretty_error!(
                 "<r><red>error<r>: \"patchedDependencies\" in package.json must be an object<r>\n",
             );
             Output::flush();
             Global::crash();
-        };
-        let mut entries = Vec::with_capacity(obj.properties.len_u32() as usize);
-        for property in obj.properties.slice() {
-            let Some(key) = property.key.and_then(|key| key.data.e_string()) else {
-                continue;
-            };
-            let Some(value) = property.value else {
-                continue;
-            };
-            let bun_ast::ExprData::EString(s) = &value.data else {
-                continue;
-            };
-            entries.push((Box::from(key.data.slice()), Box::from(s.data.slice())));
         }
+        let mut entries: Vec<(Box<[u8]>, Box<[u8]>)> =
+            Vec::with_capacity(query.property_count());
+        query.for_each_property(|key, _loc, value| {
+            if let bun_ast::ExprData::EString(s) = &value.data {
+                entries.push((Box::from(key), Box::from(s.data.slice())));
+            }
+        });
         break 'entries entries;
     };
 
@@ -715,13 +709,13 @@ pub fn do_patch_remove(manager: &mut PackageManager, log_level: LogLevel) -> Pat
         match matched.len() {
             0 => {
                 bun_core::pretty_error!(
-                    "<r><red>error<r>: no patch found for <b>{}<r> in \"patchedDependencies\"<r>\n",
+                    "<r><red>error<r>: no patch found for <b>\"{}\"<r> in \"patchedDependencies\"<r>\n",
                     bstr::BStr::new(argument),
                 );
                 if !entries.is_empty() {
                     bun_core::note!("patched packages:");
                     for (key, _) in &entries {
-                        bun_core::pretty!("  {}<r>\n", bstr::BStr::new(key));
+                        bun_core::pretty_error!("  {}<r>\n", bstr::BStr::new(key));
                     }
                 }
                 Output::flush();
@@ -730,11 +724,11 @@ pub fn do_patch_remove(manager: &mut PackageManager, log_level: LogLevel) -> Pat
             1 => {}
             _ => {
                 bun_core::pretty_errorln!(
-                    "<r><red>error<r>: Found multiple patches for <b>{}<r>, please specify a precise version from the following list:<r>",
+                    "<r><red>error<r>: Found multiple patches for <b>\"{}\"<r>, please specify a precise version from the following list:<r>",
                     bstr::BStr::new(name),
                 );
                 for i in &matched {
-                    bun_core::pretty!("  {}<r>\n", bstr::BStr::new(&entries[*i].0));
+                    bun_core::pretty_error!("  {}<r>\n", bstr::BStr::new(&entries[*i].0));
                 }
                 Output::flush();
                 Global::crash();

@@ -827,9 +827,8 @@ const traceOrderTargets: { os: Os; arch: Arch; on: Platform }[] = [
  * is an optimization, and a broken tracer must not fail a build.
  *
  * Windows agents run commands under cmd.exe (see getVerifyBaselineStep for the
- * `|| exit /b 1` convention). The generator compiles the tracer there, which
- * takes clang-cl or a Visual Studio environment; the image has both, and
- * vs-shell.ps1 provides the latter the same way it does for the test runner.
+ * `|| exit /b 1` convention). The generator compiles the tracer there, and
+ * finds the CRT and the Windows SDK for it itself (scripts/build/msvc.ts).
  * The profile zip carries the two maps the generator resolves addresses with
  * (packageAndUpload in scripts/build/ci.ts; scripts/orderfile/windows-symbols.ts).
  */
@@ -853,7 +852,7 @@ function getTraceOrderStep(target: Target, tracePlatform: Platform, options: Pip
         ? [
             `buildkite-agent artifact download ${profileDir}.zip . --step ${targetKey}-build-bun || exit /b 1`,
             `tar -xf ${profileDir}.zip || exit /b 1`,
-            `pwsh -NoProfile -File .\\scripts\\vs-shell.ps1 .\\${profileDir}\\bun-profile.exe ${generate} || exit /b 1`,
+            `.\\${profileDir}\\bun-profile.exe ${generate} || exit /b 1`,
             `buildkite-agent artifact upload ${triplet}.order`,
           ]
         : [
@@ -936,7 +935,7 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     },
     command:
       os === "windows"
-        ? `pwsh -NoProfile -File .\\scripts\\vs-shell.ps1 node .\\scripts\\runner.node.ts ${args.join(" ")}`
+        ? `node .\\scripts\\runner.node.ts ${args.join(" ")}`
         : os === "darwin"
           ? // The command hook installed on the tart hosts (scripts/darwin-ci/hooks/command.ts)
             // recognises a test step by this file name. runner.node.mjs only

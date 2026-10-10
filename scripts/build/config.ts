@@ -10,6 +10,7 @@ import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, arch as hostArch, platform as hostPlatform } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isCI } from "../buildkite.ts";
 import { locations, pins } from "./ci-images/spec.ts";
 import { NODEJS_ABI_VERSION, NODEJS_V8_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
 import { WEBKIT_VERSION } from "./deps/webkit.ts";
@@ -17,6 +18,7 @@ import { assert, BuildError } from "./error.ts";
 import { resolveMacosSdkPath } from "./macos-sdk.ts";
 import { clangTargetArch, toolchainOverride } from "./tools.ts";
 import { cyan, dim, green } from "./tty.ts";
+import { windowsSysrootCachePath } from "./winsysroot.ts";
 
 export type OS = "linux" | "darwin" | "windows" | "freebsd";
 export type Arch = "x64" | "aarch64";
@@ -289,8 +291,6 @@ export interface Config {
   rustSysroot: string | undefined;
   /** The host triple rustc reports (`x86_64-unknown-linux-gnu`, …): the platform of build scripts and proc-macros. */
   rustHostTriple: string | undefined;
-  /** Windows: MSVC link.exe path (to avoid Git's /usr/bin/link shadowing). */
-  msvcLinker: string | undefined;
   /** Windows: llvm-rc for nested cmake (CMAKE_RC_COMPILER). */
   rc: string | undefined;
   /** Windows: llvm-mt for nested cmake (CMAKE_MT). May be absent in some LLVM distros. */
@@ -316,14 +316,16 @@ export interface Config {
   /** clang `--sysroot=` path. For Android: `<ndk>/toolchains/llvm/prebuilt/<host>/sysroot`. */
   sysroot: string | undefined;
   /**
-   * Windows cross-compile only: root of an xwin-style splat of the MSVC
-   * CRT/STL + Windows SDK laid out like a Visual Studio install
+   * Windows targets: root of an xwin-style splat of the MSVC CRT/STL +
+   * Windows SDK laid out like a Visual Studio install
    * (`VC/Tools/MSVC/<ver>`, `Windows Kits/10`). Passed to clang-cl as
-   * `/winsysroot` and to lld-link as `/winsysroot:` — the cross equivalent
-   * of the INCLUDE/LIB env a VS dev shell provides on a Windows host.
-   * undefined on native Windows builds (VS dev shell supplies the SDK).
+   * `/winsysroot` and to lld-link as `/winsysroot:`. undefined only for
+   * webkit=local on a Windows host, which builds against the installed
+   * toolset through the INCLUDE/LIB env msvc.ts sets.
    */
   winsysroot: string | undefined;
+  /** Whether the build may fetch what `winsysroot` is made of, which is Microsoft's and under its license terms. */
+  acceptMicrosoftLicenses: boolean;
   /** NDK compiler-rt/libunwind dir: `<ndk>/toolchains/llvm/prebuilt/<host>/lib/clang/<ver>/lib/linux`. */
   androidNdkRuntimeDir: string | undefined;
 
@@ -406,8 +408,10 @@ export interface PartialConfig {
    * it from the installed SDK / CI floor). Default: MIN_OSX_DEPLOYMENT_TARGET.
    */
   osxDeploymentTarget?: string;
-  /** Windows sysroot (xwin splat, VS layout). Only used when cross-compiling for os=windows. */
+  /** Windows sysroot (xwin splat, VS layout) for os=windows, in place of the one the build finds or fetches. */
   winsysroot?: string;
+  /** Default: only in CI. A person accepts a license themselves (winsysroot.ts says which, when it has to fetch). */
+  acceptMicrosoftLicenses?: boolean;
   // Version pins (defaults in versions.ts).
   nodejsVersion?: string;
   nodejsAbiVersion?: string;
@@ -483,12 +487,6 @@ export interface Toolchain extends JsToolchain {
   cargoHome: string | undefined;
   /** RUSTUP_HOME. Set alongside cargo; undefined when cargo is unavailable. */
   rustupHome: string | undefined;
-  /**
-   * Windows only: absolute path to MSVC's link.exe. Set as the cargo linker
-   * via CARGO_TARGET_<triple>_LINKER to prevent Git Bash's /usr/bin/link
-   * (the GNU hard-link utility) from shadowing the real linker in PATH.
-   */
-  msvcLinker: string | undefined;
   /**
    * Windows only: llvm-rc (resource compiler). Passed to nested cmake
    * as CMAKE_RC_COMPILER. cmake's own detection usually finds it, but
@@ -616,7 +614,8 @@ export function detectWindowsSysroot(): string | undefined {
     existsSync(join(p, "Windows Kits", "10", "Include")) || existsSync(join(p, "Windows Kits", "10", "include"));
   const env = process.env.WINDOWS_SYSROOT;
   if (env && looksValid(env)) return env;
-  for (const p of [locations.windowsSysroot, "/opt/xwin"]) {
+  const { linux, windows } = locations.windowsSysroot;
+  for (const p of hostPlatform() === "win32" ? [windows] : [linux, "/opt/xwin"]) {
     if (looksValid(p)) return p;
   }
   return undefined;
@@ -1169,15 +1168,22 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     }
   }
 
-  // ─── Cross-compilation (Windows) ───
+  // ─── Windows sysroot and cross-compilation ───
   // Same pattern as Android/FreeBSD, with the MSVC spin: the host LLVM's
   // clang-cl/lld-link/llvm-lib/llvm-rc are used (tools.ts picks them by
   // target), and the "sysroot" is an xwin splat of the MSVC CRT/STL +
   // Windows SDK in Visual Studio layout, passed via /winsysroot instead of
-  // --sysroot. Building ON Windows needs none of this — the VS dev shell
-  // provides INCLUDE/LIB.
+  // --sysroot. A Windows host builds against the same one. The exception is
+  // webkit=local there: msbuild and WebKit's own cmake compile ICU and WebKit
+  // against the installed toolset (msvc.ts), whose STL bun then has to share.
   let winsysroot: string | undefined;
-  if (windows && host.os !== "windows") {
+  const installedToolset = host.os === "windows" && partial.webkit === "local";
+  if (windows && installedToolset && partial.winsysroot !== undefined) {
+    throw new BuildError("--winsysroot cannot be used with --webkit=local on a Windows host", {
+      hint: "A local WebKit is compiled against the installed Visual Studio toolset, and bun has to match it. Drop one of the two.",
+    });
+  }
+  if (windows && !installedToolset) {
     winsysroot =
       partial.winsysroot !== undefined
         ? isAbsolute(partial.winsysroot)
@@ -1185,21 +1191,22 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
           : resolve(cwd, partial.winsysroot)
         : detectWindowsSysroot();
     if (winsysroot === undefined) {
-      if (ci || buildkite) {
-        // CI always fetches its own sysroot into the per-build cache (see
-        // winsysroot.ts `ensureWindowsSysroot`, called from configure.ts
-        // before the graph is emitted) instead of relying on agent image
-        // provisioning.
-        winsysroot = resolve(cacheDir, "winsysroot");
+      if (ci || buildkite || host.os === "windows") {
+        // Fetched by winsysroot.ts `ensureWindowsSysroot`, called from
+        // configure.ts before the graph is emitted. CI does not rely on
+        // agent image provisioning, nor a Windows host on what is installed.
+        winsysroot = windowsSysrootCachePath(cacheDir);
       } else {
         throw new BuildError("--os=windows requires a Windows sysroot (MSVC CRT + Windows SDK) when cross-compiling", {
           hint:
             "Set WINDOWS_SYSROOT or pass --winsysroot=<path>. Create one with xwin (https://github.com/Jake-Shadle/xwin):\n" +
             "  cargo install xwin  (or download a release binary)\n" +
-            `  xwin --accept-license --arch x86_64,aarch64 --sdk-version ${pins.windowsSysroot.sdk} --crt-version ${pins.windowsSysroot.crt} --include-atl splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --output ${locations.windowsSysroot}`,
+            `  xwin --accept-license --arch x86_64,aarch64 --sdk-version ${pins.windowsSysroot.sdk} --crt-version ${pins.windowsSysroot.crt} --include-atl splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --output ${locations.windowsSysroot.linux}`,
         });
       }
     }
+  }
+  if (windows && host.os !== "windows") {
     if (partial.webkit === "local") {
       throw new BuildError("Cross-compiling for Windows requires the prebuilt WebKit (webkit=local needs msbuild)", {
         hint: "Drop --webkit=local or build on a Windows host.",
@@ -1359,7 +1366,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
           : undefined,
     rustSysroot: toolchain.rustSysroot,
     rustHostTriple: toolchain.rustHostTriple,
-    msvcLinker: toolchain.msvcLinker,
     rc: toolchain.rc,
     mt: toolchain.mt,
     nasm: toolchain.nasm,
@@ -1368,6 +1374,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     crossTarget,
     sysroot,
     winsysroot,
+    // Where the build runs, not `ci`: that is a flag, and `bun run build:ci` is a person passing it.
+    acceptMicrosoftLicenses: partial.acceptMicrosoftLicenses ?? isCI,
     androidNdkRuntimeDir,
     version,
     revision,

@@ -98,14 +98,14 @@ export const globalFlags: Flag[] = [
     desc: "Cross-compile sysroot (target libc headers + libs)",
   },
   {
-    // Windows cross-compile: clang-cl can't read the VS dev shell's INCLUDE
-    // env on a non-Windows host. /winsysroot points it at an xwin-style
-    // splat laid out like a VS install (VC/Tools/MSVC + Windows Kits/10),
-    // covering the MSVC CRT/STL and Windows SDK headers + import libs.
+    // /winsysroot points clang-cl at an xwin-style splat laid out like a VS
+    // install (VC/Tools/MSVC + Windows Kits/10), covering the MSVC CRT/STL
+    // and Windows SDK headers + import libs. With it clang-cl looks neither
+    // at INCLUDE nor for an installed toolset.
     // The lld-link equivalent (/winsysroot:) is added in linkerFlags below.
-    flag: c => ["/winsysroot", quote(c.winsysroot!, false)],
+    flag: c => ["/winsysroot", quote(c.winsysroot!, c.host.os === "windows")],
     when: c => c.windows && c.winsysroot !== undefined,
-    desc: "Windows cross-compile: MSVC CRT + Windows SDK root (xwin splat)",
+    desc: "MSVC CRT + Windows SDK root (xwin splat)",
   },
   {
     // Same host-GCC #include_next leak as the FreeBSD block below: on
@@ -1002,19 +1002,18 @@ export const linkerFlags: Flag[] = [
     // splat's stale copies (see UCRT_SERVICING_VERSION in winsysroot.ts —
     // the VS-manifest payload xwin downloads carries an ancient arm64 UCRT
     // with broken printf formatting).
-    flag: c => quote(`/libpath:${ucrtServicingLibDir(c)!}`, false),
-    when: c => c.windows && c.host.os !== "windows",
-    desc: "Windows cross-compile: serviced Universal CRT static libs (SDK NuGet) override the splat's",
+    flag: c => quote(`/libpath:${ucrtServicingLibDir(c)!}`, c.host.os === "windows"),
+    when: c => c.windows && c.winsysroot !== undefined,
+    desc: "Serviced Universal CRT static libs (SDK NuGet) override the splat's",
   },
   {
-    // Windows cross-compile: these ldflags go after /link, straight to
-    // lld-link, which doesn't see the compile-side `/winsysroot` from
-    // globalFlags — repeat it in lld-link's own spelling so the MSVC CRT
-    // and Windows SDK import libraries (libcmt, kernel32, ...) are found
-    // without a VS dev shell's LIB env.
-    flag: c => quote(`/winsysroot:${c.winsysroot!}`, false),
+    // These ldflags go after /link, straight to lld-link, which doesn't see
+    // the compile-side `/winsysroot` from globalFlags — repeat it in
+    // lld-link's own spelling so the MSVC CRT and Windows SDK import
+    // libraries (libcmt, kernel32, ...) are found there, and LIB is ignored.
+    flag: c => quote(`/winsysroot:${c.winsysroot!}`, c.host.os === "windows"),
     when: c => c.windows && c.winsysroot !== undefined,
-    desc: "Windows cross-compile: MSVC CRT + Windows SDK library search root (xwin splat)",
+    desc: "MSVC CRT + Windows SDK library search root (xwin splat)",
   },
   {
     flag: ["/STACK:0x1200000,0x200000", "/errorlimit:0"],

@@ -15,6 +15,7 @@ import {
   recordedTool,
   tools,
 } from "../../../scripts/build/ci-images/spec.ts";
+import { isQuotaRefusal, untilQuotaAllows } from "../../../scripts/ci-image.ts";
 
 test("every image of the spec generates, with its tools in the spec's order", () => {
   using dir = tempDir("ci-images", {});
@@ -153,4 +154,47 @@ test("the record a Windows bake writes", () => {
     `Get-Content "$scratch\\packages" | Sort-Object | ForEach-Object { "package $_" } | Out-File -Append -Encoding ascii 'C:\\bun-image.txt'`,
     "Remove-Item $scratch -Recurse -Force -ErrorAction SilentlyContinue",
   ]);
+});
+
+test("a Windows bake knows Azure refusing its VM for want of cores from any other failure", () => {
+  // As Packer printed it, when a push had cancelled a bake moments before.
+  expect(
+    isQuotaRefusal(
+      "==> azure-arm.image: ERROR: -> InvalidTemplateDeployment : The template deployment 'pkrdpe4foakw44w' is not valid according to the validation procedure.\n" +
+        "==> azure-arm.image: ERROR:   -> QuotaExceeded : Operation could not be completed as it results in exceeding approved StandardDasv7Family Cores quota. " +
+        "Additional details - Deployment Model: Resource Manager, Location: southcentralus, Current Limit: 10, Current Usage: 8, Additional Required: 4, (Minimum) New Limit Required: 12.",
+    ),
+  ).toBe(true);
+  expect(isQuotaRefusal("==> azure-arm.image: An error occurred: bootstrap: tar exited with code 2")).toBe(false);
+});
+
+test("a Windows bake asks again while it is refused for quota, and only then", async () => {
+  /** Builds that end as `results` say, in turn; what happened, in order. */
+  const bake = async (attempts: number, ...results: { code: number; refusedForQuota: boolean }[]) => {
+    const log: string[] = [];
+    const result = await untilQuotaAllows(
+      async () => (log.push("build"), results.shift()!),
+      attempts,
+      async () => void log.push("wait"),
+    );
+    return { log, code: result.code };
+  };
+  const refused = { code: 1, refusedForQuota: true };
+
+  expect(await bake(10, { code: 0, refusedForQuota: false })).toEqual({ log: ["build"], code: 0 });
+  expect(await bake(10, refused, refused, { code: 0, refusedForQuota: false })).toEqual({
+    log: ["build", "wait", "build", "wait", "build"],
+    code: 0,
+  });
+  // The script failing is not something to repeat: a bake takes an hour.
+  expect(await bake(10, { code: 1, refusedForQuota: false })).toEqual({ log: ["build"], code: 1 });
+  expect(await bake(10, refused, { code: 1, refusedForQuota: false })).toEqual({
+    log: ["build", "wait", "build"],
+    code: 1,
+  });
+  // Cores that nothing is releasing: it gives up, without a wait after the last.
+  expect(await bake(3, refused, refused, refused)).toEqual({
+    log: ["build", "wait", "build", "wait", "build"],
+    code: 1,
+  });
 });

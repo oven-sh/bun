@@ -996,10 +996,11 @@ impl<V: CalcValue> Calc<V> {
         }
     }
 
-    /// Orders two values when their units allow it.
+    /// Orders two values with compatible units or two numbers, never a number and a value.
     fn partial_cmp_args(a: &Self, b: &Self) -> Option<Ordering> {
         match (a, b) {
             (Calc::Value(a), Calc::Value(b)) => protocol::PartialCmp::partial_cmp(&**a, &**b),
+            (Calc::Number(a), Calc::Number(b)) => protocol::PartialCmp::partial_cmp(a, b),
             _ => None,
         }
     }
@@ -1009,44 +1010,23 @@ impl<V: CalcValue> Calc<V> {
     /// I am pretty sure we could do this reduction in place, or do it as the
     /// arguments are being parsed.
     fn reduce_args(args: &mut Vec<Self>, order: Ordering) {
-        // Reduces the arguments of a min() or max() expression, combining compatible values.
-        // e.g. min(1px, 1em, 2px, 3in) => min(1px, 1em)
+        // Keeps one argument per comparable group: min(1px, 1em, 2px, 3in) => min(1px, 1em).
         let mut reduced: Vec<Self> = Vec::new();
 
-        for arg in args.iter_mut() {
-            let mut found: Option<Option<usize>> = None;
-            if let Calc::Value(val) = &*arg {
-                for (idx, b) in reduced.iter().enumerate() {
-                    if let Calc::Value(v) = b {
-                        let result = protocol::PartialCmp::partial_cmp(&**val, &**v);
-                        if result.is_some() {
-                            if result == Some(order) {
-                                found = Some(Some(idx));
-                                break;
-                            } else {
-                                found = Some(None);
-                                break;
-                            }
-                        }
+        'args: for arg in args.drain(..) {
+            for kept in reduced.iter_mut() {
+                match Self::partial_cmp_args(&arg, kept) {
+                    Some(ord) if ord == order => {
+                        *kept = arg;
+                        continue 'args;
                     }
+                    Some(_) => continue 'args,
+                    None => {}
                 }
             }
-
-            // For borrowck, `found` stores an index rather than a pointer.
-            if let Some(maybe_idx) = found {
-                if let Some(idx) = maybe_idx {
-                    reduced[idx] = core::mem::replace(arg, Calc::Number(420.0));
-                    continue;
-                }
-            } else {
-                reduced.push(core::mem::replace(arg, Calc::Number(420.0)));
-                continue;
-            }
-            // arg dropped here
-            *arg = Calc::Number(420.0);
+            reduced.push(arg);
         }
 
-        // Drop on replace frees the old args.
         *args = reduced;
     }
 

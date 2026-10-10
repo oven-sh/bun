@@ -138,6 +138,7 @@ pub(super) fn plural(count: usize) -> &'static str {
 pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], color: bool) {
     let mut counts = Counts::default();
     let mut has_errors = false;
+    let mut padded = 0usize;
     let start = out.len();
     if color {
         out.extend_from_slice(RESET.open);
@@ -177,6 +178,9 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], color: bool) {
         );
         let (kinds, messages) = (widest(&kind_len), widest(&|row| row.message_len));
         let rules = widest(&|row| visible_len(&row.rule));
+        // Every row is as wide as the widest. Where that is more than ESLint can print ("Invalid string length"), none is.
+        padded = padded.saturating_add(rows.len().saturating_mul(messages));
+        let is_padded = padded as u64 <= bun_lint::fix::MAX_STRING_LENGTH;
         let mut text = Vec::new();
         for (i, row) in rows.iter().enumerate() {
             has_errors |= row.is_error;
@@ -193,7 +197,12 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], color: bool) {
             }
             pad(&mut text, kinds - kind_len(row) + 2);
             text.extend_from_slice(&row.message);
-            pad(&mut text, messages - row.message_len + 2);
+            let gap = if is_padded {
+                messages - row.message_len
+            } else {
+                0
+            };
+            pad(&mut text, gap + 2);
             if !row.rule.is_empty() {
                 styled(&mut text, color, &DIM, &row.rule);
             }

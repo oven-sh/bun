@@ -3304,6 +3304,22 @@ describe.concurrent("bun lint", () => {
   describe("formats", () => {
     const files = { "eslint.config.js": basic, "src/a.js": bad };
 
+    // Rows times the widest: 800 MB. ESLint 10.12 ends with "RangeError: Invalid string length".
+    test("stylish does not make every row as wide as the widest where that is more than ESLint can print", async () => {
+      const names = [Buffer.alloc(200_000, "a").toString(), ...Array.from({ length: 4_000 }, (_, i) => "b" + i)];
+      const { raw, exitCode } = await lint(
+        {
+          "eslint.config.js": `module.exports = [{ rules: { "no-unused-vars": "error" } }];`,
+          "a.js": names.map(name => `var ${name};\n`).join(""),
+        },
+        ["-f", "stylish", "a.js"],
+      );
+      expect(raw.length).toBeLessThan(1_000_000);
+      expect(raw).toContain("'b3999' is defined but never used  no-unused-vars");
+      expect(raw).toContain("4001 problems");
+      expect(exitCode).toBe(1);
+    });
+
     test("json", async () => {
       const { raw, exitCode } = await lint(files, ["-f", "json", "--rule", "semi: off", "--rule", "eqeqeq: off"]);
       const results = JSON.parse(raw);

@@ -1169,7 +1169,19 @@ describe("integer <-> JSValue conversions", () => {
           return v - 0.5;
         };
 
+        // https://github.com/oven-sh/bun/issues/44906: an element read from a
+        // Float64Array is double-encoded even when it is integral, and so is
+        // a Math.sqrt() result.
+        const fromFloat64Array = { i32: [], u32: [], i16: [] };
+        for (const v of new Float64Array([7, 3, 0, -5, 1e6])) {
+          fromFloat64Array.i32.push(symbols.i32_arg(v));
+          fromFloat64Array.u32.push(symbols.u32_arg(v));
+          fromFloat64Array.i16.push(symbols.i16_arg(v));
+        }
+
         const results = {
+          from_float64_array: fromFloat64Array,
+          from_math_sqrt: symbols.i32_arg(Math.sqrt(49)),
           u32: {
             max: symbols.u32_arg(0xffffffff),
             two_pow_31: symbols.u32_arg(0x80000000),
@@ -1227,6 +1239,12 @@ describe("integer <-> JSValue conversions", () => {
     const results = stdout.startsWith("{") ? JSON.parse(stdout) : stdout;
     expect({ results, stderr, exitCode }).toMatchObject({
       results: {
+        from_float64_array: {
+          i32: [7, 3, 0, -5, 1000000],
+          u32: [7, 3, 0, 4294967291, 1000000], // -5 + 2 ** 32
+          i16: [7, 3, 0, -5, 16960], // 1e6 - 15 * 65536
+        },
+        from_math_sqrt: 7,
         u32: {
           max: 4294967295,
           two_pow_31: 2147483648,

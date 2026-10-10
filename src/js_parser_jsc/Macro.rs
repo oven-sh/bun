@@ -126,7 +126,7 @@ impl MacroContext {
 
         let input_specifier: &[u8] = 'brk: {
             if let Some(replacement) = ModuleLoader::HardcodedModule::Alias::get(
-                import_record_path,
+                import_record_path_without_macro_prefix,
                 bun_ast::Target::Bun,
                 Default::default(),
             ) {

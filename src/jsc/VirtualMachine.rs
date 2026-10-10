@@ -5060,7 +5060,7 @@ impl VirtualMachine {
 
     /// Note: `is_a_file_path` is a runtime
     /// arg to avoid duplicating the body for both monomorphizations.
-    pub(crate) fn _resolve(
+    fn _resolve(
         &mut self,
         ret: &mut ResolveFunctionResult,
         specifier: &[u8],
@@ -5096,14 +5096,6 @@ impl VirtualMachine {
             ret.path = self.dupe_resolved_path(specifier);
             return Ok(());
         }
-        if let Some(result) = ModuleLoader::HardcodedModule::Alias::get(
-            specifier,
-            bun_ast::Target::Bun,
-            Default::default(),
-        ) {
-            ret.path = result.path.as_bytes();
-            return Ok(());
-        }
         if self.module_loader.eval_source.is_some()
             && (specifier.ends_with(bun_paths::path_literal!("/[eval]").as_bytes())
                 || specifier.ends_with(bun_paths::path_literal!("/[stdin]").as_bytes()))
@@ -5127,6 +5119,11 @@ impl VirtualMachine {
         let is_special_source = source == MAIN_FILE_NAME || Macro::is_macro_path(source);
         let mut query_string: &[u8] = b"";
         let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
+        // The caller answers a builtin's name as written. With a query it names no module (as in Node), and what
+        // the cut leaves is that builtin's name, not a package's for the resolver to look up.
+        if !query_string.is_empty() && ModuleLoader::is_builtin(normalized_specifier) {
+            return Err(crate::CrateError::ModuleNotFound);
+        }
         let top_level_dir = self.top_level_dir();
         let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {

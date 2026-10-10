@@ -202,12 +202,24 @@ pub fn exposed_internal_tag(spec: &[u8]) -> Option<(Vec<u8>, crate::ResolvedSour
     Some((name, tag))
 }
 
+/// Whether `name` is a builtin module's name: a key of the alias table, or an `internal/` module under
+/// `--expose-internals`.
+pub fn is_builtin(name: &[u8]) -> bool {
+    HardcodedModule::Alias::has(name, bun_ast::Target::Bun, Default::default())
+        || exposed_internal_tag(name).is_some()
+}
+
+/// Whether a preload goes to the module loader as written and not through the resolver, which would look a
+/// package of that name up: a builtin's name, or any `node:` specifier (the loader reports an unknown one).
+pub fn preload_is_builtin(name: &[u8]) -> bool {
+    name.starts_with(b"node:") || is_builtin(name)
+}
+
 /// C++ entry point: whether `data[..len]` names a builtin module.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
     // SAFETY: C++ guarantees `data[..len]` is a valid UTF-8 specifier slice.
-    let str = unsafe { bun_core::ffi::slice(data, len) };
-    bun_aliases_get(str).is_some() || exposed_internal_tag(str).is_some()
+    is_builtin(unsafe { bun_core::ffi::slice(data, len) })
 }
 
 /// Module loader resolve hook: index into the codegen'd `Bun::builtinModuleKeys` of the canonical key a builtin alias

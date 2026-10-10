@@ -246,6 +246,37 @@ fn relative_workspace_path<'b>(
     &buf[..len]
 }
 
+/// `err.path` is relative to `cwd`, or absolute when the pattern is.
+fn add_glob_error(
+    log: &mut bun_ast::Log,
+    source: &bun_ast::Source,
+    loc: bun_ast::Loc,
+    user_pattern: &[u8],
+    cwd: &[u8],
+    err: &bun_sys::Error,
+) -> crate::Error {
+    let mut buf = path::path_buffer_pool::get();
+    let failed_path = path::string_paths::without_trailing_slash_windows_path(
+        resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+            cwd,
+            &mut buf.0[..],
+            &[&err.path],
+        )
+        .unwrap_or(&err.path),
+    );
+    let _ = bun_ast::add_error_pretty!(
+        log,
+        Some(source),
+        loc,
+        "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r> ({} \"{}\")",
+        BStr::new(user_pattern),
+        BStr::new(err.name()),
+        <&'static str>::from(err.syscall),
+        BStr::new(failed_path),
+    );
+    crate::Error::InstallFailed
+}
+
 impl WorkspaceMap {
     pub(crate) fn process_names_array(
         &mut self,
@@ -446,32 +477,14 @@ impl WorkspaceMap {
                     Some(ignored_workspace_paths),
                 )? {
                     Ok(w) => w,
-                    Err(e) => {
-                        let _ = bun_ast::add_error_pretty!(
-                            log,
-                            Some(source),
-                            loc,
-                            "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
-                            BStr::new(user_pattern),
-                            BStr::new(e.name()),
-                        );
-                        return Err(crate::Error::GlobError);
-                    }
+                    Err(e) => return Err(add_glob_error(log, source, loc, user_pattern, cwd, &e)),
                 };
                 // walker dropped at end of loop iter; GlobWalker is heap-backed with no
                 // arena, and its Drop only logs + frees owned Vec/Box fields.
 
                 let mut iter = glob::walk::Iterator::new(&mut walker);
                 if let Err(e) = iter.init()? {
-                    let _ = bun_ast::add_error_pretty!(
-                        log,
-                        Some(source),
-                        loc,
-                        "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
-                        BStr::new(user_pattern),
-                        BStr::new(e.name()),
-                    );
-                    return Err(crate::Error::GlobError);
+                    return Err(add_glob_error(log, source, loc, user_pattern, cwd, &e));
                 }
 
                 'next_match: loop {
@@ -479,15 +492,7 @@ impl WorkspaceMap {
                         Ok(Some(r)) => r,
                         Ok(None) => break,
                         Err(e) => {
-                            let _ = bun_ast::add_error_pretty!(
-                                log,
-                                Some(source),
-                                loc,
-                                "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
-                                BStr::new(user_pattern),
-                                BStr::new(e.name()),
-                            );
-                            return Err(crate::Error::GlobError);
+                            return Err(add_glob_error(log, source, loc, user_pattern, cwd, &e));
                         }
                     };
                     let matched_path: &[u8] = &matched_path_owned;

@@ -273,7 +273,6 @@ bun upgrade --canary
   - [Build an app with SolidStart and Bun](https://bun.com/guides/ecosystem/solidstart)
   - [Build an app with TanStack Start and Bun](https://bun.com/guides/ecosystem/tanstack-start)
   - [Build an HTTP server using Elysia and Bun](https://bun.com/guides/ecosystem/elysia)
-  - [Build an HTTP server using StricJS and Bun](https://bun.com/guides/ecosystem/stric)
   - [Containerize a Bun application with Docker](https://bun.com/guides/ecosystem/docker)
   - [Build an HTTP server using Express and Bun](https://bun.com/guides/ecosystem/express)
   - [Use Neon Postgres through Drizzle ORM](https://bun.com/guides/ecosystem/neon-drizzle)

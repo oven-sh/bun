@@ -804,6 +804,11 @@ export const dnsGetaddrinfoError = $newRustFunction(
   2,
 ) as (code: string, hostname: string) => Error & { code: string; errno: number; syscall: string; hostname: string };
 
+export const fetchRequestIdInternals = {
+  /** Adds `count` to the counter that gives each request its id, and returns the next id. */
+  skipIds: $newRustFunction("http/AsyncHTTP.rs", "TestingAPIs.skipIds", 1) as (count: number) => number,
+};
+
 export const fetchH2Internals = {
   liveCounts: $newRustFunction("http/H2Client.rs", "TestingAPIs.liveCounts", 0) as () => {
     sessions: number;

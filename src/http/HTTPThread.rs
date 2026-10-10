@@ -101,7 +101,7 @@ pub struct HttpThread {
 
     pub(crate) queued_shutdowns: Vec<ShutdownMessage>,
     pub(crate) queued_writes: Vec<WriteMessage>,
-    pub(crate) queued_receive_resumes: Vec<u32>,
+    pub(crate) queued_receive_resumes: Vec<u64>,
     pub(crate) queued_cert_check_resumes: Vec<CertCheckResumeMessage>,
     /// `PoolOptions::id`s whose idle connections to close. Rare:
     /// `has_queued_pool_closes` lets a tick skip the lock.
@@ -202,7 +202,7 @@ pub(crate) fn request_body_send_buffer_capacity(estimated_size: usize) -> usize 
 }
 
 pub struct WriteMessage {
-    pub(crate) async_http_id: u32,
+    pub(crate) async_http_id: u64,
     pub(crate) kind: WriteMessageType,
 }
 
@@ -216,13 +216,13 @@ pub enum WriteMessageType {
 }
 
 pub struct ShutdownMessage {
-    pub(crate) async_http_id: u32,
+    pub(crate) async_http_id: u64,
 }
 
 /// The JS thread's `checkServerIdentity` callback approved the peer
 /// certificate; un-park the connection so the request is written.
 pub struct CertCheckResumeMessage {
-    pub(crate) async_http_id: u32,
+    pub(crate) async_http_id: u64,
 }
 
 pub(crate) const LIBDEFLATE_SHARED_BUFFER_LEN: usize = 512 * 1024;
@@ -531,7 +531,7 @@ impl HttpThread {
         }
     }
 
-    fn abort_pending_h2_waiter(&mut self, async_http_id: u32) -> bool {
+    fn abort_pending_h2_waiter(&mut self, async_http_id: u64) -> bool {
         if self.https_context.abort_pending_h2_waiter(async_http_id) {
             return true;
         }
@@ -889,7 +889,7 @@ impl HttpThread {
         }
     }
 
-    pub fn schedule_receive_resume(&mut self, async_http_id: u32) {
+    pub fn schedule_receive_resume(&mut self, async_http_id: u64) {
         {
             let _guard = self.queued_receive_resumes_lock.lock_guard();
             if self.queued_receive_resumes.last() == Some(&async_http_id) {
@@ -904,7 +904,7 @@ impl HttpThread {
         self.schedule_shutdown_by_id(http.async_http_id);
     }
 
-    pub fn schedule_shutdown_by_id(&mut self, async_http_id: u32) {
+    pub fn schedule_shutdown_by_id(&mut self, async_http_id: u64) {
         bun_core::scoped_log!(HTTPThread, "scheduleShutdown {}", async_http_id);
         {
             let _guard = self.queued_shutdowns_lock.lock_guard();
@@ -1147,7 +1147,7 @@ fn start_queued_task(
 /// Borrow the HTTP-thread abort tracker. PORTING.md §Global mutable state:
 /// HTTP-thread-only, per-statement reborrow.
 #[inline]
-fn abort_tracker() -> &'static mut ArrayHashMap<u32, uws::AnySocket> {
+fn abort_tracker() -> &'static mut ArrayHashMap<u64, uws::AnySocket> {
     crate::abort_tracker()
 }
 

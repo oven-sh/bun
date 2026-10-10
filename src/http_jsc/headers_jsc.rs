@@ -1,4 +1,4 @@
-//! JSC bridges for `bun.http.{Headers,H2Client,H3Client}`. Keeps `src/http/`
+//! JSC bridges for `bun.http.{Headers,AsyncHTTP,H2Client,H3Client}`. Keeps `src/http/`
 //! free of JSC types.
 
 use core::ptr::NonNull;
@@ -143,6 +143,22 @@ pub fn to_fetch_headers(
     )
 }
 
+struct AsyncHTTPTestingAPIs;
+
+impl AsyncHTTPTestingAPIs {
+    /// `skipIds(count)`: see `bun_http::async_http::skip_ids_for_testing`.
+    fn skip_ids(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let [count] = frame.arguments_as_array::<1>();
+        if !count.is_number() {
+            return Err(global.throw_invalid_arguments(format_args!("skipIds expects a number")));
+        }
+        let count = count.to_int64().max(0) as u64;
+        Ok(JSValue::js_number_from_uint64(
+            bun_http::async_http::skip_ids_for_testing(count),
+        ))
+    }
+}
+
 struct H2TestingAPIs;
 
 impl H2TestingAPIs {
@@ -204,4 +220,8 @@ pub fn h2_live_counts(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
 #[inline]
 pub fn h3_quic_live_counts(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     H3TestingAPIs::quic_live_counts(global, frame)
+}
+#[inline]
+pub fn async_http_skip_ids(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    AsyncHTTPTestingAPIs::skip_ids(global, frame)
 }

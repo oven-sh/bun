@@ -882,7 +882,7 @@ test("closeIdleConnections()/closeAllConnections() after close() leave an upgrad
     releaseResponse = () => res.end("ok");
   });
   server.on("upgrade", (req, socket) => {
-    upgradedServerSocket = socket;
+    upgradedServerSocket = socket as import("node:net").Socket;
     socket.on("error", () => {});
     socket.on("data", chunk => socket.write(chunk));
     socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: echo\r\n\r\n");

@@ -29,7 +29,7 @@ for (let i = 0; i < 5; i++) {
         receivedByteLength += data.length;
         if (resolve) {
           resolve();
-          resolve = null;
+          resolve = null as any;
         }
       });
     });

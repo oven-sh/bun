@@ -131,7 +131,7 @@ test.each([
     certificate: new crypto.X509Certificate(tls.cert + text).fingerprint256,
     hkdf: Buffer.from(crypto.hkdfSync("sha256", "key", text, text, 16)).toString("hex"),
     resolvePaths: require.resolve.paths(text),
-    resolveLookupPaths: Module._resolveLookupPaths(text, { paths: ["/node_modules"] }),
+    resolveLookupPaths: (Module as any)._resolveLookupPaths(text, { paths: ["/node_modules"] }),
     run: db.query("SELECT v FROM t").get(),
     prepare: db.prepare(`SELECT '${text}' AS v`).get(),
     parameter: db.prepare("SELECT ? AS v").get(text),

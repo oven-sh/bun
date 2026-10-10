@@ -32,7 +32,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         // Attempt to send command - should fail with connection error
         await client.set("key", "value");
         expect(false).toBe(true); // Should not reach here
-      } catch (error) {
+      } catch (error: any) {
         // Expect an error with connection closed message
         expect(error.message).toMatch(/connection closed|socket closed|failed to connect/i);
       } finally {
@@ -56,7 +56,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       try {
         await client.get("any-key");
         expect(false).toBe(true); // Should not reach here
-      } catch (error) {
+      } catch (error: any) {
         // Should fail with connection error
         expect(error.message).toMatch(/connection closed|socket closed|failed to connect|offline queue is disabled/i);
       }
@@ -64,7 +64,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       try {
         await client.set("any-key", "value");
         expect(false).toBe(true); // Should not reach here
-      } catch (error) {
+      } catch (error: any) {
         // Should fail with connection error
         expect(error.message).toMatch(/connection closed|socket closed|failed to connect|offline queue is disabled/i);
       }
@@ -72,7 +72,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       try {
         await client.del("any-key");
         expect(false).toBe(true); // Should not reach here
-      } catch (error) {
+      } catch (error: any) {
         // Should fail with connection error
         expect(error.message).toMatch(/connection closed|socket closed|failed to connect|offline queue is disabled/i);
       }
@@ -80,7 +80,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       try {
         await client.incr("counter");
         expect(false).toBe(true); // Should not reach here
-      } catch (error) {
+      } catch (error: any) {
         // Should fail with connection error
         expect(error.message).toMatch(/connection closed|socket closed|failed to connect|offline queue is disabled/i);
       }
@@ -138,7 +138,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
       try {
         await commandPromise;
         expect(false).toBe(true); // Should not reach here
-      } catch (error) {
+      } catch (error: any) {
         // Should fail with a connection error
         expect(error.message).toMatch(/connection closed|socket closed|failed to connect/i);
       }
@@ -158,7 +158,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
         // Try to send command - should reject immediately
         await client.set("key", "value");
         expect(false).toBe(true); // Should not reach here
-      } catch (error) {
+      } catch (error: any) {
         expect(error.message).toMatch(/connection closed|offline queue is disabled/i);
       }
 
@@ -295,7 +295,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
   describe("Multiple Connection Attempts", () => {
     test("should handle rapid connection/disconnection", async () => {
       // Create and immediately disconnect many clients
-      const promises = [];
+      const promises: void[] = [];
 
       for (let i = 0; i < 10; i++) {
         const client = new RedisClient(DEFAULT_REDIS_URL, {
@@ -313,7 +313,7 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
 
     test("should not crash when connections fail", async () => {
       // Create multiple clients with invalid connections in parallel
-      const clients = [];
+      const clients: RedisClient[] = [];
 
       for (let i = 0; i < 5; i++) {
         clients.push(
@@ -400,7 +400,7 @@ describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
       sockets.push(socket);
       const state = { buffer: Buffer.alloc(0) };
       socket.on("data", chunk => {
-        state.buffer = Buffer.concat([state.buffer, chunk]);
+        state.buffer = Buffer.concat([state.buffer, chunk as Buffer]);
         for (const args of readCommands(state)) {
           const name = (args[0] ?? "").toUpperCase();
           if (name === "HELLO") {
@@ -1456,7 +1456,7 @@ describe("Valkey: Recovering After fail()", () => {
     const port = await fake.listen();
     const client = new RedisClient(`redis://127.0.0.1:${port}`);
     const closes: string[] = [];
-    client.onclose = err => closes.push(`${err.code}: ${err.message}`);
+    client.onclose = err => closes.push(`${(err as any).code}: ${err.message}`);
     try {
       await dropAndAwaitRetryDelay(client);
       // Queued for the retry; only close() is left to settle it.
@@ -2157,7 +2157,7 @@ describe("Valkey: Offline Queue", () => {
       const state = { buffer: Buffer.alloc(0) };
       socket.on("data", chunk => {
         if (!answer) return;
-        state.buffer = Buffer.concat([state.buffer, chunk]);
+        state.buffer = Buffer.concat([state.buffer, chunk as Buffer]);
         const replies = readCommands(state).map(args =>
           (args[0] ?? "").toUpperCase() === "HELLO" ? "+OK\r\n" : "+PONG\r\n",
         );

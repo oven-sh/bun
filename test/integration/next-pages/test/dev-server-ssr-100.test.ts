@@ -35,7 +35,7 @@ async function getDevServerURL() {
     },
     stdio: ["ignore", "pipe", "inherit"],
   });
-  dev_server.stdout?.unref?.();
+  (dev_server.stdout as any)?.unref?.();
   var hasLoaded = false;
   dev_server_pid = dev_server.pid;
 
@@ -82,7 +82,7 @@ async function getDevServerURL() {
   readStream()
     .catch(e => reject(e))
     .finally(() => {
-      dev_server.unref?.();
+      dev_server!.unref?.();
     });
   await promise;
   return baseUrl;

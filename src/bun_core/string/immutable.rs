@@ -617,6 +617,7 @@ pub fn rsplit_once<'a>(self_: &'a [u8], delimiter: &[u8]) -> Option<(&'a [u8], &
     Some((&self_[..i], &self_[i + delimiter.len()..]))
 }
 
+#[derive(Clone)]
 pub struct SplitIterator<'a> {
     pub(crate) buffer: &'a [u8],
     pub(crate) index: Option<usize>,

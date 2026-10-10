@@ -33,7 +33,7 @@ test("MySQL: AuthSwitchRequest with a short mysql_native_password nonce is rejec
     let buffered = Buffer.alloc(0);
     let sentAuthSwitch = false;
     socket.write(greeting);
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buffered = Buffer.concat([buffered, chunk]);
       while (buffered.length >= 4) {
         const len = buffered[0] | (buffered[1] << 8) | (buffered[2] << 16);
@@ -81,7 +81,7 @@ test("MySQL: an AuthSwitchRequest frame declaring a zero-length payload is rejec
     let buffered = Buffer.alloc(0);
     let replied = false;
     socket.write(greeting);
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), seq => {
         if (!replied) {
           replied = true;

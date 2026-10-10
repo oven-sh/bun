@@ -61,7 +61,7 @@ test("client sends the SETTINGS ACK before DATA unblocked by a larger INITIAL_WI
     windowUpdate.writeUInt32BE(64 * 1024 * 1024);
     socket.write(frame(0x8, 0, 0, windowUpdate));
 
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buf = Buffer.concat([buf, chunk]);
       if (!prefaceStripped) {
         if (buf.length < PREFACE.length) return;

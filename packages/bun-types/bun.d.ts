@@ -571,9 +571,6 @@ declare module "bun" {
     cancel?: UnderlyingSourceCancelCallback;
     pull?: UnderlyingSourcePullCallback<R>;
     start?: UnderlyingSourceStartCallback<R>;
-    /**
-     * Mode "bytes" is not supported.
-     */
     type?: undefined;
   }
 
@@ -1084,7 +1081,8 @@ declare module "bun" {
      *
      * @category Utilities
      *
-     * @param input The TOML document to parse, as a string or UTF-8 bytes
+     * @param input The TOML document to parse, as a string or UTF-8 bytes. A `Blob` that is backed by a file, such
+     * as `Bun.file()`, throws: pass `await file.text()`.
      * @returns A JavaScript object
      * @throws {SyntaxError} If the input is not valid TOML
      */
@@ -1123,7 +1121,11 @@ declare module "bun" {
      * // 'name = "app"\n\n[server]\nport = 8080\n'
      * ```
      */
-    export function stringify(input: unknown, replacer?: undefined | null, space?: string | number): string | undefined;
+    export function stringify<T>(
+      input: T,
+      replacer?: undefined | null,
+      space?: string | number,
+    ): T extends Function | symbol | undefined ? undefined : T extends object ? string : string | undefined;
   }
 
   /**
@@ -1496,7 +1498,8 @@ declare module "bun" {
      *
      * @category Utilities
      *
-     * @param input The YAML string to parse
+     * @param input The YAML document to parse, as a string or UTF-8 bytes. A `Blob` that is backed by a file, such
+     * as `Bun.file()`, throws: pass `await file.text()`.
      * @returns A JavaScript value, or an array of them for a multi-document stream
      *
      * @example
@@ -1511,7 +1514,9 @@ declare module "bun" {
      * console.log(YAML.parse("abc: def")) // { "abc": "def" }
      * ```
      */
-    export function parse(input: string): unknown;
+    export function parse(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob,
+    ): unknown;
 
     /**
      * Convert a JavaScript value into a YAML string. Strings are double quoted if they contain keywords, non-printable or
@@ -3504,6 +3509,36 @@ declare module "bun" {
     optimizeImports?: string[];
 
     /**
+     * Type check the entrypoints and everything they import, like `bun check`.
+     * Equivalent to `--check` in the CLI.
+     *
+     * A type error fails the build like any other build error: nothing is
+     * written, and each error is a {@link BuildMessage} whose message starts
+     * with TypeScript's error code.
+     *
+     * The compiler options come from the `tsconfig.json` of the project, or
+     * from the file that `tsconfig` names. The check also uses the `conditions`
+     * and the `loader` of the build.
+     *
+     * @default false
+     *
+     * @example
+     * ```ts
+     * const result = await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   outdir: './dist',
+     *   check: true,
+     *   throw: false,
+     * });
+     * for (const log of result.logs) {
+     *   // TS2322: Type 'string' is not assignable to type 'number'.
+     *   console.error(`${log.position?.file}:${log.position?.line}: ${log.message}`);
+     * }
+     * ```
+     */
+    check?: boolean;
+
+    /**
      * - When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
      * - When set to `false`, returns a {@link BuildOutput} with `{success: false}`
      *
@@ -3512,7 +3547,9 @@ declare module "bun" {
     throw?: boolean;
 
     /**
-     * Custom tsconfig.json file path to use for path resolution.
+     * Custom tsconfig.json file path. This build reads it in place of every
+     * `tsconfig.json` it would otherwise find, for `paths`, JSX and decorator
+     * settings, and for `check`. A directory means the `tsconfig.json` in it.
      * Equivalent to `--tsconfig-override` in the CLI.
      * @example
      * ```ts
@@ -6389,6 +6426,15 @@ declare module "bun" {
   interface OnResolveResult {
     /**
      * The destination of the import
+     *
+     * In a runtime plugin, a path without a `namespace` is resolved from the
+     * importing module like any other import, without running `onResolve`
+     * callbacks on it. If nothing is found there, it is used as it is when an
+     * `onLoad` callback matches it.
+     *
+     * A bare name could also be a package in the registry, so `onResolve`
+     * callbacks run on it once more. If one of them returns a path, the name is
+     * the plugin's own and is never auto-installed.
      */
     path: string;
     /**
@@ -10052,9 +10098,9 @@ declare module "bun" {
     resize(width: number, height: number): Promise<void>;
 
     /** Navigate back in session history. */
-    back(): Promise<void>;
+    goBack(): Promise<void>;
     /** Navigate forward in session history. */
-    forward(): Promise<void>;
+    goForward(): Promise<void>;
     /** Reload the current page. */
     reload(): Promise<void>;
 

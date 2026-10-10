@@ -42,7 +42,7 @@ const txtAnswer = Buffer.from([
 function onTcpConnection(socket: net.Socket) {
   let buf = Buffer.alloc(0);
   socket.on("data", chunk => {
-    buf = Buffer.concat([buf, chunk]);
+    buf = Buffer.concat([buf, chunk as Buffer]);
     while (buf.length >= 2) {
       const len = buf.readUInt16BE(0);
       if (buf.length < 2 + len) break;
@@ -69,7 +69,7 @@ async function bindPair(): Promise<{ udp: dgram.Socket; tcp: net.Server; port: n
     const udp = dgram.createSocket("udp4");
     udp.bind(0, "127.0.0.1");
     await once(udp, "listening");
-    const port = (udp.address() as dgram.AddressInfo).port;
+    const port = (udp.address() as net.AddressInfo).port;
 
     const tcp = net.createServer(onTcpConnection);
     try {

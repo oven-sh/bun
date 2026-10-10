@@ -85,7 +85,7 @@ describe("serialize & deserialize", () => {
         `,
         ],
         env: bunEnv,
-        stdin: serialized,
+        stdin: serialized as any,
         stdout: "pipe",
         stderr: "inherit",
       });

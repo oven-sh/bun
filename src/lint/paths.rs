@@ -62,7 +62,14 @@ fn of_node(style: Style, answer: &[u8]) -> Vec<u8> {
 
 /// `path.isAbsolute(path)`, on this system.
 pub fn is_absolute(path: &[u8]) -> bool {
-    is_absolute_as(if cfg!(windows) { Style::Windows } else { Style::Posix }, path)
+    is_absolute_as(
+        if cfg!(windows) {
+            Style::Windows
+        } else {
+            Style::Posix
+        },
+        path,
+    )
 }
 
 pub(crate) fn is_absolute_as(style: Style, path: &[u8]) -> bool {

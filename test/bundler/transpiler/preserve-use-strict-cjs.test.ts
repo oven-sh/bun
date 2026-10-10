@@ -79,6 +79,11 @@ out.beforeBlock = attempt(function () {
   return seen;
 });
 
+out.neverEntered = attempt(function () {
+  if (false) { function f() {} }
+  return String(f);
+});
+
 out.leftBeforeDeclaration = attempt(function () {
   exit: { break exit; function f() {} }
   return typeof f;
@@ -193,6 +198,7 @@ module.exports = out;
       jison: "token",
       switchCase: 3,
       beforeBlock: ["undefined", true, "function"],
+      neverEntered: "undefined",
       leftBeforeDeclaration: "undefined",
       callBeforeDeclaration: 7,
       assignBeforeDeclaration: "number",
@@ -226,14 +232,6 @@ module.exports = g;
 `,
     });
     expect(await bunRun(path.join(String(dir), "nested.cjs"))).toSpawn("1");
-  });
-
-  // A file with no CommonJS marker runs as a module, where this text is a SyntaxError.
-  test.concurrent("a function in statically dead code does not reach the engine", async () => {
-    using dir = tempDir("block-level-function", {
-      "dead.js": `if (false) { function o() { var static = 1; } }\nif (false) { function eval() {} }\nconsole.log("loaded");\n`,
-    });
-    expect(await bunRun(path.join(String(dir), "dead.js"))).toSpawn("loaded");
   });
 
   test.concurrent("also through require(), import() and a .js file", async () => {

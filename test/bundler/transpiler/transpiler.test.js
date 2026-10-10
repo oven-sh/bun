@@ -5753,13 +5753,6 @@ describe("block-level function declarations", () => {
     expect(print(code)).toBe(expected);
   });
 
-  // Dead code elimination removes a `let` with its branch. A declaration would stay in the output.
-  it("a function in a statically dead branch is still lowered to let", () => {
-    expect(print("if (false) {\n  function f() {}\n}\nmodule.exports = 1;\n")).toBe(
-      "if (false) {\n  let f = function() {};\n}\nmodule.exports = 1;\n",
-    );
-  });
-
   // A strict scope has no `var` to lose, and its "use strict" may not be printed.
   it.each([
     [

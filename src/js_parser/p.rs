@@ -3616,8 +3616,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             || self.is_strict_mode()
             // The REPL wraps each input in a function, which would own the `var` of a top-level block.
             || (self.options.repl_mode && self.fn_or_arrow_data_visit.is_outside_fn_or_arrow)
-            // Dead code elimination removes a `let` with its branch. A declaration survives it.
-            || (self.is_control_flow_dead && self.options.features.dead_code_elimination)
             || self.sloppy_mode_block_fn_without_var.contains_key(&name)
     }
 

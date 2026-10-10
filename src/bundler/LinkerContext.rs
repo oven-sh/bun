@@ -861,6 +861,23 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: forwarded; see fn-level contract.
         unsafe { self.load(bundle, entry_points, server_component_boundaries, reachable)? };
 
+        // SAFETY: scalar `bool` read of a field disjoint from `self` (= `(*bundle).linker`).
+        let has_top_level_await = unsafe { (*bundle).has_any_top_level_await_modules };
+        let format_without_top_level_await = match self.options.output_format {
+            Format::Cjs => Some("cjs"),
+            Format::Iife => Some("iife"),
+            Format::Esm | Format::InternalBakeDev => None,
+        };
+        // Before any task is queued: `bun build` does not join them when `link` fails.
+        if has_top_level_await && let Some(format_name) = format_without_top_level_await {
+            // Only `Bun.build()` installs a completion; the CLI never does.
+            // SAFETY: discriminant read of a field disjoint from `self`.
+            let from_js_api = unsafe { (*bundle).completion.is_some() };
+            if self.reject_top_level_await(format_name, from_js_api) {
+                return Err(LinkError::BuildFailed);
+            }
+        }
+
         if self.options.source_maps != SourceMapOption::None {
             self.compute_data_for_source_map(reachable);
         }
@@ -872,8 +889,7 @@ impl<'a> LinkerContext<'a> {
         }
 
         // Validate top-level await for all files first.
-        // SAFETY: scalar `bool` read of a field disjoint from `self` (= `(*bundle).linker`).
-        if unsafe { (*bundle).has_any_top_level_await_modules } {
+        if has_top_level_await && format_without_top_level_await.is_none() {
             // SAFETY: `parse_graph` is a backref to `BundleV2.graph`, disjoint
             // from `*self` (= `BundleV2.linker`). The SoA column slices below
             // are physically disjoint and the underlying slabs do not
@@ -2038,6 +2054,45 @@ impl<'a> LinkerContext<'a> {
         hasher.write(&chunk.output_source_map.suffix);
 
         hasher.digest()
+    }
+
+    /// Returns whether a reachable file has a top-level `await`, and reports each one.
+    fn reject_top_level_await(&self, format_name: &str, from_js_api: bool) -> bool {
+        let parse_graph = self.parse_graph();
+        let tla_keywords = parse_graph.ast.items_top_level_await_keyword();
+        let input_files = parse_graph.input_files.items_source();
+        // ESM bytecode exists only in a compiled executable.
+        let bytecode_needs_compile =
+            self.options.generate_bytecode_cache && !self.options.compile_mode.is_executable();
+        let note: &'static [u8] = match (from_js_api, bytecode_needs_compile) {
+            (false, false) => b"Use --format=esm to allow top-level await",
+            (false, true) => b"Use --compile --format=esm to allow top-level await with --bytecode",
+            (true, false) => b"Use format: \"esm\" to allow top-level await",
+            (true, true) => {
+                b"Use compile: true and format: \"esm\" to allow top-level await with bytecode: true"
+            }
+        };
+
+        let mut rejected = false;
+        for source_index in &self.graph.reachable_files {
+            let source_index = source_index.get() as usize;
+            let Some(tla_keyword) = tla_keywords.get(source_index).filter(|r| r.len > 0) else {
+                continue;
+            };
+            self.log_disjoint().add_range_error_fmt_with_notes(
+                Some(&input_files[source_index]),
+                *tla_keyword,
+                Box::new([Data {
+                    text: std::borrow::Cow::Borrowed(note),
+                    ..Default::default()
+                }]),
+                format_args!(
+                    "Top-level await is currently not supported with the \"{format_name}\" output format"
+                ),
+            );
+            rejected = true;
+        }
+        rejected
     }
 
     pub(crate) fn validate_tla(

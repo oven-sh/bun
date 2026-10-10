@@ -210,6 +210,7 @@ fn unlink(ctx: &mut ContextData) -> crate::Result<()> {
                 abs_target_buf: link_target_buf.as_mut_slice(),
                 abs_dest_buf: link_dest_buf.as_mut_slice(),
                 rel_buf: link_rel_buf.as_mut_slice(),
+                installed_from: None,
                 err: None,
                 skipped_due_to_missing_bin: false,
             };

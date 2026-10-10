@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -474,20 +474,98 @@ describe("Bun.Terminal", () => {
       expect(terminal.inputFlags).toBe(0);
     });
 
-    test.skipIf(isWindows)("NaN clamps to tcflag_t max, same as Infinity", async () => {
-      // Assigning NaN must clamp to the same value as Infinity (tcflag_t::MAX),
-      // matching the reference `@max(0, @min(num, max))` semantics. The kernel
-      // may mask some bits per field, so compare NaN against Infinity rather
-      // than a hard-coded constant.
-      await using terminal = new Bun.Terminal({ cols: 80, rows: 24 });
+    type FlagProp = "inputFlags" | "outputFlags" | "localFlags" | "controlFlags";
+    const flagProps: FlagProp[] = ["inputFlags", "outputFlags", "localFlags", "controlFlags"];
 
-      for (const prop of ["inputFlags", "outputFlags", "localFlags", "controlFlags"] as const) {
-        terminal[prop] = Infinity;
-        const fromInfinity = terminal[prop];
-        terminal[prop] = NaN;
-        const fromNaN = terminal[prop];
-        expect({ prop, fromNaN }).toEqual({ prop, fromNaN: fromInfinity });
-        expect(fromNaN).toBeGreaterThan(0);
+    // Assigns `value` and reports what the assignment threw. The shared
+    // validator owns the message text, so only check that it names the property.
+    function assign(terminal: Bun.Terminal, prop: FlagProp, value: unknown) {
+      try {
+        terminal[prop] = value as number;
+      } catch (e: any) {
+        return { threw: e.name, code: e.code, namesProperty: String(e.message).includes(`"${prop}"`) };
+      }
+      return { threw: null };
+    }
+    const invalidType = { threw: "TypeError", code: "ERR_INVALID_ARG_TYPE", namesProperty: true };
+    const outOfRange = { threw: "RangeError", code: "ERR_OUT_OF_RANGE", namesProperty: true };
+    const accepted = { threw: null };
+
+    // There is no termios on Windows, so the setters never look at the value.
+    describe.skipIf(isWindows)("setting a value that is not an unsigned 32-bit integer", () => {
+      test.each(flagProps)("%s throws a TypeError for a value that is not a number", async prop => {
+        await using terminal = new Bun.Terminal({});
+        const before = terminal[prop];
+        // The setter does not coerce, so it never calls into the object.
+        const toPrimitive = mock(() => 8);
+
+        const notNumbers: [string, unknown][] = [
+          ["undefined", undefined],
+          ["null", null],
+          ['"bogus"', "bogus"],
+          ['"8"', "8"],
+          ["{}", {}],
+          ["[]", []],
+          ["true", true],
+          ["8n", 8n],
+          ["Symbol()", Symbol("flags")],
+          ["() => 8", () => 8],
+          ["{ valueOf }", { valueOf: toPrimitive }],
+          ["{ [Symbol.toPrimitive] }", { [Symbol.toPrimitive]: toPrimitive }],
+        ];
+        for (const [label, value] of notNumbers) {
+          expect({ label, ...assign(terminal, prop, value) }).toEqual({ label, ...invalidType });
+        }
+
+        expect(toPrimitive).not.toHaveBeenCalled();
+        expect(terminal[prop]).toBe(before);
+      });
+
+      test.each(flagProps)("%s throws a RangeError for a number that is not an integer", async prop => {
+        await using terminal = new Bun.Terminal({});
+        const before = terminal[prop];
+
+        for (const value of [NaN, Infinity, -Infinity, 1.5]) {
+          const label = String(value);
+          expect({ label, ...assign(terminal, prop, value) }).toEqual({ label, ...outOfRange });
+        }
+
+        expect(terminal[prop]).toBe(before);
+      });
+
+      test.each(flagProps)("%s accepts 0 and 0xffffffff and throws a RangeError one past each", async prop => {
+        await using terminal = new Bun.Terminal({});
+        const before = terminal[prop];
+
+        // A bitwise expression returns a signed 32-bit number, so it is
+        // negative when bit 31 is set.
+        const bit31Set = 0x80000000 | 8;
+        for (const value of [-1, bit31Set, 2 ** 32, Number.MAX_SAFE_INTEGER]) {
+          const label = String(value);
+          expect({ label, ...assign(terminal, prop, value) }).toEqual({ label, ...outOfRange });
+        }
+        expect(terminal[prop]).toBe(before);
+
+        // The kernel keeps or drops some bits per field, so compare the two
+        // accepted assignments with each other, not with a constant.
+        expect(assign(terminal, prop, 0xffffffff)).toEqual(accepted);
+        const allBitsRequested = terminal[prop];
+        expect(assign(terminal, prop, 0)).toEqual(accepted);
+        const noBitsRequested = terminal[prop];
+        expect(allBitsRequested).toBeGreaterThan(noBitsRequested);
+
+        expect(assign(terminal, prop, bit31Set >>> 0)).toEqual(accepted);
+      });
+    });
+
+    test("setting a value that is not a number on a closed terminal is still a no-op", () => {
+      const terminal = new Bun.Terminal({});
+      terminal.close();
+
+      for (const prop of flagProps) {
+        expect(assign(terminal, prop, undefined)).toEqual(accepted);
+        expect(assign(terminal, prop, NaN)).toEqual(accepted);
+        expect(terminal[prop]).toBe(0);
       }
     });
   });

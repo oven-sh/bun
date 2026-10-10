@@ -1853,6 +1853,40 @@ describe("option combinations", () => {
 describe("uid/gid", () => {
   const isRoot = process.getuid?.() === 0;
 
+  // A NaN uid or gid used to be coerced to id 0 (root).
+  describe.each(["uid", "gid"] as const)("an invalid %s throws before the spawn", key => {
+    const outOfRange = (must: string, received: string) => ({
+      name: "RangeError",
+      code: "ERR_OUT_OF_RANGE",
+      message: `The value of "${key}" is out of range. It must be ${must}. Received ${received}`,
+    });
+    const notANumber = {
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "${key}" property must be of type number, got string`,
+    };
+    const cmd = [bunExe(), "--version"];
+
+    it.each([
+      [NaN, outOfRange("an integer", "NaN")],
+      [1.5, outOfRange("an integer", "1.5")],
+      [Infinity, outOfRange("an integer", "Infinity")],
+      [-Infinity, outOfRange("an integer", "-Infinity")],
+      [2 ** 31, outOfRange(">= -2147483648 && <= 2147483647", "2147483648")],
+      ["1", notANumber],
+    ])("%p", (value: any, error) => {
+      expect(() => spawn(cmd, { env: bunEnv, [key]: value })).toThrow(expect.objectContaining(error));
+      expect(() => spawn({ cmd, env: bunEnv, [key]: value })).toThrow(expect.objectContaining(error));
+    });
+
+    it("NaN beside a valid id", () => {
+      const other = key === "uid" ? "gid" : "uid";
+      expect(() => spawn({ cmd, env: bunEnv, [other]: 65534, [key]: NaN })).toThrow(
+        expect.objectContaining(outOfRange("an integer", "NaN")),
+      );
+    });
+  });
+
   it.if(isPosix && isRoot)("applies uid and gid to the child", async () => {
     await using proc = spawn({ cmd: ["id", "-u"], uid: 65534, gid: 65534, stdout: "pipe" });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);

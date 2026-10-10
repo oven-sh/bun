@@ -398,6 +398,8 @@ let myTypedArray = new Uint8Array(32);
 const myPtr = ptr(myTypedArray);
 ```
 
+The pointer stays valid while the `TypedArray` is referenced and its `ArrayBuffer` is not transferred. `ptr()` does not keep the `TypedArray` alive, so keep a reference to it for as long as native code uses the pointer.
+
 To convert from a pointer to an `ArrayBuffer`:
 
 ```ts
@@ -540,6 +542,8 @@ const out = encode_png(
 ```
 
 The [auto-generated wrapper](https://github.com/oven-sh/bun/blob/6a65631cbdcae75bfa1e64323a6ad613a922cd1a/src/bun.js/ffi.exports.js#L180-L182) converts the `TypedArray` to a pointer.
+
+That pointer is valid for the duration of the call. If the native code keeps the pointer after the call returns, pass `ptr(typedArray)` and keep the `TypedArray` referenced.
 
 <Accordion title="Hardmode">
 

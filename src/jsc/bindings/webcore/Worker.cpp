@@ -65,22 +65,45 @@ Worker::Worker(ScriptExecutionContext& context, WorkerOptions&& options)
 {
 }
 
+// A URL Standard scheme followed by ':'. At least two characters, so that a Windows drive path such as
+// "C:\worker.js" does not count as one.
+static bool hasURLSchemePrefix(const String& string)
+{
+    size_t colon = string.find(':');
+    if (colon == notFound || colon < 2 || !isASCIIAlpha(string[0]))
+        return false;
+    for (size_t i = 1; i < colon; ++i) {
+        UChar c = string[i];
+        if (!isASCIIAlphanumeric(c) && c != '+' && c != '-' && c != '.')
+            return false;
+    }
+    return true;
+}
+
+ExceptionOr<String> Worker::resolveScriptURL(const String& url)
+{
+    if (!hasURLSchemePrefix(url))
+        return String { url };
+    WTF::URL urlObject { url };
+    if (!urlObject.isValid())
+        return Exception { SyntaxError, makeString("Invalid URL: \""_s, url, '"') };
+    if (urlObject.protocolIsFile())
+        return urlObject.fileSystemPath();
+    return String { url };
+}
+
 ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const String& urlInit, WorkerOptions&& options)
 {
     ASSERT(context.isContextThread());
 
-    String url = urlInit;
-    if (url.startsWith("file://"_s)) {
-        WTF::URL urlObject { url };
-        if (!urlObject.isValid())
-            return Exception { TypeError, makeString("Invalid file URL: \""_s, urlInit, '"') };
-        url = urlObject.fileSystemPath();
-    }
+    auto url = resolveScriptURL(urlInit);
+    if (url.hasException())
+        return url.releaseException();
 
     auto worker = adoptRef(*new Worker(context, WTF::move(options)));
     worker->suspendIfNeeded();
 
-    auto started = worker->m_contextProxy->startWorkerGlobalScope(url);
+    auto started = worker->m_contextProxy->startWorkerGlobalScope(url.returnValue());
     if (started.hasException())
         return started.releaseException();
     return worker;

@@ -592,7 +592,7 @@ fn send_audit_requests(
     let mut stats = AuditStats::default();
 
     for request in &collected.requests {
-        match send_audit_request(pm, &request.registry, &request.body, echo_non_json)? {
+        match send_audit_request(pm, request, echo_non_json)? {
             Ok(body) => {
                 stats.checked += request.packages.len();
                 bodies.push(body);
@@ -690,10 +690,14 @@ fn merge_bulk_bodies(bodies: &[Box<[u8]>]) -> Box<[u8]> {
 
 fn send_audit_request(
     pm: &mut PackageManager,
-    registry: &AuditRegistry,
-    body: &[u8],
+    request: &AuditRequest,
     echo_non_json: bool,
 ) -> Result<Result<Box<[u8]>, SkipReason>, bun_alloc::AllocError> {
+    let AuditRequest {
+        registry,
+        packages,
+        body,
+    } = request;
     libdeflate::load();
     let mut compressor = libdeflate::OwnedCompressor::new(6).ok_or(bun_alloc::AllocError)?;
 
@@ -763,6 +767,15 @@ fn send_audit_request(
                 return Ok(Ok(Box::<[u8]>::from(response)));
             }
             SkipReason::NotJson
+        }
+        // No retry makes this URL http(s), so a scoped registry is not skipped for it.
+        Err(http::Error::UnsupportedProtocol) => {
+            let scope = match packages.first() {
+                Some(package) if !registry.is_default => pm.scope_for_package_name(&package.name),
+                _ => &pm.options.scope,
+            };
+            scope.report_unsupported_protocol();
+            Global::exit(1);
         }
         Err(err) => SkipReason::Send(err.name()),
     };

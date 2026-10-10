@@ -810,8 +810,13 @@ impl PublishCommand {
             http::FetchRedirect::Follow,
         );
 
-        let Ok(res) = req.send_sync(&mut response_buf) else {
-            return false;
+        let res = match req.send_sync(&mut response_buf) {
+            Ok(res) => res,
+            Err(bun_http::Error::UnsupportedProtocol) => {
+                registry.report_unsupported_protocol();
+                Global::crash();
+            }
+            Err(_) => return false,
         };
         if res.status_code() != 200 {
             return false;
@@ -865,9 +870,8 @@ impl PublishCommand {
         }
 
         // continues from `printSummary`
-        let registry_href = registry_url.href_without_auth();
         bun_core::pretty!(
-            "<b><blue>Tag<r>: {}\n<b><blue>Access<r>: {}\n<b><blue>Registry<r>: {}/\n",
+            "<b><blue>Tag<r>: {}\n<b><blue>Access<r>: {}\n<b><blue>Registry<r>: ",
             bstr::BStr::new(if !ctx.manager.options.publish_config.tag.is_empty() {
                 ctx.manager.options.publish_config.tag
             } else {
@@ -878,8 +882,14 @@ impl PublishCommand {
             } else {
                 "default"
             },
-            bstr::BStr::new(strings::without_trailing_slash(&registry_href)),
         );
+        match registry.printable_href() {
+            Ok(registry_href) => bun_core::pretty!(
+                "{}/\n",
+                bstr::BStr::new(strings::without_trailing_slash(&registry_href)),
+            ),
+            Err(problem) => bun_core::pretty!("a URL that {}\n", problem),
+        }
 
         // dry-run stops here
         if ctx.manager.options.dry_run {
@@ -937,6 +947,10 @@ impl PublishCommand {
             Err(e) => {
                 if e == bun_http::Error::Alloc(bun_alloc::AllocError) {
                     return Err(PublishError::OutOfMemory);
+                }
+                if e == bun_http::Error::UnsupportedProtocol {
+                    registry.report_unsupported_protocol();
+                    Global::crash();
                 }
                 Output::err(e, "failed to publish package", ());
                 Global::crash();

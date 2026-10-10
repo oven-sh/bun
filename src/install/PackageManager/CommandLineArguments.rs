@@ -1667,9 +1667,10 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             if !strings::has_prefix(registry, b"https://")
                 && !strings::has_prefix(registry, b"http://")
             {
-                Output::err_generic(
-                    "Registry URL must start with 'https://' or 'http://': {}\n",
-                    (bun_core::fmt::quote(registry),),
+                Npm::registry::report_unsupported_protocol(
+                    "Registry",
+                    format_args!("--registry"),
+                    registry,
                 );
                 Global::crash();
             }

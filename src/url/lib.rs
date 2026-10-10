@@ -544,6 +544,19 @@ impl<'a> URL<'a> {
         self.is_http() || self.is_https()
     }
 
+    /// RFC 3986 §3.1: `ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )`.
+    fn is_scheme(bytes: &[u8]) -> bool {
+        bytes.first().is_some_and(u8::is_ascii_alphabetic)
+            && bytes.iter().all(
+                |byte| matches!(byte, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'+' | b'-' | b'.'),
+            )
+    }
+
+    /// `protocol` when it is a scheme: `parse` also keeps there what precedes a `://` and is not one.
+    pub fn scheme(&self) -> Option<&'a [u8]> {
+        Self::is_scheme(self.protocol).then_some(self.protocol)
+    }
+
     pub fn get_port(&self) -> Option<u16> {
         bun_core::fmt::parse_int::<u16>(self.port, 10).ok()
     }
@@ -847,12 +860,9 @@ impl<'a> URL<'a> {
                 b':' => {
                     if i + 3 <= str.len() && str[i + 1] == b'/' && str[i + 2] == b'/' {
                         self.protocol = &str[0..i];
-                        // RFC 3986 §3.1: only behind `ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )` is there an authority.
-                        let is_scheme = self.protocol.first().is_some_and(u8::is_ascii_alphabetic)
-                            && self.protocol.iter().all(|byte| {
-                                matches!(byte, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'+' | b'-' | b'.')
-                            });
-                        return is_scheme.then(|| u32::try_from(i + 3).expect("int cast"));
+                        // Only behind a scheme is there an authority.
+                        return Self::is_scheme(self.protocol)
+                            .then(|| u32::try_from(i + 3).expect("int cast"));
                     }
                 }
                 _ => {}
@@ -1892,6 +1902,7 @@ mod tests {
     fn no_host_is_read_behind_a_second_scheme() {
         let url = URL::parse(b"http:first.example://second.example/");
         assert_eq!(url.protocol, b"http:first.example");
+        assert_eq!(url.scheme(), None);
         assert_eq!(url.hostname, b"http");
 
         let url = URL::parse(b"blob:http://second.example/id");
@@ -1904,7 +1915,11 @@ mod tests {
 
         let url = URL::parse(b"localhost:3000/api");
         assert_eq!(url.protocol, b"");
+        assert_eq!(url.scheme(), None);
         assert_eq!((url.hostname, url.port), (&b"localhost"[..], &b"3000"[..]));
+
+        let url = URL::parse(b"git+ssh://second.example/");
+        assert_eq!(url.scheme(), Some(&b"git+ssh"[..]));
     }
 
     #[test]

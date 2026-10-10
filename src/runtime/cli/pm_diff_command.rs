@@ -723,7 +723,7 @@ fn fetch_registry_tree(
         URL::parse(manifest_url),
         // The abbreviated packument has versions + dist, all this needs; full ones run to tens of MB.
         b"application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-        Some((name, version)),
+        RegistryGet::Manifest { name, version },
     )?;
 
     let mut log = bun_ast::Log::init();
@@ -825,7 +825,7 @@ fn fetch_registry_tree(
         scope,
         URL::parse(&tarball_url),
         b"application/octet-stream",
-        None,
+        RegistryGet::Tarball { name },
     )?;
 
     let mut tree = Tree {
@@ -844,12 +844,24 @@ impl bun_core::strings::Appender for BumpAppender<'_> {
     }
 }
 
+#[derive(Clone, Copy)]
+enum RegistryGet<'a> {
+    Manifest {
+        name: &'a [u8],
+        version: &'a [u8],
+    },
+    /// The `dist.tarball` of `name`.
+    Tarball {
+        name: &'a [u8],
+    },
+}
+
 fn registry_get(
     pm: &PackageManager,
     scope: &npm::registry::Scope,
     url: URL<'_>,
     accept: &[u8],
-    for_error: Option<(&[u8], &[u8])>,
+    what: RegistryGet<'_>,
 ) -> Result<MutableString, crate::Error> {
     let mut headers = http::HeaderBuilder::default();
     headers.count(b"Accept", accept);
@@ -902,12 +914,29 @@ fn registry_get(
         Ok(r) => r,
         Err(err) => {
             Status::clear();
-            Output::err(err, "GET {} failed", (BStr::new(&display_url),));
+            match (err, what) {
+                (http::Error::UnsupportedProtocol, RegistryGet::Manifest { .. }) => {
+                    scope.report_unsupported_protocol()
+                }
+                // `dist.tarball` comes from the registry, not from the registry URL.
+                (http::Error::UnsupportedProtocol, RegistryGet::Tarball { name }) => {
+                    npm::registry::report_unsupported_protocol(
+                        "Tarball",
+                        format_args!("package {}", bun_fmt::quote(name)),
+                        &display_url,
+                    )
+                }
+                _ => Output::err(err, "GET {} failed", (BStr::new(&display_url),)),
+            }
             Global::exit(1);
         }
     };
     if res.status_code() >= 400 {
         Status::clear();
+        let for_error = match what {
+            RegistryGet::Manifest { name, version } => Some((name, version)),
+            RegistryGet::Tarball { .. } => None,
+        };
         npm::response_error::<false>(&req, &res, for_error, &mut response_buf)?;
     }
     Ok(response_buf)

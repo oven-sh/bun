@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { createSecretKey, type webcrypto } from "node:crypto";
+import { createDiffieHellman, createSecretKey, type webcrypto } from "node:crypto";
 
 type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
 type HmacImportParams = webcrypto.HmacImportParams;
@@ -14,6 +14,26 @@ it("crypto.subtle setter should not throw", () => {
   // @ts-expect-error
   expect(() => (globalThis.crypto.subtle = 123)).not.toThrow();
   expect(globalThis.crypto.subtle).toBe(subtle);
+});
+
+describe("importKey failure", () => {
+  // A failed key parse pushes to BoringSSL's thread-local error queue. The
+  // rejection must drain it so the next failed BoringSSL call reports its own
+  // error and not this one.
+  it.each([
+    ["pkcs8", { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, ["sign"]],
+    ["spki", { name: "ECDSA", namedCurve: "P-256" }, ["verify"]],
+  ] as const)("a failed %s import leaves no BoringSSL error behind", async (format, algorithm, usages) => {
+    const rejection = await crypto.subtle
+      .importKey(format, new Uint8Array([0, 0, 0]), algorithm, false, usages as KeyUsage[])
+      .then(
+        () => "resolved",
+        (e: Error) => e.name,
+      );
+    expect(rejection).toBe("DataError");
+    // createDiffieHellman(1) pushes BN_R_BITS_TOO_SMALL and reports the oldest entry.
+    expect(() => createDiffieHellman(1)).toThrow(expect.objectContaining({ code: "ERR_OSSL_BN_BITS_TOO_SMALL" }));
+  });
 });
 
 describe("Web Crypto", () => {

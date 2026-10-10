@@ -376,21 +376,23 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
 
     JSHash* hash = JSHash::create(vm, structure);
 
+    // A failed init or copy pushes its own entry last. ERR_get_error would
+    // return the oldest entry, which can belong to an earlier unrelated call.
     if (zigHasher) {
         if (!hash->initZig(globalObject, scope, zigHasher.release(), xofLen)) {
-            throwCryptoError(globalObject, scope, ERR_get_error(), "Digest method not supported"_s);
+            throwCryptoError(globalObject, scope, ERR_peek_last_error(), "Digest method not supported"_s);
             return {};
         }
         return JSValue::encode(hash);
     }
 
     if (!hash->init(globalObject, scope, md, xofLen)) {
-        throwCryptoError(globalObject, scope, ERR_get_error(), "Digest method not supported"_s);
+        throwCryptoError(globalObject, scope, ERR_peek_last_error(), "Digest method not supported"_s);
         return {};
     }
 
     if (original != nullptr && !original->m_ctx.copyTo(hash->m_ctx)) {
-        throwCryptoError(globalObject, scope, ERR_get_error(), "Digest copy error"_s);
+        throwCryptoError(globalObject, scope, ERR_peek_last_error(), "Digest copy error"_s);
         return {};
     }
 

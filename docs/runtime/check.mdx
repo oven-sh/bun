@@ -171,7 +171,7 @@ typecheck:
 - **One line per error.** When the output is not a terminal, `bun check` prints errors in the format of `tsc --pretty false`. Problem matchers and scripts written for `tsc` keep working.
 - **Errors go to stdout.** The summary line goes to stderr.
 - **No cache to save or restore.** `bun check` does not write `.tsbuildinfo` files. Every run checks the whole project.
-- **An empty run fails.** If there is nothing to check, `bun check` exits with code `1`. A job that runs in the wrong directory fails instead of passing.
+- **An empty run fails.** If there is nothing to check, `bun check` exits with code `1`. A job that runs in the wrong directory fails instead of passing. So does a job whose [paths have nothing to check](#some-files-or-directories).
 - **Shared runners.** `bun check` starts one thread per CPU core. Use `--threads 4` to use fewer.
 
 To check types and run tests in one step, use `bun test --check`. Bun runs the tests only if the test files, and everything they import, have no type errors.
@@ -245,6 +245,21 @@ Bun checks each file with the same `tsconfig.json` your editor uses for it:
 - If no project includes the file, Bun still checks it, with the options of the nearest `tsconfig.json`.
 
 A directory means the files of the project inside that directory. If the project has no files there, Bun checks every file in the directory that `exclude` does not rule out. An example is `bun check scripts` when `include` is `["src"]`.
+
+A path names a file or a directory to check. To name a project, use `-p` or [`-b`](#every-project). If every path is a `tsconfig.json`, `bun check` stops and says how to use it.
+
+```txt
+error: 'tsconfig.build.json' is a configuration file, not a file to check
+To use it as the project: bun check -p tsconfig.build.json
+To use it with the projects it references: bun check -b tsconfig.build.json
+To check the project here: bun check
+```
+
+If the paths exist but have no TypeScript files, the run fails with `Nothing to check`. An example is `bun check package.json`.
+
+If one path has a file to check, Bun checks it and says nothing about the other paths. A `tsconfig.json` among the paths is not the project: `bun check tsconfig.build.json src/index.ts` checks `src/index.ts` with the nearest `tsconfig.json`.
+
+A run that names only declaration files passes when `skipLibCheck` is on. Bun does not check those files, with or without a path. lint-staged runs `bun check` this way when you stage only a `.d.ts` file.
 
 ### Without a `tsconfig.json`
 
@@ -651,6 +666,7 @@ These differences are intentional:
 - **Compiler options work with `-b`.** `tsc -b --strict` reports TS5094. `bun check -b --strict` applies the option to every project.
 - **A `tsconfig.json` with nothing but `references` is followed.** `tsc` without `-b` [checks nothing](#a-tsconfigjson-with-nothing-but-references) there.
 - **Paths work next to a `tsconfig.json`.** `tsc src/index.ts` reports TS5112 if there is a `tsconfig.json`. `bun check src/index.ts` [checks the file with it](#some-files-or-directories).
+- **A path with nothing to check is an error.** Without a `tsconfig.json`, `tsc package.json` and `tsc packages/app/tsconfig.json` report nothing. `bun check` fails: it says `Nothing to check` for the first, and tells you to use `-p` or `-b` for the second.
 - **There is no `bun check --watch`.** To check again on every change, use [`bun --watch --check`](#watch-mode).
 - **The order of files does not change the errors.** `tsc` collects the errors of a file right after it checks that file, so it drops an error that a later file raises in an earlier one. `bun check` reports it.
 - **A file that is too long affects no other file.** After TS2563 for the top-level code of one file, `tsc` stops following the types of variables and parameters in the files it checks next, so it drops errors there and reports false ones. `bun check` starts every file afresh.

@@ -358,6 +358,15 @@ pub mod registry {
                 }
             }
 
+            // The config loaders split literal strings; an expanded $ENV_VAR is split here.
+            let from_url = api::NpmRegistry::from_url(&registry.url);
+            registry.url = from_url.url;
+            if !registry.has_credentials() {
+                registry.token = from_url.token;
+                registry.username = from_url.username;
+                registry.password = from_url.password;
+            }
+
             // `url` borrows the owned `registry_url` buffer for the duration
             // of parsing. The final href is moved into `Scope.url: OwnedURL`
             // (owned `Box<[u8]>`).

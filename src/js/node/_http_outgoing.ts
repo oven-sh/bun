@@ -5,7 +5,7 @@ const { Stream } = require("internal/stream");
 const { isUint8Array, validateString } = require("internal/validators");
 const { deprecate } = require("internal/util/deprecate");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
-const { kOutHeaders, kNeedDrain, utcDate } = require("internal/http");
+const { kOutHeaders, kNeedDrain, utcDate, outgoingMessageInternals } = require("internal/http");
 const {
   validateHeaderName,
   validateHeaderValue,
@@ -652,6 +652,61 @@ function matchHeader(self, state, field, value) {
       self._defaultKeepAlive = false;
       break;
   }
+}
+
+// The raw arms of _storeHeader's walk for a handle, which takes the lines as [name, value, ...]. Not a mode of _storeHeader: every http.request() runs that.
+function walkRawHead(self, headers) {
+  const state = { connection: false, contLen: false, te: false, date: false, trailer: false, flat: [] as string[] };
+  const lenient = self._isLenientHeaderValidation();
+  if (ArrayIsArray(headers)) {
+    const headersLength = headers.length;
+    if (headersLength && ArrayIsArray(headers[0])) {
+      for (let i = 0; i < headersLength; i++) {
+        const entry = headers[i];
+        pushRawHeader(self, state, entry[0], entry[1], lenient);
+      }
+    } else {
+      if (headersLength % 2 !== 0) {
+        throw $ERR_INVALID_ARG_VALUE("headers", headers);
+      }
+
+      for (let n = 0; n < headersLength; n += 2) {
+        pushRawHeader(self, state, headers[n + 0], headers[n + 1], lenient);
+      }
+    }
+  } else {
+    for (const key in headers) {
+      if (ObjectHasOwn(headers, key)) {
+        pushRawHeader(self, state, key, headers[key], lenient);
+      }
+    }
+  }
+  return state;
+}
+outgoingMessageInternals.walkRawHead = walkRawHead;
+
+// processHeader() for walkRawHead(), without its Content-Disposition step: that step is for a head that Node writes as UTF-8, and the native handle writes one byte for each character.
+function pushRawHeader(self, state, key, value, lenient) {
+  validateHeaderName(key);
+  if (ArrayIsArray(value)) {
+    const valueLength = value.length;
+    const unique = self[kUniqueHeaders];
+    if ((valueLength < 2 || !isCookieField(key)) && (!unique || !unique.$has(lowercaseHeaderName(key)))) {
+      for (let i = 0; i < valueLength; i++) pushRawLine(self, state, key, value[i], lenient);
+      return;
+    }
+    value = value.join("; ");
+  }
+  pushRawLine(self, state, key, value, lenient);
+}
+
+// storeHeader() for walkRawHead().
+function pushRawLine(self, state, key, value, lenient) {
+  validateHeaderValueLenient(key, value, lenient);
+  state.flat.push(key, "" + value);
+  // matchHeader() returns for other lengths. lowercaseHeaderName() saves its toLowerCase() a new string.
+  const length = key.length;
+  if (length >= 4 && length <= 17) matchHeader(self, state, lowercaseHeaderName(key), value);
 }
 
 function parseUniqueHeadersOption(headers) {

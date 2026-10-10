@@ -62,6 +62,7 @@ const {
   kOutHeaders,
   onDataIncomingMessage,
   http1ServerPipeline,
+  outgoingMessageInternals,
 } = require("internal/http");
 const { FakeSocket } = require("internal/http/FakeSocket");
 const NumberIsNaN = Number.isNaN;
@@ -207,6 +208,17 @@ function strictContentLength(response, headerState, fromEnd) {
       contentLength = +contentLength;
       if (NumberIsNaN(contentLength)) {
         return;
+      }
+    } else {
+      const rawHead = response[kRawHead];
+      if (rawHead !== undefined) {
+        if (response[kReplayingPipelinedOps]) {
+          // A queued response is checked when its calls are replayed, where a throw has no caller. What only a raw head is checked for stays out of there.
+          if (rawHead.te || NumberIsNaN(contentLength)) return;
+        } else if (NumberIsNaN(contentLength)) {
+          // matchHeader() left NaN for a Content-Length that is not a number. In Node no write() is more than NaN and no end() equals it, as with Infinity in the handle.
+          return Infinity;
+        }
       }
     }
     return contentLength;
@@ -2250,7 +2262,7 @@ function getNodeHTTPServerSocket() {
 
 // Node validates the `Trailer` header inside _storeHeader, after the body framing has
 // been decided, so `this.chunkedEncoding` is already set. Bun frames the body in uWS
-// and never sets `response.chunkedEncoding`, so reproduce Node's decision here.
+// and does not set `response.chunkedEncoding` from the header store, so reproduce Node's decision here.
 function willBeChunked(response) {
   // kOutHeaders is a null-proto map of lowercased name -> [name, value];
   // index it directly instead of paying hasHeader/getHeader (each of which
@@ -2270,7 +2282,6 @@ function willBeChunked(response) {
 // fields, so it can carry neither a body nor trailers.
 function hasInvalidTrailer(response) {
   if (willBeChunked(response)) return false;
-  if (response._trailer) return true;
   const outHeaders = response[kOutHeaders];
   return outHeaders !== null && outHeaders["trailer"] !== undefined;
 }
@@ -2302,6 +2313,8 @@ function _writeHead(statusCode, reason, obj, response) {
     let k;
 
     if ($isArray(obj)) {
+      // Only writeHead() called
+      if (!response[kOutHeaders]) return setRawHead(response, obj);
       const length = obj.length;
       // Append all the headers provided in the array:
       if (length && $isArray(obj[0])) {
@@ -2335,6 +2348,8 @@ function _writeHead(statusCode, reason, obj, response) {
         }
       }
     } else if (obj) {
+      // Only writeHead() called
+      if (!response[kOutHeaders]) return setRawHead(response, obj);
       const keys = Object.keys(obj);
       const length = keys.length;
       // Retain for(;;) loop for performance reasons
@@ -2353,6 +2368,66 @@ function _writeHead(statusCode, reason, obj, response) {
   }
 }
 
+// What walkRawHead() returns for a writeHead() with no header set before. Node renders those headers as given (https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L465-L468). A handle writes the head later.
+const kRawHead = Symbol("kRawHead");
+
+function setRawHead(response, headers) {
+  if (!response[kHandle]) {
+    if (response._header) throw $ERR_HTTP_HEADERS_SENT("writeHead");
+    // _storeHeader validates. A throw here comes before writeHead() marks the headers as sent.
+    response._storeHeader(`HTTP/1.1 ${response.statusCode} ${response.statusMessage}\r\n`, headers);
+    return;
+  }
+  const contentLength = response._contentLength;
+  let rawHead;
+  try {
+    rawHead = outgoingMessageInternals.walkRawHead!(response, headers);
+    if (response[headerStateSymbol] === NodeHTTPHeaderState.sent) {
+      // The toString() of a value sent the head from inside the walk. Node sends a second head then. A handle cannot.
+      if (response.finished) return;
+      throw $ERR_HTTP_HEADERS_SENT("writeHead");
+    }
+    const statusCode = response.statusCode;
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L492-L497
+    if (response.chunkedEncoding && (statusCode === 204 || statusCode === 304)) {
+      response.chunkedEncoding = false;
+      response.shouldKeepAlive = false;
+    }
+    // The last check of _storeHeader: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L555-L557
+    if (rawHead.trailer && !rawHeadIsChunked(response, rawHead)) {
+      throw $ERR_HTTP_TRAILER_INVALID();
+    }
+  } catch (error) {
+    // The lines of a failed call are gone, and so is their Content-Length. What they said about the connection stays, as in Node.
+    if (response._last) response[kMustCloseConnection] = true;
+    response._contentLength = contentLength;
+    throw error;
+  }
+  response[kRawHead] = rawHead;
+}
+
+// What _storeHeader leaves in chunkedEncoding for a raw head: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L519-L548
+function rawHeadIsChunked(response, rawHead) {
+  if (!rawHead.contLen && !rawHead.te) {
+    if (!response._hasBody) return false;
+    if (response.useChunkedEncodingByDefault && !response._removedTE) return true;
+  }
+  return response.chunkedEncoding === true;
+}
+
+function moveRawHeadToStore(res) {
+  const rawHead = res[kRawHead];
+  // After end() the head is out, and appendHeader() would throw.
+  if (rawHead === undefined || res._header) return;
+  res[kRawHead] = undefined;
+  if (rawHead.contLen) res._contentLength = null;
+  if (rawHead.te) res.chunkedEncoding = false;
+  const lines = rawHead.flat;
+  for (let i = 0, length = lines.length; i < length; i += 2) {
+    OutgoingMessagePrototype.appendHeader.$call(res, lines[i], lines[i + 1]);
+  }
+}
+
 function ServerResponse(req, options): void {
   if (!(this instanceof ServerResponse)) return new ServerResponse(req, options);
   OutgoingMessage.$call(this, options);
@@ -2364,6 +2439,8 @@ function ServerResponse(req, options): void {
   this._sent100 = false;
   this[headerStateSymbol] = NodeHTTPHeaderState.none;
   this[kPendingCallbacks] = [];
+  // Declared here so that writeHead() never shape-transitions the response when it keeps its headers.
+  this[kRawHead] = undefined;
   this.finished = false;
 
   // this is matching node's behaviour
@@ -2414,6 +2491,7 @@ $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
 // Like Node.js's _storeHeader(), the defaults never touch kOutHeaders, so
 // getHeaders()/getHeaderNames()/hasHeader() keep reporting only the headers
 // the user actually set, even after the headers have been flushed.
+// The headers of a writeHead() with no header set before are not in kOutHeaders: they go into the array as kRawHead has them.
 // Reusable backing array for renderNativeHeaders. The native writeHead
 // consumes the array synchronously, so it can be reused across requests;
 // the busy flag covers re-entrancy (a user toString() on a header value
@@ -2464,8 +2542,23 @@ function renderNativeHeaders(res) {
   let hasDate = false;
   let hasConnection = false;
   let hasKeepAlive = false;
+  // Defined when the head names a Transfer-Encoding, a Content-Length.
+  let headTransferEncoding;
+  let headContentLength;
   try {
-    if (headersMap !== null && headersMap !== undefined) {
+    const rawHead = res[kRawHead];
+    if (rawHead !== undefined) {
+      // The lines that writeHead() took from its argument are the head, whatever the store holds by now.
+      const lines = rawHead.flat;
+      for (let i = 0, length = lines.length; i < length; i++) flat.push(lines[i]);
+      hasDate = rawHead.date;
+      hasConnection = rawHead.connection;
+      if (rawHead.te) headTransferEncoding = true;
+      if (rawHead.contLen) headContentLength = true;
+      // matchHeader() left the other two on the response: a Keep-Alive line, and `close` in a Connection line.
+      hasKeepAlive = res._defaultKeepAlive === false;
+      if (res._last) res[kMustCloseConnection] = true;
+    } else if (headersMap !== null && headersMap !== undefined) {
       for (const key in headersMap) {
         const entry = headersMap[key];
         const name = entry[0];
@@ -2502,6 +2595,9 @@ function renderNativeHeaders(res) {
           flat.push(name, String(value));
         }
       }
+      // headersMap already holds res[kOutHeaders]: index the two framing headers once for the checks below.
+      headTransferEncoding = headersMap["transfer-encoding"];
+      headContentLength = headersMap["content-length"];
     }
 
     if (res.sendDate && !hasDate) {
@@ -2512,12 +2608,8 @@ function renderNativeHeaders(res) {
     // chunked Transfer-Encoding on such a response could confuse reverse
     // proxies, so like Node.js the body framing is suppressed and the
     // connection is forcibly closed after the response.
-    // headersMap already holds res[kOutHeaders]; index the two framing headers
-    // once instead of re-reading the symbol per check below.
-    const storedTransferEncoding = headersMap === null ? undefined : headersMap["transfer-encoding"];
-    const storedContentLength = headersMap === null ? undefined : headersMap["content-length"];
     let defectiveNoBodyResponse = false;
-    if (storedTransferEncoding !== undefined) {
+    if (headTransferEncoding !== undefined) {
       const statusCode = res[kSnapshotStatusCode] ?? res.statusCode;
       if (statusCode === 204 || statusCode === 304) {
         defectiveNoBodyResponse = true;
@@ -2535,8 +2627,8 @@ function renderNativeHeaders(res) {
     // False for HTTP/1.0 (set by the constructor) or when the user cleared it.
     const chunkedByDefault = !!res.useChunkedEncodingByDefault;
     // Node's shouldSendKeepAlive: without chunked encoding only an explicit Content-Length lets the connection persist.
-    const canPersist = chunkedByDefault || storedContentLength !== undefined;
-    if (storedContentLength === undefined && storedTransferEncoding === undefined) {
+    const canPersist = chunkedByDefault || headContentLength !== undefined;
+    if (headContentLength === undefined && headTransferEncoding === undefined) {
       if (res._hasBody === false) {
         // HEAD / 204 / 304 / 1xx: there is no body to delimit, so removing the
         // framing headers must not close the connection (Node's _storeHeader
@@ -3049,8 +3141,14 @@ function accountQueuedHeaderBytes(res, queued) {
   }
   // Status line: "HTTP/1.1 NNN <message>\r\n".
   let bytes = 15 + String(res.statusMessage ?? STATUS_CODES[res.statusCode] ?? "unknown").length;
+  const rawHead = res[kRawHead];
   const outHeaders = res[kOutHeaders];
-  if (outHeaders !== null && outHeaders !== undefined) {
+  if (rawHead !== undefined) {
+    const lines = rawHead.flat;
+    for (let i = 0, length = lines.length; i < length; i += 2) {
+      bytes += lines[i].length + 4 + lines[i + 1].length;
+    }
+  } else if (outHeaders !== null && outHeaders !== undefined) {
     for (const key in outHeaders) {
       const entry = outHeaders[key];
       if (!entry) continue;
@@ -3067,9 +3165,15 @@ function accountQueuedHeaderBytes(res, queued) {
   // Headers the native writer adds when absent, with their literal serialized
   // lengths: "Date: <29-byte IMF-fixdate>\r\n" (37), "Connection: keep-alive\r\n"
   // (24), "Transfer-Encoding: chunked\r\n" (28), plus the terminating "\r\n".
-  if (!res.hasHeader("date")) bytes += 37;
-  if (!res.hasHeader("connection")) bytes += 24;
-  if (!res.hasHeader("content-length") && !res.hasHeader("transfer-encoding")) bytes += 28;
+  if (rawHead !== undefined) {
+    if (!rawHead.date) bytes += 37;
+    if (!rawHead.connection) bytes += 24;
+    if (!rawHead.contLen && !rawHead.te) bytes += 28;
+  } else {
+    if (!res.hasHeader("date")) bytes += 37;
+    if (!res.hasHeader("connection")) bytes += 24;
+    if (!res.hasHeader("content-length") && !res.hasHeader("transfer-encoding")) bytes += 28;
+  }
   bytes += 2;
   queued.headerBytes = bytes;
   queued.bytes += bytes;
@@ -3266,7 +3370,7 @@ Object.defineProperty(ServerResponse.prototype, "connection", {
   },
 });
 
-// The native-handle path ignores this flag (uWS does the chunk framing), but
+// The native-handle path does not frame the body by this flag (uWS does the chunk framing), but
 // the standalone path (no kHandle, assignSocket()) goes through the upstream
 // _storeHeader/write_/end machinery, which sets and reads it to frame the
 // body - so it needs real storage.
@@ -3333,6 +3437,8 @@ Object.defineProperty(ServerResponse.prototype, "headersSent", {
   },
   set(value) {
     this[headerStateSymbol] = value ? NodeHTTPHeaderState.sent : NodeHTTPHeaderState.none;
+    // The headers are changeable again, so the lines of kRawHead go to the header store.
+    if (!value) moveRawHeadToStore(this);
   },
 });
 
@@ -3530,7 +3636,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   if (
     trailer &&
     this._hasBody &&
-    !this.hasHeader("content-length") &&
+    !(this[kRawHead]?.contLen ?? this.hasHeader("content-length")) &&
     this.req?.httpVersionMajor === 1 &&
     this.req?.httpVersionMinor >= 1
   ) {
@@ -3799,7 +3905,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
   let written = 0;
   if (chunk) {
     written = typeof chunk === "string" ? Buffer.byteLength(chunk, encoding) : chunk.length;
-    if (written > 0 && this.getHeader("content-length") === undefined) {
+    if (written > 0 && !(this[kRawHead]?.contLen ?? this.getHeader("content-length") !== undefined)) {
       // Chunked framing overhead: <hex length>\r\n<chunk>\r\n
       written += written.toString(16).length + 4;
     }
@@ -3989,7 +4095,13 @@ ServerResponse.prototype.writeHead = function (statusCode, statusMessage, header
   // Node's writeHead() freezes body framing: _storeHeader runs with _contentLength null and
   // a later end(chunk) cannot add Content-Length once _header exists. Headers render lazily
   // here, so record the frozen choice for renderNativeHeaders.
-  if (!this[kImplicitHeaderFromEnd] && !this.hasHeader("content-length") && !this.hasHeader("transfer-encoding")) {
+  const rawHead = this[kRawHead];
+  if (
+    !this[kImplicitHeaderFromEnd] &&
+    (rawHead !== undefined
+      ? !rawHead.contLen && !rawHead.te
+      : !this.hasHeader("content-length") && !this.hasHeader("transfer-encoding"))
+  ) {
     this[kFramingFrozenChunked] = true;
   }
 

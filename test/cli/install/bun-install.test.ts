@@ -17,7 +17,7 @@ import {
   toBeWorkspaceLink,
   toHaveBins,
 } from "harness";
-import { basename, join, resolve, sep } from "path";
+import { basename, join, parse, resolve, sep } from "path";
 import {
   createTestContext,
   destroyTestContext,
@@ -126,6 +126,258 @@ function serveDirectory(root: string) {
     },
   });
 }
+
+test.skipIf(!isWindows)("generated Windows uninstaller validates TEMP before cleanup", async () => {
+  using dir = tempDir("bun-windows-uninstaller", {
+    "verify-uninstaller.ps1": String.raw`
+      param([string]$Uninstaller, [string]$CasesBase64, [string]$RealTempsBase64)
+
+      $ErrorActionPreference = "Stop"
+      [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+      $Tokens = $null
+      $ParseErrors = $null
+      $Ast = [Management.Automation.Language.Parser]::ParseFile($Uninstaller, [ref]$Tokens, [ref]$ParseErrors)
+      if ($ParseErrors.Count -gt 0) { throw $ParseErrors[0] }
+      $FunctionAst = $Ast.Find({
+        param($Node)
+        $Node -is [Management.Automation.Language.FunctionDefinitionAst] -and $Node.Name -eq "Remove-BunTempFiles"
+      }, $true)
+      if ($null -eq $FunctionAst) { throw "Remove-BunTempFiles was not found" }
+      $InvocationAst = $Ast.Find({
+        param($Node)
+        if ($Node -isnot [Management.Automation.Language.CommandAst] -or $Node.GetCommandName() -ne "Remove-BunTempFiles") {
+          return $false
+        }
+        for ($Parent = $Node.Parent; $null -ne $Parent -and $Parent -ne $Ast; $Parent = $Parent.Parent) {
+          if ($Parent -is [Management.Automation.Language.FunctionDefinitionAst]) { return $false }
+        }
+        return $Parent -eq $Ast
+      }, $true)
+      if ($null -eq $InvocationAst) { throw "Remove-BunTempFiles is not invoked at script scope" }
+
+      # Never run the whole uninstaller. Keep filesystem mocks scoped to the guard tests.
+      $Result = & {
+        Invoke-Expression $FunctionAst.Extent.Text
+        function Test-Path {
+          [CmdletBinding()]
+          param([string]$LiteralPath, [string]$PathType)
+          if ($PathType -ne "Container") { throw "TEMP must be a directory" }
+          return -not $script:CurrentCase.notDirectory
+        }
+        function Get-ChildItem {
+          [CmdletBinding()]
+          param([string]$LiteralPath, [string]$Filter, [switch]$Force)
+          $script:EnumeratedPaths += [IO.Path]::Combine($LiteralPath, $Filter)
+          if ($script:CurrentCase.failEnumeration -and $Filter -eq "bun-*") {
+            throw "Simulated enumeration failure"
+          }
+          foreach ($Suffix in @("first", "second")) {
+            $Name = $Filter.Replace("*", $Suffix)
+            [PSCustomObject]@{ Name = $Name; FullName = [IO.Path]::Combine($LiteralPath, $Name) }
+          }
+          # A provider filter can match an 8.3 alias instead of the actual filename.
+          [PSCustomObject]@{ Name = "unrelated.txt"; FullName = [IO.Path]::Combine($LiteralPath, "unrelated.txt") }
+        }
+        function Remove-Item {
+          [CmdletBinding()]
+          param([string]$LiteralPath, [switch]$Recurse, [switch]$Force)
+          $script:RemovedPaths += $LiteralPath
+          if ($script:CurrentCase.failRemoval -and [IO.Path]::GetFileName($LiteralPath) -eq "bun-first") {
+            throw "Simulated removal failure"
+          }
+        }
+
+        $CasesJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($CasesBase64))
+        $Results = @{}
+        foreach ($Case in ($CasesJson | ConvertFrom-Json)) {
+          $script:CurrentCase = $Case
+          [Environment]::SetEnvironmentVariable("TEMP", $Case.temp, "Process")
+          $script:EnumeratedPaths = @()
+          $script:RemovedPaths = @()
+          Remove-BunTempFiles
+          $Results[$Case.name] = @{
+            enumerated = @($script:EnumeratedPaths)
+            removed = @($script:RemovedPaths)
+          }
+        }
+        $Results
+      }
+
+      # These calls use the real cmdlets, but only on the disposable test fixtures.
+      Invoke-Expression $FunctionAst.Extent.Text
+      $RealTempsJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($RealTempsBase64))
+      foreach ($TempPath in ($RealTempsJson | ConvertFrom-Json)) {
+        $HiddenFile = [IO.Path]::Combine($TempPath, "bun-hidden.txt")
+        if ([IO.File]::Exists($HiddenFile)) {
+          [IO.File]::SetAttributes($HiddenFile, [IO.FileAttributes]::Hidden -bor [IO.FileAttributes]::ReadOnly)
+        }
+        [Environment]::SetEnvironmentVariable("TEMP", $TempPath, "Process")
+        Remove-BunTempFiles
+        Remove-BunTempFiles # No matches must also be harmless.
+      }
+      $Result | ConvertTo-Json -Depth 4 -Compress
+    `,
+  });
+  const bunRoot = join(String(dir), "bun");
+  const bunBin = join(bunRoot, "bin");
+  const installedBun = join(bunBin, "bun.exe");
+  const uninstaller = join(bunRoot, "uninstall.ps1");
+  const cleanupFixture = join(String(dir), "verify-uninstaller.ps1");
+
+  await mkdir(bunBin, { recursive: true });
+  await cp(bunExe(), installedBun);
+
+  await using proc = spawn({
+    cmd: [installedBun, "completions"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  expect(await proc.exited).toBe(0);
+
+  const validTemp = join(String(dir), "valid-temp");
+  const wildcardTemp = join(String(dir), "temp[x]");
+  const backtickTemp = join(String(dir), "temp`x");
+  const uncTemp = "\\\\server\\share\\temp";
+  const driveRoot = parse(String(dir)).root;
+  const cases: {
+    name: string;
+    temp: string | null;
+    expectedTemp?: string;
+    failEnumeration?: boolean;
+    failRemoval?: boolean;
+    notDirectory?: boolean;
+  }[] = [
+    { name: "unset", temp: null },
+    { name: "empty", temp: "" },
+    { name: "blank", temp: " \t" },
+    { name: "relative", temp: "relative" },
+    { name: "rootRelative", temp: "\\relative" },
+    { name: "slashRootRelative", temp: "/relative" },
+    { name: "driveRelative", temp: `${driveRoot.slice(0, 2)}relative` },
+    { name: "driveRoot", temp: driveRoot },
+    { name: "uncRoot", temp: "\\\\server\\share" },
+    { name: "uncRootTrailing", temp: "\\\\server\\share\\" },
+    { name: "canonicalRoot", temp: `${driveRoot}temp\\..` },
+    { name: "canonicalUncRoot", temp: `${uncTemp}\\..` },
+    { name: "invalidStar", temp: join(driveRoot, "temp*") },
+    { name: "invalidQuestion", temp: join(driveRoot, "temp?") },
+    { name: "invalidQuote", temp: join(driveRoot, 'temp"') },
+    { name: "invalidPipe", temp: join(driveRoot, "temp|") },
+    { name: "invalidColon", temp: join(driveRoot, "temp:stream") },
+    { name: "invalidControl", temp: join(driveRoot, "temp\x1f") },
+    { name: "extendedPath", temp: `\\\\?\\${validTemp}` },
+    { name: "extendedCanonicalRoot", temp: `\\\\?\\${driveRoot}temp\\..` },
+    { name: "devicePath", temp: `\\\\.\\${validTemp}` },
+    { name: "extendedUncPath", temp: "\\\\?\\UNC\\server\\share\\temp" },
+    { name: "missingDirectory", temp: validTemp, notDirectory: true },
+    { name: "fileInsteadOfDirectory", temp: join(validTemp, "bun-file.txt"), notDirectory: true },
+    { name: "valid", temp: validTemp, expectedTemp: validTemp },
+    { name: "wildcard", temp: wildcardTemp, expectedTemp: wildcardTemp },
+    { name: "backtick", temp: backtickTemp, expectedTemp: backtickTemp },
+    { name: "trailingSeparator", temp: `${validTemp}${sep}`, expectedTemp: validTemp },
+    { name: "forwardSlashes", temp: validTemp.replaceAll("\\", "/"), expectedTemp: validTemp },
+    { name: "canonicalChild", temp: `${validTemp}\\child\\..`, expectedTemp: validTemp },
+    { name: "uncChild", temp: uncTemp, expectedTemp: uncTemp },
+    { name: "enumerationFailure", temp: validTemp, expectedTemp: validTemp, failEnumeration: true },
+    { name: "removalFailure", temp: validTemp, expectedTemp: validTemp, failRemoval: true },
+  ];
+  const expected = Object.fromEntries(
+    cases.map(({ name, expectedTemp, failEnumeration }) => [
+      name,
+      {
+        enumerated: expectedTemp ? ["bun-*", "bunx-*"].map(pattern => join(expectedTemp, pattern)) : [],
+        removed: expectedTemp
+          ? (failEnumeration
+              ? ["bunx-first", "bunx-second"]
+              : ["bun-first", "bun-second", "bunx-first", "bunx-second"]
+            ).map(name => join(expectedTemp, name))
+          : [],
+      },
+    ]),
+  );
+
+  const realTemps = [
+    "real plain",
+    "real-bracket[x]",
+    "real-tick`x",
+    "real-double-tick``x",
+    "real-both`[x]",
+    "real-unicode-\u00e9",
+  ].map(name => join(String(dir), name));
+  const decoyTemps = ["real-bracketx", "real-tickx", "real-double-tick`x", "real-bothx", "real-both`x"].map(name =>
+    join(String(dir), name),
+  );
+  const fileTemp = join(String(dir), "bun-not-a-directory.txt");
+  const missingTemp = join(String(dir), "missing-temp");
+  const removedDirectories = ["bun-dir", "bunx-dir", "bun-dir[x]", "bunx-dir`x"];
+  const removedFiles = ["bun-file.txt", "bunx-file.txt", "bun-hidden.txt", "bun-file[x].txt", "bunx-file`x.txt"];
+  const removed = [...removedDirectories, ...removedFiles];
+  const preserved = ["keep.txt", "bun -keep.txt", "bunx -keep.txt", join("keep-dir", "bun-nested", "keep.txt")];
+  const fixtures = [...removedDirectories.map(name => join(name, "nested", "file.txt")), ...removedFiles, ...preserved];
+  const shells = ["powershell.exe"];
+  const pwsh = Bun.which("pwsh.exe");
+  if (pwsh) shells.push(pwsh);
+
+  for (const shell of shells) {
+    // Recreate the files so every available PowerShell version performs real deletions.
+    for (const temp of realTemps) {
+      for (const name of fixtures) {
+        const path = join(temp, name);
+        await mkdir(parse(path).dir, { recursive: true });
+        await writeFile(path, "fixture");
+      }
+    }
+    await writeFile(fileTemp, "do not delete");
+    for (const temp of decoyTemps) {
+      await mkdir(temp, { recursive: true });
+      await writeFile(join(temp, "bun-keep.txt"), "do not delete");
+    }
+
+    await using cleanup = spawn({
+      cmd: [
+        shell,
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        cleanupFixture,
+        "-Uninstaller",
+        uninstaller,
+        "-CasesBase64",
+        Buffer.from(JSON.stringify(cases)).toString("base64"),
+        "-RealTempsBase64",
+        Buffer.from(JSON.stringify([...realTemps, fileTemp, missingTemp])).toString("base64"),
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      cleanup.stdout.text(),
+      cleanup.stderr.text(),
+      cleanup.exited,
+    ]);
+    expect(stderr).toBe("");
+    expect(stdout).toMatch(/^\{.*\}\r?\n$/s);
+    expect(JSON.parse(stdout)).toEqual(expected);
+    for (const temp of realTemps) {
+      expect(await exists(temp)).toBe(true);
+      for (const name of removed) expect(await exists(join(temp, name))).toBe(false);
+      for (const name of preserved) expect(readFileSync(join(temp, name), "utf8")).toBe("fixture");
+    }
+    expect(readFileSync(fileTemp, "utf8")).toBe("do not delete");
+    expect(await exists(missingTemp)).toBe(false);
+    for (const temp of decoyTemps) {
+      expect(readFileSync(join(temp, "bun-keep.txt"), "utf8")).toBe("do not delete");
+    }
+    expect(exitCode).toBe(0);
+  }
+});
 
 describe.concurrent("bun-install", () => {
   for (let input of ["abcdef", "65537", "-1"]) {

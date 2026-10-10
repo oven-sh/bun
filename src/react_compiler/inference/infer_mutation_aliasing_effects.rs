@@ -462,58 +462,73 @@ impl<'a> IntoIterator for &'a ValueIdSet {
 const CHUNK: usize = 64;
 const CHUNK_OF_CHUNKS: usize = CHUNK * CHUNK;
 
-/// A vector in chunks of chunks that its clones share until one of them writes to the chunk.
+type Chunk<T> = Option<Rc<[T; CHUNK]>>;
+
+/// A vector in chunks of chunks that its clones share until one of them writes to a chunk. `None`: all is the default.
 #[derive(Debug, Clone)]
-struct ChunkedVec<T>(Vec<Rc<[Rc<[T; CHUNK]>; CHUNK]>>);
+struct ChunkedVec<T>(Vec<Chunk<Chunk<T>>>);
 
 impl<T: Clone + Default> ChunkedVec<T> {
     fn with_len(len: usize) -> Self {
-        let mut this = ChunkedVec(Vec::new());
-        this.grow(len.div_ceil(CHUNK_OF_CHUNKS));
-        this
+        ChunkedVec(vec![None; len.div_ceil(CHUNK_OF_CHUNKS)])
     }
 
     fn grow(&mut self, chunks_of_chunks: usize) {
         if chunks_of_chunks > self.0.len() {
-            let empty = Rc::new(std::array::from_fn(|_| T::default()));
-            let empty = Rc::new(std::array::from_fn(|_| Rc::clone(&empty)));
-            self.0.resize(chunks_of_chunks, empty);
+            self.0.resize(chunks_of_chunks, None);
         }
     }
 
     #[inline]
     fn get(&self, i: usize) -> Option<&T> {
-        let chunks = self.0.get(i / CHUNK_OF_CHUNKS)?;
-        Some(&chunks[i / CHUNK % CHUNK][i % CHUNK])
+        let chunks = self.0.get(i / CHUNK_OF_CHUNKS)?.as_ref()?;
+        Some(&chunks[i / CHUNK % CHUNK].as_ref()?[i % CHUNK])
     }
 
     #[inline]
     fn get_mut(&mut self, i: usize) -> &mut T {
         self.grow(i / CHUNK_OF_CHUNKS + 1);
-        let chunks = Rc::make_mut(&mut self.0[i / CHUNK_OF_CHUNKS]);
-        &mut Rc::make_mut(&mut chunks[i / CHUNK % CHUNK])[i % CHUNK]
+        Self::cell_mut(
+            &mut self.0[i / CHUNK_OF_CHUNKS],
+            i / CHUNK % CHUNK,
+            i % CHUNK,
+        )
+    }
+
+    fn cell_mut(chunks: &mut Chunk<Chunk<T>>, chunk: usize, at: usize) -> &mut T {
+        let chunks = chunks.get_or_insert_with(|| Rc::new(std::array::from_fn(|_| None)));
+        let chunk = &mut Rc::make_mut(chunks)[chunk];
+        let chunk = chunk.get_or_insert_with(|| Rc::new(std::array::from_fn(|_| T::default())));
+        &mut Rc::make_mut(chunk)[at]
     }
 
     fn iter(&self) -> impl Iterator<Item = &T> {
-        let chunks = self.0.iter().flat_map(|chunks| chunks.iter());
-        chunks.flat_map(|chunk| chunk.iter())
+        let chunks = self.0.iter().flatten().flat_map(|chunks| chunks.iter());
+        chunks.flatten().flat_map(|chunk| chunk.iter())
     }
 
     /// Puts `merged(mine, theirs)` at each index where it is something, and copies no chunk for less. Whether it was.
+    /// `merged(mine, &T::default())` is nothing.
     fn merge_from(&mut self, other: &Self, merged: impl Fn(&T, &T) -> Option<T>) -> bool {
         self.grow(other.0.len());
+        let is = |mine: Option<&Rc<_>>, theirs| mine.is_some_and(|mine| Rc::ptr_eq(mine, theirs));
+        let nothing = T::default();
         let mut changed = false;
         for (mine, theirs) in self.0.iter_mut().zip(&other.0) {
-            if Rc::ptr_eq(mine, theirs) {
+            let Some(theirs) = theirs else { continue };
+            if mine.as_ref().is_some_and(|mine| Rc::ptr_eq(mine, theirs)) {
                 continue;
             }
             for (chunk, theirs) in theirs.iter().enumerate() {
-                if Rc::ptr_eq(&mine[chunk], theirs) {
+                let Some(theirs) = theirs else { continue };
+                if is(mine.as_ref().and_then(|mine| mine[chunk].as_ref()), theirs) {
                     continue;
                 }
                 for (at, theirs) in theirs.iter().enumerate() {
-                    if let Some(merged) = merged(&mine[chunk][at], theirs) {
-                        Rc::make_mut(&mut Rc::make_mut(mine)[chunk])[at] = merged;
+                    let cells = mine.as_ref().and_then(|mine| mine[chunk].as_ref());
+                    let cell = cells.map_or(&nothing, |cells| &cells[at]);
+                    if let Some(merged) = merged(cell, theirs) {
+                        *Self::cell_mut(mine, chunk, at) = merged;
                         changed = true;
                     }
                 }

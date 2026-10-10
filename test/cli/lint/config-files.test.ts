@@ -3572,7 +3572,8 @@ test.concurrent.each([
 ])("no-restricted-syntax with a selector that cannot be read: %#", async (option, message) => {
   const files = { ".eslintrc.json": rc({ rules: { "no-restricted-syntax": ["error", "Foo", option] } }), "a.js": code };
   const { problems, stderr, exitCode } = await lint(files, ["a.js"]);
-  expect(stderr).toContain(`${message}\nOccurred while linting <dir>/a.js`);
+  // `lint` has a `/` for each backslash.
+  expect(stderr).toContain(`${message.replaceAll("\\", "/")}\nOccurred while linting <dir>/a.js`);
   expect({ problems, exitCode }).toEqual({ problems: [], exitCode: 2 });
 });
 

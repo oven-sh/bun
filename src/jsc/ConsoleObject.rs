@@ -1825,13 +1825,7 @@ pub mod formatter {
         bun_collections::object_pool!(pub Pool: Map, threadsafe, 16);
         pub type PoolNode = bun_collections::pool::Node<Map>;
 
-        /// Safe `&mut Map` accessor for a pooled node. `Map::INIT` is `Some`,
-        /// so every node returned by [`Pool::get_node`] carries an initialized
-        /// `data` payload, and the caller exclusively owns the node until
-        /// [`Pool::release`]. Centralises the `NonNull::as_mut()` +
-        /// `assume_init_mut()` pair so the four call sites in this file (and
-        /// the cause-chain guard in `VirtualMachine::print_error_instance`)
-        /// don't each open-code two `unsafe` operations.
+        /// Safe `&mut Map` accessor for a pooled node.
         #[inline]
         pub(crate) fn node_data_mut(node: &mut core::ptr::NonNull<PoolNode>) -> &mut Map {
             // SAFETY: `Map::INIT` is `Some`, so `data` is initialized for
@@ -3210,6 +3204,28 @@ pub mod formatter {
     // ───────────────────────────────────────────────────────────────────────
 
     impl<'a> Formatter<'a> {
+        #[inline(never)]
+        pub(crate) fn visited_insert(&mut self, value: JSValue) -> bool {
+            if self.map_node.is_none() {
+                let mut node = core::ptr::NonNull::new(visited::Pool::get_node())
+                    .expect("ObjectPool::get_node always returns a valid heap node");
+                let data = visited::node_data_mut(&mut node);
+                data.clear();
+                self.map = core::mem::take(data);
+                self.map_node = Some(node);
+            }
+            !self
+                .map
+                .get_or_put(value)
+                .expect("unreachable")
+                .found_existing
+        }
+
+        #[inline]
+        pub(crate) fn visited_remove(&mut self, value: JSValue) {
+            let _ = self.map.remove(&value);
+        }
+
         /// Circular-reference / stack-overflow / visited-map prelude for
         /// `print_as`. Outlined so its locals (the pool node, the
         /// `get_or_put` result, the `[Circular]` write path) live in a leaf
@@ -3245,17 +3261,7 @@ pub mod formatter {
                 return Ok(false);
             }
 
-            if self.map_node.is_none() {
-                let mut node = core::ptr::NonNull::new(visited::Pool::get_node())
-                    .expect("ObjectPool::get_node always returns a valid heap node");
-                let data = visited::node_data_mut(&mut node);
-                data.clear();
-                self.map = core::mem::take(data);
-                self.map_node = Some(node);
-            }
-
-            let entry = self.map.get_or_put(value).expect("unreachable");
-            if entry.found_existing {
+            if !self.visited_insert(value) {
                 if writer_
                     .write_all(pfmt!("<r><cyan>[Circular]<r>", C).as_bytes())
                     .is_err()
@@ -4554,7 +4560,7 @@ pub mod formatter {
             } else if js_type != jsc::JSType::DOMWrapper {
                 if *remove_before_recurse {
                     *remove_before_recurse = false;
-                    let _ = self.map.remove(&value);
+                    self.visited_remove(value);
                 }
 
                 if value.is_callable() {
@@ -4567,7 +4573,7 @@ pub mod formatter {
             }
             if *remove_before_recurse {
                 *remove_before_recurse = false;
-                let _ = self.map.remove(&value);
+                self.visited_remove(value);
             }
 
             *remove_before_recurse = true;
@@ -4837,7 +4843,7 @@ pub mod formatter {
                 evt @ (EventType::MessageEvent | EventType::ErrorEvent) => evt,
                 _ => {
                     if *remove_before_recurse {
-                        let _ = self.map.remove(&value);
+                        self.visited_remove(value);
                     }
                     // We must potentially remove it again.
                     *remove_before_recurse = true;

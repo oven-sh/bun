@@ -865,7 +865,7 @@ function expectBundled(
                 "--compile-autoload-package-json",
                 "--no-compile-autoload-package-json",
               ),
-              compile && typeof compile === "object" && (compile as any).aot ? "--compile-aot" : [],
+              compile && typeof compile === "object" && (compile as any).aot ? "--aot" : [],
               outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
               define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
               `--target=${target}`,

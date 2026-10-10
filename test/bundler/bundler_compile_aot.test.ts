@@ -678,7 +678,7 @@ describe("bundler", () => {
     using dir = tempDir("compile-aot-empty", { "entry.ts": "export {};" });
     const path = join(String(dir), "remarks.txt");
     await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--compile-aot", "entry.ts", "--outfile", "out"],
+      cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", "out"],
       env: { ...bunEnv, BUN_AOT_OPTIONS: `aotRemarksPath=${path}` },
       cwd: String(dir),
       stdout: "pipe",
@@ -737,7 +737,7 @@ describe("bundler", () => {
     });
     const path = join(String(dir), "remarks.txt");
     await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--compile-aot", "--splitting", "entry.js", "--outfile", "out"],
+      cmd: [bunExe(), "build", "--compile", "--aot", "--splitting", "entry.js", "--outfile", "out"],
       env: { ...bunEnv, BUN_AOT_OPTIONS: `aotRemarksPath=${path},useAOTInlining=0` },
       cwd: String(dir),
       stdout: "pipe",
@@ -773,7 +773,7 @@ describe("bundler", () => {
     });
     const path = join(String(dir), "remarks.txt");
     await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--compile-aot", "entry.ts", "--outfile", "out"],
+      cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", "out"],
       env: { ...bunEnv, BUN_AOT_OPTIONS: `aotRemarksPath=${path},useAOTInlining=0` },
       cwd: String(dir),
       stdout: "pipe",
@@ -829,7 +829,7 @@ describe("bundler", () => {
     });
     const path = join(String(dir), "remarks.txt");
     await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--compile-aot", "--splitting", "entry.js", "--outfile", "out"],
+      cmd: [bunExe(), "build", "--compile", "--aot", "--splitting", "entry.js", "--outfile", "out"],
       env: { ...bunEnv, BUN_AOT_OPTIONS: `aotRemarksPath=${path},useAOTInlining=0` },
       cwd: String(dir),
       stdout: "pipe",
@@ -862,7 +862,7 @@ describe("bundler", () => {
       using dir = tempDir("compile-aot-lifted-commonjs", files);
       const path = join(String(dir), "remarks.txt");
       await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "--compile", "--compile-aot", "entry.mjs", "--outfile", "out"],
+        cmd: [bunExe(), "build", "--compile", "--aot", "entry.mjs", "--outfile", "out"],
         env: { ...bunEnv, BUN_AOT_OPTIONS: `aotRemarksPath=${path},useAOTInlining=0` },
         cwd: String(dir),
         stdout: "pipe",
@@ -1103,7 +1103,7 @@ describe("bundler", () => {
       return { said, stdout };
     };
     const [reduced, whole] = await Promise.all([
-      buildAndRun("reduced", "--compile-aot"),
+      buildAndRun("reduced", "--aot"),
       buildAndRun("whole", "--bytecode", "--format=esm"),
     ]);
     expect(whole.said).not.toContain("module graph:");
@@ -1165,7 +1165,7 @@ describe("bundler", () => {
   });
 });
 
-test("--compile-aot does not inline a function that is never reached", async () => {
+test("--aot does not inline a function that is never reached", async () => {
   using dir = tempDir("compile-aot-unreached-callee", {
     "app.ts": `
       type Comparer = (a: number, b: number) => number;
@@ -1184,7 +1184,7 @@ test("--compile-aot does not inline a function that is never reached", async () 
     `,
   });
   await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--compile-aot", "app.ts", "--outfile", "app"],
+    cmd: [bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "app"],
     env: { ...bunEnv, BUN_SOUND_TYPES: "infer", BUN_AOT_OPTIONS: "verboseAOTCompilation=1" },
     cwd: String(dir),
     stdout: "pipe",
@@ -1261,17 +1261,17 @@ test("compile.aot: concurrent builds from several threads", async () => {
 const otherTarget = process.platform === "linux" ? "bun-darwin-x64" : "bun-linux-x64";
 const whyNot = "ahead-of-time compilation cannot target another platform or version of Bun";
 
-test("--compile-aot rejects cross-compilation and unsupported targets", async () => {
+test("--aot rejects cross-compilation and unsupported targets", async () => {
   using dir = tempDir("compile-aot-cross", { "entry.ts": `console.log(1);` });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--compile-aot", `--target=${otherTarget}`, "entry.ts", "--outfile", "out"],
+    cmd: [bunExe(), "build", "--compile", "--aot", `--target=${otherTarget}`, "entry.ts", "--outfile", "out"],
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain(`--compile-aot: ${whyNot}`);
+  expect(stderr).toContain(`--aot: ${whyNot}`);
   expect(exitCode).not.toBe(0);
 });
 
@@ -1285,17 +1285,17 @@ test("compile.aot rejects cross-compilation and unsupported targets", async () =
   ).toThrow(`compile.aot: ${whyNot}`);
 });
 
-test("--compile-aot requires --format=esm", async () => {
+test("--aot requires --format=esm", async () => {
   using dir = tempDir("compile-aot-format", { "entry.cjs": `console.log(1);` });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--compile-aot", "--format=cjs", "entry.cjs", "--outfile", "out"],
+    cmd: [bunExe(), "build", "--compile", "--aot", "--format=cjs", "entry.cjs", "--outfile", "out"],
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("--compile-aot requires --format=esm");
+  expect(stderr).toContain("--aot requires --format=esm");
   expect(exitCode).not.toBe(0);
   expect(() =>
     Bun.build({
@@ -1306,7 +1306,7 @@ test("--compile-aot requires --format=esm", async () => {
   ).toThrow("compile.aot requires format: 'esm'");
 });
 
-describe("Bun.ModuleGraph with --compile-aot", () => {
+describe("Bun.ModuleGraph with --aot", () => {
   async function run(entry: string) {
     using dir = tempDir("compile-aot-module-graph", {
       "entry.ts": `
@@ -1342,7 +1342,7 @@ describe("Bun.ModuleGraph with --compile-aot", () => {
       `,
     });
     await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--compile-aot", "--splitting", "entry.ts", "app.ts", "--outfile", "out"],
+      cmd: [bunExe(), "build", "--compile", "--aot", "--splitting", "entry.ts", "app.ts", "--outfile", "out"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -1521,7 +1521,7 @@ test.each(["forEach", "map"])(
       "entry.ts": `[1].${method}(function callback() { throw new Error("thrown in the callback"); });`,
     });
     await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--compile-aot", "entry.ts", "--outfile", "out"],
+      cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", "out"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -1547,7 +1547,7 @@ test("image and program data are used", async () => {
     "entry.ts": `function add(a: number, b: number) { return a + b; } console.log(new (function Made(this: any) { this.sum = add(1, 2); } as any)().sum);`,
   });
   await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--compile-aot", "entry.ts", "--outfile", "out"],
+    cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", "out"],
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
@@ -1575,7 +1575,7 @@ test("image and program data are used", async () => {
 });
 
 test.each([
-  ["without a JIT", { BUN_JSC_useJIT: "0" }, ["--compile-aot"]],
+  ["without a JIT", { BUN_JSC_useJIT: "0" }, ["--aot"]],
   ["with BUN_AOT=1", { BUN_AOT: "1" }, ["--bytecode", "--format=esm"]],
 ])("a build %s produces the same code", async (_, env, flags) => {
   using dir = tempDir("compile-aot-builder", {
@@ -1600,7 +1600,7 @@ test.each([
     expect({ stdout, exitCode }).toEqual({ stdout: "123,foo\n", exitCode: 0 });
     return stderr.match(/^\[aot\] image: \d+ bytes, \d+ of code/m)?.[0];
   }
-  const [expected, actual] = await Promise.all([imageOf("a", {}, ["--compile-aot"]), imageOf("b", env, flags)]);
+  const [expected, actual] = await Promise.all([imageOf("a", {}, ["--aot"]), imageOf("b", env, flags)]);
   expect(expected).toStartWith("[aot] image: ");
   expect(actual).toBe(expected);
 });
@@ -1624,7 +1624,7 @@ test.each([
     Array.from({ length: 6 }, async (_, i) => {
       const outfile = join(String(dir), String(i), "out");
       await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "--compile", "--compile-aot", "entry.ts", "--outfile", outfile],
+        cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", outfile],
         env: { ...bunEnv, BUN_AOT_OPTIONS: options },
         cwd: String(dir),
         stdout: "ignore",
@@ -1647,7 +1647,7 @@ test("compiles RegExps with the u and v flags", async () => {
   async function numberOfRegExps(entry: string, expectedStdout: string) {
     const outfile = join(String(dir), entry.replace(".ts", ""));
     await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--compile-aot", entry, "--outfile", outfile],
+      cmd: [bunExe(), "build", "--compile", "--aot", entry, "--outfile", outfile],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -1689,7 +1689,7 @@ test("hot run-time RegExps are compiled", async () => {
   });
   const outfile = join(String(dir), "entry");
   await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--compile-aot", "entry.ts", "--outfile", outfile],
+    cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", outfile],
     env: bunEnv,
     cwd: String(dir),
     stdout: "ignore",
@@ -1734,7 +1734,7 @@ test("crash reports symbolicate compiled frames", async () => {
   const outfile = join(String(dir), "entry");
   const map = join(String(dir), "map");
   await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--compile-aot", "entry.ts", "--outfile", outfile],
+    cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", outfile],
     env: { ...bunEnv, BUN_AOT_OPTIONS: `aotMapFilePath=${map}` },
     cwd: String(dir),
     stdout: "ignore",
@@ -1785,7 +1785,7 @@ test("--cpu-prof attributes native time to the calling function", async () => {
   });
   const outfile = join(String(dir), "entry");
   await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--compile-aot", "entry.ts", "--outfile", outfile],
+    cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", outfile],
     env: bunEnv,
     cwd: String(dir),
     stdout: "ignore",
@@ -1812,7 +1812,7 @@ test("--cpu-prof attributes native time to the calling function", async () => {
 test("image size limit is a build error", async () => {
   using dir = tempDir("compile-aot-too-large", { "entry.ts": `console.log(1);` });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--compile-aot", "entry.ts", "--outfile", "out"],
+    cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", "out"],
     env: { ...bunEnv, BUN_AOT_OPTIONS: "numberOfAOTStubCopiesForTesting=12" },
     cwd: String(dir),
     stdout: "pipe",
@@ -1825,12 +1825,12 @@ test("image size limit is a build error", async () => {
   expect(existsSync(join(String(dir), "out"))).toBe(false);
 });
 
-test("--compile-aot with --bytecode-depth is an error", async () => {
+test("--aot with --bytecode-depth is an error", async () => {
   using dir = tempDir("compile-aot-depth", {
     "entry.ts": `function a() { return function b() { return function c() { return 1; }; }; } console.log(a()()());`,
   });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", "--compile-aot", "--bytecode-depth=1", "entry.ts", "--outfile", "out"],
+    cmd: [bunExe(), "build", "--compile", "--aot", "--bytecode-depth=1", "entry.ts", "--outfile", "out"],
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
@@ -1885,7 +1885,7 @@ test.each([
 test("BUN_AOT=0 disables AoT at build time", async () => {
   using dir = tempDir("compile-aot-env-off", { "entry.ts": `console.log(function named() {}.toString());` });
   await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "entry.ts", "--compile", "--compile-aot", "--outfile", "out"],
+    cmd: [bunExe(), "build", "entry.ts", "--compile", "--aot", "--outfile", "out"],
     env: { ...bunEnv, BUN_AOT: "0" },
     cwd: String(dir),
     stdout: "pipe",
@@ -1906,25 +1906,25 @@ test("BUN_AOT=0 disables AoT at build time", async () => {
   });
 });
 
-test("--compile-aot requires --compile", async () => {
+test("--aot requires --compile", async () => {
   using dir = tempDir("compile-aot-requires-compile", { "entry.ts": `console.log(1);` });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile-aot", "entry.ts", "--outdir", "out"],
+    cmd: [bunExe(), "build", "--aot", "entry.ts", "--outdir", "out"],
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("--compile-aot requires --compile");
+  expect(stderr).toContain("--aot requires --compile");
   expect(exitCode).not.toBe(0);
 });
 
-describe("--compile-aot across threads", () => {
+describe("--aot across threads", () => {
   async function run(files: Record<string, string>, entryPoints: string[], env: Record<string, string> = {}) {
     using dir = tempDir("compile-aot-threads", files);
     await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--compile-aot", "--splitting", ...entryPoints, "--outfile", "out"],
+      cmd: [bunExe(), "build", "--compile", "--aot", "--splitting", ...entryPoints, "--outfile", "out"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -2103,11 +2103,11 @@ describe("--compile-aot across threads", () => {
   });
 });
 
-describe("--compile-aot at run time", () => {
+describe("--aot at run time", () => {
   async function run(source: string, env: Record<string, string> = {}) {
     using dir = tempDir("compile-aot-run-time", { "entry.ts": source });
     await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--compile-aot", "entry.ts", "--outfile", "out"],
+      cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", "out"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -2196,7 +2196,7 @@ describe("--compile-aot at run time", () => {
   });
 });
 
-test("--compile-aot lays machine code out by --bytecode-order", async () => {
+test("--aot lays machine code out by --bytecode-order", async () => {
   using dir = tempDir("compile-aot-order", {
     "entry.ts": `
       function alpha(n: number) { let s = "alpha"; for (let i = 0; i < n; i++) s += i; return s; }
@@ -2220,7 +2220,7 @@ test("--compile-aot lays machine code out by --bytecode-order", async () => {
       stderr: "pipe",
     });
     expect([await proc.stderr.text(), await proc.exited]).toEqual([expect.not.stringContaining("error"), 0]);
-    if (!args.includes("--compile-aot")) return [];
+    if (!args.includes("--aot")) return [];
     const wanted = new Set(["alpha", "beta", "gamma", "delta", "epsilon", "twinOfDelta"]);
     return (await Bun.file(map).text())
       .split("\n")
@@ -2235,10 +2235,10 @@ test("--compile-aot lays machine code out by --bytecode-order", async () => {
   }
   await build("recorded", ["--bytecode"]);
   expect(await run("recorded", ["delta", "beta"], { BUN_BYTECODE_ORDER_OUT: join(cwd, "app.order") })).toEqual(["delta/4/3,beta3.2.1.0.\n", 0]);
-  expect(await build("plain", ["--compile-aot"])).toEqual(["alpha", "beta", "gamma", "delta", "epsilon", "twinOfDelta"]);
-  const ordered = await build("ordered", ["--compile-aot", "--bytecode-order=app.order"]);
+  expect(await build("plain", ["--aot"])).toEqual(["alpha", "beta", "gamma", "delta", "epsilon", "twinOfDelta"]);
+  const ordered = await build("ordered", ["--aot", "--bytecode-order=app.order"]);
   expect(ordered).toEqual(["delta", "twinOfDelta", "beta", "alpha", "gamma", "epsilon"]);
-  expect(await build("again", ["--compile-aot", "--bytecode-order=app.order"])).toEqual(ordered);
+  expect(await build("again", ["--aot", "--bytecode-order=app.order"])).toEqual(ordered);
   for (const outfile of ["plain", "ordered"])
     expect(await run(outfile, ["alpha", "beta", "gamma", "delta", "epsilon", "twinOfDelta"])).toEqual([
       "alpha0123,beta3.2.1.0.,gamma5-9,delta/4/3,epsieven,twin/4/3\n",
@@ -2246,7 +2246,7 @@ test("--compile-aot lays machine code out by --bytecode-order", async () => {
     ]);
 });
 
-describe("--compile-aot optimizations", () => {
+describe("--aot optimizations", () => {
   const program = /* ts */ `
     const out: unknown[] = [];
     const kept: unknown[] = [];
@@ -2421,7 +2421,7 @@ describe("--compile-aot optimizations", () => {
     using dir = tempDir("compile-aot-optimizations", { "entry.ts": program });
     const path = join(String(dir), "remarks.txt");
     await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--compile-aot", "entry.ts", "--outfile", "out"],
+      cmd: [bunExe(), "build", "--compile", "--aot", "entry.ts", "--outfile", "out"],
       env: { ...bunEnv, BUN_AOT_OPTIONS: [`aotRemarksPath=${path}`, options].filter(Boolean).join(",") },
       cwd: String(dir),
       stdout: "pipe",
@@ -2504,7 +2504,7 @@ describe("--compile-aot optimizations", () => {
   });
 });
 
-describe("--compile-aot with a type table", () => {
+describe("--aot with a type table", () => {
   const root = join(import.meta.dir, "compile-aot-typed");
   const typed = [
     "useTypeTags=1",
@@ -2516,7 +2516,7 @@ describe("--compile-aot with a type table", () => {
     using dir = tempDir("compile-aot-typed", {});
     const path = join(String(dir), "remarks.txt");
     await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "--compile-aot", "src/main.ts", "--outfile", join(String(dir), "out")],
+      cmd: [bunExe(), "build", "--compile", "--aot", "src/main.ts", "--outfile", join(String(dir), "out")],
       env: {
         ...bunEnv,
         ...env,
@@ -2560,7 +2560,7 @@ describe("--compile-aot with a type table", () => {
       expect([await proc.stderr.text(), await proc.exited]).toEqual([expect.not.stringContaining("error"), 0]);
     }
     async function comeBeforeTopLevelCode(outfile: string, args: string[]) {
-      await build(outfile, ["--compile-aot", ...args], {
+      await build(outfile, ["--aot", ...args], {
         BUN_SOUND_TYPES_TAGS: join(root, "tags.bin"),
         BUN_SOUND_TYPES_ORACLE_ROOT: root,
         BUN_AOT_OPTIONS: `${typed},aotMapFilePath=${out(outfile + ".map")}`,
@@ -2609,7 +2609,7 @@ describe("--compile-aot with a type table", () => {
       });
       const copy = realpathSync(String(dir));
       await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "--compile", "--compile-aot", entry, "--outfile", join(copy, "out")],
+        cmd: [bunExe(), "build", "--compile", "--aot", entry, "--outfile", join(copy, "out")],
         env: {
           ...bunEnv,
           BUN_SOUND_TYPES_TAGS: join(table, "tags.bin"),
@@ -2795,7 +2795,7 @@ describe("--compile-aot with a type table", () => {
         if (flags.length && refusedBySoundTypes.includes(program)) continue;
         const out = join(String(dir), "out");
         await using build = Bun.spawn({
-          cmd: [bunExe(), "build", "--compile", "--compile-aot", ...flags, `src/${program}.ts`, "--outfile", out],
+          cmd: [bunExe(), "build", "--compile", "--aot", ...flags, `src/${program}.ts`, "--outfile", out],
           env: {
             ...bunEnv,
             BUN_SOUND_TYPES_TAGS: join(fixture, "tags.bin"),
@@ -2839,7 +2839,7 @@ describe("--compile-aot with a type table", () => {
         const expected = await reference.stdout.text();
         expect(expected).toStartWith("0,pair,0.5 0/0.5 1,two,3 1/3 4,five,undefined 4/undefined 6,seven,8 6/8 9,ten,11 9/11 a,b,c a/c 4 14 11 ");
         await using build = Bun.spawn({
-          cmd: [bunExe(), "build", "--compile", "--compile-aot", "src/main.ts", "--outfile", join(String(dir), "out")],
+          cmd: [bunExe(), "build", "--compile", "--aot", "src/main.ts", "--outfile", join(String(dir), "out")],
           env: {
             ...bunEnv,
             BUN_SOUND_TYPES_TAGS: join(fixture, "tags.bin"),
@@ -2904,7 +2904,7 @@ describe("--compile-aot with a type table", () => {
       const out = join(String(dir), "out");
       const remarksPath = join(String(dir), "remarks.txt");
       await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "--compile", "--compile-aot", "--sound-types=infer", "src/main.ts", "--outfile", out],
+        cmd: [bunExe(), "build", "--compile", "--aot", "--sound-types=infer", "src/main.ts", "--outfile", out],
         env: {
           ...bunEnv,
           BUN_SOUND_TYPES_TAGS: join(fixture, "tags.bin"),
@@ -3007,7 +3007,7 @@ describe("--compile-aot with a type table", () => {
       const out = join(String(dir), "out");
       const path = join(String(dir), "remarks.txt");
       await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "--compile", "--compile-aot", "--sound-types=infer", "src/main.ts", "--outfile", out],
+        cmd: [bunExe(), "build", "--compile", "--aot", "--sound-types=infer", "src/main.ts", "--outfile", out],
         env: {
           ...bunEnv,
           BUN_SOUND_TYPES_TAGS: join(fixture, "tags.bin"),
@@ -3096,7 +3096,7 @@ describe("--compile-aot with a type table", () => {
       const out = join(String(dir), "out");
       const counts = join(String(dir), "counts");
       await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "--compile", "--compile-aot", "src/main.ts", "--outfile", out],
+        cmd: [bunExe(), "build", "--compile", "--aot", "src/main.ts", "--outfile", out],
         env: {
           ...bunEnv,
           BUN_SOUND_TYPES_TAGS: join(fixture, "tags.bin"),

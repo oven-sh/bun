@@ -61,7 +61,7 @@ async function runWrapped(dir: string, outfile: string, build: Record<string, st
       bunExe(),
       "build",
       "--compile",
-      "--compile-aot",
+      "--aot",
       "--splitting",
       "wrapper.ts",
       mainOf(dir),

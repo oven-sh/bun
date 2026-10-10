@@ -26,7 +26,7 @@ async function compile(options: string | null, env: Record<string, string>): Pro
   cpSync(join(import.meta.dir, "fixtures", "compile-aot-second-copies"), join(folder, "src"), { recursive: true });
   const remarks = join(folder, "remarks.txt");
   await using build = Bun.spawn({
-    cmd: [bunExe(), "build", "--compile", ...(options === null ? [] : ["--compile-aot"]), "src/entry.ts", "src/worker.ts", "--outfile", "out"],
+    cmd: [bunExe(), "build", "--compile", ...(options === null ? [] : ["--aot"]), "src/entry.ts", "src/worker.ts", "--outfile", "out"],
     env: { ...bunEnv, ...env, BUN_AOT_OPTIONS: [`aotRemarksPath=${remarks}`, options].filter(Boolean).join(",") },
     cwd: folder,
     stdout: "pipe",

@@ -197,8 +197,8 @@ bun build <entry points>
   Prepend arguments to the standalone executable’s <code>execArgv</code>
 </ParamField>
 
-<ParamField path="--compile-aot" type="boolean">
-  Compile JavaScript to machine code when the executable is built. Implies <code>--bytecode</code> and{" "}
+<ParamField path="--aot" type="boolean">
+  Compile JavaScript to machine code when the executable is built. Requires <code>--compile</code>. Implies <code>--bytecode</code> and{" "}
   <code>--format=esm</code>
 </ParamField>
 

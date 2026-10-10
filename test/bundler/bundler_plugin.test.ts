@@ -441,6 +441,50 @@ describe("bundler", () => {
       },
     };
   });
+  // The namespace check accepts "@" and "/", for names like "@scope/name". Its error
+  // message used to name "$" in their place, a character the check refuses.
+  test("plugin/NamespaceCharacters", async () => {
+    using dir = tempDir("plugin-namespace-characters", {
+      "entry.ts": `console.log("entry");`,
+    });
+    const accepted = ["file", "under_score", "with-dash", "@scope/name", "A1"];
+    const refused = ["a$b", "a.b", "a:b", "a b", "é"];
+    const hooks = ["onResolve", "onLoad"] as const;
+    const results: [string, string][] = [];
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.ts")],
+      throw: false,
+      plugins: [
+        {
+          name: "namespace-characters",
+          setup(build) {
+            for (const hook of hooks) {
+              for (const namespace of [...accepted, ...refused]) {
+                try {
+                  build[hook]({ filter: /^never-matches$/, namespace }, () => undefined);
+                  results.push([`${hook} ${namespace}`, "accepted"]);
+                } catch (e) {
+                  results.push([`${hook} ${namespace}`, `${(e as Error).name}: ${(e as Error).message}`]);
+                }
+              }
+            }
+          },
+        },
+      ],
+    });
+    expect(Object.fromEntries(results)).toEqual(
+      Object.fromEntries(
+        hooks.flatMap(hook => [
+          ...accepted.map(namespace => [`${hook} ${namespace}`, "accepted"]),
+          ...refused.map(namespace => [
+            `${hook} ${namespace}`,
+            `TypeError: namespace "${namespace}" can only contain ASCII letters, digits, "_", "-", "@" and "/"`,
+          ]),
+        ]),
+      ),
+    );
+    expect({ success: result.success, logs: result.logs.map(log => log.message) }).toEqual({ success: true, logs: [] });
+  });
   // Like esbuild, an external import is printed with the path that onResolve returned.
   itBundled("plugin/ResolveExternalRewritesPath", {
     files: {

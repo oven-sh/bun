@@ -6,7 +6,7 @@
 // the buffered extractor would produce.
 
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, readdirSorted, tempDir } from "harness";
+import { bunEnv, bunExe, readdirSorted, runCommandMaxRSS, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
@@ -237,20 +237,23 @@ async function makeRegistry(tgz: Buffer, shasum: string, integrity: string, chun
   };
 }
 
+const installCmd = [bunExe(), "install", "--verbose", "--linker=hoisted"];
+const installEnv = (cwd: string, extraEnv: Record<string, string> = {}) => ({
+  ...bunEnv,
+  BUN_INSTALL_CACHE_DIR: join(cwd, ".cache"),
+  ...extraEnv,
+});
+
 async function runInstall(cwd: string, extraEnv: Record<string, string> = {}) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "install", "--verbose", "--linker=hoisted"],
+    cmd: installCmd,
     cwd,
-    env: {
-      ...bunEnv,
-      BUN_INSTALL_CACHE_DIR: join(cwd, ".cache"),
-      ...extraEnv,
-    },
+    env: installEnv(cwd, extraEnv),
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode, resourceUsage: proc.resourceUsage() };
+  return { stdout, stderr, exitCode };
 }
 
 describe("streaming tarball extraction", () => {
@@ -869,7 +872,13 @@ test("buffered extract does not hold the decompressed local tarball in memory", 
   // in memory is negligible relative to PAYLOAD_SIZE.
   expect(statSync(tgzPath).size).toBeLessThan(8 * 1024 * 1024);
 
-  const { stderr, exitCode, resourceUsage } = await runInstall(String(dir));
+  // Not runInstall: the maxRSS of a process this test runner spawns directly
+  // also counts the runner's own peak (see runCommandMaxRSS).
+  const { stderr, exitCode, maxRSS } = await runCommandMaxRSS({
+    cmd: installCmd,
+    cwd: String(dir),
+    env: installEnv(String(dir)),
+  });
 
   expect(stderr).not.toContain("error:");
   const big = statSync(join(String(dir), "node_modules", "oversized-pkg", "data.bin"));
@@ -878,19 +887,13 @@ test("buffered extract does not hold the decompressed local tarball in memory", 
 
   // The property under test: extraction never held the 256 MiB
   // decompressed tar in memory. With the old pre-decompress path the
-  // child's maxRSS was well over 3x PAYLOAD_SIZE (Vec growth
+  // install's maxRSS was well over 3x PAYLOAD_SIZE (Vec growth
   // reallocations): ~780 MB release, ~1 GB debug+ASAN. Streaming
   // through libarchive it stays at baseline (~40 MB release, ~240 MB
-  // debug+ASAN), so the midpoint gives wide margin both ways without
-  // needing to branch on build type.
-  // `Subprocess.resourceUsage().maxRSS` is normalised to bytes on every
-  // platform. The > 1 MiB lower bound guards that unit: any bun process
-  // peaks well above 1 MiB in bytes but under 1_048_576 in kB, so a
-  // regression to kB trips the lower bound instead of vacuously passing
-  // the upper one.
-  const maxRssBytes = resourceUsage?.maxRSS ?? 0;
-  expect(maxRssBytes).toBeGreaterThan(1024 * 1024);
-  expect(maxRssBytes).toBeLessThan(2 * PAYLOAD_SIZE);
+  // debug+ASAN, reported as the spawner's ~320 MB floor), so the
+  // midpoint gives wide margin both ways without needing to branch on
+  // build type.
+  expect(maxRSS).toBeLessThan(2 * PAYLOAD_SIZE);
 });
 
 test("streaming extract skips a damaged header block and extracts the entries after it byte-for-byte while more data is still arriving", async () => {

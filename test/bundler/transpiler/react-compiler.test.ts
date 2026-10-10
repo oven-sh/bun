@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, runCommandMaxRSS, tempDir, withoutAsanQuarantine } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled, type BundlerTestInput } from "../expectBundled";
@@ -3093,25 +3093,17 @@ test("react-compiler memory does not grow with the square of the size of a compo
   });
 
   const peakMB = async (entry: string) => {
-    await using proc = Bun.spawn({
+    const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
       cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
-      env: {
-        ...bunEnv,
-        // ASAN's quarantine keeps freed blocks resident, which hides the difference.
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
-          .filter(Boolean)
-          .join(":"),
-      },
+      // ASAN's quarantine keeps freed blocks resident, which hides the difference.
+      env: withoutAsanQuarantine(bunEnv),
       cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     // The component compiled, or there is no component.
     expect(stdout.includes("react/compiler-runtime")).toBe(entry !== "empty.jsx");
     expect(exitCode).toBe(0);
-    return proc.resourceUsage()!.maxRSS / 1024 / 1024;
+    return maxRSS / 1024 / 1024;
   };
 
   const [empty, chain, pattern] = await Promise.all([peakMB("empty.jsx"), peakMB("chain.jsx"), peakMB("pattern.jsx")]);
@@ -3142,17 +3134,13 @@ test("react-compiler keeps one copy of each dependency of a phi", async () => {
   });
 
   const build = async (entry: string) => {
-    await using proc = Bun.spawn({
+    const { stdout, stderr, exitCode, maxRSS } = await runCommandMaxRSS({
       cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
-      env: bunEnv,
       cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-    return { memoized: /\b_c\(\d+\)/.test(stdout), peakMB: proc.resourceUsage()!.maxRSS / 1024 / 1024 };
+    return { memoized: /\b_c\(\d+\)/.test(stdout), peakMB: maxRSS / 1024 / 1024 };
   };
 
   const [empty, ladder] = await Promise.all([build("empty.jsx"), build("ladder.jsx")]);

@@ -170,7 +170,7 @@ pub(super) fn lower_inner<'h>(
     let last = params.len().saturating_sub(1);
     for (i, param) in params.iter().enumerate() {
         let is_rest = has_rest_arg && i == last;
-        let param_loc = convert_loc(param.binding.loc);
+        let param_loc = convert_loc(builder.with_default(param.binding.loc));
 
         if is_rest {
             // Create a temporary place for the spread param

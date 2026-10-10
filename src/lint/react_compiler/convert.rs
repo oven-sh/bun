@@ -110,6 +110,8 @@ pub(crate) struct Converted {
     pub(crate) recorded: Vec<Recorded>,
     /// [`Host::type_casts`](bun_react_compiler::Host::type_casts)
     pub(crate) casts: Vec<(Loc, Loc)>,
+    /// [`Host::targets_with_defaults`](bun_react_compiler::Host::targets_with_defaults)
+    pub(crate) defaults: Vec<(Loc, Loc)>,
     /// Each `new Date()` and `Date()`, which is in the tree as `Date.now()`. In the order of the source.
     pub(crate) clock_reads: Vec<Span>,
 }
@@ -156,6 +158,7 @@ pub(crate) struct Converter<'a, 'x> {
     fragment: Ref,
     recorded: Vec<Recorded>,
     casts: Vec<(Loc, Loc)>,
+    defaults: Vec<(Loc, Loc)>,
     clock_reads: Vec<Span>,
     /// Of the function that is being converted.
     here: Counts,
@@ -192,6 +195,7 @@ pub(crate) fn convert<'a>(
         fragment: Ref::NONE,
         recorded: Vec::new(),
         casts: Vec::new(),
+        defaults: Vec::new(),
         clock_reads: Vec::new(),
         here: Counts::default(),
         squares: Counts::default(),
@@ -211,9 +215,12 @@ pub(crate) fn convert<'a>(
     casts.reverse();
     bun_lint::utils::sort::sort_by_key(&mut casts, |it| it.0.start);
     casts.dedup_by_key(|it| it.0.start);
+    let mut defaults = converter.defaults;
+    bun_lint::utils::sort::sort_by_key(&mut defaults, |it| it.0.start);
     Ok(Converted {
         root,
         casts,
+        defaults,
         spans: converter.spans,
         symbols: converter.symbols,
         is_outside: converter.is_outside,
@@ -413,7 +420,7 @@ impl<'a> Converter<'a, '_> {
 
     fn arg(&mut self, param: Param<'a>, first: &mut AstVec<JsStmt>) -> Converts<G::Arg> {
         let mut binding = self.binding(param.pat())?;
-        let default = self.default(param.default())?;
+        let default = self.default(&binding, param.pat(), param.default())?;
         // oxc's lowering takes a parameter apart as a declaration does, which can have a variable that a
         // function in it assigns. Upstream's does that for the `...rest` of an object, Bun's for nothing.
         let is_taken_apart_in_body = match (self.flavor, param.pat().kind()) {
@@ -570,11 +577,18 @@ impl<'a> Converter<'a, '_> {
 
     // ───────────────────────────── patterns ─────────────────────────────
 
-    fn default(&mut self, value: Option<Expr<'a>>) -> Converts<Option<JsExpr>> {
+    fn default(
+        &mut self,
+        binding: &Binding,
+        target: Pat<'a>,
+        value: Option<Expr<'a>>,
+    ) -> Converts<Option<JsExpr>> {
         let Some(value) = value else {
             return Ok(None);
         };
         self.branch()?;
+        let whole = self.loc(Span::new(target.span().start, value.span().end))?;
+        self.defaults.push((binding.loc, whole));
         if let ExprKind::Jsx(jsx) = value.skip_type_wrappers().kind() {
             self.recorded.push(Recorded::DefaultIsJsx {
                 span: value.span(),
@@ -605,16 +619,22 @@ impl<'a> Converter<'a, '_> {
                     let mut has_spread = false;
                     for element in elements {
                         has_spread = element.is_rest();
-                        let binding = match element.pat() {
-                            Some(pat) => this.binding(pat)?,
-                            None => Binding {
-                                loc: this.loc(element.span())?,
-                                data: B::B::BMissing(B::Missing {}),
-                            },
+                        let (binding, default_value) = match element.pat() {
+                            Some(pat) => {
+                                let binding = this.binding(pat)?;
+                                let default_value =
+                                    this.default(&binding, pat, element.default())?;
+                                (binding, default_value)
+                            }
+                            None => {
+                                let loc = this.loc(element.span())?;
+                                let data = B::B::BMissing(B::Missing {});
+                                (Binding { loc, data }, None)
+                            }
                         };
                         items.push(ArrayBinding {
                             binding,
-                            default_value: this.default(element.default())?,
+                            default_value,
                         });
                     }
                     let array = B::Array {
@@ -635,11 +655,13 @@ impl<'a> Converter<'a, '_> {
                         if prop.is_rest() {
                             flags |= flags::Property::IsSpread;
                         }
+                        let value = this.binding(prop.value())?;
+                        let default_value = this.default(&value, prop.value(), prop.default())?;
                         properties.push(B::Property {
                             flags,
                             key,
-                            value: this.binding(prop.value())?,
-                            default_value: this.default(prop.default())?,
+                            value,
+                            default_value,
                         });
                     }
                     let object = B::Object {
@@ -1386,7 +1408,14 @@ impl<'a> Converter<'a, '_> {
             } => JsStmt::alloc(
                 S::For {
                     init: init.map(|it| self.stmt(it)).transpose()?,
-                    test: test.map(|it| self.expr(it)).transpose()?,
+                    test: match (test, self.flavor) {
+                        (Some(it), _) => Some(self.expr(it)?),
+                        // Both lowerings go on as for `while (true)`. Upstream's records a Todo as well.
+                        (None, Flavor::Oxlint) => {
+                            Some(JsExpr::init(E::Boolean { value: true }, loc))
+                        }
+                        (None, Flavor::Eslint) => None,
+                    },
                     update: update.map(|it| self.expr(it)).transpose()?,
                     body: self.stmt(body)?,
                 },

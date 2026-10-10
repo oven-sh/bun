@@ -67,6 +67,11 @@ pub trait Host {
         &[]
     }
 
+    /// The `x` of each `x = d` in a pattern with the whole, in the order of the `x`. The parser has no node for it.
+    fn targets_with_defaults(&self) -> &[(Loc, Loc)] {
+        &[]
+    }
+
     /// Whether `ref_` is bound outside of the function that is compiled, which for the parser is
     /// in the scope of the module.
     fn is_module_level(&self, ref_: Ref) -> bool {

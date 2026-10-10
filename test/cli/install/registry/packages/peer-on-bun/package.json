@@ -1,0 +1,22 @@
+{
+  "_id": "peer-on-bun",
+  "name": "peer-on-bun",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "peer-on-bun",
+      "version": "1.0.0",
+      "peerDependencies": {
+        "bun": ">=1.0.0"
+      },
+      "_id": "peer-on-bun@1.0.0",
+      "dist": {
+        "integrity": "sha512-r+jJvV2iX8gP4+nhiuMh4U6VI0m0q0ZmAYvx4dS2+2WyLWDGAfru4oj/UF80NfMgw4pqN+GKOK+K2JDZG9zQ4w==",
+        "shasum": "7dc24a1eff8fc4102c96d01f9dc34def606a77e0",
+        "tarball": "http://localhost:4873/peer-on-bun/-/peer-on-bun-1.0.0.tgz"
+      }
+    }
+  }
+}

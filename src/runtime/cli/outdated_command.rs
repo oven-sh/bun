@@ -12,7 +12,9 @@ use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::{
     LogLevel, Subcommand, WorkspaceFilter, populate_manifest_cache,
 };
-use bun_install::{CommandLineArguments, DependencyID, PackageID, PackageManager, resolution};
+use bun_install::{
+    CommandLineArguments, DependencyExt as _, DependencyID, PackageID, PackageManager, resolution,
+};
 use bun_wyhash::hash;
 
 use crate::Command;
@@ -32,6 +34,10 @@ struct GroupedOutdatedInfo {
     dep_id: DependencyID,
     workspace_pkg_id: PackageID,
     grouped_workspace_names: Option<Box<[u8]>>,
+}
+
+fn visible_width(text: &[u8]) -> usize {
+    strings::visible::width::exclude_ansi_colors::utf8(text)
 }
 
 /// The rows of the `bun outdated` table and the column widths that fit them.
@@ -62,6 +68,27 @@ impl<'a> FilterType<'a> {
         }
     }
     // *NOTE*: name and path are not allocated → no Drop impl needed.
+}
+
+/// Printed between the two names of an aliased dependency: the row for
+/// `"my-alias": "npm:dep@1.0.0"` reads `my-alias@npm:dep`, which is what
+/// `bun add` takes and prints.
+const ALIAS_SEPARATOR: &str = "@npm:";
+
+/// A pattern selects a dependency by the name of its package or by its alias,
+/// so every name the table prints can be passed back as a filter. A `!pattern`
+/// keeps the dependency only when neither name matches.
+fn name_pattern_matches(pattern: &[u8], package_name: &[u8], alias: Option<&[u8]>) -> bool {
+    let by_package_name = glob::r#match(pattern, package_name);
+    let Some(alias) = alias else {
+        return by_package_name.matches();
+    };
+    let by_alias = glob::r#match(pattern, alias);
+    if by_alias.is_negated() {
+        by_alias.matches() && by_package_name.matches()
+    } else {
+        by_alias.matches() || by_package_name.matches()
+    }
 }
 
 impl OutdatedCommand {
@@ -390,7 +417,10 @@ impl OutdatedCommand {
                     continue;
                 }
 
-                // package patterns match against dependency name (name in package.json)
+                let package_name =
+                    manager.lockfile.packages.items_name()[package_id as usize].slice(string_buf);
+                let alias = dep.alias_for(package_name, string_buf);
+
                 if let Some(patterns) = &package_patterns {
                     let matched = 'match_: {
                         for pattern in patterns {
@@ -400,9 +430,7 @@ impl OutdatedCommand {
                                     if name_pattern.is_empty() {
                                         continue;
                                     }
-                                    if !glob::r#match(name_pattern, dep.name.slice(string_buf))
-                                        .matches()
-                                    {
+                                    if !name_pattern_matches(name_pattern, package_name, alias) {
                                         break 'match_ false;
                                     }
                                 }
@@ -416,8 +444,6 @@ impl OutdatedCommand {
                     }
                 }
 
-                let package_name =
-                    manager.lockfile.packages.items_name()[package_id as usize].slice(string_buf);
                 let scope = manager.options.scope_for_package_name(package_name).clone();
                 let mut expired = false;
                 let Some(manifest) = manager.manifests.by_name_allow_expired(
@@ -465,6 +491,7 @@ impl OutdatedCommand {
                 }
 
                 let package_name_len = package_name.len()
+                    + alias.map_or(0, |alias| visible_width(alias) + ALIAS_SEPARATOR.len())
                     + if dep.behavior.is_dev() {
                         " (dev)".len()
                     } else if dep.behavior.is_peer() {
@@ -696,10 +723,13 @@ impl OutdatedCommand {
                     for _ in 0..COLUMN_LEFT_PAD {
                         bun_core::pretty!(" ");
                     }
+                    let mut name_len = package_name.len() + behavior_str.len();
+                    if let Some(alias) = dep.alias_for(package_name, string_buf) {
+                        bun_core::pretty!("{}<d>{}<r>", BStr::new(alias), ALIAS_SEPARATOR);
+                        name_len += visible_width(alias) + ALIAS_SEPARATOR.len();
+                    }
                     bun_core::pretty!("{}<d>{}<r>", BStr::new(package_name), behavior_str);
-                    for _ in package_name.len() + behavior_str.len()
-                        ..package_column_inside_length + COLUMN_RIGHT_PAD
-                    {
+                    for _ in name_len..package_column_inside_length + COLUMN_RIGHT_PAD {
                         bun_core::pretty!(" ");
                     }
                 }

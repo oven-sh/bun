@@ -499,6 +499,37 @@ if (feature("RUNTIME_FLAG")) {
     expect(exitCode2).toBe(0);
   });
 
+  // The runtime transpiler folds "ENABLED_" + "FEATURE" too, so it must read the whole name.
+  test("reads a folded flag name whole at runtime with bun run", async () => {
+    using dir = tempDir("bundler-feature-flag", {
+      "index.ts": `
+import { feature } from "bun:bundle";
+
+if (feature("ENABLED_" + "FEATURE")) {
+  console.log("folded flag enabled");
+} else {
+  console.log("folded flag disabled");
+}
+`,
+    });
+
+    async function run(flag: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", `--feature=${flag}`, "./index.ts"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    }
+
+    const [whole, firstSegment] = await Promise.all([run("ENABLED_FEATURE"), run("ENABLED_")]);
+    expect(whole).toMatchObject({ stdout: "folded flag enabled", exitCode: 0 });
+    expect(firstSegment).toMatchObject({ stdout: "folded flag disabled", exitCode: 0 });
+  });
+
   test("works correctly in bun test", async () => {
     using dir = tempDir("bundler-feature-flag", {
       "test.test.ts": `

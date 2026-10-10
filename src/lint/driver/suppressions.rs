@@ -4,8 +4,8 @@
 use crate::results::{Counts, FileResult};
 use crate::run::Fatal;
 use crate::{fs, paths};
-use bun_lint::context::Severity;
 use bun_core::printer::json_stringify;
+use bun_lint::context::Severity;
 use bun_lint::linter::{LintMessage, RuleId, Suppression, parse_rule_id};
 use bun_lint::options::Json;
 use std::io::Write;

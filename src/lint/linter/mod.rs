@@ -59,8 +59,8 @@ pub use message::{
 };
 pub(crate) use per_file::PerFile;
 pub use registry::{
-    NativePlugins, Registry, oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, parse_rule_id,
-    plugin_of_oxlint,
+    NativePlugins, Registry, oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key,
+    parse_rule_id, plugin_of_oxlint,
 };
 pub use resolved::{ConfiguredJsRule, ConfiguredRule, LinterOptions, ResolvedConfig, severity_of};
 use resolved::{Prepared, Slot};

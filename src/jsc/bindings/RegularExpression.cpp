@@ -29,5 +29,7 @@ extern "C" int Yarr__RegularExpression__matchedLength(RegularExpression* re)
 }
 extern "C" int Yarr__RegularExpression__matches(RegularExpression* re, const BunString* string)
 {
-    return re->match(string->toWTFString(BunString::ZeroCopy), 0, 0);
+    // A null WTF::String never matches in Yarr, not even against /(?:)/ or /^$/.
+    // An empty subject must be matchable, so pass the empty string instead.
+    return re->match(string->toWTFString(BunString::NonNull), 0, 0);
 }

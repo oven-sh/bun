@@ -450,6 +450,121 @@ describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
   });
 });
 
+describe("Valkey: Auto-Reconnect Selected Database", () => {
+  // A RESP peer that tracks the selected database per connection and
+  // records every command it receives, per connection.
+  function createDbPeer() {
+    const sockets: net.Socket[] = [];
+    const commands: string[][][] = [];
+    const hellos: PromiseWithResolvers<void>[] = [];
+    const helloOn = (connection: number) => {
+      while (hellos.length < connection) hellos.push(Promise.withResolvers<void>());
+      return hellos[connection - 1].promise;
+    };
+    const server = net.createServer(socket => {
+      const connection = commands.push([]);
+      sockets.push(socket);
+      const state = { buffer: Buffer.alloc(0), db: 0 };
+      socket.on("data", chunk => {
+        state.buffer = Buffer.concat([state.buffer, chunk]);
+        for (const args of readCommands(state)) {
+          commands[connection - 1].push(args);
+          const name = (args[0] ?? "").toUpperCase();
+          if (name === "HELLO") {
+            socket.write("+OK\r\n");
+            helloOn(connection);
+            hellos[connection - 1].resolve();
+          } else if (name === "SELECT") {
+            state.db = Number(args[1]);
+            socket.write("+OK\r\n");
+          } else if (name === "CLIENT") {
+            const info = `db=${state.db}`;
+            socket.write(`$${info.length}\r\n${info}\r\n`);
+          } else {
+            socket.write("+OK\r\n");
+          }
+        }
+      });
+      socket.on("error", () => {});
+    });
+    return {
+      listen: () =>
+        new Promise<number>(resolve =>
+          server.listen(0, "127.0.0.1", () => resolve((server.address() as net.AddressInfo).port)),
+        ),
+      commands,
+      helloOn,
+      dropAll: () => sockets.splice(0).forEach(socket => socket.destroy()),
+      [Symbol.dispose]: () => {
+        server.close();
+        sockets.forEach(socket => socket.destroy());
+      },
+    };
+  }
+  const options = { autoReconnect: true, enableOfflineQueue: true, connectionTimeout: 5000, maxRetries: 10 };
+  const currentDb = (client: RedisClient) => client.send("CLIENT", ["INFO"]);
+
+  test("select() is replayed after an auto-reconnect, and duplicate() starts on the URL database", async () => {
+    using peer = createDbPeer();
+    const port = await peer.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}/2`, options);
+    let duplicate: RedisClient | undefined;
+    try {
+      await client.set("a", "1");
+      expect(await (client as any).select(5)).toBe("OK");
+      expect(await currentDb(client)).toBe("db=5");
+
+      peer.dropAll();
+      await peer.helloOn(2);
+      await client.set("c", "1");
+      expect(await currentDb(client)).toBe("db=5");
+      expect(peer.commands[1].slice(0, 2)).toEqual([
+        ["HELLO", "3"],
+        ["SELECT", "5"],
+      ]);
+
+      // Like ioredis and node-redis, a duplicate is built from the
+      // configuration, not from the session's SELECT.
+      duplicate = await client.duplicate();
+      expect(await currentDb(duplicate)).toBe("db=2");
+      expect(peer.commands[2].slice(0, 2)).toEqual([
+        ["HELLO", "3"],
+        ["SELECT", "2"],
+      ]);
+    } finally {
+      duplicate?.close();
+      client.close();
+    }
+  });
+
+  test("a raw SELECT is tracked too, and select(0) stops the reconnect SELECT", async () => {
+    using peer = createDbPeer();
+    const port = await peer.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}/2`, options);
+    try {
+      expect(await client.send("SELECT", ["4"])).toBe("OK");
+      peer.dropAll();
+      await peer.helloOn(2);
+      expect(await currentDb(client)).toBe("db=4");
+      expect(peer.commands[1].slice(0, 2)).toEqual([
+        ["HELLO", "3"],
+        ["SELECT", "4"],
+      ]);
+
+      expect(await (client as any).select(0)).toBe("OK");
+      peer.dropAll();
+      await peer.helloOn(3);
+      expect(await currentDb(client)).toBe("db=0");
+      expect(peer.commands[2].slice(0, 2)).toEqual([
+        ["HELLO", "3"],
+        ["CLIENT", "INFO"],
+      ]);
+    } finally {
+      client.close();
+    }
+  });
+});
+
 describe("Valkey: Recovering After fail()", () => {
   // Answers the chunk carrying HELLO with `+OK` and the one carrying PING with
   // `+PONG` unless `replies` says otherwise for that connection (a hook that

@@ -102,13 +102,16 @@ if (process.platform === "win32") {
     "api-ms-win-core-synch-l1-2-0.dll", // forwards to kernel32; OS-provided (NOT api-ms-win-crt-*)
     "bcrypt.dll",
     "bcryptprimitives.dll",
+    "combase.dll", // WebGPU: the `windows` crate's COM glue (CoTaskMemFree)
     "crypt32.dll",
     "dbghelp.dll",
+    "dxgi.dll", // WebGPU: adapter enumeration for the Direct3D 12 backend
     "iphlpapi.dll",
     "kernel32.dll",
     "ntdll.dll",
     "ole32.dll",
     "oleaut32.dll",
+    "setupapi.dll", // WebGPU: wgpu reads the display driver's version through it
     "shell32.dll",
     "user32.dll",
     "userenv.dll",

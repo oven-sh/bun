@@ -296,7 +296,9 @@ impl PackCommand {
                     Global::crash();
                 }
                 // for_publish-only variants — unreachable when FOR_PUBLISH=false.
-                PackError::RestrictedUnscopedPackage | PackError::PrivatePackage => unreachable!(),
+                PackError::NotSemverVersion
+                | PackError::RestrictedUnscopedPackage
+                | PackError::PrivatePackage => unreachable!(),
             }
         }
         Ok(())
@@ -319,9 +321,11 @@ pub enum PackError<const FOR_PUBLISH: bool> {
     MissingPackageVersion,
     #[error("InvalidPackageVersion")]
     InvalidPackageVersion,
-    // The following two are only valid when FOR_PUBLISH == true (const-generic
+    // The following three are only valid when FOR_PUBLISH == true (const-generic
     // enums cannot conditionally include variants, so both instantiations
     // share one enum).
+    #[error("NotSemverVersion")]
+    NotSemverVersion,
     #[error("RestrictedUnscopedPackage")]
     RestrictedUnscopedPackage,
     #[error("PrivatePackage")]
@@ -2100,6 +2104,8 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     }
 
     if FOR_PUBLISH {
+        package_version =
+            Semver::Version::clean(package_version).ok_or(PackError::NotSemverVersion)?;
         if let Some(private) = json.root.get(b"private") {
             if let Some(is_private) = private.as_bool() {
                 if is_private {
@@ -2328,6 +2334,10 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             .ok_or(PackError::InvalidPackageVersion)?;
         if package_version.is_empty() || has_unsafe_tarball_filename_part(package_version) {
             return Err(PackError::InvalidPackageVersion);
+        }
+        if FOR_PUBLISH {
+            package_version =
+                Semver::Version::clean(package_version).ok_or(PackError::NotSemverVersion)?;
         }
     }
 

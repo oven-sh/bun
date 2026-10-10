@@ -118,6 +118,30 @@ describe("bundler", () => {
       api.expectFile("out.js").not.toInclude("import ");
     },
   });
+  // randomInt, timingSafeEqual, getFips and subtle were missing from the crypto
+  // polyfill, and its default export was the WebCrypto object instead of the
+  // module. Only WebCrypto-backed members are checked here, so the result does
+  // not depend on how crypto-browserify is bundled. The expected output is what
+  // Node.js prints for the same code.
+  itBundled("browser/NodeCryptoRandomIntAndTimingSafeEqual", {
+    files: {
+      "/entry.js": /* js */ `
+        import crypto, { randomInt, timingSafeEqual, getFips, subtle, webcrypto } from "node:crypto";
+        const code = f => { try { f(); return "no error"; } catch (e) { return e.code; } };
+        const v = randomInt(-5, 5);
+        console.log(Number.isInteger(v) && v >= -5 && v < 5, randomInt(1, 2), code(() => randomInt(5, 5)), code(() => randomInt(1.5)));
+        console.log(timingSafeEqual(new Uint8Array([1, 0, 2, 0]), new Uint16Array([1, 2])), timingSafeEqual(new Uint8Array([1]), new Uint8Array([2])));
+        console.log(code(() => timingSafeEqual(new Uint8Array(1), new Uint8Array(2))), code(() => timingSafeEqual("a", new Uint8Array(1))));
+        console.log(getFips(), subtle === webcrypto.subtle);
+        console.log(typeof crypto.randomInt, typeof crypto.timingSafeEqual, typeof crypto.randomUUID, typeof crypto.subtle);
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout:
+        "true 1 ERR_OUT_OF_RANGE ERR_INVALID_ARG_TYPE\ntrue false\nERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH ERR_INVALID_ARG_TYPE\n0 true\nfunction function function object",
+    },
+  });
   // The polyfill is plain JS bundled into the user's output, so it cannot use
   // JSC builtin intrinsics ($newPromiseCapability and friends). Those are
   // only rewritten inside src/js; in a browser bundle they are bare globals.

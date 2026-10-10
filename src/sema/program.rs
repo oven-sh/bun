@@ -2769,23 +2769,6 @@ fn uses_wildcard_types(options: &Options) -> bool {
     (options.types.iter().flatten()).any(|it| it == b"*")
 }
 
-/// The packages of types that `options` bring into a program with a root file, each with the file that it is resolved
-/// to. `None`: one is not installed (2688).
-pub fn types_of(host: &dyn Host, options: &Options) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
-    if options.types.as_ref().is_none_or(Vec::is_empty) {
-        return Some(Vec::new());
-    }
-    let session = Session::new();
-    let resolver = Resolver::new(&session, host, options);
-    let from = inside(&options.base_dir, INFERRED_TYPES_CONTAINING_FILE);
-    let names = automatic_type_directives(host, &resolver, options);
-    let resolved = names.into_iter().map(|name| {
-        let found = resolver.resolve_type_reference(&name, &from, ResolutionMode::None, None)?;
-        Some((name, found.0))
-    });
-    resolved.collect()
-}
-
 /// The `N` of each `/// <reference lib="N" />` in the file at `path`.
 pub fn libs_referenced_by(host: &dyn Host, path: &[u8]) -> Vec<Vec<u8>> {
     let Some(text) = host.read(path) else {

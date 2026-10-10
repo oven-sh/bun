@@ -210,17 +210,31 @@ pub struct Roots {
     case_sensitive: bool,
 }
 
+/// A path with its names: it is split once for all the projects that are asked about it.
+pub struct Asked<'a> {
+    path: &'a [u8],
+    names: Vec<&'a [u8]>,
+}
+
+impl<'a> Asked<'a> {
+    pub fn new(path: &'a [u8]) -> Asked<'a> {
+        let names = PathParts::of_directory(typescript_path(path));
+        Asked { path, names }
+    }
+}
+
 impl Roots {
-    /// Whether `getFileNamesFromConfigSpecs` finds the file at `path`, which is there and is no JSON file. `is_file`:
-    /// asked about the files beside it with the same name and another extension: `a.ts` takes the place of `a.js`.
-    pub fn has(&self, path: &[u8], is_file: &dyn Fn(&[u8]) -> bool) -> bool {
+    /// Whether `getFileNamesFromConfigSpecs` finds the file, which is there and is no JSON file. `is_file`: asked about
+    /// the files beside it with the same name and another extension: `a.ts` takes the place of `a.js`.
+    pub fn has(&self, file: &Asked, is_file: &dyn Fn(&[u8]) -> bool) -> bool {
+        let path = file.path;
         let is_literal = |path: &[u8]| {
             (self.literal.iter()).any(|it| is_same_path(it, path, self.case_sensitive))
         };
         if is_literal(path) {
             return true;
         }
-        if !self.matches(path) {
+        if !self.matches(file) {
             return false;
         }
         // `hasFileWithHigherPriorityExtension`
@@ -233,7 +247,7 @@ impl Roots {
                 continue;
             }
             let other = change_extension(path, extension);
-            if (is_literal(&other) || self.matches(&other)) && is_file(&other) {
+            if (is_literal(&other) || self.matches(&Asked::new(&other))) && is_file(&other) {
                 return false;
             }
         }
@@ -241,14 +255,14 @@ impl Roots {
     }
 
     /// `include` has it, and `exclude` has not.
-    fn matches(&self, path: &[u8]) -> bool {
+    fn matches(&self, file: &Asked) -> bool {
+        let (path, directory) = (file.path, &file.names);
         let has_extension = |it: &[u8]| path.len() > it.len() && path.ends_with(it);
         let is_supported = self
             .groups
             .iter()
             .any(|group| group.iter().any(|it| has_extension(it)))
             || self.more.iter().any(|it| has_extension(it));
-        let directory = &PathParts::of_directory(typescript_path(path));
         let whole = PathParts {
             directory,
             name: b"",

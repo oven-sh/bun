@@ -70,6 +70,8 @@ const BYTES_IN_THE_COST: f64 = 1e6;
 struct Left {
     /// How large the files are that are still to come.
     bytes: u64,
+    /// How large those were of which it was known at first.
+    at_first: u64,
     /// How large those are that may come, and of which it has not shown.
     possible: u64,
     /// How large those are that have come, and those that have not.
@@ -87,6 +89,7 @@ impl Demand {
     pub fn expect(&self, size: u64, most: usize) {
         *self.0.lock() = Left {
             bytes: size,
+            at_first: size,
             most,
             ..Left::default()
         };
@@ -123,24 +126,35 @@ impl Demand {
         left.bytes = left.bytes.saturating_sub(size as u64);
     }
 
-    /// Whether to start another realm beside the `realms` that there are, all of which are in use: by how much sooner the run
-    /// ends with it, against what it costs.
+    /// Whether to start another realm beside the `realms` that there are, all of which are in use: by how much sooner a run with
+    /// these files ends with it, against what it costs. By all the files of the run, not by those that are left: how many are
+    /// left when a thread happens to ask is up to the clock.
     pub fn is_worth_another(&self, realms: usize) -> bool {
         let left = self.0.lock();
         if realms == 0 || realms >= left.most {
             return realms == 0;
         }
         // Until it is of use the others go on. Then they are one more.
-        let (left, realms) = (left.expected() / BYTES_IN_THE_COST, realms as f64);
-        (left / realms - 1.0) / (realms + 1.0) >= SHARE_TO_SAVE
+        let (all, realms) = (left.all() / BYTES_IN_THE_COST, realms as f64);
+        (all / realms - 1.0) / (realms + 1.0) >= SHARE_TO_SAVE
     }
 }
 
 impl Left {
     /// Of those that may come, as large a part as has come of those of which it has shown. The first that comes says little: as
     /// if what a realm costs had shown before, and not come.
-    fn expected(&self) -> f64 {
+    fn still_to_show(&self) -> f64 {
         let (come, not) = (self.shown.0 as f64, self.shown.1 as f64);
-        self.bytes as f64 + self.possible as f64 * come / (come + not + BYTES_IN_THE_COST)
+        self.possible as f64 * come / (come + not + BYTES_IN_THE_COST)
+    }
+
+    /// How large the files are that are still to come, as far as can be told.
+    fn expected(&self) -> f64 {
+        self.bytes as f64 + self.still_to_show()
+    }
+
+    /// How large the files of the whole run are, as far as can be told.
+    fn all(&self) -> f64 {
+        (self.at_first + self.shown.0) as f64 + self.still_to_show()
     }
 }

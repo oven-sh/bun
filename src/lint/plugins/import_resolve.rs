@@ -2,6 +2,7 @@
 //! `resolve` of eslint-module-utils: the file that a file means by a name, for the resolvers of
 //! `settings["import/resolver"]`.
 
+use crate::import_settings::is_of_package;
 use bun_core::strings;
 use bun_lint::modules::{Lookup, Modules};
 use bun_lint::paths;
@@ -102,13 +103,20 @@ fn opts(config: Option<&Json>) -> Lookup<'_> {
 
 /// `requireResolver`, with its configuration. `None`: it is not known here.
 fn require_resolver<'s>(name: &[u8], config: Option<&'s Json>) -> Option<Lookup<'s>> {
-    match name
-        .strip_prefix(b"eslint-import-resolver-")
-        .unwrap_or(name)
-    {
-        b"node" => Some(opts(config)),
-        b"typescript" => Some(Lookup::TypeScript),
-        _ => None,
+    let is = |short: &[u8], package: &[u8]| name == short || is_of_package(name, package);
+    if is(b"node", b"eslint-import-resolver-node") {
+        Some(opts(config))
+    } else if is(b"typescript", b"eslint-import-resolver-typescript") {
+        let option = |name: &[u8]| config.and_then(|it| it.get(name));
+        let file = option(b"tsconfig").and_then(|it| it.get(b"configFile"));
+        let projects = file
+            .or_else(|| option(b"project"))
+            .filter(|it| is_truthy(it));
+        Some(Lookup::TypeScript(
+            projects.into_iter().flat_map(concat).flatten().collect(),
+        ))
+    } else {
+        None
     }
 }
 

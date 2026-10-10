@@ -108,8 +108,10 @@ struct Known<'h> {
     resolvers: ShardedMap<Vec<u8>, ProjectResolver<'h>>,
     /// The path of the `tsconfig.json` for the files of a directory.
     configs: ShardedMap<Vec<u8>, Vec<u8>>,
-    /// [`Graph::scopes_in`]
+    /// [`Graph::scopes_in`], [`Graph::scopes_of`]
     scopes: ShardedMap<Vec<u8>, Vec<Scope>>,
+    /// [`Graph::configs_of_typescript_resolver`]: by the directory and the projects.
+    typescript_configs: ShardedMap<Vec<u8>, Vec<Vec<u8>>>,
     /// What a specifier that is not relative means: by the `tsconfig.json`, the directory, how it is imported, and the
     /// specifier.
     not_relative: ShardedMap<Vec<u8>, Option<(Vec<u8>, bool)>>,
@@ -190,6 +192,8 @@ pub type Parallel<'p> = &'p dyn Fn(usize, &(dyn Fn(usize) + Sync));
 struct Scope {
     /// Empty: it cannot be read, and is for every file.
     config: Vec<u8>,
+    /// `baseUrl`, or else its directory.
+    base: Vec<u8>,
     files: Vec<Vec<u8>>,
     /// Absolute. With each: whether it ends in a `*`. Then it takes only JavaScript and TypeScript.
     include: Vec<(Pattern, bool)>,
@@ -200,6 +204,7 @@ struct Scope {
 impl Scope {
     const BROKEN: Scope = Scope {
         config: Vec::new(),
+        base: Vec::new(),
         files: Vec::new(),
         include: Vec::new(),
         exclude: Vec::new(),
@@ -230,8 +235,12 @@ impl Scope {
             (None, None) => &everything[..],
         };
         let allow_js = (project.raw_compiler_options.iter()).find(|it| it.0 == b"allowJs");
+        let base_url = (project.raw_compiler_options.iter()).find(|it| it.0 == b"baseUrl");
         Scope {
             config: project.config_path.clone(),
+            base: (base_url.and_then(|it| it.1.as_str()))
+                .unwrap_or(directory)
+                .to_vec(),
             files: (written.files.iter().flatten())
                 .map(|it| absolute(it))
                 .collect(),
@@ -343,12 +352,24 @@ impl<'h> Graph<'h> {
     /// The `tsconfig.json` in `directory`, if there is one, after those that it refers to: oxlint asks them first. What
     /// those refer to is not asked.
     fn scopes_in(&self, directory: &[u8]) -> &[Scope] {
-        let known = self.known();
-        if let Some(scopes) = known.scopes.get_ref(directory) {
-            return scopes;
+        match self.known().scopes.get_ref(directory) {
+            Some(scopes) => scopes,
+            None => self.load_scopes(directory, &join(directory, b"tsconfig.json")),
         }
+    }
+
+    /// The same for the configuration at `config`, whatever it is called.
+    fn scopes_of(&self, config: &[u8]) -> &[Scope] {
+        match self.known().scopes.get_ref(config) {
+            Some(scopes) => scopes,
+            None => self.load_scopes(config, config),
+        }
+    }
+
+    fn load_scopes(&self, key: &[u8], config: &[u8]) -> &[Scope] {
+        let known = self.known();
         let _loading = self.loading.lock();
-        if let Some(scopes) = known.scopes.get_ref(directory) {
+        if let Some(scopes) = known.scopes.get_ref(key) {
             return scopes;
         }
         let disk = WithoutListings(self.store.disk());
@@ -356,9 +377,8 @@ impl<'h> Graph<'h> {
             let project = load_overriding(&disk, &self.store.session, config, &|_| Vec::new());
             project.ok().map(|it| Scope::new(&it))
         };
-        let config = join(directory, b"tsconfig.json");
-        let project = (disk.is_file(&config))
-            .then(|| load_overriding(&disk, &self.store.session, &config, &|_| Vec::new()).ok());
+        let project = (disk.is_file(config))
+            .then(|| load_overriding(&disk, &self.store.session, config, &|_| Vec::new()).ok());
         let scopes = project.flatten().map_or_else(Vec::new, |project| {
             let referenced = project.references.iter();
             let referenced =
@@ -367,7 +387,96 @@ impl<'h> Graph<'h> {
             let all: Option<Vec<Scope>> = referenced.chain([own]).collect();
             all.unwrap_or_else(|| vec![Scope::BROKEN])
         });
-        known.scopes.insert_ref(directory.to_vec(), scopes)
+        known.scopes.insert_ref(key.to_vec(), scopes)
+    }
+
+    /// The configurations whose `paths` eslint-import-resolver-typescript 4 asks about what `from` imports, in its
+    /// order. An empty one: none. `projects`: its `project`.
+    fn configs_of_typescript_resolver(&self, projects: &[&[u8]], from: &[u8]) -> &[Vec<u8>] {
+        let directory = directory_of(from);
+        let key = [directory, b"\0", &projects.join(&b"\0"[..])[..]].concat();
+        if let Some(configs) = self.known().typescript_configs.get_ref(&key[..]) {
+            return configs;
+        }
+        let (cwd, disk) = (&self.store.cwd[..], self.store.disk());
+        let names = [&b"tsconfig.json"[..], b"jsconfig.json"];
+        let in_directory = |it: &[u8]| {
+            names
+                .iter()
+                .map(|name| join(it, name))
+                .find(|it| disk.is_file(it))
+        };
+        // `tryFile`
+        let try_file = |path: Vec<u8>| match disk.is_file(&path) {
+            true => Some(path),
+            false => in_directory(&path),
+        };
+        let mut listed: Vec<Vec<u8>> = match projects
+            .iter()
+            .any(|it| strings::contains_any(it, b"*?[{(!"))
+        {
+            false => (projects.iter())
+                .filter_map(|it| try_file(join(cwd, it)))
+                .collect(),
+            // Of what the patterns find only those above the file: the others are further from it.
+            true => {
+                let patterns = projects
+                    .iter()
+                    .map(|it| Pattern::new(&join(cwd, it), GlobOptions::BUN));
+                let patterns: Vec<Pattern> = patterns.collect();
+                let named = |it: &[u8]| [it.to_vec(), join(it, names[0]), join(it, names[1])];
+                (ancestors(directory).flat_map(named))
+                    .filter(|it| patterns.iter().any(|pattern| pattern.matches(it)))
+                    .filter_map(try_file)
+                    .collect()
+            }
+        };
+        // `computeAffinity`
+        let distance = |config: &Vec<u8>| {
+            let (mut a, mut b) = (
+                strings::split(directory_of(config), b"/"),
+                strings::split(directory, b"/"),
+            );
+            let (mut left, mut right) = (a.next(), b.next());
+            while left.is_some() && left == right {
+                (left, right) = (a.next(), b.next());
+            }
+            left.iter().count() + a.count() + right.iter().count() + b.count()
+        };
+        listed.sort_by_key(distance);
+        listed.dedup();
+        let is_for_it = |it: &Vec<u8>| self.scopes_of(it).last().is_some_and(|own| own.has(from));
+        let chosen = match listed.len() {
+            0 => in_directory(cwd).into_iter().collect(),
+            1 => listed,
+            _ => match listed.iter().position(is_for_it) {
+                Some(at) => vec![listed.swap_remove(at)],
+                None => listed,
+            },
+        };
+        let mut configs = Vec::new();
+        for config in chosen {
+            // `references: "auto"`
+            let referenced = self
+                .scopes_of(&config)
+                .split_last()
+                .map_or(&[][..], |it| it.1);
+            let is_around = |it: &&Scope| {
+                let rest = directory.strip_prefix(&it.base[..]);
+                !it.config.is_empty() && rest.is_some_and(|it| matches!(it, [] | [b'/', ..]))
+            };
+            configs.extend(
+                referenced
+                    .iter()
+                    .find(is_around)
+                    .map(|it| it.config.clone()),
+            );
+            configs.push(config);
+        }
+        if configs.is_empty() {
+            configs.push(Vec::new());
+        }
+        self.known().typescript_configs.insert_ref(key, configs)
     }
 
     /// The `tsconfig.json` that has a say about what the file `from` imports. Empty: none.
@@ -474,10 +583,10 @@ impl<'h> Graph<'h> {
 
     /// What eslint-import-resolver-typescript finds and TypeScript does not: a file by its whole name, whatever that
     /// ends in, and with `.json` or `.node` behind it. Also through `paths` and `baseUrl`.
-    fn resolve_other_file(&self, specifier: &[u8], from: &[u8]) -> Option<Vec<u8>> {
+    fn resolve_other_file(&self, config: &[u8], specifier: &[u8], from: &[u8]) -> Option<Vec<u8>> {
         let ProjectResolver {
             resolver, base_url, ..
-        } = self.resolver_of(self.config_of(from), directory_of(from));
+        } = self.resolver_of(config, directory_of(from));
         let how = AsRequire {
             extensions: &[b".json", b".node"],
             module_directories: &[b"node_modules"],
@@ -527,12 +636,13 @@ impl<'h> Graph<'h> {
             let found = (by.resolve)(self, typescript_path(from), specifier, is_require)?;
             return Some((Cow::Owned(join(&self.store.cwd, &found)), false));
         }
-        self.resolve_any_path(from, specifier, is_require)
+        self.resolve_any_path(self.config_of(from), from, specifier, is_require)
             .filter(|it| !self.flavor().resolves_as_node() || is_read_by_oxlint(&it.0))
     }
 
     fn resolve_any_path(
         &self,
+        config: &[u8],
         from: &[u8],
         specifier: &[u8],
         is_require: bool,
@@ -546,12 +656,12 @@ impl<'h> Graph<'h> {
             {
                 return found.map(|it| (Cow::Owned(it), false));
             }
-            return self.resolve_with_project(from, specifier, is_require);
+            return self.resolve_with_project(config, from, specifier, is_require);
         }
         // What is not relative means the same in all the files of a directory that have the same `tsconfig.json`, and
         // takes long to find.
         let key = [
-            self.config_of(from),
+            config,
             b"\0",
             directory_of(from),
             if is_require { b"\0r\0" } else { b"\0i\0" },
@@ -562,7 +672,7 @@ impl<'h> Graph<'h> {
             Some(found) => found,
             None => {
                 let found = self
-                    .resolve_with_project(from, specifier, is_require)
+                    .resolve_with_project(config, from, specifier, is_require)
                     .map(|it| (it.0.into_owned(), it.1));
                 self.known().not_relative.insert_ref(key, found)
             }
@@ -622,6 +732,7 @@ impl<'h> Graph<'h> {
 
     fn resolve_with_project(
         &self,
+        config: &[u8],
         from: &[u8],
         specifier: &[u8],
         is_require: bool,
@@ -633,7 +744,7 @@ impl<'h> Graph<'h> {
         };
         let ProjectResolver {
             resolver, base_url, ..
-        } = self.resolver_of(self.config_of(from), directory_of(from));
+        } = self.resolver_of(config, directory_of(from));
         let from_base_url = || {
             let base_url = base_url
                 .as_ref()
@@ -1051,7 +1162,7 @@ impl Modules for Graph<'_> {
         let from = from_native(from);
         let found = match lookup {
             _ if specifier.len() > 4096 => return None,
-            Lookup::TypeScript => {
+            Lookup::TypeScript(projects) => {
                 // `removeQuerystring`
                 let end = strings::last_index_of_char(specifier, b'?').unwrap_or(specifier.len());
                 let specifier = &specifier[..end];
@@ -1065,7 +1176,12 @@ impl Modules for Graph<'_> {
                     return None;
                 }
                 let real = self.store.disk().realpath(&from);
-                let found = self.resolve_any_path(&real, specifier, is_require);
+                let configs = self.configs_of_typescript_resolver(projects, &from);
+                let found = configs.iter().find_map(|config| {
+                    let found = self.resolve_any_path(config, &real, specifier, is_require);
+                    let other = || self.resolve_other_file(config, specifier, &from);
+                    found.or_else(|| Some((Cow::Owned(other()?), false)))
+                });
                 // TypeScript adds neither `.json` nor `.node` to a name. Such a file comes before a directory.
                 let named = join(directory_of(&from), specifier);
                 let is_in_directory = |it: &[u8]| {
@@ -1080,8 +1196,7 @@ impl Modules for Graph<'_> {
                         let file = files.find(|it| self.store.disk().is_file(it));
                         file.unwrap_or_else(|| found.0.into_owned())
                     }
-                    Some(found) => found.0.into_owned(),
-                    None => self.resolve_other_file(specifier, &from)?,
+                    found => found?.0.into_owned(),
                 }
             }
             Lookup::Node(extensions) => {

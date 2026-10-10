@@ -1224,19 +1224,28 @@ impl Disk {
 
 /// The disk, for a few questions in many directories: each is a call of the system, and no directory is listed for it
 /// or kept. A `Disk` lists the directory of whatever it is asked about, which pays where most of it is asked for.
-pub(crate) struct Asking<'d> {
-    pub(crate) disk: &'d Disk,
+#[derive(Copy, Clone)]
+pub(crate) struct Asking {
+    pub(crate) is_case_sensitive: bool,
     /// Or else every directory is empty: the `include` of a configuration file finds nothing.
     pub(crate) lists: bool,
 }
 
-impl Asking<'_> {
+impl Asking {
+    /// `project`: a path in the project, in the checker's path format.
+    pub(crate) fn new(project: &[u8]) -> Asking {
+        Asking {
+            is_case_sensitive: is_file_system_case_sensitive(project),
+            lists: false,
+        }
+    }
+
     fn is_directory(path: &[u8]) -> Option<bool> {
         is_directory(Fd::cwd(), for_the_system(&with_root(path))?)
     }
 }
 
-impl Host for Asking<'_> {
+impl Host for Asking {
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
         read_at(path, false)
     }
@@ -1264,16 +1273,16 @@ impl Host for Asking<'_> {
         }
     }
     fn is_case_sensitive(&self) -> bool {
-        self.disk.is_case_sensitive()
+        self.is_case_sensitive
     }
-    fn script_kind(&self, path: &[u8]) -> Option<ScriptKind> {
-        self.disk.script_kind(path)
+    fn script_kind(&self, _: &[u8]) -> Option<ScriptKind> {
+        None
     }
     fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)] {
-        self.disk.extra_file_extensions()
+        &[]
     }
-    fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>> {
-        self.disk.scripts_of_page(page)
+    fn scripts_of_page(&self, _: &[u8]) -> Vec<Vec<u8>> {
+        Vec::new()
     }
     fn parse<'s>(
         &self,
@@ -1283,10 +1292,18 @@ impl Host for Asking<'_> {
         atoms: &Interner<'s>,
         options: ParseOptions,
     ) -> hir::File<'s> {
-        self.disk.parse(arena, path, text, atoms, options)
+        bun_sema_parser::summarize(
+            arena,
+            path,
+            None,
+            text,
+            atoms,
+            options.experimental_decorators,
+            options.module_detection == ModuleDetection::Force,
+        )
     }
     fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
-        self.disk.parse_package_json(arena, text)
+        parse_package_json(arena, text)
     }
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
         (0..count).for_each(work);

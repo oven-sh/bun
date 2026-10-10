@@ -90,7 +90,8 @@ impl NoUnsafeMemberAccess {
         if self.allow_optional_chaining && node.is_optional() {
             return;
         }
-        if !computed && (node.is_in_type_query() || node.is_jsx_tag_name()) {
+        // For tsgolint the `a.b` of `<a.b>` and of `</a.b>` is a member expression like any other.
+        if !computed && (node.is_in_type_query() || node.is_jsx_tag_name() && !cx.language().is_oxlint) {
             return;
         }
         let ty = object.ty();

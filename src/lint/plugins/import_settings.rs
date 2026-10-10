@@ -56,14 +56,18 @@ pub(crate) fn strings_of(json: Option<&Json>) -> Vec<&[u8]> {
     strings_in(json).collect()
 }
 
-/// The parser that `require(name)` gives: `name` is a package, or what `require.resolve` says.
-fn parser_named(name: &[u8]) -> Parser {
+/// Whether `require(name)` gives `package`: `name` is the package, or what `require.resolve` says, a file in it.
+pub(crate) fn is_of_package(name: &[u8], package: &[u8]) -> bool {
     let path = paths::portable(name, name);
-    let package = match strings::last_index_of(&path, b"/node_modules/") {
+    let inside = match strings::last_index_of(&path, b"/node_modules/") {
         Some(at) => path.get(at + b"/node_modules/".len()..).unwrap_or_default(),
         None => &path[..],
     };
-    let is_in = |it: &[u8]| matches!(package.strip_prefix(it), Some([] | [b'/', ..]));
+    matches!(inside.strip_prefix(package), Some([] | [b'/', ..]))
+}
+
+fn parser_named(name: &[u8]) -> Parser {
+    let is_in = |it: &[u8]| is_of_package(name, it);
     if is_in(b"espree") {
         Parser::Espree
     } else if is_in(b"@typescript-eslint/parser") {

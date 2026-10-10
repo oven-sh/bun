@@ -570,10 +570,16 @@ pub(crate) fn run_task(
         task_tag::ProcessWaiterThreadTask => {
             #[cfg(not(windows))]
             {
+                let t = cast_ptr!(ProcessWaiterThreadTask<Process>);
+                // Only the regular loop is driven until a yielded task runs. A macro's and Bun.spawnSync's are not.
+                let regular_loop = core::ptr::eq(el, &raw const vm.regular_event_loop);
                 // SAFETY: tag identifies pointee; heap-allocated in WaiterThread.
-                let t =
-                    unsafe { bun_core::heap::take(cast_ptr!(ProcessWaiterThreadTask<Process>)) };
-                t.run_from_js_thread();
+                if regular_loop && unsafe { (*t).poll_first() } {
+                    el.enqueue_task_after_yield(task);
+                } else {
+                    // SAFETY: as above.
+                    unsafe { bun_core::heap::take(t) }.run_from_js_thread();
+                }
             }
             #[cfg(windows)]
             unreachable!("posix-only");

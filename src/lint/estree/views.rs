@@ -536,6 +536,22 @@ pub(super) fn jsx_text_value<'a>(e: Expr<'a>) -> Option<&'a [u8]> {
     })
 }
 
+/// oxlint's `value` of a string that is the value of a JSX attribute, without braces: what is between the quotes, where it does not
+/// read `&amp;` and the like. `None`: `v` is not one, or the tree is not for oxlint's rules.
+pub(super) fn attribute_as_written<'a>(v: VNode<'a>) -> Option<&'a [u8]> {
+    if !v.file().language().is_oxlint || v.part != Part::Main {
+        return None;
+    }
+    let e = v.expr()?;
+    let Node::Prop(attribute) = e.parent() else {
+        return None;
+    };
+    let is_bare = attribute.is_jsx_attribute()
+        && attribute.key().is_some()
+        && e.jsx_container_span().is_none();
+    is_bare.then(|| v.file().slice(e.span().shrink(1, 1)))
+}
+
 /// `#isValidEscape` of typescript-estree
 fn has_valid_escapes(raw: &[u8]) -> bool {
     let is_hex =

@@ -523,7 +523,7 @@ estree_schema! {
     Literal [literals()] (v) {
         data Raw = v.file().slice(v.span());
         data Value = match v.leaf()?.0 {
-            Leaf::String(value) => Value::Str(value),
+            Leaf::String(value) => Value::Str(attribute_as_written(v).unwrap_or(value)),
             Leaf::Number(value) => Value::Number(value),
             Leaf::Bool(value) => Value::Bool(value),
             Leaf::BigInt(digits) => Value::BigInt(digits),
@@ -1196,10 +1196,13 @@ estree_schema! {
         data Raw = v.file().slice(v.span());
         data Value = match v.part {
             Part::Whitespace(_) => v.file().slice(v.span()),
+            // oxlint does not read `&amp;` and the like.
+            _ if v.file().language().is_oxlint => v.file().slice(v.span()),
             _ => jsx_text_value(v.expr()?)?,
         };
         // acorn reads the text with `parseLiteral`, which takes what ends in `n` for a `bigint`.
         es_data Bigint = match v.part {
+            _ if v.file().language().is_oxlint => return None,
             _ if !v.file().slice(v.span()).ends_with(b"n") => return None,
             Part::Whitespace(_) => v.file().slice(v.span()),
             _ => jsx_text_value(v.expr()?)?,

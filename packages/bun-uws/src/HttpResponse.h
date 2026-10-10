@@ -183,16 +183,18 @@ public:
         return true;
     }
 
-    /* node:http: an idle tunnel is at read EOF and has nothing left to send. Like a libuv handle in that state, it does not hold
-     * the event loop. The filter hears -3 when a tunnel becomes idle and +3 when it has bytes to send again. */
-    void setNodeHttpTunnelIdle(bool idle) {
+    /* node:http: a connection at rest does not read (a request stopped its reads, or a tunnel is at read EOF) and has
+     * nothing left to send. Like a libuv stream handle in that state, it does not hold the event loop:
+     * https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1473-L1485. The filter hears -3 when a
+     * connection comes to rest and +3 when it reads again or has bytes to send again. */
+    void setNodeHttpAtRest(bool atRest) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-        if (!httpResponseData->filteredAccept || httpResponseData->filteredIdleTunnel == idle) {
+        if (!httpResponseData->filteredAccept || httpResponseData->filteredAtRest == atRest) {
             return;
         }
-        httpResponseData->filteredIdleTunnel = idle;
+        httpResponseData->filteredAtRest = atRest;
         for (auto &f : HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this)->filterHandlers) {
-            f(this, idle ? -3 : 3);
+            f(this, atRest ? -3 : 3);
         }
     }
 
@@ -473,7 +475,7 @@ public:
         }
         if (((AsyncSocketData<SSL> *) responseData)->filteredAccept) {
             for (auto &f : httpContextData->filterHandlers) {
-                f((HttpResponse<SSL> *) this, ((AsyncSocketData<SSL> *) responseData)->filteredIdleTunnel ? -4 : -2);
+                f((HttpResponse<SSL> *) this, ((AsyncSocketData<SSL> *) responseData)->filteredAtRest ? -4 : -2);
             }
         }
 

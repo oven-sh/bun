@@ -2483,7 +2483,8 @@ where
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_pending_requests(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_number((self.pending_requests.get() as u32 & 0x7FFF_FFFF) as i32 as f64)
+        let pending = self.pending_requests.get() + self.body_tail_count.get() as usize;
+        JSValue::js_number((pending as u32 & 0x7FFF_FFFF) as i32 as f64)
     }
 
     #[bun_jsc::host_fn(getter)]

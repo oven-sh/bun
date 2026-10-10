@@ -268,8 +268,12 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// ([`NewServer::is_drained`]); for Bun.serve it also holds the
     /// graceful-stop promise open ([`NewServer::is_closed`]).
     pub(crate) active_connection_count: core::cell::Cell<u32>,
-    /// The node:http tunnels in `active_connection_count` that are at read EOF and have nothing left to send.
-    pub(crate) idle_tunnel_count: core::cell::Cell<u32>,
+    /// The node:http connections in `active_connection_count` that are at rest: they do not read (a request stopped the reads, or a tunnel is at read EOF) and have nothing left to send.
+    pub(crate) at_rest_count: core::cell::Cell<u32>,
+    /// The node:http requests whose response is over and whose body still arrives. They are not in `pending_requests`.
+    pub(crate) body_tail_count: core::cell::Cell<u32>,
+    /// Holds the loop for those bodies while a connection reads, also after `server.unref()`: a response that is over holds nothing.
+    pub(crate) body_tail_ref: bun_jsc::JsCell<KeepAlive>,
     /// Live `ServerWebSocket` count. Lives on the server (not the websocket
     /// context) so a reload's context swap cannot reset it, and sits in a
     /// `Cell` because the open/close accounting arrives through shared
@@ -498,7 +502,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// uWS filter: `+2` at TCP accept (before any TLS handshake), `-2` on
     /// `HttpContext::onClose` / `HttpResponse::upgrade()` — see
     /// `AsyncSocketData::filteredAccept`. Feeds [`Self::active_connection_count`].
-    /// `-3` / `+3`: a node:http tunnel becomes idle / has bytes to send again. `-4`: it closes idle.
+    /// `-3` / `+3`: a node:http connection comes to rest / reads again or has bytes to send again
+    /// (`HttpResponse::setNodeHttpAtRest`). `-4`: it closes at rest.
     extern "C" fn on_connection_filter(
         _socket: *mut uws_sys::us_socket_t,
         opened: i32,
@@ -518,22 +523,24 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     return;
                 }
                 3 => {
-                    this.note_tunnel_idle(false);
+                    this.note_at_rest(false);
+                    this.update_body_tail_hold();
                     // With a listener open, the loop ref is the user's to drop (`server.unref()`).
                     if !this.has_listener() {
-                        // SAFETY: `this` is not used again, and a tunnel write never runs inside `app.close()`.
+                        // SAFETY: `this` is not used again, and neither a write nor a resume runs inside `app.close()`.
                         unsafe { &mut *user_data.cast::<Self>() }.ref_();
                     }
                     return;
                 }
-                -3 => this.note_tunnel_idle(true),
+                -3 => this.note_at_rest(true),
                 -4 => {
-                    this.note_tunnel_idle(false);
+                    this.note_at_rest(false);
                     this.note_connection_closed();
                 }
                 -2 => this.note_connection_closed(),
                 _ => return,
             }
+            this.update_body_tail_hold();
             !this.has_loop_holding_connections()
                 && !this.has_listener()
                 && !this.deinit_running.get()
@@ -1541,7 +1548,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     // Raw 'upgrade'/'connect' handoff: the exchange left HTTP, so
                     // release the pending-request accounting now - a half-open
                     // tunnel never closes, which stranded `pending_requests`.
-                    nhr.mark_request_as_done_if_necessary();
+                    nhr.on_tunnel_handoff();
                 }
             } else if nhr_flags.contains(NhrFlags::IS_REQUEST_PENDING) {
                 // The socket was adopted by the WebSocket context inside the
@@ -1613,20 +1620,48 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             .set(self.active_connection_count.get().saturating_sub(1));
     }
 
-    fn note_tunnel_idle(&self, idle: bool) {
-        let count = self.idle_tunnel_count.get();
-        // `AsyncSocketData::filteredIdleTunnel` pairs every -3 with one +3 or -4.
-        debug_assert!(idle || count > 0);
-        self.idle_tunnel_count.set(if idle {
+    fn note_at_rest(&self, at_rest: bool) {
+        let count = self.at_rest_count.get();
+        // `AsyncSocketData::filteredAtRest` pairs every -3 with one +3 or -4.
+        debug_assert!(at_rest || count > 0);
+        self.at_rest_count.set(if at_rest {
             count + 1
         } else {
             count.saturating_sub(1)
         });
     }
 
-    /// An idle tunnel is open but, like a libuv handle at EOF with no write pending, does not hold the loop.
+    /// A connection at rest is open but, like a libuv handle that does not read and has no write pending, does not hold the loop.
     fn has_loop_holding_connections(&self) -> bool {
-        self.active_connection_count.get() > self.idle_tunnel_count.get()
+        self.active_connection_count.get() > self.at_rest_count.get()
+    }
+
+    /// A node:http response is over and the rest of its request body still arrives (`started`), or that body is over too.
+    pub(crate) fn on_node_http_body_tail(&mut self, started: bool) {
+        if started {
+            self.pending_requests.set(self.pending_requests.get() - 1);
+            self.body_tail_count.set(self.body_tail_count.get() + 1);
+            self.update_body_tail_hold();
+        } else {
+            self.body_tail_count.set(self.body_tail_count.get() - 1);
+            self.update_body_tail_hold();
+            self.deinit_if_we_can();
+        }
+    }
+
+    fn update_body_tail_hold(&self) {
+        let holds = self.body_tail_count.get() > 0 && self.has_loop_holding_connections();
+        if holds == self.body_tail_ref.get().is_active() {
+            return;
+        }
+        let loop_ctx = self.vm.loop_ctx();
+        self.body_tail_ref.with_mut(|keep_alive| {
+            if holds {
+                keep_alive.ref_(loop_ctx);
+            } else {
+                keep_alive.unref(loop_ctx);
+            }
+        });
     }
 
     fn note_websocket_opened(&self) {
@@ -1663,7 +1698,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// no open HTTP connection. The wrapper may only go `Weak` from here on
     /// (see [`Self::js_value_for_dispatch`]).
     pub(crate) fn is_drained(&self) -> bool {
-        self.is_closed() && !self.has_active_connections()
+        // The close of a connection reaches a request that waits for its body in a later task.
+        self.is_closed() && !self.has_active_connections() && self.body_tail_count.get() == 0
     }
 
     pub(crate) fn has_listener(&self) -> bool {
@@ -2221,7 +2257,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             js_value: jsc::JsRef::empty(),
             pending_requests: core::cell::Cell::new(0),
             active_connection_count: core::cell::Cell::new(0),
-            idle_tunnel_count: core::cell::Cell::new(0),
+            at_rest_count: core::cell::Cell::new(0),
+            body_tail_count: core::cell::Cell::new(0),
+            body_tail_ref: bun_jsc::JsCell::new(KeepAlive::default()),
             active_websocket_count: core::cell::Cell::new(0),
             deinit_running: core::cell::Cell::new(false),
             abort_handle: jsc::AbortHandle::for_owner::<Self>(),
@@ -4050,6 +4088,10 @@ impl AnyServer {
 
     pub(crate) fn on_request_complete(&mut self) {
         any_server_dispatch_mut!(self, |s| s.on_request_complete())
+    }
+
+    pub(crate) fn on_node_http_body_tail(&mut self, started: bool) {
+        any_server_dispatch_mut!(self, |s| s.on_node_http_body_tail(started))
     }
 
     pub(crate) fn on_static_request_complete(&mut self) {

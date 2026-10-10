@@ -182,6 +182,44 @@ static bool isTunnel(const JSNodeHTTPServerSocket* self)
     return self->is_ssl ? isInTunnelMode<true>(socket) : isInTunnelMode<false>(socket);
 }
 
+/* The reads of a connection that is not a tunnel are stopped: by flood prevention, or by a request whose stream is full or paused. */
+template<bool SSL>
+static constexpr uint32_t readsStopped = uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED | uWS::HttpResponseData<SSL>::HTTP_NODE_READS_STOPPED;
+
+/* Tells uWS whether this connection is at rest: its reads do not hold the event loop and it has nothing left to send. See HttpResponse::setNodeHttpAtRest. */
+template<bool SSL>
+static void refreshAtRestOf(us_socket_t* socket)
+{
+    auto* httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
+    auto* cell = reinterpret_cast<JSNodeHTTPServerSocket*>(httpResponseData->socketData);
+    auto* asyncSocket = reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket);
+    const uint32_t state = httpResponseData->state;
+    bool atRest;
+    if (httpResponseData->isConnectRequest) {
+        atRest = cell && cell->tunnelReadEnded;
+    } else if ((atRest = (state & readsStopped<SSL>) != 0)) {
+        /* A response in flight or queued has bytes to send. An Upgrade request whose body still arrives has no response. */
+        const bool responseInFlight = (state & uWS::HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) && !(state & uWS::HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY);
+        atRest = !responseInFlight && httpResponseData->nodeHttpQueuedPipelinedCount == 0;
+        if (atRest) {
+            /* hasFullyDrained() does not count the cork buffer. */
+            asyncSocket->sendCorked();
+        }
+    }
+    atRest = atRest && (!cell || cell->streamBuffer.bufferedSize() == 0) && asyncSocket->hasFullyDrained();
+    reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->setNodeHttpAtRest(atRest);
+}
+
+/* The reads start again, so the connection is not at rest. This comes before the resume: us_socket_resume() closes a socket whose poll it cannot arm again. */
+template<bool SSL>
+static void endReadsStop(us_socket_t* socket, uWS::NodeHttpResponseData<SSL>* httpResponseData)
+{
+    if (httpResponseData->state & readsStopped<SSL>) [[unlikely]] {
+        httpResponseData->state &= ~readsStopped<SSL>;
+        refreshAtRestOf<SSL>(socket);
+    }
+}
+
 void JSNodeHTTPServerSocket::applyTunnelReads()
 {
     if (!isTunnel(this)) {
@@ -383,6 +421,12 @@ JSC::EncodedJSValue JSNodeHTTPServerSocket::halfClose(JSC::JSGlobalObject* globa
     // Not for a tunnel that paused its reads: the resume that ends that pause is the re-add.
     const bool cycleReads = !upgraded && !tunnelReadsPaused();
     if (socket && cycleReads) {
+        // The resume below also ends a stop of the reads by a request.
+        if (is_ssl) {
+            endReadsStop<true>(socket, reinterpret_cast<uWS::NodeHttpResponseData<true>*>(us_socket_ext(socket)));
+        } else {
+            endReadsStop<false>(socket, reinterpret_cast<uWS::NodeHttpResponseData<false>*>(us_socket_ext(socket)));
+        }
         us_socket_pause(socket);
     }
     auto result = us_socket_buffered_js_write(socket, is_ssl, ended, hasUnsentResponseBytes(), flushesStreamBufferOnDrain(), &streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
@@ -570,11 +614,11 @@ void JSNodeHTTPServerSocket::appendPipelinedResponse(JSC::VM& vm, WebCore::JSNod
     m_pipelinedResponses.last().set(vm, this, response);
 }
 
-/* Flood prevention gives the reads back. A tunnel that paused them itself (readStop) also resumes them itself. */
+/* Flood prevention or a request gives the reads back. A tunnel that paused them itself (readStop) also resumes them itself. */
 template<bool SSL>
-static void endFloodPreventionPause(us_socket_t* socket, uWS::NodeHttpResponseData<SSL>* httpResponseData)
+static void resumeReads(us_socket_t* socket, uWS::NodeHttpResponseData<SSL>* httpResponseData)
 {
-    httpResponseData->state &= ~uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
+    endReadsStop<SSL>(socket, httpResponseData);
     auto* cell = reinterpret_cast<JSNodeHTTPServerSocket*>(httpResponseData->socketData);
     if (cell && cell->tunnelReadsPaused()) {
         return;
@@ -598,15 +642,16 @@ static void onNodeHttpReadsResumable(us_socket_t* socket)
         && (reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->getBufferedAmount() > 0 || queuedResponsesHoldReads<SSL>(httpResponseData))) {
         return;
     }
-    endFloodPreventionPause<SSL>(socket, httpResponseData);
+    resumeReads<SSL>(socket, httpResponseData);
 }
 
-/* Pause edge (JS-driven, after the caller paused the socket). */
+/* Pause edge (JS-driven, after the caller paused the socket). `stop` is HTTP_NODE_READS_PAUSED for flood prevention and HTTP_NODE_READS_STOPPED for a request. */
 template<bool SSL>
-static void onNodeHttpReadsPaused(us_socket_t* socket)
+static void onNodeHttpReadsPaused(us_socket_t* socket, uint32_t stop)
 {
     auto* d = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
-    d->state |= uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
+    d->state |= stop;
+    refreshAtRestOf<SSL>(socket);
 }
 
 extern "C" void Bun__NodeHTTP__onReadsPaused(int ssl, us_socket_t* socket)
@@ -615,9 +660,34 @@ extern "C" void Bun__NodeHTTP__onReadsPaused(int ssl, us_socket_t* socket)
         return;
     }
     if (ssl) {
-        onNodeHttpReadsPaused<true>(socket);
+        onNodeHttpReadsPaused<true>(socket, uWS::HttpResponseData<true>::HTTP_NODE_READS_PAUSED);
     } else {
-        onNodeHttpReadsPaused<false>(socket);
+        onNodeHttpReadsPaused<false>(socket, uWS::HttpResponseData<false>::HTTP_NODE_READS_PAUSED);
+    }
+}
+
+extern "C" void Bun__NodeHTTP__onReadsStopped(int ssl, us_socket_t* socket)
+{
+    if (!socket || us_socket_is_closed(socket)) {
+        return;
+    }
+    if (ssl) {
+        onNodeHttpReadsPaused<true>(socket, uWS::HttpResponseData<true>::HTTP_NODE_READS_STOPPED);
+    } else {
+        onNodeHttpReadsPaused<false>(socket, uWS::HttpResponseData<false>::HTTP_NODE_READS_STOPPED);
+    }
+}
+
+/* A response finished while the reads are stopped: nothing but its bytes in flight holds the connection now. */
+extern "C" void Bun__NodeHTTP__refreshAtRest(int ssl, us_socket_t* socket)
+{
+    if (!socket || us_socket_is_closed(socket)) {
+        return;
+    }
+    if (ssl) {
+        refreshAtRestOf<true>(socket);
+    } else {
+        refreshAtRestOf<false>(socket);
     }
 }
 
@@ -647,6 +717,29 @@ extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, us_socket_t* socket)
         onNodeHttpReadsResumable<true>(socket);
     } else {
         onNodeHttpReadsResumable<false>(socket);
+    }
+}
+
+/* The socket took the bytes that uWS held. Flood prevention can give the reads back, and a connection whose reads stay stopped can be at rest. */
+template<bool SSL>
+static void onNodeHttpWritableWhileReadsStopped(us_socket_t* socket)
+{
+    auto* httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
+    if (httpResponseData->state & uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) {
+        onNodeHttpReadsResumable<SSL>(socket);
+        if (us_socket_is_closed(socket)) {
+            return;
+        }
+    }
+    refreshAtRestOf<SSL>(socket);
+}
+
+extern "C" void Bun__NodeHTTP__onWritableWhileReadsStopped(int ssl, us_socket_t* socket)
+{
+    if (ssl) {
+        onNodeHttpWritableWhileReadsStopped<true>(socket);
+    } else {
+        onNodeHttpWritableWhileReadsStopped<false>(socket);
     }
 }
 
@@ -887,16 +980,15 @@ extern "C" bool Bun__NodeHTTPServerSocket__writeBehindResponse(us_socket_t* sock
     return is_ssl ? writeBehindResponse<true>(socket, data, length) : writeBehindResponse<false>(socket, data, length);
 }
 
-void JSNodeHTTPServerSocket::updateTunnelIdle()
+void JSNodeHTTPServerSocket::refreshAtRest()
 {
-    if (!tunnelReadEnded || upgraded || isClosed()) {
+    if (upgraded || isClosed()) {
         return;
     }
-    const bool sent = streamBuffer.bufferedSize() == 0;
     if (is_ssl) {
-        reinterpret_cast<uWS::HttpResponse<true>*>(socket)->setNodeHttpTunnelIdle(sent && reinterpret_cast<uWS::AsyncSocket<true>*>(socket)->hasFullyDrained());
+        refreshAtRestOf<true>(socket);
     } else {
-        reinterpret_cast<uWS::HttpResponse<false>*>(socket)->setNodeHttpTunnelIdle(sent && reinterpret_cast<uWS::AsyncSocket<false>*>(socket)->hasFullyDrained());
+        refreshAtRestOf<false>(socket);
     }
 }
 
@@ -910,7 +1002,7 @@ void JSNodeHTTPServerSocket::onDrain()
 
     // A read pause or resume arms the writable event too: nothing was buffered, so nothing drained.
     if (this->streamBuffer.bufferedSize() == 0 && !heldWriteAwaitsDrain) {
-        updateTunnelIdle();
+        refreshAtRest();
         return;
     }
     // uWS calls this with its own buffer empty, so the write it held has left.
@@ -931,7 +1023,7 @@ void JSNodeHTTPServerSocket::onDrain()
             return;
         }
     }
-    updateTunnelIdle();
+    refreshAtRest();
     WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
 
     if (scriptExecutionContext) {
@@ -991,7 +1083,7 @@ void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
             auto delivered = WTF::makeScopeExit([&] {
                 thisObject->didDeliverQueuedTunnelBytes(length);
                 if (last) {
-                    thisObject->updateTunnelIdle();
+                    thisObject->refreshAtRest();
                 }
             });
             if (!callbackObject) {

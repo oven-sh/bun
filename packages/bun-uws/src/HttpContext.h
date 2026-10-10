@@ -37,6 +37,7 @@
 
 
 extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, struct us_socket_t *s);
+extern "C" void Bun__NodeHTTP__onWritableWhileReadsStopped(int ssl, struct us_socket_t *s);
 extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, struct us_socket_t *s);
 
 namespace uWS {
@@ -277,7 +278,7 @@ private:
         }
         if (httpResponseData->filteredAccept) {
             for (auto &f : httpContextData->filterHandlers) {
-                f((HttpResponse<SSL> *) s, httpResponseData->filteredIdleTunnel ? -4 : -2);
+                f((HttpResponse<SSL> *) s, httpResponseData->filteredAtRest ? -4 : -2);
             }
         }
 
@@ -970,10 +971,11 @@ private:
         /* node:http compat: reads were paused while pipelined responses were
          * queued and stayed paused because the socket still had outgoing
          * backpressure when the queue drained; now that it has flushed, read
-         * new requests again. */
+         * new requests again. Reads that a request stopped stay stopped: with
+         * nothing left to send, the connection is at rest. */
         if constexpr (IsNodeHttp) {
-            if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) {
-                Bun__NodeHTTP__onReadsResumable(SSL, s);
+            if (httpResponseData->state & (HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED | HttpResponseData<SSL>::HTTP_NODE_READS_STOPPED)) {
+                Bun__NodeHTTP__onWritableWhileReadsStopped(SSL, s);
             }
         }
 

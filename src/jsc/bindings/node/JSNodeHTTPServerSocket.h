@@ -146,8 +146,8 @@ public:
     void readStop();
     void readStart();
     bool tunnelReadsPaused() const { return tunnelReadsStopped || tunnelReadsQueuedFull; }
-    /* Tells uWS whether this tunnel is idle: at read EOF with nothing left to send. See HttpResponse::setNodeHttpTunnelIdle. */
-    void updateTunnelIdle();
+    /* Tells uWS whether this connection is at rest: its reads do not hold the event loop (a request stopped them, or a tunnel is at read EOF) and it has nothing left to send. See HttpResponse::setNodeHttpAtRest. */
+    void refreshAtRest();
     /* uWS still holds bytes of an HTTP response on this connection. A raw write has to go through the same buffer, or it reaches the wire first. */
     bool hasUnsentResponseBytes() const;
     /* Sends the response bytes that are not in the uWS buffer (the zero-copy tail of a res.write(), the cork buffer) to the kernel or into it. A raw write or a FIN then goes out behind them. */

@@ -277,7 +277,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketWrite, (JSC::JSGlobalObje
     if (hold && thisObject->functionToCallOnDrain && JSValue::decode(result).isFalse()) {
         thisObject->heldWriteAwaitsDrain = true;
     }
-    thisObject->updateTunnelIdle();
+    thisObject->refreshAtRest();
     return result;
 }
 

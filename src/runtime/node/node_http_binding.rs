@@ -60,6 +60,7 @@ pub(crate) fn get_bun_server_open_count(
                 let server = unsafe { &*server };
                 return Ok(JSValue::js_number(
                     server.pending_requests.get() as f64
+                        + f64::from(server.body_tail_count.get())
                         + f64::from(server.active_sockets_count())
                         + f64::from(server.active_connection_count.get()),
                 ));

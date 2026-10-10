@@ -1,10 +1,11 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tls as tlsCert } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { Agent as HttpsAgent, createServer as createHttpsServer, get as httpsGet } from "node:https";
 import type { AddressInfo } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
+import { join } from "node:path";
 import { connect as tlsConnect } from "node:tls";
 
 // Node's net.Server#close callback (and the 'close' event) only fires once
@@ -1010,4 +1011,117 @@ test("no 'close' is emitted on a re-listened server when an earlier connection e
     socket.destroy();
     server.closeAllConnections();
   }
+});
+
+// A connection whose request stopped the reads does not keep the process alive (below), but it is
+// still open: the server 'close' waits for it.
+test.each(["before", "after"])(
+  "server.close(cb) %s a request stops the reads fires when that connection closes",
+  async order => {
+    const stopped = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    let closeCbFired = false;
+    const close = () =>
+      server.close(() => {
+        closeCbFired = true;
+        closed.resolve();
+      });
+    const server = createServer((req, res) => {
+      req.once("data", () => {
+        req.pause();
+        res.end("ok");
+        if (order === "before") close();
+        (function untilReadsStop() {
+          if (req.readableLength < req.readableHighWaterMark) return setImmediate(untilReadsStop);
+          stopped.resolve();
+        })();
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const socket = connect(port, "127.0.0.1");
+    try {
+      await once(socket, "connect");
+      let response = "";
+      socket.on("data", chunk => (response += chunk));
+      socket.on("error", () => {});
+      // The body never ends.
+      socket.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10000000\r\n\r\n" + Buffer.alloc(1000, "f"));
+      while (!response.includes("ok")) await once(socket, "data");
+      // More than the request buffers.
+      socket.write(Buffer.alloc(2 * 65536, "x"));
+      await stopped.promise;
+      if (order === "after") close();
+      for (let i = 0; i < 4; i++) await new Promise<void>(r => setImmediate(r));
+      expect(closeCbFired).toBe(false);
+
+      server.closeAllConnections();
+      await closed.promise;
+      expect(closeCbFired).toBe(true);
+    } finally {
+      socket.destroy();
+      server.closeAllConnections();
+    }
+  },
+);
+
+async function runBodyFixture(env: Record<string, string>) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "node-http-body-read-stopped-fixture.js")],
+    env: {
+      ...bunEnv,
+      CERT: tlsCert.cert,
+      KEY: tlsCert.key,
+      // bun test does not kill the child of a concurrent test that times out. With this, a
+      // child that hangs exits when the test process does.
+      BUN_FEATURE_FLAG_NO_ORPHANS: "1",
+      ...env,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: stdout && JSON.parse(stdout), stderr, exitCode, signalCode: proc.signalCode };
+}
+
+// In Node.js a request stops the reads of its socket when its stream is full, and a handle that
+// does not read and has nothing to send is not active: it does not keep the process alive. The
+// fixture runs under Node.js as it is, and every expectation here is Node v26.3.0's.
+describe.concurrent("a request that does not read its body to the end", () => {
+  const atRest = { events: [], received: 0 };
+  const expected = {
+    stdout: {
+      // Their connections are still open, so neither they nor the server emit 'close'.
+      "the response ended first": atRest,
+      "the response ended first, the request is piped": atRest,
+      "the response ends later": atRest,
+      "the response is written later": atRest,
+      "an Upgrade request": atRest,
+      // What the peer sent behind the first bytes of the body, and "tail".
+      "a reader comes later": { events: ["end", "close"], received: 2 * 65536 + 4 },
+      "bytes left to send": { events: ["finish"], received: 0 },
+      "a write to the socket behind the response": { events: ["sent"], received: 0 },
+      "a reader all along": { events: ["end", "close"], received: 1004 },
+    },
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  };
+
+  test.each([
+    // With keepAliveTimeout 0 no timer is left that could end a connection.
+    ["http, server.close() before the reads stop", { PROTO: "http", CLOSE: "before", KEEPALIVE: "0" }],
+    ["http, server.close() after the reads stop", { PROTO: "http", CLOSE: "after" }],
+    ["http, server.unref() in place of server.close()", { PROTO: "http", CLOSE: "unref" }],
+    ["https, server.close() before the reads stop", { PROTO: "https", CLOSE: "before" }],
+  ])(
+    "keeps the process alive only while it reads or has bytes left to send: %s",
+    async (_, env) => {
+      expect(await runBodyFixture(env)).toEqual(expected);
+    },
+    // A debug build needs most of the default 5 s to load node:http in a child process.
+    30_000,
+  );
 });

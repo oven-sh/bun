@@ -88,7 +88,6 @@ pub(crate) struct NodeHTTPResponse {
     pub poll_ref: JsCell<jsc::Ref>,
 
     pub(crate) body_read_state: Cell<BodyReadState>,
-    pub(crate) body_read_ref: JsCell<jsc::Ref>,
     pub(crate) promise: JsCell<StrongOptional>, // Strong.Optional
     pub(crate) server: AnyServer,
 
@@ -132,6 +131,11 @@ bitflags! {
         /// The server socket granted the connection to this response. A queued pipelined response waits for it.
         const CURRENT                             = 1 << 4;
         const IS_REQUEST_PENDING                  = 1 << 5;
+        /// The response is over and the request waits only for the rest of its body. The server
+        /// counts it as a body tail and not as a pending request (`AnyServer::on_node_http_body_tail`).
+        const BODY_TAIL                           = 1 << 6;
+        /// This request stopped the reads of the connection at least once (`pause_socket`).
+        const STOPPED_READS                       = 1 << 7;
         /// node:http handed this connection to a raw 'upgrade'/'connect'
         /// tunnel (JSNodeHTTPServerSocket::upgradeToTunnelMode).
         const TUNNELED                            = 1 << 8;
@@ -247,6 +251,10 @@ unsafe extern "C" {
     // node:http flood prevention (JSNodeHTTPServerSocket.cpp): unsent response bytes and queued responses hold a paused socket.
     safe fn Bun__NodeHTTP__onReadsPaused(ssl: core::ffi::c_int, socket: *mut c_void);
     safe fn Bun__NodeHTTP__onReadsResumable(ssl: core::ffi::c_int, socket: *mut c_void);
+    // A request stopped the reads (after the caller paused the socket). Reads that are stopped do not hold the event loop.
+    safe fn Bun__NodeHTTP__onReadsStopped(ssl: core::ffi::c_int, socket: *mut c_void);
+    // Tells the server whether the connection is at rest (`HttpResponse::setNodeHttpAtRest`).
+    safe fn Bun__NodeHTTP__refreshAtRest(ssl: core::ffi::c_int, socket: *mut c_void);
     // False when no read of this socket is being parsed.
     safe fn Bun__NodeHTTP__notifyWhenReadParsed(ssl: core::ffi::c_int, socket: *mut c_void)
     -> bool;
@@ -561,6 +569,11 @@ impl NodeHTTPResponse {
             return;
         }
         raw.pause();
+        self.update_flags(|f| f.insert(Flags::STOPPED_READS));
+        Bun__NodeHTTP__onReadsStopped(
+            any_response_is_ssl(&raw) as core::ffi::c_int,
+            raw.socket().cast(),
+        );
     }
 
     /* Pipelined flood prevention pauses READS on the connection, legal after the in-flight
@@ -606,6 +619,14 @@ impl NodeHTTPResponse {
             any_response_is_ssl(&raw) as core::ffi::c_int,
             raw.socket().cast(),
         );
+    }
+
+    /// For the end of a response: a paused socket does not read the next request. A body that
+    /// still arrives keeps the reads as its stream left them, like Node's `resOnFinish`.
+    fn resume_socket_unless_body_arrives(&self) {
+        if !self.body_still_arriving() {
+            self.resume_socket();
+        }
     }
 
     /// Empty `sec_websocket_*` slices fall back to the request's headers.
@@ -738,9 +759,6 @@ impl NodeHTTPResponse {
             self.release_body_slot();
         }
         self.body_read_state.set(to);
-        if self.body_read_ref.get().has {
-            self.body_read_ref.with_mut(|r| r.unref(vm_get()));
-        }
         true
     }
 
@@ -829,7 +847,11 @@ impl NodeHTTPResponse {
         self.poll_ref.with_mut(|r| r.unref(vm));
         self.unregister_auto_flush();
 
-        server.on_request_complete();
+        if self.flags.get().contains(Flags::BODY_TAIL) {
+            server.on_node_http_body_tail(false);
+        } else {
+            server.on_request_complete();
+        }
 
         if had_async_promise {
             self.deref();
@@ -1204,7 +1226,7 @@ impl NodeHTTPResponse {
                     auto_header_bits,
                     keep_alive_timeout_secs,
                 )?;
-                this.resume_socket();
+                this.resume_socket_unless_body_arrives();
                 this.write_or_end::<true>(global_object, &end_args, this_value)
             };
             if let Some(raw_response) = raw_response {
@@ -1581,7 +1603,42 @@ impl NodeHTTPResponse {
         self.update_flags(|f| f.insert(Flags::REQUEST_HAS_COMPLETED));
         self.poll_ref.with_mut(|r| r.unref(vm_get()));
 
-        self.mark_request_as_done_if_necessary();
+        self.mark_request_as_done_or_begin_body_tail();
+    }
+
+    /// A raw 'upgrade'/'connect' tunnel took the connection, so no response goes through this
+    /// handle. What is left of the request is the rest of its body, if it has one.
+    pub(crate) fn on_tunnel_handoff(&self) {
+        self.poll_ref.with_mut(|r| r.unref(vm_get()));
+        self.mark_request_as_done_or_begin_body_tail();
+    }
+
+    /// The response side is over. If the body still arrives, the request stays for it, and from
+    /// here on the connection holds the event loop, while it reads (`HttpResponse::setNodeHttpAtRest`).
+    fn mark_request_as_done_or_begin_body_tail(&self) {
+        let flags = self.flags.get();
+        if !flags.contains(Flags::IS_REQUEST_PENDING) {
+            return;
+        }
+        if !self.should_request_be_pending() {
+            return self.mark_request_as_done();
+        }
+        if flags.contains(Flags::BODY_TAIL) || !self.body_still_arriving() {
+            return;
+        }
+        scoped_log!(NodeHTTPResponse, "beginBodyTail");
+        self.update_flags(|f| f.insert(Flags::BODY_TAIL));
+        let mut server = self.server;
+        server.on_node_http_body_tail(true);
+        // Reads that stopped before the response was over can leave the connection at rest now.
+        if flags.contains(Flags::STOPPED_READS)
+            && let Some(raw) = self.reader()
+        {
+            Bun__NodeHTTP__refreshAtRest(
+                any_response_is_ssl(&raw) as core::ffi::c_int,
+                raw.socket().cast(),
+            );
+        }
     }
 }
 
@@ -1767,11 +1824,7 @@ impl NodeHTTPResponse {
             }
         }
 
-        // The callback can run 'end' -> autoDestroy -> `ondata = undefined`, which drops the ref first.
         if last {
-            if self.body_read_ref.get().has {
-                self.body_read_ref.with_mut(|r| r.unref(vm_get()));
-            }
             self.mark_request_as_done_if_necessary();
         }
     }
@@ -2403,9 +2456,6 @@ impl NodeHTTPResponse {
         if let Some(raw_response) = self.reader() {
             raw_response.on_data(on_data_shim, self.as_ctx_ptr());
         }
-
-        // `body_read_ref` is still held from create(): every unref also leaves `.pending`.
-        debug_assert!(self.body_read_ref.get().has);
     }
 
     pub(crate) fn write(
@@ -2488,8 +2538,7 @@ impl NodeHTTPResponse {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
-        // We dont wanna a paused socket when we call end, so is important to resume the socket
-        self.resume_socket();
+        self.resume_socket_unless_body_arrives();
         self.write_or_end::<true>(global_object, arguments, callframe.this())
     }
 
@@ -2652,7 +2701,6 @@ impl NodeHTTPResponse {
 
 impl Drop for NodeHTTPResponse {
     fn drop(&mut self) {
-        debug_assert!(!self.body_read_ref.get().has);
         debug_assert!(!self.poll_ref.get().has);
         debug_assert!(!self.pending_pinned_write.get().is_some());
         let flags = self.flags.get();
@@ -2665,7 +2713,6 @@ impl Drop for NodeHTTPResponse {
         );
 
         self.poll_ref.with_mut(|r| r.unref(vm_get()));
-        self.body_read_ref.with_mut(|r| r.unref(vm_get()));
 
         self.promise.with_mut(|p| p.deinit());
     }
@@ -2762,7 +2809,6 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
             Flags::default()
         }),
         poll_ref: JsCell::new(jsc::Ref::default()),
-        body_read_ref: JsCell::new(jsc::Ref::default()),
         promise: JsCell::new(StrongOptional::empty()),
         request_trailers: JsCell::new(Vec::new()),
         armed_this_value: Cell::new(JSValue::ZERO),
@@ -2775,9 +2821,6 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
 
     // SAFETY: `response` was just allocated and leaked; we hold the only reference.
     let response_ref = unsafe { &*response };
-    if *has_body {
-        response_ref.body_read_ref.with_mut(|r| r.r#ref(vm));
-    }
     response_ref.poll_ref.with_mut(|r| r.r#ref(vm));
     // SAFETY: `response` is a fresh `heap::alloc` heap payload; ownership of
     // the +1 wrapper ref transfers to the GC (`NodeHTTPResponseClass__finalize`

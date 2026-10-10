@@ -100,6 +100,15 @@ pub enum Mode {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
+pub enum NodeInspectorWait {
+    Idle,
+    /// `run_node_inspector_wait` is on the stack.
+    Running,
+    /// A call at a breakpoint armed the wait. The end of the pause runs it.
+    AfterPause,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Protocol {
     /// WebKit inspector protocol, spoken by debug.bun.sh and the VSCode extension.
     Jsc,
@@ -132,6 +141,9 @@ pub struct Debugger {
     pub extension_agent: ErasedAgentSlot,
     pub http_server_agent: HTTPServerAgent,
     pub must_block_until_connected: bool,
+    pub node_inspector_wait: NodeInspectorWait,
+    /// `runWhilePaused` is on the stack.
+    pub in_breakpoint_pause: bool,
 }
 
 impl Default for Debugger {
@@ -151,6 +163,8 @@ impl Default for Debugger {
             extension_agent: ErasedAgentSlot::default(),
             http_server_agent: HTTPServerAgent::default(),
             must_block_until_connected: false,
+            node_inspector_wait: NodeInspectorWait::Idle,
+            in_breakpoint_pause: false,
         }
     }
 }
@@ -161,6 +175,7 @@ impl Default for Debugger {
 unsafe extern "C" {
     safe fn Bun__createJSDebugger(global: &JSGlobalObject) -> u32;
     safe fn Bun__ensureDebugger(ctx_id: u32, wait: bool);
+    safe fn BunDebugger__drainOrPark(ctx_id: u32);
     safe fn Bun__startJSDebuggerThread(
         global: &JSGlobalObject,
         ctx_id: u32,
@@ -211,6 +226,10 @@ impl Debugger {
         if !dbg.must_block_until_connected {
             return;
         }
+        debug_assert!(
+            !this.jsc_vm().is_entered(),
+            "the startup wait for a debugger runs the event loop: it must not be called with JavaScript on the stack",
+        );
         let (ctx_id, wait) = (dbg.script_execution_context_id, dbg.wait_for_connection);
         // Reset `must_block_until_connected` on every exit path.
         let _reset = scopeguard::guard((), |()| {
@@ -588,10 +607,14 @@ pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: boo
 
     // Install Bun's controller before any yield can let a client
     // connectFrontend() to JSC's default one; the waiting path's later call
-    // from wait_for_debugger_if_necessary is then a bunControllerInstalled
+    // from wait_for_node_inspector_connection is then a bunControllerInstalled
     // no-op that only handles the block.
-    let ctx_id = match this.debugger.as_deref() {
-        Some(d) => d.script_execution_context_id,
+    let ctx_id = match this.debugger_mut() {
+        Some(d) => {
+            // `create()` sets it for the startup wait, which node:inspector does not use.
+            d.must_block_until_connected = false;
+            d.script_execution_context_id
+        }
         None => return false,
     };
     Bun__ensureDebugger(ctx_id, false);
@@ -600,25 +623,128 @@ pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: boo
 }
 
 /// `inspector.open(port, host, true)` / `inspector.waitForDebugger()` — block,
-/// ticking the event loop, until a frontend connects to the inspector.
+/// with no event loop, until `Runtime.runIfWaitingForDebugger`: https://github.com/nodejs/node/blob/v26.3.0/src/inspector_agent.cc#L787-L803
 // HOST_EXPORT(Debugger__waitForNodeInspectorConnection, c)
 pub fn wait_for_node_inspector_connection() {
     // Node blocks on every waitForDebugger() call for a fresh
     // Runtime.runIfWaitingForDebugger, even if a frontend already resolved a
     // previous wait — see test-inspector-wait-for-connection.js.
     let this = VirtualMachine::get();
-    {
+    let ctx_id = {
         let Some(dbg) = this.debugger_mut() else {
             return;
         };
+        bun_analytics::features::debugger.fetch_add(1, Ordering::Relaxed);
         if dbg.wait_for_connection == Wait::Off {
             // Mirror `create()`: the ref pairs with the unref in `did_connect`.
             dbg.wait_for_connection = Wait::Forever;
             dbg.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
         }
-        dbg.must_block_until_connected = true;
+        dbg.script_execution_context_id
+    };
+    Bun__ensureDebugger(ctx_id, true);
+    run_node_inspector_wait();
+}
+
+fn run_node_inspector_wait() {
+    let this = VirtualMachine::get();
+    let ctx_id = {
+        let Some(dbg) = this.debugger_mut() else {
+            return;
+        };
+        // A call inside the wait or at a breakpoint only arms it: https://github.com/nodejs/node/blob/v26.3.0/src/inspector_agent.cc#L535-L541
+        if dbg.node_inspector_wait != NodeInspectorWait::Idle {
+            return;
+        }
+        if dbg.in_breakpoint_pause {
+            dbg.node_inspector_wait = NodeInspectorWait::AfterPause;
+            return;
+        }
+        dbg.node_inspector_wait = NodeInspectorWait::Running;
+        dbg.script_execution_context_id
+    };
+    let _reset = scopeguard::guard((), |()| {
+        if let Some(dbg) = VirtualMachine::get().debugger_mut() {
+            dbg.node_inspector_wait = NodeInspectorWait::Idle;
+        }
+    });
+
+    // Borrowed again on every pass: code that a frontend evaluates runs inside the step.
+    while this
+        .debugger
+        .as_deref()
+        .is_some_and(|dbg| dbg.wait_for_connection != Wait::Off)
+    {
+        BunDebugger__drainOrPark(ctx_id);
     }
-    Debugger::wait_for_debugger_if_necessary(VirtualMachine::get_mut_ptr());
+}
+
+// HOST_EXPORT(Debugger__willRunWhilePaused, c)
+pub fn will_run_while_paused() {
+    if let Some(dbg) = VirtualMachine::get().debugger_mut() {
+        dbg.in_breakpoint_pause = true;
+    }
+}
+
+// HOST_EXPORT(Debugger__didRunWhilePaused, c)
+pub fn did_run_while_paused() {
+    let Some(dbg) = VirtualMachine::get().debugger_mut() else {
+        return;
+    };
+    dbg.in_breakpoint_pause = false;
+    // The program stays stopped after Debugger.resume: https://github.com/nodejs/node/blob/v26.3.0/src/inspector_agent.cc#L778-L785
+    if dbg.node_inspector_wait == NodeInspectorWait::AfterPause {
+        dbg.node_inspector_wait = NodeInspectorWait::Idle;
+        run_node_inspector_wait();
+    }
+}
+
+// HOST_EXPORT(Debugger__writeNodeInspectorLine, c)
+pub fn write_node_inspector_line(line: &BunString) -> bool {
+    #[cfg(windows)]
+    {
+        let _ = line;
+        false
+    }
+    #[cfg(not(windows))]
+    {
+        let bytes = line.to_owned_slice();
+        let written = match bun_sys::write(bun_core::Fd::stderr(), &bytes) {
+            Ok(written) => written,
+            Err(err) if err.is_retry() => 0,
+            Err(_) => return true,
+        };
+        if written == bytes.len() {
+            return true;
+        }
+        // fd 2 is full and a wait runs no event loop, so a thread writes the rest when the reader has made room.
+        // SAFETY: the thread owns the bytes of the line and holds no state of a VM.
+        std::thread::Builder::new()
+            .name("InspectorLine".to_owned())
+            .spawn(move || write_when_stderr_has_room(&bytes[written..]))
+            .is_ok()
+    }
+}
+
+#[cfg(not(windows))]
+fn write_when_stderr_has_room(mut rest: &[u8]) {
+    use bun_sys::posix::{POLL_OUT, PollFd, poll};
+    let fd = bun_core::Fd::stderr();
+    while !rest.is_empty() {
+        let mut fds = [PollFd {
+            fd: fd.native(),
+            events: POLL_OUT,
+            revents: 0,
+        }];
+        if poll(&mut fds, -1).is_err() {
+            return;
+        }
+        match bun_sys::write(fd, rest) {
+            Ok(written) => rest = &rest[written..],
+            Err(err) if err.is_retry() => {}
+            Err(_) => return,
+        }
+    }
 }
 
 /// The debugger thread reported that `Bun.serve` failed (e.g. EADDRINUSE) —

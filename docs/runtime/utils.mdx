@@ -229,7 +229,7 @@ test("peek.status", () => {
 Opens a file in your default editor. Bun auto-detects your editor from the `$VISUAL` or `$EDITOR` environment variables.
 
 ```ts
-const currentFile = import.meta.url;
+const currentFile = import.meta.path;
 Bun.openInEditor(currentFile);
 ```
 
@@ -243,12 +243,14 @@ editor = "code" # [!code ++]
 Or specify an editor with the `editor` param. You can also specify a line and column number.
 
 ```ts
-Bun.openInEditor(import.meta.url, {
+Bun.openInEditor(import.meta.path, {
   editor: "vscode", // or "subl"
   line: 10,
   column: 5,
 });
 ```
+
+On Windows, some editors install a `.cmd` or `.bat` file as their command. VS Code's `code.cmd` is one. Windows runs such a file through `cmd.exe`, which reads `"`, `%`, `&`, `|`, `<`, `>`, `^`, and line breaks in the command line as command syntax. For such an editor, `Bun.openInEditor()` throws when the path of the editor, or an argument for the editor (the path, the line, or the column), contains one of those characters.
 
 ## `Bun.deepEquals()`
 

@@ -5806,6 +5806,12 @@ declare module "bun" {
   /**
    * Open a file in your local editor. The editor is detected from `$VISUAL` or `$EDITOR`
    *
+   * On Windows, some editors install a `.cmd` or `.bat` file as their command (VS Code's
+   * `code.cmd` is one), and Windows runs such a file through `cmd.exe`. For such an editor,
+   * this function throws when the path of the editor, or an argument for the editor (`path`,
+   * `line` or `column`), contains `"`, `%`, `&`, `|`, `<`, `>`, `^` or a line break, because
+   * `cmd.exe` reads those characters as command syntax.
+   *
    * @param path Path of the file to open
    * @param options Editor, line, and column overrides
    */

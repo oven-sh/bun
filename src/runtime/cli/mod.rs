@@ -222,7 +222,7 @@ pub(crate) mod which_npm_client;
 #[path = "open.rs"]
 mod open_full;
 pub(crate) mod open {
-    pub(crate) use super::open_full::{Editor, EditorContext};
+    pub(crate) use super::open_full::{BatchArg, Editor, EditorContext, OpenError};
     use bun_core::Output;
 
     #[cfg(target_os = "macos")]

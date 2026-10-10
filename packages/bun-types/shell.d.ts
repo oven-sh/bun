@@ -120,6 +120,10 @@ declare module "bun" {
        * Read from stdout as a string, line by line
        *
        * Automatically calls {@link quiet} to disable echoing to stdout.
+       *
+       * Note: this currently buffers the command's entire stdout in memory and
+       * yields lines once the command exits. If the output ends with a newline,
+       * no trailing empty string is yielded.
        */
       lines(): AsyncIterable<string>;
 

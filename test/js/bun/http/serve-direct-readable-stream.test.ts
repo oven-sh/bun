@@ -2407,3 +2407,125 @@ describe("direct stream edge cases over Bun.serve", () => {
     expect(await (await fetch(server.url, { method: "POST", body: "again" })).text()).toBe("again");
   });
 });
+
+// write() resolves the native sink only after the chunk is converted. A String
+// object's Symbol.toPrimitive runs user JS, and that JS can tear the response
+// down, which frees the sink the write was about to use.
+describe("a chunk whose string conversion tears the response down", () => {
+  test("controller.write() reports the closed controller instead of using it", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const lines = [];
+        const server = Bun.serve({
+          port: 0,
+          fetch: () => new Response(new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              await controller.write("seed");
+              const chunk = Object.assign(new String("x"), {
+                [Symbol.toPrimitive]() { controller.close(); return "payload"; },
+              });
+              for (const label of ["closing write", "write after"]) {
+                try { lines.push(label + " " + controller.write(label === "closing write" ? chunk : "y")); }
+                catch (e) { lines.push(label + " threw " + /already been closed/.test(e.message)); }
+              }
+            },
+          })),
+        });
+        const res = await fetch(server.url);
+        lines.push("body " + JSON.stringify(await res.text()));
+        server.stop(true);
+        for (const line of lines) console.log(line);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe('closing write threw true\nwrite after threw true\nbody "seed"\n');
+    if (exitCode !== 0) expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // The pump writes the chunks of a default ReadableStream body into the same
+  // sink. server.stop(true) from inside the conversion frees it under the write.
+  test("the body pump survives server.stop(true) from inside the conversion", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        let server;
+        const chunk = Object.assign(new String("x"), {
+          [Symbol.toPrimitive]() { server.stop(true); return "payload"; },
+        });
+        server = Bun.serve({
+          port: 0,
+          fetch: () => new Response(new ReadableStream({
+            async pull(controller) {
+              controller.enqueue("seed");
+              await new Promise(resolve => setImmediate(resolve));
+              controller.enqueue(chunk);
+              controller.close();
+            },
+          })),
+        });
+        try {
+          const res = await fetch(server.url);
+          console.log("status", res.status);
+          console.log("body", JSON.stringify(await res.text()));
+        } catch (e) {
+          console.log("read failed", e.code);
+        }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The client loses the connection either before or after the headers; both
+    // are fine. The point is that the process does not use the freed sink.
+    expect(stdout).toMatch(/^(status 200\nread failed ECONNRESET|read failed ECONNRESET)\n$/);
+    if (exitCode !== 0) expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // The accepted chunk types do not change on either face.
+  test("a String object still streams on both faces", async () => {
+    using direct = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller: any) {
+              await controller.write(new String("abc"));
+              await controller.write(Object("def"));
+              await controller.end();
+            },
+          }) as any,
+        ),
+    });
+    expect(await (await fetch(direct.url)).text()).toBe("abcdef");
+
+    using pump = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            pull(controller) {
+              controller.enqueue(new String("abc") as any);
+              controller.enqueue(Object("def") as any);
+              controller.close();
+            },
+          }),
+        ),
+    });
+    expect(await (await fetch(pump.url)).text()).toBe("abcdef");
+  });
+});

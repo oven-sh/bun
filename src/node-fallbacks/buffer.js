@@ -417,6 +417,7 @@ Buffer.isEncoding = function isEncoding(encoding) {
     case "latin1":
     case "binary":
     case "base64":
+    case "base64url":
     case "ucs2":
     case "ucs-2":
     case "utf16le":
@@ -501,6 +502,7 @@ function byteLength(string, encoding) {
       case "hex":
         return len >>> 1;
       case "base64":
+      case "base64url":
         return base64ToBytes(string).length;
       default:
         if (loweredCase) {
@@ -568,6 +570,9 @@ function slowToString(encoding, start, end) {
 
       case "base64":
         return base64Slice(this, start, end);
+
+      case "base64url":
+        return base64urlSlice(this, start, end);
 
       case "ucs2":
       case "ucs-2":
@@ -950,6 +955,7 @@ Buffer.prototype.write = function write(string, offset, length, encoding) {
         return asciiWrite(this, string, offset, length);
 
       case "base64":
+      case "base64url":
         // Warning: maxLength not taken into account in base64Write
         return base64Write(this, string, offset, length);
 
@@ -980,6 +986,12 @@ function base64Slice(buf, start, end) {
   } else {
     return base64.fromByteArray(buf.slice(start, end));
   }
+}
+
+// Like Node: URL-safe alphabet, no padding. Decoding (base64ToBytes) already
+// accepts both alphabets, so only encoding needs a dedicated path.
+function base64urlSlice(buf, start, end) {
+  return base64Slice(buf, start, end).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 function utf8Slice(buf, start, end) {

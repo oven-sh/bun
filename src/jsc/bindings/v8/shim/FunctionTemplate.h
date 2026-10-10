@@ -49,7 +49,8 @@ public:
     static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES functionConstruct(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 
     // Builds the synthetic ApiCallbackExitFrame and invokes m_callback.
-    static JSC::JSValue invokeCallback(JSC::JSGlobalObject* globalObject, Function* callee, JSC::JSObject* thisObject, const JSC::ArgList& args, bool isConstruct);
+    // newTarget is null for a plain call.
+    static JSC::JSValue invokeCallback(JSC::JSGlobalObject* globalObject, Function* callee, JSC::JSObject* thisObject, const JSC::ArgList& args, JSC::JSObject* newTarget);
 
     friend v8::Local<v8::Value> api_internal::GetFunctionTemplateData(v8::Isolate* isolate, v8::Local<v8::Data> target);
 

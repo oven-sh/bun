@@ -645,4 +645,120 @@ describe.if(isPosix)("HTTP server handles fragmented requests", () => {
 
     server.stop();
   });
+
+  // RFC 9112 7.1.2: after the last-chunk "0\r\n" comes trailer-part (zero or
+  // more header lines) then the terminating CRLF. Those bytes belong to the
+  // current message, so Bun.serve must consume them (discarded, since no
+  // req.trailers is exposed here) and leave the keep-alive connection ready
+  // for the next request.
+  describe("chunked request trailer-part", () => {
+    const immediate = () => new Promise<void>(resolve => setImmediate(resolve));
+    // The second request closes the connection, so the client can wait for the close.
+    const next = "GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n";
+
+    // Sends the head of a chunked POST /a, then each of `writes` so that the server reads it on its own.
+    async function drive(writes: readonly string[]) {
+      const paths: string[] = [];
+      let received = "";
+      let written = 0;
+      // How many of `writes` were out each time the handler got body bytes.
+      const writtenAtBodyBytes: number[] = [];
+      const headRead = Promise.withResolvers<void>();
+      const closed = Promise.withResolvers<void>();
+      await using server = Bun.serve({
+        port: 0,
+        async fetch(req) {
+          paths.push(new URL(req.url).pathname);
+          headRead.resolve();
+          let body = "";
+          try {
+            for await (const bytes of req.body ?? []) {
+              writtenAtBodyBytes.push(written);
+              body += Buffer.from(bytes).toString();
+            }
+          } catch {}
+          return new Response("body=" + body + ".");
+        },
+      });
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port!,
+        socket: {
+          data(_s, d) {
+            received += d.toString();
+          },
+          async open(s) {
+            s.write("POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n");
+            s.flush();
+            // The handler ran, so the server has read the head. After one immediate this code is outside of the I/O
+            // callback. An immediate queued from there waits for the next loop iteration, which polls first: the
+            // server reads each write before the client makes the next. Without the first immediate, the first two
+            // writes arrive in one read.
+            await headRead.promise;
+            await immediate();
+            for (const write of writes) {
+              s.write(write);
+              s.flush();
+              written++;
+              await immediate();
+            }
+          },
+          error(_s, err) {
+            closed.reject(err);
+          },
+          close() {
+            closed.resolve();
+          },
+        },
+      });
+      await closed.promise;
+      return { paths, received, writtenAtBodyBytes };
+    }
+
+    test.concurrentIf(!isASAN).each([
+      ["one read", ["5\r\nhello\r\n0\r\nX-Trail: one\r\nX-More: two\r\n\r\n" + next]],
+      ["next request in its own read", ["5\r\nhello\r\n0\r\nX-Trail: one\r\nX-More: two\r\n\r\n", next]],
+      ["split mid trailer name", ["5\r\nhello\r\n0\r\nX", "-Trail: one\r\nX-More: two\r\n\r\n" + next]],
+      ["split after last-chunk", ["5\r\nhello\r\n0\r\n", "X-Trail: one\r\n", "X-More: two\r\n", "\r\n" + next]],
+      ["split on trailer CR", ["5\r\nhello\r\n0\r\nX-Trail: one\r", "\nX-More: two\r\n\r\n" + next]],
+      ["split on terminating CR", ["5\r\nhello\r\n0\r\nX-Trail: one\r\nX-More: two\r\n\r", "\n" + next]],
+      ["last-chunk with extension", ["5\r\nhello\r\n0;ext=v\r\nX-Trail: one\r\n\r\n" + next]],
+    ])("consumes trailer-part and preserves keep-alive (%s)", async (_, writes) => {
+      const { paths, received, writtenAtBodyBytes } = await drive(writes);
+      expect({ paths, bodies: received.match(/body=[a-z]*\./g) ?? [], writtenAtBodyBytes }).toEqual({
+        paths: ["/a", "/b"],
+        bodies: ["body=hello.", "body=."],
+        // The server read the first write before the client made the second: the split is a real read boundary.
+        writtenAtBodyBytes: [1],
+      });
+    });
+
+    test.concurrentIf(!isASAN).each([
+      ["bare LF on a trailer line", "5\r\nhello\r\n0\r\nX-T: 9\n\r\n"],
+      ["CR not followed by LF", "5\r\nhello\r\n0\r\nX-T: 9\rZ\r\n\r\n"],
+    ])("rejects a malformed trailer-part (%s)", async (_, body) => {
+      const { paths, received } = await drive([body]);
+      expect({ paths, status: received.match(/HTTP\/1\.1 \d+/)?.[0] }).toEqual({
+        paths: ["/a"],
+        status: "HTTP/1.1 400",
+      });
+    });
+
+    // 17 KiB is above the header-size limit, which also bounds the trailer section. The limit is 16 KiB unless
+    // --max-http-header-size sets another.
+    const trailer = Buffer.alloc(17 * 1024, "X-T: " + Buffer.alloc(200, "v").toString() + "\r\n").toString();
+    const half = trailer.length / 2;
+    test.concurrentIf(!isASAN).each([
+      ["in one read", ["5\r\nhello\r\n0\r\n" + trailer + "\r\n" + next]],
+      // Each half is under the limit: only a count that survives the read boundary reaches it.
+      ["across two reads", ["5\r\nhello\r\n0\r\n" + trailer.slice(0, half), trailer.slice(half) + "\r\n" + next]],
+    ])("rejects a trailer-part larger than the header-size limit with 431 (%s)", async (_, writes) => {
+      const { paths, received, writtenAtBodyBytes } = await drive(writes);
+      expect({ paths, status: received.match(/HTTP\/1\.1 \d+/)?.[0], writtenAtBodyBytes }).toEqual({
+        paths: ["/a"],
+        status: "HTTP/1.1 431",
+        writtenAtBodyBytes: [1],
+      });
+    });
+  });
 });

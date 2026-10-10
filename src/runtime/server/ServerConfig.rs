@@ -1250,6 +1250,27 @@ impl ServerConfig {
                                     "SNI tls object must have a serverName",
                                 )));
                             }
+                            // The first entry's range is negotiated before SNI selects this one.
+                            if let Some(first) = &args.ssl_config {
+                                for (key, bound, first_bound) in [
+                                    (
+                                        "minVersion",
+                                        ssl_config.ssl_min_version,
+                                        first.ssl_min_version,
+                                    ),
+                                    (
+                                        "maxVersion",
+                                        ssl_config.ssl_max_version,
+                                        first.ssl_max_version,
+                                    ),
+                                ] {
+                                    if bound != 0 && bound != first_bound {
+                                        return Err(global.throw_invalid_arguments(format_args!(
+                                            "SNI tls object must have the same '{key}' as the first tls object"
+                                        )));
+                                    }
+                                }
+                            }
                             if args.sni.is_none() {
                                 args.sni = Some(Vec::with_capacity((value_iter.len - 1) as usize));
                             }
@@ -1277,6 +1298,17 @@ impl ServerConfig {
             return Err(
                 global.throw_invalid_arguments(format_args!("HTTP/3 requires 'tls' to be set"))
             );
+        }
+        // QUIC has no TLS version below 1.3, so a lower cap would bind the TCP listener only.
+        if args.http3
+            && args.ssl_config.as_ref().is_some_and(|ssl| {
+                ssl.ssl_max_version != 0
+                    && ssl.ssl_max_version < i32::from(bun_boringssl_sys::TLS1_3_VERSION)
+            })
+        {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "HTTP/3 requires TLS 1.3, but 'tls.maxVersion' is lower"
+            )));
         }
         if !args.http1 && !args.http2 && !args.http3 {
             return Err(global.throw_invalid_arguments(format_args!(

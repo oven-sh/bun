@@ -1,5 +1,6 @@
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
+import nodeTls from "node:tls";
 import { isWindows, tls, tmpdirSync } from "../../../harness";
 
 const defaultHostname = "localhost";
@@ -765,5 +766,113 @@ describe("Bun.serve unix socket validation", () => {
         server.stop();
       }).toThrow();
     }
+  });
+});
+
+describe("Bun.serve tls.minVersion and tls.maxVersion", () => {
+  const fetch = () => new Response("ok");
+
+  test("a value that is not a version throws", () => {
+    const code = (options: Record<string, unknown>) => {
+      try {
+        serve({ port: 0, fetch, ...options } as any).stop(true);
+        return "served";
+      } catch (e: any) {
+        return e.code;
+      }
+    };
+    expect({
+      tlsObject: code({ tls: { ...tls, minVersion: "TLSv9" } }),
+      sniArray: code({
+        tls: [
+          { ...tls, serverName: "a.test" },
+          { ...tls, serverName: "b.test", maxVersion: 13 },
+        ],
+      }),
+      topLevel: code({ ...tls, maxVersion: 0x0305 }),
+    }).toEqual({
+      tlsObject: "ERR_TLS_INVALID_PROTOCOL_VERSION",
+      sniArray: "ERR_TLS_INVALID_PROTOCOL_VERSION",
+      topLevel: "ERR_TLS_INVALID_PROTOCOL_VERSION",
+    });
+  });
+
+  test("each name, as both bounds, is the version a client negotiates", async () => {
+    const negotiated: Record<string, string | null> = {};
+    for (const version of ["TLSv1", "TLSv1.1", "TLSv1.2", "TLSv1.3"] as const) {
+      using server = serve({ port: 0, tls: { ...tls, minVersion: version, maxVersion: version }, fetch });
+      const { promise, resolve, reject } = Promise.withResolvers<string | null>();
+      // This client allows all four versions.
+      const socket = nodeTls.connect(
+        { host: "127.0.0.1", port: server.port, ca: tls.cert, servername: "localhost", minVersion: "TLSv1" },
+        () => {
+          resolve(socket.getProtocol());
+          socket.end();
+        },
+      );
+      socket.on("error", reject);
+      negotiated[version] = await promise;
+    }
+    expect(negotiated).toEqual({
+      "TLSv1": "TLSv1",
+      "TLSv1.1": "TLSv1.1",
+      "TLSv1.2": "TLSv1.2",
+      "TLSv1.3": "TLSv1.3",
+    });
+  });
+
+  // The TLS version is negotiated with the range of the first entry, before SNI selects an entry.
+  test("a later SNI entry cannot set a bound that differs from the first entry", async () => {
+    const start = (...entries: Bun.TLSOptions[]) => {
+      try {
+        serve({ port: 0, tls: entries, fetch }).stop(true);
+        return "served";
+      } catch (e: any) {
+        return e.message;
+      }
+    };
+    const a = { ...tls, serverName: "a.test" };
+    const b = { ...tls, serverName: "b.test" };
+    expect({
+      min: start(a, { ...b, minVersion: "TLSv1.3" }),
+      // The comparison is on what the entries set, so the default spelled out differs from no bound.
+      minDefault: start(a, { ...b, minVersion: "TLSv1.2" }),
+      max: start({ ...a, maxVersion: "TLSv1.3" }, { ...b, maxVersion: "TLSv1.2" }),
+      same: start({ ...a, minVersion: "TLSv1.3" }, { ...b, minVersion: "TLSv1.3" }),
+      unset: start({ ...a, maxVersion: "TLSv1.2" }, b),
+    }).toEqual({
+      min: "SNI tls object must have the same 'minVersion' as the first tls object",
+      minDefault: "SNI tls object must have the same 'minVersion' as the first tls object",
+      max: "SNI tls object must have the same 'maxVersion' as the first tls object",
+      same: "served",
+      unset: "served",
+    });
+
+    // An entry with no bound of its own uses the range of the first entry.
+    using server = serve({ port: 0, tls: [{ ...a, maxVersion: "TLSv1.2" }, b], fetch });
+    const { promise, resolve, reject } = Promise.withResolvers<string | null>();
+    const socket = nodeTls.connect(
+      { host: "127.0.0.1", port: server.port, servername: "b.test", rejectUnauthorized: false },
+      () => {
+        resolve(socket.getProtocol());
+        socket.end();
+      },
+    );
+    socket.on("error", reject);
+    expect(await promise).toBe("TLSv1.2");
+  });
+
+  // QUIC has no TLS version below 1.3, so the cap could bind the TCP listener only.
+  test("http3 with a maxVersion below TLSv1.3 throws", () => {
+    expect(() => serve({ port: 0, http3: true, tls: { ...tls, maxVersion: "TLSv1.2" }, fetch })).toThrow(
+      "HTTP/3 requires TLS 1.3, but 'tls.maxVersion' is lower",
+    );
+    using server = serve({
+      port: 0,
+      http3: true,
+      tls: { ...tls, minVersion: "TLSv1.2", maxVersion: "TLSv1.3" },
+      fetch,
+    });
+    expect(server.port).toBeGreaterThan(0);
   });
 });

@@ -1,7 +1,10 @@
 import { connect, listen, SocketHandler, TCPSocketListener } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tls } from "harness";
+import { once } from "node:events";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
+import { connect as tlsConnect, createServer as tlsCreateServer } from "node:tls";
 
 type Resolve = (value?: unknown) => void;
 type Reject = (reason?: any) => void;
@@ -92,6 +95,116 @@ it("should allow using false, null or undefined tls option", () => {
       });
     }).not.toThrow("TLSOptions must be an object");
   });
+});
+
+it("Bun.listen and Bun.connect take tls.minVersion and tls.maxVersion by name and reject other values", async () => {
+  const handlers = { data() {}, open() {}, close() {} };
+  const code = (fn: () => unknown) => {
+    try {
+      fn();
+      return "no throw";
+    } catch (e: any) {
+      return e.code;
+    }
+  };
+  // A listener capped at TLS 1.2.
+  using listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls: { ...tls, maxVersion: "TLSv1.2" },
+    socket: handlers,
+  });
+
+  expect({
+    listen: code(() =>
+      Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { ...tls, minVersion: "TLSv9" } as any,
+        socket: handlers,
+      }).stop(true),
+    ),
+    connect: code(() =>
+      Bun.connect({ hostname: "127.0.0.1", port: listener.port, tls: { maxVersion: 13 } as any, socket: handlers }),
+    ),
+    // Not unset: a `tls` object with nothing set would connect without TLS.
+    connectNull: code(() =>
+      Bun.connect({ hostname: "127.0.0.1", port: listener.port, tls: { minVersion: null } as any, socket: handlers }),
+    ),
+  }).toEqual({
+    listen: "ERR_TLS_INVALID_PROTOCOL_VERSION",
+    connect: "ERR_TLS_INVALID_PROTOCOL_VERSION",
+    connectNull: "ERR_TLS_INVALID_PROTOCOL_VERSION",
+  });
+
+  // The listener's cap, seen by a client without a cap.
+  const viaListener = Promise.withResolvers<string | null>();
+  const nodeClient = tlsConnect({ host: "127.0.0.1", port: listener.port, rejectUnauthorized: false }, () => {
+    viaListener.resolve(nodeClient.getProtocol());
+    nodeClient.end();
+  });
+  nodeClient.on("error", viaListener.reject);
+  expect(await viaListener.promise).toBe("TLSv1.2");
+
+  // A bound as the only key is a TLS config with that bound: against the capped listener the
+  // handshake fails on the version. With `tls: true` the handshake reaches the certificate.
+  const handshakeFailure = (tlsOption: true | Bun.TLSOptions) => {
+    const { promise, resolve, reject } = Promise.withResolvers<string | undefined>();
+    Bun.connect({
+      hostname: "127.0.0.1",
+      port: listener.port,
+      tls: tlsOption,
+      socket: {
+        data() {},
+        handshake(socket, _success, error: NodeJS.ErrnoException | null) {
+          resolve(error?.code);
+          socket.end();
+        },
+        connectError(_socket, error) {
+          reject(error);
+        },
+      },
+    }).catch(reject);
+    return promise;
+  };
+  expect({
+    boundOnly: await handshakeFailure({ minVersion: "TLSv1.3" }),
+    control: await handshakeFailure(true),
+  }).toEqual({ boundOnly: "EPROTO", control: "DEPTH_ZERO_SELF_SIGNED_CERT" });
+
+  // A client capped at TLS 1.2, seen by a server without a cap.
+  const server = tlsCreateServer({ key: tls.key, cert: tls.cert }, socket => {
+    socket.on("error", () => {});
+    socket.end(socket.getProtocol() ?? "");
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const viaConnect = Promise.withResolvers<string>();
+    let received = "";
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: (server.address() as AddressInfo).port,
+      tls: { rejectUnauthorized: false, minVersion: "TLSv1.2", maxVersion: "TLSv1.2" },
+      socket: {
+        data(_socket, chunk) {
+          received += chunk.toString();
+        },
+        close() {
+          viaConnect.resolve(received);
+        },
+        error(_socket, err) {
+          viaConnect.reject(err);
+        },
+        connectError(_socket, err) {
+          viaConnect.reject(err);
+        },
+      },
+    });
+    expect(await viaConnect.promise).toBe("TLSv1.2");
+  } finally {
+    server.close();
+  }
 });
 
 it("echo server 1 on 1", async () => {

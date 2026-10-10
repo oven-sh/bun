@@ -1,6 +1,8 @@
 import { expect, it } from "bun:test";
 import { readFileSync } from "fs";
+import { tls as tlsCert } from "harness";
 import { once } from "node:events";
+import type { AddressInfo } from "node:net";
 import tls from "node:tls";
 import { join } from "path";
 
@@ -115,7 +117,8 @@ it.todo("complete cert chains sent to peer, but without requesting client's cert
   });
 });
 
-// TODO: this requires maxVersion/minVersion
+// Known gap: fetch reports this failed handshake as EPROTO. Node reports the alert the
+// server sends, ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE.
 it.todo("Request cert from TLS1.2 client that doesn't have one.", async () => {
   try {
     await connect({
@@ -394,5 +397,178 @@ it("fetch applies tls.sigalgs even when it is the only TLS option", async () => 
     expect(outcome).toBe("rejected:ERR_SSL_NO_COMMON_SIGNATURE_ALGORITHMS");
   } finally {
     tlsServer.close();
+  }
+});
+
+it("tls.minVersion and tls.maxVersion take node's names or a protocol code, and reject other values", () => {
+  const concat = (a: string, b: string) => a + b;
+  const accepted = [
+    "TLSv1",
+    "TLSv1.1",
+    "TLSv1.2",
+    "TLSv1.3",
+    concat("TLSv1", ".3"),
+    undefined,
+    0,
+    0x0301,
+    0x0302,
+    0x0303,
+    0x0304,
+  ];
+  const rejected = [
+    // If null were unset, it alone would make the `tls` of Bun.connect, Bun.listen and Bun.serve empty: no TLS.
+    null,
+    "TLSv9",
+    "tlsv1.3",
+    "",
+    new String("TLSv1.2"),
+    1,
+    -1,
+    0x0305,
+    // 0x0303 after a cast to uint16_t
+    0x10303,
+    771.5,
+    2 ** 31,
+    NaN,
+    // 0x0303 as a BigInt: rejected, as in node
+    771n,
+    true,
+    false,
+    {},
+    Symbol("TLSv1.2"),
+  ];
+  const parse = (tlsOptions: Record<string, unknown>) => {
+    try {
+      new Bun.FetchSession({ tls: tlsOptions as any })[Symbol.dispose]();
+      return "accepted";
+    } catch (e: any) {
+      return `${e.name} ${e.code}`;
+    }
+  };
+  for (const key of ["minVersion", "maxVersion"]) {
+    expect(accepted.map(value => parse({ [key]: value }))).toEqual(accepted.map(() => "accepted"));
+    expect(rejected.map(value => parse({ [key]: value }))).toEqual(
+      rejected.map(() => "TypeError ERR_TLS_INVALID_PROTOCOL_VERSION"),
+    );
+  }
+
+  // The message is node's: the value as node's %j prints it, then the bound.
+  const message = (tlsOptions: Record<string, unknown>) => {
+    try {
+      new Bun.FetchSession({ tls: tlsOptions as any })[Symbol.dispose]();
+    } catch (e: any) {
+      return e.message;
+    }
+  };
+  expect([
+    message({ minVersion: "TLSv9" }),
+    message({ minVersion: "" }),
+    message({ minVersion: 'a"b' }),
+    message({ maxVersion: 1 }),
+  ]).toEqual([
+    '"TLSv9" is not a valid minimum TLS protocol version',
+    '"" is not a valid minimum TLS protocol version',
+    '"a\\"b" is not a valid minimum TLS protocol version',
+    "1 is not a valid maximum TLS protocol version",
+  ]);
+});
+
+it("fetch applies tls.minVersion and tls.maxVersion to the handshake", async () => {
+  let secureConnections = 0;
+  const listen = async (options: tls.TlsOptions) => {
+    const server = tls.createServer({ key: tlsCert.key, cert: tlsCert.cert, ...options }, socket => {
+      secureConnections++;
+      const chunks: Buffer[] = [];
+      socket.on("data", (chunk: Buffer) => {
+        chunks.push(chunk);
+        if (Buffer.concat(chunks).includes("\r\n\r\n")) {
+          const body = socket.getProtocol() ?? "";
+          socket.end(`HTTP/1.1 200 OK\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`);
+        }
+      });
+      socket.on("error", () => {});
+    });
+    server.on("tlsClientError", () => {});
+    const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+    server.listen(0, "127.0.0.1", onListening);
+    await listening;
+    return server;
+  };
+  const negotiated = async (server: tls.Server, options: Record<string, unknown>) => {
+    const port = (server.address() as AddressInfo).port;
+    const response = await fetch(`https://127.0.0.1:${port}/`, {
+      keepalive: false,
+      tls: { ca: tlsCert.cert, ...options } as any,
+    });
+    return await response.text();
+  };
+
+  const server = await listen({});
+  const tls12Server = await listen({ maxVersion: "TLSv1.2" });
+  const legacyServer = await listen({ minVersion: "TLSv1" });
+  try {
+    expect({
+      minName: await negotiated(server, { minVersion: "TLSv1.3" }),
+      maxName: await negotiated(server, { maxVersion: "TLSv1.2" }),
+      bothNames: await negotiated(server, { minVersion: "TLSv1.2", maxVersion: "TLSv1.2" }),
+      maxCode: await negotiated(server, { maxVersion: 0x0303 }),
+      tls12Server: await negotiated(tls12Server, {}),
+      // A cap below the default floor needs the floor too.
+      tls1: await negotiated(legacyServer, { minVersion: "TLSv1", maxVersion: "TLSv1" }),
+      tls11: await negotiated(legacyServer, { minVersion: "TLSv1.1", maxVersion: "TLSv1.1" }),
+    }).toEqual({
+      minName: "TLSv1.3",
+      maxName: "TLSv1.2",
+      bothNames: "TLSv1.2",
+      maxCode: "TLSv1.2",
+      tls12Server: "TLSv1.2",
+      tls1: "TLSv1",
+      tls11: "TLSv1.1",
+    });
+    expect(secureConnections).toBe(7);
+
+    // The floor is applied: a TLS 1.3 floor cannot reach the TLS 1.2 server.
+    let handshakeError: any;
+    try {
+      await negotiated(tls12Server, { minVersion: "TLSv1.3" });
+    } catch (e) {
+      handshakeError = e;
+    }
+    expect(handshakeError?.code).toBe("EPROTO");
+    expect(secureConnections).toBe(7);
+
+    // A bound as the only key is a TLS config with that bound: the handshake fails on
+    // the version. An empty object has the defaults: the handshake reaches the certificate.
+    const failure = async (tlsOptions: Record<string, unknown>) => {
+      const port = (tls12Server.address() as AddressInfo).port;
+      try {
+        await fetch(`https://127.0.0.1:${port}/`, { keepalive: false, tls: tlsOptions as any });
+        return "no error";
+      } catch (e: any) {
+        return e.code;
+      }
+    };
+    expect({
+      boundOnly: await failure({ minVersion: "TLSv1.3" }),
+      empty: await failure({}),
+    }).toEqual({ boundOnly: "EPROTO", empty: "DEPTH_ZERO_SELF_SIGNED_CERT" });
+
+    // A value that is not a version rejects before a connection is opened.
+    const connectionsBefore = secureConnections;
+    let optionError: any;
+    try {
+      await negotiated(server, { maxVersion: 13 });
+    } catch (e) {
+      optionError = e;
+    }
+    expect({ name: optionError?.name, code: optionError?.code, connections: secureConnections }).toEqual({
+      name: "TypeError",
+      code: "ERR_TLS_INVALID_PROTOCOL_VERSION",
+      connections: connectionsBefore,
+    });
+  } finally {
+    server.close();
+    tls12Server.close();
+    legacyServer.close();
   }
 });

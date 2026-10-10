@@ -58,6 +58,24 @@ pub(crate) fn js_live_count(_global: &JSGlobalObject, _callframe: &CallFrame) ->
     Ok(JSValue::js_number(c::us_ssl_ctx_live_count() as f64))
 }
 
+/// `bun:internal-for-testing`: builds and drops an `SSL_CTX` from raw protocol version bounds.
+#[bun_jsc::host_fn]
+pub(crate) fn js_build_with_protocol_versions(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let opts = uws::socket_context::BunSocketContextOptions {
+        ssl_min_version: callframe.argument(0).coerce_to_i32(global)?,
+        ssl_max_version: callframe.argument(1).coerce_to_i32(global)?,
+        ..Default::default()
+    };
+    let mut err = uws::create_bun_socket_error_t::none;
+    if opts.create_ssl_context(&mut err).is_none() {
+        return Err(global.throw_value(create_bun_socket_error_to_js(err, global)));
+    }
+    Ok(JSValue::UNDEFINED)
+}
+
 impl SecureContext {
     // Note: no `#[bun_jsc::host_fn]` here — the `Free` shim it emits calls
     // a bare `constructor(...)` which cannot resolve inside an `impl`. The

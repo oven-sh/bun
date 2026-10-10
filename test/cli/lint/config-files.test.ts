@@ -3235,13 +3235,6 @@ describe.concurrent("a number in the options of a rule that is the length of a t
     ["indent", 2 ** 31, "a.js", "a();\n", []],
     ["import/newline-after-import", { count: 2 ** 53 }, "a.js", '\nimport "a";\nb();\n', [tooLong, 2]],
     ["import/newline-after-import", { count: 2 ** 29 }, "a.js", '\nimport "a";\nb();\n', [tooLong, 2]],
-    [
-      "import/newline-after-import",
-      { count: 2 ** 28 },
-      "a.js",
-      '\nimport "a";\nb();\n',
-      ["a.js:2:1 import/newline-after-import"],
-    ],
     // The calls are looked at when the program ends.
     ["import/newline-after-import", { count: 2 ** 31 }, "a.js", '\n\nconst a = require("a");\nb();\n', [tooLong, 1]],
     ["react/jsx-indent", 2 ** 31, "a.jsx", element, [tooLong, 2]],

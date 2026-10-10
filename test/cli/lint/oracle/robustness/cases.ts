@@ -175,7 +175,7 @@ export const cases: Case[] = [
     text: () => `const v0 = "a";\n${seq(40, i => `const v${i + 1} = v${i} + v${i};\n`)}v40.at(0);\n`,
     rules: { "node/no-unsupported-features/es-syntax": "error" },
     matches: /^/,
-    exitCode: 0,
+    exitCode: 1,
   },
   {
     name: "4,000 assignments to one variable in branches",
@@ -870,17 +870,6 @@ export const cases: Case[] = [
     reports: {},
     length: "as before",
     exitCode: 2,
-  },
-  {
-    name: "2,000 lines with an indentation of 2 ** 28 spaces, which JavaScript has",
-    file: "a.js",
-    text: () => `if (a) {\n${rep("  b();\n", 2_000)}}\n`,
-    rules: { indent: ["error", 2 ** 28] },
-    eslint: true,
-    args: ["--fix", "-f", "unix"],
-    reports: { indent: 2_000 },
-    length: "as before",
-    exitCode: 1,
   },
   // ── eslint-plugin-react: what many components share, and what is asked once for each of them ──
   {

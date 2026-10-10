@@ -302,6 +302,8 @@ struct Written {
     name: Vec<u8>,
     id: Vec<u8>,
     setting: Json,
+    /// [`merged`] has dropped another of its name for it.
+    is_kept: bool,
 }
 
 /// `rules` of `json`.
@@ -324,6 +326,7 @@ fn written_rules(json: &Json) -> Vec<Written> {
             name: name.to_vec(),
             id: id.clone(),
             setting: setting.clone(),
+            is_kept: false,
         }
     };
     rules.unwrap_or_default().iter().map(written).collect()
@@ -336,16 +339,20 @@ fn merged(own: Vec<Written>, extended: Vec<Written>) -> Vec<Written> {
         std::str::from_utf8(it).unwrap_or_default()
     }
     let mut all: Vec<Option<Written>> = own.into_iter().chain(extended).map(Some).collect();
-    let mut table: FxHashMap<(&str, &str), usize> = FxHashMap::default();
+    let mut table: FxHashMap<(&str, &str), (usize, bool)> = FxHashMap::default();
     for (at, it) in all.iter().flatten().enumerate() {
         table
             .entry((text(&it.plugin), text(&it.name)))
-            .or_insert(at);
+            .and_modify(|first| first.1 = true)
+            .or_insert((at, it.is_kept));
     }
-    let order: Vec<usize> = table.into_values().collect();
-    (order.into_iter())
-        .filter_map(|at| all.get_mut(at)?.take())
-        .collect()
+    let mut order = Vec::with_capacity(table.len());
+    order.extend(table.into_values());
+    let in_order = order.iter().filter_map(|&(at, is_kept)| {
+        let it = all.get_mut(at)?.take()?;
+        Some(Written { is_kept, ..it })
+    });
+    in_order.collect()
 }
 
 /// Whether `plugin` is one of `names`, which are as a configuration file of oxlint has them.
@@ -528,7 +535,7 @@ impl Rc<'_, '_> {
         let mut last: FxHashMap<Vec<u8>, (usize, usize)> = FxHashMap::default();
         for (at, it) in rules.iter().enumerate() {
             let known = last.entry(oxlint_rule_key(&it.id)).or_default();
-            *known = (at, known.1 + 1);
+            *known = (at, known.1 + 1 + usize::from(it.is_kept));
         }
         let later = (last.into_values().filter(|it| it.1 > 1)).filter_map(|it| rules.get(it.0));
         let later: Vec<_> = later

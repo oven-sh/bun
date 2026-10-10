@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isCaseSensitiveFS, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 
@@ -1890,6 +1890,31 @@ function runTest({
 }
 
 describe.concurrent("test file discovery (scanner)", () => {
+  // The cwd listing is walked from the directory cache and each file found
+  // is loaded through it; both must keep names that differ only in case apart.
+  test.skipIf(!isCaseSensitiveFS())("runs test files whose names differ only in case", async () => {
+    using dir = tempDir("scanner-case-variants", {
+      "a.test.ts": `import { test } from "bun:test"; test("root lower", () => { console.log("RAN root lower"); });`,
+      "A.test.ts": `import { test } from "bun:test"; test("root upper", () => { console.log("RAN root upper"); });`,
+      "nested/b.test.ts": `import { test } from "bun:test"; test("nested lower", () => { console.log("RAN nested lower"); });`,
+      "nested/B.test.ts": `import { test } from "bun:test"; test("nested upper", () => { console.log("RAN nested upper"); });`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("RAN root lower");
+    expect(stdout).toContain("RAN root upper");
+    expect(stdout).toContain("RAN nested lower");
+    expect(stdout).toContain("RAN nested upper");
+    expect(stderr).toContain(" 4 pass");
+    expect(exitCode).toBe(0);
+  });
+
   test("discovers tests in deeply nested directories and prunes dot-dirs and node_modules", async () => {
     const files: Record<string, string> = {
       "a_first.test.ts": `import { test } from "bun:test"; test("a", () => { console.log("RAN a_first"); });`,

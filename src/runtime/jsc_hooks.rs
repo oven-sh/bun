@@ -2316,7 +2316,7 @@ fn transpile_source_code_inner(
             }
 
             // ── RuntimeTranspilerCache ──────────────────────────────────────
-            // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+            // SAFETY: per fn contract.
             let (use_isolation_source_provider_cache, macro_mode) = unsafe {
                 (
                     (*jsc_vm).use_isolation_source_provider_cache(),

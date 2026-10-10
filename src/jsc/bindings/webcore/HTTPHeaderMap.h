@@ -27,7 +27,9 @@
 #pragma once
 
 #include "HTTPHeaderNames.h"
+#include <bit>
 #include <utility>
+#include <wtf/text/StringBuilder.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
@@ -48,13 +50,6 @@ public:
         String value;
 
         bool operator==(const CommonHeader& other) const { return key == other.key && value == other.value; }
-    };
-
-    struct HeaderIndex {
-        size_t index;
-        bool isCommon;
-
-        bool isValid() const { return index != notFound; }
     };
 
     struct UncommonHeader {
@@ -165,20 +160,22 @@ public:
 
     WEBCORE_EXPORT String get(const StringView name) const;
     WEBCORE_EXPORT void set(const String& name, const String& value);
-    WEBCORE_EXPORT void add(const String& name, const String& value);
+    // ValueTooLong: the combined value would pass String::MaxLength, and the stored value stays as it is.
+    enum class [[nodiscard]] AddResult : uint8_t {
+        Stored,
+        ValueTooLong,
+    };
+    WEBCORE_EXPORT AddResult add(const String& name, const String& value);
     WEBCORE_EXPORT bool contains(const StringView) const;
     WEBCORE_EXPORT int64_t indexOf(StringView name) const;
     WEBCORE_EXPORT bool remove(const StringView);
     WEBCORE_EXPORT bool removeUncommonHeader(const StringView);
 
-    WEBCORE_EXPORT String getIndex(HeaderIndex index) const;
-    WEBCORE_EXPORT bool setIndex(HeaderIndex index, const String& value);
-    HeaderIndex indexOf(const String& name) const;
-    HeaderIndex indexOf(HTTPHeaderName name) const;
-
     WEBCORE_EXPORT String get(HTTPHeaderName) const;
+    // The Set-Cookie values joined by ", ". nullopt when the join would pass String::MaxLength.
+    WEBCORE_EXPORT std::optional<String> tryJoinSetCookieHeaders() const;
     void set(HTTPHeaderName, const String& value);
-    void add(HTTPHeaderName, const String& value);
+    AddResult add(HTTPHeaderName, const String& value);
     WEBCORE_EXPORT bool contains(HTTPHeaderName) const;
     WEBCORE_EXPORT bool remove(HTTPHeaderName);
 
@@ -194,9 +191,22 @@ public:
 
     const CommonHeadersVector& commonHeaders() const { return m_commonHeaders; }
     const UncommonHeadersVector& uncommonHeaders() const { return m_uncommonHeaders; }
-    CommonHeadersVector& commonHeaders() { return m_commonHeaders; }
-    UncommonHeadersVector& uncommonHeaders() { return m_uncommonHeaders; }
-    Vector<String, 0>& getSetCookieHeaders() { return m_setCookieHeaders; }
+
+    // For a map with no entries: no name is compared and no value is joined.
+    void appendEntriesOf(const HTTPHeaderMap& other)
+    {
+        ASSERT(isEmpty());
+        m_commonHeaders.appendVector(other.m_commonHeaders);
+        m_uncommonHeaders.appendVector(other.m_uncommonHeaders);
+        m_setCookieHeaders.appendVector(other.m_setCookieHeaders);
+    }
+
+    // A producer that adds a whole list calls this at its end: no value keeps spare room, and the count of joins starts again.
+    void settle()
+    {
+        if (!m_growing.isZero()) [[unlikely]]
+            settleSlow();
+    }
 
     const_iterator begin() const { return const_iterator(*this, m_commonHeaders.begin(), m_uncommonHeaders.begin(), m_setCookieHeaders.begin()); }
     const_iterator end() const { return const_iterator(*this, m_commonHeaders.end(), m_uncommonHeaders.end(), m_setCookieHeaders.end()); }
@@ -230,15 +240,77 @@ public:
     }
 
     void setUncommonHeader(const String& name, const String& value);
-    void addUncommonHeader(const String& name, const String& value);
-    void addUncommonHeaderCloneName(const StringView name, const String& value);
+    AddResult addUncommonHeader(const String& name, const String& value);
+    AddResult addUncommonHeaderCloneName(const StringView name, const String& value);
+    WEBCORE_EXPORT String getUncommonHeader(const StringView name) const;
 
 private:
-    WEBCORE_EXPORT String getUncommonHeader(const StringView name) const;
+    // A join that gives a value under this length is one exact-fit string.
+    static constexpr unsigned growThreshold = 4096;
+    // A map makes this many exact-fit joins past growThreshold. After them a value grows in a builder: N joins copy O(N) bytes.
+    static constexpr uintptr_t exactFitJoins = 8;
+
+    // One word: the count of exact-fit joins past growThreshold, or the builders of the values that grow. A copy of the map starts at zero.
+    class Growing {
+    public:
+        using Builders = Vector<StringBuilder, 1>;
+
+        Growing() = default;
+        Growing(const Growing&)
+        {
+        }
+        Growing(Growing&& other)
+            : m_bits { std::exchange(other.m_bits, 0) }
+        {
+        }
+        Growing& operator=(const Growing&)
+        {
+            reset();
+            return *this;
+        }
+        Growing& operator=(Growing&& other)
+        {
+            reset();
+            m_bits = std::exchange(other.m_bits, 0);
+            return *this;
+        }
+        ~Growing() { reset(); }
+
+        bool isZero() const { return !m_bits; }
+        Builders* builders() const { return m_bits > exactFitJoins ? std::bit_cast<Builders*>(m_bits) : nullptr; }
+        StringBuilder* builderOf(const String& stored) const;
+        bool takeExactFitJoin()
+        {
+            if (m_bits >= exactFitJoins)
+                return false;
+            m_bits++;
+            return true;
+        }
+        StringBuilder& startBuilder();
+        void forget(const String& stored);
+        void reset()
+        {
+            if (m_bits > exactFitJoins) [[unlikely]]
+                deleteBuilders();
+            m_bits = 0;
+        }
+
+    private:
+        void deleteBuilders();
+
+        uintptr_t m_bits { 0 };
+    };
+
+    // Every add function joins a repeated name here.
+    AddResult combine(String& stored, ASCIILiteral delimiter, const String& value);
+    AddResult combineLong(String& stored, ASCIILiteral delimiter, const String& value);
+    void replace(String& stored, const String& value);
+    void settleSlow();
 
     CommonHeadersVector m_commonHeaders;
     UncommonHeadersVector m_uncommonHeaders;
     Vector<String, 0> m_setCookieHeaders;
+    Growing m_growing;
 };
 
 } // namespace WebCore

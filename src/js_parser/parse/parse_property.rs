@@ -673,6 +673,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                             && name == b"static"
                         {
                             p.lexer.keyword_was_taken(escaped_word.take());
+                            // esbuild skips this arm here and its lexer stops at the "{". Ours keeps parsing.
+                            if !p.is_tolerant()
+                                && let Some(decorator) = opts.ts_decorators.slice().first()
+                            {
+                                p.log().add_error(
+                                    Some(p.source),
+                                    p.real_loc(decorator.loc),
+                                    b"Decorators are not valid here",
+                                );
+                                return Err(crate::Error::SyntaxError);
+                            }
                             let loc = p.lexer.loc();
                             p.lexer.next()?;
 

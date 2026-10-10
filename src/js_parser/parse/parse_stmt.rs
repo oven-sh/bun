@@ -2940,6 +2940,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     p.lexer.next()?;
                     let scope_index = p.scopes_in_order.len();
                     let mut body_opts = *opts;
+                    body_opts.ts_decorators = None;
                     if p.is_tolerant() {
                         body_opts.is_typescript_declare = true;
                         body_opts.scope = StatementScope::Namespace;
@@ -3015,6 +3016,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     let scope_index = p.scopes_in_order.len();
                     // `parseModuleBlock`, wherever the declaration is.
                     let mut body_opts = *opts;
+                    // The decorators belong to this statement, not to the statements of its body.
+                    body_opts.ts_decorators = None;
                     if p.is_tolerant() && body_opts.scope == StatementScope::Nested {
                         body_opts.scope = StatementScope::Namespace;
                     }

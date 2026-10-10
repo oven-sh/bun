@@ -1888,6 +1888,236 @@ describe("css tests", () => {
     );
   });
 
+  // Ported from lightningcss's test_filter (minus the non-negative range checks).
+  describe("filter", () => {
+    describe.each(["filter", "backdrop-filter", "-webkit-filter", "-webkit-backdrop-filter"])("%s", property => {
+      describe.each([
+        ["", ""],
+        ["  ", " "],
+        ["/*empty*/", ""],
+      ])("value %j", (value, expected) => {
+        minify_test(`.foo{${property}:${value}}`, `.foo{${property}:${expected}}`);
+      });
+      minify_test(`.foo{${property}:none}`, `.foo{${property}:none}`);
+      minify_test(`.foo{${property}:blur(0px) foo}`, `.foo{${property}:blur(0px)foo}`);
+    });
+
+    minify_test(".foo { filter: url('filters.svg#filter-id'); }", ".foo{filter:url(filters.svg#filter-id)}");
+    minify_test(".foo { filter: blur(5px); }", ".foo{filter:blur(5px)}");
+    minify_test(".foo { filter: blur(0px); }", ".foo{filter:blur(0)}");
+    minify_test(".foo { filter: brightness(10%); }", ".foo{filter:brightness(10%)}");
+    minify_test(".foo { filter: brightness(100%); }", ".foo{filter:brightness(100%)}");
+    minify_test(
+      ".foo { filter: drop-shadow(16px 16px 20px yellow); }",
+      ".foo{filter:drop-shadow(16px 16px 20px #ff0)}",
+    );
+    minify_test(".foo { filter: contrast(175%) brightness(3%); }", ".foo{filter:contrast(175%)brightness(3%)}");
+    minify_test(".foo { filter: hue-rotate(0) }", ".foo{filter:hue-rotate(0deg)}");
+    // Default arguments are printed rather than dropped: older engines read an empty
+    // argument list inconsistently (lightningcss#251).
+    minify_test(
+      ".foo { filter: blur() brightness() hue-rotate() }",
+      ".foo{filter:blur(0)brightness(1)hue-rotate(0deg)}",
+    );
+    prefix_test(
+      ".foo { filter: brightness(1) }",
+      `.foo {
+          -webkit-filter: brightness(1);
+          filter: brightness(1);
+        }
+      `,
+      { chrome: Some(20 << 16) },
+    );
+
+    prefix_test(
+      ".foo { filter: blur(5px) }",
+      `.foo {
+          -webkit-filter: blur(5px);
+          filter: blur(5px);
+        }
+      `,
+      { chrome: Some(20 << 16) },
+    );
+
+    prefix_test(
+      ".foo { filter: blur(5px) }",
+      `.foo {
+          filter: blur(5px);
+        }
+      `,
+      { chrome: Some(80 << 16) },
+    );
+
+    prefix_test(
+      ".foo { backdrop-filter: blur(5px) }",
+      `.foo {
+          backdrop-filter: blur(5px);
+        }
+      `,
+      { chrome: Some(80 << 16) },
+    );
+
+    prefix_test(
+      ".foo { backdrop-filter: blur(5px) }",
+      `.foo {
+          -webkit-backdrop-filter: blur(5px);
+          backdrop-filter: blur(5px);
+        }
+      `,
+      { safari: Some(15 << 16) },
+    );
+
+    prefix_test(
+      `
+      .foo {
+        -webkit-backdrop-filter: blur(8px);
+        backdrop-filter: blur(8px);
+      }
+      `,
+      `.foo {
+        -webkit-backdrop-filter: blur(8px);
+        backdrop-filter: blur(8px);
+      }
+      `,
+      { safari: Some(16 << 16) },
+    );
+
+    prefix_test(
+      ".foo { filter: var(--foo) }",
+      `.foo {
+          -webkit-filter: var(--foo);
+          filter: var(--foo);
+        }
+      `,
+      { chrome: Some(20 << 16) },
+    );
+
+    prefix_test(
+      ".foo { filter: drop-shadow(16px 16px 20px lab(40% 56.6 39)) }",
+      `.foo {
+          -webkit-filter: drop-shadow(16px 16px 20px #b32323);
+          filter: drop-shadow(16px 16px 20px #b32323);
+          filter: drop-shadow(16px 16px 20px lab(40% 56.6 39));
+        }
+      `,
+      { chrome: Some(20 << 16) },
+    );
+
+    prefix_test(
+      ".foo { filter: contrast(175%) drop-shadow(16px 16px 20px lab(40% 56.6 39)) }",
+      `.foo {
+          filter: contrast(175%) drop-shadow(16px 16px 20px #b32323);
+          filter: contrast(175%) drop-shadow(16px 16px 20px lab(40% 56.6 39));
+        }
+      `,
+      { chrome: Some(4 << 16) },
+    );
+
+    prefix_test(
+      ".foo { filter: drop-shadow(16px 16px 20px lab(40% 56.6 39)) drop-shadow(16px 16px 20px yellow) }",
+      `.foo {
+          filter: drop-shadow(16px 16px 20px #b32323) drop-shadow(16px 16px 20px #ff0);
+          filter: drop-shadow(16px 16px 20px lab(40% 56.6 39)) drop-shadow(16px 16px 20px #ff0);
+        }
+      `,
+      { chrome: Some(4 << 16) },
+    );
+
+    prefix_test(
+      ".foo { filter: var(--foo) drop-shadow(16px 16px 20px lab(40% 56.6 39)) }",
+      `.foo {
+          filter: var(--foo) drop-shadow(16px 16px 20px #b32323);
+        }
+
+        @supports (color: lab(0% 0 0)) {
+          .foo {
+            filter: var(--foo) drop-shadow(16px 16px 20px lab(40% 56.6 39));
+          }
+        }
+      `,
+      { chrome: Some(4 << 16) },
+    );
+
+    // #44639: oklch() inside drop-shadow() was printed as written, so browsers
+    // without oklch() dropped the whole declaration.
+    prefix_test(
+      ".foo { filter: blur(1px) drop-shadow(0 0 2px oklch(25% .05 30)) }",
+      `.foo {
+          filter: blur(1px) drop-shadow(0 0 2px #361713);
+          filter: blur(1px) drop-shadow(0 0 2px lab(12.5482% 15.1914 10.4048));
+        }
+      `,
+      { chrome: Some(90 << 16) },
+    );
+
+    prefix_test(
+      ".foo { backdrop-filter: drop-shadow(0 0 2px oklch(25% .05 30)) }",
+      `.foo {
+          backdrop-filter: drop-shadow(0 0 2px #361713);
+          backdrop-filter: drop-shadow(0 0 2px lab(12.5482% 15.1914 10.4048));
+        }
+      `,
+      { chrome: Some(90 << 16) },
+    );
+
+    // An unsupported color keeps the earlier declaration as its fallback, as for `color`.
+    prefix_test(
+      ".foo { filter: blur(1px); filter: drop-shadow(0 0 2px oklch(25% .05 30)) }",
+      `.foo {
+          filter: blur(1px);
+          filter: drop-shadow(0 0 2px oklch(25% .05 30));
+        }
+      `,
+      { chrome: Some(90 << 16) },
+    );
+
+    // A later prefixed value must not erase the unprefixed declaration.
+    prefix_test(
+      ".foo { filter: blur(1px); -webkit-filter: blur(2px) }",
+      `.foo {
+          -webkit-filter: blur(1px);
+          filter: blur(1px);
+          -webkit-filter: blur(2px);
+        }
+      `,
+      { chrome: Some(20 << 16) },
+    );
+
+    prefix_test(
+      ".foo { filter: blur(1px); -webkit-filter: blur(1px) }",
+      `.foo {
+          -webkit-filter: blur(1px);
+          filter: blur(1px);
+        }
+      `,
+      { chrome: Some(20 << 16) },
+    );
+
+    // A later var() value must not erase the earlier declaration either: browsers
+    // without custom properties drop the var() one and read it.
+    prefix_test(
+      ".foo { filter: blur(1px); filter: var(--x) }",
+      `.foo {
+          -webkit-filter: blur(1px);
+          filter: blur(1px);
+          -webkit-filter: var(--x);
+          filter: var(--x);
+        }
+      `,
+      { chrome: Some(20 << 16) },
+    );
+
+    prefix_test(
+      ".foo { backdrop-filter: blur(1px); backdrop-filter: var(--x) }",
+      `.foo {
+          backdrop-filter: blur(1px);
+          backdrop-filter: var(--x);
+        }
+      `,
+      { chrome: Some(90 << 16) },
+    );
+  });
+
   describe("margin", () => {
     cssTest(
       `

@@ -9,9 +9,9 @@ use bun_alloc::ArenaVecExt as _;
 pub struct FallbackHandler {
     pub(crate) color: Option<usize>,
     pub(crate) text_shadow: Option<usize>,
+    pub(crate) filter: Option<usize>,
+    pub(crate) backdrop_filter: Option<usize>,
     // The remaining fallback fields are not implemented yet.
-    // filter: Option<usize>,
-    // backdrop_filter: Option<usize>,
     // fill: Option<usize>,
     // stroke: Option<usize>,
     // caret_color: Option<usize>,
@@ -68,9 +68,73 @@ impl FallbackHandler {
 
         // Reshaped for borrowck — pre-borrow each self.<field> as &mut so the
         // macro body can both read and assign it without re-borrowing `self`.
+        // Like `handle_unprefixed!`, plus the vendor prefix: the value's prefixes are
+        // widened for the targets, and once color fallbacks were emitted the
+        // unprefixed property is the only one the lowered value goes out under.
+        macro_rules! handle_prefixed {
+            ($self_field:ident, $Variant:ident, $feature:ident) => {
+                if let Property::$Variant((payload, prefix)) = property {
+                    let mut val = payload.deep_clone(arena);
+                    let mut prefix = context
+                        .targets
+                        .prefixes(*prefix, css::prefixes::Feature::$feature);
+
+                    // Fallbacks are generated only when no earlier declaration of this
+                    // property exists, typed or unparsed (`var()`). An earlier one is the
+                    // author's own fallback: generating one after it would override it in
+                    // every browser without the newer color (lightningcss#109).
+                    if $self_field.is_none() {
+                        let fallbacks = val.get_fallbacks(arena, &context.targets);
+                        let has_fallbacks = fallbacks.len() > 0;
+                        for fb in fallbacks.to_owned_slice().into_vec() {
+                            dest.push(Property::$Variant((fb, prefix)));
+                        }
+                        if has_fallbacks && prefix.contains(css::VendorPrefix::NONE) {
+                            prefix = css::VendorPrefix::NONE;
+                        }
+                    }
+
+                    if $self_field.is_none()
+                        || (context.targets.browsers.is_some()
+                            && !val.is_compatible(&context.targets.browsers.unwrap()))
+                    {
+                        *$self_field = Some(dest.len());
+                        dest.push(Property::$Variant((val, prefix)));
+                    } else if let Some(index) = *$self_field {
+                        // Overwrite only what the new declaration covers. Otherwise
+                        // `filter: x; -webkit-filter: y` would erase the unprefixed
+                        // `filter: x` that browsers without `-webkit-filter` read.
+                        let kept = match &dest[index] {
+                            Property::$Variant((old, old_prefix))
+                                if !prefix.contains(*old_prefix) =>
+                            {
+                                if old.eql(&val) {
+                                    Some(old_prefix.union(prefix))
+                                } else {
+                                    None
+                                }
+                            }
+                            _ => Some(prefix),
+                        };
+                        match kept {
+                            Some(prefix) => dest[index] = Property::$Variant((val, prefix)),
+                            None => {
+                                *$self_field = Some(dest.len());
+                                dest.push(Property::$Variant((val, prefix)));
+                            }
+                        }
+                    }
+
+                    return true;
+                }
+            };
+        }
+
         let this = &mut *self;
         let color = &mut this.color;
         let text_shadow = &mut this.text_shadow;
+        let filter = &mut this.filter;
+        let backdrop_filter = &mut this.backdrop_filter;
 
         // PropertyIdTag::Color has no vendor prefix.
         handle_unprefixed!(
@@ -108,29 +172,52 @@ impl FallbackHandler {
             is_compat = |v: &css::SmallList<css::css_properties::text::TextShadow, 1>, b| v
                 .is_compatible(b)
         );
+        handle_prefixed!(filter, Filter, Filter);
+        handle_prefixed!(backdrop_filter, BackdropFilter, BackdropFilter);
 
         if let Property::Unparsed(val) = property {
             let val: &UnparsedProperty = val;
-            let (mut unparsed, index): (UnparsedProperty, &mut Option<usize>) = 'unparsed_and_index: {
+            // `filter` and `backdrop-filter` were never tracked before they were typed,
+            // so an earlier declaration survived an unparsed `filter: var(--x)`. Keep it:
+            // a target without custom properties drops the `var()` one and reads it.
+            let (mut unparsed, index, keep_earlier): (UnparsedProperty, &mut Option<usize>, bool) = 'unparsed_and_index: {
                 macro_rules! match_unparsed_unprefixed {
                     ($self_field:ident, $Variant:ident) => {
                         if val.property_id.tag() == PropertyIdTag::$Variant {
                             let newval = val.deep_clone(arena);
-                            break 'unparsed_and_index (newval, $self_field);
+                            break 'unparsed_and_index (newval, $self_field, false);
+                        }
+                    };
+                }
+
+                macro_rules! match_unparsed_prefixed {
+                    ($self_field:ident, $Variant:ident, $feature:ident) => {
+                        if val.property_id.tag() == PropertyIdTag::$Variant {
+                            let newval =
+                                if val.property_id.prefix().contains(css::VendorPrefix::NONE) {
+                                    val.get_prefixed(
+                                        arena,
+                                        &context.targets,
+                                        css::prefixes::Feature::$feature,
+                                    )
+                                } else {
+                                    val.deep_clone(arena)
+                                };
+                            break 'unparsed_and_index (newval, $self_field, true);
                         }
                     };
                 }
 
                 match_unparsed_unprefixed!(color, Color);
                 match_unparsed_unprefixed!(text_shadow, TextShadow);
-                // (no prefixed properties active yet — `match_unparsed_prefixed!` kept for
-                // when filter/backdrop_filter/etc. are re-enabled in this handler.)
+                match_unparsed_prefixed!(filter, Filter, Filter);
+                match_unparsed_prefixed!(backdrop_filter, BackdropFilter, BackdropFilter);
 
                 return false;
             };
 
             context.add_unparsed_fallbacks(arena, &mut unparsed);
-            if let Some(i) = *index {
+            if let (Some(i), false) = (*index, keep_earlier) {
                 dest[i] = Property::Unparsed(unparsed);
             } else {
                 *index = Some(dest.len());
@@ -150,5 +237,7 @@ impl FallbackHandler {
     ) {
         self.color = None;
         self.text_shadow = None;
+        self.filter = None;
+        self.backdrop_filter = None;
     }
 }

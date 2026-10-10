@@ -330,8 +330,7 @@ void JSNodeHTTPServerSocket::setResponseTrailers(WTF::StringView trailers)
         for (size_t i = 0; i < span.size(); i++)
             dest[i] = static_cast<char>(span[i]);
     }
-    /* internalEnd() decides the response framing from this base-struct mirror
-     * so the shared path never touches the node-only string. */
+    /* internalEnd() reads this base-struct mirror to know that trailers follow the last chunk, so the shared path never touches the node-only string. */
     if (is_ssl) {
         ((uWS::HttpResponseData<true>*)us_socket_ext(socket))->setFlag(uWS::HttpResponseData<true>::HTTP_NODE_HAS_RESPONSE_TRAILERS, !dest.empty());
     } else {

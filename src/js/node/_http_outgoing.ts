@@ -5,7 +5,7 @@ const { Stream } = require("internal/stream");
 const { isUint8Array, validateString } = require("internal/validators");
 const { deprecate } = require("internal/util/deprecate");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
-const { kOutHeaders, kNeedDrain, utcDate } = require("internal/http");
+const { kOutHeaders, kNeedDrain, utcDate, decideFraming, NodeHTTPFraming } = require("internal/http");
 const {
   validateHeaderName,
   validateHeaderValue,
@@ -487,21 +487,7 @@ function _storeHeader(this: any, firstLine, headers) {
     header += "Date: " + utcDate() + "\r\n";
   }
 
-  // Force the connection to close when the response is a 204 No Content or
-  // a 304 Not Modified and the user has set a "Transfer-Encoding: chunked"
-  // header.
-  //
-  // RFC 2616 mandates that 204 and 304 responses MUST NOT have a body but
-  // node.js used to send out a zero chunk anyway to accommodate clients
-  // that don't have special handling for those responses.
-  //
-  // It was pointed out that this might confuse reverse proxies to the point
-  // of creating security liabilities, so suppress the zero chunk and force
-  // the connection to close.
-  if (this.chunkedEncoding && (this.statusCode === 204 || this.statusCode === 304)) {
-    this.chunkedEncoding = false;
-    this.shouldKeepAlive = false;
-  }
+  const framing = decideFraming(this, state.contLen, state.te, state.trailer);
 
   // keep-alive logic
   if (this._removedConnection) {
@@ -531,35 +517,15 @@ function _storeHeader(this: any, firstLine, headers) {
     }
   }
 
-  if (!state.contLen && !state.te) {
-    if (!this._hasBody) {
-      // Make sure we don't end the 0\r\n\r\n at the end of the message.
-      this.chunkedEncoding = false;
-    } else if (!this.useChunkedEncodingByDefault) {
-      this._last = true;
-    } else {
-      let contentLength;
-      if (!state.trailer && !this._removedContLen && typeof (contentLength = this._contentLength) === "number") {
-        header += "Content-Length: " + contentLength + "\r\n";
-      } else if (!this._removedTE) {
-        header += "Transfer-Encoding: chunked\r\n";
-        this.chunkedEncoding = true;
-      } else {
-        // We should only be able to get here if both Content-Length and
-        // Transfer-Encoding are removed by the user.
-        // See: test/parallel/test-http-remove-header-stays-removed.js
-        // We can't keep alive in this case, because with no header info the body
-        // is defined as all data until the connection is closed.
-        this._last = true;
-      }
-    }
+  if (framing & NodeHTTPFraming.contentLength) {
+    header += "Content-Length: " + this._contentLength + "\r\n";
+  } else if (framing & NodeHTTPFraming.transferEncodingChunked) {
+    header += "Transfer-Encoding: chunked\r\n";
+  } else if (framing & NodeHTTPFraming.closeDelimited) {
+    this._last = true;
   }
 
-  // Test non-chunked message does not have trailer header set,
-  // message will be terminated by the first empty line after the
-  // header fields, regardless of the header fields present in the
-  // message, and thus cannot contain a message body or 'trailers'.
-  if (this.chunkedEncoding !== true && state.trailer) {
+  if (framing & NodeHTTPFraming.trailerInvalid) {
     throw $ERR_HTTP_TRAILER_INVALID();
   }
 

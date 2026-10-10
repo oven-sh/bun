@@ -30,6 +30,7 @@ const kEmptyObject = ObjectFreeze(Object.create(null));
 const kFlag = Symbol("kFlag");
 const kLocked = Symbol("kLocked");
 const kCloseSync = Symbol("kCloseSync");
+const kCloseSyncDeferred = Symbol("kCloseSyncDeferred");
 
 var SymbolDispose = Symbol.dispose;
 
@@ -241,7 +242,51 @@ const _readFile = fs.readFile.bind(fs);
 const _writeFile = fs.writeFile.bind(fs);
 const _appendFile = fs.appendFile.bind(fs);
 
-type TailParameters<F> = F extends (first: any, ...rest: infer Rest) => any ? Rest : never;
+// readFile, writeFile and appendFile of this module take a FileHandle and run as one native
+// task on its descriptor number. The ref keeps close(), an autoClose teardown and a transfer
+// away from that number until the call settles, and the `finally` keeps a handle that the
+// caller dropped reachable until then. Node v26.3.0 takes no ref here: its close() closes at
+// once and it allows the transfer. Node reads handle.fd for each request, so a request that is
+// already issued completes, and a call that makes another request rejects with
+// ERR_OUT_OF_RANGE. A closed handle takes no ref, so the native call rejects with
+// ERR_OUT_OF_RANGE as in node and [kUnref] does not reach its last-ref arm again.
+async function readFileOfHandle(handle, fd, options) {
+  if (fd === -1) return _readFile(fd, options);
+  try {
+    handle[kRef]();
+    return await _readFile(fd, options);
+  } finally {
+    handle[kUnref]();
+  }
+}
+
+async function writeFileOfHandle(handle, fd, data, options) {
+  if (fd === -1) return _writeFile(fd, data, options);
+  try {
+    handle[kRef]();
+    // The iterator getters are caller code, so they run under the ref.
+    if (
+      !$isTypedArrayView(data) &&
+      typeof data !== "string" &&
+      ($isCallable(data?.[Symbol.iterator]) || $isCallable(data?.[Symbol.asyncIterator]))
+    ) {
+      return await writeFileAsyncIterator(fd, data, options);
+    }
+    return await _writeFile(fd, data, options);
+  } finally {
+    handle[kUnref]();
+  }
+}
+
+async function appendFileOfHandle(handle, fd, data, options) {
+  if (fd === -1) return _appendFile(fd, data, options);
+  try {
+    handle[kRef]();
+    return await _appendFile(fd, data, options);
+  } finally {
+    handle[kUnref]();
+  }
+}
 
 // Argument validation must run at the first .next(), not at call time: Node's
 // fs/promises glob is an async generator whose body constructs Glob lazily.
@@ -251,9 +296,11 @@ async function* glob(pattern, options) {
 
 const exports = {
   access: asyncWrap(fs.access, "access"),
-  appendFile: async function (fileHandleOrFdOrPath, ...args: TailParameters<typeof _appendFile>) {
-    fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
-    return _appendFile(fileHandleOrFdOrPath, ...args);
+  appendFile: async function (fileHandleOrFdOrPath, data, options) {
+    const fd = fileHandleOrFdOrPath?.[kFd];
+    return fd === undefined
+      ? _appendFile(fileHandleOrFdOrPath, data, options)
+      : appendFileOfHandle(fileHandleOrFdOrPath, fd, data, options);
   },
   close: asyncWrap(fs.close, "close"),
   copyFile: asyncWrap(fs.copyFile, "copyFile"),
@@ -307,23 +354,24 @@ const exports = {
   read: asyncWrap(fs.read, "read"),
   write: asyncWrap(fs.write, "write"),
   readdir: asyncWrap(fs.readdir, "readdir"),
-  readFile: async function (fileHandleOrFdOrPath, ...args) {
-    fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
-    return _readFile(fileHandleOrFdOrPath, ...args);
+  readFile: async function (fileHandleOrFdOrPath, options) {
+    const fd = fileHandleOrFdOrPath?.[kFd];
+    if (fd !== undefined) return readFileOfHandle(fileHandleOrFdOrPath, fd, options);
+    return _readFile(fileHandleOrFdOrPath, options);
   },
-  writeFile: async function (fileHandleOrFdOrPath, ...args: TailParameters<typeof _writeFile>) {
-    fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
+  writeFile: async function (fileHandleOrFdOrPath, data, options) {
+    const fd = fileHandleOrFdOrPath?.[kFd];
+    if (fd !== undefined) return writeFileOfHandle(fileHandleOrFdOrPath, fd, data, options);
     if (
-      !$isTypedArrayView(args[0]) &&
-      typeof args[0] !== "string" &&
-      ($isCallable(args[0]?.[Symbol.iterator]) || $isCallable(args[0]?.[Symbol.asyncIterator]))
+      !$isTypedArrayView(data) &&
+      typeof data !== "string" &&
+      ($isCallable(data?.[Symbol.iterator]) || $isCallable(data?.[Symbol.asyncIterator]))
     ) {
       $debug("fs.promises.writeFile async iterator slow path!");
       // Node accepts an arbitrary async iterator here
-      // @ts-expect-error
-      return writeFileAsyncIterator(fileHandleOrFdOrPath, ...args);
+      return writeFileAsyncIterator(fileHandleOrFdOrPath, data, options);
     }
-    return _writeFile(fileHandleOrFdOrPath, ...args);
+    return _writeFile(fileHandleOrFdOrPath, data, options);
   },
   readlink: asyncWrap(fs.readlink, "readlink"),
   realpath: asyncWrap(fs.realpath, "realpath"),
@@ -421,6 +469,22 @@ function asyncWrap(fn: any, name: string) {
   } = exports;
   let isArrayBufferView;
 
+  // The deferred arm of close() and of [kCloseSync]. Other operations hold the descriptor, so
+  // the last [kUnref] closes it and settles kClosePromise through these two functions.
+  function closeAfterLastUnref(handle) {
+    handle[kClosePromise] = PromisePrototypeFinally.$call(
+      new Promise((resolve, reject) => {
+        handle[kCloseResolve] = resolve;
+        handle[kCloseReject] = reject;
+      }),
+      () => {
+        handle[kClosePromise] = undefined;
+        handle[kCloseReject] = undefined;
+        handle[kCloseResolve] = undefined;
+      },
+    );
+  }
+
   // Partially taken from https://github.com/nodejs/node/blob/c25878d370/lib/internal/fs/promises.js#L148
   // These functions await the result so that errors propagate correctly with
   // async stack traces and so that the ref counting is correct.
@@ -455,18 +519,19 @@ function asyncWrap(fn: any, name: string) {
     async appendFile(data, options?: BufferEncoding | { encoding?: BufferEncoding | null; flush?: boolean } | null) {
       const fd = this[kFd];
       throwEBADFIfNecessary("writeFile", fd);
-      let encoding: BufferEncoding = "utf8";
-      let flush = false;
-      if (options == null || typeof options === "function") {
-      } else if (typeof options === "string") {
-        encoding = options;
-      } else {
-        encoding = options?.encoding ?? encoding;
-        flush = options?.flush ?? flush;
-      }
 
       try {
+        // The ref comes before the arguments are read: a getter of an argument is caller code.
         this[kRef]();
+        let encoding: BufferEncoding = "utf8";
+        let flush = false;
+        if (options == null || typeof options === "function") {
+        } else if (typeof options === "string") {
+          encoding = options;
+        } else {
+          encoding = options?.encoding ?? encoding;
+          flush = options?.flush ?? flush;
+        }
         return await writeFile(fd, data, { encoding, flush, flag: this[kFlag] });
       } finally {
         this[kUnref]();
@@ -525,38 +590,38 @@ function asyncWrap(fn: any, name: string) {
       const fd = this[kFd];
       throwEBADFIfNecessary("read", fd);
 
-      let buffer = bufferOrParams;
-      if (!types.isArrayBufferView(buffer)) {
-        // This is fh.read(params)
-        if (bufferOrParams !== undefined) {
-          // validateObject(bufferOrParams, 'options', kValidateObjectAllowNullable);
-          if (typeof bufferOrParams !== "object" || $isArray(bufferOrParams)) {
-            throw $ERR_INVALID_ARG_TYPE("options", "object", bufferOrParams);
-          }
-        }
-        ({
-          buffer = Buffer.alloc(16384),
-          offset = 0,
-          length = buffer.byteLength - offset,
-          position = null,
-        } = bufferOrParams ?? kEmptyObject);
-      }
-
-      if (offset !== null && typeof offset === "object") {
-        // This is fh.read(buffer, options)
-        ({ offset = 0, length = buffer?.byteLength - offset, position = null } = offset);
-      }
-
-      if (offset == null) {
-        offset = 0;
-      } else {
-        validateInteger(offset, "offset", 0);
-      }
-
-      length ??= buffer?.byteLength - offset;
-
       try {
         this[kRef]();
+        let buffer = bufferOrParams;
+        if (!types.isArrayBufferView(buffer)) {
+          // This is fh.read(params)
+          if (bufferOrParams !== undefined) {
+            // validateObject(bufferOrParams, 'options', kValidateObjectAllowNullable);
+            if (typeof bufferOrParams !== "object" || $isArray(bufferOrParams)) {
+              throw $ERR_INVALID_ARG_TYPE("options", "object", bufferOrParams);
+            }
+          }
+          ({
+            buffer = Buffer.alloc(16384),
+            offset = 0,
+            length = buffer.byteLength - offset,
+            position = null,
+          } = bufferOrParams ?? kEmptyObject);
+        }
+
+        if (offset !== null && typeof offset === "object") {
+          // This is fh.read(buffer, options)
+          ({ offset = 0, length = buffer?.byteLength - offset, position = null } = offset);
+        }
+
+        if (offset == null) {
+          offset = 0;
+        } else {
+          validateInteger(offset, "offset", 0);
+        }
+
+        length ??= buffer?.byteLength - offset;
+
         const bytesRead = await read(fd, buffer, offset, length, position);
         return { buffer, bytesRead };
       } finally {
@@ -636,29 +701,29 @@ function asyncWrap(fn: any, name: string) {
       const fd = this[kFd];
       throwEBADFIfNecessary("write", fd);
 
-      if (buffer?.byteLength === 0) return { __proto__: null, bytesWritten: 0, buffer };
-
-      isArrayBufferView ??= require("node:util/types").isArrayBufferView;
-      if (isArrayBufferView(buffer)) {
-        if (typeof offset === "object") {
-          ({ offset = 0, length = buffer.byteLength - offset, position = null } = offset ?? kEmptyObject);
-        }
-
-        if (offset == null) {
-          offset = 0;
-        }
-        if (typeof length !== "number") length = buffer.byteLength - offset;
-        if (typeof position !== "number") position = null;
-      } else {
-        // filehandle.write(string[, position[, encoding]]): `length` is the
-        // encoding. Node rejects a non-string before it validates the encoding.
-        if (typeof buffer !== "string") {
-          throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
-        }
-        validateEncoding(buffer, length);
-      }
       try {
         this[kRef]();
+        if (buffer?.byteLength === 0) return { __proto__: null, bytesWritten: 0, buffer };
+
+        isArrayBufferView ??= require("node:util/types").isArrayBufferView;
+        if (isArrayBufferView(buffer)) {
+          if (typeof offset === "object") {
+            ({ offset = 0, length = buffer.byteLength - offset, position = null } = offset ?? kEmptyObject);
+          }
+
+          if (offset == null) {
+            offset = 0;
+          }
+          if (typeof length !== "number") length = buffer.byteLength - offset;
+          if (typeof position !== "number") position = null;
+        } else {
+          // filehandle.write(string[, position[, encoding]]): `length` is the
+          // encoding. Node rejects a non-string before it validates the encoding.
+          if (typeof buffer !== "string") {
+            throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
+          }
+          validateEncoding(buffer, length);
+        }
         return {
           buffer,
           bytesWritten: await write(fd, buffer, offset, length, position),
@@ -686,19 +751,20 @@ function asyncWrap(fn: any, name: string) {
     ) {
       const fd = this[kFd];
       throwEBADFIfNecessary("writeFile", fd);
-      let encoding: BufferEncoding = "utf8";
-      let signal: AbortSignal | undefined = undefined;
-
-      if (options == null || typeof options === "function") {
-      } else if (typeof options === "string") {
-        encoding = options;
-      } else {
-        encoding = options?.encoding ?? encoding;
-        signal = options?.signal ?? undefined;
-      }
 
       try {
         this[kRef]();
+        let encoding: BufferEncoding = "utf8";
+        let signal: AbortSignal | undefined = undefined;
+
+        if (options == null || typeof options === "function") {
+        } else if (typeof options === "string") {
+          encoding = options;
+        } else {
+          encoding = options?.encoding ?? encoding;
+          signal = options?.signal ?? undefined;
+        }
+
         return await writeFile(fd, data, {
           encoding,
           flag: this[kFlag],
@@ -727,17 +793,7 @@ function asyncWrap(fn: any, name: string) {
           this[kClosePromise] = undefined;
         });
       } else {
-        this[kClosePromise] = PromisePrototypeFinally.$call(
-          new Promise((resolve, reject) => {
-            this[kCloseResolve] = resolve;
-            this[kCloseReject] = reject;
-          }),
-          () => {
-            this[kClosePromise] = undefined;
-            this[kCloseReject] = undefined;
-            this[kCloseResolve] = undefined;
-          },
-        );
+        closeAfterLastUnref(this);
       }
 
       this.emit("close");
@@ -1494,7 +1550,19 @@ function asyncWrap(fn: any, name: string) {
     [kCloseSync]() {
       if (this[kFd] === -1) return;
       if (this[kClosePromise]) {
+        // A second teardown while the close that the first one deferred is pending.
+        if (this[kCloseSyncDeferred]) return;
         throw $ERR_INVALID_STATE("The FileHandle is closing");
+      }
+      if (this[kRefs] > 1) {
+        // Another operation of this handle holds the descriptor, so the close waits for the
+        // last [kUnref], as close() does. Node v26.3.0 closes here at once.
+        fileHandleRegistry?.unregister(this);
+        this[kRefs]--;
+        closeAfterLastUnref(this);
+        this[kCloseSyncDeferred] = true;
+        this.emit("close");
+        return;
       }
       const fd = this[kFd];
       this[kFd] = -1;
@@ -1609,8 +1677,10 @@ function flagTruncates(flag): boolean {
   return flag === "w" || flag === "w+" || flag === "wx" || flag === "wx+" || flag === "xw" || flag === "xw+";
 }
 
-async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, flag, mode) {
+async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding) {
   let encoding;
+  let flag;
+  let mode;
   let signal: AbortSignal | null = null;
   if (typeof optionsOrEncoding === "object") {
     encoding = optionsOrEncoding?.encoding ?? (encoding || "utf8");

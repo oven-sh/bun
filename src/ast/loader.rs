@@ -109,11 +109,6 @@ impl Loader {
         self == Loader::Css
     }
 
-    #[inline]
-    pub fn is_js_like(self) -> bool {
-        matches!(self, Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx)
-    }
-
     pub fn should_copy_for_bundling(self) -> bool {
         matches!(
             self,

@@ -142,7 +142,7 @@ const simpleOfBob = (q: Handle) => q.unsafe(`select owner, secret from swap_b wh
 
 type Proxy = Awaited<ReturnType<typeof pgHoldingProxy>>;
 /** Resolves when the query has rejected. The proxy then holds the ReadyForQuery of that query. */
-type Failure = (q: Handle, proxy: Proxy) => Promise<unknown>;
+type Failure = (q: Handle, proxy: Proxy) => PromiseLike<unknown>;
 /** What is issued before the proxy lets that ReadyForQuery through. */
 type Gap = (q: Handle) => PromiseLike<unknown>[];
 
@@ -208,7 +208,7 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
         insert into swap_b values (1, 'bob', 'bob-secret');
         insert into swap_c values (1, 'carol', 'carol-secret');
       `);
-      const warm = await Promise.all([ofBob(q), divide(q, 1)]);
+      const warm: unknown[] = await Promise.all([ofBob(q), divide(q, 1)]);
 
       const failed = await failure(q, proxy);
       const reads = Promise.all(gap(q));

@@ -204,7 +204,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
     // `Offsets.flags` in the trailer of the embedded module graph; bit 13 = all bytecode is one linked payload.
     function hasLinkedPayload(outfile: string) {
       const file = readFileSync(isAbsolute(outfile) ? outfile : join(cwd(), outfile));
-      const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined, "latin1");
+      const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined as any, "latin1");
       return (file.readUInt32LE(trailer - 4) & (1 << 13)) !== 0;
     }
     // The ordered build's counterpart of compile/splitting/StartupModulesPrecedeLazyChunks (bundler_compile_splitting):
@@ -213,7 +213,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
     // knew and did not evaluate, all other bodies, expression info).
     function linkedLayout(outfile: string) {
       const file = readFileSync(isAbsolute(outfile) ? outfile : join(cwd(), outfile));
-      const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined, "latin1");
+      const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined as any, "latin1");
       // `Offsets { byte_count: usize, modules_ptr: StringPointer, entry_point_id: u32, compile_exec_argv_ptr: StringPointer, flags: u32 }`
       const offsets = trailer - 32;
       const base = offsets - Number(file.readBigUInt64LE(offsets));
@@ -830,7 +830,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
           // The first bytes of lazy.js's bytecode say which version of the cache wrote it.
           const outfile = join(String(dir), exe("plain"));
           const file = readFileSync(outfile);
-          const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined, "latin1");
+          const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined as any, "latin1");
           const offsets = trailer - 32;
           const base = offsets - Number(file.readBigUInt64LE(offsets));
           const modules = { offset: file.readUInt32LE(offsets + 8), length: file.readUInt32LE(offsets + 12) };
@@ -1297,7 +1297,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
           }),
         ).toThrow('The "compile.bytecodeOrder" property must be of type string or array of strings. Received number');
         // `false`, `null` and `[]` are no order file (`haveProfile && path`): the options after it are looked at.
-        for (const bytecodeOrder of [false, null, [] as string[]]) {
+        for (const bytecodeOrder of [false, null, [] as string[]] as const) {
           expect(() =>
             Bun.build({
               entrypoints: [join(cwd(), "app.js")],
@@ -2010,7 +2010,7 @@ export function inOther() {
 
       // The positions, counted in the text the executable holds. A frame is where the call's arguments start.
       const file = readFileSync(outfile);
-      const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined, "latin1");
+      const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined as any, "latin1");
       const offsets = trailer - 32;
       const base = offsets - Number(file.readBigUInt64LE(offsets));
       const record = base + file.readUInt32LE(offsets + 8);
@@ -2043,6 +2043,7 @@ export function inOther() {
       Bun.build({
         entrypoints: [join(dir, "index.js")],
         compile: {
+          // @ts-expect-error
           target: "bun-invalid-platform",
           outfile: join(dir, "invalid-app"),
         },

@@ -11,6 +11,7 @@ use crate::check::spans::{Spans, skip_trivia, skip_trivia_back};
 use crate::components::Components;
 use crate::hir::{self, *};
 use crate::json::Json;
+use crate::portable::SharedFile;
 use crate::resolve::{
     DiagAndArgs, Host, INFERRED_TYPES_CONTAINING_FILE, JsxEmit, ModuleDetection, ModuleKind,
     Options, PackageId, Phase, ResolvedModule, Resolver, ScriptTarget, Spent, Tracer, ancestors,
@@ -4066,6 +4067,61 @@ fn output_path_errors(
     (errors, common)
 }
 
+fn bind_options_of(options: &Options) -> bind::BindOptions {
+    // `GetEmitScriptTarget`: an unspecified target means the latest.
+    let is_before =
+        |target: ScriptTarget| options.target != ScriptTarget::None && options.target < target;
+    bind::BindOptions {
+        emit_standard_class_fields: options.emit_standard_class_fields,
+        before_es2020: is_before(ScriptTarget::ES2020),
+        before_es2017: is_before(ScriptTarget::ES2017),
+    }
+}
+
+/// What `Host::parse` and the binder read of the options, as a number below 32: two programs for
+/// which it is the same parse and bind a declaration file alike.
+pub fn variant_of_files(options: &Options) -> u8 {
+    let bind_options = bind_options_of(options);
+    let variant = [
+        options.experimental_decorators,
+        options.module_detection == ModuleDetection::Force,
+        bind_options.emit_standard_class_fields,
+        bind_options.before_es2020,
+        bind_options.before_es2017,
+    ];
+    variant
+        .iter()
+        .fold(0, |bits, &bit| bits << 1 | u8::from(bit))
+}
+
+/// `None`: no atom is left out, for another interner `shared` is what the parser and the binder
+/// return. Or else the name of a field that differs. `hir`: the file that `shared` was made from.
+#[cfg(any(debug_assertions, feature = "baselines"))]
+pub fn difference_for_another_program(
+    shared: &SharedFile,
+    host: &dyn Host,
+    options: &Options,
+    bind_options: bind::BindOptions,
+    path: &[u8],
+    hir: &hir::File,
+) -> Option<&'static str> {
+    let session = Session::new();
+    let atoms = Interner::new_in(&session);
+    // No name has the number that it has in the program.
+    for junk in 0..1000 {
+        atoms.intern(format!("\u{1}{junk}").as_bytes());
+    }
+    let arena = session.arena();
+    let (mut copied, copied_bound) = shared.for_program(arena, &atoms);
+    let text = host.read_source(path);
+    let mut parsed = host.parse(arena, path, &text, &atoms, options);
+    // The binder consults it.
+    parsed.text = Cow::Owned(hir.text.to_vec());
+    copied.text = Cow::Owned(hir.text.to_vec());
+    let bound = bind::bind(&parsed, bind_options, &atoms, arena);
+    crate::portable::first_difference((&parsed, &bound), (&copied, &copied_bound))
+}
+
 /// `GetSymbolNameForPrivateIdentifier`: `#x` is scoped to the class that declares it. From here on
 /// it is spelled `\xFE#x@<hash of the path>.<class>` (`PRIVATE_NAME_PREFIX`), at its declaration
 /// and at every reference. An `#x` that no enclosing class declares stays `#x`, which resolves to
@@ -5483,13 +5539,25 @@ impl<'s> Files<'s> {
         specifies_esm: bool,
         text: Cow<'static, [u8]>,
     ) -> (hir::File<'s>, Bound<'s>) {
-        let mut hir = host.parse(arena, path, &text, atoms, options);
         // The source text of TypeScript's own libraries is only consulted where they are checked.
         // With `libReplacement` a library can be any file.
-        if !is_lib
+        let keeps_text = !is_lib
             || options.lib_replacement
-            || !(options.skip_lib_check || options.skip_default_lib_check)
-        {
+            || !(options.skip_lib_check || options.skip_default_lib_check);
+        let bind_options = bind_options_of(options);
+        // The binder consults the text.
+        let variant = variant_of_files(options) << 1 | u8::from(keeps_text);
+        let shared = host.shared_file(path, &text, variant);
+        if let Some(file) = shared.as_ref().and_then(|it| it.get()) {
+            let _lowering = Spent::on(host, Phase::Lower);
+            let (mut hir, bound) = file.for_program(arena, atoms);
+            if keeps_text {
+                hir.text = text;
+            }
+            return (hir, bound);
+        }
+        let mut hir = host.parse(arena, path, &text, atoms, options);
+        if keeps_text {
             hir.text = text;
         }
         // `getExternalModuleIndicator`: the other conditions that make a file without imports or
@@ -5518,15 +5586,7 @@ impl<'s> Files<'s> {
             hir.has_module_syntax = is_shown || is_decreed;
             hir.is_module_by_decree = !is_shown && is_decreed;
         }
-        // `GetEmitScriptTarget`: an unspecified target means the latest.
-        let is_before =
-            |target: ScriptTarget| options.target != ScriptTarget::None && options.target < target;
         let _binding = Spent::on(host, Phase::Bind);
-        let bind_options = bind::BindOptions {
-            emit_standard_class_fields: options.emit_standard_class_fields,
-            before_es2020: is_before(ScriptTarget::ES2020),
-            before_es2017: is_before(ScriptTarget::ES2017),
-        };
         let mut bound = bind::bind(&hir, bind_options, atoms, arena);
         // The same result as when the parser runs out of stack: an empty HIR, which `check_file`
         // reports as not fully checked.
@@ -5541,6 +5601,19 @@ impl<'s> Files<'s> {
                 ..host.parse(arena, path, b"", atoms, options)
             };
             bound = bind::bind(&hir, bind_options, atoms, arena);
+        } else if let Some(shared) = shared
+            && hir.kind == FileKind::Declaration
+            && !hir.ran_out_of_stack
+        {
+            let file = SharedFile::new(&hir, &bound, atoms);
+            #[cfg(debug_assertions)]
+            assert_eq!(
+                difference_for_another_program(&file, host, options, bind_options, path, &hir),
+                None,
+                "{}",
+                bstr::BStr::new(path)
+            );
+            let _ = shared.set(file);
         }
         (hir, bound)
     }
@@ -6523,7 +6596,9 @@ impl<'s> Files<'s> {
             return None;
         }
         let module = self.module_of_specifier_as(file, spec, mode)?;
-        let type_symbol = self.canonical(self.module_export(module, name)?);
+        // `getExportOfModule` ends in `resolveSymbol`: `namespace N { export { I as name } }`.
+        let type_symbol = self.resolve_symbol(self.module_export(module, name)?)?;
+        let type_symbol = self.canonical(type_symbol);
         let is_type = !self.flags(type_symbol).intersects(SymFlags::VALUE);
         is_type.then_some(type_symbol)
     }

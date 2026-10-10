@@ -3104,6 +3104,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `hasCommonProperties`
     pub(super) fn has_common_properties(&mut self, source: TypeId, target: TypeId) -> bool {
         let apparent = self.reduced_apparent_type_as_object(source);
+        let apparent = self.object_with_properties_of(apparent);
         let Some(sm) = self.members(apparent) else {
             return false;
         };
@@ -4336,6 +4337,7 @@ impl<'p, 's> Checker<'p, 's> {
         members.retain(|member| !self.is_error_type(*member) && !member.is_never());
         if members.len() < 2 {
             let apparent = members.first().copied().unwrap_or(source);
+            let apparent = self.object_with_properties_of(apparent);
             // `getPropertyOfType` finds nothing in a type that is not an object type: `any`, which
             // `T & U` resolves to where `U` extends `any`.
             let properties = match self.members(apparent) {
@@ -5987,6 +5989,13 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         if (a.0.mapper, a.1) == (b.0.mapper, b.1) {
+            return true;
+        }
+        // `instantiateSymbol` returns it itself, in every type that inherits it.
+        if let PropSource::Symbol(sym) = a.0.source
+            && ((a.0.flags | b.0.flags).contains(PropFlags::THISLESS)
+                || self.is_thisless_for_this_mapper(sym))
+        {
             return true;
         }
         let (a, b) = (self.compose(a.0.mapper, a.1), self.compose(b.0.mapper, b.1));

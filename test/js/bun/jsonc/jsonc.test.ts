@@ -38,11 +38,11 @@ test("Bun.JSONC.parse nested empty object is spreadable after adding a property"
   // The JSON rows builder sized the object with inline capacity 0 for an
   // empty {}, so spreading it tripped JSC's hasInlineStorage() debug assert
   // once a property was added.
-  const o = Bun.JSONC.parse('{"a": {}}').a;
+  const o = (Bun.JSONC.parse('{"a": {}}') as any).a;
   o.x = 1;
   expect({ ...o }).toEqual({ x: 1 });
 
-  const t = Bun.TOML.parse("[a]\n").a;
+  const t = (Bun.TOML.parse("[a]\n") as any).a;
   t.y = 2;
   expect({ ...t }).toEqual({ y: 2 });
 });

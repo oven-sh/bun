@@ -538,6 +538,7 @@ impl Checker<'_, '_> {
         let hir = self.hir(file);
         // `getPropertiesOfType`
         let apparent_base = self.apparent_type(base_type);
+        let apparent_base = self.object_with_properties_of(apparent_base);
         let (Some(base_members), Some(own_members)) =
             (self.members(apparent_base), self.members(class_type))
         else {
@@ -972,6 +973,7 @@ impl Checker<'_, '_> {
                     flags,
                     source: PropSource::Symbol(self.symbol_of_member(f, m)),
                     mapper: MapperId::IDENTITY,
+                    name_type: TypeId::UNRESOLVED,
                 };
                 let prop_type = self.type_of_prop_as_read(&prop, members.mapper);
                 self.check_index_constraint_for_property(&cx, &prop, Some(name_type), prop_type);

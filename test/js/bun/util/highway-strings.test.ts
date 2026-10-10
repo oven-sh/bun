@@ -14,7 +14,7 @@ const OFFSETS = [0, 1, 13];
 // Deterministic filler that never contains the values we plant (top bit set).
 function filler(len: number, offset: number): Uint8Array;
 function filler<T extends Uint8Array | Uint16Array>(len: number, offset: number, ctor: { new (n: number): T }): T;
-function filler(len: number, offset: number, ctor: Uint8ArrayConstructor | Uint16ArrayConstructor = Uint8Array) {
+function filler(len: number, offset: number, ctor: { new (n: number): Uint8Array | Uint16Array } = Uint8Array) {
   const backing = new ctor(len + offset + 16);
   const bits = backing.BYTES_PER_ELEMENT * 8;
   let x = 0x9e3779b9 ^ len ^ (offset << 8);

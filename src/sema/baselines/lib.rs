@@ -456,6 +456,16 @@ impl Host for Virtual {
     fn is_case_sensitive(&self) -> bool {
         self.is_case_sensitive
     }
+    fn share_declaration_files(&self, _: u32, _: usize) {}
+    fn stays_loaded(&self) {}
+    fn shared_file(
+        &self,
+        _: &[u8],
+        _: &[u8],
+        _: u8,
+    ) -> Option<std::sync::Arc<std::sync::OnceLock<bun_sema::portable::SharedFile>>> {
+        None
+    }
     fn parse<'s>(
         &self,
         arena: &'s bun_sema::session::Arena,
@@ -1802,6 +1812,9 @@ fn run_one(
             task_clock: None,
             plan_options: bun_sema_driver::PlanOptions {
                 reproduces_symbol_ids: false,
+                // The tests run side by side, each on one thread. The plan of several threads is the
+                // one with steps, publishing and validation.
+                tasks_on_one_thread: true,
                 ..Default::default()
             },
             retains_everything: false,

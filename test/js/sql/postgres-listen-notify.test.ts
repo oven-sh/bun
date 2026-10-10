@@ -56,7 +56,7 @@ async function mockServer() {
     };
     socket.once("data", () => {
       socket.write(Buffer.concat([pgAuthenticationOk(), pgBackendKeyData(PID, SECRET), pgReadyForQuery()]));
-      socket.on("data", data => {
+      socket.on("data", (data: Buffer) => {
         buffered = pgReadFrontendMessages(Buffer.concat([buffered, data]), (type, body) => {
           if (type === 0x50 /* Parse: name\0 query\0 ... */) {
             const nameEnd = body.indexOf(0);

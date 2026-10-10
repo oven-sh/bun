@@ -296,7 +296,7 @@ test("support require in eval for a file", async () => {
 
 test("support require in eval for a file that doesnt exist", async () => {
   const worker = new Worker(`postMessage(require('./fixture-invalid.js').argv[0])`, { eval: true });
-  const result = await new Promise(resolve => {
+  const result = await new Promise<any>(resolve => {
     worker.on("message", resolve);
     worker.on("error", resolve);
   });
@@ -306,7 +306,7 @@ test("support require in eval for a file that doesnt exist", async () => {
 
 test("support worker eval that throws", async () => {
   const worker = new Worker(`postMessage(throw new Error("boom"))`, { eval: true });
-  const result = await new Promise(resolve => {
+  const result = await new Promise<any>(resolve => {
     worker.on("message", resolve);
     worker.on("error", resolve);
   });
@@ -1408,7 +1408,7 @@ describe("postMessage transfer list", () => {
             *[Symbol.iterator]() {
               throw new Error("user boom");
             },
-          },
+          } as any,
         },
       ),
     ).toThrow("user boom");
@@ -1684,7 +1684,7 @@ test("close(cb) interleaves with other close listeners in registration order", a
   const { port1 } = new MessageChannel();
   const order: string[] = [];
   port1.on("close", () => order.push("A"));
-  port1.close(() => order.push("B"));
+  (port1 as any).close(() => order.push("B"));
   port1.on("close", () => order.push("C"));
   order.push("sync");
   await new Promise(r => setImmediate(() => setImmediate(r)));
@@ -1693,7 +1693,7 @@ test("close(cb) interleaves with other close listeners in registration order", a
   // A listener added AFTER close(cb) fires after cb.
   const { port1: p2 } = new MessageChannel();
   const order2: string[] = [];
-  p2.close(() => order2.push("B"));
+  (p2 as any).close(() => order2.push("B"));
   p2.on("close", () => order2.push("C"));
   await new Promise(r => setImmediate(() => setImmediate(r)));
   expect(order2).toEqual(["B", "C"]);
@@ -1945,7 +1945,7 @@ test("postMessage with a non-object transfer element throws DataCloneError", () 
   ] as const) {
     let err: any;
     try {
-      port1.postMessage(...args);
+      (port1 as any).postMessage(...args);
     } catch (e) {
       err = e;
     }
@@ -1956,7 +1956,7 @@ test("postMessage with a non-object transfer element throws DataCloneError", () 
 });
 
 test("MessageEvent ports validation walks the iterator once and gives a detailed error for any iterable", () => {
-  expect(() => new MessageEvent("message", { ports: new Set([{}]) })).toThrow(
+  expect(() => new MessageEvent("message", { ports: new Set([{}]) } as any)).toThrow(
     /Expected eventInitDict\.ports\[0\] \("\{\}"\) to be an instance of MessagePort/,
   );
   expect(
@@ -1965,12 +1965,12 @@ test("MessageEvent ports validation walks the iterator once and gives a detailed
         ports: (function* () {
           yield {};
         })(),
-      }),
+      } as any),
   ).toThrow(/Expected eventInitDict\.ports\[0\]/);
   const { port1 } = new MessageChannel();
   const traps: string[] = [];
   const proxy = new Proxy([port1], { get: (t, k) => (traps.push(String(k)), (t as any)[k]) });
-  expect(() => new MessageEvent("message", { ports: proxy })).not.toThrow();
+  expect(() => new MessageEvent("message", { ports: proxy } as any)).not.toThrow();
   // Symbol.iterator is read exactly once.
   expect(traps.filter(k => k.includes("Symbol")).length).toBe(1);
   port1.close();
@@ -2213,7 +2213,7 @@ test("parent messages are delivered after the worker's entry evaluated; exit han
     { eval: true },
   );
   const errors: string[] = [];
-  w.on("error", e => errors.push(e.message));
+  w.on("error", e => errors.push((e as Error).message));
   const exited = new Promise<number>(resolve => w.on("exit", resolve));
   w.postMessage(0);
   expect(await exited).toBe(0);
@@ -2522,7 +2522,7 @@ test("a worker with a preload is not started before its entry module runs", asyn
 import { parentPort } from "worker_threads";
 parentPort.on("message", m => parentPort.postMessage(["got", m, dep, globalThis.setupRan === true]));`,
   });
-  const w = new Worker(join(String(dir), "w.mjs"), { preload: join(String(dir), "setup.js") });
+  const w = new Worker(join(String(dir), "w.mjs"), { preload: join(String(dir), "setup.js") } as any);
   const reply = new Promise(resolve => w.on("message", resolve));
   w.postMessage("hi");
   expect(await reply).toEqual(["got", "hi", 1, true]);

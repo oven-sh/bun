@@ -24,7 +24,7 @@ async function pausedClient(port: number): Promise<{ sock: net.Socket; initial: 
   const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
   sock.on("error", reject);
   sock.once("close", () => reject(new Error("socket closed before upgrade completed")));
-  let buf = Buffer.alloc(0);
+  let buf: Buffer = Buffer.alloc(0);
   const onData = (d: Buffer) => {
     buf = buf.length ? Buffer.concat([buf, d]) : d;
     const i = buf.indexOf("\r\n\r\n");
@@ -75,7 +75,7 @@ describe("BackPressure buffer", () => {
         return new Response("no", { status: 500 });
       },
       websocket: {
-        maxBackpressure: SIZE * 2,
+        backpressureLimit: SIZE * 2,
         idleTimeout: 0,
         open(ws) {
           opened.resolve(ws);
@@ -93,7 +93,7 @@ describe("BackPressure buffer", () => {
       },
     });
 
-    const { sock, initial } = await pausedClient(server.port);
+    const { sock, initial } = await pausedClient(server.port!);
     const ws = await opened.promise;
     // Send only after the client has paused its read side so the kernel send
     // buffer is the only sink; a non-empty remainder lands in BackPressure.
@@ -124,7 +124,7 @@ describe("BackPressure buffer", () => {
     consume(initial);
     const allReceived = Promise.withResolvers<void>();
     if (received >= target) allReceived.resolve();
-    sock.on("data", chunk => {
+    sock.on("data", (chunk: Buffer) => {
       consume(chunk);
       if (received >= target) allReceived.resolve();
     });
@@ -161,7 +161,7 @@ describe("BackPressure buffer", () => {
     let sent = 0;
     let sawBufferedAboveWindow = false;
     const drained = Promise.withResolvers<void>();
-    const fill = (ws: import("bun").ServerWebSocket<unknown>) => {
+    const fill = (ws: import("bun").ServerWebSocket<undefined>) => {
       while (sent < COUNT) {
         ws.sendBinary(frames[sent]);
         sent++;
@@ -179,7 +179,7 @@ describe("BackPressure buffer", () => {
         return new Response("no", { status: 500 });
       },
       websocket: {
-        maxBackpressure: WINDOW * 4,
+        backpressureLimit: WINDOW * 4,
         idleTimeout: 0,
         open: fill,
         drain: fill,
@@ -190,7 +190,7 @@ describe("BackPressure buffer", () => {
       },
     });
 
-    const { sock, initial } = await pausedClient(server.port);
+    const { sock, initial } = await pausedClient(server.port!);
 
     const perFrame = headerLen + FRAME;
     const target = COUNT * perFrame;
@@ -218,7 +218,7 @@ describe("BackPressure buffer", () => {
     consume(initial);
     const allReceived = Promise.withResolvers<void>();
     if (received >= target) allReceived.resolve();
-    sock.on("data", chunk => {
+    sock.on("data", (chunk: Buffer) => {
       consume(chunk);
       if (received >= target) allReceived.resolve();
     });

@@ -527,6 +527,9 @@ bitflags::bitflags! {
         const HAS_NON_UNIFORM_TYPE = 1 << 15;
         const HAS_LITERAL_TYPE = 1 << 16;
         const ABSTRACT = 1 << 17;
+        /// On a member that a class or an interface has inherited: `instantiateSymbol` returned it
+        /// itself (`m.MapsThisOnly() && isThisless(symbol)`), and does so for every heir.
+        const THISLESS = 1 << 18;
         /// Without any of these a property is accessible everywhere except through `super`
         /// (`checkPropertyAccessibilityAtLocation`). For accessors the accessor in use decides, so
         /// they are inspected.
@@ -576,6 +579,10 @@ pub struct Prop<'s> {
     pub source: PropSource<'s>,
     /// The mapper to instantiate the type from `source` with.
     pub mapper: MapperId,
+    /// `links.nameType` of a symbol that is made from another (`getSpreadSymbol`, `getSpreadType`,
+    /// `createSymbolWithType`), where that is a member of an enum: `source` no longer leads to it,
+    /// and the name only spells it. `TypeId::UNRESOLVED`: `name`, `STRING_NAME` and `source` tell.
+    pub name_type: TypeId,
 }
 
 const _: () = assert!(size_of::<Prop<'static>>() <= 40);
@@ -3304,7 +3311,8 @@ follow_struct!(Prop<'_> {
     name,
     flags,
     source,
-    mapper
+    mapper,
+    name_type
 });
 follow_enum!(IndexComponent {
     IndexComponent::Property(a, b) => (a, b),
@@ -3566,7 +3574,8 @@ clone_in_struct!(Prop {
     name,
     flags,
     source,
-    mapper
+    mapper,
+    name_type
 });
 clone_in_struct!(Shape {
     symbol_declared_at,

@@ -24,12 +24,12 @@ describe("Bun.inspect", () => {
   });
 
   it("supports colors: false, via 2nd arg", () => {
-    const output = Bun.inspect({ a: 1 }, null, null);
+    const output = (Bun.inspect as any)({ a: 1 }, null, null);
     expect(stripAnsi(output)).toBe(output);
   });
 
   it("supports colors: true, via 2nd arg", () => {
-    const output = Bun.inspect({ a: 1 }, true, 2);
+    const output = (Bun.inspect as any)({ a: 1 }, true, 2);
     expect(stripAnsi(output)).not.toBe(output);
   });
 
@@ -62,7 +62,7 @@ describe("Bun.inspect", () => {
     };
     const inspectedPositional = (depth: number) => {
       try {
-        return Bun.inspect(obj, depth);
+        return Bun.inspect(obj, depth as any);
       } catch (e) {
         return "threw: " + (e as Error).message;
       }
@@ -116,7 +116,7 @@ describe("Bun.inspect", () => {
   }
 
   it("stack overflow is thrown when it should be for objects", () => {
-    var object = { a: { b: { c: { d: 1 } } } };
+    var object: object = { a: { b: { c: { d: 1 } } } };
     for (let i = 0; i < 16 * 1024; i++) {
       object = { a: object };
     }
@@ -127,10 +127,10 @@ describe("Bun.inspect", () => {
   });
 
   it("stack overflow is thrown when it should be for Error", () => {
-    var object = { a: { b: { c: { d: 1 } } } };
+    var object: object = { a: { b: { c: { d: 1 } } } };
     for (let i = 0; i < 16 * 1024; i++) {
       const err = new Error("hello");
-      err.object = object;
+      (err as any).object = object;
       object = err;
     }
 

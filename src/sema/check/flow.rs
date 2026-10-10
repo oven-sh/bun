@@ -184,6 +184,8 @@ pub(super) struct FlowMemo {
     type_predicates_in_progress: SmallVec<[(FileId, FnId); 2]>,
     /// `flowNodePostSuper`
     flow_node_post_super: FxHashMap<(FileId, FlowId), bool>,
+    /// `finalArrayType` of an evolving array type whose element type is a union.
+    final_array_types: FxHashMap<TypeId, TypeId>,
     /// One bit per flow node of the file `settled_calls_of`: the `Flow::Call` nodes for whose calls
     /// `effects_signatures` has an entry, and those of them for which that is `None`.
     settled_calls: Vec<(u64, u64)>,
@@ -1681,7 +1683,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// The entry of `quick_initializers` for a declaration whose resolutions are right below
     /// `stack[to]`.
     pub(super) fn resolutions_below(&self, to: usize) -> (usize, usize) {
-        let mut below = self.stack[..to].iter();
+        // A declaration whose name is a pattern has no symbol and so no resolution: those of the
+        // binding element are below the frames of the patterns around it.
+        let is_pattern = |q: &&Query| matches!(**q, Query::Pat(..)) && !self.is_resolution(**q);
+        let patterns = self.stack[..to].iter().rev().take_while(is_pattern).count();
+        let mut below = self.stack[..to - patterns].iter();
         let from = below
             .rposition(|&q| !self.is_resolution(q))
             .map_or(0, |i| i + 1);
@@ -5511,7 +5517,7 @@ impl<'p, 's> Checker<'p, 's> {
         start: Start,
         of_name: Crossing,
     ) -> TypeId {
-        if self.flow_analysis_disabled {
+        if self.flow_analysis_disabled.contains(&file) {
             return TypeId::ERROR;
         }
         let bound = self.bound(file);
@@ -5567,10 +5573,17 @@ impl<'p, 's> Checker<'p, 's> {
         ty
     }
 
+    /// `c.flowAnalysisDisabled = true`, for the references in `file`.
+    pub(crate) fn disable_flow_analysis(&mut self, file: FileId) {
+        if !self.flow_analysis_disabled.contains(&file) {
+            self.flow_analysis_disabled.push(file);
+        }
+    }
+
     /// `getFlowTypeOfReferenceEx`, once the `FlowState` is set up.
     fn get_flow_type_of_reference(&mut self, mut walk: Walk, flow: FlowId) -> TypeId {
         let (file, e, declared) = (walk.reference.file, walk.reference.at, walk.declared);
-        if self.flow_analysis_disabled {
+        if self.flow_analysis_disabled.contains(&file) {
             return TypeId::ERROR;
         }
         self.flow_invocation_count += 1;
@@ -5587,7 +5600,7 @@ impl<'p, 's> Checker<'p, 's> {
         let evolved = evolved.ty;
         // errorType, and `reportFlowControlError`
         if walk.too_deep {
-            self.flow_analysis_disabled = true;
+            self.disable_flow_analysis(file);
             self.report_flow_control_error(&walk.reference);
             return TypeId::ERROR;
         }
@@ -5815,7 +5828,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `getFlowNodeOfNode(reference) == nil`: `declaredType`. `expr_flow` has the unreachable
         // node for that too.
         if flow == UNREACHABLE
-            && !self.flow_analysis_disabled
+            && !self.flow_analysis_disabled.contains(&file)
             && !is_narrowable_reference(self.hir(file), e)
         {
             return TypeId::AUTO;
@@ -6149,13 +6162,20 @@ impl<'p, 's> Checker<'p, 's> {
         if element.is_never() {
             return self.auto_array_type;
         }
-        let element = if self.is_union(element) {
-            let parts = self.parts(element);
-            self.union_reduced(parts)
-        } else {
-            element
-        };
-        self.array_of(element)
+        if !self.is_union(element) {
+            return self.array_of(element);
+        }
+        if let Some(&known) = self.flow_memo.final_array_types.get(&ty) {
+            return known;
+        }
+        let scope = self.begin_scope();
+        let parts = self.parts(element);
+        let element = self.union_reduced(parts);
+        let result = self.array_of(element);
+        if self.end_scope_by_counters(scope).is_ok() {
+            self.flow_memo.final_array_types.insert(ty, result);
+        }
+        result
     }
 
     /// The type at a join of control flow paths. Evolving arrays stay evolving if all the types are
@@ -6661,8 +6681,11 @@ impl<'p, 's> Checker<'p, 's> {
         let reference = &walk.reference;
         while let Some((then, shared_flow)) = pending.pop() {
             // A condition is applied to the finalized array type; if it narrows nothing, the array
-            // stays evolving.
-            let seen = self.finalize_evolving_array(ty);
+            // stays evolving. `getTypeAtFlowArrayMutation` does not finalize it.
+            let seen = match then {
+                Pending::Mutation(_) | Pending::Nothing => ty,
+                _ => self.finalize_evolving_array(ty),
+            };
             let narrowed = match then {
                 // Applied to the finalized array type: the array stops evolving.
                 Pending::NonNull => {
@@ -8198,7 +8221,7 @@ impl<'p, 's> Checker<'p, 's> {
         test: ExprId,
         sense: bool,
     ) -> TypeId {
-        if self.flow_analysis_disabled {
+        if self.flow_analysis_disabled.contains(&reference.file) {
             return TypeId::ERROR;
         }
         self.flow_invocation_count += 1;
@@ -8210,7 +8233,7 @@ impl<'p, 's> Checker<'p, 's> {
             walk.depth = 1;
             let ty = self.flow_type(&mut walk, before).ty;
             if walk.too_deep {
-                self.flow_analysis_disabled = true;
+                self.disable_flow_analysis(reference.file);
                 self.report_flow_control_error(reference);
                 return TypeId::ERROR;
             }

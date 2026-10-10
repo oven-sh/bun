@@ -48,9 +48,12 @@ afterEach(() => {
 });
 
 const count = 200;
-let server: Server | undefined;
+let server: Server<any> | undefined;
 
-async function runTest({ port, ...serverOptions }: Serve<any>, test: (server: Server) => Promise<void> | void) {
+async function runTest(
+  { port, ...serverOptions }: Serve.Options<any> & { unix?: undefined },
+  test: (server: Server<any>) => Promise<void> | void,
+) {
   if (server) {
     server.reload({ ...serverOptions, port: 0 });
   } else {
@@ -89,10 +92,10 @@ it("should be able to abruptly stop the server many times", async () => {
         await Bun.sleep(50);
         server.stop(true);
         await Bun.sleep(50);
-        server = undefined;
+        server = undefined as any;
         if (stopped.resolve) {
           stopped.resolve();
-          stopped.resolve = undefined;
+          stopped.resolve = undefined as any;
         }
 
         return new Response("Hello, World!");
@@ -104,7 +107,7 @@ it("should be able to abruptly stop the server many times", async () => {
       try {
         await fetch(url, { keepalive: true }).then(res => res.text());
         expect.unreachable();
-      } catch (e) {
+      } catch (e: any) {
         expect(["ECONNRESET", "ECONNREFUSED"]).toContain(e.code);
       }
     }
@@ -323,7 +326,7 @@ describe.todoIf(isBroken && isIntelMacOS)(
             {
               async fetch(req) {
                 var hasher = new Bun.SHA256();
-                for await (const chunk of req.body) {
+                for await (const chunk of req.body!) {
                   await Bun.sleep(0);
                   hasher.update(chunk);
                 }
@@ -357,8 +360,8 @@ describe.todoIf(isBroken && isIntelMacOS)(
                 });
 
                 // We are testing for ReadableStream leaks, so we use the ReadableStream here.
-                const chunks = [];
-                for await (const chunk of response.body) {
+                const chunks: Uint8Array[] = [];
+                for await (const chunk of response.body!) {
                   chunks.push(chunk);
                 }
 
@@ -401,7 +404,7 @@ describe.todoIf(isBroken && isIntelMacOS)(
     await runTest(
       {
         fetch() {
-          return new Response("Foo Bar", { status: statusCode });
+          return new Response("Foo Bar", { status: statusCode as number });
         },
       },
       async server => {
@@ -419,7 +422,7 @@ describe.todoIf(isBroken && isIntelMacOS)(
       {
         fetch() {
           try {
-            return new Response("Foo Bar", { status: statusCode });
+            return new Response("Foo Bar", { status: statusCode as number });
           } catch (err) {
             expect(err).toBeInstanceOf(RangeError);
             return new Response("Error!", { status: 500 });
@@ -616,11 +619,11 @@ it.each([
     },
   });
 
-  const socket = net.connect(server.port, "127.0.0.1");
+  const socket = net.connect(server.port!, "127.0.0.1");
   const response = await new Promise<string>((resolve, reject) => {
     const chunks: Buffer[] = [];
     socket.on("error", reject);
-    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("data", chunk => chunks.push(chunk as Buffer));
     socket.on("close", () => resolve(Buffer.concat(chunks).toString()));
     socket.write(payload);
   });
@@ -648,7 +651,7 @@ describe("does not dispatch a pipelined request after Connection: close", () => 
       ).length;
     const socket = net.connect(port, "127.0.0.1");
     socket.on("data", c => {
-      chunks.push(c);
+      chunks.push(c as Buffer);
       if (count() >= expectedResponses) resolve();
     });
     socket.on("error", () => {});
@@ -691,7 +694,7 @@ describe("does not dispatch a pipelined request after Connection: close", () => 
       },
     });
 
-    const { raw, responses, closedByServer } = await roundTrip(server.port, requestA + pipelinedB, 2);
+    const { raw, responses, closedByServer } = await roundTrip(server.port!, requestA + pipelinedB, 2);
 
     expect(raw).toContain("body:/a");
     expect(raw).not.toContain("body:/b");
@@ -714,7 +717,7 @@ describe("does not dispatch a pipelined request after Connection: close", () => 
     });
 
     const { raw, responses, closedByServer } = await roundTrip(
-      server.port,
+      server.port!,
       "GET /0 HTTP/1.1\r\nHost: x\r\n\r\n" +
         "GET /1 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n" +
         "GET /2 HTTP/1.1\r\nHost: x\r\n\r\n" +
@@ -747,7 +750,7 @@ describe("does not dispatch a pipelined request after Connection: close", () => 
     });
 
     const { raw, responses, closedByServer } = await roundTrip(
-      server.port,
+      server.port!,
       "GET /a HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n" + pipelinedB,
       2,
     );
@@ -774,7 +777,7 @@ describe("does not dispatch a pipelined request after Connection: close", () => 
     // /a keeps the connection alive; /b carries the close so the server
     // closes the socket and roundTrip's `done` settles via the close event.
     const { raw, responses } = await roundTrip(
-      server.port,
+      server.port!,
       requestA + "GET /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
       2,
     );
@@ -797,7 +800,7 @@ describe("does not dispatch a pipelined request after Connection: close", () => 
     });
 
     const { raw, responses } = await roundTrip(
-      server.port,
+      server.port!,
       "GET /a HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n@@@ not HTTP\r\n\r\n",
       2,
     );
@@ -876,7 +879,7 @@ describe("streaming", () => {
     });
 
     it("returning a Response whose body stream is already locked calls the error handler", async () => {
-      let captured: { code: unknown; name: string; message: string } | null = null;
+      let captured = null as { code: unknown; name: string; message: string } | null;
       await using server = serve({
         port: 0,
         fetch() {
@@ -1550,7 +1553,7 @@ it("reload() of a node:http-backed server keeps the 'connection' event firing", 
     await hit();
     expect(connections).toBe(1);
 
-    const native = (httpServer as any)[Symbol.for("::bunternal::")] as Server;
+    const native = (httpServer as any)[Symbol.for("::bunternal::")] as Server<undefined>;
     native.reload({ fetch: () => new Response("x") });
 
     await hit();
@@ -1663,7 +1666,7 @@ it("reload() that drops the node:http handler keeps the server's node:http stop(
   let waiter = Promise.withResolvers<void>();
   await using connection = await Bun.connect({
     hostname: "127.0.0.1",
-    port: server.port,
+    port: server.port!,
     socket: {
       data(_, data) {
         received += data.toString("latin1");
@@ -1808,7 +1811,7 @@ it("does not write body bytes for null body statuses", async () => {
     const { resolve, reject, promise } = Promise.withResolvers<void>();
     await using connection = await Bun.connect({
       hostname: "127.0.0.1",
-      port: server.port,
+      port: server.port!,
       socket: {
         data(socket, data) {
           received.push(data);
@@ -1883,7 +1886,7 @@ describe("Response.error()", () => {
         },
       });
 
-      expect(await rawStatusLine(server.port, method)).toBe("HTTP/1.1 502 Bad Gateway");
+      expect(await rawStatusLine(server.port!, method)).toBe("HTTP/1.1 502 Bad Gateway");
       expect(errors.map(error => error.message)).toEqual([unsendable]);
     });
   });
@@ -1928,7 +1931,12 @@ describe("Response.error()", () => {
 });
 
 describe("response framing", () => {
-  type RawResponse = { statusLine: string; headerNames: string[]; headers: Record<string, string>; body: string };
+  type RawResponse = {
+    statusLine: string;
+    headerNames: string[];
+    headers: Record<string, string | undefined>;
+    body: string;
+  };
   // Read the raw response so that `Content-Length: 0` and an absent
   // Content-Length are distinguishable (fetch normalizes the two cases away),
   // and so body bytes smuggled after a no-body status's header block show up.
@@ -1983,7 +1991,7 @@ describe("response framing", () => {
         hostname: "127.0.0.1",
         fetch: () => new Response(null, { status }),
       });
-      const { statusLine, headerNames } = await rawRequest(server.port, method);
+      const { statusLine, headerNames } = await rawRequest(server.port!, method);
       expect(statusLine).toStartWith(`HTTP/1.1 ${status} `);
       expect(headerNames).not.toContain("content-length");
       expect(headerNames).not.toContain("transfer-encoding");
@@ -1997,7 +2005,7 @@ describe("response framing", () => {
         hostname: "127.0.0.1",
         fetch: () => new Response(null, { status: 205 }),
       });
-      const { statusLine, headers } = await rawRequest(server.port, method);
+      const { statusLine, headers } = await rawRequest(server.port!, method);
       expect(statusLine).toStartWith(`HTTP/1.1 205 `);
       expect(headers["content-length"]).toBe("0");
     });
@@ -2021,7 +2029,7 @@ describe("response framing", () => {
             headers: appCL === undefined ? { etag: '"x"' } : { etag: '"x"', "content-length": appCL },
           }),
       });
-      const { statusLine, headers, body } = await rawRequest(server.port, method);
+      const { statusLine, headers, body } = await rawRequest(server.port!, method);
       expect({ statusLine: statusLine.slice(0, 12), contentLength: headers["content-length"] ?? null, body }).toEqual({
         statusLine: "HTTP/1.1 304",
         contentLength: expected,
@@ -2047,9 +2055,9 @@ describe("response framing", () => {
     const { resolve, reject, promise } = Promise.withResolvers<void>();
     await using c = await Bun.connect({
       hostname: "127.0.0.1",
-      port: server.port,
+      port: server.port!,
       socket: {
-        data: (_, d) => received.push(d),
+        data: (_, d) => received.push(d) as any,
         close: () => resolve(),
         end: () => resolve(),
         error: (_, e) => reject(e),
@@ -2094,7 +2102,7 @@ describe("response framing", () => {
             }
           : { port: 0, hostname: "127.0.0.1", fetch: makeResponse },
       );
-      const { statusLine, headers, body } = await rawRequest(server.port, method);
+      const { statusLine, headers, body } = await rawRequest(server.port!, method);
       expect({
         statusLine: statusLine.slice(0, 12),
         contentLength: headers["content-length"] ?? null,
@@ -2114,7 +2122,7 @@ describe("response framing", () => {
       routes: { "/": new Response(Bun.file(join(String(dir), "f.bin")), { status: 101 }) },
       fetch: () => new Response("unreachable", { status: 500 }),
     });
-    const { statusLine, headers, body } = await rawRequest(server.port, method);
+    const { statusLine, headers, body } = await rawRequest(server.port!, method);
     expect({ statusLine: statusLine.slice(0, 12), contentLength: headers["content-length"] ?? null, body }).toEqual({
       statusLine: "HTTP/1.1 101",
       contentLength: null,
@@ -2200,8 +2208,8 @@ describe("response framing", () => {
         fetch: boom,
         error: errorHandler,
       });
-      const head = await rawRequest(server.port, "HEAD");
-      const get = await rawRequest(server.port, "GET");
+      const head = await rawRequest(server.port!, "HEAD");
+      const get = await rawRequest(server.port!, "GET");
       expect({
         head: {
           statusLine: head.statusLine,
@@ -2223,8 +2231,8 @@ describe("response framing", () => {
 
     it("the dev missing-response page is not sent for HEAD", async () => {
       using server = Bun.serve({ port: 0, hostname: "127.0.0.1", development: true, fetch: () => undefined as any });
-      const head = await rawRequest(server.port, "HEAD");
-      const get = await rawRequest(server.port, "GET");
+      const head = await rawRequest(server.port!, "HEAD");
+      const get = await rawRequest(server.port!, "GET");
       expect({
         head: { statusLine: head.statusLine, body: head.body },
         get: { statusLine: get.statusLine, body: get.body },
@@ -2490,7 +2498,7 @@ it("should support multiple Set-Cookie headers", async () => {
       expect(response.headers.getAll("Set-Cookie")).toEqual(["foo=bar", "baz=qux"]);
       expect(response.headers.get("Set-Cookie")).toEqual("foo=bar, baz=qux");
 
-      const cloned = response.clone().headers;
+      const cloned = response.clone().headers as Headers;
       expect(response.headers.getAll("Set-Cookie")).toEqual(["foo=bar", "baz=qux"]);
 
       response.headers.delete("Set-Cookie");
@@ -2571,7 +2579,7 @@ describe("should support Content-Range with Bun.file()", () => {
         const response = await fetch(`${server.url.origin}/?start=${start}&end=${end}`, {
           verbose: true,
         });
-        expect(parseInt(response.headers.get("Content-Range")?.split("/")[1])).toEqual(full.byteLength);
+        expect(parseInt(response.headers.get("Content-Range")?.split("/")[1]!)).toEqual(full.byteLength);
         expect(await response.arrayBuffer()).toEqual(full.buffer.slice(start, end));
         expect(response.status).toBe(start > 0 || end < full.byteLength ? 206 : 200);
       });
@@ -2667,7 +2675,7 @@ it("request body and signal life cycle", async () => {
 
     for (let j = 0; j < 10; j++) {
       const batchSize = 64;
-      const requests = [];
+      const requests: Promise<Response>[] = [];
       for (let i = 0; i < batchSize; i++) {
         requests.push(fetch(server.url.origin));
       }
@@ -2762,7 +2770,7 @@ it("unix socket connection throws an error on a bad domain without crashing", as
   const unix = "/i/don/tevent/exist/because/the/directory/is/invalid/yes.sock";
   expect(() => {
     using server = Bun.serve({
-      port: 0,
+      port: 0 as any,
       unix,
 
       async fetch(req) {
@@ -2797,7 +2805,7 @@ it("#5859 json", async () => {
       try {
         const json = await req.json();
         console.log({ json });
-      } catch (e) {
+      } catch (e: any) {
         return new Response(e?.message!, { status: 500 });
       }
 
@@ -2974,7 +2982,7 @@ describe.concurrent("should error with invalid options", async () => {
           return new Response("hi");
         },
         tls: {
-          requestCert: "invalid",
+          requestCert: "invalid" as any,
         },
       });
     }).toThrow("TLSOptions.requestCert must be a boolean");
@@ -2987,7 +2995,7 @@ describe.concurrent("should error with invalid options", async () => {
           return new Response("hi");
         },
         tls: {
-          rejectUnauthorized: "invalid",
+          rejectUnauthorized: "invalid" as any,
         },
       });
     }).toThrow("TLSOptions.rejectUnauthorized must be a boolean");
@@ -3001,7 +3009,7 @@ describe.concurrent("should error with invalid options", async () => {
         },
         tls: {
           rejectUnauthorized: true,
-          lowMemoryMode: "invalid",
+          lowMemoryMode: "invalid" as any,
         },
       });
     }).toThrow("TLSOptions.lowMemoryMode must be a boolean");
@@ -3057,7 +3065,7 @@ it.concurrent("should resolve pending promise if requested ended with pending re
 });
 
 it.concurrent("should work with dispose keyword", async () => {
-  let url: string;
+  let url: URL;
   {
     using server = Bun.serve({
       port: 0,
@@ -3091,7 +3099,7 @@ it("should be able to stop in the middle of a file response", async () => {
     for (let j = 0; j < 16; j++) {
       const res = await fetch(url);
       expect(res.status).toBe(200);
-      readers.push((res.body as ReadableStream).getReader());
+      readers.push((res.body as ReadableStream).getReader() as ReadableStreamDefaultReader);
     }
     await Promise.all(readers.map(r => r.read()));
     expect(proc.exitCode).toBe(null);
@@ -3119,7 +3127,7 @@ it("should be able to abrupt stop the server", async () => {
     try {
       await fetch(server.url).then(res => res.text());
       expect.unreachable();
-    } catch (e) {
+    } catch (e: any) {
       expect(e.code).toBe("ECONNRESET");
     }
   }
@@ -3175,7 +3183,7 @@ it("should be able to abort a sendfile response and streams", async () => {
     } catch {}
   }
   const batchSize = 20;
-  const batch = [];
+  const batch: Promise<void>[] = [];
 
   for (let i = 0; i < 500; i++) {
     batch.push(doRequest());
@@ -3211,7 +3219,7 @@ it.concurrent("should not send extra bytes when using sendfile", async () => {
 
   // manually fetch the file using sockets, and get the whole content
   const { promise, resolve, reject } = Promise.withResolvers();
-  const socket = net.connect(serve.port, "localhost", () => {
+  const socket = net.connect(serve.port!, "localhost", () => {
     socket.write("GET /file HTTP/1.1\r\nHost: localhost\r\n\r\n");
     setTimeout(() => {
       socket.end(); // wait a bit before closing the connection so we get the whole content
@@ -3222,7 +3230,7 @@ it.concurrent("should not send extra bytes when using sendfile", async () => {
   let content_length = 0;
   let headers = "";
 
-  socket.on("data", data => {
+  socket.on("data", (data: Buffer) => {
     if (body) {
       body = Buffer.concat([body as Buffer, data]);
 
@@ -3365,7 +3373,7 @@ it.concurrent(
           count--;
           if (count == 0) {
             clearInterval(interval);
-            interval = null;
+            interval = null as any;
             controller.close();
             return;
           }
@@ -3390,7 +3398,7 @@ it.concurrent(
     });
     let received = 0;
     const response = await fetch(server.url);
-    const stream = response.body.getReader();
+    const stream = response.body!.getReader();
     const decoder = new TextDecoder();
     while (true) {
       const { done, value } = await stream.read();
@@ -3412,7 +3420,7 @@ it.concurrent("allow requestIP after async operation", async () => {
     },
   });
 
-  const ip = await fetch(server.url).then(res => res.json());
+  const ip: any = await fetch(server.url).then(res => res.json());
   expect(ip).not.toBeNull();
   expect(ip.port).toBeInteger();
   expect(ip.address).toBeString();
@@ -3460,7 +3468,7 @@ it.concurrent(
 );
 
 it.concurrent("#6462", async () => {
-  let headers: string[] = [];
+  let headers: [string, string | null][] = [];
   using server = Bun.serve({
     port: 0,
     async fetch(request) {
@@ -3479,8 +3487,8 @@ it.concurrent("#6462", async () => {
   const bytes = Buffer.from(`GET / HTTP/1.1\r\nConnection: close\r\nHost: ${server.hostname}\r\nTest!: test\r\n\r\n`);
   const { promise, resolve } = Promise.withResolvers();
   await Bun.connect({
-    port: server.port,
-    hostname: server.hostname,
+    port: server.port!,
+    hostname: server.hostname!,
     socket: {
       open(socket) {
         const wrote = socket.write(bytes);
@@ -3524,8 +3532,8 @@ it.concurrent("combines duplicate request headers per the Fetch spec", async () 
 
   const { promise, resolve } = Promise.withResolvers<void>();
   await Bun.connect({
-    port: server.port,
-    hostname: server.hostname,
+    port: server.port!,
+    hostname: server.hostname!,
     socket: {
       open(socket) {
         socket.write(
@@ -3573,8 +3581,8 @@ it.concurrent("#6583", async () => {
   });
   const { promise, resolve } = Promise.withResolvers();
   await Bun.connect({
-    port: server.port,
-    hostname: server.hostname,
+    port: server.port!,
+    hostname: server.hostname!,
     tls: true,
     socket: {
       open(socket) {
@@ -3909,7 +3917,7 @@ it("applies backpressure to a Response(ReadableStream) body when the client stal
 
   // Raw client: send the request, read the head of the response, then stop
   // reading so TCP backpressure propagates back to the server.
-  const socket = net.connect(server.port, "127.0.0.1");
+  const socket = net.connect(server.port!, "127.0.0.1");
   const { promise: stalled, resolve: onStalled, reject: onSocketError } = Promise.withResolvers<void>();
   socket.on("error", onSocketError);
   socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n"));
@@ -3972,7 +3980,7 @@ it("resumes a backpressured Response(ReadableStream) once the client drains and 
     },
   });
 
-  const socket = net.connect(server.port, "127.0.0.1");
+  const socket = net.connect(server.port!, "127.0.0.1");
   const { promise: stalled, resolve: onStalled, reject: onSocketError } = Promise.withResolvers<void>();
   const { promise: bodyDone, resolve: onBodyDone } = Promise.withResolvers<void>();
   socket.on("error", onSocketError);
@@ -4103,7 +4111,7 @@ describe("request body backpressure", () => {
       },
     });
 
-    const { sock, sentBeforeGate, drainWaiters } = await pumpUploadUntilPlateau(server.port, TOTAL, 7);
+    const { sock, sentBeforeGate, drainWaiters } = await pumpUploadUntilPlateau(server.port!, TOTAL, 7);
     try {
       gate.resolve();
       await serverDone.promise;
@@ -4153,7 +4161,7 @@ describe("request body backpressure", () => {
       },
     });
 
-    const { sock, sentBeforeGate } = await pumpUploadUntilPlateau(server.port, TOTAL, 9);
+    const { sock, sentBeforeGate } = await pumpUploadUntilPlateau(server.port!, TOTAL, 9);
     try {
       gate.resolve();
       await serverDone.promise;
@@ -4193,7 +4201,7 @@ describe("request body backpressure", () => {
       },
     });
 
-    const { sock, sentBeforeGate } = await pumpUploadUntilPlateau(server.port, TOTAL, 3);
+    const { sock, sentBeforeGate } = await pumpUploadUntilPlateau(server.port!, TOTAL, 3);
     try {
       expect(sentBeforeGate).toBeLessThan(TOTAL);
 
@@ -4234,7 +4242,7 @@ describe("request body backpressure", () => {
         },
       });
 
-      const { sock, sentBeforeGate } = await pumpUploadUntilPlateau(server.port, TOTAL, 5);
+      const { sock, sentBeforeGate } = await pumpUploadUntilPlateau(server.port!, TOTAL, 5);
       try {
         expect(sentBeforeGate).toBeLessThan(TOTAL);
 
@@ -4273,7 +4281,7 @@ describe("request body backpressure", () => {
       },
     });
 
-    const { sock, sentBeforeGate, getSent } = await pumpUploadUntilPlateau(server.port, TOTAL, 2, "keep-alive");
+    const { sock, sentBeforeGate, getSent } = await pumpUploadUntilPlateau(server.port!, TOTAL, 2, "keep-alive");
     try {
       expect(sentBeforeGate).toBeGreaterThan(0);
       expect(sentBeforeGate).toBeLessThan(TOTAL);
@@ -4336,7 +4344,7 @@ it("type: direct stream awaiting flush(true) under backpressure does not re-ente
     },
   });
 
-  const socket = net.connect(server.port, "127.0.0.1");
+  const socket = net.connect(server.port!, "127.0.0.1");
   const { promise: stalled, resolve: onStalled, reject: onSocketError } = Promise.withResolvers<void>();
   const { promise: bodyDone, resolve: onBodyDone } = Promise.withResolvers<void>();
   socket.on("error", onSocketError);
@@ -4410,7 +4418,7 @@ it("type: direct controller.write() Promise resolves on drain and resumes pull",
     },
   });
 
-  const socket = net.connect(server.port, "127.0.0.1");
+  const socket = net.connect(server.port!, "127.0.0.1");
   const { promise: closed, resolve: onClosed, reject: onSocketError } = Promise.withResolvers<void>();
   socket.on("error", onSocketError);
   socket.on("close", () => onClosed());
@@ -4532,7 +4540,7 @@ it("type: direct stream that ignores backpressure is not re-entered on drain", a
     },
   });
 
-  const socket = net.connect(server.port, "127.0.0.1");
+  const socket = net.connect(server.port!, "127.0.0.1");
   const { promise: bodyDone, resolve: onBodyDone, reject: onSocketError } = Promise.withResolvers<void>();
   socket.on("error", onSocketError);
   socket.on("close", () => onBodyDone());
@@ -4594,7 +4602,7 @@ it("applies backpressure to a Response(async generator) body when the client sta
     },
   });
 
-  const socket = net.connect(server.port, "127.0.0.1");
+  const socket = net.connect(server.port!, "127.0.0.1");
   const { promise: stalled, resolve: onStalled, reject: onSocketError } = Promise.withResolvers<void>();
   socket.on("error", onSocketError);
   socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n"));
@@ -4654,13 +4662,13 @@ it("type: direct stream — small write queued under backpressure is delivered i
     },
   });
 
-  const socket = net.connect(server.port, "127.0.0.1");
+  const socket = net.connect(server.port!, "127.0.0.1");
   const { promise: stalled, resolve: onStalled, reject: onSocketError } = Promise.withResolvers<void>();
   const { promise: bodyDone, resolve: onBodyDone } = Promise.withResolvers<void>();
   socket.on("error", onSocketError);
   socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"));
   const chunks: Buffer[] = [];
-  socket.on("data", c => chunks.push(c));
+  socket.on("data", c => chunks.push(c as Buffer));
   socket.on("close", () => onBodyDone());
   socket.once("data", () => {
     socket.pause();
@@ -4789,7 +4797,7 @@ describe("a client half-close after the request does not truncate a large respon
       port: 0,
       fetch: () => new Response(Buffer.alloc(BODY, "a"), { headers: { "content-length": String(BODY) } }),
     });
-    expect(await halfCloseRequest(server.port)).toEqual({ body: BODY, ended: true });
+    expect(await halfCloseRequest(server.port!)).toEqual({ body: BODY, ended: true });
   });
 
   it("static route (tryEnd tail)", async () => {
@@ -4800,7 +4808,7 @@ describe("a client half-close after the request does not truncate a large respon
       },
       fetch: () => new Response("miss", { status: 404 }),
     });
-    expect(await halfCloseRequest(server.port)).toEqual({ body: BODY, ended: true });
+    expect(await halfCloseRequest(server.port!)).toEqual({ body: BODY, ended: true });
   });
 
   it("https fetch handler (tryEnd tail)", async () => {
@@ -4836,7 +4844,7 @@ describe("a client half-close after the request does not truncate a large respon
         return new Response(Buffer.alloc(BODY, "a"), { headers: { "content-length": String(BODY) } });
       },
     });
-    const socket = connect(server.port, "127.0.0.1");
+    const socket = connect(server.port!, "127.0.0.1");
     socket.on("error", () => {});
     await new Promise<void>(r => socket.once("connect", () => r()));
     socket.end("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
@@ -4867,7 +4875,7 @@ describe("a client half-close after the request does not truncate a large respon
         );
       },
     });
-    const socket = connect(server.port, "127.0.0.1");
+    const socket = connect(server.port!, "127.0.0.1");
     const gotData = Promise.withResolvers<void>();
     socket.once("data", () => gotData.resolve());
     socket.on("error", () => {});
@@ -4892,7 +4900,7 @@ it.each([
   using server = serve({ port: 0, fetch: () => new Response("ok") });
 
   const { promise, resolve, reject } = Promise.withResolvers<string>();
-  const socket = connect(server.port, "127.0.0.1", () => {
+  const socket = connect(server.port!, "127.0.0.1", () => {
     socket.write(`${prefix}GET / HTTP/1.1\r\nHost: localhost\r\n\r\n`);
   });
   let received = "";
@@ -4960,8 +4968,8 @@ it("applies backpressure to a ReadableStream response while the client drains", 
 // stop() saw the server drained, released the wrapper (and its handlers) to the GC, and the request that
 // then arrived dispatched through whatever the GC had left of them.
 it("serves a TLS connection whose handshake completes after a graceful stop()", async () => {
-  let server: Server | null = Bun.serve({ port: 0, tls, fetch: () => new Response("served") });
-  const raw = net.connect(server.port, "127.0.0.1");
+  let server: Server<undefined> | null = Bun.serve({ port: 0, tls, fetch: () => new Response("served") });
+  const raw = net.connect(server.port!, "127.0.0.1");
   let client: nodeTls.TLSSocket | undefined;
   try {
     await new Promise((res, rej) => (raw.on("connect", res), raw.on("error", rej)));
@@ -4975,7 +4983,7 @@ it("serves a TLS connection whose handshake completes after a graceful stop()", 
         raw.write(chunk, cb);
       },
     });
-    raw.on("data", d => (hold ? held.push(d) : wire.push(d)));
+    raw.on("data", d => (hold ? held.push(d as Buffer) : wire.push(d)));
     raw.on("close", () => wire.push(null));
     const c = (client = nodeTls.connect({ socket: wire, rejectUnauthorized: false }));
     c.on("error", () => {});
@@ -5293,14 +5301,14 @@ describe("requests pipelined in one read", () => {
     const worker = new Worker(join(String(dir), "server.mjs"), { workerData: received });
     try {
       const messages = on(worker, "message");
-      const [port] = (await messages.next()).value;
+      const [port] = (await messages.next()).value!;
       const reply = await exchange(plain(port), postJson, reply => {
         if (!reply.endsWith("accepted")) return false;
         Atomics.store(received, 0, 1);
         Atomics.notify(received, 0);
         return true;
       });
-      const [outcome] = (await messages.next()).value;
+      const [outcome] = (await messages.next()).value!;
       expect({ responses: parseResponses(reply), outcome }).toEqual({
         responses: [{ status: "HTTP/1.1 202 Accepted", body: "accepted" }],
         outcome: "released",
@@ -5340,7 +5348,7 @@ describe("requests pipelined in one read", () => {
       fetch: req => (req.url.endsWith("/big") ? new Response(big) : echoPath(req)),
     });
     const reply = await exchange(
-      plain(server.port),
+      plain(server.port!),
       get("/a") + get("/b") + get("/big") + get("/c") + get("/d", "Connection: close\r\n"),
     );
     const ok = "HTTP/1.1 200 OK";
@@ -5370,7 +5378,7 @@ describe("requests pipelined in one read", () => {
   it("sends the completed responses before the response to a malformed request", async () => {
     using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: echoPath });
     // The third request has no Host header.
-    const reply = await exchange(plain(server.port), get("/a") + get("/b") + "GET /c HTTP/1.1\r\n\r\n");
+    const reply = await exchange(plain(server.port!), get("/a") + get("/b") + "GET /c HTTP/1.1\r\n\r\n");
     expect(parseResponses(reply)).toEqual([
       { status: "HTTP/1.1 200 OK", body: "/a" },
       { status: "HTTP/1.1 200 OK", body: "/b" },
@@ -5387,7 +5395,7 @@ describe("requests pipelined in one read", () => {
     });
     try {
       const reply = await exchange(
-        plain(server.port),
+        plain(server.port!),
         get("/a") + get("/b") + get("/pending") + get("/c"),
         reply => parseResponses(reply).length >= 2 && reply.endsWith("/b"),
       );
@@ -5420,7 +5428,7 @@ describe("requests pipelined in one read", () => {
     });
     const frame = "\x81\x05hello";
     const reply = await exchange(
-      plain(server.port),
+      plain(server.port!),
       get("/a") +
         get(
           "/ws",
@@ -5454,7 +5462,7 @@ describe("requests pipelined in one read", () => {
       },
     });
     const reply = await exchange(
-      plain(server.port),
+      plain(server.port!),
       get("/a") +
         get("/b") +
         get(
@@ -5479,7 +5487,7 @@ describe("requests pipelined in one read", () => {
         return new Response("done");
       },
     });
-    const reply = await exchange(plain(server.port), "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\n");
+    const reply = await exchange(plain(server.port!), "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\n");
     expect(parseResponses(reply)).toEqual([{ status: "HTTP/1.1 200 OK", body: "done" }]);
   });
 
@@ -5541,11 +5549,11 @@ describe("requests pipelined in one read", () => {
       const responses = (reply: string) => reply.split("HTTP/1.1 ").length - 1;
       // Resolves when the server closes. One response too many ends it early.
       const reply = await exchange(
-        connect(server.port),
+        connect(server.port!),
         payload + get("/b") + get("/c"),
         reply => responses(reply) > expected.length,
       );
-      expect({ ran, responses: responses(reply) }).toEqual({ ran: expected, responses: expected.length });
+      expect({ ran, responses: responses(reply) }).toEqual({ ran: expected as any, responses: expected.length });
     });
   });
 });
@@ -5553,7 +5561,7 @@ describe("requests pipelined in one read", () => {
 // node:http reads "close" from Proxy-Connection too, like llhttp. That is not a Bun.serve default.
 it("Proxy-Connection: close does not end a Bun.serve connection", async () => {
   using server = serve({ port: 0, fetch: req => new Response(new URL(req.url).pathname) });
-  const socket = connect(server.port, "127.0.0.1");
+  const socket = connect(server.port!, "127.0.0.1");
   try {
     let received = "";
     socket.write(

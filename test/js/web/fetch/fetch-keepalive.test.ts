@@ -15,7 +15,7 @@ test("keepalive", async () => {
     const res = await fetch(`http://localhost:${server.port}`, {
       keepalive: false,
     });
-    const headers = await res.json();
+    const headers: any = await res.json();
     expect(headers.connection).toBeUndefined();
   }
 
@@ -23,7 +23,7 @@ test("keepalive", async () => {
     const res = await fetch(`http://localhost:${server.port}`, {
       keepalive: true,
     });
-    const headers = await res.json();
+    const headers: any = await res.json();
     expect(headers.connection).toBe("keep-alive");
   }
 
@@ -34,7 +34,7 @@ test("keepalive", async () => {
         "Connection": "HELLO!",
       },
     });
-    const headers = await res.json();
+    const headers: any = await res.json();
     expect(headers.connection).toBe("HELLO!");
   }
 });

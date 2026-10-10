@@ -37,7 +37,10 @@ describe.concurrent("frames in the same read as the upgrade request", () => {
 
   // Echoes every message, so the frames a client gets back show what the
   // server saw and in which order.
-  function echoServer(events: string[], options: { tls?: boolean; fetch?: (req: Request, srv: Server) => any } = {}) {
+  function echoServer(
+    events: string[],
+    options: { tls?: boolean; fetch?: (req: Request, srv: Server<undefined>) => any } = {},
+  ) {
     return serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -141,7 +144,7 @@ describe.concurrent("frames in the same read as the upgrade request", () => {
   it.each([false, true])("are delivered in order, and a ping gets its pong (tls: %p)", async useTls => {
     const events: string[] = [];
     using server = echoServer(events, { tls: useTls });
-    using client = await rawClient(server.port, useTls);
+    using client = await rawClient(server.port!, useTls);
 
     // One write, so the request and the frames reach the server in one read.
     client.socket.write(Buffer.concat([Buffer.from(upgradeRequest), text("early"), ping("p")]));
@@ -165,7 +168,7 @@ describe.concurrent("frames in the same read as the upgrade request", () => {
           return new Response("no", { status: 400 });
         },
       });
-      using client = await rawClient(server.port);
+      using client = await rawClient(server.port!);
 
       client.socket.write(Buffer.concat([Buffer.from(upgradeRequest), text("early"), ping("p")]));
       expect(await client.status()).toBe("HTTP/1.1 101 Switching Protocols");
@@ -181,7 +184,7 @@ describe.concurrent("frames in the same read as the upgrade request", () => {
   it("a frame that the read cuts short is completed by the next read", async () => {
     const events: string[] = [];
     using server = echoServer(events);
-    using client = await rawClient(server.port);
+    using client = await rawClient(server.port!);
 
     const frame = text("split");
     client.socket.write(Buffer.concat([Buffer.from(upgradeRequest), frame.subarray(0, 4)]));
@@ -197,7 +200,7 @@ describe.concurrent("frames in the same read as the upgrade request", () => {
   it("are delivered when the request head spans two reads", async () => {
     const events: string[] = [];
     using server = echoServer(events);
-    using client = await rawClient(server.port);
+    using client = await rawClient(server.port!);
 
     // The response to the first request shows that the server has read, and
     // kept, the first part of the upgrade request.
@@ -216,7 +219,7 @@ describe.concurrent("frames in the same read as the upgrade request", () => {
   it("are delivered when a request head that spans two reads is as large as a head can be", async () => {
     const events: string[] = [];
     using server = echoServer(events);
-    using client = await rawClient(server.port);
+    using client = await rawClient(server.port!);
 
     const padding = maxHeaderSize - upgradeRequest.length - "X-Pad: \r\n".length;
     const request = `${upgradeRequest.slice(0, -2)}X-Pad: ${Buffer.alloc(padding, "a")}\r\n\r\n`;
@@ -237,7 +240,7 @@ describe.concurrent("frames in the same read as the upgrade request", () => {
   it("are delivered when the read starts with the rest of another request's body", async () => {
     const events: string[] = [];
     using server = echoServer(events);
-    using client = await rawClient(server.port);
+    using client = await rawClient(server.port!);
 
     client.socket.write("POST /plain HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 10\r\n\r\n01234");
     expect(await client.status("plain".length)).toBe("HTTP/1.1 200 OK");
@@ -257,7 +260,7 @@ describe.concurrent("frames in the same read as the upgrade request", () => {
   ])("a %s body in the same read as the upgrade request is not parsed as frames", async (_, framedBody) => {
     const events: string[] = [];
     using server = echoServer(events);
-    using client = await rawClient(server.port);
+    using client = await rawClient(server.port!);
 
     client.socket.write(upgradeRequest.slice(0, -2) + framedBody);
     expect(await client.status()).toBe("HTTP/1.1 101 Switching Protocols");
@@ -270,7 +273,7 @@ describe.concurrent("frames in the same read as the upgrade request", () => {
   it("a body is not parsed as frames when the request head spans two reads", async () => {
     const events: string[] = [];
     using server = echoServer(events);
-    using client = await rawClient(server.port);
+    using client = await rawClient(server.port!);
 
     client.socket.write("GET /plain HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n" + upgradeRequest.slice(0, 40));
     expect(await client.status("plain".length)).toBe("HTTP/1.1 200 OK");
@@ -296,7 +299,7 @@ describe.concurrent("frames in the same read as the upgrade request", () => {
         upgradeResult.resolve(srv.upgrade(req));
       },
     });
-    using client = await rawClient(server.port);
+    using client = await rawClient(server.port!);
 
     client.socket.write(Buffer.concat([Buffer.from(upgradeRequest), text("early")]));
     expect(await client.status()).toBe("HTTP/1.1 400 Bad Request");
@@ -326,8 +329,8 @@ describe.concurrent("frames in the same read as the upgrade request", () => {
         return new Response("no", { status: 400 });
       },
     });
-    using upgrading = await rawClient(server.port);
-    using other = await rawClient(server.port);
+    using upgrading = await rawClient(server.port!);
+    using other = await rawClient(server.port!);
 
     upgrading.socket.write(upgradeRequest);
     await waiting.promise;

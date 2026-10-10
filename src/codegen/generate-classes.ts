@@ -672,6 +672,21 @@ extern JSC_CALLCONV JSC::EncodedJSValue ${symbolName(typeName, name)}GetCachedVa
   `.trim();
 }
 
+/** The body of `if (!thisObject)` in a generated host function. */
+function invalidThisStatement(behavior: InvalidThisBehavior, typeName: string): string {
+  switch (behavior) {
+    case InvalidThisBehavior.Throw:
+      return `RELEASE_AND_RETURN(scope, Bun::throwInvalidThisCallError(lexicalGlobalObject, callFrame, "${typeName}"_s));`;
+    case InvalidThisBehavior.NoOp:
+      return `return JSValue::encode(JSC::jsUndefined());`;
+    case InvalidThisBehavior.RejectPromise:
+      return `Bun::throwInvalidThisCallError(lexicalGlobalObject, callFrame, "${typeName}"_s);
+    return JSValue::encode(JSC::JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, scope));`;
+    default:
+      throw new Error(`${typeName}: unknown invalidThisBehavior ${behavior}`);
+  }
+}
+
 function renderFieldsImpl(
   symbolName: (typeName: string, name: string) => string,
   typeName: string,
@@ -816,7 +831,11 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
 
     if ("fn" in proto[name]) {
       const fn = proto[name].fn;
-      const invalidThisBehavior = proto[name].invalidThisBehavior ?? InvalidThisBehavior.Throw;
+      const onInvalidThis = invalidThisStatement(
+        proto[name].invalidThisBehavior ??
+          (proto[name].async ? InvalidThisBehavior.RejectPromise : InvalidThisBehavior.Throw),
+        typeName,
+      );
       rows.push(`
 JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -828,7 +847,7 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
       ? `
         JSC::JSBoundFunction* thisBoundFunction = dynamicDowncast<JSC::JSBoundFunction>(callFrame->thisValue());
         if (!thisBoundFunction) [[unlikely]] {
-          RELEASE_AND_RETURN(scope, Bun::throwInvalidThisCallError(lexicalGlobalObject, callFrame, "${typeName}"_s));
+          ${onInvalidThis}
         }
         JSC::JSValue thisBoundFunctionThisValue = thisBoundFunction->boundThis();
         ${className(typeName)}* thisObject = dynamicDowncast<${className(typeName)}>(thisBoundFunctionThisValue);
@@ -837,12 +856,7 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
   }
 
   if (!thisObject) [[unlikely]] {
-      ${
-        invalidThisBehavior == InvalidThisBehavior.Throw
-          ? `
-    RELEASE_AND_RETURN(scope, Bun::throwInvalidThisCallError(lexicalGlobalObject, callFrame, "${typeName}"_s));`
-          : `return JSValue::encode(JSC::jsUndefined());`
-      }
+    ${onInvalidThis}
   }
 
   JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -2155,6 +2169,7 @@ const GENERATED_CLASSES_IMPL_HEADER_PRE = `
 
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/InternalFunction.h>
+#include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/LazyClassStructure.h>
 #include <JavaScriptCore/LazyClassStructureInlines.h>
 #include <JavaScriptCore/FunctionPrototype.h>

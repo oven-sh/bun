@@ -5412,6 +5412,242 @@ it("deeply nested expressions error instead of crashing the process", () => {
   expect([exitCode, signalCode ?? undefined]).toEqual([0, undefined]);
 }, 60_000);
 
+// After a stack overflow the visit pass skips each expression that it did not visit yet. The code
+// that runs after a skipped visit must not read that expression. The tests with a child process
+// are not concurrent: a debug build is slow when several children fill their stacks at once.
+describe("a stack overflow in the visit pass", () => {
+  const overflow = "Maximum call stack size exceeded";
+  const repeat = (fill, count) => Buffer.alloc(fill.length * count, fill).toString();
+  const messageOf = call => {
+    try {
+      call();
+      return "no error";
+    } catch (e) {
+      return e.message;
+    }
+  };
+  // A number of member levels at which the visit pass of this build overflows the stack.
+  let limit = 1024;
+  while (messageOf(() => new Bun.Transpiler({ loader: "js" }).transformSync("a" + repeat(".b", limit))) !== overflow) {
+    if (limit >= 1 << 22) throw new Error("no overflow at " + limit + " levels");
+    limit *= 2;
+  }
+  // The visit pass overflows the stack in this member chain, and skips what comes after it.
+  const chain = "a" + repeat(".b", 2 * limit);
+  // The visit pass gives a skipped identifier no symbol. The length of this name is greater
+  // than the number of symbols in each module below.
+  const name = repeat("L", 2000);
+
+  const prelude = `
+    const repeat = (fill, count) => Buffer.alloc(fill.length * count, fill).toString();
+    const overflow = "${overflow}";
+    const chain = "a" + repeat(".b", ${2 * limit});
+    const name = repeat("L", ${name.length});
+    // The message of the error that the call throws.
+    const outcome = async call => {
+      try {
+        await call();
+        return "no error";
+      } catch (e) {
+        return e.message;
+      }
+    };
+    // The smallest number of levels at which the visit of build(levels) overflows. This also
+    // parses each of the next "after" numbers of levels.
+    const firstOverflow = async (transpiler, build, after = 0) => {
+      const overflows = async levels => {
+        const message = await outcome(() => transpiler.transformSync(build(levels)));
+        // A smaller number of levels can overflow the printer.
+        if (message !== overflow && message !== "no error" && !message.includes("StackOverflow")) {
+          throw new Error(levels + " levels: " + message);
+        }
+        return message === overflow;
+      };
+      let below = 0;
+      let first = 1024;
+      while (!(await overflows(first))) {
+        if (first >= 1 << 22) throw new Error("no overflow at " + first + " levels");
+        below = first;
+        first *= 2;
+      }
+      while (first - below > 1) {
+        const middle = (below + first) >> 1;
+        if (await overflows(middle)) first = middle;
+        else below = middle;
+      }
+      for (let levels = first + 1; levels <= first + after; levels++) await overflows(levels);
+      return first;
+    };
+  `;
+
+  // Runs bun with the arguments, in a directory with the files.
+  async function spawn(args, files = {}) {
+    using dir = tempDir("visit-overflow", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+  const run = script => spawn(["-e", prelude + script]);
+  const ok = { stdout: "ok\n", stderr: "", exitCode: 0, signalCode: null };
+  // What a bun command that fails with the one error gives.
+  const oneError = ({ stderr, ...rest }) => ({ errors: stderr.match(/^error: .*$/gm), ...rest });
+  const failed = { errors: ["error: " + overflow], stdout: "", exitCode: 1, signalCode: null };
+
+  it.each(["js", "ts"])("is the one error for a skipped default value or typeof operand, %s", async loader => {
+    const result = await run(`
+      const cases = [
+        ["[" + chain + ", " + name + " = 1] = y;", "transformSync", "transform", "scan"],
+        ["({ a: " + chain + ", " + name + " = 1 } = y);", "transformSync"],
+        ["x = typeof (false ? " + chain + " : " + name + ");", "transformSync"],
+      ];
+      for (const [source, ...methods] of cases) {
+        for (const method of methods) {
+          const transpiler = new Bun.Transpiler({ loader: "${loader}" });
+          const message = await outcome(() => transpiler[method](source));
+          if (message !== overflow) throw new Error(method + " of " + source.slice(-32) + ": " + message);
+          if (transpiler.transformSync("f(1);") !== "f(1);\\n") throw new Error("the instance does not work");
+        }
+      }
+      console.log("ok");
+    `);
+    expect(result).toEqual(ok);
+  });
+
+  it("is the one error for a TypeScript class with a method after it", async () => {
+    const result = await run(`
+      const legacyDecorators = { compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } };
+      const cases = [
+        ["class A { a = " + chain + "; m() {} }"],
+        ["export default class { a = " + chain + "; get g() { return 1; } }"],
+        ["class A { a = " + chain + "; @dec m(@dec x: number): void {} }", legacyDecorators],
+        ["class A { @dec a = " + chain + "; constructor() {} }"],
+      ];
+      for (const [source, tsconfig] of cases) {
+        const transpiler = new Bun.Transpiler({ loader: "ts", tsconfig });
+        const message = await outcome(() => transpiler.transformSync(source));
+        if (message !== overflow) throw new Error(source.slice(-40) + ": " + message);
+      }
+      console.log("ok");
+    `);
+    expect(result).toEqual(ok);
+  });
+
+  it("is the one error for require() and require.resolve() at the debug log level", () => {
+    // At this log level, a require() or require.resolve() of something that is not a string
+    // literal logs a note, and the transpiler then throws "Parse error" with the list of messages.
+    const transpiler = new Bun.Transpiler({ loader: "js", target: "node", logLevel: "debug" });
+    const calls = [
+      `require(${chain})`,
+      `require.resolve(${chain} ? "./d" : "./e")`,
+      `require.resolve(y ? ${chain} : "./d")`,
+    ];
+    const messages = calls.map(call => messageOf(() => transpiler.transformSync(`x = ${call};`)));
+    expect(messages).toEqual([overflow, overflow, overflow]);
+  });
+
+  // The identifier is the deepest expression of a member chain. At the first number of levels
+  // that overflows, the visit of the identifier is the first visit that is skipped. The right
+  // side of the assignment is deeper, so there the identifier is the first a few levels later.
+  it.each([
+    ["a call", `levels => name + "()" + repeat(".b", levels)`],
+    ["an assignment", `levels => "(" + name + " = 1)" + repeat(".b", levels)`],
+  ])("is the one error at the depth where it starts, %s", async (_, build) => {
+    const result = await run(`
+      await firstOverflow(new Bun.Transpiler({ loader: "js" }), ${build}, 4);
+      console.log("ok");
+    `);
+    expect(result).toEqual(ok);
+  });
+
+  it("does not change a define value that the minifier visits again", async () => {
+    const result = await run(`
+      // A define value lives as long as the instance. The minifier puts "y" in the place of "x"
+      // and visits the statement again. Only that second visit goes into the value of X.
+      const depth = 200;
+      const transpiler = new Bun.Transpiler({
+        loader: "js",
+        define: { X: repeat('{"a":', depth) + "[1,2,3]" + repeat("}", depth) },
+        minify: { syntax: true },
+        deadCodeElimination: true,
+      });
+      const printed = () => transpiler.transformSync("export default X;");
+      const before = printed();
+      const build = target => levels => "function f() { let x = y; return x + " + target + repeat(".b", levels) + "; }";
+      // The overflow is in the value of X: a chain of 2 more levels without the value has none.
+      const levels = await firstOverflow(transpiler, build("X"));
+      const alone = await outcome(() => transpiler.transformSync(build("Z")(levels + 2)));
+      if (alone === overflow) throw new Error("no overflow in the define value");
+      if (printed() !== before) throw new Error("the define value changed");
+      console.log("ok");
+    `);
+    expect(result).toEqual(ok);
+  });
+
+  it("is the one error for a React Fast Refresh signature with a hook argument after it", async () => {
+    const result = await spawn(["build", "--react-fast-refresh", "--external", "react", "component.jsx"], {
+      "component.jsx": `
+        import { useReducer } from "react";
+        export function Component() {
+          const [state] = useReducer(${chain}, [${name}]);
+          return state;
+        }
+      `,
+    });
+    expect(oneError(result)).toEqual(failed);
+  });
+
+  it.concurrent.each([
+    ["require()", `x = require(${chain});`],
+    ["require.resolve()", `x = require.resolve(${chain});`],
+    ["feature()", `import { feature } from "bun:bundle";\nif (feature(${chain})) {}`],
+    ["a macro", `import { m } from "./macro.ts" with { type: "macro" };\nexport const x = m(${chain});`],
+    [
+      "a macro with a template",
+      `import { m } from "./macro.ts" with { type: "macro" };\nexport const x = m\`\${${chain}}\`;`,
+    ],
+    // Only the module format of the dev server keeps import.meta.hot.
+    [
+      "import.meta.hot.accept()",
+      `import "./dep.ts";\nimport.meta.hot.accept([${chain}, "./dep.ts"], () => {});`,
+      "internal_bake_dev",
+    ],
+  ])("is the one error for the argument of %s", async (_, source, format = "esm") => {
+    using dir = tempDir("visit-overflow-argument", {
+      "entry.ts": source,
+      "macro.ts": "export function m(...args) { return args.length; }",
+      "dep.ts": "export default 1;",
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.ts")],
+      // With an empty list, a specifier that is not a string literal is an error.
+      allowUnresolved: [],
+      format,
+      throw: false,
+    });
+    const errors = result.logs.filter(log => log.level === "error").map(log => log.message);
+    expect(errors).toEqual([overflow]);
+  });
+
+  it("is the one error for a skipped default value in a file that runs", async () => {
+    const result = await spawn(["index.js"], { "index.js": `[${chain}, ${name} = 1] = globalThis.y;` });
+    expect(oneError(result)).toEqual(failed);
+  });
+
+  // The visit pass makes no part for a statement that it skips, and `_parse` moves the part of a
+  // hoistable statement to the top: panic: unreachable. https://github.com/oven-sh/bun/pull/44137
+  it.todo("is the one error for a hoistable statement after it in a file that runs", async () => {
+    const source = `export default function f() { return ${chain}; }\nclass B {}`;
+    const result = await spawn(["index.js"], { "index.js": source });
+    expect(oneError(result)).toEqual(failed);
+  });
+});
+
 it("deeply nested TypeScript types error instead of crashing the process", () => {
   const script = `
     const repeat = (fill, count) => Buffer.alloc(fill.length * count, fill).toString();

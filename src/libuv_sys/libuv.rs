@@ -2617,6 +2617,9 @@ pub const UV_PROCESS_DETACHED: c_uint = 8;
 pub const UV_PROCESS_WINDOWS_HIDE: c_uint = 16;
 pub const UV_PROCESS_WINDOWS_HIDE_CONSOLE: c_uint = 32;
 pub const UV_PROCESS_WINDOWS_HIDE_GUI: c_uint = 64;
+// oven-sh/libuv only. High bits, so a flag that upstream adds cannot collide.
+pub const UV_PROCESS_WINDOWS_CREATE_NO_WINDOW: c_uint = 1 << 16;
+pub const UV_PROCESS_WINDOWS_NO_JOB_OBJECT: c_uint = 1 << 17;
 
 pub const SIGHUP: c_int = 1;
 pub const SIGQUIT: c_int = 3;

@@ -13,7 +13,7 @@
 //! | `mergeRules([detectionInstructions, ..])` | [`Components::with`], [`Instructions`] |
 //! | `utils.findReturnStatement` | `util_ast::find_return_statement` |
 //! | `utils.isReactHookCall`, `reactImportInstructions` | in `hook-use-state`, their one reader |
-//! | `ThisExpression` of `detectionInstructions` | nothing: nobody asks for the `this` that it bans |
+//! | `components.add(node, 0)` of a `ThisExpression` | nothing: nobody asks for that `this` |
 //!
 //! A `Call`, a `Dot` or an `Index` that is the whole of an optional chain is taken for the
 //! `CallExpression` or the `MemberExpression`, not for the `ChainExpression` around it.
@@ -257,7 +257,7 @@ pub(crate) struct Components<'a> {
 }
 
 impl<'a> Components<'a> {
-    /// `false` is certain: nothing gets into the list of this file.
+    /// `false` is certain: nothing but what is banned gets into the list of this file.
     pub(crate) fn may_have_any(file: &'a File<'a>) -> bool {
         const NAMES: [&str; 8] = [
             "Component",
@@ -387,6 +387,13 @@ impl<'a> Components<'a> {
                 self.push(node);
             }
         }
+        // ThisExpression
+        if has_stages {
+            let this_expressions = file.exprs_of_kind(ExprTag::This);
+            for e in this_expressions.filter(|it| !it.is_jsx_tag_name()) {
+                self.push(Node::Expr(e));
+            }
+        }
         // MemberExpression of propTypes.js and defaultProps.js
         if file.mentions_any(&["propTypes", "defaultProps", "getDefaultProps"]) {
             let members = [ExprTag::Dot, ExprTag::Index].map(|tag| file.exprs_of_kind(tag));
@@ -422,6 +429,10 @@ impl<'a> Components<'a> {
                 }
                 ExprKind::Object(_) => {
                     self.add(node, 2);
+                }
+                // What it bans nobody asks for. On the way it can ask for the list.
+                ExprKind::This => {
+                    self.get_parent_stateless_component(node);
                 }
                 _ => {
                     self.get_related_component(e);

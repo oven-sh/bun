@@ -127,7 +127,14 @@ const READER: Reader = Reader {
 
 /// An `ExportMap`.
 #[derive(Copy, Clone)]
-pub(crate) struct ExportMap<'a>(&'a Facts);
+pub(crate) struct ExportMap<'a> {
+    facts: &'a Facts,
+    /// The resolver gives its path from the working directory: upstream has another map for that `path`.
+    is_relative: bool,
+}
+
+/// What `path` is to upstream: who asks has one map for it.
+type Id = (*const Facts, bool);
 
 /// A value of `namespace`.
 #[derive(Copy, Clone)]
@@ -147,20 +154,20 @@ pub(crate) enum Got<'a> {
 }
 
 impl<'a> ExportMap<'a> {
-    /// Absolute.
+    /// Always absolute.
     pub(crate) fn path(self) -> &'a [u8] {
-        &self.0.record.path
+        &self.facts.record.path
     }
 
     /// `errors.length > 0`
     pub(crate) fn has_errors(self) -> bool {
-        !self.0.record.errors.is_empty()
+        !self.facts.record.errors.is_empty()
     }
 
     /// `msg` in `reportErrors`
     pub(crate) fn errors_text(self) -> Vec<u8> {
         let mut msg = Vec::new();
-        for (index, e) in self.0.record.errors.iter().enumerate() {
+        for (index, e) in self.facts.record.errors.iter().enumerate() {
             if index > 0 {
                 msg.extend_from_slice(b", ");
             }
@@ -175,7 +182,7 @@ impl<'a> ExportMap<'a> {
 
     /// `parseGoal === 'ambiguous'`
     pub(crate) fn is_ambiguous(self) -> bool {
-        !self.0.record.is_module
+        !self.facts.record.is_module
     }
 
     /// The keys of `reexports`.
@@ -183,17 +190,17 @@ impl<'a> ExportMap<'a> {
         self.reexports().map(|it| it.key().unwrap_or(UNDEFINED))
     }
 
-    fn id(self) -> *const Facts {
-        std::ptr::from_ref(self.0)
+    fn id(self) -> Id {
+        (std::ptr::from_ref(self.facts), self.is_relative)
     }
 
-    /// `path === other.path`: who asks has one map for a path.
+    /// `path === other.path`
     fn is(self, other: ExportMap) -> bool {
-        std::ptr::eq(self.0, other.0)
+        self.id() == other.id()
     }
 
     fn namespace(self, interop: bool) -> &'a Table {
-        let facts = self.0;
+        let facts = self.facts;
         let [without, with] = &facts.namespace;
         let table = if interop { with } else { without };
         table.get_or_init(|| {
@@ -207,27 +214,28 @@ impl<'a> ExportMap<'a> {
 
     /// The values of `namespace`.
     fn entries(self, interop: bool) -> impl Iterator<Item = &'a Entry> {
-        self.namespace(interop).iter(&self.0.record.namespace)
+        self.namespace(interop).iter(&self.facts.record.namespace)
     }
 
     /// `namespace.get(name)`
     fn entry(self, interop: bool, name: Key) -> Option<&'a Entry> {
-        self.namespace(interop).get(&self.0.record.namespace, name)
+        self.namespace(interop)
+            .get(&self.facts.record.namespace, name)
     }
 
     /// The values of `reexports`.
     fn reexports(self) -> impl Iterator<Item = &'a Reexport> {
-        self.0.reexports.iter(&self.0.record.reexports)
+        self.facts.reexports.iter(&self.facts.record.reexports)
     }
 
     /// `reexports.get(name)`
     fn reexport(self, name: Key) -> Option<&'a Reexport> {
-        self.0.reexports.get(&self.0.record.reexports, name)
+        self.facts.reexports.get(&self.facts.record.reexports, name)
     }
 
     /// `namespace.size + reexports.size`
     fn own_size(self, interop: bool) -> usize {
-        self.namespace(interop).len() + self.0.reexports.len()
+        self.namespace(interop).len() + self.facts.reexports.len()
     }
 }
 
@@ -283,7 +291,7 @@ pub(crate) struct ExportMaps<'a> {
     interop: OnceCell<bool>,
     /// The language of `file`, read by espree and by `@typescript-eslint/parser`: for `import/parsers`.
     languages: [OnceCell<Box<LanguageOptions>>; 2],
-    dependencies: RefCell<FxHashMap<*const Facts, Dependencies<'a>>>,
+    dependencies: RefCell<FxHashMap<Id, Dependencies<'a>>>,
 }
 
 impl<'a> ExportMaps<'a> {
@@ -349,15 +357,16 @@ impl<'a> ExportMaps<'a> {
         }
         let modules = self.modules;
         let language = self.language_of(path)?;
-        let path = if paths::is_absolute(path) {
-            Cow::Borrowed(path)
-        } else {
+        let is_relative = !paths::is_absolute(path);
+        let path = if is_relative {
             Cow::Owned(paths::resolve(modules.cwd(), path))
+        } else {
+            Cow::Borrowed(path)
         };
         let facts = modules.facts(&path, language, &READER)?;
         let facts = facts.downcast_ref::<Facts>()?;
         // "ambiguous modules return null"
-        (!facts.record.is_null).then_some(ExportMap(facts))
+        (!facts.record.is_null).then_some(ExportMap { facts, is_relative })
     }
 
     /// `RemotePath.resolve`, in `map`. `None`: `null` or `undefined`.
@@ -379,7 +388,7 @@ impl<'a> ExportMaps<'a> {
 
     /// One getter for a path: `captureDependency` returns the one that `imports` has.
     fn dependencies_of(&self, map: ExportMap<'a>) -> Dependencies<'a> {
-        let star_exports = &map.0.record.star_exports;
+        let star_exports = &map.facts.record.star_exports;
         if star_exports.is_empty() {
             return Rc::default();
         }
@@ -411,7 +420,7 @@ impl<'a> ExportMaps<'a> {
     /// `size`. A module that exports all of itself again, directly or not, counts once.
     pub(crate) fn size(&self, map: ExportMap<'a>) -> usize {
         let interop = self.is_es_module_interop();
-        if map.0.record.star_exports.is_empty() {
+        if map.facts.record.star_exports.is_empty() {
             return map.own_size(interop);
         }
         let call = |this: ExportMap<'a>| Size {
@@ -420,7 +429,7 @@ impl<'a> ExportMaps<'a> {
             size: this.own_size(interop),
         };
         // What has returned. Of a call that is running: nothing.
-        let mut known: FxHashMap<*const Facts, usize> = FxHashMap::default();
+        let mut known: FxHashMap<Id, usize> = FxHashMap::default();
         known.insert(map.id(), 0);
         let mut running = vec![call(map)];
         let mut returned = 0;
@@ -632,7 +641,7 @@ impl<'a> ExportMaps<'a> {
 
     /// The same of `map.doc`.
     pub(crate) fn module_deprecation(&self, map: ExportMap<'a>) -> Option<Option<&'a [u8]>> {
-        let doc = map.0.record.doc.as_ref()?;
+        let doc = map.facts.record.doc.as_ref()?;
         doc.deprecated.as_ref().map(|it| it.as_deref())
     }
 
@@ -651,7 +660,7 @@ impl<'a> ExportMaps<'a> {
     pub(crate) fn imports(&self, map: ExportMap<'a>) -> Vec<(Vec<u8>, Vec<&'a Dependency>)> {
         let mut places: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
         let mut imports: Vec<(Vec<u8>, Vec<&'a Dependency>)> = Vec::new();
-        for declaration in &map.0.record.imports {
+        for declaration in &map.facts.record.imports {
             let Some(p) = self.remote_path(map, &declaration.specifier) else {
                 continue;
             };

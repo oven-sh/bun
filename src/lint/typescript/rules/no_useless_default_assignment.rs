@@ -260,7 +260,7 @@ fn check_parameter<'a>(param: Param<'a>, cx: &Context<'a>) {
     });
     if !default_can_be_used {
         let first = signatures.iter().find_map(|it| it.get_parameters().get(param_index));
-        let target = param.ty().map_or(param.pat().span(), |it| it.outer_span());
+        let target = param.ty().map_or_else(|| param.pat().span(), |it| it.outer_span());
         report_useless_default(right, removal, target, "parameter", first.map(|it| it.get_type()), cx);
     }
 }

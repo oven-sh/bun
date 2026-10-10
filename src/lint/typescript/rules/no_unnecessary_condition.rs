@@ -46,17 +46,13 @@ pub struct State<'a> {
 
 type Context<'a> = Cx<'a, NoUnnecessaryCondition>;
 
-const CONDITIONS: On = On::new()
-    .exprs(&[
-        ExprTag::Assign,
-        ExprTag::Binary,
-        ExprTag::Call,
-        ExprTag::Dot,
-        ExprTag::Index,
-        ExprTag::Cond,
-    ])
-    .stmts(&[StmtTag::If, StmtTag::DoWhile, StmtTag::For, StmtTag::While])
-    .cases();
+/// What has a condition is listened to in the order of the source, the outer one first, as upstream: a condition that is in
+/// another one can be reported twice at one place.
+const CONDITIONS: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]).enter(
+    NodeTags::CASE
+        .exprs(&[ExprTag::Assign, ExprTag::Binary, ExprTag::Call, ExprTag::Cond])
+        .stmts(&[StmtTag::If, StmtTag::DoWhile, StmtTag::For, StmtTag::While]),
+);
 
 const ALWAYS_FALSY: Message =
     Message::new("alwaysFalsy", "Unnecessary conditional, value is always falsy.");
@@ -450,7 +446,7 @@ fn check_node<'a>(expression: Expr<'a>, cx: &mut Context<'a>) {
         .labels_with(|labels| {
             if !is_literal {
                 labels.first(format!("Type: {}", tsgolint_type_name(ty)));
-                labels.push(node, "");
+                labels.push(node.outer_span(), "");
             }
         });
 }
@@ -985,6 +981,15 @@ impl Rule for NoUnnecessaryCondition {
             optional_properties: FxHashMap::default(),
         };
         Some(flags)
+    }
+
+    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        match node {
+            Node::Expr(node) => self.expr(node, cx),
+            Node::Stmt(node) => self.stmt(node, cx),
+            Node::Case(node) => self.case(node, cx),
+            _ => {}
+        }
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {

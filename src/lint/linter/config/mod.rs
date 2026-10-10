@@ -86,6 +86,7 @@ pub(crate) use rc::{OxlintChanges, oxlint_changes};
 use rustc_hash::FxHashMap;
 pub use shape::glob_refusal;
 use smallvec::SmallVec;
+use std::borrow::Cow;
 use std::sync::Arc;
 
 #[doc(hidden)]
@@ -172,6 +173,8 @@ struct ConfigObject {
     plugins: Vec<Box<[u8]>>,
     /// The prefixes of the plugins that are not implemented here.
     foreign_plugins: Vec<Box<[u8]>>,
+    /// `$jsPlugins`: where each is in [`Config::js_locations`].
+    js_plugins: Vec<u32>,
     /// All of them as `--print-config` has them: `prefix:name@version`, or the prefix of one that does not say what it is called.
     printed_plugins: Vec<Box<[u8]>>,
     /// The object is invalid: the message of ESLint, which it gives when the object is merged.
@@ -207,6 +210,7 @@ impl Default for ConfigObject {
             rules: Vec::new(),
             plugins: Vec::new(),
             foreign_plugins: Vec::new(),
+            js_plugins: Vec::new(),
             printed_plugins: Vec::new(),
             error: None,
             language: None,
@@ -355,8 +359,12 @@ pub struct Config {
     advice: Vec<Vec<u8>>,
     unknown_rules: Vec<Box<[u8]>>,
     js_plugins: Vec<Arc<js_plugin::Plugin>>,
+    /// For each, where it is in `js_locations`.
+    js_plugin_places: Vec<u32>,
     /// `$jsPlugins`: where the plugin with a prefix is.
     js_locations: Vec<(Box<[u8]>, Json)>,
+    /// Objects, for different files, have different plugins under one name.
+    has_twins: bool,
     heads: Heads,
     cache: Cache,
 }
@@ -777,6 +785,9 @@ impl Config {
             ..ResolvedConfig::default()
         };
         let mut plugins: Vec<&[u8]> = Vec::new();
+        // Where the plugins of the file are in `js_locations`, if that is not plain from their names.
+        let mut places: Vec<u32> = Vec::new();
+        let prefix_at = |place: u32| self.js_locations.get(place as usize).map(|it| &it.0);
         // In oxlint `categories` say something about the plugins that overrides add only if one of the overrides names other
         // plugins than all that are on for the file.
         let of_overrides = || {
@@ -795,6 +806,15 @@ impl Config {
             }
             let of_object = object.plugins.iter().chain(&object.foreign_plugins);
             plugins.extend(of_object.map(|it| &it[..]));
+            for &place in object.js_plugins.iter().filter(|_| self.has_twins) {
+                let is_twin = |it: &u32| *it != place && prefix_at(*it) == prefix_at(place);
+                if let Some(prefix) = prefix_at(place).filter(|_| places.iter().any(is_twin)) {
+                    let start = b"Key \"plugins\": Cannot redefine plugin \"";
+                    config.error = Some([&start[..], &prefix[..], &b"\"."[..]].concat());
+                    return config;
+                }
+                places.push(place);
+            }
             let merge_into = match self.is_legacy {
                 true => eslintrc::merge_into,
                 false => merge::deep_merge_into,
@@ -860,6 +880,24 @@ impl Config {
         config.language.without_modules = self.without_modules;
         let parser_location = (indices.iter().rev())
             .find_map(|index| self.objects.get(*index as usize)?.parser_location.as_ref());
+        // Without the plugins in whose place the file has another of the same name.
+        let is_of_file = |place: u32| {
+            places.contains(&place) || !places.iter().any(|it| prefix_at(*it) == prefix_at(place))
+        };
+        let js_plugins: Cow<[Arc<js_plugin::Plugin>]> = match self.has_twins {
+            false => Cow::Borrowed(&self.js_plugins),
+            true => (self.js_plugins.iter().zip(&self.js_plugin_places))
+                .filter(|it| is_of_file(*it.1))
+                .map(|it| Arc::clone(it.0))
+                .collect(),
+        };
+        let js_locations: Cow<[(Box<[u8]>, Json)]> = match self.has_twins {
+            false => Cow::Borrowed(&self.js_locations),
+            true => (self.js_locations.iter().zip(0..))
+                .filter(|it| is_of_file(it.1))
+                .map(|it| it.0.clone())
+                .collect(),
+        };
         config.linter = linter;
         config.parser_name = (language_options.get(b"parser"))
             .and_then(Json::as_str)
@@ -875,8 +913,8 @@ impl Config {
                 rules: &rules,
                 parser: parser_location.filter(|it| it.get(b"module").is_some()),
                 plugins: &plugins,
-                locations: &self.js_locations,
-                js_plugins: &self.js_plugins,
+                locations: &js_locations,
+                js_plugins: &js_plugins,
             })
             .map(Arc::new);
         }
@@ -915,14 +953,14 @@ impl Config {
             }
             // For ESLint 8 that is a message in every file.
             let eslint_8 = config.language.eslint_8.as_ref();
-            if eslint_8.is_some_and(|it| it.lacks_rule(&setting.id, &self.js_plugins)) {
+            if eslint_8.is_some_and(|it| it.lacks_rule(&setting.id, &js_plugins)) {
                 if setting.severity != Severity::Off {
                     config.missing_rules.push(setting.id);
                 }
                 continue;
             }
             // What `jsPlugins` names hides a plugin of the same name that is implemented here.
-            let js = find_js_rule(&self.js_plugins, &setting.id);
+            let js = find_js_rule(&js_plugins, &setting.id);
             let prefix = super::registry::parse_rule_id(&setting.id).0;
             // Not what is written with a name that oxlint has for the plugin here, `node/..`, or comes from a category.
             let is_native_for_oxlint =
@@ -976,7 +1014,7 @@ impl Config {
             }
             let or_else = match js.flatten().filter(|_| entry.meta.hands_back) {
                 Some(rule) => {
-                    let location = self.js_locations.iter().find(|it| *it.0 == *prefix);
+                    let location = js_locations.iter().find(|it| *it.0 == *prefix);
                     let module = location.and_then(|it| it.1.get(b"module")?.as_str());
                     if setting.severity != Severity::Off && config.package_module.is_none() {
                         config.package_module = module.map(Arc::from);
@@ -999,7 +1037,7 @@ impl Config {
             let has = |it: &&Arc<js_plugin::Plugin>| {
                 self.accepts_all_plugins || plugins.contains(&&it.name[..])
             };
-            config.js_plugins = self.js_plugins.iter().filter(has).cloned().collect();
+            config.js_plugins = js_plugins.iter().filter(has).cloned().collect();
             let sources: Vec<&Json> = indices
                 .iter()
                 .filter_map(|index| self.objects.get(*index as usize)?.source.as_ref())

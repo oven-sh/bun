@@ -12,9 +12,12 @@ const REQUIRE_TYPE: Message = Message::new("", "Prop \"{{name}}\" should define 
 
 type Context<'c, 'a> = &'c Cx<'a, RequirePropTypes>;
 
+/// The outer one first, as oxlint: `defineModel()` in the list of `defineProps` is reported twice at one place.
+const CALLS: NodeTags = NodeTags::new().exprs(&[ExprTag::Call]);
+
 impl Rule for RequirePropTypes {
     const META: Meta = Meta::oxlint(Plugin::Vue, "require-prop-types", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]).stmts(&[StmtTag::ExportDefault]);
+    const ON: On = On::new().enter(CALLS).exprs(&[ExprTag::New]).stmts(&[StmtTag::ExportDefault]);
     no_state!();
 
     fn new(_: &Options) -> Self {
@@ -25,7 +28,7 @@ impl Rule for RequirePropTypes {
         let mut on = On::new();
         if is_vue_setup(file) {
             if file.mentions_any(&["defineProps", "defineModel"]) {
-                on = on.exprs(&[ExprTag::Call]);
+                on = on.enter(CALLS);
             }
         } else if file.mentions("props") {
             on = on.stmts(&[StmtTag::ExportDefault]).exprs(&[ExprTag::New]);
@@ -33,18 +36,18 @@ impl Rule for RequirePropTypes {
         on
     }
 
+    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        if let Node::Expr(e) = node {
+            run_on_setup(e, cx);
+        }
+    }
+
+    // `new Vue({ .. })`
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        match e.tag() {
-            ExprTag::Call => run_on_setup(e, cx),
-            // `new Vue({ .. })`
-            ExprTag::New => {
-                if let ExprKind::New(new_expr) = e.kind()
-                    && is_specific_id(new_expr.callee(), "Vue")
-                {
-                    check_options_props(new_expr.args().first().and_then(as_inner_object_expression), cx);
-                }
-            }
-            _ => {}
+        if let ExprKind::New(new_expr) = e.kind()
+            && is_specific_id(new_expr.callee(), "Vue")
+        {
+            check_options_props(new_expr.args().first().and_then(as_inner_object_expression), cx);
         }
     }
 

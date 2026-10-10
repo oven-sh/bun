@@ -77,7 +77,7 @@ impl Rule for NoImpliedEval {
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types()
         .extends_base_rule("no-implied-eval");
-    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]);
+    const ON: On = On::new().enter(NodeTags::new().exprs(&[ExprTag::Call, ExprTag::New]));
     type State<'a> = GlobalFunctions<'a>;
 
     fn new(_: &Options) -> Self {
@@ -88,7 +88,11 @@ impl Rule for NoImpliedEval {
         Some(GlobalFunctions::default())
     }
 
-    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+    // The outer one first, as upstream: `Function()` as an argument of `setTimeout` is reported twice at one place.
+    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        let Node::Expr(node) = node else {
+            return;
+        };
         let (ExprKind::Call(call) | ExprKind::New(call)) = node.kind() else {
             return;
         };

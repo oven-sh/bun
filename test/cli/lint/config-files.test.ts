@@ -323,6 +323,35 @@ describe.concurrent("an eslint.config.js", () => {
   });
 
   // What ESLint 10.12 prints.
+  // ESLint 10.12 says the same.
+  test("objects for different files can have different plugins under one name, one file cannot", async () => {
+    const plugin = (name: string) =>
+      `({ rules: { r: { create: context => ({ Program: node => context.report({ node, message: "${name} ran" }) }) } } })`;
+    const files = {
+      "one.cjs": `module.exports = ${plugin("one")};`,
+      "two.cjs": `module.exports = ${plugin("two")};`,
+      "x/a.js": "a;\n",
+      "y/a.js": "a;\n",
+    };
+    const objects = (first: string) => `const rules = { "p/r": "error" };
+      export default [{ ${first} plugins: { p: one }, rules }, { files: ["y/**"], plugins: { p: two }, rules }];`;
+    const imported = `import one from "./one.cjs"; import two from "./two.cjs";`;
+    const written = `const [one, two] = [${plugin("one")}, ${plugin("two")}];`;
+    const messages = ({ raw }: { raw: string }) =>
+      JSON.parse(raw).results.map((it: { messages: { message: string }[] }) => it.messages.map(it => it.message));
+    const [ofModules, ofTheFile, forOneFile] = await Promise.all([
+      lint({ ...files, "eslint.config.mjs": imported + objects(`files: ["x/**"],`) }, ["x", "y"]),
+      lint({ ...files, "eslint.config.mjs": written + objects(`files: ["x/**"],`) }, ["x", "y"]),
+      lint({ ...files, "eslint.config.mjs": imported + objects("") }, ["x", "y"]),
+    ]);
+    expect([messages(ofModules), messages(ofTheFile)]).toEqual([
+      [["one ran"], ["two ran"]],
+      [["one ran"], ["two ran"]],
+    ]);
+    expect(forOneFile.stderr).toContain(`Key "plugins": Cannot redefine plugin "p".`);
+    expect(forOneFile.exitCode).toBe(2);
+  });
+
   test("usedDeprecatedRules has the rules of a plugin in JavaScript, in the order of the configuration", async () => {
     const info = {
       message: "Gone.",

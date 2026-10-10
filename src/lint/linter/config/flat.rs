@@ -54,6 +54,8 @@ pub(super) struct Reader<'r> {
     pub(super) unknown_rules: Vec<Box<[u8]>>,
     /// The JavaScript plugins that are loaded.
     pub(super) js_plugins: Vec<Arc<js_plugin::Plugin>>,
+    /// For each, where it is in `js_locations`.
+    pub(super) js_plugin_places: Vec<u32>,
     /// `$jsPlugins`: where the plugin with a prefix can be loaded from.
     pub(super) js_locations: Vec<(Box<[u8]>, Json)>,
     /// How many of the objects are ESLint's own.
@@ -512,7 +514,15 @@ impl Reader<'_> {
             .and_then(Json::as_object)
             .unwrap_or_default()
         {
-            if !self.js_locations.iter().any(|it| *it.0 == prefix[..]) {
+            // `twin`: which of the plugins that objects have under that name.
+            let is_it = |it: &(Box<[u8]>, Json)| {
+                *it.0 == prefix[..] && it.1.get(b"twin") == location.get(b"twin")
+            };
+            let known = self.js_locations.iter().position(is_it);
+            object
+                .js_plugins
+                .push(known.unwrap_or(self.js_locations.len()) as u32);
+            if known.is_none() {
                 self.js_locations
                     .push((prefix[..].into(), location.clone()));
             }
@@ -707,6 +717,7 @@ impl Config {
             advice: Vec::new(),
             unknown_rules: Vec::new(),
             js_plugins: Vec::new(),
+            js_plugin_places: Vec::new(),
             js_locations: Vec::new(),
             defaults: 0,
             foreign_prefixes: Vec::new(),
@@ -745,7 +756,7 @@ impl Reader<'_> {
         &mut self,
         load: &mut LoadLocatedPlugin<'_>,
     ) -> Result<(), ConfigError> {
-        for (prefix, location) in &mut self.js_locations {
+        for (place, (prefix, location)) in self.js_locations.iter_mut().enumerate() {
             let mut unknown = self.unknown_rules.iter();
             // A rule of `--rulesdir`, which has no prefix, can have the name of a rule that exists here.
             if prefix.is_empty()
@@ -755,6 +766,7 @@ impl Reader<'_> {
                 self.js_plugins.push(load(location, prefix).map_err(|why| {
                     ConfigError::new(&[b"Failed to load the plugin \"", prefix, b"\": ", &why])
                 })?);
+                self.js_plugin_places.push(place as u32);
             }
             // Only where it is is of any more use.
             if let Json::Object(entries) = location {
@@ -786,6 +798,8 @@ impl Reader<'_> {
             advice: self.advice,
             unknown_rules: self.unknown_rules,
             js_plugins: self.js_plugins,
+            js_plugin_places: self.js_plugin_places,
+            has_twins: (self.js_locations.iter()).any(|it| it.1.get(b"twin").is_some()),
             js_locations: self.js_locations,
             cache: Default::default(),
         }

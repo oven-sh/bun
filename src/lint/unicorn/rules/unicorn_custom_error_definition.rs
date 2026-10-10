@@ -100,14 +100,22 @@ fn is_expected_string_literal<'a>(e: Expr<'a>, expected: Name<'a>) -> bool {
 
 impl Rule for CustomErrorDefinition {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "custom-error-definition", Kind::Suggestion);
-    const ON: On = On::new().classes();
+    const ON: On = On::new().enter(NodeTags::CLASS);
     no_state!();
 
     fn new(_: &Options) -> Self {
         CustomErrorDefinition
     }
 
-    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.has_classes() { Self::ON } else { On::new() }
+    }
+
+    // The outer one first, as oxlint: a class that is the value of `name` is reported twice at one place.
+    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        let Node::Class(class) = node else {
+            return;
+        };
         if !has_valid_super_class(class) {
             return;
         }

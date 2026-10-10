@@ -42,6 +42,9 @@ pub struct State<'a> {
     in_array_or_iter: AncestorWalk<'a, u8, Option<InsideArrayOrIterator>>,
     within_children_to_array: AncestorMemo<'a, ()>,
     imports: OnceCell<Imports<'a>>,
+    /// The file mentions `key`, `toArray`.
+    mentions_key: bool,
+    mentions_to_array: bool,
 }
 
 /// What is asked about the imports of a file.
@@ -79,7 +82,11 @@ impl Rule for JsxKey {
         if !is_jsx(file) || !file.has_exprs([ExprTag::Jsx]) {
             return None;
         }
-        Some(State::default())
+        Some(State {
+            mentions_key: file.mentions("key"),
+            mentions_to_array: file.mentions("toArray"),
+            ..State::default()
+        })
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -112,7 +119,7 @@ impl JsxKey {
         if self.check_key_must_before_spread {
             check_jsx_element_is_key_before_spread(jsx, cx);
         }
-        if self.warn_on_duplicates && cx.mentions("key") {
+        if self.warn_on_duplicates && cx.state.mentions_key {
             check_duplicate_keys(&mut jsx.children().iter().filter(|it| it.jsx_container_span().is_none()), cx);
         }
     }
@@ -127,7 +134,7 @@ fn check_missing_key<'a>(e: Expr<'a>, span: Span, cx: &mut Cx<'a, JsxKey>) {
     let Some(outer) = cx.state.in_array_or_iter.run(Node::Expr(e), 0, is_in_array_or_iter) else {
         return;
     };
-    if cx.mentions("toArray") {
+    if cx.state.mentions_to_array {
         let State { within_children_to_array, imports, .. } = &mut cx.state;
         if within_children_to_array.find(Node::Expr(e), |_, parent| is_children_to_array(parent, imports)).is_some() {
             return;

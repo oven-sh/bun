@@ -965,6 +965,7 @@ impl Config {
                 advice: Vec::new(),
                 unknown_rules: Vec::new(),
                 js_plugins: Vec::new(),
+                js_plugin_places: Vec::new(),
                 js_locations: Vec::new(),
                 defaults: 0,
                 foreign_prefixes: Vec::new(),

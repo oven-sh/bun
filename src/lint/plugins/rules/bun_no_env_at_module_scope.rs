@@ -19,8 +19,14 @@ const ENVIRONMENT: Message = Message::new(
 
 const PROCESS_MODULES: [&str; 2] = ["node:process", "process"];
 
+pub struct State<'a> {
+    runs_later: RunsLater<'a>,
+    /// The file mentions one of [`PROCESS_MODULES`].
+    mentions_module: bool,
+}
+
 /// `process.env`, `Bun.env`, `import.meta.env`, and the `env` of `import { env } from "node:process"`.
-fn is_environment(e: Expr) -> bool {
+fn is_environment(e: Expr, mentions_module: bool) -> bool {
     match e.kind() {
         ExprKind::Dot { obj, name, .. } if name.name().is("env") => match obj.kind() {
             ExprKind::ImportMeta => true,
@@ -30,7 +36,7 @@ fn is_environment(e: Expr) -> bool {
             }
             _ => false,
         },
-        ExprKind::Ident(_) => PROCESS_MODULES.iter().any(|it| e.file().mentions(it) && is_import_symbol(e, it, "env")),
+        ExprKind::Ident(_) => mentions_module && PROCESS_MODULES.iter().any(|it| is_import_symbol(e, it, "env")),
         _ => false,
     }
 }
@@ -65,14 +71,17 @@ impl NoEnvAtModuleScope {
 impl Rule for NoEnvAtModuleScope {
     const META: Meta = Meta::plugin(Plugin::Bun, "no-env-at-module-scope", Kind::Suggestion);
     const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]);
-    type State<'a> = RunsLater<'a>;
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         NoEnvAtModuleScope { allow: list_option(options, "allow", &["NODE_ENV"]) }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<RunsLater<'a>> {
-        file.mentions("env").then(RunsLater::default)
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+        file.mentions("env").then(|| State {
+            runs_later: RunsLater::default(),
+            mentions_module: file.mentions_any(&PROCESS_MODULES),
+        })
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -80,15 +89,19 @@ impl Rule for NoEnvAtModuleScope {
         if !ast_utils::is_member_expression(e) {
             return;
         }
-        if e.object().is_some_and(is_environment) {
+        let mentions_module = cx.state.mentions_module;
+        if e.object().is_some_and(|it| is_environment(it, mentions_module)) {
             let is_allowed = || ast_utils::get_static_property_name(e).is_some_and(|name| self.allows(&name));
-            if !is_written(e) && !is_allowed() && runs_while_module_is_evaluated(Node::Expr(e), &mut cx.state) {
+            if !is_written(e)
+                && !is_allowed()
+                && runs_while_module_is_evaluated(Node::Expr(e), &mut cx.state.runs_later)
+            {
                 cx.report(e, VARIABLE).data("text", e.text());
             }
-        } else if is_environment(e)
+        } else if is_environment(e, mentions_module)
             && !matches!(e.parent(), Node::Expr(member) if member.object() == Some(e))
             && !self.allows_all_of(e)
-            && runs_while_module_is_evaluated(Node::Expr(e), &mut cx.state)
+            && runs_while_module_is_evaluated(Node::Expr(e), &mut cx.state.runs_later)
         {
             cx.report(e, ENVIRONMENT);
         }

@@ -47,12 +47,22 @@ function describeParser(parser) {
   };
 }
 
+// Objects for different files can have different plugins under one name: which of those called `prefix` it is, from 0.
+const called = new Map();
+function twinOf(prefix, plugin) {
+  if (!called.has(prefix)) called.set(prefix, []);
+  const all = called.get(prefix);
+  if (!all.includes(plugin)) all.push(plugin);
+  return all.indexOf(plugin);
+}
+
 // Many objects have the same plugins: only the first says what is in one.
 const described = new Set();
 function describedOnce(prefix, plugin) {
+  const key = `${twinOf(prefix, plugin)}/${prefix}`;
   // A worker says what is in it, if a rule of it is on that is not built in.
-  if (described.has(prefix) || untouched.has(plugin.rules)) return undefined;
-  described.add(prefix);
+  if (described.has(key) || untouched.has(plugin.rules)) return undefined;
+  described.add(key);
   return describe(prefix, plugin);
 }
 
@@ -171,6 +181,7 @@ function serializeConfigObject(given, index) {
         {
           ...(locateDeep(plugin) ?? { config: path, index }),
           else: { config: path, index },
+          twin: twinOf(prefix, plugin) || undefined,
           described: describedOnce(prefix, plugin),
         },
       ]),

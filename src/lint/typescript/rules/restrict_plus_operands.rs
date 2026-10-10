@@ -47,7 +47,9 @@ fn is_named_reg_exp(ty: Type) -> bool {
 
 impl RestrictPlusOperands {
     fn report_invalid<'a>(&self, cx: &Cx<'a, Self>, base_node: Expr<'a>, ty: Type<'a>) {
-        cx.report(base_node, INVALID)
+        // tsgolint points at the parentheses too.
+        let place = if cx.language().is_oxlint { base_node.outer_span() } else { base_node.span() };
+        cx.report(place, INVALID)
             .data("type", ty.to_text())
             .data("stringLike", self.string_like.clone());
     }
@@ -146,7 +148,7 @@ impl Rule for RestrictPlusOperands {
     const META: Meta = Meta::typescript("restrict-plus-operands", Kind::Problem)
         .presets(Presets::RECOMMENDED_TYPE_CHECKED.union(Presets::STRICT_TYPE_CHECKED))
         .requires_types();
-    const ON: On = On::new().exprs(&[ExprTag::Binary, ExprTag::Assign]);
+    const ON: On = On::new().enter(NodeTags::new().exprs(&[ExprTag::Binary, ExprTag::Assign]));
     no_state!();
 
     fn new(options: &Options) -> Self {
@@ -182,14 +184,18 @@ impl Rule for RestrictPlusOperands {
     }
 
     fn narrow<'a>(&self, _: &'a File<'a>) -> On {
-        let mut on = On::new().exprs(&[ExprTag::Binary]);
+        let mut kinds = NodeTags::new().exprs(&[ExprTag::Binary]);
         if !self.skip_compound_assignments {
-            on = on.exprs(&[ExprTag::Assign]);
+            kinds = kinds.exprs(&[ExprTag::Assign]);
         }
-        on
+        On::new().enter(kinds)
     }
 
-    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+    // The outer one first, as upstream: a sum that is an operand can be reported twice at one place.
+    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        let Node::Expr(node) = node else {
+            return;
+        };
         match node.tag() {
             ExprTag::Binary => {
                 if let ExprKind::Binary { op: BinOp::Add, left, right } = node.kind() {

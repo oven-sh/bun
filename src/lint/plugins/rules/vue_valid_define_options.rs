@@ -39,9 +39,6 @@ impl Rule for ValidDefineOptions {
             utils::sort::sort_unstable_by_key(&mut identifiers, |it| it.0.span().start);
         }
         for (call_expr, call) in &calls {
-            if calls.len() > 1 {
-                cx.report(call_expr, MULTIPLE);
-            }
             if let Some(type_args) = call.type_args().angle_brackets_span() {
                 cx.report(type_args, TYPE_ARGS);
             }
@@ -69,6 +66,10 @@ impl Rule for ValidDefineOptions {
                     cx.report(ident, REFERENCING_LOCALLY);
                 }
             }
+        }
+        // After all else that is reported at a call.
+        for (call_expr, _) in calls.iter().filter(|_| calls.len() > 1) {
+            cx.report(call_expr, MULTIPLE);
         }
     }
 }

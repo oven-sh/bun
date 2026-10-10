@@ -522,7 +522,7 @@ fn tsgolint_expectation_for_argument<'a>(node: Expr<'a>, call: Call<'a>, index: 
                 };
                 let ty = parameter.get_type_at_location(expression);
                 let ty = match is_rest_parameter_declaration(declaration) {
-                    false => Some(ty).filter(|_| at == index),
+                    false => (at == index).then_some(ty),
                     true if index < at => None,
                     true if ty.is_array_type() => ty.get_type_arguments().first(),
                     true if ty.is_tuple_type() => ty.get_type_arguments().get(index - at),
@@ -535,7 +535,8 @@ fn tsgolint_expectation_for_argument<'a>(node: Expr<'a>, call: Call<'a>, index: 
                     of_parameter = Some((tsgolint_expectation_range(declaration), ty));
                 }
                 if let Some(contextual_type) = contextual_type.filter(|it| *it != ty && accepts_void(*it)) {
-                    of_context = of_context.or(Some((tsgolint_expectation_range(declaration), contextual_type)));
+                    let at = tsgolint_expectation_range(declaration);
+                    of_context = of_context.or(Some((at, contextual_type)));
                 }
             }
         }

@@ -64,6 +64,7 @@ pub struct State<'a> {
 }
 
 type Context<'a> = Cx<'a, EsSyntax>;
+type Bodies<'a> = smallvec::SmallVec<[List<'a, Stmt<'a>>; 4]>;
 
 /// The reserved words of ECMAScript 3.
 const KEYWORDS: [&str; 59] = [
@@ -270,20 +271,16 @@ impl Rule for EsSyntax {
         if active.has(CLASSES) {
             on = on.classes();
         }
-        if any(&[ACCESSOR_PROPERTIES, COMPUTED_PROPERTIES, CLASS_FIELDS, CLASS_STATIC_BLOCK, TEMPLATE_LITERALS]) {
+        let has_templates = any(&[TEMPLATE_LITERALS, MALFORMED_TEMPLATE_LITERALS]);
+        if has_templates || any(&[ACCESSOR_PROPERTIES, COMPUTED_PROPERTIES, CLASS_FIELDS, CLASS_STATIC_BLOCK]) {
             on = on.members();
         }
-        if any(&[
-            ACCESSOR_PROPERTIES,
-            COMPUTED_PROPERTIES,
-            KEYWORD_PROPERTIES,
-            PROPERTY_SHORTHANDS,
-            REST_SPREAD_PROPERTIES,
-            TEMPLATE_LITERALS,
-        ]) {
+        if has_templates
+            || any(&[ACCESSOR_PROPERTIES, COMPUTED_PROPERTIES, KEYWORD_PROPERTIES, PROPERTY_SHORTHANDS, REST_SPREAD_PROPERTIES])
+        {
             on = on.props();
         }
-        if any(&[COMPUTED_PROPERTIES, KEYWORD_PROPERTIES, REST_SPREAD_PROPERTIES, TEMPLATE_LITERALS]) {
+        if has_templates || any(&[COMPUTED_PROPERTIES, KEYWORD_PROPERTIES, REST_SPREAD_PROPERTIES]) {
             on = on.nodes(NodeTags::PAT_PROP);
         }
         if any(&[DESTRUCTURING, TRAILING_COMMAS]) {
@@ -309,7 +306,7 @@ impl Rule for EsSyntax {
         if active.has(SPREAD_ELEMENTS) {
             on = on.exprs(&[ExprTag::Spread]);
         }
-        if any(&[TEMPLATE_LITERALS, MALFORMED_TEMPLATE_LITERALS]) {
+        if has_templates {
             on = on.exprs(&[ExprTag::Template, ExprTag::TaggedTemplate]);
         }
         if active.has(TOP_LEVEL_AWAIT) {
@@ -739,11 +736,15 @@ impl EsSyntax {
 
     /// `` [`a`] ``, which is no expression here.
     fn template_as_key<'a>(&self, key: Option<Key<'a>>, cx: &Context<'a>) {
-        if let Some(key) = key.filter(|it| matches!(it.kind(), KeyKind::ComputedString(_)))
+        if let Some(key) = key
+            && let KeyKind::ComputedString(value) = key.kind()
             && let span = key.inner_span(cx.file())
             && cx.text().get(span.start as usize) == Some(&b'`')
         {
             self.report(cx, TEMPLATE_LITERALS, span);
+            if value.is("null") {
+                self.report(cx, MALFORMED_TEMPLATE_LITERALS, span);
+            }
         }
     }
 
@@ -802,9 +803,10 @@ impl EsSyntax {
         };
         let is_tagged = matches!(e.parent(), Node::Expr(parent) if matches!(parent.kind(), ExprKind::TaggedTemplate(call) if call.template() == Some(e)));
         if !is_tagged {
-            return self.report(cx, TEMPLATE_LITERALS, e.span());
+            self.report(cx, TEMPLATE_LITERALS, e.span());
         }
-        if (0..template.quasi_count()).any(|i| template.cooked(i).is_none()) {
+        // The selector is `TemplateElement[value.cooked=null]`, which compares texts.
+        if (0..template.quasi_count()).any(|i| template.cooked(i).is_none_or(|it| it.is("null"))) {
             self.report(cx, MALFORMED_TEMPLATE_LITERALS, e.span());
         }
     }
@@ -1072,8 +1074,17 @@ impl EsSyntax {
     }
 
     fn modules<'a>(&self, cx: &Context<'a>) {
+        let mut bodies = Bodies::new();
+        bodies.push(cx.file().body());
+        while let Some(body) = bodies.pop() {
+            self.modules_in(cx, body, &mut bodies);
+        }
+    }
+
+    /// `namespaces`: it gets the bodies of those in `body`.
+    fn modules_in<'a>(&self, cx: &Context<'a>, body: List<'a, Stmt<'a>>, namespaces: &mut Bodies<'a>) {
         let literal = |name: Ident<'a>| name.is_string().then(|| name.span());
-        for stmt in cx.file().body() {
+        for stmt in body {
             let mut names: smallvec::SmallVec<[Option<Span>; 4]> = smallvec::SmallVec::new();
             let span = match stmt.kind() {
                 StmtKind::Import(import) => {
@@ -1092,6 +1103,10 @@ impl EsSyntax {
                     Some(stmt.span())
                 }
                 StmtKind::ExportDefault(_) => Some(stmt.span()),
+                StmtKind::Module(module) => {
+                    namespaces.push(module.innermost().body());
+                    stmt.export_span()
+                }
                 _ => stmt.export_span(),
             };
             if let Some(span) = span {

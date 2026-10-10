@@ -87,6 +87,8 @@ fn type_of_key<'a>(
     name: impl FnOnce() -> Type<'a>,
 ) -> Type<'a> {
     match key.map(Key::kind) {
+        // For tsgolint the type at a name in brackets is that of the property too.
+        _ if file.language().is_oxlint => name(),
         Some(KeyKind::Computed(expression)) => expression.ty(),
         // The type of the literal, of which it only matters that it is a primitive.
         Some(KeyKind::ComputedString(_)) => file.type_checker().get_string_type(),
@@ -306,10 +308,10 @@ fn check_object_destructure<'a>(
 }
 
 /// tsgolint's `diagnosticTypeText`
-fn diagnostic_type_text(ty: Type) -> String {
+fn diagnostic_type_text(ty: Type) -> bstr::BString {
     match is_intrinsic_error_type(ty) {
-        true => "error".to_owned(),
-        false => String::from_utf8_lossy(&ty.to_text()).into_owned(),
+        true => bstr::BString::from("error"),
+        false => bstr::BString::from(ty.to_text()),
     }
 }
 
@@ -483,13 +485,15 @@ fn check_property<'a>(cx: &Context<'a>, node: Prop<'a>, value: Expr<'a>) {
             // `getContextualType(checker, key)` is the contextual type of the property if the key
             // is an identifier, and nothing otherwise.
             let receiver_type = || {
+                // tsgolint asks for that of the value, whatever the key is.
                 let contextual_type = match key.map(Key::kind) {
                     Some(KeyKind::Ident(_)) => value.contextual_type(),
+                    _ if file.language().is_oxlint => value.contextual_type(),
                     _ => None,
                 };
                 contextual_type.unwrap_or_else(type_of_name)
             };
-            let target = key.map_or(node.span(), |it| it.span(file));
+            let target = key.map_or_else(|| node.span(), |it| it.span(file));
             check_assignment(cx, &receiver_type, value, node.span(), target, true);
         }
         PropKind::Method | PropKind::Getter | PropKind::Setter => {
@@ -501,7 +505,7 @@ fn check_property<'a>(cx: &Context<'a>, node: Prop<'a>, value: Expr<'a>) {
                     value,
                     node.type_at_location(),
                     node.span(),
-                    key.map_or(node.span(), |it| it.span(file)),
+                    key.map_or_else(|| node.span(), |it| it.span(file)),
                     true,
                 );
             }
@@ -568,7 +572,7 @@ impl NoUnsafeAssignment {
                 node.binding_span(),
                 right,
                 node.span_without_modifiers(),
-                node.ty().map_or(node.pat().span(), |it| it.outer_span()),
+                node.ty().map_or_else(|| node.pat().span(), |it| it.outer_span()),
                 true,
             );
         }
@@ -623,7 +627,7 @@ impl NoUnsafeAssignment {
                 node.binding_span(),
                 init,
                 node.span(),
-                node.ty().map_or(node.pat().span(), |it| it.outer_span()),
+                node.ty().map_or_else(|| node.pat().span(), |it| it.outer_span()),
                 compares,
             );
         }
@@ -674,7 +678,7 @@ impl Rule for NoUnsafeAssignment {
         }
         let file = cx.file();
         let receiver_type = || type_of_key(file, node.key(), || NameOf(node).ty());
-        let name = || node.key().map_or(node.span(), |it| it.span(file));
+        let name = || node.key().map_or_else(|| node.span(), |it| it.span(file));
         let target = node.ty().map_or_else(name, |it| it.outer_span());
         check_assignment(cx, &receiver_type, value, node.span(), target, node.ty().is_some());
     }
@@ -725,7 +729,7 @@ impl Rule for NoUnsafeAssignment {
             && value.jsx_container_span().is_some()
             && !value.is_missing()
         {
-            let target = node.key().map_or(node.span(), |it| it.span(cx.file()));
+            let target = node.key().map_or_else(|| node.span(), |it| it.span(cx.file()));
             check_assignment(cx, &|| NameOf(node).ty(), value, value.span(), target, true);
         }
     }

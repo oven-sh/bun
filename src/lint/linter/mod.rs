@@ -361,7 +361,7 @@ impl<S: RuleSet> Linter<S> {
             let Some(number) = self.instance(rule).map(S::number) else {
                 continue;
             };
-            on.0[number as usize / 64] |= 1 << (number % 64);
+            on.insert(number);
             order.push(Slot {
                 at: at as u32,
                 number,
@@ -677,7 +677,7 @@ impl<S: RuleSet> Linter<S> {
             let mut on = RuleBits::EMPTY;
             for it in enabled.iter().filter(|it| it.severity != Severity::Off) {
                 let number = it.rule.number();
-                on.0[number as usize / 64] |= 1 << (number % 64);
+                on.insert(number);
             }
             let listening = crate::runner::listening::<S>(file, &on);
             for it in &mut enabled {

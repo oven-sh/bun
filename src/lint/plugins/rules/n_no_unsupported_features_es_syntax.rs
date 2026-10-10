@@ -171,8 +171,10 @@ const OUTER: u64 = 0;
 /// For a property, which can be as long as its value.
 const PROPERTY: u64 = 1;
 const NODE: u64 = 2;
-const NODE_EXIT: u64 = 3;
-const PROGRAM_EXIT: u64 = 4;
+/// For a node in what is reported.
+const INNER: u64 = 3;
+const NODE_EXIT: u64 = 4;
+const PROGRAM_EXIT: u64 = 5;
 
 /// The listener that reports `feature`, where it matters: where something else can be reported at the same place.
 const fn listener_of(feature: usize) -> u64 {
@@ -207,6 +209,7 @@ const fn listener_of(feature: usize) -> u64 {
         FUNCTION_DECLARATIONS_IN_IF_STATEMENT_CLAUSES_WITHOUT_BLOCK => listener(NODE, 2, 4),
         INITIALIZERS_IN_FOR_IN => listener(NODE, 3, 3),
         ARBITRARY_MODULE_NAMESPACE_NAMES => listener(NODE, 4, 8),
+        MALFORMED_TEMPLATE_LITERALS => listener(INNER, 0, 0),
         ARROW_FUNCTIONS => listener(NODE_EXIT, 0, 0),
         _ => listener(NODE, 0, 1),
     }
@@ -234,6 +237,7 @@ impl Rule for EsSyntax {
         .exprs(&[ExprTag::Template, ExprTag::TaggedTemplate, ExprTag::Await, ExprTag::Call, ExprTag::New])
         .exprs(&[ExprTag::Dot, ExprTag::Index, ExprTag::PrivateIdentifier, ExprTag::Super, ExprTag::Regex])
         .stmts(&[StmtTag::Var, StmtTag::Fn, StmtTag::ForOf, StmtTag::ForIn, StmtTag::Try])
+        .types(&[TypeTag::StringLit])
         .number_literals()
         .string_literals()
         .finish();
@@ -302,7 +306,7 @@ impl Rule for EsSyntax {
             on = on.exprs(&[ExprTag::Spread]);
         }
         if has_templates {
-            on = on.exprs(&[ExprTag::Template, ExprTag::TaggedTemplate]);
+            on = on.exprs(&[ExprTag::Template, ExprTag::TaggedTemplate]).types(&[TypeTag::StringLit]);
         }
         if active.has(TOP_LEVEL_AWAIT) {
             on = on.exprs(&[ExprTag::Await]);
@@ -427,6 +431,18 @@ impl Rule for EsSyntax {
         }
     }
 
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Context<'a>) {
+        // `` `a` `` is a `TemplateLiteral` as a type too.
+        if let TypeKind::StringLit(value) = ty.kind()
+            && cx.text().get(ty.span().start as usize) == Some(&b'`')
+        {
+            self.report(cx, TEMPLATE_LITERALS, ty.span());
+            if value.is("null") {
+                self.report(cx, MALFORMED_TEMPLATE_LITERALS, ty.span());
+            }
+        }
+    }
+
     fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Context<'a>) {
         if comma_before(cx.file(), pat.span().end - 1).is_some() {
             self.report(cx, TRAILING_COMMAS, utils::estree_span(Node::Pat(pat)));
@@ -474,9 +490,14 @@ impl Rule for EsSyntax {
         }
         let key = member.key();
         let key_span = key.map(|it| it.inner_span(cx.file()));
+        // Of an `accessor` the `#a` alone counts.
+        let is_field = match member.flags().contains(Flags::ACCESSOR) {
+            true => key.is_some_and(Key::is_private),
+            false => !member.flags().contains(Flags::AMBIENT),
+        };
         match member.kind() {
             MemberKind::StaticBlock => self.report(cx, CLASS_STATIC_BLOCK, member.span()),
-            MemberKind::Property if !member.flags().intersects(Flags::AMBIENT | Flags::ACCESSOR) => {
+            MemberKind::Property if is_field => {
                 if let Some(key_span) = key_span {
                     self.report(cx, CLASS_FIELDS, key_span);
                 }
@@ -768,8 +789,11 @@ impl EsSyntax {
         match op {
             Some(BinOp::Pow) => self.report(cx, EXPONENTIAL_OPERATORS, e.span()),
             Some(BinOp::And | BinOp::Or | BinOp::Nullish) => {
-                if let Some(operator) = e.operator_span() {
-                    self.report(cx, LOGICAL_ASSIGNMENT_OPERATORS, operator);
+                // `getTokenAfter(node.left)`: after `(a)` that is the `)`.
+                let after = skip_trivia(cx.text(), target.span().end);
+                let paren = (cx.text().get(after as usize) == Some(&b')')).then(|| Span::new(after, after + 1));
+                if let Some(token) = paren.or_else(|| e.operator_span()) {
+                    self.report(cx, LOGICAL_ASSIGNMENT_OPERATORS, token);
                 }
             }
             None if matches!(target.tag(), ExprTag::Array | ExprTag::Object) && !target.is_parenthesized() && !e.is_assignment_target() => {
@@ -797,8 +821,8 @@ impl EsSyntax {
         let ExprKind::Template(template) = e.kind() else {
             return self.report(cx, TEMPLATE_LITERALS, e.span());
         };
-        let is_tagged = matches!(e.parent(), Node::Expr(parent) if matches!(parent.kind(), ExprKind::TaggedTemplate(call) if call.template() == Some(e)));
-        if !is_tagged {
+        // The selector is `:not(TaggedTemplateExpression) > TemplateLiteral`: nor one that is the tag.
+        if !matches!(e.parent(), Node::Expr(parent) if parent.tag() == ExprTag::TaggedTemplate) {
             self.report(cx, TEMPLATE_LITERALS, e.span());
         }
         // The selector is `TemplateElement[value.cooked=null]`, which compares texts.

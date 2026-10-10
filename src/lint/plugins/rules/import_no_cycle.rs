@@ -303,6 +303,10 @@ impl NoCycle {
         let Some(me) = modules.find(file.path()) else {
             return;
         };
+        // The modules are known by their real paths. Nothing leads back to the name of a link.
+        if modules.path(me) != bun_lint::paths::from_native(file.path()) {
+            return;
+        }
         let requests = requests_of(file, Flavor::Oxlint);
         let mut seen = FxHashSet::default();
         for request in &requests {

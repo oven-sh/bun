@@ -14,7 +14,7 @@ use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::formats::Reason;
 use bun_lint::js_plugin::{Engine, HEAVY, Host, Loading, Route};
-use bun_lint::linter::{FileConfig, LintMessage, Registry, RuleId};
+use bun_lint::linter::{FileConfig, LintMessage, Registry, RuleId, is_parse_error};
 use bun_sema::util::FxHashSet;
 use bun_threading::Guarded;
 use std::io::Write;
@@ -1164,6 +1164,13 @@ impl Run<'_> {
             }),
         }
         results.extend(about_suppressions);
+        // oxlint prints what its parser says, without the words that ESLint puts before it.
+        if is_oxlint {
+            let messages = results.iter_mut().flat_map(|it| &mut it.messages);
+            for message in messages.filter(|it| is_parse_error(it)) {
+                message.message.drain(..b"Parsing error: ".len());
+            }
+        }
         // oxlint's formats print what they print when there is no problem.
         if is_oxlint && options.silent {
             results.clear();

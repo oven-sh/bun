@@ -202,6 +202,9 @@
   "src/lint/plugins/regexp_type_builtins.rs": [
     "dead_code, until every rule of the plugin is written"
   ],
+  "src/lint/plugins/regexp_type_data.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
   "src/lint/react/util_ast.rs": [
     "dead_code, until every rule of the plugin is written"
   ],

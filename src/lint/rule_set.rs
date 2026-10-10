@@ -19,6 +19,11 @@ impl RuleBits {
     pub const EMPTY: RuleBits = RuleBits([0; RuleBits::WORDS]);
 
     #[inline]
+    pub const fn insert(&mut self, rule: u16) {
+        self.0[rule as usize / 64] |= 1 << (rule % 64);
+    }
+
+    #[inline]
     pub const fn has(&self, rule: u16) -> bool {
         self.0[rule as usize / 64] & (1 << (rule % 64)) != 0
     }

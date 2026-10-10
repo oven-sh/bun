@@ -1,5 +1,7 @@
 //! `bun lint` on bytes: every rule that needs neither types nor other files, with its default
-//! options, and with the comments of the text that configure rules.
+//! options, and with the comments of the text that configure rules. Or, with flag 6, with a configuration of
+//! its own: the first line of the text is a configuration object, whose rules are on with its options, alone or
+//! (flag 7) beside all the others.
 
 #![no_main]
 
@@ -9,6 +11,7 @@ use bun_lint::language::{Parser, SourceType};
 use bun_lint::context::Severity;
 use bun_lint::linter::{LintOptions, LintResult, Registry, ResolvedConfig};
 use bun_lint::options::Json;
+use bun_lint::runner::RuleEntry;
 use bun_sema::atom::{Intern, Interner};
 use bun_sema::bind::{BindOptions, Recycled, bind_for_lint_in};
 use bun_sema::session::Session;
@@ -54,6 +57,46 @@ struct Setup {
     configs: Vec<[ResolvedConfig; 4]>,
 }
 
+/// Not by their names: what a name stands for depends on whose configuration it is in.
+fn needs_only_the_file(rule: &RuleEntry) -> bool {
+    !rule.meta.requires_types && !rule.meta.needs_modules
+}
+
+/// Every rule that `config` says nothing of, with its default options.
+fn turn_on_the_rest(linter: &Linter, config: &mut ResolvedConfig) {
+    for &rule in linter.registry().all().iter().filter(|it| needs_only_the_file(it)) {
+        if config.rule(rule).is_none() {
+            config.configure(rule, Severity::Error, &[]);
+        }
+    }
+}
+
+fn set_language(config: &mut ResolvedConfig, variant: usize, is_oxlint: bool) {
+    let (path, parser, source_type) = VARIANTS[variant];
+    // How the comments of a text name rules.
+    config.prefers_typescript_rules = is_oxlint;
+    config.language.parser = parser;
+    config.language.source_type = source_type;
+    config.language.jsx = path.ends_with('x');
+    config.language.is_oxlint = is_oxlint;
+    config.understands_oxlint_comments = is_oxlint;
+}
+
+/// `None`: it is no JSON, the command would stop at it, or it turns on a rule that needs more than the file.
+fn own_config(json: &[u8], variant: usize, is_oxlint: bool, with_the_rest: bool) -> Option<ResolvedConfig> {
+    let linter = &setup().linter;
+    let json = bun_lint::json::parse(json)?;
+    let mut config = ResolvedConfig::from_json(linter.registry(), &json, &mut Vec::new());
+    if config.error.is_some() || !config.configured().all(|it| needs_only_the_file(it.entry)) {
+        return None;
+    }
+    if with_the_rest {
+        turn_on_the_rest(linter, &mut config);
+    }
+    set_language(&mut config, variant, is_oxlint);
+    Some(config)
+}
+
 fn setup() -> &'static Setup {
     static SETUP: OnceLock<Setup> = OnceLock::new();
     SETUP.get_or_init(|| {
@@ -66,28 +109,18 @@ fn setup() -> &'static Setup {
             bun_lint_jest::RULES,
         ];
         let linter = Linter::new(Registry::new(&all));
-        // Not by their names: what a name stands for depends on whose configuration it is in.
-        let rules = || (all.iter().flat_map(|it| it.iter())).filter(|it| !it.meta.requires_types && !it.meta.needs_modules);
-        let configs = VARIANTS.map(|(path, parser, source_type)| {
+        let configs = (0..VARIANTS.len()).map(|variant| {
             [0, 1, 2, 3].map(|which| {
-                let is_oxlint = which & 1 != 0;
                 let json = if which & 2 != 0 { bun_lint::json::parse(SETTINGS) } else { None };
                 let json = json.unwrap_or(Json::Null);
                 let mut config = ResolvedConfig::from_json(linter.registry(), &json, &mut Vec::new());
-                for rule in rules() {
-                    config.configure(rule, Severity::Error, &[]);
-                }
-                // How the comments of a text name rules.
-                config.prefers_typescript_rules = is_oxlint;
-                config.language.parser = parser;
-                config.language.source_type = source_type;
-                config.language.jsx = path.ends_with('x');
-                config.language.is_oxlint = is_oxlint;
-                config.understands_oxlint_comments = is_oxlint;
+                turn_on_the_rest(&linter, &mut config);
+                set_language(&mut config, variant, which & 1 != 0);
                 config
             })
         });
-        Setup { linter, configs: configs.into() }
+        let configs: Vec<_> = configs.collect();
+        Setup { linter, configs }
     })
 }
 
@@ -132,7 +165,22 @@ fn run(data: &[u8]) {
     };
     let which = input.variant as usize % VARIANTS.len();
     let (path, parser, source_type) = VARIANTS[which];
-    let config = &setup().configs[which][usize::from(input.has(0)) + 2 * usize::from(input.has(5))];
+    let mut run = Run::new(data);
+    let mut text = input.text;
+    let own;
+    let config = if input.has(6) {
+        let end = text.iter().position(|&it| it == b'\n').unwrap_or(text.len());
+        run.how = format!("the configuration {}", String::from_utf8_lossy(&text[..end]));
+        let made = run.guarded(|| own_config(&text[..end], which, input.has(0), input.has(7)));
+        let Some(made) = made.flatten() else {
+            return;
+        };
+        own = made;
+        text = text.get(end + 1..).unwrap_or_default();
+        &own
+    } else {
+        &setup().configs[which][usize::from(input.has(0)) + 2 * usize::from(input.has(5))]
+    };
     let fixes = input.has(1);
     let options = LintOptions {
         allow_inline_config: !input.has(2),
@@ -140,11 +188,12 @@ fn run(data: &[u8]) {
         wants_suppressions: input.has(4),
         ..LintOptions::default()
     };
-    let mut run = Run::new(data);
     run.how = format!(
-        "{path} {parser:?} {source_type:?} oxlint={} settings={} fix={fixes} inline={} fixes={} suppressions={}",
+        "{path} {parser:?} {source_type:?} oxlint={} settings={} own={} rest={} fix={fixes} inline={} fixes={} suppressions={}",
         input.has(0),
         input.has(5),
+        input.has(6),
+        input.has(7),
         options.allow_inline_config,
         options.wants_fixes,
         options.wants_suppressions
@@ -152,8 +201,11 @@ fn run(data: &[u8]) {
     if shows() {
         show(&run.how, input.text);
     }
+    if shows() && input.has(6) {
+        show("rules that are configured", config.configured().count().to_string().as_bytes());
+    }
     let too_deep = || LintResult::default();
-    let Some(first) = run.guarded(|| lint(path.as_bytes(), input.text, config, &options)) else {
+    let Some(first) = run.guarded(|| lint(path.as_bytes(), text, config, &options)) else {
         return;
     };
     if shows() {
@@ -165,7 +217,7 @@ fn run(data: &[u8]) {
     };
     drop(first);
     let fixed = run.guarded(|| {
-        bun_lint::linter::verify_and_fix(input.text, &|_| true, &mut |text| {
+        bun_lint::linter::verify_and_fix(text, &|_| true, &mut |text| {
             lint(path.as_bytes(), text, config, &options).unwrap_or_else(too_deep)
         })
     });
@@ -177,7 +229,7 @@ fn run(data: &[u8]) {
             let size = data.len().max(1).ilog2();
             run.report("fix-breaks-the-syntax", &format!("{path}-{parser:?}-2e{size}"), "");
         }
-        if str::from_utf8(input.text).is_ok() && str::from_utf8(&fixed.output).is_err() {
+        if str::from_utf8(text).is_ok() && str::from_utf8(&fixed.output).is_err() {
             run.report("not-utf8", path, "");
         }
     }

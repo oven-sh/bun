@@ -155,12 +155,21 @@ for (const [name, text] of readBundle(join(import.meta.dir, "../../../../lint/co
     const hasOptions = Array.isArray(it.options) && it.options.length > 0;
     if (typeof it.code != "string" || (at++ % 8 && !hasOptions)) continue;
     const isTypeScript = name.includes("typescript-eslint/");
+    const { plugin, rule } = fixture;
+    const id = plugin == "eslint" ? rule : `${plugin == "typescript-eslint" ? "@typescript-eslint" : plugin}/${rule}`;
+    const code = it.code;
     if (hasOptions) {
-      const { plugin, rule } = fixture;
-      const id = plugin == "eslint" ? rule : `${plugin == "typescript-eslint" ? "@typescript-eslint" : plugin}/${rule}`;
       it.code = `/* eslint ${id}: ${JSON.stringify([2, ...it.options]).replaceAll("*/", "*\\/")} */\n${it.code}`;
     }
-    write("lint", isTypeScript ? (it.code.includes("</") ? 5 : 4) : it.code.includes("</") ? 3 : 0, 0, Buffer.from(it.code));
+    const variant = isTypeScript ? (it.code.includes("</") ? 5 : 4) : it.code.includes("</") ? 3 : 0;
+    write("lint", variant, 0, Buffer.from(it.code));
+    // The same as a configuration of its own (flag 6), alone and beside all other rules (flag 7).
+    if (hasOptions) {
+      const config = { rules: { [id]: [2, ...it.options] }, settings: it.settings, languageOptions: it.languageOptions };
+      const text = Buffer.from(`${JSON.stringify(config)}\n${code}`);
+      write("lint", variant, 0, text, 1 << 6);
+      if (at % 4 == 0) write("lint", variant, 0, text, (1 << 6) | (1 << 7));
+    }
   }
 }
 console.log(Object.fromEntries(counts));

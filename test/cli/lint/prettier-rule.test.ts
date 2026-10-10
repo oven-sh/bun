@@ -265,6 +265,37 @@ describe.concurrent("prettier/prettier", () => {
     expect(stderr).not.toContain("ran in JavaScript");
   });
 
+  // A project that is half way from one major version of the plugin to the next.
+  test("of two plugins under the one name each file has its own", async () => {
+    const copy = (directory: string, version: string) => ({
+      [`${directory}/node_modules/prettier/package.json`]: JSON.stringify({ name: "prettier", version: "3.9.9" }),
+      [`${directory}/node_modules/eslint-plugin-prettier/package.json`]: JSON.stringify({
+        name: "eslint-plugin-prettier",
+        version,
+        main: "index.js",
+      }),
+      [`${directory}/node_modules/eslint-plugin-prettier/index.js`]: `module.exports = { meta: { name: "eslint-plugin-prettier", version: "${version}" }, rules: { prettier: ${theirs} } };`,
+      [`${directory}/plugin.mjs`]: `export { default } from "eslint-plugin-prettier";`,
+      [`${directory}/a.js`]: "const a = {b:1}\n",
+    });
+    const files = {
+      ...copy("x", "5.5.6"),
+      ...copy("y", "4.2.1"),
+      "eslint.config.mjs": `import x from "./x/plugin.mjs";
+        import y from "./y/plugin.mjs";
+        export default [
+          { ignores: ["eslint.config.mjs", "**/plugin.mjs"] },
+          { files: ["x/**"], plugins: { prettier: x }, rules: { "prettier/prettier": "error" } },
+          { files: ["y/**"], plugins: { prettier: y }, rules: { "prettier/prettier": "error" } },
+        ];`,
+    };
+    const [{ reports }, { stderr }] = await Promise.all([lint(files), run(files, "-f", "stylish")]);
+    expect(reports).toEqual({ "x/a.js": expected["git.js"], "y/a.js": ["theirs"] });
+    expect(stderr.split("\n")).toContain(
+      "note: prettier/prettier ran in JavaScript for 1 file: the eslint-plugin-prettier that is installed is not 5.",
+    );
+  });
+
   // It is `bun format`, which also leaves alone what `.gitignore` names. The comment in off.js is for the other rule.
   test("bun/format reports the same, and nothing has to be installed", async () => {
     const own = (text: string) => text.replaceAll("prettier/prettier", "bun/format");

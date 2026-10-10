@@ -198,7 +198,7 @@ describe.concurrent("bun lint", () => {
     expect(
       stdout
         .split("\n")
-        .filter(line => / Parsing error: /.test(line))
+        .filter(line => line.endsWith(" [Error]"))
         .map(line => line.match(/a\d+\.js/)?.[0]),
     ).toEqual(Object.keys(files).sort());
     expect(exitCode).toBe(1);
@@ -739,7 +739,7 @@ describe.concurrent("bun lint", () => {
         ["a.js", "a = /a/gg;"],
       ])("what OXC refuses is a parsing error: %s: %j", async (name, code) => {
         const { stdout, exitCode } = await lint({ ".oxlintrc.json": quiet, [name]: code + "\n" }, ["-f", "unix"]);
-        expect(stdout).toContain(": Parsing error: ");
+        expect(stdout).toMatch(/^a\.[jt]s:\d+:\d+: (?!Parsing error).* \[Error\]$/m);
         expect(exitCode).toBe(1);
       });
 
@@ -758,7 +758,7 @@ describe.concurrent("bun lint", () => {
         ["a.ts", "declare function f(a: number, a: number): void;\nexport {};", "a.ts:1:20"],
       ])("what OXC refuses is a parsing error: a name that two parameters bind: %s: %j", async (name, code, place) => {
         const { stdout, exitCode } = await lint({ ".oxlintrc.json": quiet, [name]: code + "\n" }, ["-f", "unix"]);
-        expect(stdout).toContain(`${place}: Parsing error: Identifier`);
+        expect(stdout).toContain(`${place}: Identifier`);
         expect(exitCode).toBe(1);
       });
 
@@ -786,7 +786,7 @@ describe.concurrent("bun lint", () => {
         ["a.js", "for (const a of b);"],
       ])("what OXC takes is linted: %s: %j", async (name, code) => {
         const { stdout, exitCode } = await lint({ ".oxlintrc.json": quiet, [name]: code + "\n" }, ["-f", "unix"]);
-        expect(stdout).not.toContain("Parsing error");
+        expect(stdout).not.toContain("[Error]");
         expect(exitCode).toBe(0);
       });
 

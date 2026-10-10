@@ -1870,15 +1870,26 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
             // A pattern, which starts JavaScriptCore before any engine does.
             export default [{ files: ["src/*"], plugins: { own }, rules: { "own/grows": "error", "id-match": ["error", "^[a-z]+$"] } }];`,
           "plugin.mjs": `
+            import { randomUUID } from "node:crypto";
+            import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
             const kept = [];
-            let files = 0;
+            let isNoted = false;
             const grows = {
               create: context => ({
                 Program(node) {
-                  // It takes its time, so that more than one engine pays, and begins to grow when these have started.
+                  if (!isNoted) {
+                    isNoted = true;
+                    mkdirSync("engines", { recursive: true });
+                    writeFileSync("engines/" + randomUUID(), "");
+                  }
+                  // It takes its time, so that more than one engine pays.
                   let sum = 0;
-                  for (let i = 0; i < 3e7; i++) sum += i % 7;
-                  if (++files > 8 && kept.length < 10) kept.push(new Uint8Array(16 << 20).fill(sum % 5));
+                  for (let i = 0; i < 1e7; i++) sum += i % 7;
+                  // Nothing foresees it: as long as there is one engine it does not grow at all. From the second on each keeps
+                  // 64 MB for every file, until the process is well over what is for the engines.
+                  if (readdirSync("engines").length > 1 && process.memoryUsage.rss() < 1100 << 20) {
+                    kept.push(new Uint8Array(64 << 20).fill(sum % 5));
+                  }
                   context.report({ node, message: "seen" });
                 },
               }),
@@ -1887,7 +1898,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         };
         const text = `foo;\n/*${Buffer.alloc(250_000, "x")}*/\n`;
         for (let i = 0; i < count; i++) files[`src/${i}.js`] = text;
-        // Half of it is for the engines, of which each grows by 160 MB.
+        // Half of it is planned for the engines, and above three quarters one is freed.
         const variables = { BUN_LINT_MEMORY: String(1 << 30) };
         const { raw, stderr, exitCode } = await lint(
           files,
@@ -1900,9 +1911,9 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         return { seen, freed: Number(/, freed to stay in the memory: (\d+)/.exec(stderr)?.[1] ?? 0) };
       };
       const more = Math.max(40, availableParallelism() + 1);
-      const [one, some, many] = await Promise.all([run(1, "8"), run(160, "8"), run(more, "0")]);
+      const [one, some, many] = await Promise.all([run(1, "8"), run(96, "8"), run(more, "0")]);
       expect(one).toEqual({ seen: 1, freed: 0 });
-      expect([some.seen, many.seen]).toEqual([160, more]);
+      expect([some.seen, many.seen]).toEqual([96, more]);
       expect(some.freed).toBeGreaterThan(0);
     },
     timeout,

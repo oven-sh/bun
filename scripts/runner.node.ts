@@ -29,7 +29,7 @@ import {
 } from "node:fs";
 import { readFile } from "node:fs/promises";
 import type { Socket } from "node:net";
-import { availableParallelism, userInfo } from "node:os";
+import { availableParallelism } from "node:os";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as setTimeoutPromise } from "node:timers/promises";
@@ -62,6 +62,7 @@ import {
   getFileUrl,
   getPullRequestFiles,
   getSecret,
+  getUser,
   isBuildkite,
   isCI,
   isGithubAction,
@@ -1023,7 +1024,14 @@ async function runTests(): Promise<TestResult[]> {
       const absoluteTestPath = join(testsPath, testPath);
       const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
       if (isNodeTest(testPath)) {
-        const testContent = readFileSync(absoluteTestPath, "utf-8");
+        let testContent = "";
+        try {
+          testContent = readFileSync(absoluteTestPath, "utf-8");
+        } catch (error) {
+          // Gone since the tests were listed. The step below fails on it, as it
+          // does for any other test file, instead of this throw ending the run.
+          if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
+        }
         const flagsMatch = /^\/\/ Flags:[^\S\r\n]+(--[^\r\n]*)$/m.exec(testContent);
         const testFlags = flagsMatch
           ? // The group of the pattern is not optional, and split() returns at least one element.
@@ -1964,7 +1972,7 @@ async function spawnBun(
 ): Promise<SpawnBunResult> {
   const path = getCombinedPath(execPath);
   const tmpdirPath = mkdtempSync(join(tmpdir(), "buntmp-"));
-  const { username, homedir } = userInfo();
+  const { username, homedir } = getUser();
   const shellPath = getShell();
   const bunEnv: SpawnEnv = {
     ...process.env,

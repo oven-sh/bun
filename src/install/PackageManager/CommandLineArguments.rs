@@ -4,6 +4,7 @@
 //! - bun update
 //! - bun patch
 //! - bun patch-commit
+//! - bun patch-remove
 //! - bun pm
 //! - bun add
 //! - bun remove
@@ -332,6 +333,13 @@ static PATCH_COMMIT_PARAMS: &[ParamType] = concat_params![
         clap::param!("<POS> ...                         \"dir\" containing changes to a package"),
         clap::param!("--patches-dir <dir>                    The directory to put the patch file"),
     ]
+];
+
+static PATCH_REMOVE_PARAMS: &[ParamType] = concat_params![
+    SHARED_PARAMS,
+    &[clap::param!(
+        "<POS> ...                         \"name\" of the patched package"
+    ),]
 ];
 
 static OUTDATED_PARAMS: &[ParamType] = concat_params![
@@ -885,6 +893,31 @@ Full documentation is available at <magenta>https://bun.com/docs/install/patch<r
                 pretty_help(outro_text);
                 Output::flush();
             }
+            Subcommand::PatchRemove => {
+                let intro_text = r#"
+<b>Usage<r>: <b><green>bun patch-remove<r> <cyan>[flags or options]<r> <blue>\<package\><r><d>@\<version\><r>
+
+  Remove a patch: deletes the patch file, the "patchedDependencies" entry in package.json, and reinstalls the package unpatched.
+
+<b>Flags:<r>"#;
+
+                let outro_text = r"
+
+<b>Examples:<r>
+  <d>Remove the patch for jquery (when only one version is patched)<r>
+  <b><green>bun patch-remove jquery<r>
+
+  <d>Remove the patch for a specific version of jquery<r>
+  <b><green>bun patch-remove jquery@17.0.2<r>
+
+Full documentation is available at <magenta>https://bun.com/docs/cli/patch<r>.
+";
+
+                pretty_help(intro_text);
+                clap::simple_help(PATCH_REMOVE_PARAMS);
+                pretty_help(outro_text);
+                Output::flush();
+            }
             Subcommand::Pm => {
                 PackageManagerCommand::print_help();
             }
@@ -1241,6 +1274,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             Subcommand::Unlink => UNLINK_PARAMS,
             Subcommand::Patch => PATCH_PARAMS,
             Subcommand::PatchCommit => PATCH_COMMIT_PARAMS,
+            Subcommand::PatchRemove => PATCH_REMOVE_PARAMS,
             Subcommand::Outdated => OUTDATED_PARAMS,
             Subcommand::Pack => PACK_PARAMS,
             Subcommand::Publish => PUBLISH_PARAMS,
@@ -1698,6 +1732,15 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                 (),
             );
             bun_core::note!("Run 'bun patch-commit --help' for more information");
+            Global::crash();
+        }
+
+        if subcommand == Subcommand::PatchRemove && cli.positionals.len() < 2 {
+            Output::err_generic(
+                "Missing package name to remove the patch for.\n  <d>Usage:<r> bun patch-remove <cyan>\\<package\\><r><d>[@\\<version\\>]<r>",
+                (),
+            );
+            bun_core::note!("Run 'bun patch-remove --help' for more information");
             Global::crash();
         }
 

@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { lstatSync, readFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
+import { existsSync, lstatSync, readFileSync } from "fs";
+import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry, type DirectoryTree } from "harness";
 import { isAbsolute, join, sep } from "path";
 
 const expectNoError = (o: $.ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
@@ -62,6 +62,40 @@ describe("error messages", () => {
     expect(stderr).toContain("Missing path to the package directory");
     expect(stderr).toContain("bun patch-commit node_modules/<package>");
     expect(stderr).toContain("bun patch-commit --help");
+    expect(exitCode).toBe(1);
+  });
+
+  test("'bun patch-remove' with no package name shows a usage example", async () => {
+    await using dir = tempDir("bun-patch-remove-noarg", {
+      "package.json": JSON.stringify({ name: "t" }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "patch-remove"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Missing package name to remove the patch for");
+    expect(stderr).toContain("bun patch-remove <package>");
+    expect(stderr).toContain("bun patch-remove --help");
+    expect(exitCode).toBe(1);
+  });
+
+  test("'bun patch-remove' with no patchedDependencies shows an error", async () => {
+    await using dir = tempDir("bun-patch-remove-none", {
+      "package.json": JSON.stringify({ name: "t", dependencies: { bar: "0.0.7" } }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "patch-remove", "bar"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('package.json has no "patchedDependencies"');
     expect(exitCode).toBe(1);
   });
 });
@@ -1232,5 +1266,217 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
     // name-only argument exercises the name-and-version lookup path
     const patchKey = await expectPatchFlowWorks(String(dir), env, "pkg-to-patch");
     expect(patchKey).toBe("pkg-to-patch@./dep.tgz");
+  });
+});
+
+describe("bun patch-remove", async () => {
+  const registry = new VerdaccioRegistry();
+
+  beforeAll(async () => {
+    await registry.start();
+  });
+
+  afterAll(() => {
+    registry.stop();
+  });
+
+  async function createProject(files: DirectoryTree) {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files,
+    });
+    return packageDir;
+  }
+
+  // CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`
+  async function runBun(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    return { stdout, stderr, exitCode };
+  }
+
+  async function install(cwd: string) {
+    const { stderr, exitCode } = await runBun(cwd, "install");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+
+  async function patchPackage(cwd: string, name: string, dirForEdits?: string) {
+    const prep = await runBun(cwd, "patch", name);
+    expect(prep.stderr).not.toContain("error:");
+    expect(prep.exitCode).toBe(0);
+    await Bun.write(
+      join(dirForEdits ?? cwd, "node_modules", name, "index.js"),
+      "module.exports = 'patched';\n",
+    );
+    const commit = await runBun(cwd, "patch", "--commit", `node_modules/${name}`);
+    expect(commit.stderr).not.toContain("error:");
+    expect(commit.exitCode).toBe(0);
+  }
+
+  async function readPackageJson(cwd: string) {
+    return JSON.parse(await Bun.file(join(cwd, "package.json")).text());
+  }
+
+  test.concurrent("removes the patch file, the patchedDependencies field, and the patches dir", async () => {
+    const packageDir = await createProject({
+      "package.json": JSON.stringify({ name: "foo", dependencies: { bar: "0.0.7" } }),
+    });
+    await install(packageDir);
+    await patchPackage(packageDir, "bar");
+
+    expect((await readPackageJson(packageDir)).patchedDependencies).toEqual({
+      "bar@0.0.7": "patches/bar@0.0.7.patch",
+    });
+
+    const { stdout, stderr, exitCode } = await runBun(packageDir, "patch-remove", "bar");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("Removed patch bar@0.0.7");
+
+    // the field is gone entirely once the last patch is removed
+    expect((await readPackageJson(packageDir)).patchedDependencies).toBeUndefined();
+    // the patch file and the now-empty patches dir are gone
+    expect(await Bun.file(join(packageDir, "patches", "bar@0.0.7.patch")).exists()).toBe(false);
+    expect(existsSync(join(packageDir, "patches"))).toBe(false);
+    // node_modules is restored to the unpatched package
+    expect(await Bun.file(join(packageDir, "node_modules", "bar", "index.js")).text()).not.toContain(
+      "patched",
+    );
+    // the lockfile no longer records the patch
+    expect(await Bun.file(join(packageDir, "bun.lock")).text()).not.toContain("patchedDependencies");
+  });
+
+  test.concurrent("accepts name@version", async () => {
+    const packageDir = await createProject({
+      "package.json": JSON.stringify({ name: "foo", dependencies: { bar: "0.0.7" } }),
+    });
+    await install(packageDir);
+    await patchPackage(packageDir, "bar");
+
+    const { stdout, stderr, exitCode } = await runBun(packageDir, "patch-remove", "bar@0.0.7");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("Removed patch bar@0.0.7");
+    expect((await readPackageJson(packageDir)).patchedDependencies).toBeUndefined();
+  });
+
+  test.concurrent("keeps the other patches and the patches dir", async () => {
+    const packageDir = await createProject({
+      "package.json": JSON.stringify({
+        name: "foo",
+        dependencies: { bar: "0.0.7", "no-deps": "1.0.0" },
+      }),
+    });
+    await install(packageDir);
+    await patchPackage(packageDir, "bar");
+    await patchPackage(packageDir, "no-deps");
+
+    expect((await readPackageJson(packageDir)).patchedDependencies).toEqual({
+      "bar@0.0.7": "patches/bar@0.0.7.patch",
+      "no-deps@1.0.0": "patches/no-deps@1.0.0.patch",
+    });
+
+    const { stderr, exitCode } = await runBun(packageDir, "patch-remove", "bar");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    expect((await readPackageJson(packageDir)).patchedDependencies).toEqual({
+      "no-deps@1.0.0": "patches/no-deps@1.0.0.patch",
+    });
+    expect(await Bun.file(join(packageDir, "patches", "bar@0.0.7.patch")).exists()).toBe(false);
+    expect(await Bun.file(join(packageDir, "patches", "no-deps@1.0.0.patch")).exists()).toBe(true);
+    expect(existsSync(join(packageDir, "patches"))).toBe(true);
+    expect(await Bun.file(join(packageDir, "node_modules", "bar", "index.js")).text()).not.toContain(
+      "patched",
+    );
+    expect(await Bun.file(join(packageDir, "node_modules", "no-deps", "index.js")).text()).toContain(
+      "patched",
+    );
+  });
+
+  test.concurrent("errors when no patch exists for the package", async () => {
+    const packageDir = await createProject({
+      "package.json": JSON.stringify({ name: "foo", dependencies: { bar: "0.0.7" } }),
+    });
+    await install(packageDir);
+
+    const { stderr, exitCode } = await runBun(packageDir, "patch-remove", "bar");
+    expect(stderr).toContain('no patch found for "bar"');
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("errors when multiple patched versions exist", async () => {
+    const packageDir = await createProject({
+      "package.json": JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0" } }),
+    });
+    await install(packageDir);
+    await patchPackage(packageDir, "no-deps");
+
+    // hand-write a second patched version so the name alone is ambiguous
+    const pkg = await readPackageJson(packageDir);
+    pkg.patchedDependencies["no-deps@2.0.0"] = "patches/no-deps@2.0.0.patch";
+    await Bun.write(join(packageDir, "package.json"), JSON.stringify(pkg, null, 2));
+    await Bun.write(join(packageDir, "patches", "no-deps@2.0.0.patch"), "");
+
+    const { stderr, exitCode } = await runBun(packageDir, "patch-remove", "no-deps");
+    expect(stderr).toContain("Found multiple patches for no-deps");
+    expect(stderr).toContain("no-deps@1.0.0");
+    expect(stderr).toContain("no-deps@2.0.0");
+    expect(exitCode).toBe(1);
+    // nothing was removed
+    expect((await readPackageJson(packageDir)).patchedDependencies["no-deps@1.0.0"]).toBe(
+      "patches/no-deps@1.0.0.patch",
+    );
+  });
+
+  test("from a workspace package edits the root package.json", async () => {
+    const packageDir = await createProject({
+      "package.json": JSON.stringify({
+        name: "root",
+        private: true,
+        workspaces: ["packages/*"],
+      }),
+      packages: {
+        server: {
+          "package.json": JSON.stringify({
+            name: "server",
+            version: "1.0.0",
+            dependencies: { bar: "0.0.7" },
+          }),
+        },
+      },
+    });
+    const subdir = join(packageDir, "packages", "server");
+    await install(subdir);
+    await patchPackage(subdir, "bar", packageDir);
+
+    expect((await readPackageJson(packageDir)).patchedDependencies).toEqual({
+      "bar@0.0.7": "patches/bar@0.0.7.patch",
+    });
+    // the workspace package's own package.json is untouched
+    expect((await readPackageJson(subdir)).patchedDependencies).toBeUndefined();
+
+    const { stdout, stderr, exitCode } = await runBun(subdir, "patch-remove", "bar");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("Removed patch bar@0.0.7");
+
+    expect((await readPackageJson(packageDir)).patchedDependencies).toBeUndefined();
+    expect(await Bun.file(join(packageDir, "patches", "bar@0.0.7.patch")).exists()).toBe(false);
+    expect(existsSync(join(packageDir, "patches"))).toBe(false);
+    expect(
+      await Bun.file(join(packageDir, "node_modules", "bar", "index.js")).text(),
+    ).not.toContain("patched");
   });
 });

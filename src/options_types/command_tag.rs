@@ -38,6 +38,7 @@ pub enum Tag {
     ExecCommand,
     PatchCommand,
     PatchCommitCommand,
+    PatchRemoveCommand,
     OutdatedCommand,
     UpdateInteractiveCommand,
     PublishCommand,
@@ -81,6 +82,7 @@ impl Tag {
             Tag::ExecCommand => b'e',
             Tag::PatchCommand => b'x',
             Tag::PatchCommitCommand => b'z',
+            Tag::PatchRemoveCommand => b'X',
             Tag::OutdatedCommand => b'o',
             Tag::UpdateInteractiveCommand => b'q',
             Tag::PublishCommand => b'k',
@@ -103,6 +105,7 @@ impl Tag {
                 | Tag::UpdateCommand
                 | Tag::PatchCommand
                 | Tag::PatchCommitCommand
+                | Tag::PatchRemoveCommand
                 | Tag::OutdatedCommand
                 | Tag::PublishCommand
                 | Tag::AuditCommand
@@ -124,6 +127,7 @@ impl Tag {
                 | Tag::UpdateCommand
                 | Tag::PatchCommand
                 | Tag::PatchCommitCommand
+                | Tag::PatchRemoveCommand
                 | Tag::OutdatedCommand
                 | Tag::PublishCommand
                 | Tag::AuditCommand
@@ -167,6 +171,7 @@ impl Tag {
         Self::ExecCommand,
         Self::PatchCommand,
         Self::PatchCommitCommand,
+        Self::PatchRemoveCommand,
         Self::OutdatedCommand,
         Self::UpdateInteractiveCommand,
         Self::PublishCommand,
@@ -222,6 +227,7 @@ pub static LOADS_CONFIG: TagTable<bool> = TagTable({
     a[Tag::UpdateCommand as usize] = true;
     a[Tag::PatchCommand as usize] = true;
     a[Tag::PatchCommitCommand as usize] = true;
+    a[Tag::PatchRemoveCommand as usize] = true;
     a[Tag::PackageManagerCommand as usize] = true;
     a[Tag::BunxCommand as usize] = true;
     a[Tag::AutoCommand as usize] = true;
@@ -246,6 +252,7 @@ pub static ALWAYS_LOADS_CONFIG: TagTable<bool> = TagTable({
     a[Tag::UpdateCommand as usize] = true;
     a[Tag::PatchCommand as usize] = true;
     a[Tag::PatchCommitCommand as usize] = true;
+    a[Tag::PatchRemoveCommand as usize] = true;
     a[Tag::PackageManagerCommand as usize] = true;
     a[Tag::BunxCommand as usize] = true;
     a[Tag::OutdatedCommand as usize] = true;
@@ -274,6 +281,7 @@ pub static USES_GLOBAL_OPTIONS: TagTable<bool> = TagTable({
     a[Tag::PackageManagerCommand as usize] = false;
     a[Tag::PatchCommand as usize] = false;
     a[Tag::PatchCommitCommand as usize] = false;
+    a[Tag::PatchRemoveCommand as usize] = false;
     a[Tag::PublishCommand as usize] = false;
     a[Tag::RemoveCommand as usize] = false;
     a[Tag::UnlinkCommand as usize] = false;

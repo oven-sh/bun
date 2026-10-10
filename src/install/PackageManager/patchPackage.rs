@@ -25,6 +25,7 @@ use crate::{
     BuntagHashBuf, DependencyID, Features, PackageID, Resolution, buntaghashbuf_make,
     initialize_store, invalid_package_id,
 };
+use bun_collections::VecExt;
 
 #[inline]
 fn string_hash(s: &[u8]) -> u64 {
@@ -605,6 +606,207 @@ pub fn do_patch_commit(
         patchfile_path,
         not_in_workspace_root,
     }))
+}
+
+pub struct PatchRemoveResult {
+    pub(crate) patch_keys: Box<[Box<[u8]>]>,
+    pub(crate) not_in_workspace_root: bool,
+}
+
+/// - Arg is name and possibly version (e.g. "is-even" or "is-even@1.0.0")
+/// - Match each argument against "patchedDependencies" keys in the root package.json
+/// - Delete the patch file for every match, then the patches directory once it is empty
+/// - The caller removes the matched entries from package.json and reinstalls,
+///   which reinstalls each package unpatched
+pub fn do_patch_remove(manager: &mut PackageManager, log_level: LogLevel) -> PatchRemoveResult {
+    let root_dir = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    // `patchedDependencies` only lives in the root package.json; when the
+    // command runs inside a workspace package, the caller must edit the root
+    // manifest instead of the one resolved from cwd.
+    // SAFETY: `ROOT_PACKAGE_JSON_PATH` is written once during
+    // `PackageManager::init` on this thread; only read thereafter.
+    let not_in_workspace_root = !strings::eql_long(
+        manager.original_package_json_path.as_bytes(),
+        unsafe { super::ROOT_PACKAGE_JSON_PATH.read() }.as_bytes(),
+        true,
+    );
+
+    let root_package_json_path =
+        resolve_path::join_z::<platform::Auto>(&[root_dir, b"package.json"]);
+    let root_package_json_source: bun_ast::Source =
+        match bun_ast::to_source(root_package_json_path, Default::default()) {
+            Ok(s) => s,
+            Err(e) => {
+                Output::err(
+                    e,
+                    "failed to read {f}",
+                    (bun_fmt::quote(root_package_json_path.as_bytes()),),
+                );
+                Global::crash();
+            }
+        };
+
+    initialize_store();
+    let log = manager.log_mut();
+    let parsed = match JSON::ParsedJson::parse_package_json(&root_package_json_source, log) {
+        Ok(p) => p,
+        Err(err) => {
+            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            bun_core::pretty_errorln!(
+                "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
+                err.name(),
+                bstr::BStr::new(root_package_json_source.path.pretty_dir()),
+            );
+            Global::crash();
+        }
+    };
+    let json = parsed.root;
+
+    // (key, patchfile path) pairs copied out of the AST so no borrow of it is
+    // held across the matching loop
+    let entries: Vec<(Box<[u8]>, Box<[u8]>)> = 'entries: {
+        let Some(query) = json.get(b"patchedDependencies") else {
+            bun_core::pretty_error!(
+                "<r><red>error<r>: package.json has no \"patchedDependencies\", so there is nothing to remove<r>\n",
+            );
+            Output::flush();
+            Global::crash();
+        };
+        let bun_ast::ExprData::EObject(obj) = &query.data else {
+            bun_core::pretty_error!(
+                "<r><red>error<r>: \"patchedDependencies\" in package.json must be an object<r>\n",
+            );
+            Output::flush();
+            Global::crash();
+        };
+        let mut entries = Vec::with_capacity(obj.properties.len_u32() as usize);
+        for property in obj.properties.slice() {
+            let Some(key) = property.key.and_then(|key| key.data.e_string()) else {
+                continue;
+            };
+            let Some(value) = property.value else {
+                continue;
+            };
+            let bun_ast::ExprData::EString(s) = &value.data else {
+                continue;
+            };
+            entries.push((Box::from(key.data.slice()), Box::from(s.data.slice())));
+        }
+        break 'entries entries;
+    };
+
+    // Resolve every argument before touching the filesystem so a typo in one
+    // argument cannot leave earlier entries already removed
+    let positionals: &'static [&'static [u8]] = manager.options.positionals;
+    let mut patch_keys: Vec<Box<[u8]>> = Vec::with_capacity(positionals.len() - 1);
+    let mut patchfile_paths: Vec<Box<[u8]>> = Vec::with_capacity(positionals.len() - 1);
+    for argument in &positionals[1..] {
+        let (name, version) = Dependency::split_name_and_maybe_version(argument);
+        let matched: Vec<usize> = entries
+            .iter()
+            .enumerate()
+            .filter(|(_, (key, _))| {
+                let (key_name, key_version) = Dependency::split_name_and_maybe_version(key);
+                key_name == name && version.is_none_or(|v| key_version == Some(v))
+            })
+            .map(|(i, _)| i)
+            .collect();
+
+        match matched.len() {
+            0 => {
+                bun_core::pretty_error!(
+                    "<r><red>error<r>: no patch found for <b>{}<r> in \"patchedDependencies\"<r>\n",
+                    bstr::BStr::new(argument),
+                );
+                Output::flush();
+                Global::crash();
+            }
+            1 => {}
+            _ => {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r>: Found multiple patches for <b>{}<r>, please specify a precise version from the following list:<r>",
+                    bstr::BStr::new(name),
+                );
+                for i in &matched {
+                    bun_core::pretty!("  {}<r>\n", bstr::BStr::new(&entries[*i].0));
+                }
+                Output::flush();
+                Global::crash();
+            }
+        }
+
+        let i = matched[0];
+        if patch_keys.iter().any(|key| *key == entries[i].0) {
+            continue;
+        }
+        patch_keys.push(entries[i].0.clone());
+        patchfile_paths.push(entries[i].1.clone());
+    }
+
+    for (key, path) in patch_keys.iter().zip(patchfile_paths.iter()) {
+        if !path.is_empty() {
+            let patchfile: Vec<u8> = if Platform::AUTO.is_absolute(path) {
+                path.to_vec()
+            } else {
+                resolve_path::join::<platform::Auto>(&[root_dir, path]).to_vec()
+            };
+            let mut zbuf = patchfile;
+            zbuf.push(0);
+            let path_len = zbuf.len() - 1;
+            if let Err(e) = sys::unlink(ZStr::from_buf(&zbuf, path_len)) {
+                if e.get_errno() != sys::E::ENOENT {
+                    Output::err(
+                        e,
+                        "failed to delete patch file {f}",
+                        (bun_fmt::quote(&zbuf[..path_len]),),
+                    );
+                    Global::crash();
+                }
+            }
+            // a value like `../shared/foo.patch` points outside the project;
+            // leave those directories alone
+            if !path.starts_with(b"..") {
+                remove_empty_patch_directories(root_dir, path);
+            }
+        }
+
+        if log_level != LogLevel::Silent {
+            bun_core::pretty!("<r>Removed patch <b>{}</b><r>\n", bstr::BStr::new(key));
+            Output::flush();
+        }
+    }
+
+    PatchRemoveResult {
+        patch_keys: patch_keys.into_boxed_slice(),
+        not_in_workspace_root,
+    }
+}
+
+/// After a patch file is deleted, remove its directory and any now-empty
+/// parent directories (e.g. `patches/` once the last patch is gone), stopping
+/// at the first directory that still has contents.
+fn remove_empty_patch_directories(root_dir: &[u8], patchfile_rel_path: &[u8]) {
+    let mut rel_dir: &[u8] = match patchfile_rel_path
+        .iter()
+        .rposition(|&b| b == b'/' || b == SEP)
+    {
+        Some(i) if i > 0 => &patchfile_rel_path[..i],
+        _ => return,
+    };
+    loop {
+        let dir: Vec<u8> = resolve_path::join::<platform::Auto>(&[root_dir, rel_dir]).to_vec();
+        let mut zbuf = dir;
+        zbuf.push(0);
+        // rmdir fails with ENOTEMPTY while other patch files remain — the
+        // expected "keep the directory" case — so every error ends the climb
+        if sys::rmdir(ZStr::from_buf(&zbuf, zbuf.len() - 1)).is_err() {
+            return;
+        }
+        rel_dir = match rel_dir.iter().rposition(|&b| b == b'/' || b == SEP) {
+            Some(i) if i > 0 => &rel_dir[..i],
+            _ => return,
+        };
+    }
 }
 
 fn escape_patch_filename(name: &[u8]) -> Option<Box<[u8]>> {

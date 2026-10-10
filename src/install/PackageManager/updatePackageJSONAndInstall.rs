@@ -20,7 +20,7 @@ use super::package_json_editor as PackageJSONEditor;
 use super::update_request::Array as UpdateRequestArray;
 use super::workspace_selection;
 use super::{
-    Command, PackageManager, PatchCommitResult, Subcommand, UpdateRequest,
+    Command, PackageManager, PatchCommitResult, PatchRemoveResult, Subcommand, UpdateRequest,
     attempt_to_create_package_json, install_with_manager, patch_package,
 };
 
@@ -145,7 +145,10 @@ fn update_package_json_and_install_with_manager_with_updates_and_update_requests
     update_requests: &mut UpdateRequestArray,
 ) -> Result<(), Error> {
     let subcommand = manager.subcommand;
-    if subcommand != Subcommand::PatchCommit && subcommand != Subcommand::Patch {
+    if subcommand != Subcommand::PatchCommit
+        && subcommand != Subcommand::Patch
+        && subcommand != Subcommand::PatchRemove
+    {
         // reshaped for borrowck — `parse` returns a `&mut [UpdateRequest]`
         // sub-slice of `update_requests`; we take its length and truncate the Vec so
         // the next call can take the Vec by value.
@@ -381,6 +384,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     let mut any_changes = false;
 
     let mut not_in_workspace_root: Option<PatchCommitResult> = None;
+    let mut patch_removal_not_in_root: Option<PatchRemoveResult> = None;
     match subcommand {
         Subcommand::Remove => {
             any_changes =
@@ -421,6 +425,17 @@ fn update_package_json_and_install_with_manager_with_updates(
                         ..Default::default()
                     },
                 )?;
+            }
+        }
+        Subcommand::PatchRemove => {
+            let result = patch_package::do_patch_remove(manager, log_level);
+            if result.not_in_workspace_root {
+                patch_removal_not_in_root = Some(result);
+            } else {
+                any_changes = PackageJSONEditor::remove_patched_dependencies(
+                    &mut current_package_json_root,
+                    &result.patch_keys,
+                );
             }
         }
         _ => {
@@ -611,6 +626,15 @@ fn update_package_json_and_install_with_manager_with_updates(
             );
         }
 
+        if let Some(result) = &patch_removal_not_in_root {
+            let mut root_package_json_root: bun_ast::Expr = root_package_json.root;
+            PackageJSONEditor::remove_patched_dependencies(
+                &mut root_package_json_root,
+                &result.patch_keys,
+            );
+            print_package_json_into_cache_entry(root_package_json, root_package_json_root);
+        }
+
         let root_is_targeted = manager
             .update_target_workspaces
             .as_deref()
@@ -661,7 +685,9 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     if manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
         let (source, path): (&[u8], &ZStr) =
-            if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
+            if matches!(manager.options.patch_features, PatchFeatures::Commit { .. })
+                || subcommand == Subcommand::PatchRemove
+            {
                 'source_and_path: {
                     let root_package_json_entry = match manager
                         .workspace_package_json_cache
@@ -801,6 +827,12 @@ pub fn update_package_json_and_install_and_cli(
                         }
                         Subcommand::Patch | Subcommand::PatchCommit => {
                             bun_core::pretty_errorln!("<r>No package.json, so nothing to patch");
+                            Global::crash();
+                        }
+                        Subcommand::PatchRemove => {
+                            bun_core::pretty_errorln!(
+                                "<r>No package.json, so there are no patches to remove"
+                            );
                             Global::crash();
                         }
                         _ if cli.filters.is_empty() => {

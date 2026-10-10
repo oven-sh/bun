@@ -35,6 +35,23 @@ impl<'a> Way<'a> {
     }
 }
 
+impl Way<'_> {
+    /// What `step` answers, which counts for `count` steps at least: the ways that are begun in it
+    /// get no steps of their own. `None`, and it is not called, if no steps are left.
+    pub(crate) fn within<T>(self, count: i64, step: impl FnOnce() -> T) -> Option<T> {
+        let Some(Steps(left)) = self.0 else {
+            return Some(step());
+        };
+        let before = left.get();
+        if before <= 0 {
+            return None;
+        }
+        let answer = step();
+        left.set(left.get().min(before - count).max(0));
+        Some(answer)
+    }
+}
+
 /// The scope of `node` and the scopes around it.
 pub(crate) fn scopes_around<'a>(node: Node<'a>) -> impl Iterator<Item = Scope<'a>> {
     scopes_around_at(node, 1)

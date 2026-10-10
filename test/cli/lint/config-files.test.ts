@@ -1008,6 +1008,41 @@ test.concurrent(
   },
 );
 
+// Recorded from eslint-import-resolver-typescript 4.4.5 with eslint-plugin-import 2.32.0 under ESLint 10.12. Node.js and TypeScript take
+// what `exports` names for the file.
+test.concurrent(
+  "import/resolver: typescript goes on from what `exports` names: extensions, then a directory",
+  async () => {
+    const found = ["exp/a", "exp/b", "exp/c", "exp/d", "exp/e", "exp/a.ts", "exp/style.css"];
+    const missing = ["exp/none", "exp/a.css", "exp/dist/a", "other/a"];
+    const files = {
+      "eslint.config.mjs": `export default [{
+      files: ["**/*.ts"],
+      settings: { "import/resolver": { typescript: true } },
+      plugins: { import: { meta: { name: "eslint-plugin-import" }, rules: {} } },
+      rules: { "import/no-unresolved": "error" },
+    }];`,
+      "package.json": "{}",
+      "tsconfig.json": "{}",
+      "node_modules/exp/package.json": JSON.stringify({ name: "exp", exports: { "./*": "./dist/*" } }),
+      "node_modules/exp/dist/a.ts": "",
+      "node_modules/exp/dist/b.js": "",
+      "node_modules/exp/dist/c.json": "{}",
+      "node_modules/exp/dist/d/index.js": "",
+      "node_modules/exp/dist/e.d.ts": "",
+      "node_modules/exp/dist/style.css": "",
+      "node_modules/other/package.json": JSON.stringify({ name: "other", exports: { "./b": "./b.js" } }),
+      "node_modules/other/a.js": "",
+      "src/main.ts": [...found, ...missing].map(it => `import ${JSON.stringify(it)};\n`).join(""),
+    };
+    const { problems } = await lint(files, ["src/main.ts"]);
+    // `lint` sorts them as strings.
+    expect(problems).toEqual(
+      missing.map((_, at) => `src/main.ts:${found.length + at + 1}:8 import/no-unresolved`).sort(),
+    );
+  },
+);
+
 test.concurrent(
   "import/ignore with a regular expression that is not written as a string: the package answers",
   async () => {

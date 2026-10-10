@@ -621,9 +621,10 @@ impl<'a> Components<'a> {
         let mut is_certain = true;
         while let Parent::CallExpression(call) = Parent::of(current_node) {
             let callee = call.callee().map(Expr::tag);
-            let has_steps = way.take(4);
-            is_certain &= has_steps && !matches!(callee, Some(ExprTag::Dot | ExprTag::Index));
-            if !has_steps || !self.is_pragma_component_wrapper(Node::Expr(call)) {
+            let is_wrapper = way.within(4, || self.is_pragma_component_wrapper(Node::Expr(call)));
+            is_certain &=
+                is_wrapper.is_some() && !matches!(callee, Some(ExprTag::Dot | ExprTag::Index));
+            if is_wrapper != Some(true) {
                 break;
             }
             current_node = Node::Expr(call);
@@ -882,10 +883,7 @@ impl<'a> Components<'a> {
         let mut scope = Some(node.scope());
         while let Some(candidate) = scope.and_then(|it| self.closest_candidate(it)) {
             // Many nodes under many functions that are given to wrappers.
-            if !way.take(8) {
-                return None;
-            }
-            let found = self.get_stateless_component(candidate.node());
+            let found = way.within(8, || self.get_stateless_component(candidate.node()))?;
             if found.is_some() {
                 return found;
             }

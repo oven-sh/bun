@@ -101,6 +101,14 @@ bun add <package> <@version>
   <code>-a</code>
 </ParamField>
 
+<ParamField path="--linker" type="string">
+  Linker strategy (one of <code>isolated</code> or <code>hoisted</code>)
+</ParamField>
+
+<ParamField path="--minimum-release-age" type="number">
+  Only install package versions published at least this many seconds ago
+</ParamField>
+
 ### Network & Registry
 
 <ParamField path="--ca" type="string">
@@ -157,6 +165,18 @@ bun add <package> <@version>
 
 <ParamField path="--no-summary" type="boolean">
   Don't print a summary
+</ParamField>
+
+### Platform Targeting
+
+<ParamField path="--cpu" type="string">
+  Override CPU architecture for optional dependencies (e.g., <code>x64</code>, <code>arm64</code>, <code>*</code> for
+  all)
+</ParamField>
+
+<ParamField path="--os" type="string">
+  Override operating system for optional dependencies (e.g., <code>linux</code>, <code>darwin</code>, <code>*</code> for
+  all)
 </ParamField>
 
 ### Global Configuration &amp; Context

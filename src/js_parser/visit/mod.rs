@@ -97,7 +97,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         };
         self.fn_only_data_visit = FnOnlyDataVisit {
             is_this_nested: true,
-            ..Default::default()
+            is_derived_class_ctor: core::mem::take(&mut self.next_fn_is_derived_class_ctor),
         };
 
         if let Some(name) = func.name {
@@ -1059,6 +1059,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 .expect("unreachable");
 
             let mut constructor_function: Option<bun_ast::StoreRef<E::Function>> = None;
+            let is_derived_class = class.extends.is_some();
             let properties: &mut [G::Property] = class.properties.slice_mut();
             for property in properties.iter_mut() {
                 if property.kind == PropertyKind::ClassStaticBlock {
@@ -1126,6 +1127,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 // The value of "this" is shadowed inside property values
                 let old_is_this_captured = self.fn_only_data_visit.is_this_nested;
                 self.fn_only_data_visit.is_this_nested = true;
+                let old_is_derived_class_ctor = self.fn_only_data_visit.is_derived_class_ctor;
+                self.fn_only_data_visit.is_derived_class_ctor = false;
 
                 // We need to explicitly assign the name to the property initializer if it
                 // will be transformed such that it is no longer an inline initializer.
@@ -1165,6 +1168,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 }
 
                 if let Some(val) = property.value {
+                    self.next_fn_is_derived_class_ctor = is_derived_class
+                        && property.kind == PropertyKind::Normal
+                        && property.flags.contains(flags::Property::IsMethod)
+                        && !property.flags.contains(flags::Property::IsStatic)
+                        && !property.flags.contains(flags::Property::IsComputed)
+                        && matches!(val.data, ExprData::EFunction(_))
+                        && matches!(
+                            property.key.map(|k| k.data),
+                            Some(ExprData::EString(s)) if s.eql_comptime(b"constructor")
+                        );
                     if let Some(name) = name_to_keep {
                         let was_anon = val.is_anonymous_named();
                         let prev_dcn = self.decorator_class_name;
@@ -1183,6 +1196,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     } else {
                         self.visit_expr(property.value.as_mut().unwrap());
                     }
+                    self.next_fn_is_derived_class_ctor = false;
 
                     if Self::IS_TYPESCRIPT_ENABLED {
                         if constructor_function_.is_some() {
@@ -1222,6 +1236,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 // manual restore for the two `defer`s above
                 self.vis_scope().forbid_arguments = false;
                 self.fn_only_data_visit.is_this_nested = old_is_this_captured;
+                self.fn_only_data_visit.is_derived_class_ctor = old_is_derived_class_ctor;
             }
 
             if Self::IS_TYPESCRIPT_ENABLED {

@@ -56,7 +56,9 @@ pub(crate) struct ServerConfig {
     /// Created with `onNodeHTTPRequest`; unlike the handler above, `reload()` never clears this.
     pub(crate) is_node_http_server: bool,
 
-    pub(crate) websocket: Option<WebSocketServerContext>,
+    /// Heap-stable because every live `ServerWebSocket` keeps a non-owning
+    /// back-reference to this context's handler across `server.reload()`.
+    pub(crate) websocket: Option<Box<WebSocketServerContext>>,
 
     pub(crate) reuse_port: bool,
     pub(crate) id: Box<[u8]>,
@@ -1044,10 +1046,10 @@ impl ServerConfig {
             }
 
             // `ssl_config` drops with args on error.
-            args.websocket = Some(super::web_socket_server_context::on_create(
+            args.websocket = Some(Box::new(super::web_socket_server_context::on_create(
                 global,
                 websocket_object,
-            )?);
+            )?));
         }
 
         if let Some(port_) = arg.get_truthy(global, "port")? {

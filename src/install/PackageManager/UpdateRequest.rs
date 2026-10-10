@@ -342,6 +342,40 @@ impl PackageManager {
     pub(crate) fn is_update_request(&self, name_hash: PackageNameHash, name: &[u8]) -> bool {
         self.index_of_update_request(name_hash, name).is_some()
     }
+
+    /// Whether a root package of a global install links its bins into the global bin dir.
+    pub(crate) fn links_bins_globally(&self, package_id: PackageID, installed: bool) -> bool {
+        if !self.options.global {
+            return false;
+        }
+        // `patch` and `add --only-missing` name a package and carry no update request.
+        let names_packages = match self.subcommand {
+            Subcommand::Update => !self.update_requests.is_empty(),
+            Subcommand::Add
+            | Subcommand::Remove
+            | Subcommand::Link
+            | Subcommand::Patch
+            | Subcommand::PatchCommit => true,
+            _ => false,
+        };
+        if names_packages {
+            return self
+                .update_requests
+                .iter()
+                .any(|request| request.package_id == package_id);
+        }
+        // Only what this run installed: a bin name that two global packages share keeps its owner.
+        installed
+            && self
+                .lockfile
+                .packages
+                .items_resolutions()
+                .first()
+                .is_some_and(|root| {
+                    root.get(self.lockfile.buffers.resolutions.as_slice())
+                        .contains(&package_id)
+                })
+    }
 }
 
 pub use super::Subcommand;

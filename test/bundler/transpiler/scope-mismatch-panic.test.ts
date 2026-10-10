@@ -172,7 +172,7 @@ g();`,
 
     // Must fail with the intended transpiler error, not a scope mismatch panic.
     expect(stderr).not.toContain("Scope mismatch");
-    expect(stderr).toContain("template literal macro invocations are not supported");
+    expect(stderr).toContain('"Cannot convert argument type to JS" error in macro');
     expect(exitCode).not.toBe(0);
   });
 
@@ -222,7 +222,7 @@ new C().m();`,
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).not.toContain("Scope mismatch");
-    expect(stderr).toContain("template literal macro invocations are not supported");
+    expect(stderr).toContain('"Cannot convert argument type to JS" error in macro');
     expect(exitCode).not.toBe(0);
   });
 });

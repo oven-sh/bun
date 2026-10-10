@@ -422,14 +422,27 @@ function normalizeQuery(
         const value = values[i];
 
         if (value instanceof Query) {
-          const q = value as QueryType<any, any>;
-          const [sub_query, sub_values] = normalizeQuery(adapter, q[_strings], q[_values], binding_idx);
+          // Checked before the recursion: its string arm turns 0, false and "" into []. $isArray covers a Proxy.
+          const fragment_values = (value as QueryType<any, any>)[_values];
+          if (!$isJSArray(fragment_values) && fragment_values != null && !$isArray(fragment_values)) {
+            throw new SyntaxError(
+              "Nested sql.unsafe() fragment values must be an array, received " +
+                (typeof fragment_values === "object" ? "an object" : "a " + typeof fragment_values),
+            );
+          }
+          const [sub_query, sub_values] = normalizeQuery(
+            adapter,
+            (value as QueryType<any, any>)[_strings],
+            fragment_values,
+            binding_idx,
+          );
+          const sub_values_count = sub_values.length;
 
           query += sub_query;
-          for (let j = 0; j < sub_values.length; j++) {
+          for (let j = 0; j < sub_values_count; j++) {
             binding_values.push(sub_values[j]);
           }
-          binding_idx += sub_values.length;
+          binding_idx += sub_values_count;
         } else if (value instanceof SQLHelper) {
           const command = adapter.getHelperCommand(query);
           const { columns, value: items } = value as SQLHelper<any>;

@@ -466,6 +466,8 @@ const sql = new SQL({ adapter: "sqlite", filename: "myapp.db", strict: true });
 const result = await sql.unsafe("SELECT * FROM users WHERE id = :id", { id: 1 });
 ```
 
+An object of named parameters works only when `sql.unsafe` runs on its own. If a `sql.unsafe` nested inside another query has one, the outer query rejects with a `SyntaxError`.
+
 ### Execute and Cancelling Queries
 
 Queries are lazy: they only start executing when awaited or run with `.execute()`.

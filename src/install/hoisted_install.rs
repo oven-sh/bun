@@ -107,6 +107,17 @@ pub(crate) fn install_hoisted_packages(
     // block above, so no other borrow of `*mgr_ptr` is live here.
     let this = unsafe { &mut *mgr_ptr };
 
+    // Unfiltered installs only: `--filter` installs leave unselected
+    // workspaces' `node_modules` alone (`bun prune` is the cleanup for
+    // those), and the scanner's narrowed pre-install pass is followed by a
+    // full install that performs the prune.
+    if packages_to_install.is_none()
+        && workspace_filters.is_empty()
+        && this.lockfile.workspace_paths.count() > 0
+    {
+        prune_stale_workspace_node_modules(&this.lockfile, &original_trees, &original_tree_dep_ids);
+    }
+
     let _restore_buffers = scopeguard::guard(
         (original_trees, original_tree_dep_ids),
         move |(trees, dep_ids)| {
@@ -620,3 +631,266 @@ pub(crate) fn install_hoisted_packages(
 
     Ok(summary)
 }
+
+/// Deletes entries of each workspace's `node_modules/` (one level into
+/// `@scope/`) whose name the workspace declares as a dependency but the
+/// hoisted tree places elsewhere. Such leftovers from a previous
+/// package-local install shadow the hoisted copy during resolution, and the
+/// installer never visits a workspace tree whose deps all hoisted away
+/// (issue #29793). Entries with undeclared names (a manual `bun link`, a
+/// hand-dropped folder) are left alone; `bun prune` handles extraneous
+/// entries. Only called for unfiltered installs, with the full tree buffers.
+fn prune_stale_workspace_node_modules(
+    lockfile: &crate::lockfile::Lockfile,
+    trees: &[tree::Tree],
+    tree_dep_ids: &[DependencyID],
+) {
+    if trees.is_empty() {
+        return;
+    }
+
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let packages_slice = lockfile.packages.slice();
+    let pkg_resolutions = packages_slice.items_resolution();
+    let pkg_dependencies = packages_slice.items_dependencies();
+
+    // Walk only workspaces that resolve cleanly; pkg_id 0 (stale lockfile,
+    // hash collision) cannot be trusted to name a workspace.
+    let mut workspaces_to_walk: Vec<(PackageID, Vec<u8>)> = Vec::new();
+    {
+        let hashes = lockfile.workspace_paths.keys();
+        let paths = lockfile.workspace_paths.values();
+        for (name_hash, ws_path) in hashes.iter().zip(paths.iter()) {
+            let pkg_id = lockfile.get_workspace_package_id(Some(*name_hash));
+            if pkg_id == 0 {
+                continue;
+            }
+            let fs_path = ws_path.slice(string_buf);
+            if fs_path.is_empty() {
+                continue;
+            }
+            workspaces_to_walk.push((pkg_id, fs_path.to_vec()));
+        }
+    }
+
+    if workspaces_to_walk.is_empty() {
+        return;
+    }
+
+    // Workspace `node_modules` path -> folder names the tree places there.
+    let mut expected_by_ws_path: StringHashMap<StringHashMap<()>> = StringHashMap::default();
+
+    let fs_path_for = |pkg_id: PackageID| -> Option<&[u8]> {
+        workspaces_to_walk
+            .iter()
+            .find(|(id, _)| *id == pkg_id)
+            .map(|(_, p)| p.as_slice())
+    };
+
+    for t in trees {
+        // Only workspace-package trees are a workspace's `node_modules`.
+        if t.dependency_id == crate::invalid_dependency_id {
+            continue;
+        }
+        if t.dependency_id == tree::ROOT_DEP_ID {
+            continue;
+        }
+        let dep_idx = t.dependency_id as usize;
+        if dep_idx >= deps.len() || dep_idx >= resolutions.len() {
+            continue;
+        }
+        let pkg_id = resolutions[dep_idx];
+        let pkg_idx = pkg_id as usize;
+        if pkg_idx >= pkg_resolutions.len() {
+            continue;
+        }
+        if pkg_resolutions[pkg_idx].tag != crate::resolution::Tag::Workspace {
+            continue;
+        }
+        let Some(ws_fs_path) = fs_path_for(pkg_id) else {
+            continue;
+        };
+
+        let key = workspace_node_modules_key(ws_fs_path);
+        let set = match expected_by_ws_path.get_or_put_value(&key, StringHashMap::default()) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let tree_deps = t.dependencies.get(tree_dep_ids);
+        for &dep_id in tree_deps {
+            let d = dep_id as usize;
+            if d >= deps.len() {
+                continue;
+            }
+            let dep_name = deps[d].name.slice(string_buf);
+            if dep_name.is_empty() {
+                continue;
+            }
+            let _ = set.put(dep_name, ());
+        }
+    }
+
+    // For each workspace, prune the declared dependency names the tree does
+    // not place in that workspace's own `node_modules`.
+    for (pkg_id, fs_path) in &workspaces_to_walk {
+        let pkg_idx = *pkg_id as usize;
+        if pkg_idx >= pkg_dependencies.len() {
+            continue;
+        }
+        let key = workspace_node_modules_key(fs_path);
+        let placed = expected_by_ws_path.get(key.as_slice());
+
+        let mut prunable: StringHashMap<()> = StringHashMap::default();
+        for dep in pkg_dependencies[pkg_idx].get(deps) {
+            let name = dep.name.slice(string_buf);
+            if name.is_empty() {
+                continue;
+            }
+            if placed.is_some_and(|p| p.contains_key(name)) {
+                continue;
+            }
+            let _ = prunable.put(name, ());
+        }
+        if prunable.is_empty() {
+            continue;
+        }
+        prune_node_modules_at(&key, &prunable);
+    }
+}
+
+/// Normalized `<ws_path>/node_modules` key, shared by the placed-set map and
+/// the walk so the two can't diverge (a miss would treat placed entries as
+/// prunable).
+fn workspace_node_modules_key(ws_path: &[u8]) -> Vec<u8> {
+    let trimmed = match ws_path.last() {
+        Some(b'/') | Some(b'\\') => &ws_path[..ws_path.len() - 1],
+        _ => ws_path,
+    };
+    let mut key = Vec::with_capacity(trimmed.len() + b"/node_modules".len());
+    key.extend_from_slice(trimmed);
+    key.extend_from_slice(b"/node_modules");
+    // Canonicalize separators so the Windows hash lookup matches.
+    if cfg!(windows) {
+        for b in key.iter_mut() {
+            if *b == b'\\' {
+                *b = b'/';
+            }
+        }
+    }
+    key
+}
+
+/// Opens `<cwd>/<rel_path>` and removes each top-level directory entry whose
+/// name is in `prunable`. Also descends one level into `@scope/` directories
+/// so scoped packages are handled. Missing directories are ignored.
+fn prune_node_modules_at(rel_path: &[u8], prunable: &StringHashMap<()>) {
+    let cwd = Fd::cwd();
+    // `Dir` closes the fd on drop.
+    let dir = match sys::open_dir_for_iteration(cwd, rel_path) {
+        Ok(fd) => Dir::from_fd(fd),
+        Err(_) => return,
+    };
+
+    // Snapshot the listing first: deleting during batched readdir iteration
+    // can re-surface entries on some filesystems.
+    let mut names: Vec<Vec<u8>> = Vec::new();
+    let mut iter = sys::iterate_dir(dir.fd());
+    loop {
+        let entry = match iter.next() {
+            Ok(Some(e)) => e,
+            Ok(None) => break,
+            Err(_) => return,
+        };
+        let name = entry.name.slice_u8();
+        if name.is_empty() || name[0] == b'.' {
+            continue;
+        }
+        names.push(name.to_vec());
+    }
+
+    let mut deleted_any = false;
+    for name in &names {
+        if name[0] == b'@' {
+            // The prunable set stores scoped packages as `@scope/pkg`.
+            deleted_any |= prune_scoped_node_modules(&dir, name, prunable);
+            continue;
+        }
+        if prunable.contains_key(name.as_slice()) && dir.delete_tree(name).is_ok() {
+            deleted_any = true;
+        }
+    }
+
+    // A removed package may have had bins linked into this `.bin`; sweep the
+    // now-dangling links like `remove_collapsed_copies` does.
+    if deleted_any {
+        crate::prune::prune_bins(&dir);
+    }
+}
+
+/// Returns whether any entry was deleted.
+fn prune_scoped_node_modules(parent: &Dir, scope: &[u8], prunable: &StringHashMap<()>) -> bool {
+    // `open_real_subdir` refuses a symlinked `@scope`, so the deletes below
+    // cannot escape the workspace's `node_modules`.
+    let Some(scope_dir) = crate::prune::open_real_subdir(parent, scope) else {
+        return false;
+    };
+
+    let mut names: Vec<Vec<u8>> = Vec::new();
+    let mut has_remaining = false;
+    let mut iter = sys::iterate_dir(scope_dir.fd());
+    loop {
+        let entry = match iter.next() {
+            Ok(Some(e)) => e,
+            Ok(None) => break,
+            Err(_) => return false,
+        };
+        let name = entry.name.slice_u8();
+        if name.is_empty() {
+            continue;
+        }
+        if name[0] == b'.' {
+            has_remaining = true;
+            continue;
+        }
+        names.push(name.to_vec());
+    }
+
+    let mut deleted_any = false;
+    for name in &names {
+        let mut full_name = Vec::with_capacity(scope.len() + 1 + name.len());
+        full_name.extend_from_slice(scope);
+        full_name.push(b'/');
+        full_name.extend_from_slice(name);
+
+        if !prunable.contains_key(full_name.as_slice()) {
+            has_remaining = true;
+            continue;
+        }
+
+        if scope_dir.delete_tree(name).is_err() {
+            has_remaining = true;
+        } else {
+            deleted_any = true;
+        }
+    }
+
+    // Close before removing, as `Dir::delete_tree` requires on Windows.
+    drop(iter);
+    drop(scope_dir);
+
+    // Remove the scope directory if it ended up empty.
+    if !has_remaining {
+        let mut scope_z = Vec::with_capacity(scope.len() + 1);
+        scope_z.extend_from_slice(scope);
+        scope_z.push(0);
+        let z = bun_core::ZStr::from_buf(&scope_z, scope.len());
+        let _ = sys::rmdirat(parent.fd(), z);
+    }
+
+    deleted_any
+}
+
+// ported from: src/install/hoisted_install.zig

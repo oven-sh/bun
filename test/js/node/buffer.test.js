@@ -4657,6 +4657,47 @@ describe("raw <enc>Slice / <enc>Write bindings match Node", () => {
       });
     });
 
+    describe("with a receiver that is not a buffer", () => {
+      const NOT_A_BUFFER = expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: "argument must be a buffer",
+      });
+
+      it.each([...strict, ...clamping])("%s rejects a non-ArrayBufferView receiver with ERR_INVALID_ARG_TYPE", method => {
+        expect(() => Buffer.prototype[method].call({})).toThrow(NOT_A_BUFFER);
+        expect(() => Buffer.prototype[method].call(new ArrayBuffer(4))).toThrow(NOT_A_BUFFER);
+        expect(() => Buffer.prototype[method].call(123)).toThrow(NOT_A_BUFFER);
+        expect(() => Buffer.prototype[method].call(null)).toThrow(NOT_A_BUFFER);
+        expect(() => Buffer.prototype[method].call(undefined)).toThrow(NOT_A_BUFFER);
+      });
+
+      it.each([
+        "utf8Slice",
+        "hexSlice",
+        "asciiSlice",
+        "latin1Slice",
+        "base64Slice",
+        "base64urlSlice",
+        "ucs2Slice",
+        "utf16leSlice",
+      ])("%s rejects a non-ArrayBufferView receiver with ERR_INVALID_ARG_TYPE", method => {
+        expect(() => Buffer.prototype[method].call({})).toThrow(NOT_A_BUFFER);
+        expect(() => Buffer.prototype[method].call(new ArrayBuffer(4))).toThrow(NOT_A_BUFFER);
+        expect(() => Buffer.prototype[method].call(123)).toThrow(NOT_A_BUFFER);
+        expect(() => Buffer.prototype[method].call(null)).toThrow(NOT_A_BUFFER);
+        expect(() => Buffer.prototype[method].call(undefined)).toThrow(NOT_A_BUFFER);
+      });
+
+      it("accepts ArrayBufferView receivers that are not Buffer (DataView, Uint8Array)", () => {
+        const u8 = new Uint8Array([104, 105, 33, 33]);
+        const dv = new DataView(u8.buffer);
+        expect(Buffer.prototype.hexSlice.call(dv)).toBe("68692121");
+        expect(Buffer.prototype.utf8Slice.call(dv)).toBe("hi!!");
+        expect(Buffer.prototype.hexWrite.call(dv, "ab")).toBe(1);
+        expect(Buffer.prototype.utf8Write.call(dv, "ab")).toBe(2);
+      });
+    });
+
     it("the documented write() wrapper is unchanged", () => {
       const buf = dest();
       expect(() => buf.write("hello", 6, 1000)).toThrow(expect.objectContaining({ code: "ERR_OUT_OF_RANGE" }));

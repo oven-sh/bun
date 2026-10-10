@@ -62,8 +62,9 @@ impl Error {
         }
     }
 
+    /// The `RangeError` of `esquery`, at a depth that depends on the machine there as well.
     fn too_deep() -> Error {
-        Error::new(b"The selector is nested too deeply.".to_vec())
+        Error::new(b"Maximum call stack size exceeded".to_vec())
     }
 
     /// `esquery.parse` returns `undefined`, which ESLint does not expect.

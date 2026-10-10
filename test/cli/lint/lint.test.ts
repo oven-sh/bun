@@ -5448,6 +5448,29 @@ describe.concurrent("rules as oxlint has them", () => {
     );
   }
 
+  test("what a variable is, behind forty others", async () => {
+    const chain = (name: string, first: string) =>
+      [first, ...Array(40).keys()].map((it, at) => `const ${name}${at} = ${at ? name : ""}${it};\n`).join("");
+    const rows: [code: string, reports: string[]][] = [
+      [
+        `${chain("h", "async function (req, res) {}")}app.get("/", h40);\n`,
+        ["1:12 Express endpoint handler for `/` should not be `async`."],
+      ],
+      [`${chain("a", "`t`")}a40.concat(b);\n`, []],
+      [`${chain("c", "[1]")}c40.concat(b);\n`, ["42:1 Prefer the spread operator (`...`) over array.concat()"]],
+    ];
+    const names = rows.map((_, at) => `r${at}.js`);
+    const files = {
+      ".oxlintrc.json": JSON.stringify({
+        plugins: ["oxc", "unicorn"],
+        categories: { correctness: "off" },
+        rules: { "oxc/no-async-endpoint-handlers": "error", "unicorn/prefer-spread": "error" },
+      }),
+      ...Object.fromEntries(rows.map(([code], at) => [names[at], code])),
+    };
+    expect(await reports(files, names)).toEqual(rows.map(row => row[1]));
+  });
+
   // What a callback reads it keeps in a hash table, where a parameter of a function in the callback and a variable of the component
   // with its name are two. It names what is missing in the order of that table, and reports where the first is.
   test("react/exhaustive-deps: a name that is another variable further in", async () => {

@@ -3539,6 +3539,22 @@ describe.concurrent("a number in the options of a rule that is the length of a t
   });
 });
 
+// As ESLint 9.39.5, but for the kind of the error before the message.
+test.concurrent.each([
+  ["[", 'Syntax error in selector "[" at position 1: Expected " " or [^ [\\],():#!=><~+.] but end of input found.'],
+  [
+    { selector: "a >", message: "no" },
+    'Syntax error in selector "a >" at position 3: Expected " ", "!", "#", "*", ".", ":", ":first-child", ":has(", ":is(", ":last-child", ":matches(", ":not(", ":nth-child(", ":nth-last-child(", "[", or [^ [\\],():#!=><~+.] but end of input found.',
+  ],
+  [":foo", "Unknown class name: foo"],
+  [`${":not(".repeat(100_000)}a${")".repeat(100_000)}`, "Maximum call stack size exceeded"],
+])("no-restricted-syntax with a selector that cannot be read: %#", async (option, message) => {
+  const files = { ".eslintrc.json": rc({ rules: { "no-restricted-syntax": ["error", "Foo", option] } }), "a.js": code };
+  const { problems, stderr, exitCode } = await lint(files, ["a.js"]);
+  expect(stderr).toContain(`${message}\nOccurred while linting <dir>/a.js`);
+  expect({ problems, exitCode }).toEqual({ problems: [], exitCode: 2 });
+});
+
 // As ESLint 10.12. What is in a plugin of the configuration is known, whether or not a rule of it is on.
 test.concurrent(
   "a rule that only a comment names, of a plugin of which the configuration turns no rule on",

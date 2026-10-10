@@ -14,6 +14,10 @@ struct Restriction {
 
 const RESTRICTED_SYNTAX: Message = Message::new("restrictedSyntax", "{{message}}");
 
+fn selector_of(option: &Json) -> Option<&[u8]> {
+    option.as_str().or_else(|| option.get(b"selector")?.as_str())
+}
+
 impl Rule for NoRestrictedSyntax {
     const META: Meta = Meta::eslint("no-restricted-syntax", Kind::Suggestion);
     const ON: On = On::new().nodes(NodeTags::ALL).finish();
@@ -23,11 +27,10 @@ impl Rule for NoRestrictedSyntax {
     fn new(options: &Options) -> Self {
         let mut restrictions: Vec<Restriction> = Vec::new();
         for option in options.all() {
-            let object = Object::of(Some(option));
-            let Some(source) = option.as_str().or_else(|| object.get("selector")?.as_str()) else {
+            let Some(source) = selector_of(option) else {
                 continue;
             };
-            let message: Box<[u8]> = match object.get("message").and_then(Json::as_str) {
+            let message: Box<[u8]> = match option.get(b"message").and_then(Json::as_str) {
                 Some(message) if !message.is_empty() => message.into(),
                 _ => [b"Using '", source, b"' is not allowed."].concat().into(),
             };
@@ -35,12 +38,18 @@ impl Rule for NoRestrictedSyntax {
             if let Some(same) = restrictions.iter_mut().find(|it| it.selector.source() == source) {
                 same.message = message;
             } else if let Ok(selector) = Selector::parse(source) {
-                // TODO(api): ESLint throws if a selector is not valid. A rule has no way to refuse its options.
                 restrictions.push(Restriction { selector, message });
             }
         }
         utils::sort::sort_by(&mut restrictions, |a, b| a.selector.compare(&b.selector));
         NoRestrictedSyntax { restrictions }
+    }
+
+    fn validate(options: &Options) -> Result<(), Vec<u8>> {
+        for source in options.all().iter().filter_map(selector_of) {
+            Selector::parse(source).map_err(|error| error.message().to_vec())?;
+        }
+        Ok(())
     }
 
     fn narrow<'a>(&self, _: &'a File<'a>) -> On {

@@ -684,21 +684,8 @@ pub(crate) trait ReactiveFunctionTransform {
         let mut next_block: Option<Vec<ReactiveStatement>> = None;
         let len = block.len();
         for i in 0..len {
-            // Take the statement out temporarily
-            let mut stmt = std::mem::replace(
-                &mut block[i],
-                // Placeholder — will be overwritten or discarded
-                ReactiveStatement::Instruction(ReactiveInstruction {
-                    id: EvaluationOrder(0),
-                    lvalue: None,
-                    value: ReactiveValue::Instruction(crate::hir::InstructionValue::Debugger {
-                        loc: None,
-                    }),
-                    effects: None,
-                    loc: None,
-                }),
-            );
-            let transformed = match &mut stmt {
+            // In its place: what fails deep down has little stack left, and drops nothing of the tree there.
+            let transformed = match &mut block[i] {
                 ReactiveStatement::Instruction(instr) => {
                     self.transform_instruction(instr, state)?
                 }
@@ -713,10 +700,17 @@ pub(crate) trait ReactiveFunctionTransform {
             match transformed {
                 Transformed::Keep => {
                     if let Some(ref mut nb) = next_block {
-                        nb.push(stmt);
-                    } else {
-                        // Put it back
-                        block[i] = stmt;
+                        // `block` is discarded.
+                        let placeholder = ReactiveStatement::Instruction(ReactiveInstruction {
+                            id: EvaluationOrder(0),
+                            lvalue: None,
+                            value: ReactiveValue::Instruction(
+                                crate::hir::InstructionValue::Debugger { loc: None },
+                            ),
+                            effects: None,
+                            loc: None,
+                        });
+                        nb.push(std::mem::replace(&mut block[i], placeholder));
                     }
                 }
                 Transformed::Remove => {

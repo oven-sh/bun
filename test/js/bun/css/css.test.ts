@@ -1888,6 +1888,136 @@ describe("css tests", () => {
     );
   });
 
+  // Ported from lightningcss's test_svg and test_ui, with an in-gamut color.
+  describe("fill, stroke and caret", () => {
+    describe.each(["fill", "stroke"])("%s", property => {
+      minify_test(`.foo { ${property}: yellow; }`, `.foo{${property}:#ff0}`);
+      minify_test(`.foo { ${property}: url(#foo); }`, `.foo{${property}:url(#foo)}`);
+      minify_test(`.foo { ${property}: url(#foo) none; }`, `.foo{${property}:url(#foo) none}`);
+      minify_test(`.foo { ${property}: url(#foo) yellow; }`, `.foo{${property}:url(#foo) #ff0}`);
+      minify_test(`.foo { ${property}: none; }`, `.foo{${property}:none}`);
+      minify_test(`.foo { ${property}: context-fill; }`, `.foo{${property}:context-fill}`);
+      minify_test(`.foo { ${property}: context-stroke; }`, `.foo{${property}:context-stroke}`);
+
+      prefix_test(
+        `.foo { ${property}: lab(40% 56.6 39) }`,
+        `.foo {
+          ${property}: #b32323;
+          ${property}: color(display-p3 .643308 .192455 .167712);
+          ${property}: lab(40% 56.6 39);
+        }
+        `,
+        { chrome: Some(90 << 16), safari: Some(14 << 16) },
+      );
+    });
+
+    prefix_test(
+      ".foo { fill: url(#foo) lab(40% 56.6 39) }",
+      `.foo {
+        fill: url("#foo") #b32323;
+        fill: url("#foo") color(display-p3 .643308 .192455 .167712);
+        fill: url("#foo") lab(40% 56.6 39);
+      }
+      `,
+      { chrome: Some(90 << 16), safari: Some(14 << 16) },
+    );
+
+    prefix_test(
+      ".foo { fill: var(--url) lab(40% 56.6 39) }",
+      `.foo {
+        fill: var(--url) #b32323;
+      }
+
+      @supports (color: lab(0% 0 0)) {
+        .foo {
+          fill: var(--url) lab(40% 56.6 39);
+        }
+      }
+      `,
+      { chrome: Some(90 << 16) },
+    );
+
+    minify_test(".foo { caret-color: auto }", ".foo{caret-color:auto}");
+    minify_test(".foo { caret-color: yellow }", ".foo{caret-color:#ff0}");
+    describe.each(["auto", "bar", "block", "underscore"])("caret-shape %s", shape => {
+      minify_test(`.foo { caret-shape: ${shape} }`, `.foo{caret-shape:${shape}}`);
+    });
+    // Typed, so keywords are normalized; anything else still passes through as written.
+    minify_test(".foo { caret-shape: BLOCK }", ".foo{caret-shape:block}");
+    minify_test(".foo { caret-shape: banana }", ".foo{caret-shape:banana}");
+    // `caret` sets `caret-color` and `caret-shape`, so interleaved declarations keep their order.
+    minify_test(
+      ".foo { caret-color: red; caret: auto; caret-color: blue }",
+      ".foo{caret-color:red;caret:auto;caret-color:#00f}",
+    );
+    minify_test(".foo { caret: red; caret-color: blue; caret: green }", ".foo{caret:red;caret-color:#00f;caret:green}");
+    minify_test(".foo { caret: red; caret-shape: bar; caret: green }", ".foo{caret:red;caret-shape:bar;caret:green}");
+    minify_test(
+      ".foo { caret-color: red; caret: var(--c); caret-color: blue }",
+      ".foo{caret-color:red;caret:var(--c);caret-color:#00f}",
+    );
+    minify_test(".foo { caret: yellow block }", ".foo{caret:#ff0 block}");
+    minify_test(".foo { caret: block yellow }", ".foo{caret:#ff0 block}");
+    minify_test(".foo { caret: block }", ".foo{caret:block}");
+    minify_test(".foo { caret: yellow }", ".foo{caret:#ff0}");
+    minify_test(".foo { caret: auto auto }", ".foo{caret:auto}");
+    minify_test(".foo { caret: auto }", ".foo{caret:auto}");
+    minify_test(".foo { caret: yellow auto }", ".foo{caret:#ff0}");
+    minify_test(".foo { caret: auto block }", ".foo{caret:block}");
+
+    prefix_test(
+      ".foo { caret-color: lab(40% 56.6 39) }",
+      `.foo {
+        caret-color: #b32323;
+        caret-color: color(display-p3 .643308 .192455 .167712);
+        caret-color: lab(40% 56.6 39);
+      }
+      `,
+      { chrome: Some(90 << 16), safari: Some(14 << 16) },
+    );
+
+    prefix_test(
+      ".foo { caret: lab(40% 56.6 39) block }",
+      `.foo {
+        caret: #b32323 block;
+        caret: color(display-p3 .643308 .192455 .167712) block;
+        caret: lab(40% 56.6 39) block;
+      }
+      `,
+      { chrome: Some(90 << 16), safari: Some(14 << 16) },
+    );
+
+    prefix_test(
+      ".foo { caret: lab(40% 56.6 39) var(--foo) }",
+      `.foo {
+        caret: #b32323 var(--foo);
+      }
+
+      @supports (color: lab(0% 0 0)) {
+        .foo {
+          caret: lab(40% 56.6 39) var(--foo);
+        }
+      }
+      `,
+      { chrome: Some(90 << 16) },
+    );
+
+    // #44658: oklch() in these properties was printed as written.
+    prefix_test(
+      ".foo { fill: oklch(25% .05 30); stroke: oklch(25% .05 30); caret-color: oklch(25% .05 30) }",
+      `.foo {
+        fill: #361713;
+        fill: lab(12.5482% 15.1914 10.4048);
+        stroke: #361713;
+        stroke: lab(12.5482% 15.1914 10.4048);
+        caret-color: #361713;
+        caret-color: lab(12.5482% 15.1914 10.4048);
+      }
+      `,
+      { chrome: Some(90 << 16) },
+    );
+  });
+
   describe("margin", () => {
     cssTest(
       `

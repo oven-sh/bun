@@ -426,7 +426,21 @@ describe("fs.promises functions with a FileHandle argument", () => {
   it.each([
     ["readFile(handle)", handle => fsPromises.readFile(handle, "utf8"), "hello", "hello"],
     ["writeFile(handle, string)", handle => fsPromises.writeFile(handle, "HELLO"), undefined, "HELLO"],
+    ["writeFile(handle, Buffer)", handle => fsPromises.writeFile(handle, Buffer.from("HELLO")), undefined, "HELLO"],
     ["writeFile(handle, iterable)", handle => fsPromises.writeFile(handle, ["HE", "LLO"]), undefined, "HELLO"],
+    [
+      "writeFile(handle, async iterable)",
+      handle =>
+        fsPromises.writeFile(
+          handle,
+          (async function* () {
+            yield "HE";
+            yield "LLO";
+          })(),
+        ),
+      undefined,
+      "HELLO",
+    ],
     ["appendFile(handle, string)", handle => fsPromises.appendFile(handle, "HELLO"), undefined, "HELLO"],
   ])("%s keeps the descriptor open until it settles", async (_name, call, value, content) => {
     await using dir = tempDir("handle-argument", { "x.txt": "hello" });
@@ -440,23 +454,26 @@ describe("fs.promises functions with a FileHandle argument", () => {
     expect(await pending).toBe(value);
     await closed;
     expect(fh.fd).toBe(-1);
-    expect(fs.readFileSync(file, "utf8")).toContain(content);
+    expect(fs.readFileSync(file, "utf8")).toBe(content);
   });
 
   it.each([
-    ["a fulfilled call", handle => fsPromises.readFile(handle), undefined],
-    [
-      "an argument error",
-      handle => fsPromises.readFile(handle, { encoding: "no-such-encoding" }),
-      "ERR_INVALID_ARG_VALUE",
-    ],
     [
       "a signal that is already aborted",
       handle => fsPromises.readFile(handle, { signal: AbortSignal.abort() }),
       "ABORT_ERR",
     ],
-    // the handle is open for reading only
-    ["a task that fails", handle => fsPromises.writeFile(handle, "x"), expect.any(String)],
+    // the handle is open for reading only, so the write of the native task fails
+    [
+      "a writeFile task that fails",
+      handle => fsPromises.writeFile(handle, "x"),
+      expect.stringMatching(/^E(BADF|PERM|ACCES)$/),
+    ],
+    [
+      "an appendFile task that fails",
+      handle => fsPromises.appendFile(handle, "x"),
+      expect.stringMatching(/^E(BADF|PERM|ACCES)$/),
+    ],
     [
       "an iterable that throws",
       handle =>
@@ -468,17 +485,48 @@ describe("fs.promises functions with a FileHandle argument", () => {
         ),
       "from the iterable",
     ],
-  ])("releases the handle after %s", async (_name, call, outcome) => {
-    await using dir = tempDir("handle-argument-settled", { "x.txt": "hello" });
+  ])("holds the handle until %s rejects, then releases it", async (_name, call, outcome) => {
+    await using dir = tempDir("handle-argument-rejected", { "x.txt": "hello" });
     const fh = await fsPromises.open(join(dir, "x.txt"), "r");
-    expect(
-      await call(fh).then(
-        () => undefined,
-        err => err.code ?? err.message,
-      ),
-    ).toEqual(outcome);
-    // nothing holds the handle any more, so close() does not wait
+    const fd = fh.fd;
+    const pending = call(fh).then(
+      () => undefined,
+      err => err.code ?? err.message,
+    );
+    // close() in the same tick waits for the call
     const closed = fh.close();
+    expect(fh.fd).toBe(fd);
+    expect(await pending).toEqual(outcome);
+    // the call released its ref, so the close that waited has run
+    expect(fh.fd).toBe(-1);
+    await closed;
+  });
+
+  // The native call throws before it starts a task, so close() comes from a getter of the options.
+  it.each([
+    ["readFile", (handle, options) => fsPromises.readFile(handle, options)],
+    ["writeFile", (handle, options) => fsPromises.writeFile(handle, "x", options)],
+    ["appendFile", (handle, options) => fsPromises.appendFile(handle, "x", options)],
+  ])("%s holds the handle across an argument error, then releases it", async (_name, call) => {
+    await using dir = tempDir("handle-argument-invalid", { "x.txt": "hello" });
+    const fh = await fsPromises.open(join(dir, "x.txt"), "r");
+    const fd = fh.fd;
+    let closed, fdInGetter;
+    const options = {
+      get encoding() {
+        closed ??= fh.close();
+        fdInGetter ??= fh.fd;
+        return "no-such-encoding";
+      },
+    };
+    expect(
+      await call(fh, options).then(
+        () => undefined,
+        err => err.code,
+      ),
+    ).toBe("ERR_INVALID_ARG_VALUE");
+    expect(fdInGetter).toBe(fd);
+    // the call released its ref, so the close that waited has run
     expect(fh.fd).toBe(-1);
     await closed;
   });
@@ -486,7 +534,6 @@ describe("fs.promises functions with a FileHandle argument", () => {
   it("a closed handle rejects with ERR_OUT_OF_RANGE and takes no part in a close() that is in progress", async () => {
     await using dir = tempDir("handle-argument-closed", { "x.txt": "hello" });
     const fh = await fsPromises.open(join(dir, "x.txt"), "r+");
-    const fd = fh.fd;
     const read = fh.read(Buffer.alloc(1), 0, 1, 0);
     const closed = fh.close();
     await read;
@@ -509,10 +556,11 @@ describe("fs.promises functions with a FileHandle argument", () => {
       "ERR_OUT_OF_RANGE",
       "ERR_OUT_OF_RANGE",
     ]);
+    // Another thread closes the descriptor, so close() cannot settle before the event loop
+    // turns. A call that took a ref on the closed handle would settle it from a microtask.
+    for (let i = 0; i < 32; i++) await Promise.resolve();
+    expect(Bun.peek.status(closed)).toBe("pending");
     await closed;
-    // close() settled after the descriptor was closed. Nothing else opens a file in this
-    // process between the close and this check.
-    expect(() => fs.fstatSync(fd)).toThrow(expect.objectContaining({ code: "EBADF" }));
   });
 
   it("a getter that closes the handle does not take the descriptor from the call", async () => {
@@ -567,7 +615,8 @@ describe("fs.promises functions with a FileHandle argument", () => {
     }
     // a worker exists only if the transfer was not refused
     await worker?.terminate();
-    expect(thrown).toMatchObject({ name: "DataCloneError" });
+    expect(thrown).toBeInstanceOf(DOMException);
+    expect(thrown).toMatchObject({ name: "DataCloneError", message: "Cannot transfer FileHandle while in use" });
     expect(await pending).toBe("hello");
     await fh.close();
   });

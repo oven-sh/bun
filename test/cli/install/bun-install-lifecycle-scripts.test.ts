@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, readdirSync } from "fs";
+import { existsSync, readdirSync, readlinkSync } from "fs";
 import { exists, mkdir, rm, writeFile } from "fs/promises";
 import {
   VerdaccioRegistry,
@@ -14,7 +14,7 @@ import {
   tempDir,
 } from "harness";
 import { constants as osConstants } from "os";
-import { basename, join, sep } from "path";
+import { basename, dirname, join, sep } from "path";
 
 var verdaccio = new VerdaccioRegistry();
 
@@ -4567,4 +4567,71 @@ describe.concurrent("pm untrusted/trust under the isolated linker", () => {
       expect(JSON.parse(await file(join(packageDir, "package.json")).text()).trustedDependencies).toEqual([pkgName]);
     },
   );
+
+  test("a script that one project trusts does not change what another project loads from the global store", async () => {
+    const pkgName = "lifecycle-shared-store-pkg";
+    await using ctx = await setup({
+      pkgName,
+      dependent: "root",
+      bunfigExtra: "globalStore = true\n",
+      packages: [
+        {
+          packageJson: {
+            name: pkgName,
+            scripts: { postinstall: `${bunExe()} -e 'require("fs").writeFileSync("RAN-marker","ok")'` },
+          },
+          files: {
+            "index.js": `module.exports = require("fs").existsSync(__dirname + "/RAN-marker") ? "its postinstall ran" : "its postinstall did not run";`,
+          },
+        },
+      ],
+    });
+    const { packageDir, env } = ctx;
+
+    // `b` and `c` have the dependency, registry and cache of `a`. They never trust the package.
+    const twin = {
+      "bunfig.toml": await file(join(packageDir, "bunfig.toml")).text(),
+      "package.json": await file(join(packageDir, "package.json")).text(),
+    };
+    using bDir = tempDir("pm-trust-shared-store-b", twin);
+    using cDir = tempDir("pm-trust-shared-store-c", twin);
+    const a = { packageDir, env };
+    const b = { packageDir: String(bDir), env };
+    const c = { packageDir: String(cDir), env };
+
+    const ok = async (project: typeof a, ...args: string[]) => {
+      const { out, err, exitCode } = await run(project, ...args);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      return out.trim();
+    };
+    const entryOf = (project: typeof a) =>
+      readlinkSync(join(project.packageDir, "node_modules", ".bun", `${pkgName}@1.0.0`));
+
+    await ok(a, "install");
+    await ok(b, "install");
+    const shared = entryOf(b);
+    expect(basename(dirname(shared))).toBe("links");
+    expect(entryOf(a)).toBe(shared);
+
+    // Only `a` trusts the package. `bun pm trust` can leave the script to the next install of `a`, so run that too.
+    await ok(a, "pm", "trust", pkgName);
+    await ok(a, "install");
+    await ok(c, "install");
+
+    const load = ["-p", `require("${pkgName}")`];
+    expect({
+      a: await ok(a, ...load),
+      b: await ok(b, ...load),
+      c: await ok(c, ...load),
+      entryOfB: entryOf(b),
+      entryOfC: entryOf(c),
+    }).toEqual({
+      a: "its postinstall ran",
+      b: "its postinstall did not run",
+      c: "its postinstall did not run",
+      entryOfB: shared,
+      entryOfC: shared,
+    });
+  });
 });

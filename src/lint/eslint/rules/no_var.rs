@@ -278,7 +278,9 @@ fn fix_as_oxlint<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, declarations: List<'
 }
 
 impl Rule for NoVar {
-    const META: Meta = Meta::eslint("no-var", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta = Meta::eslint("no-var", Kind::Suggestion)
+        .fixable(Fixable::Code)
+        .reports_on_exit();
     const ON: On = On::new().stmts(&[StmtTag::Var]);
     type State<'a> = State<'a>;
 

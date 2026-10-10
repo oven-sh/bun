@@ -804,9 +804,11 @@ impl<'f, 's> Binder<'f, 's> {
             2300
         };
         let count = there.decls.len() as u32;
+        let first = there.decls.first().copied().unwrap_or(decl);
         self.b.redeclarations.push(Redeclaration {
             symbol,
             count,
+            first,
             decl,
             code,
         });
@@ -3763,6 +3765,7 @@ impl<'f, 's> Binder<'f, 's> {
             self.b.redeclarations.push(Redeclaration {
                 symbol: exported,
                 count: 0,
+                first: decl,
                 decl,
                 code: 2300,
             });

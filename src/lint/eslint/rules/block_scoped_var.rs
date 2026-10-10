@@ -98,7 +98,13 @@ impl Rule for BlockScopedVar {
                     .data("definitionLine", definition.line)
                     .data("definitionColumn", definition.column + 1)
                     .labels_with(|labels| {
-                        labels.first(format!("'{}' is used here", bstr::BStr::new(reference.name().bytes())));
+                        let name = bstr::BStr::new(reference.name().bytes());
+                        // A declaration that gives the variable a value.
+                        if matches!(reference.node(), Node::Pat(_)) {
+                            labels.first("it is redeclared here");
+                            return labels.push(pattern_of(pat), format!("'{name}' is first declared here"));
+                        }
+                        labels.first(format!("'{name}' is used here"));
                         labels.push(pattern_of(pat), "It is declared in a different scope here");
                     });
                 false

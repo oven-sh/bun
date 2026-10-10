@@ -3,7 +3,7 @@
 use crate::class::{self, Class, Escape, Read};
 use crate::ignore::{IgnoreOptions, IgnoreSyntax};
 use crate::node::{Assertion, MAX_NESTING, Node, Program, lower, simplify};
-use crate::unit::{Subject, Text, Unit, push_utf8};
+use crate::unit::{Subject, Text, Unit, push_utf8, well_formed};
 use bun_core::strings;
 
 pub(crate) struct Line {
@@ -32,8 +32,9 @@ pub(crate) fn text_for(options: IgnoreOptions) -> Text {
 pub(crate) fn line(bytes: &[u8], options: IgnoreOptions) -> Result<Option<Line>, Vec<u8>> {
     match options.syntax {
         IgnoreSyntax::Globset => globset_line(bytes, options.ignores_case),
-        IgnoreSyntax::Git | IgnoreSyntax::Npm7012 => Ok(wildmatch_line(bytes, options)),
-        IgnoreSyntax::Npm5 | IgnoreSyntax::Npm705 => Ok(legacy_line(bytes, options)),
+        IgnoreSyntax::Git => Ok(wildmatch_line(bytes, options)),
+        IgnoreSyntax::Npm7012 => Ok(wildmatch_line(&well_formed(bytes), options)),
+        IgnoreSyntax::Npm5 | IgnoreSyntax::Npm705 => Ok(legacy_line(&well_formed(bytes), options)),
     }
 }
 

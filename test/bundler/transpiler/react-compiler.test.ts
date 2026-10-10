@@ -776,6 +776,37 @@ describe("bundler", () => {
     },
   });
 
+  // `c` is assigned in a scope that lies in the scope of `d`. Only the inner one had it as an output, so a render in which
+  // the outer one is not run again gave `undefined`. babel-plugin-react-compiler 1.0.0 does the same.
+  itBundled("react-compiler/ReassignedInAScopeInAScope", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        const f = x => x;
+        function Component(props) {
+          let c = null, d = [], e = {};
+          c = { k: c || "x" };
+          { const s = \`\${props.x}-\${e}\`; f(s); { const s = c; f(() => s); } }
+          { const s = props.y; f(() => s); }
+          { const s = d; f(() => s); }
+          return <div>{c}{d}{e}</div>;
+        }
+        const rendered = [Component({ x: 1 }), Component({ x: 1 }), Component({ x: 2 })];
+        console.log(rendered.map(it => JSON.stringify(it.p.children[0])).join(", "));
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `let cache; exports.c = n => (cache ??= new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: `{"k":"x"}, {"k":"x"}, {"k":"x"}` },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
   // Sibling of the above: `WAS_ORIGINALLY_TYPEOF_IDENTIFIER` was also dropped,
   // so the printer wrapped `typeof undeclared` as `typeof (0, undeclared)`,
   // which throws ReferenceError instead of returning "undefined" — breaking

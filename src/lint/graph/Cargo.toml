@@ -12,6 +12,7 @@ bun_sema.workspace = true
 bun_sema_driver.workspace = true
 bun_sema_parser.workspace = true
 bun_core.workspace = true
+bun_glob.workspace = true
 bun_threading.workspace = true
 smallvec.workspace = true
 

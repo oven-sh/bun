@@ -1914,6 +1914,15 @@ impl<'a> DependencyCollectionContext<'a> {
     }
 
     fn check_valid_dependency(&self, dep: &ReactiveScopeDependency, env: &Environment) -> bool {
+        self.check_valid_dependency_of(self.current_scope(), dep, env)
+    }
+
+    fn check_valid_dependency_of(
+        &self,
+        scope: Option<ScopeId>,
+        dep: &ReactiveScopeDependency,
+        env: &Environment,
+    ) -> bool {
         // Ref value is not a valid dep
         let ty = &env.types[env.identifiers[dep.identifier.0 as usize].type_.0 as usize];
         if crate::hir::is_ref_value_type(ty) {
@@ -1930,7 +1939,7 @@ impl<'a> DependencyCollectionContext<'a> {
             .get(dep.identifier)
             .or_else(|| self.declarations.get(ident.declaration_id));
 
-        if let Some(current_scope) = self.current_scope() {
+        if let Some(current_scope) = scope {
             if let Some(decl) = current_declaration {
                 let scope_range_start = env.scopes[current_scope.0 as usize].range.start;
                 return decl.id < scope_range_start;
@@ -2039,14 +2048,17 @@ impl<'a> DependencyCollectionContext<'a> {
     fn visit_reassignment(&mut self, place: &Place, env: &mut Environment) {
         // Not in upstream: a store that dead_code_elimination.rs retains can be in a later scope.
         self.declare_outside_original_scope(place.identifier, env);
-        if let Some(current_scope) = self.current_scope() {
+        // Upstream asks the innermost scope alone. A scope around it that is not run again then leaves the variable unset.
+        for index in 0..self.scope_stack.len() {
+            let current_scope = self.scope_stack[index];
             let scope = &env.scopes[current_scope.0 as usize];
             let already = scope.reassignments.iter().any(|id| {
                 env.identifiers[id.0 as usize].declaration_id
                     == env.identifiers[place.identifier.0 as usize].declaration_id
             });
             if !already
-                && self.check_valid_dependency(
+                && self.check_valid_dependency_of(
+                    Some(current_scope),
                     &ReactiveScopeDependency {
                         identifier: place.identifier,
                         reactive: place.reactive,

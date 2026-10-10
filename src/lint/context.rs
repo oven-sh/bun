@@ -316,6 +316,15 @@ impl<'a> Report<'a> {
         self
     }
 
+    /// [`Meta::reports_on_exit`](crate::rule::Meta::reports_on_exit), for a rule of which only some listeners are called on
+    /// leaving a node.
+    pub fn on_exit(mut self, is_on_exit: bool) -> Self {
+        if let Some(diagnostic) = &mut self.diagnostic {
+            diagnostic.is_reported_on_exit = is_on_exit;
+        }
+        self
+    }
+
     fn details(&mut self) -> Option<&mut Details> {
         let diagnostic = self.diagnostic.as_mut()?;
         Some(&mut **diagnostic.details.get_or_insert_default())

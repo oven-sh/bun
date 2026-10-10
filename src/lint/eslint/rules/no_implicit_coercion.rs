@@ -142,7 +142,11 @@ fn type_of_coercion(node: Expr) -> &'static str {
 }
 
 fn report<'a>(node: Expr<'a>, recommendation: &[u8], remedy: Remedy, cx: &Cx<'a, NoImplicitCoercion>) {
-    let mut report = cx.report(node, IMPLICIT_COERCION).data("recommendation", recommendation.to_vec());
+    // `"BinaryExpression:exit"`
+    let mut report = cx
+        .report(node, IMPLICIT_COERCION)
+        .on_exit(node.tag() == ExprTag::Binary)
+        .data("recommendation", recommendation.to_vec());
     if cx.language().is_oxlint {
         let kind = type_of_coercion(node);
         report = report.data("type", kind).help(match kind {

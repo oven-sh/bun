@@ -223,6 +223,8 @@ pub struct State<'a> {
     last_seen: u32,
     /// With a configuration of oxlint: a way back in a loop of the constructor leads to a `super()` again.
     is_called_again_in_loop: bool,
+    /// The first `super()` of the constructor that can be reached.
+    first_call: Option<Span>,
 }
 
 impl<'a> State<'a> {
@@ -412,6 +414,7 @@ impl ConstructorSuper {
         cx.state.edges_down.clear();
         cx.state.last_seen = 0;
         cx.state.is_called_again_in_loop = false;
+        cx.state.first_call = None;
     }
 
     fn on_code_path_start<'a>(&self, code_path: CodePath<'a>, node: Node<'a>, cx: &mut Cx<'a, Self>) {
@@ -574,10 +577,21 @@ impl ConstructorSuper {
         let (Some(last), is_duplicate) = cx.state.mark_current_segments(code_path) else {
             return;
         };
+        let first_call = *cx.state.first_call.get_or_insert_with(|| e.span());
         if is_duplicate {
-            cx.report(e, DUPLICATE);
+            cx.report(e, DUPLICATE).labels_with(|labels| labels.push(first_call, "`super()` was first called here."));
         } else if !super_is_constructor {
-            cx.report(e, BAD_SUPER);
+            let class = cx.state.constructor.map(|it| it.owner().parent());
+            cx.report(e, BAD_SUPER).labels_with(|labels| {
+                if let Some(Node::Class(class)) = class
+                    && let Some(super_class) = class.extends()
+                {
+                    labels.push(super_class.outer_span(), match super_class.tag() {
+                        ExprTag::Null if !super_class.is_parenthesized() => "`null` does not provide a constructor to call.",
+                        _ => "This superclass expression is not constructable.",
+                    });
+                }
+            });
         } else if let Some(info) = cx.state.seg_info_map.get_mut(&last) {
             info.valid_nodes.push(e);
         }

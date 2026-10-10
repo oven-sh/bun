@@ -485,10 +485,12 @@ fn check_property<'a>(cx: &Context<'a>, node: Prop<'a>, value: Expr<'a>) {
             // `getContextualType(checker, key)` is the contextual type of the property if the key
             // is an identifier, and nothing otherwise.
             let receiver_type = || {
-                // tsgolint asks for that of the value, whatever the key is.
+                // tsgolint asks the same of the value first, which answers for a bare name too: `{ [a]: b }`, and not
+                // `{ [a]: b() }` or `{ [a]: (b) }`.
+                let is_bare_name = value.tag() == ExprTag::Ident && !value.is_parenthesized();
                 let contextual_type = match key.map(Key::kind) {
                     Some(KeyKind::Ident(_)) => value.contextual_type(),
-                    _ if file.language().is_oxlint => value.contextual_type(),
+                    _ if file.language().is_oxlint && is_bare_name => value.contextual_type(),
                     _ => None,
                 };
                 contextual_type.unwrap_or_else(type_of_name)

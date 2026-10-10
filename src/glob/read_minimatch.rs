@@ -23,10 +23,12 @@ pub(crate) fn part(pattern: &[u8], dot: bool) -> Part {
     if stars > 0 && after_stars.is_empty() {
         return Part::Star;
     }
-    if stars > 0 && is_plain(after_stars) {
+    // These two compare bytes.
+    let is_quick = !Text::UTF16.has_replacement(pattern);
+    if is_quick && stars > 0 && is_plain(after_stars) {
         return Part::StarExt(after_stars.into());
     }
-    if marks > 0 && is_plain(after_marks) {
+    if is_quick && marks > 0 && is_plain(after_marks) {
         return Part::QuestionMarks(Text::UTF16.count_units(pattern), after_marks.into());
     }
     let is_dot_and_stars = |text: &[u8]| match text {

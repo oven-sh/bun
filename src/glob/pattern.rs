@@ -6,8 +6,9 @@ use crate::read_ignore;
 use crate::read_minimatch3;
 use crate::read_picomatch;
 use crate::segments::{self, Expansion};
-use crate::unit::Subject;
+use crate::unit::{Subject, Text, well_formed};
 use bun_core::strings;
+use std::borrow::Cow;
 
 pub use crate::segments::Candidate;
 
@@ -111,6 +112,16 @@ struct Alternative {
     written: Box<[u8]>,
     program: Program,
     is_negated: bool,
+    /// `written` has U+FFFD, which a bad byte of a path is too.
+    has_replacement: bool,
+}
+
+impl Alternative {
+    /// Whether `path` is the same string as the pattern, which is well formed.
+    #[inline]
+    fn is_written(&self, path: &[u8]) -> bool {
+        path == &self.written[..] || self.has_replacement && well_formed(path) == &self.written[..]
+    }
 }
 
 enum Kind {
@@ -180,6 +191,10 @@ impl Pattern {
             kind,
             is_negated: false,
         };
+        let pattern: &[u8] = &match options.syntax {
+            Syntax::Bun => Cow::Borrowed(pattern),
+            _ => well_formed(pattern),
+        };
         let pattern = match options.syntax {
             Syntax::Minimatch3 => strings::trim_js_whitespace(pattern),
             _ => pattern,
@@ -211,6 +226,7 @@ impl Pattern {
                     written: Box::default(),
                     program: read_minimatch3::pattern(pattern, options),
                     is_negated: false,
+                    has_replacement: false,
                 }],
                 is_asked_directly: true,
             }),
@@ -225,6 +241,7 @@ impl Pattern {
                     let (program, is_negated) =
                         read_picomatch::pattern(&written, options.dot, options.posix);
                     Alternative {
+                        has_replacement: Text::UTF16.has_replacement(&written),
                         written: written.into(),
                         program,
                         is_negated,
@@ -250,6 +267,7 @@ impl Pattern {
                     written: Box::default(),
                     program: read_ignore::globset_matcher(written)?,
                     is_negated: false,
+                    has_replacement: false,
                 }],
                 is_asked_directly: true,
             },
@@ -333,7 +351,7 @@ impl Pattern {
                 is_asked_directly,
             } => alternatives.iter().any(|it| {
                 // `picomatch.test`: a path that is the pattern, letter for letter, matches, whatever the pattern means.
-                if !is_asked_directly && path == &it.written[..] {
+                if !is_asked_directly && it.is_written(path) {
                     return true;
                 }
                 let hit = it.program.matches(Subject::of(path));

@@ -1,7 +1,7 @@
 //! What minimatch 10.2.6 does with a path that is split at its slashes: at most 2 x parts x names tests of a name.
 
 use crate::braces;
-use crate::node::Program;
+use crate::node::{Assertion, Node, Program, lower};
 use crate::pattern::{Options, Syntax};
 use crate::read_minimatch;
 use crate::read_minimatch3;
@@ -245,6 +245,14 @@ pub(crate) fn read(pattern: &[u8], options: Options) -> Option<Vec<Expansion>> {
         let parts = names.into_iter().map(|it| match is_3 {
             true => read_minimatch3::part(it, dot),
             false => read_minimatch::part(it, dot),
+        });
+        // A name without magic is compared byte by byte.
+        let parts = parts.map(|it| match it {
+            Part::Literal(name) if Text::UTF16.has_replacement(&name) => {
+                let nodes = vec![Node::Lit(name.into()), Node::Assert(Assertion::End)];
+                Part::Name(lower(Node::Seq(nodes), Text::UTF16))
+            }
+            it => it,
         });
         Expansion::new(parts.collect())
     };

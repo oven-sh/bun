@@ -1079,6 +1079,7 @@ name = "bun_lint_graph"
 version = "0.0.0"
 dependencies = [
  "bun_core",
+ "bun_glob",
  "bun_lint",
  "bun_sema",
  "bun_sema_driver",

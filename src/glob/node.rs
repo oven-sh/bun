@@ -383,6 +383,8 @@ fn tokens_of(nodes: &[Node], text: Text) -> Option<Tokens> {
     for (i, node) in nodes.iter().enumerate() {
         let after = nodes.get(i + 1..).unwrap_or_default();
         match node {
+            // That loop compares bytes.
+            Node::Lit(bytes) if text.has_replacement(bytes) => return None,
             Node::Lit(bytes) => out.push_lit(bytes),
             Node::Any => out.push(Tok::Any),
             Node::Star => out.push(Tok::Star),

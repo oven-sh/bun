@@ -90,9 +90,9 @@ fn is_file_or_executable(name: &[u8], cwd: &[u8]) -> bool {
         let path = bun_core::ZBox::from_bytes(join_abs_string::<Auto>(dir, &[&parts.concat()]));
         bun_sys::exists_at_type(bun_core::Fd::cwd(), &path).ok()
     };
-    // Those of the resolver.
-    let extensions: [&[u8]; 9] = [
-        b".tsx", b".ts", b".jsx", b".cts", b".cjs", b".js", b".mjs", b".mts", b".json",
+    // Those of the resolver that can be run: `bun lint -o lint.json` must not take the name away.
+    let extensions: [&[u8]; 8] = [
+        b".tsx", b".ts", b".jsx", b".cts", b".cjs", b".js", b".mjs", b".mts",
     ];
     let is_file = |parts: &[&[u8]]| kind(cwd, parts) == Some(ExistsAtType::File);
     let found = match kind(cwd, &[name]) {

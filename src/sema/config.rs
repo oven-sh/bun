@@ -104,6 +104,18 @@ pub struct Project {
     pub errors: Vec<ConfigError>,
     /// The merged `compilerOptions` of all the files that were read, from which `options` is built.
     pub raw_compiler_options: Vec<(Vec<u8>, Json)>,
+    pub written: Written,
+}
+
+/// `files`, `include` and `exclude` as the file that has them writes them: those of an extended file are not made
+/// relative to the one that extends it, and nothing is left out. `None`: no file has it. Not what they mean to
+/// TypeScript: the graph of imports of `bun lint` reads them, for oxlint's rule about which files a `tsconfig.json` is
+/// for.
+#[derive(Clone, Default)]
+pub struct Written {
+    pub files: Option<Vec<Vec<u8>>>,
+    pub include: Option<Vec<Vec<u8>>>,
+    pub exclude: Option<Vec<Vec<u8>>>,
 }
 
 impl Project {
@@ -206,6 +218,8 @@ struct List {
     /// `propOfRaw.sliceValue`. `convertArrayLiteralElementsToJson` leaves out the elements that are
     /// `null`, and a list of nothing else is nil. An element of the wrong type is still in it.
     items: Option<Vec<Json>>,
+    /// [`Written`]
+    written: Option<Vec<Json>>,
 }
 
 impl List {
@@ -221,6 +235,7 @@ impl List {
         List {
             is_specified: value.is_some(),
             is_array: written.is_some(),
+            written: items.clone(),
             items,
         }
     }
@@ -231,6 +246,11 @@ impl List {
         items
             .filter_map(|item| item.as_str().map(<[u8]>::to_vec))
             .collect()
+    }
+
+    fn written(&self) -> Option<Vec<Vec<u8>>> {
+        let strings = self.written.as_ref()?.iter().filter_map(Json::as_str);
+        Some(strings.map(<[u8]>::to_vec).collect())
     }
 
     fn stringify(&self) -> Vec<u8> {
@@ -509,6 +529,7 @@ fn parse_config(
                     is_specified: true,
                     is_array: true,
                     items: Some(rebase(items)),
+                    written: extended.written,
                 };
             }
         };
@@ -661,6 +682,7 @@ pub fn without_config(host: &dyn Host, dir: &[u8], compiler: Json, files: Vec<Ve
             is_specified: !files.is_empty(),
             is_array: !files.is_empty(),
             items: (!files.is_empty()).then(|| files.into_iter().map(Json::String).collect()),
+            written: None,
         },
         ..Raw::default()
     };
@@ -815,6 +837,11 @@ fn project_from_raw(
         has_references: references.is_some(),
         references: references.unwrap_or_default(),
         errors,
+        written: Written {
+            files: raw.files.written(),
+            include: raw.include.written(),
+            exclude: raw.exclude.written(),
+        },
         raw_compiler_options: match compiler {
             Json::Object(options) => options,
             _ => Vec::new(),

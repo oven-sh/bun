@@ -18,6 +18,7 @@
 #![forbid(unsafe_code)]
 
 use bun_core::strings;
+use bun_glob::{Options as GlobOptions, Pattern};
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser};
 use bun_lint::modules::{
@@ -27,7 +28,10 @@ use bun_lint::modules::{
 use bun_lint::paths::{is_absolute, relative};
 use bun_sema::atom::Interner;
 use bun_sema::bind::{BindOptions, Recycled, bind_for_lint_in};
-use bun_sema::config::{Project, find_config, load_overriding, without_config};
+use bun_sema::config::{
+    Project, find_config, load_overriding, resolve_config_file_name_of_project_reference,
+    without_config,
+};
 use bun_sema::hir::ResolutionMode;
 use bun_sema::json::Json;
 use bun_sema::resolve::{AsRequire, Host, Resolver, ScriptKind, ancestors, join, typescript_path};
@@ -102,7 +106,10 @@ struct Known<'h> {
     resolvers: ShardedMap<Vec<u8>, ProjectResolver<'h>>,
     /// The path of the `tsconfig.json` for the files of a directory.
     configs: ShardedMap<Vec<u8>, Vec<u8>>,
-    /// What a specifier that is not relative means: by the directory, how it is imported, and the specifier.
+    /// [`Graph::scopes_in`]
+    scopes: ShardedMap<Vec<u8>, Vec<Scope>>,
+    /// What a specifier that is not relative means: by the `tsconfig.json`, the directory, how it is imported, and the
+    /// specifier.
     not_relative: ShardedMap<Vec<u8>, Option<(Vec<u8>, bool)>>,
     /// Paths with symbolic links followed.
     real_paths: ShardedMap<Vec<u8>, Vec<u8>>,
@@ -172,6 +179,83 @@ pub fn with_file<R>(
 /// Calls the function with every index below the count, on any number of threads.
 pub type Parallel<'p> = &'p dyn Fn(usize, &(dyn Fn(usize) + Sync));
 
+/// The files that a `tsconfig.json` is for, as oxc-resolver decides it, with which oxlint resolves. That is not how
+/// TypeScript decides it.
+struct Scope {
+    /// Empty: it cannot be read, and is for every file.
+    config: Vec<u8>,
+    files: Vec<Vec<u8>>,
+    /// Absolute. With each: whether it ends in a `*`. Then it takes only JavaScript and TypeScript.
+    include: Vec<(Pattern, bool)>,
+    exclude: Vec<Pattern>,
+    allows_js: bool,
+}
+
+impl Scope {
+    const BROKEN: Scope = Scope {
+        config: Vec::new(),
+        files: Vec::new(),
+        include: Vec::new(),
+        exclude: Vec::new(),
+        allows_js: false,
+    };
+
+    fn new(project: &Project) -> Scope {
+        let directory = directory_of(&project.config_path);
+        let absolute = |written: &[u8]| match written.strip_prefix(b"${configDir}") {
+            Some(rest) => join(directory, rest.strip_prefix(b"/").unwrap_or(rest)),
+            None => join(directory, written),
+        };
+        let pattern = |written: &Vec<u8>| {
+            let mut path = absolute(written);
+            // A last name without a `.` and without a wildcard is that of a directory.
+            let last = &path[directory_of(&path).len()..];
+            if !strings::contains_any(last, b".*?") {
+                path.extend_from_slice(b"/**/*");
+            }
+            (Pattern::new(&path, GlobOptions::BUN), path.ends_with(b"*"))
+        };
+        let patterns = |written: &[Vec<u8>]| written.iter().map(pattern).collect::<Vec<_>>();
+        let written = &project.written;
+        let everything = [b"**/*".to_vec()];
+        let include = match (&written.include, &written.files) {
+            (Some(include), _) => &include[..],
+            (None, Some(_)) => &[],
+            (None, None) => &everything[..],
+        };
+        let allow_js = (project.raw_compiler_options.iter()).find(|it| it.0 == b"allowJs");
+        Scope {
+            config: project.config_path.clone(),
+            files: (written.files.iter().flatten())
+                .map(|it| absolute(it))
+                .collect(),
+            include: patterns(include),
+            exclude: (patterns(written.exclude.as_deref().unwrap_or_default()).into_iter())
+                .map(|it| it.0)
+                .collect(),
+            allows_js: allow_js.is_some_and(|it| it.1 == Json::Bool(true)),
+        }
+    }
+
+    fn has(&self, path: &[u8]) -> bool {
+        if self.config.is_empty() || self.files.iter().any(|it| it == path) {
+            return true;
+        }
+        let extension =
+            strings::last_index_of_char(path, b'.').map_or(&b""[..], |dot| &path[dot + 1..]);
+        // Not `cjs`.
+        if !self.allows_js && matches!(extension, b"js" | b"jsx" | b"mjs") {
+            return false;
+        }
+        let is_script = matches!(
+            extension,
+            b"ts" | b"tsx" | b"mts" | b"cts" | b"js" | b"jsx" | b"mjs" | b"cjs"
+        );
+        let mut include = self.include.iter().filter(|it| is_script || !it.1);
+        include.any(|it| it.0.matches(path)) && !self.exclude.iter().any(|it| it.matches(path))
+    }
+}
+
 fn directory_of(path: &[u8]) -> &[u8] {
     match strings::last_index_of_char(path, b'/') {
         Some(0) | None => b"/",
@@ -240,17 +324,58 @@ impl<'h> Graph<'h> {
         })
     }
 
-    /// The resolver for the files in `directory`.
-    fn resolver(&self, directory: &[u8]) -> &ProjectResolver<'h> {
+    /// The `tsconfig.json` in `directory`, if there is one, after those that it refers to: oxlint asks them first. What
+    /// those refer to is not asked.
+    fn scopes_in(&self, directory: &[u8]) -> &[Scope] {
         let known = self.known();
-        let config = match known.configs.get_ref(directory) {
-            Some(config) => config,
-            None => {
-                let found = find_config(self.store.disk(), directory).unwrap_or_default();
-                known.configs.insert_ref(directory.to_vec(), found)
-            }
+        if let Some(scopes) = known.scopes.get_ref(directory) {
+            return scopes;
+        }
+        let _loading = self.loading.lock();
+        if let Some(scopes) = known.scopes.get_ref(directory) {
+            return scopes;
+        }
+        let disk = WithoutListings(self.store.disk());
+        let load = |config: &[u8]| {
+            let project = load_overriding(&disk, &self.store.session, config, &|_| Vec::new());
+            project.ok().map(|it| Scope::new(&it))
         };
-        self.resolver_of(config, directory)
+        let config = join(directory, b"tsconfig.json");
+        let project = (disk.is_file(&config))
+            .then(|| load_overriding(&disk, &self.store.session, &config, &|_| Vec::new()).ok());
+        let scopes = project.flatten().map_or_else(Vec::new, |project| {
+            let referenced = project.references.iter();
+            let referenced =
+                referenced.map(|it| load(&resolve_config_file_name_of_project_reference(&it.path)));
+            let own = Some(Scope::new(&project));
+            let all: Option<Vec<Scope>> = referenced.chain([own]).collect();
+            all.unwrap_or_else(|| vec![Scope::BROKEN])
+        });
+        known.scopes.insert_ref(directory.to_vec(), scopes)
+    }
+
+    /// The `tsconfig.json` that has a say about what the file `from` imports. Empty: none.
+    fn config_of(&self, from: &[u8]) -> &[u8] {
+        let directory = directory_of(from);
+        if !self.flavor().resolves_as_node() {
+            let known = self.known();
+            return match known.configs.get_ref(directory) {
+                Some(config) => config,
+                None => {
+                    let found = find_config(self.store.disk(), directory).unwrap_or_default();
+                    known.configs.insert_ref(directory.to_vec(), found)
+                }
+            };
+        }
+        for directory in ancestors(directory) {
+            if let Some(scope) = self.scopes_in(directory).iter().find(|it| it.has(from)) {
+                return &scope.config;
+            }
+            if directory.ends_with(b"/node_modules") {
+                break;
+            }
+        }
+        b""
     }
 
     /// The resolver for the files that the configuration at `config` is for. Empty: none is. `directory`: one of
@@ -380,8 +505,11 @@ impl<'h> Graph<'h> {
             }
             return self.resolve_with_project(from, specifier, is_require);
         }
-        // What is not relative means the same in all the files of a directory, and takes long to find.
+        // What is not relative means the same in all the files of a directory that have the same `tsconfig.json`, and
+        // takes long to find.
         let key = [
+            self.config_of(from),
+            b"\0",
             directory_of(from),
             if is_require { b"\0r\0" } else { b"\0i\0" },
             specifier,
@@ -462,7 +590,7 @@ impl<'h> Graph<'h> {
         };
         let ProjectResolver {
             resolver, base_url, ..
-        } = self.resolver(directory_of(from));
+        } = self.resolver_of(self.config_of(from), directory_of(from));
         let from_base_url = || {
             let base_url = base_url
                 .as_ref()
@@ -797,7 +925,8 @@ impl Modules for Graph<'_> {
     }
 
     fn resolve(&self, from: &[u8], specifier: &[u8], is_require: bool) -> Option<Resolved> {
-        let from = self.known_as(from);
+        // By its name, also if that is the name of a link.
+        let from = from_native(from);
         let (path, is_external) = self.resolve_path(&from, specifier, is_require)?;
         Some(Resolved {
             module: *self.complete.get()?.ids.get(&path[..])?,
@@ -874,7 +1003,8 @@ impl Modules for Graph<'_> {
     }
 
     fn es_module_interop(&self, directory: &[u8]) -> bool {
-        self.resolver(&from_native(directory)).es_module_interop
+        let file = join(&from_native(directory), b"index.ts");
+        (self.resolver_of(self.config_of(&file), directory_of(&file))).es_module_interop
     }
 
     fn path(&self, module: ModuleId) -> &[u8] {

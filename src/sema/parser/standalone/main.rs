@@ -132,7 +132,13 @@ fn agree_one(path: &[u8], text: &[u8], how: Reading, scratch: &mut Scratch) -> O
     let strict = parse_as_file(path, text, options, &atoms, scratch);
     let error = match &general {
         Ok(general) => (general.file.diagnostics.iter())
-            .find(|it| it.kind == DiagnosticKind::Parse)
+            .filter(|it| it.kind == DiagnosticKind::Parse)
+            // Only recovery says where acorn stops in a script. Who has the whole tree finds the keyword in it.
+            .find(|it| {
+                let rest = text.get(it.start as usize..).unwrap_or_default();
+                let is_module_syntax = rest.starts_with(b"import") || rest.starts_with(b"export");
+                !(it.code == 1128 && is_module_syntax && how.dialect.script)
+            })
             .map(|it| format!("{:?}", (it.kind, it.code, it.start))),
         Err(why) => Some(format!("NEITHER: {:?} at {}", why.why, why.at)),
     };

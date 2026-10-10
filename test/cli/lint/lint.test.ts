@@ -3268,6 +3268,59 @@ describe.concurrent("bun lint", () => {
   });
 
   // The same.
+  test("a name that is declared again in TypeScript is refused where oxc refuses it", async () => {
+    const cases: Record<string, [code: string, at?: string]> = {
+      "a0.ts": ["let a; let a;", "1:5: Identifier `a`"],
+      "a1.ts": ["let b; let a; let a;", "1:12: Identifier `a`"],
+      "a2.ts": ["type A = 1; type A = 2;", "1:6: Identifier `A`"],
+      "a3.ts": ["class A {} class A {}", "1:7: Identifier `A`"],
+      "a4.ts": ["var a; let a;", "1:5: Identifier `a`"],
+      "a5.ts": ["let a; { var a; }", "1:5: Identifier `a`"],
+      "a6.ts": ["function f(a) { let a; }", "1:12: Identifier `a`"],
+      "a7.ts": ["enum E {} class E {}", "1:6: Identifier `E`"],
+      "a8.ts": ["interface A {} type A = 1;", "1:11: Identifier `A`"],
+      "a9.ts": ["enum E { A, A }", "1:10: Identifier `A`"],
+      "b0.ts": ['import a from "x"; import a from "y";', "1:8: Identifier `a`"],
+      "b1.ts": ["let a; function a() {}", "1:5: Identifier `a`"],
+      "b2.ts": ["const enum E {} enum E {}", "1:12: Identifier `E`"],
+      "b3.ts": ["let { a, a } = b;", "1:7: Identifier `a`"],
+      "b4.ts": ["function f(a) { function a() {} }", "1:12: Identifier `a`"],
+      "b5.ts": ["switch (x) { case 1: let a; case 2: let a; }", "1:26: Identifier `a`"],
+      "b6.ts": ["export const a = 1; export const a = 2;", "1:14: Identifier `a`"],
+      "b7.ts": ["namespace N { let a; let a; }", "1:19: Identifier `a`"],
+      "b8.ts": ["declare let a; declare let a;", "1:13: Identifier `a`"],
+      "c0.ts": ["interface A {} interface A {}"],
+      "c1.ts": ["namespace N {} namespace N {}"],
+      "c2.ts": ["var a; var a;"],
+      "c3.ts": ["function f() {} var f;"],
+      "c4.ts": ['import { a } from "x"; let a;'],
+      "c5.ts": ["function f() {} function f() {}"],
+      "c6.ts": ["class A {} interface A {}"],
+      "c7.ts": ["const a = 1; type a = 1;"],
+      "c8.ts": ["enum E { A } enum E { B }"],
+      "c9.ts": ["function f<T, T>() {}"],
+      "d0.ts": ["interface A { x: 1; x: 2 }"],
+      "d1.ts": ["export default class {} export default class {}"],
+      "d2.ts": ["function f(a) { var a; }"],
+      "d3.ts": ["for (let a;;) { let a; }"],
+      "d4.ts": ["class A {} namespace A {}"],
+    };
+    const files = Object.fromEntries(Object.entries(cases).map(([name, [code]]) => [name, code + "\n"]));
+    const oxlintrc = JSON.stringify({ categories: { correctness: "off" } });
+    const { stdout } = await lint({ ".oxlintrc.json": oxlintrc, ...files }, ["-f", "unix"]);
+    expect(
+      stdout
+        .split("\n")
+        .filter(line => line.endsWith("]"))
+        .sort(),
+    ).toEqual(
+      Object.entries(cases).flatMap(([name, [, at]]) =>
+        at ? [`${name}:${at} has already been declared [Error]`] : [],
+      ),
+    );
+  });
+
+  // The same.
   test("`with` is refused where the code is strict for oxc, and in TypeScript", async () => {
     const cases: Record<string, [code: string, at?: string]> = {
       "a0.mjs": ["with (a) {}", "1:1"],
@@ -4362,6 +4415,13 @@ describe.concurrent("a lint script in package.json", () => {
   test("a directory of that name without an index does not", async () => {
     const { "package.json": __, ...rest } = files;
     const { stdout, exitCode } = await lint({ ...rest, "lint/notes.txt": "x" }, ["-f", "unix", "a.js"]);
+    expect(stdout).toContain("[Error/no-debugger]");
+    expect(exitCode).toBe(1);
+  });
+
+  test.each(["lint.json", "lint/index.json"])("%s, which cannot be run, does not", async name => {
+    const { "package.json": __, ...rest } = files;
+    const { stdout, exitCode } = await lint({ ...rest, [name]: "[]" }, ["-f", "unix", "a.js"]);
     expect(stdout).toContain("[Error/no-debugger]");
     expect(exitCode).toBe(1);
   });

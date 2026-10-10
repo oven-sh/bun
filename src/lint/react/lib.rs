@@ -20,6 +20,7 @@ mod util_component_util;
 mod util_components;
 mod util_components_list;
 mod util_components_related;
+mod util_default_props;
 mod util_eslint;
 mod util_get_token_before_closing_bracket;
 mod util_is_create_context;
@@ -34,6 +35,7 @@ mod util_pragma;
 mod util_prop_types_declaration;
 mod util_prop_wrapper;
 mod util_props;
+mod util_used_prop_types;
 mod util_variable;
 mod util_version;
 

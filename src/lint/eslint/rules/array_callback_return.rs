@@ -72,6 +72,16 @@ fn full_method_name(array_method_name: &str) -> String {
     [prefix, array_method_name].concat()
 }
 
+/// Where oxlint says that the method is called: at its name, or at the whole of `Array.from`.
+fn place_of_method(callee: Expr, array_method_name: &str) -> Option<Span> {
+    match callee.kind() {
+        _ if matches!(array_method_name, "from" | "fromAsync") => Some(callee.span()),
+        ExprKind::Dot { name, .. } => Some(name.span()),
+        ExprKind::Index { index, .. } => Some(index.span()),
+        _ => None,
+    }
+}
+
 #[derive(Default)]
 pub struct State<'a> {
     /// The outermost of the `&&`, `||`, `??` and `?:` that an expression is an operand of, or itself,
@@ -192,7 +202,7 @@ impl ArrayCallbackReturn {
 
     /// oxlint reports a callback once: at its body, or at its head if it ends with an `if` without `else` or a `switch`
     /// without `default`.
-    fn check_as_oxlint<'a>(&self, func: Func<'a>, method: &str, cx: &Cx<'a, Self>) {
+    fn check_as_oxlint<'a>(&self, func: Func<'a>, (method, callee): (&str, Expr<'a>), cx: &Cx<'a, Self>) {
         let FnBody::Block(body) = func.body() else {
             return;
         };
@@ -233,7 +243,13 @@ impl ArrayCallbackReturn {
             };
             Self::report(cx, place, message, func, method)
                 .data("value_requirement", value_requirement)
-                .labels_with(|it| it.note = note.into());
+                .labels_with(|it| {
+                    it.note = note.into();
+                    if let (true, Some(last), Some(called)) = (can_run_past_the_last, last, place_of_method(callee, method)) {
+                        it.push(last, "This path may reach the end of the callback.");
+                        it.push(called, format!("\"{}\" is called here.", full_method_name(method)));
+                    }
+                });
         }
     }
 
@@ -241,11 +257,13 @@ impl ArrayCallbackReturn {
     fn check_for_each_callback<'a>(&self, func: Func<'a>, callee: Expr<'a>, cx: &Cx<'a, Self>) {
         let is_allowed = |value: Expr<'a>| self.allow_void && is_expression_void(value);
         // oxlint reports a callback once, at the name of the method.
-        let place_of_oxlint = match callee.kind() {
-            _ if !cx.language().is_oxlint => None,
-            ExprKind::Dot { name, .. } => Some(name.span()),
-            ExprKind::Index { index, .. } => Some(index.span()),
-            _ => None,
+        let place_of_oxlint = place_of_method(callee, "forEach").filter(|_| cx.language().is_oxlint);
+        let label = |labels: &mut Details, value: Expr<'a>| {
+            labels.first("\"Array.prototype.forEach\" is called here.");
+            labels.push(value.outer_span(), match self.allow_void {
+                true => "Prepend `void` to the expression.",
+                false => "This returned value is ignored.",
+            });
         };
         for statement in func.returns() {
             let StmtKind::Return(Some(argument)) = statement.kind() else {
@@ -255,7 +273,8 @@ impl ArrayCallbackReturn {
                 continue;
             }
             let place = place_of_oxlint.unwrap_or_else(|| statement.span());
-            let mut report = Self::report(cx, place, EXPECTED_NO_RETURN_VALUE, func, "forEach");
+            let mut report = Self::report(cx, place, EXPECTED_NO_RETURN_VALUE, func, "forEach")
+                .labels_with(|labels| label(labels, argument));
             if self.allow_void && place_of_oxlint.is_some() {
                 report = report.help(EXPECTED_VOID);
             }
@@ -276,6 +295,7 @@ impl ArrayCallbackReturn {
         }
         let head = place_of_oxlint.unwrap_or_else(|| ast_utils::get_function_head_loc(func));
         let mut report = Self::report(cx, head, EXPECTED_NO_RETURN_VALUE, func, "forEach")
+            .labels_with(|labels| label(labels, body))
             .suggest(WRAP_BRACES, |fixer| curly_wrap_fixer(fixer, func));
         if self.allow_void && place_of_oxlint.is_some() {
             report = report.help(EXPECTED_VOID);
@@ -323,7 +343,7 @@ impl Rule for ArrayCallbackReturn {
             return;
         }
         if cx.language().is_oxlint {
-            return self.check_as_oxlint(func, method, cx);
+            return self.check_as_oxlint(func, (method, callee), cx);
         }
         let mut has_return = false;
         for statement in func.returns() {

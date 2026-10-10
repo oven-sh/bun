@@ -72,10 +72,17 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 && !it.flags.contains(Flags::DEFAULT)
                 && (is_ecmascript || it.flags.contains(Flags::EXPORT))
         };
-        if self.f.classes.get(class.idx()).is_some_and(lacks_name)
-            && !(self.recovers() && self.lists == 1 << ListKind::SourceElements as u32)
-        {
-            self.report();
+        if self.f.classes.get(class.idx()).is_some_and(lacks_name) {
+            let is_in_list_of_file = self.lists == 1 << ListKind::SourceElements as u32;
+            match self.recovers() {
+                true if is_in_list_of_file => {}
+                true if !is_ecmascript => {
+                    if let Some(class) = self.f.classes.get_mut(class.idx()) {
+                        class.flags -= Flags::EXPORT;
+                    }
+                }
+                _ => self.report(),
+            }
         }
         let modifiers = self.f.classes.get(class.idx()).map(|it| it.modifiers);
         self.add_stmt(StmtKind::Class(class), start, modifiers.unwrap_or_default())
@@ -212,7 +219,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                         (heritage.extends_args, element_error) = p.type_arguments_unchecked();
                     }
                     p.check_js_type_arguments(heritage.extends_args);
-                    element_error = element_error.or_else(|| p.import_with_type_arguments(first_token));
+                    element_error =
+                        element_error.or_else(|| p.import_with_type_arguments(first_token));
                     element_error = element_error.or(of_import);
                 }),
                 false => {
@@ -221,7 +229,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                         let first_token = (p.lx.start, p.lx.end);
                         let ty = p.heritage_type(!has_implements, 2500);
                         p.s.ids.push(ty.0);
-                        element_error = element_error.or_else(|| p.import_with_type_arguments(first_token));
+                        element_error =
+                            element_error.or_else(|| p.import_with_type_arguments(first_token));
                     });
                     self.context = saved;
                     self.js_error((keyword.0, self.prev_end()), 8005, b"");
@@ -404,8 +413,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[inline(never)]
     #[track_caller]
     fn is_constructor_without_parameters(&mut self, name: T) -> bool {
-        if self.recovers() && name == T::Constructor {
-            return true;
+        if self.recovers() {
+            return name == T::Constructor;
         }
         self.report();
         false
@@ -544,7 +553,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             && (kind != MemberKind::Property
                 || is_generator
                 || matches!(self.token(), T::OpenParen | T::LessThan));
-        // The other parser does not go on at the `!` of `async a!`.
+        // The checker reports the `async` of `async a!`.
         if !is_function
             && (name_token == T::Constructor
                 || flags.contains(Flags::ASYNC) && self.token() == T::Exclamation)

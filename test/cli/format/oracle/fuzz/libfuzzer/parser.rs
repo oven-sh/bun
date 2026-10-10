@@ -94,7 +94,14 @@ fn agree_one(
     let strict = parse_as_file(path, text, options, &atoms, scratch);
     let error = match &general {
         Ok(general) => (general.file.diagnostics.iter())
-            .find(|it| it.kind == DiagnosticKind::Parse)
+            .filter(|it| it.kind == DiagnosticKind::Parse)
+            // In a script only the one that recovers reports the keyword: it has to be the first error, as it is acorn's. Of a
+            // text that is valid but for that the linter finds the keyword in the tree.
+            .find(|it| {
+                let at = text.get(it.start as usize..).unwrap_or_default();
+                let is_module_syntax = at.starts_with(b"import") || at.starts_with(b"export");
+                !(dialect.ecmascript && dialect.script && it.code == 1128 && is_module_syntax)
+            })
             .map(|it| format!("{:?}", (it.kind, it.code))),
         // Too large, too deep and not UTF-8 are no syntax to recover from.
         Err(why) if matches!(why.why, Refusal::TooLarge | Refusal::TooDeep | Refusal::NotUtf8) => return None,

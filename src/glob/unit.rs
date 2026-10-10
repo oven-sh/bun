@@ -1,5 +1,7 @@
 //! What a unit of a text is, and folding. The text stays UTF-8 bytes and a position is a byte offset.
 
+use std::borrow::Cow;
+
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Unit {
     /// git, globset.
@@ -82,6 +84,29 @@ fn sequence_len(bytes: &[u8], at: usize) -> usize {
     if is_valid { len } else { 0 }
 }
 
+/// As JavaScript reads a file: U+FFFD for each byte that is in no sequence. The readers take the length of a character from its first byte.
+pub(crate) fn well_formed(bytes: &[u8]) -> Cow<'_, [u8]> {
+    if bytes.is_ascii() {
+        return Cow::Borrowed(bytes);
+    }
+    let mut out = Vec::new();
+    let (mut at, mut copied) = (0, 0);
+    while at < bytes.len() {
+        let len = sequence_len(bytes, at);
+        if len == 0 {
+            out.extend_from_slice(&bytes[copied..at]);
+            out.extend_from_slice("\u{FFFD}".as_bytes());
+            copied = at + 1;
+        }
+        at += len.max(1);
+    }
+    if copied == 0 {
+        return Cow::Borrowed(bytes);
+    }
+    out.extend_from_slice(&bytes[copied..]);
+    Cow::Owned(out)
+}
+
 /// The character of `len` bytes at `at`, where `sequence_len` has found it. `len` is 2, 3 or 4.
 fn code_point_at(bytes: &[u8], at: usize, len: usize) -> u32 {
     let lead = bytes.get(at).copied().unwrap_or(0);
@@ -120,6 +145,21 @@ impl Text {
         unit: Unit::Utf16,
         folds: false,
     };
+
+    /// Whether a unit of it is U+FFFD, which a bad byte of a path is too: then bytes do not say whether two texts are the same.
+    pub(crate) fn has_replacement(self, literal: &[u8]) -> bool {
+        if self.unit == Unit::Byte || literal.is_ascii() {
+            return false;
+        }
+        let mut at = 0;
+        while let Some((unit, len)) = self.plain().next(Subject::of(literal), at) {
+            if unit == REPLACEMENT {
+                return true;
+            }
+            at += len;
+        }
+        false
+    }
 
     /// The same without folding.
     pub(crate) fn plain(self) -> Text {

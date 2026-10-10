@@ -839,6 +839,8 @@ pub struct Redeclaration {
     pub symbol: SymbolId,
     /// `len(symbol.Declarations)` by then.
     pub count: u32,
+    /// `symbol.Declarations[0]`. `decl`, if there is none.
+    pub first: Decl,
     pub decl: Decl,
     /// The error code reported at each of those declarations and at `decl`.
     pub code: u32,

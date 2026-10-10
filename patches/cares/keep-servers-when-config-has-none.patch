@@ -1,0 +1,32 @@
+Keep the channel's servers when the system config names no usable one.
+
+A resolver config can hold nameserver lines that c-ares drops while it
+parses them: a link-local address with no interface, or a blacklisted
+IPv6 address. The parsed list is then empty but not absent, and
+ares_sysconfig_apply() hands it to ares_servers_update(), which removes
+every server the channel has. A channel with no server answers
+ARES_ENOSERVER for every query after that, for the life of the channel.
+
+An absent list (a config file that names no server at all) already
+leaves the servers alone, because sysconfig->sconfig stays NULL. This
+patch gives an empty list the same treatment.
+
+ares_init_options() is unaffected: a new channel has no server yet, so
+it adds its default server exactly as before. The change is visible
+only to ares_reinit() on a live channel.
+
+--- a/src/lib/ares_sysconfig.c
++++ b/src/lib/ares_sysconfig.c
+@@ -517,7 +517,11 @@
+ {
+   ares_status_t status;
+ 
+-  if (sysconfig->sconfig && !(channel->optmask & ARES_OPT_SERVERS)) {
++  /* Bun: an empty list means the config named only servers that could not be
++   * used. Keep the ones the channel has: a channel with no server fails every
++   * query from here on. */
++  if (ares_llist_len(sysconfig->sconfig) > 0 &&
++      !(channel->optmask & ARES_OPT_SERVERS)) {
+     status = ares_servers_update(channel, sysconfig->sconfig, ARES_FALSE);
+     if (status != ARES_SUCCESS) {
+       return status;

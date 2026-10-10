@@ -182,6 +182,8 @@ new!(pub NODE_DISABLE_COMPILE_CACHE: string, "NODE_DISABLE_COMPILE_CACHE", {});
 // Set by `bun run` for a script named `check`: the directories of the packages whose `check` script
 // is running. In those, `bun check` is the type checker and not the script again.
 new!(pub BUN_INTERNAL_CHECK_SCRIPTS: string, "BUN_INTERNAL_CHECK_SCRIPTS", {});
+// Test-only: the file c-ares reads in place of /etc/resolv.conf.
+new!(pub BUN_INTERNAL_DNS_RESOLV_CONF: string, "BUN_INTERNAL_DNS_RESOLV_CONF", {});
 // Set by HostProcess.rs when spawning the WebView host subprocess. The
 // child's CLI entrypoint checks this before anything else and hands off to
 // C++ Bun__WebView__hostMain. Never returns — no JSC, no VM.

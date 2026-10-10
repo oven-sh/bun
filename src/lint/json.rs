@@ -70,11 +70,7 @@ pub enum Notation {
 /// is `null`, a date of TOML is a string, as it is written. No document of YAML is `null`, several are
 /// an array. A repeated key is there as often as it is written. `Err`: what is wrong with `text`.
 pub fn parse_as(notation: Notation, text: &[u8]) -> Result<Json, Vec<u8>> {
-    // An alias of YAML is a value once more: a short text can stand for any number of them.
-    let length = bun_core::strings::without_utf8_bom(text).len();
-    let mut left = length.saturating_mul(64).clamp(1 << 10, 1 << 23);
-    with_parsed(notation, text, |root| from_expr(root, &mut left))?
-        .ok_or_else(|| b"It has too many values".to_vec())
+    with_parsed(notation, text, from_parsed)?.ok_or_else(|| b"It is nested too deeply".to_vec())
 }
 
 /// Calls `read` with the value that `text` is in `notation` as Bun's parser makes it, where each part knows its place in
@@ -104,13 +100,6 @@ pub fn with_parsed<T>(
 
 /// A value of one of Bun's parsers, or a part of one, as [`parse_as`] returns it. `None`: it is nested too deep.
 pub fn from_parsed(expr: &Expr) -> Option<Json> {
-    let mut left = usize::MAX;
-    from_expr(expr, &mut left)
-}
-
-/// `left`: how many more values there can be.
-fn from_expr(expr: &Expr, left: &mut usize) -> Option<Json> {
-    *left = left.checked_sub(1)?;
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return None;
     }
@@ -124,7 +113,7 @@ fn from_expr(expr: &Expr, left: &mut usize) -> Option<Json> {
         Data::EArray(it) => {
             let mut items = it.slice().iter();
             Json::Array(items.try_fold(Vec::new(), |mut items, item| {
-                items.push(from_expr(item, left)?);
+                items.push(from_parsed(item)?);
                 Some(items)
             })?)
         }
@@ -135,7 +124,7 @@ fn from_expr(expr: &Expr, left: &mut usize) -> Option<Json> {
                     continue;
                 };
                 // `String(key)`, but for a key that is an array or an object.
-                let key = match from_expr(key, left)? {
+                let key = match from_parsed(key)? {
                     Json::String(key) => key,
                     Json::Number(key) => number_to_string(key),
                     key => {
@@ -144,7 +133,7 @@ fn from_expr(expr: &Expr, left: &mut usize) -> Option<Json> {
                         text
                     }
                 };
-                entries.push((key, from_expr(value, left)?));
+                entries.push((key, from_parsed(value)?));
             }
             Json::Object(entries)
         }

@@ -2379,6 +2379,14 @@ describe.concurrent("the configuration files of ESLint 8", () => {
     expect(problems).toEqual(["a.js:2:7 eqeqeq"]);
   });
 
+  test("aliases of YAML that stand for 100,000 values are read", async () => {
+    const level = (i: number) => `  a${i}: &a${i} [${Array(10).fill(i ? `*a${i - 1}` : "x")}]\n`;
+    const settings = `settings:\n${[0, 1, 2, 3, 4].map(level).join("")}`;
+    const { problems, exitCode } = await lint({ ".eslintrc.yaml": yaml("eqeqeq") + settings, "a.js": code });
+    expect(problems).toEqual(["a.js:2:7 eqeqeq"]);
+    expect(exitCode).toBe(1);
+  });
+
   test.each([
     [".eslintrc.json", '{ "rules": '],
     [".eslintrc.json", ""],

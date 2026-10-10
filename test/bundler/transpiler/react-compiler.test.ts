@@ -3293,3 +3293,159 @@ test("react-compiler compile time is not exponential in the function nesting dep
   expect(stdout).toMatch(/\b_c\(\d+\)/);
   expect(exitCode).toBe(0);
 });
+
+// After N sequential `if`s that assign one local, the local holds one of N
+// values. InferMutationAliasingEffects kept them in a list for each of the N
+// phis, searched a list for each value it added, and copied every list into
+// the state of every block: N^4 steps. It also copied and compared the whole
+// state at each block. InferReactivePlaces walked all blocks before a block to
+// find the branches that control it, which is quadratic, and a `try` statement
+// is nine blocks. On a release build, 1000 of these `if`s in one component
+// took 36 seconds and 1000 of these `try` statements 9 seconds.
+describe.each([
+  ["if", (i: number) => `if (p.a > ${i}) v++;`],
+  ["try", (i: number) => `try { v += p.f(${i}); } catch { v = ${i}; }`],
+] as const)("react-compiler compile time", (shape, statement) => {
+  // A debug build takes 5 ms per statement. It cannot build enough `try`
+  // statements in the time of one test for the quadratic part to stand out.
+  const name = `per statement does not grow with the number of sequential \`${shape}\` statements`;
+  test.skipIf(isDebug && shape === "try")(name, async () => {
+    // `large` statements in one component, against `control` statements in
+    // components of `perComponent`. EnterSSA recurses once per block between a
+    // use and its definition. On the 4 MB stack of a bundler thread it
+    // overflows at about 8000 `if` or 2300 `try` statements on a release
+    // build, and at about 1000 or 400 on a debug build.
+    const { large, control, perComponent, rounds } = isDebug
+      ? { large: 300, control: 60, perComponent: 20, rounds: 1 }
+      : isASAN
+        ? { large: shape === "if" ? 400 : 300, control: 300, perComponent: 10, rounds: 3 }
+        : { large: shape === "if" ? 1000 : 500, control: 500, perComponent: 20, rounds: 3 };
+    const source = (statements: number, perComponent: number) =>
+      `import { useState } from "react";\n` +
+      Array.from({ length: statements / perComponent }, (_, c) => {
+        const body = Array.from({ length: perComponent }, (_, i) => statement(c * perComponent + i)).join("\n  ");
+        return `export function App${c}(p) {\n  const [s] = useState(0);\n  let v = s;\n  ${body}\n  return <b>{v}{s}</b>;\n}\n`;
+      }).join("");
+    using dir = tempDir("react-compiler-sequential", {
+      "warmup.jsx": source(1, 1),
+      "control.jsx": source(control, perComponent),
+      "large.jsx": source(large, large),
+    });
+
+    // The bundler runs on threads of this process. `cpuUsage` counts them all.
+    const cpuPerStatement = async (entry: string, statements: number) => {
+      const before = process.cpuUsage();
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), entry)],
+        target: "browser",
+        external: ["*"],
+        reactCompiler: true,
+        throw: false,
+      });
+      const { user } = process.cpuUsage(before);
+      expect(result.success).toBe(true);
+      expect(await result.outputs[0].text()).toContain("react/compiler-runtime");
+      return user / statements;
+    };
+
+    // The time per statement must not depend on the size of the component. The
+    // ratio is 0.5 to 1.4 with the fixes. Without them it is 6 for the 300
+    // `if`s of a debug build, 7 for 300 `try` statements, 10 for 500, and over
+    // 100 for 1000 `if`s. Other load on the machine adds to a CPU time, so an
+    // optimized build, which has the time, takes the best of up to three.
+    await cpuPerStatement("warmup.jsx", 1);
+    let controlCost = Infinity;
+    let largeCost = Infinity;
+    for (let round = 0; round < rounds; round++) {
+      controlCost = Math.min(controlCost, await cpuPerStatement("control.jsx", control));
+      largeCost = Math.min(largeCost, await cpuPerStatement("large.jsx", large));
+      if (largeCost / controlCost < 2.5) break;
+    }
+    expect(largeCost / controlCost).toBeLessThan(2.5);
+  });
+});
+
+// The values that an identifier can hold are a set with an order, as in the
+// TypeScript original. To freeze a function is to freeze what it captures,
+// one value of the callee after the other, and a capture is skipped when all
+// of its values are frozen already. So the order decides whether the walk
+// freezes the `null` that `c` shares with `y`, which makes `y.x = 1` an error.
+// babel-plugin-react-compiler leaves the first component as written and
+// compiles the second.
+test("react-compiler freezes the captures of a function in the order of its values", async () => {
+  const source = (callee: string) => `
+    export function Component(props) {
+      const m = {};
+      const B = () => { m.x = 1; };
+      let y = null;
+      let el = null;
+      if (props.a) {
+        if (props.b) { y = B; }
+        const c = y;
+        const A = () => { m.y = c; };
+        const q = ${callee};
+        const F = () => q();
+        el = <div onClick={F} />;
+        y = null;
+      } else {
+        if (props.d) { y = {}; }
+      }
+      y.x = 1;
+      return [el, y];
+    }
+  `;
+  using dir = tempDir("react-compiler-value-order", {
+    "ab.jsx": source("props.c ? A : B"),
+    "ba.jsx": source("props.c ? B : A"),
+  });
+
+  const memoized = async (entry: string) => {
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), entry)],
+      target: "browser",
+      external: ["*"],
+      reactCompiler: true,
+      throw: false,
+    });
+    expect(result.success).toBe(true);
+    return /\b_c\(\d+\)/.test(await result.outputs[0].text());
+  };
+
+  expect({ ab: await memoized("ab.jsx"), ba: await memoized("ba.jsx") }).toEqual({ ab: false, ba: true });
+});
+
+// The test of a `do`/`while` loop decides whether its own block runs again, so
+// that block is in its own post-dominator frontier. InferReactivePlaces needs
+// that entry to see that `x` follows `props.n`. Without it the element is
+// memoized with no dependency, and the second render returns the first.
+itBundled("react-compiler/DoWhileTestControlsItsOwnBlock", {
+  files: {
+    "/entry.jsx": /* jsx */ `
+      function Counter(props) {
+        let x = 0;
+        let i = 0;
+        do {
+          x += 1;
+          i++;
+        } while (i < props.n);
+        return <div>{x}</div>;
+      }
+      console.log(JSON.stringify([Counter({ n: 1 }).p.children, Counter({ n: 3 }).p.children]));
+    `,
+    "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+    "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+    // One cache for the one component, kept between the two renders.
+    "/node_modules/react/compiler-runtime.js": `
+      let cache;
+      exports.c = n => (cache ??= new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+    `,
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+  },
+  reactCompiler: true,
+  target: "browser",
+  backend: "api",
+  run: { stdout: "[1,3]" },
+  onAfterBundle(api) {
+    expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+  },
+});

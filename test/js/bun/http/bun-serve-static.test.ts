@@ -352,3 +352,30 @@ describe("static route preconditions (RFC 9110 §13.2.2)", () => {
     });
   });
 });
+
+// An S3 object has no bytes in memory. GET sends an empty body for it
+// (#43930), and HEAD states that length.
+test("HEAD of a static route with an S3 file body states the length GET sends", async () => {
+  const s3 = new Bun.S3Client({
+    accessKeyId: "test",
+    secretAccessKey: "test",
+    bucket: "my-bucket",
+    // Neither request asks S3 anything.
+    endpoint: "http://127.0.0.1:1",
+  });
+  using server = Bun.serve({
+    port: 0,
+    routes: { "/object": new Response([s3.file("object.txt")]) },
+    fetch: () => new Response("nf", { status: 404 }),
+  });
+
+  const url = new URL("/object", server.url);
+  const [head, get] = await Promise.all([fetch(url, { method: "HEAD" }), fetch(url)]);
+  expect({
+    head: { status: head.status, contentLength: head.headers.get("content-length") },
+    get: { status: get.status, contentLength: get.headers.get("content-length"), body: await get.text() },
+  }).toEqual({
+    head: { status: 200, contentLength: "0" },
+    get: { status: 200, contentLength: "0", body: "" },
+  });
+});

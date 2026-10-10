@@ -53,9 +53,15 @@ console.log(features.rateLimit); // => true
 
 ---
 
-For parsing JSON5 strings at runtime, use `Bun.JSON5.parse()`:
+For parsing JSON5 strings at runtime, use `Bun.JSON5.parse()`. It returns `unknown`, so give the result a type:
 
 ```ts config.ts icon="/icons/typescript.svg"
+interface Person {
+  name: string;
+  age: number;
+  hobbies: string[];
+}
+
 const data = Bun.JSON5.parse(`{
   name: 'John Doe',
   age: 30,
@@ -63,7 +69,7 @@ const data = Bun.JSON5.parse(`{
     'reading',
     'coding',
   ],
-}`);
+}`) as Person;
 
 console.log(data.name); // => "John Doe"
 console.log(data.hobbies); // => ["reading", "coding"]

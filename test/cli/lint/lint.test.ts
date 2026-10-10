@@ -2225,6 +2225,66 @@ describe.concurrent("bun lint", () => {
       );
       expect(said).toEqual(expected);
     });
+
+    // `eslint-scope` takes the name of a JSX element for a reference since ESLint 10. Before that a rule of a plugin marks what an
+    // element uses, as `react/jsx-uses-vars` does: here `local/uses-vars`, which MARKS=off turns off.
+    describe("the names of JSX elements", () => {
+      const files = {
+        "eslint.config.mjs":
+          '// What eslint-plugin-react\'s jsx-uses-vars does, in short.\nconst usesVars = { create(context) { return {\n  Program(node) { context.sourceCode.markVariableAsUsed("marked", node); },\n  JSXOpeningElement(node) {\n    let name = node.name;\n    while (name.type === "JSXMemberExpression") name = name.object;\n    if (name.type === "JSXIdentifier") context.sourceCode.markVariableAsUsed(name.name, node);\n  },\n}; } };\nexport default [{ files: ["**/*.jsx"], plugins: { local: { rules: { "uses-vars": usesVars } } }, languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },\n  rules: { "local/uses-vars": process.env.MARKS === "off" ? "off" : "error", "no-unused-vars": "error", "no-undef": "error", "no-use-before-define": "error" } }];\n',
+        "a.jsx":
+          'import { Card, Button, Unused } from "./components.jsx";\nimport * as Icons from "./icons.jsx";\nconst marked = 1;\nconst notMarked = 2;\nexport const C = () => <Card><Button /><Icons.Close /></Card>;\nfunction render() { return <Widget />; }\nconst Widget = () => <span />;\nrender();\n',
+      };
+      test.each([
+        [
+          "9.39.5",
+          "on",
+          [
+            "no-unused-vars 1:24-1:30 'Unused' is defined but never used.",
+            "no-unused-vars 4:7-4:16 'notMarked' is assigned a value but never used.",
+          ],
+        ],
+        [
+          "9.39.5",
+          "off",
+          [
+            "no-unused-vars 1:10-1:14 'Card' is defined but never used.",
+            "no-unused-vars 1:16-1:22 'Button' is defined but never used.",
+            "no-unused-vars 1:24-1:30 'Unused' is defined but never used.",
+            "no-unused-vars 2:13-2:18 'Icons' is defined but never used.",
+            "no-unused-vars 3:7-3:13 'marked' is assigned a value but never used.",
+            "no-unused-vars 4:7-4:16 'notMarked' is assigned a value but never used.",
+            "no-unused-vars 7:7-7:13 'Widget' is assigned a value but never used.",
+          ],
+        ],
+        [
+          "10.12.0",
+          "on",
+          [
+            "no-unused-vars 1:24-1:30 'Unused' is defined but never used.",
+            "no-unused-vars 4:7-4:16 'notMarked' is assigned a value but never used.",
+            "no-use-before-define 6:29-6:35 'Widget' was used before it was defined.",
+          ],
+        ],
+        [
+          "10.12.0",
+          "off",
+          [
+            "no-unused-vars 1:24-1:30 'Unused' is defined but never used.",
+            "no-unused-vars 3:7-3:13 'marked' is assigned a value but never used.",
+            "no-unused-vars 4:7-4:16 'notMarked' is assigned a value but never used.",
+            "no-use-before-define 6:29-6:35 'Widget' was used before it was defined.",
+          ],
+        ],
+      ])("%s, the rule that marks them is %s", async (version, MARKS, expected) => {
+        const installed = { "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }) };
+        const { raw } = await lint({ ...files, ...installed }, ["-f", "json", "a.jsx"], { env: { MARKS } });
+        const said = (JSON.parse(raw)[0].messages as any[]).map(
+          it => `${it.ruleId} ${it.line}:${it.column}-${it.endLine}:${it.endColumn} ${it.message}`,
+        );
+        expect(said).toEqual(expected);
+      });
+    });
   });
 
   describe("--fix", () => {

@@ -748,13 +748,11 @@ impl StrictBooleanExpressions {
 }
 
 const CONDITIONS: On = On::new()
-    .exprs(&[
-        ExprTag::Cond,
-        ExprTag::Unary,
-        ExprTag::Binary,
-        ExprTag::Call,
-    ])
-    .stmts(&[StmtTag::If, StmtTag::While, StmtTag::DoWhile, StmtTag::For]);
+    .exprs(&[ExprTag::Cond, ExprTag::Unary, ExprTag::Binary])
+    .stmts(&[StmtTag::If, StmtTag::While, StmtTag::DoWhile, StmtTag::For])
+    // As nodes, which come last: oxlint reports a predicate at its call, after what the call is
+    // as a condition.
+    .nodes(NodeTags::new().exprs(&[ExprTag::Call]));
 
 impl Rule for StrictBooleanExpressions {
     const META: Meta = Meta::typescript("strict-boolean-expressions", Kind::Suggestion)
@@ -805,7 +803,6 @@ impl Rule for StrictBooleanExpressions {
                     self.traverse_node(node, false, cx);
                 }
             }
-            ExprKind::Call(_) => self.traverse_call_expression(node, cx),
             _ => {}
         }
     }
@@ -819,6 +816,12 @@ impl Rule for StrictBooleanExpressions {
                 test: Some(test), ..
             } => self.traverse_node(test, true, cx),
             _ => {}
+        }
+    }
+
+    fn node<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        if let Node::Expr(node) = node {
+            self.traverse_call_expression(node, cx);
         }
     }
 

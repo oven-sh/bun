@@ -184,7 +184,7 @@ pub struct Iterator<'a, const PATH_STYLE: IteratorPathStyle> {
 pub struct IteratorNext<'a> {
     pub relative_path: &'a ZStr,
     pub dependencies: &'a [DependencyID],
-    pub(crate) tree_id: Id,
+    pub tree_id: Id,
 
     /// depth of the node_modules folder in the tree
     ///

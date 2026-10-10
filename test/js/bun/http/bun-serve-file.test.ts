@@ -1,6 +1,6 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, tempDirWithFiles, tls } from "harness";
 import { mkfifo } from "mkfifo";
 import { closeSync, openSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
@@ -1375,6 +1375,43 @@ test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not
   }
 });
 
+// One request on its own connection; `Connection: close` makes the server hang
+// up once it considers the response finished, so `body` is every byte that
+// followed the head, however many the head declared.
+async function wireResponse(port: number, method: "GET" | "HEAD", path: string, secure = false) {
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  let captured = "";
+  await Bun.connect({
+    hostname: "127.0.0.1",
+    port,
+    ...(secure ? { tls: { rejectUnauthorized: false } } : {}),
+    socket: {
+      open(socket) {
+        socket.write(`${method} ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+      },
+      data(_socket, chunk) {
+        captured += Buffer.from(chunk).toString("latin1");
+      },
+      close() {
+        resolve(captured);
+      },
+      error(_socket, err) {
+        reject(err);
+      },
+    },
+  });
+  const raw = await promise;
+  const headEnd = raw.indexOf("\r\n\r\n");
+  if (headEnd === -1) throw new Error(`no response head in ${JSON.stringify(raw)}`);
+  const head = raw.slice(0, headEnd);
+  return {
+    status: Number(head.split(" ")[1]),
+    contentRange: /^content-range:\s*(.*)$/im.exec(head)?.[1] ?? null,
+    contentLength: /^content-length:\s*(\d+)/im.exec(head)?.[1] ?? null,
+    body: raw.slice(headEnd + 4),
+  };
+}
+
 // A file route serves the window of the Bun.file() slice it was built from,
 // given either the slice or its unread stream (which is turned back into the
 // slice). FileRoute used to clamp the window to the file size without taking
@@ -1406,36 +1443,9 @@ test("file routes frame a slice that reaches or starts past EOF by the bytes the
     fetch: () => new Response("fallback", { status: 404 }),
   });
 
-  // One GET on its own connection; `Connection: close` makes the server hang
-  // up once it considers the response finished, so `body` is every byte that
-  // followed the head, however many the head declared.
   async function wire(path: string) {
-    const { promise, resolve } = Promise.withResolvers<string>();
-    let captured = "";
-    await Bun.connect({
-      hostname: "127.0.0.1",
-      port: server.port!,
-      socket: {
-        open(socket) {
-          socket.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
-        },
-        data(_socket, chunk) {
-          captured += Buffer.from(chunk).toString("latin1");
-        },
-        close() {
-          resolve(captured);
-        },
-        error() {
-          resolve(captured);
-        },
-      },
-    });
-    const raw = await promise;
-    const headEnd = raw.indexOf("\r\n\r\n");
-    return {
-      contentLength: /^content-length:\s*(\d+)/im.exec(raw.slice(0, headEnd))?.[1] ?? null,
-      body: raw.slice(headEnd + 4),
-    };
+    const { contentLength, body } = await wireResponse(server.port!, "GET", path);
+    return { contentLength, body };
   }
 
   const results: Record<string, unknown> = {};
@@ -1452,6 +1462,209 @@ test("file routes frame a slice that reaches or starts past EOF by the bytes the
     "slice(100)": { blob: exactly(""), stream: exactly("") },
     "whole file": { blob: exactly("0123456789ABCDEF"), stream: exactly("0123456789ABCDEF") },
   });
+});
+
+// The same for a slice that a fetch handler returns. The response declared
+// the whole file for a slice as long as the file that starts past byte 0 (on
+// this 16-byte file slice(5, 21) declared Content-Length: 16 and sent 11
+// bytes) and for every slice of Bun.file(fd).
+test("a fetch handler frames a Bun.file() slice by the bytes it serves", async () => {
+  using dir = tempDir("serve-handler-slice-framing", {
+    "partial.txt": "0123456789ABCDEF",
+    "shrinks.txt": "0123456789ABCDEF",
+  });
+  const path = join(String(dir), "partial.txt");
+  const file = () => Bun.file(path);
+
+  // A slice taken while the file had 16 bytes: stored as 11 bytes from byte 5.
+  // The file then shrinks to those 11 bytes, so 6 are left from byte 5.
+  const shrinks = Bun.file(join(String(dir), "shrinks.txt"));
+  expect(shrinks.size).toBe(16);
+  const sliceBeforeShrink = shrinks.slice(5);
+  expect(sliceBeforeShrink.size).toBe(11);
+  writeFileSync(join(String(dir), "shrinks.txt"), "0123456789A");
+
+  const fds: number[] = [];
+  try {
+    // A descriptor of its own for each window: Bun.file(fd) shares the file offset of the descriptor.
+    const fdSlice = (begin: number, end?: number, init?: ResponseInit) => {
+      const fd = openSync(path, "r");
+      fds.push(fd);
+      return () => new Response(Bun.file(fd).slice(begin, end), init);
+    };
+    // Only the framing of these is asserted: a path slice as long as the file
+    // from past byte 0, and a shorter slice with an explicit status.
+    const framingOnly: Record<string, () => Response | Promise<Response>> = {
+      "path slice(5, 21)": () => new Response(file().slice(5, 21)),
+      "path slice(5, 21) from an async handler": async () => new Response(file().slice(5, 21)),
+      "path slice(5, 21).stream()": () => new Response(file().slice(5, 21).stream()),
+      "path slice(5, 21) with headers": () => new Response(file().slice(5, 21), { headers: { "X-Custom": "1" } }),
+      "path slice(5, 21) with its own Content-Range": () =>
+        new Response(file().slice(5, 21), { headers: { "Content-Range": "bytes 5-15/16" } }),
+      "path slice(5, 21) with status 404": () => new Response(file().slice(5, 21), { status: 404 }),
+      "path slice(5, 21) with status 404 and headers": () =>
+        new Response(file().slice(5, 21), { status: 404, headers: { "X-Custom": "1" } }),
+      "path slice(5, 21) with status 416 and its own Content-Range": () =>
+        new Response(file().slice(5, 21), { status: 416, headers: { "Content-Range": "bytes */16" } }),
+      "path slice(16, 32)": () => new Response(file().slice(16, 32)),
+      "path slice(5, 20) with status 404": () => new Response(file().slice(5, 20), { status: 404 }),
+    };
+    const others: Record<string, () => Response | Promise<Response>> = {
+      "path slice(5, 20)": () => new Response(file().slice(5, 20)),
+      "path slice(5, 22)": () => new Response(file().slice(5, 22)),
+      "path slice(0, 16)": () => new Response(file().slice(0, 16)),
+      "fd slice(5, 10)": fdSlice(5, 10),
+      "fd slice(10)": fdSlice(10),
+      "fd slice(5, 21)": fdSlice(5, 21),
+      "fd slice(16, 32)": fdSlice(16, 32),
+      "fd slice(5, 10) with status 206 and its own Content-Range": fdSlice(5, 10, {
+        status: 206,
+        headers: { "Content-Range": "bytes 5-9/16" },
+      }),
+    };
+    const windows = { ...framingOnly, ...others };
+    const names = Object.keys(windows);
+    const handler = (req: Request) => {
+      const { pathname } = new URL(req.url);
+      if (pathname === "/slice-before-shrink") return new Response(sliceBeforeShrink);
+      return windows[names[Number(pathname.slice(1))]]();
+    };
+    await using server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: handler });
+    await using secureServer = Bun.serve({ port: 0, hostname: "127.0.0.1", tls, fetch: handler });
+
+    const framing: Record<string, unknown> = {};
+    const answers: Record<string, unknown> = {};
+    for (const [i, name] of names.entries()) {
+      const get = await wireResponse(server.port!, "GET", `/${i}`);
+      const head = await wireResponse(server.port!, "HEAD", `/${i}`);
+      framing[name] = {
+        contentLength: get.contentLength,
+        body: get.body,
+        head: { contentLength: head.contentLength, body: head.body },
+      };
+      if (name in others) answers[name] = { status: get.status, contentRange: get.contentRange };
+    }
+
+    // HEAD declares what GET sends, and sends nothing.
+    const exactly = (body: string) => ({
+      contentLength: String(body.length),
+      body,
+      head: { contentLength: String(body.length), body: "" },
+    });
+    expect(framing).toEqual({
+      "path slice(5, 21)": exactly("56789ABCDEF"),
+      "path slice(5, 21) from an async handler": exactly("56789ABCDEF"),
+      "path slice(5, 21).stream()": exactly("56789ABCDEF"),
+      "path slice(5, 21) with headers": exactly("56789ABCDEF"),
+      "path slice(5, 21) with its own Content-Range": exactly("56789ABCDEF"),
+      "path slice(5, 21) with status 404": exactly("56789ABCDEF"),
+      "path slice(5, 21) with status 404 and headers": exactly("56789ABCDEF"),
+      "path slice(5, 21) with status 416 and its own Content-Range": exactly("56789ABCDEF"),
+      "path slice(16, 32)": exactly(""),
+      "path slice(5, 20) with status 404": exactly("56789ABCDEF"),
+      "path slice(5, 20)": exactly("56789ABCDEF"),
+      "path slice(5, 22)": exactly("56789ABCDEF"),
+      "path slice(0, 16)": exactly("0123456789ABCDEF"),
+      "fd slice(5, 10)": exactly("56789"),
+      "fd slice(10)": exactly("ABCDEF"),
+      "fd slice(5, 21)": exactly("56789ABCDEF"),
+      "fd slice(16, 32)": exactly(""),
+      "fd slice(5, 10) with status 206 and its own Content-Range": exactly("56789"),
+    });
+    expect(answers).toEqual({
+      "path slice(5, 20)": { status: 206, contentRange: "bytes 5-15/*" },
+      "path slice(5, 22)": { status: 206, contentRange: "bytes 5-15/*" },
+      "path slice(0, 16)": { status: 200, contentRange: null },
+      "fd slice(5, 10)": { status: 200, contentRange: null },
+      "fd slice(10)": { status: 200, contentRange: null },
+      "fd slice(5, 21)": { status: 200, contentRange: null },
+      "fd slice(16, 32)": { status: 200, contentRange: null },
+      "fd slice(5, 10) with status 206 and its own Content-Range": { status: 206, contentRange: "bytes 5-9/16" },
+    });
+
+    // GET only: HEAD takes its length from the size the Blob cached before the file shrank.
+    const afterShrink = await wireResponse(server.port!, "GET", "/slice-before-shrink");
+    expect({ contentLength: afterShrink.contentLength, body: afterShrink.body }).toEqual({
+      contentLength: "6",
+      body: "56789A",
+    });
+
+    // Over TLS, where a file body never takes sendfile(2).
+    const overTls = await wireResponse(secureServer.port!, "GET", `/${names.indexOf("path slice(5, 21)")}`, true);
+    expect({ contentLength: overTls.contentLength, body: overTls.body }).toEqual({
+      contentLength: "11",
+      body: "56789ABCDEF",
+    });
+  } finally {
+    fds.forEach(fd => closeSync(fd));
+  }
+});
+
+// The handler of docs/runtime/http/routing.mdx ("To send part of a file")
+// slices by the request's Range header. `Range: bytes=5-21` asks this 16-byte
+// file for 16 bytes from byte 5. The response declared 16 and sent the 11
+// that exist. A client that waits for the rest gets a truncated response when
+// the connection times out. A relay that sends the next request on the
+// connection, as this test does, reads the head of the next response as the
+// 5 bytes still owed (RFC 9112 6.3).
+test("a Range as long as the file, past byte 0, leaves the next response on the connection in step", async () => {
+  using dir = tempDir("serve-range-by-slice", { "partial.txt": "0123456789ABCDEF" });
+  const path = join(String(dir), "partial.txt");
+  await using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      const [start = 0, end = Infinity] = req.headers.get("Range")!.split("=").at(-1)!.split("-").map(Number);
+      return new Response(Bun.file(path).slice(start, end));
+    },
+  });
+
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  let captured = "";
+  let askedAgain = false;
+  const socket = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port!,
+    socket: {
+      open(socket) {
+        socket.write("GET /first HTTP/1.1\r\nHost: x\r\nRange: bytes=5-21\r\n\r\n");
+      },
+      data(socket, chunk) {
+        captured += Buffer.from(chunk).toString("latin1");
+        if (!askedAgain) {
+          // The 11 bytes of the slice are in: ask again on this connection.
+          if (captured.endsWith("\r\n\r\n56789ABCDEF")) {
+            askedAgain = true;
+            socket.write("GET /second HTTP/1.1\r\nHost: x\r\nRange: bytes=0-3\r\n\r\n");
+          }
+        } else if (captured.endsWith("\r\n\r\n012")) {
+          resolve(captured);
+        }
+      },
+      close() {
+        reject(new Error(`connection closed after ${JSON.stringify(captured)}`));
+      },
+      error(_socket, err) {
+        reject(err);
+      },
+    },
+  });
+  try {
+    const raw = await promise;
+    const headEnd = raw.indexOf("\r\n\r\n");
+    // Cut the first response where its Content-Length says it ends, as a client does.
+    const declared = Number(/^content-length:\s*(\d+)/im.exec(raw.slice(0, headEnd))?.[1]);
+    const next = raw.slice(headEnd + 4 + declared);
+    expect({
+      body: raw.slice(headEnd + 4, headEnd + 4 + declared),
+      next: { status: next.split("\r\n")[0], body: next.slice(next.indexOf("\r\n\r\n") + 4) },
+    }).toEqual({
+      body: "56789ABCDEF",
+      next: { status: "HTTP/1.1 206 Partial Content", body: "012" },
+    });
+  } finally {
+    socket.end();
+  }
 });
 
 // A request that declares a body arms the request-body (onData) callback on
@@ -1904,4 +2117,52 @@ test.skipIf(!isLinux)("sendfile serves an intact >=1MB file over a unix socket l
   const body = Buffer.from(await res.arrayBuffer());
   expect(body.length).toBe(data.length);
   expect(body.compare(data)).toBe(0);
+});
+
+// A window of 1 MiB or more goes through sendfile(2) on Linux. The file is
+// 1 MiB + 100 bytes, so each of these windows is 1 MiB from byte 100, except
+// the last, which is one byte under and takes the reader.
+test.skipIf(!isLinux)("a fetch handler frames a Bun.file() slice that goes through sendfile", async () => {
+  const MiB = 1 << 20;
+  const K = 100;
+  const size = MiB + K;
+  const bytes = Buffer.alloc(size, Buffer.from(Array.from({ length: 251 }, (_, i) => i)));
+  using dir = tempDir("serve-handler-slice-sendfile", { "big.bin": bytes });
+  const path = join(String(dir), "big.bin");
+  const fds: number[] = [];
+  try {
+    const fdSlice = (begin: number) => {
+      const fd = openSync(path, "r");
+      fds.push(fd);
+      return () => new Response(Bun.file(fd).slice(begin));
+    };
+    const windows: Record<string, { begin: number; response: () => Response }> = {
+      "path slice(K, K + size)": { begin: K, response: () => new Response(Bun.file(path).slice(K, K + size)) },
+      "path slice(K, K + size - 1)": { begin: K, response: () => new Response(Bun.file(path).slice(K, K + size - 1)) },
+      "fd slice(K)": { begin: K, response: fdSlice(K) },
+      "fd slice(K + 1)": { begin: K + 1, response: fdSlice(K + 1) },
+    };
+    const names = Object.keys(windows);
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: req => windows[names[Number(new URL(req.url).pathname.slice(1))]].response(),
+    });
+
+    const results: Record<string, unknown> = {};
+    for (const [i, name] of names.entries()) {
+      const { contentLength, body } = await wireResponse(server.port!, "GET", `/${i}`);
+      const expected = bytes.subarray(windows[name].begin).toString("latin1");
+      results[name] = { contentLength, received: body.length, intact: body === expected };
+    }
+    const exactly = (length: number) => ({ contentLength: String(length), received: length, intact: true });
+    expect(results).toEqual({
+      "path slice(K, K + size)": exactly(MiB),
+      "path slice(K, K + size - 1)": exactly(MiB),
+      "fd slice(K)": exactly(MiB),
+      "fd slice(K + 1)": exactly(MiB - 1),
+    });
+  } finally {
+    fds.forEach(fd => closeSync(fd));
+  }
 });

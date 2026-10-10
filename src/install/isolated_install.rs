@@ -2051,6 +2051,7 @@ pub(crate) fn install_isolated_packages(
             tasks,
             waiters_head: vec![store::entry::Id::INVALID; store.entries.len()].into_boxed_slice(),
             next_waiter: vec![store::entry::Id::INVALID; store.entries.len()].into_boxed_slice(),
+            member_scripts: Default::default(),
             trusted_dependencies_mutex: Default::default(),
             trusted_dependencies_from_update_requests,
             supported_backend: std::sync::atomic::AtomicU8::new(
@@ -2619,6 +2620,8 @@ pub(crate) fn install_isolated_packages(
                 Global::exit(1);
             }
         }
+
+        installer.run_member_scripts();
 
         if installer.manager().options.log_level.show_progress() {
             progress.root.end();

@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readFileSync, readlinkSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, isWindows, readdirSorted, runBunInstall, tempDir } from "harness";
 import { createRequire } from "module";
 import { basename, dirname, join } from "path";
 import { pathToFileURL } from "url";
@@ -675,6 +675,311 @@ describe("isolated workspaces", () => {
       { name: "pkg2", dependencies: { pkg1: "workspace:*", pkg2: "workspace:*" } },
       { name: "pkg3", dependencies: { "different-name": "workspace:." } },
     ]);
+  });
+});
+
+describe("lifecycle scripts of workspace members", () => {
+  // The registry package one-fixed-dep depends on no-deps@1.0.0, which resolves to the member.
+  // The root links its bins after one-fixed-dep, so the old order did not depend on timing.
+  test.each(["preinstall", "install", "postinstall", "prepare"])(
+    "%s can run the bin of a root dependency that the member does not declare",
+    async hook => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "root",
+            workspaces: ["packages/*"],
+            dependencies: { "one-fixed-dep": "1.0.0" },
+            devDependencies: { "what-bin": "1.0.0" },
+          }),
+          "packages/no-deps/package.json": JSON.stringify({
+            name: "no-deps",
+            version: "1.0.0",
+            scripts: { [hook]: "what-bin" },
+          }),
+        },
+      });
+
+      await runBunInstall(bunEnv, packageDir);
+
+      expect(
+        readlinkSync(join(packageDir, "node_modules", ".bun", "one-fixed-dep@1.0.0", "node_modules", "no-deps")),
+      ).toBe(join("..", "..", "..", "..", "packages", "no-deps"));
+      expect(await file(join(packageDir, "packages", "no-deps", "what-bin.txt")).text()).toBe("what-bin@1.0.0");
+    },
+  );
+
+  test("run after the lifecycle scripts of the root's dependencies", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: { "lifecycle-postinstall": "1.0.0" },
+          trustedDependencies: ["lifecycle-postinstall"],
+        }),
+        // The postinstall script of lifecycle-postinstall writes postinstall.txt.
+        "packages/pkg1/package.json": JSON.stringify({
+          name: "pkg1",
+          version: "1.0.0",
+          scripts: { postinstall: "cp ../../node_modules/lifecycle-postinstall/postinstall.txt dependency-script.txt" },
+        }),
+      },
+    });
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(await file(join(packageDir, "packages", "pkg1", "dependency-script.txt")).text()).toBe("postinstall!");
+  });
+
+  test("can read a root dependency on an install from bun.lock with a cold cache", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+        "packages/pkg1/package.json": JSON.stringify({
+          name: "pkg1",
+          version: "1.0.0",
+          scripts: { postinstall: "cp ../../node_modules/no-deps/package.json no-deps.json" },
+        }),
+      },
+    });
+
+    await runBunInstall(bunEnv, packageDir, { packages: ["--ignore-scripts"] });
+    await Promise.all([
+      rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+      rm(join(packageDir, ".bun-cache"), { recursive: true, force: true }),
+    ]);
+    await runBunInstall(bunEnv, packageDir, { frozenLockfile: true });
+
+    expect(await file(join(packageDir, "packages", "pkg1", "no-deps.json")).json()).toEqual({
+      name: "no-deps",
+      version: "1.0.0",
+    });
+  });
+
+  test("run before the lifecycle scripts of the root", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          scripts: { postinstall: "cp packages/pkg1/built.txt built.txt" },
+        }),
+        "packages/pkg1/package.json": JSON.stringify({
+          name: "pkg1",
+          version: "1.0.0",
+          scripts: { postinstall: `${bunExe()} build.js` },
+        }),
+        "packages/pkg1/build.js": `require("fs").writeFileSync("built.txt", "built");`,
+      },
+    });
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(await file(join(packageDir, "built.txt")).text()).toBe("built");
+  });
+
+  // The member's script writes dist/no-deps-cli. A dependent can link the bin only after that.
+  test.each([
+    { form: "bin", hook: "preinstall", bin: { bin: { "no-deps-cli": "dist/no-deps-cli" } }, prebuilt: false },
+    { form: "bin", hook: "postinstall", bin: { bin: { "no-deps-cli": "dist/no-deps-cli" } }, prebuilt: false },
+    { form: "directories.bin", hook: "postinstall", bin: { directories: { bin: "dist" } }, prebuilt: false },
+    { form: "replaced bin", hook: "postinstall", bin: { bin: { "no-deps-cli": "dist/no-deps-cli" } }, prebuilt: true },
+  ])(
+    "a member's $form written by its $hook is linked for every dependent in the same install",
+    async ({ hook, bin, prebuilt }) => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "root",
+            workspaces: ["packages/*"],
+            dependencies: { "no-deps": "workspace:*", "one-fixed-dep": "1.0.0" },
+          }),
+          "packages/no-deps/package.json": JSON.stringify({
+            name: "no-deps",
+            version: "1.0.0",
+            ...bin,
+            scripts: { [hook]: "rm -rf dist && mkdir dist && cp cli.js dist/no-deps-cli" },
+          }),
+          "packages/no-deps/cli.js": "#!/usr/bin/env node\n",
+          ...(prebuilt ? { "packages/no-deps/dist/no-deps-cli": "#!/usr/bin/env node\n" } : {}),
+          "packages/pkg1/package.json": JSON.stringify({
+            name: "pkg1",
+            version: "1.0.0",
+            dependencies: { "no-deps": "workspace:*" },
+          }),
+        },
+      });
+      const bins = async () => ({
+        root: await readdirSorted(join(packageDir, "node_modules", ".bin")),
+        member: await readdirSorted(join(packageDir, "packages", "pkg1", "node_modules", ".bin")),
+        registryPackage: await readdirSorted(
+          join(packageDir, "node_modules", ".bun", "one-fixed-dep@1.0.0", "node_modules", ".bin"),
+        ),
+      });
+      const names = isWindows ? ["no-deps-cli.bunx", "no-deps-cli.exe"] : ["no-deps-cli"];
+
+      await runBunInstall(bunEnv, packageDir);
+
+      expect(await bins()).toEqual({ root: names, member: names, registryPackage: names });
+      if (!isWindows) {
+        // The script writes the file without the execute bit. The linker sets the bit when it links the bin.
+        expect(statSync(join(packageDir, "packages", "no-deps", "dist", "no-deps-cli")).mode & 0o100).toBe(0o100);
+      }
+
+      await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+      expect(await bins()).toEqual({ root: names, member: names, registryPackage: names });
+    },
+  );
+
+  test("postinstall can run a bin that the preinstall of another member writes", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+        "packages/lib/package.json": JSON.stringify({
+          name: "lib",
+          version: "1.0.0",
+          bin: { "lib-cli": "dist/cli.js" },
+          scripts: { preinstall: "mkdir dist && cp cli.js dist/cli.js" },
+        }),
+        "packages/lib/cli.js": `#!/usr/bin/env node\nrequire("fs").writeFileSync("lib-cli.txt", "lib-cli");`,
+        "packages/app/package.json": JSON.stringify({
+          name: "app",
+          version: "1.0.0",
+          dependencies: { lib: "workspace:*" },
+          scripts: { postinstall: "lib-cli" },
+        }),
+      },
+    });
+
+    await runBunInstall(bunEnv, packageDir);
+
+    expect(await file(join(packageDir, "packages", "app", "lib-cli.txt")).text()).toBe("lib-cli");
+  });
+
+  // The script of lib is slow to start, so app finds built.txt only if it waits for lib.
+  const build = `require("fs").writeFileSync("built.txt", "built");`;
+  test.each([
+    {
+      shape: "a member",
+      members: { app: { lib: "workspace:*" }, lib: {} },
+    },
+    {
+      shape: "a member through a member without scripts",
+      members: { app: { mid: "workspace:*" }, mid: { lib: "workspace:*" }, lib: {} },
+    },
+    {
+      shape: "a member in a dependency cycle",
+      members: { app: { lib: "workspace:*" }, lib: { other: "workspace:*" }, other: { lib: "workspace:*" } },
+    },
+  ])("--filter: run after the scripts of $shape that the member depends on", async ({ members }) => {
+    const scripts: Record<string, string | undefined> = {
+      app: "cp ../lib/built.txt built.txt",
+      lib: `${bunExe()} build.js`,
+      other: "echo started > started.txt",
+    };
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+        "packages/lib/build.js": build,
+        ...Object.fromEntries(
+          Object.entries(members).map(([name, dependencies]) => [
+            `packages/${name}/package.json`,
+            JSON.stringify({
+              name,
+              version: "1.0.0",
+              dependencies,
+              scripts: scripts[name] ? { postinstall: scripts[name] } : undefined,
+            }),
+          ]),
+        ),
+      },
+    });
+
+    await runBunInstall(bunEnv, packageDir, { packages: ["--filter", "app"] });
+
+    expect(await file(join(packageDir, "packages", "app", "built.txt")).text()).toBe("built");
+  });
+
+  test("a failing script fails the install and keeps the member", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+        "packages/pkg1/package.json": JSON.stringify({
+          name: "pkg1",
+          version: "1.0.0",
+          scripts: { postinstall: "exit 3" },
+        }),
+      },
+    });
+
+    const { err } = await runBunInstall(bunEnv, packageDir, {
+      allowErrors: true,
+      savesLockfile: false,
+      expectedExitCode: 3,
+    });
+
+    expect(err).toContain('error: postinstall script from "pkg1" exited with 3');
+    expect(existsSync(join(packageDir, "packages", "pkg1", "package.json"))).toBe(true);
+  });
+
+  test("a failing script of an optional member ends the member's other scripts, not the install", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+        "packages/lib/package.json": JSON.stringify({
+          name: "lib",
+          version: "1.0.0",
+          scripts: { preinstall: "exit 3", postinstall: "echo started > ../app/lib-postinstall.txt" },
+        }),
+        // With the filter, this optional edge is the only edge to lib.
+        "packages/app/package.json": JSON.stringify({
+          name: "app",
+          version: "1.0.0",
+          optionalDependencies: { lib: "workspace:*" },
+          scripts: { postinstall: "echo started > started.txt" },
+        }),
+      },
+    });
+
+    await runBunInstall(bunEnv, packageDir, { packages: ["--filter", "app"] });
+
+    expect({
+      app: existsSync(join(packageDir, "packages", "app", "started.txt")),
+      libPostinstall: existsSync(join(packageDir, "packages", "app", "lib-postinstall.txt")),
+    }).toEqual({ app: true, libPostinstall: false });
+  });
+
+  test("do not run with --ignore-scripts", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+        "packages/pkg1/package.json": JSON.stringify({
+          name: "pkg1",
+          version: "1.0.0",
+          scripts: { postinstall: "echo started > started.txt" },
+        }),
+      },
+    });
+
+    await runBunInstall(bunEnv, packageDir, { packages: ["--ignore-scripts"] });
+
+    expect(existsSync(join(packageDir, "packages", "pkg1", "started.txt"))).toBe(false);
   });
 });
 

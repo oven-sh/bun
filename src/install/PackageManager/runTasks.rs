@@ -22,9 +22,8 @@ use super::{
     Command, PackageInstaller, PackageManager, ProgressStrings, Subcommand, TaskCallbackList,
 };
 use super::{directories, enqueue};
-use crate::dependency::Behavior;
 use crate::isolated_install::installer as store_installer;
-use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _};
+use crate::isolated_install::store::EntryColumns as _;
 use crate::lifecycle_script_runner::InstallCtx;
 use crate::network_task::{Authorization, ForTarballError};
 use crate::package_manifest_map::Value as ManifestEntry;
@@ -379,10 +378,7 @@ fn run_tasks_erased(
                 }
                 &store_installer::Result::RunScripts(list) => {
                     let entry_id = task.entry_id;
-                    let node_id = installer.store.entries.items_node_id()[entry_id.get() as usize];
-                    let dep_id = installer.store.nodes.items_dep_id()[node_id.get() as usize];
-                    let dep = &installer.lockfile().buffers.dependencies[dep_id as usize];
-                    let optional = dep.behavior.contains(Behavior::OPTIONAL);
+                    let optional = installer.is_optional(entry_id);
                     // SAFETY: `list` is the per-entry scripts slot owned by
                     // `store.entries.items_scripts()[entry_id]`; this Task is
                     // its sole consumer (see Installer.rs Yield::RunScripts).

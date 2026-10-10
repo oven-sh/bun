@@ -1711,6 +1711,9 @@ struct Look<'a> {
     /// Not `NodeResolutionFeaturesExports`: the `exports` of a package in `node_modules` are
     /// ignored.
     ignores_exports: bool,
+    /// `NodeResolutionFeatures.AllFeatures` under `node10`, which has none of them otherwise: what is looked up says
+    /// how it is to be resolved (`resolution-mode`). `GetConditions` has `node` then.
+    all_features: bool,
     /// `resolvePackageDirectoryOnly`
     resolve_package_directory_only: bool,
     /// Not the rules of TypeScript but those of the package `resolve` 2.0 under eslint-import-resolver-node: see
@@ -2680,7 +2683,7 @@ impl<'h> Resolver<'h> {
             // `GetConditions`
             let by_mode: &[u8] = if look.import { b"import" } else { b"require" };
             let mut conditions: Vec<&[u8]> = vec![by_mode, b"types"];
-            if self.options.resolves_like_node {
+            if self.options.resolves_like_node || look.all_features {
                 conditions.push(b"node");
             }
             conditions.extend(self.options.custom_conditions.iter().map(Vec::as_slice));
@@ -2701,7 +2704,7 @@ impl<'h> Resolver<'h> {
         };
         if !(look.outcome.found_package.get()
             && !look.is_config_lookup
-            && self.options.has_exports_feature()
+            && (look.all_features || self.options.has_exports_feature())
             && !look.ignores_exports
             && (look.typescript || look.declarations)
             && !is_relative(spec)
@@ -2748,6 +2751,7 @@ impl<'h> Resolver<'h> {
             ending_from_config: false,
             outcome,
             ignores_exports: false,
+            all_features: self.options.forbids_self_name_references && mode != ResolutionMode::None,
             resolve_package_directory_only: false,
             as_require: false,
         }
@@ -2777,6 +2781,7 @@ impl<'h> Resolver<'h> {
             typescript: false,
             declarations: false,
             ignores_exports: !how.through_paths,
+            all_features: false,
             as_require: true,
             ..self.look(ResolutionMode::Require, true, &outcome)
         };
@@ -2858,11 +2863,11 @@ impl<'h> Resolver<'h> {
         }
         // Tries each location in turn until one produces a result.
         let mut found = Found::No;
-        if self.options.has_imports_feature() && spec.starts_with(b"#") {
+        if (look.all_features || self.options.has_imports_feature()) && spec.starts_with(b"#") {
             found = self.package_imports(spec, from_dir, look);
         }
         if let Found::No = found
-            && !self.options.forbids_self_name_references
+            && (look.all_features || !self.options.forbids_self_name_references)
         {
             found = self.self_name(spec, from_dir, look);
         }
@@ -3831,7 +3836,8 @@ impl<'h> Resolver<'h> {
             };
         }
         let package = self.package(&package_dir);
-        let respects_exports = self.options.has_exports_feature() && !look.ignores_exports;
+        let has_exports_feature = look.all_features || self.options.has_exports_feature();
+        let respects_exports = has_exports_feature && !look.ignores_exports;
         let exports = package
             .and_then(|p| p.json.get(b"exports"))
             .filter(|_| respects_exports);
@@ -4305,7 +4311,7 @@ impl<'h> Resolver<'h> {
         condition == b"default"
             || condition == b"types"
             || condition == by_mode
-            || condition == b"node" && self.options.resolves_like_node
+            || condition == b"node" && (self.options.resolves_like_node || look.all_features)
             || self
                 .options
                 .custom_conditions

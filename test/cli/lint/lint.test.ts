@@ -4349,6 +4349,33 @@ describe.concurrent("bun lint", () => {
           with5: ["2:14 no-unsafe-assignment", "2:21 no-unsafe-member-access"],
           with6: ["2:14 no-unsafe-assignment", "2:21 no-unsafe-member-access"],
         },
+        // but for an import that says how it is to be resolved: that one knows all of it, and each way has its own
+        "explicit-node10-resolution-mode": {
+          options: {
+            "strict": true,
+            "noEmit": true,
+            "types": [],
+            "lib": ["es2022"],
+            "target": "es2022",
+            "module": "esnext",
+            "moduleResolution": "node10",
+          },
+          files: {
+            "a.ts":
+              'import type { V as I } from "pkg" with { "resolution-mode": "import" };\n' +
+              'import type { V as R } from "pkg" with { "resolution-mode": "require" };\n' +
+              'import type { V as N } from "pkg";\n' +
+              'type T = import("pkg", { with: { "resolution-mode": "import" } }).V;\n' +
+              "export const x1 = (v: I) => v.esm;\nexport const x2 = (v: R) => v.cjs;\nexport const x3 = (v: T) => v.esm;\n" +
+              "export const x4 = (v: I) => v.cjs;\nexport const x5 = (v: N) => v.esm;\n",
+            "node_modules/pkg/c.d.cts": "export interface V {\n  cjs: number;\n}\n",
+            "node_modules/pkg/e.d.mts": "export interface V {\n  esm: number;\n}\n",
+            "node_modules/pkg/package.json":
+              '{ "name": "pkg", "version": "1.0.0", "exports": { ".": { "import": { "types": "./e.d.mts" }, "require": { "types": "./c.d.cts" } } } }\n',
+          },
+          with5: ["8:29 no-unsafe-return", "9:29 no-unsafe-return", "9:31 no-unsafe-member-access"],
+          with6: ["8:29 no-unsafe-return", "9:29 no-unsafe-return", "9:31 no-unsafe-member-access"],
+        },
         // nor the name of the package itself
         "explicit-node-self-name": {
           options: {

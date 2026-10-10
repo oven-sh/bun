@@ -1682,6 +1682,53 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
+  // What `@rushstack/eslint-patch` does when `eslint-config-next` loads it, in a package that is laid out as it is.
+  test(
+    "a configuration that looks for ESLint among the modules that have loaded it finds that of the project",
+    async () => {
+      const files = {
+        "node_modules/eslint/package.json": `{ "name": "eslint", "version": "9.0.0" }`,
+        "node_modules/@eslint/eslintrc/package.json": `{ "name": "@eslint/eslintrc", "version": "3.0.0" }`,
+        "node_modules/@rushstack/eslint-patch/package.json": `{ "name": "@rushstack/eslint-patch", "version": "1.15.0" }`,
+        "node_modules/@rushstack/eslint-patch/modern-module-resolution.js": `require("./lib/modern-module-resolution");`,
+        "node_modules/@rushstack/eslint-patch/lib/modern-module-resolution.js": `require("./_patch-base");`,
+        "node_modules/@rushstack/eslint-patch/lib/_patch-base.js": `
+          const path = require("path");
+          const folderOf = (name, from) => path.dirname(require.resolve(name + "/package.json", { paths: [from.path] }));
+          let bundle, eslint;
+          for (let current = module; current && eslint === undefined; current = current.parent) {
+            if (bundle !== undefined) {
+              if (current.filename.startsWith(folderOf("eslint", current) + path.sep)) eslint = folderOf("eslint", current);
+            } else if (current.filename === path.join(folderOf("@eslint/eslintrc", current), "dist/eslintrc.cjs")) {
+              bundle = current.filename;
+            }
+          }
+          if (eslint === undefined) throw new Error("Failed to patch ESLint because the calling module was not recognized.");`,
+        "node_modules/eslint-config-mine/package.json": `{ "name": "eslint-config-mine", "main": "index.js" }`,
+        "node_modules/eslint-config-mine/index.js": `
+          require("@rushstack/eslint-patch/modern-module-resolution");
+          module.exports = { rules: { "no-debugger": "error" } };`,
+        "a.js": "debugger;\n",
+      };
+      const own = `{ rules: { program: { create: context => ({ Program(node) { context.report({ node, message: "own" }); } }) } } }`;
+      const configurations = {
+        "eslint.config.mjs": `
+          import { createRequire } from "node:module";
+          export default [createRequire(import.meta.url)("eslint-config-mine")];`,
+        "eslint.config.cjs": `module.exports = [require("eslint-config-mine")];`,
+        // An engine runs this one too: nothing else has the plugin.
+        "eslint.config.js": `module.exports = [require("eslint-config-mine"), { plugins: { own: ${own} }, rules: { "own/program": "error" } }];`,
+      };
+      for (const [name, configuration] of Object.entries(configurations)) {
+        const { stdout, exitCode } = await lint({ ...files, [name]: configuration }, ["-f", "unix", "a.js"]);
+        expect(stdout).toContain("<dir>/a.js:1:1: Unexpected 'debugger' statement. [Error/no-debugger]");
+        expect(stdout.includes("<dir>/a.js:1:1: own [Error/own/program]")).toBe(name === "eslint.config.js");
+        expect(exitCode).toBe(1);
+      }
+    },
+    timeout,
+  );
+
   // ESLint in Node.js gives up at 740: "Not enough stack space to parse input". So does the parser here between 300 and 400 in a
   // debug build, whose frames are larger.
   test(

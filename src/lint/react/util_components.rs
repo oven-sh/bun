@@ -255,6 +255,9 @@ pub(crate) struct Components<'a> {
     is_finished: bool,
     /// See [`Components::closest_candidate`].
     candidates: FxHashMap<Scope<'a>, Option<Scope<'a>>>,
+    /// [`Components::get_pragma_component_wrapper`] of a function, where the time does not matter:
+    /// many nodes in a function that many calls are around ask for it.
+    wrappers: FxHashMap<Func<'a>, Option<Expr<'a>>>,
     /// [`get_name_of_wrapped_component`], by the first argument: it looks through a whole body.
     wrapped: FxHashMap<Expr<'a>, Option<Name<'a>>>,
     /// [`may_have_explicit_components`]
@@ -303,6 +306,7 @@ impl<'a> Components<'a> {
             is_started: false,
             is_finished: false,
             candidates: FxHashMap::default(),
+            wrappers: FxHashMap::default(),
             wrapped: FxHashMap::default(),
             may_have_explicit: OnceCell::new(),
             documented_at: AncestorMemo::default(),
@@ -606,13 +610,27 @@ impl<'a> Components<'a> {
 
     /// `getPragmaComponentWrapper`: the outermost of the calls of wrapper functions around `node`.
     pub(crate) fn get_pragma_component_wrapper(&mut self, node: Node<'a>) -> Option<Expr<'a>> {
+        let func = node.as_func();
+        if let Some(&known) = func.and_then(|it| self.wrappers.get(&it)) {
+            return known;
+        }
+        let way = Way::new(self.file);
         let mut current_node = node;
         let mut prev_node = None;
-        while let Parent::CallExpression(call) = Parent::of(current_node)
-            && self.is_pragma_component_wrapper(Node::Expr(call))
-        {
+        // What is said of `a.memo(..)` depends on the time.
+        let mut is_certain = true;
+        while let Parent::CallExpression(call) = Parent::of(current_node) {
+            let callee = call.callee().map(Expr::tag);
+            let has_steps = way.take(4);
+            is_certain &= has_steps && !matches!(callee, Some(ExprTag::Dot | ExprTag::Index));
+            if !has_steps || !self.is_pragma_component_wrapper(Node::Expr(call)) {
+                break;
+            }
             current_node = Node::Expr(call);
             prev_node = Some(call);
+        }
+        if let (true, Some(func)) = (is_certain, func) {
+            self.wrappers.insert(func, prev_node);
         }
         prev_node
     }

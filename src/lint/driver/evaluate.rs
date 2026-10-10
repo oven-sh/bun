@@ -19,6 +19,7 @@ pub(crate) const ESLINT: Source = &[
     START,
     DESCRIBE,
     STAND_INS,
+    bun_lint::js_plugin::ESLINT_PATCH,
     include_str!("evaluate-eslint.js"),
 ];
 /// For what the configuration files of ESLint 8 name.

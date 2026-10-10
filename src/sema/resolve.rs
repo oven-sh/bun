@@ -5,7 +5,7 @@ use crate::hir::ResolutionMode;
 use crate::json::Json;
 use crate::session::{Arena, Session};
 use crate::util::SharedSort;
-use crate::util::{FxHashSet, ShardedMap};
+use crate::util::{AppendVec, FxHashMap, FxHashSet, ShardedMap};
 use bstr::ByteSlice;
 use bun_core::strings;
 use bun_paths::fs::Path;
@@ -1862,18 +1862,69 @@ pub struct ResolvedModule<'h> {
     pub package_id: Option<PackageId<'h>>,
 }
 
+/// A memo table of a resolver. Two threads may compute the same entry; they compute the same value.
+enum Memo<K, V> {
+    Sharded(ShardedMap<K, V>),
+    /// Of a resolver that is made for a lookup or two: the 256 empty shards of the other cost more than those.
+    Small(Box<SmallMemo<K, V>>),
+}
+
+struct SmallMemo<K, V> {
+    places: bun_threading::Guarded<FxHashMap<K, u32>>,
+    values: AppendVec<V>,
+}
+
+impl<K: std::hash::Hash + Eq, V> Memo<K, V> {
+    fn new(is_small: bool) -> Memo<K, V> {
+        match is_small {
+            true => Memo::Small(Box::new(SmallMemo {
+                places: Default::default(),
+                values: AppendVec::new(),
+            })),
+            false => Memo::Sharded(ShardedMap::default()),
+        }
+    }
+
+    #[inline]
+    fn get_ref<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: std::borrow::Borrow<Q>,
+        Q: std::hash::Hash + Eq + ?Sized,
+    {
+        match self {
+            Memo::Sharded(map) => map.get_ref(key),
+            Memo::Small(map) => {
+                let at = *map.places.lock().get(key)?;
+                Some(map.values.get(at))
+            }
+        }
+    }
+
+    /// Does not overwrite an existing value. Returns the stored value.
+    fn insert_ref(&self, key: K, value: V) -> &V {
+        match self {
+            Memo::Sharded(map) => map.insert_ref(key, value),
+            Memo::Small(map) => {
+                let mut places = map.places.lock();
+                let at = *places.entry(key).or_insert_with(|| map.values.push(value));
+                map.values.get(at)
+            }
+        }
+    }
+}
+
 pub struct Resolver<'h> {
     /// Owns every path in the caches. It is not the session of the check: the caches are of no use
     /// once the program is loaded, and the caller frees them then.
     session: &'h Session,
     host: &'h dyn Host,
     options: &'h Options,
-    packages: ShardedMap<&'h [u8], Option<Package<'h>>>,
-    dirs: ShardedMap<&'h [u8], bool>,
-    files: ShardedMap<&'h [u8], bool>,
+    packages: Memo<&'h [u8], Option<Package<'h>>>,
+    dirs: Memo<&'h [u8], bool>,
+    files: Memo<&'h [u8], bool>,
     /// Cache of the results of `resolve_module_name`. The key is the directory, `//`, the mode as a
     /// digit, and the specifier. No directory contains `//`.
-    resolved: ShardedMap<&'h [u8], Option<ResolvedModule<'h>>>,
+    resolved: Memo<&'h [u8], Option<ResolvedModule<'h>>>,
     /// `resolutionState.diagnostics` of all lookups: whether it concerns `imports`, the entry, and
     /// the `package.json`.
     ambiguous_roots: bun_threading::Guarded<Vec<(bool, &'h [u8], &'h [u8]), &'h Session>>,
@@ -1882,7 +1933,7 @@ pub struct Resolver<'h> {
     links: bun_threading::Guarded<Vec<(&'h [u8], &'h [u8]), &'h Session>>,
     /// `knownSymlinks.Directories`: the symlink target of a package directory in `node_modules`.
     /// `None`: it is not a symlink.
-    linked_packages: ShardedMap<&'h [u8], Option<&'h [u8]>>,
+    linked_packages: Memo<&'h [u8], Option<&'h [u8]>>,
     /// `GetCompilerOptionsWithRedirect`: one for each of `options.referenced_options`, made when a file of that project is
     /// first resolved from: the empty maps of a resolver are five times 64 shards, and a project of a monorepo references
     /// hundreds.
@@ -2180,6 +2231,15 @@ pub fn is_javascript(path: &[u8]) -> bool {
 
 impl<'h> Resolver<'h> {
     pub fn new(session: &'h Session, host: &'h dyn Host, options: &'h Options) -> Self {
+        Self::with_tables(session, host, options, false)
+    }
+
+    fn with_tables(
+        session: &'h Session,
+        host: &'h dyn Host,
+        options: &'h Options,
+        are_small: bool,
+    ) -> Self {
         let redirected = options
             .referenced_options
             .iter()
@@ -2188,13 +2248,13 @@ impl<'h> Resolver<'h> {
             session,
             host,
             options,
-            packages: ShardedMap::default(),
-            dirs: ShardedMap::default(),
-            files: ShardedMap::default(),
-            resolved: ShardedMap::default(),
+            packages: Memo::new(are_small),
+            dirs: Memo::new(are_small),
+            files: Memo::new(are_small),
+            resolved: Memo::new(are_small),
             ambiguous_roots: bun_threading::Guarded::new(Vec::new_in(session)),
             links: bun_threading::Guarded::new(Vec::new_in(session)),
-            linked_packages: ShardedMap::default(),
+            linked_packages: Memo::new(are_small),
             // Not in an arena: a resolver that keeps nothing creates none.
             redirected: redirected.collect(),
             is_redirect: false,
@@ -2405,7 +2465,7 @@ impl<'h> Resolver<'h> {
                     || self.path_through_linked_package(path).is_some_and(|real| {
                         self.directory_exists_if_project_reference_decl_dir(&real)
                     })));
-        self.dirs.insert(self.keep(path), result)
+        *self.dirs.insert_ref(self.keep(path), result)
     }
 
     fn is_file(&self, path: &[u8]) -> bool {
@@ -2417,7 +2477,7 @@ impl<'h> Resolver<'h> {
         }
         // Most misses are in directories that do not exist.
         let result = self.is_dir(dirname::<Posix>(path)) && self.host.is_file(path);
-        self.files.insert(self.keep(path), result)
+        *self.files.insert_ref(self.keep(path), result)
     }
 
     fn package(&self, dir: &[u8]) -> Option<&Package<'h>> {
@@ -4279,7 +4339,7 @@ pub fn resolve_config(
         resolve_package_json_imports: true,
         ..Default::default()
     };
-    let resolver = Resolver::new(session, host, &options);
+    let resolver = Resolver::with_tables(session, host, &options, true);
     let outcome = Outcome::default();
     let look = Look {
         typescript: false,

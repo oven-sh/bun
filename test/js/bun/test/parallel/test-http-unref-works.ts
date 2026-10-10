@@ -1,6 +1,7 @@
 import { once } from "events";
 import { isWindows } from "harness";
 import { createServer } from "http";
+import type { AddressInfo } from "net";
 
 if (isWindows) process.exit(0); // Windows doesnt support SIGUSR1
 
@@ -10,7 +11,7 @@ const server = createServer((req, res) => {
 });
 server.listen(0);
 await once(server, "listening");
-const port = server.address().port;
+const port = (server.address() as AddressInfo).port;
 process.on(SIGNAL, async () => {
   server.unref();
 

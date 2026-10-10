@@ -16,6 +16,7 @@ import {
 import { createConnection, createServer as createTcpServer } from "net";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
+import { asyncIterableBodyShapes, settled as settledBody } from "../web/streams/async-iterable-body-shapes";
 var setTimeoutAsync = (fn, delay) => {
   return new Promise((resolve, reject) => {
     setTimeout(() => {
@@ -99,6 +100,28 @@ describe("HTMLRewriter", () => {
       .transform(new Response("<div>hello</div>"));
     expect(res).toBeInstanceOf(Response);
     await expect(res.text()).rejects.toThrow("test");
+  });
+
+  // `.body` exists but nothing reads it when the handler throws, so the failure
+  // waits inside the output stream. A read that starts afterwards used to see a
+  // complete, empty document.
+  it("error inside element handler rejects a .body that is read only afterwards", async () => {
+    let input;
+    const threw = Promise.withResolvers();
+    const res = new HTMLRewriter()
+      .on("div", {
+        element(element) {
+          threw.resolve();
+          throw new Error("test");
+        },
+      })
+      .transform(new Response(new ReadableStream({ start: controller => void (input = controller) })));
+    const body = res.body;
+    input.enqueue(new TextEncoder().encode("<div>hello</div>"));
+    await threw.promise;
+    // One turn later the call that ran the handler has returned and failed the output.
+    await setImmediatePromise();
+    await expect(body.getReader().read()).rejects.toThrow("test");
   });
 
   // Inputs that go through the JS stream pump with data already queued are
@@ -731,6 +754,36 @@ describe("HTMLRewriter", () => {
       });
     });
 
+    // An async-iterable input gets the same cancel, with the same reason. It is closed
+    // the way `for await` leaves an iterator: return(). The reason is not thrown into it.
+    describe.each(asyncIterableBodyShapes)(
+      "a still-open async-iterable input (%s) is closed with return() when",
+      (_, make) => {
+        it("the output reader cancels", async () => {
+          const shape = make({ chunk: "<p>one</p>" });
+          const res = new HTMLRewriter().on("p", { element() {} }).transform(new Response(shape.body));
+          const reader = res.body.getReader();
+          const first = await reader.read();
+          expect(new TextDecoder().decode(first.value)).toBe("<p>one</p>");
+          await reader.cancel(new Error("reader went away"));
+          expect(await settledBody(shape)).toEqual(shape.expected);
+        });
+
+        it("a handler throws", async () => {
+          const shape = make({ chunk: "<p>one</p>" });
+          const res = new HTMLRewriter()
+            .on("p", {
+              element() {
+                throw new Error("handler threw");
+              },
+            })
+            .transform(new Response(shape.body));
+          await expect(res.text()).rejects.toThrow("handler threw");
+          expect(await settledBody(shape)).toEqual(shape.expected);
+        });
+      },
+    );
+
     // Two rewriters chained, both suspending: `init()`'s own comment names
     // "another transform()" as a supported consumer of a pending body.
     it("chained suspending transforms", async () => {
@@ -1350,6 +1403,27 @@ describe("HTMLRewriter", () => {
           result = await settle(reader.read());
         } while (!result.rejected && !result.value.done);
         expect(result).toEqual(rejectedWithConnectionError);
+      });
+    });
+
+    it("a first read on .body after the upstream failed rejects", async () => {
+      await withPartialBodyServer(async (url, release) => {
+        const res = await fetch(url);
+        // `.body` is taken before the upstream fails and read only after it. The
+        // output stream holds the failure meanwhile; it used to read as a
+        // complete, empty document. The rewriter is given a wrapper so that
+        // `res` itself still shows when the failure has landed.
+        const body = rewriter().transform(new Response(res.body, res)).body;
+        release();
+        // Bun.inspect(res) lists the body stream while the body is pending and
+        // stops once the body holds the error. By then the error has gone
+        // through the rewriter into its output.
+        const deadline = Date.now() + 10_000;
+        while (Bun.inspect(res).includes("ReadableStream")) {
+          if (Date.now() > deadline) throw new Error("the upstream failure never reached the body");
+          await Bun.sleep(1);
+        }
+        expect(await settle(body.getReader().read())).toEqual(rejectedWithConnectionError);
       });
     });
 

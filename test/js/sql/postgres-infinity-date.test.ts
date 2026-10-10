@@ -123,7 +123,7 @@ const extended = await listeningServer(socket => {
   const reply = () => extReply;
   let pending = Buffer.alloc(0);
   let sawStartup = false;
-  socket.on("data", chunk => {
+  socket.on("data", (chunk: Buffer) => {
     pending = Buffer.concat([pending, chunk]);
     if (!sawStartup) {
       if (pending.length < 4) return;
@@ -355,7 +355,7 @@ test.each(["timestamp", "timestamptz"] as const)("binding ±Infinity to %s write
   const { port, server } = await listeningServer(socket => {
     let pending = Buffer.alloc(0);
     let sawStartup = false;
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       pending = Buffer.concat([pending, chunk]);
       if (!sawStartup) {
         if (pending.length < 4) return;
@@ -421,7 +421,7 @@ test.each(["timestamp", "timestamptz"] as const)(
     const { port, server } = await listeningServer(socket => {
       let pending = Buffer.alloc(0);
       let sawStartup = false;
-      socket.on("data", chunk => {
+      socket.on("data", (chunk: Buffer) => {
         pending = Buffer.concat([pending, chunk]);
         if (!sawStartup) {
           if (pending.length < 4) return;

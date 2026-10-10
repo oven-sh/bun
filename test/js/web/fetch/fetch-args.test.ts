@@ -1,6 +1,6 @@
 import { TCPSocketListener } from "bun";
 import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, tempDir } from "harness";
 import { join } from "node:path";
 
 let server;
@@ -20,8 +20,8 @@ afterAll(() => {
 
 test("fetch(request subclass with headers)", async () => {
   class MyRequest extends Request {
-    constructor(input: RequestInfo, init?: RequestInit) {
-      super(input, init);
+    constructor(input: string | URL | Request, init?: RequestInit) {
+      super(input as string, init);
       this.headers.set("hello", "world");
     }
   }
@@ -44,7 +44,7 @@ test("fetch(RequestInit, headers)", async () => {
     },
     url: server!.url,
   };
-  const { headers } = await fetch(myRequest, {
+  const { headers } = await fetch(myRequest as any, {
     headers: {
       "hello": "world2",
     },
@@ -55,8 +55,8 @@ test("fetch(RequestInit, headers)", async () => {
 
 test("fetch(url, RequestSubclass)", async () => {
   class MyRequest extends Request {
-    constructor(input: RequestInfo, init?: RequestInit) {
-      super(input, init);
+    constructor(input: string | URL | Request, init?: RequestInit) {
+      super(input as string, init);
       this.headers.set("hello", "world");
     }
   }
@@ -76,7 +76,7 @@ test("fetch({toString throwing}, {headers} isn't accessed)", async () => {
       throw new Error("bad2");
     }),
   };
-  expect(async () => await fetch(str, obj)).toThrow("bad2");
+  expect(async () => await fetch(str as any, obj as any)).toThrow("bad2");
   expect(mocked).not.toHaveBeenCalled();
   expect(str.toString).toHaveBeenCalledTimes(1);
 });
@@ -274,10 +274,84 @@ describe.concurrent("fetch() early rejections are reported when unhandled", () =
   });
 });
 
+// fetch() reads the body first and hands it to the request last. An all-ASCII
+// string body is a reference on the caller's string, so an exit in between that
+// drops the body without releasing it keeps the whole string.
+describe("fetch() releases a string body when it ends before it queues a request", () => {
+  const refused = `"ftp://127.0.0.1:1/", { method: "POST", body }`;
+  const cases: [name: string, call: string, setup?: string][] = [
+    ["unsupported protocol", `fetch(${refused})`],
+    ["GET with a body", `fetch("http://127.0.0.1:1/", { body })`],
+    ["invalid header name", `fetch("http://127.0.0.1:1/", { method: "POST", body, headers: { "a b": "1" } })`],
+    [
+      "init.headers getter throws",
+      `fetch("http://127.0.0.1:1/", { method: "POST", body, get headers() { throw new Error("boom"); } })`,
+    ],
+    [
+      "proxy combined with unix",
+      `fetch("http://127.0.0.1:1/", { method: "POST", body, proxy: "http://127.0.0.1:1/", unix: "fetch-args.sock" })`,
+    ],
+    ["file: url with a host", `fetch("file://example.com/a", { method: "POST", body })`],
+    [
+      "blob: url that is not registered",
+      `fetch("blob:00000000-0000-0000-0000-000000000000", { method: "POST", body })`,
+    ],
+    // These two resolve: the body is dropped on the way to a 200 response.
+    [
+      "blob: url that is registered",
+      `fetch(blobUrl, { method: "POST", body })`,
+      `const blobUrl = URL.createObjectURL(new Blob(["x"]));`,
+    ],
+    [
+      "file: url",
+      `fetch(fileUrl, { method: "POST", body })`,
+      `const fileUrl = Bun.pathToFileURL(process.execPath).href;`,
+    ],
+    [
+      "s3: request signing fails",
+      `fetch("s3://bucket/key", { method: "PATCH", body, s3: { accessKeyId: "a", secretAccessKey: "b" } })`,
+    ],
+    ["s3: option of the wrong type", `fetch("s3://bucket/key", { method: "PUT", body, s3: { accessKeyId: 1 } })`],
+    ["Bun.fetch", `Bun.fetch(${refused})`],
+    ["FetchSession.fetch", `session.fetch(${refused})`, `const session = new Bun.FetchSession();`],
+    ["node-fetch", `nodeFetch(${refused})`, `const nodeFetch = require("node-fetch");`],
+    ["undici fetch", `undici.fetch(${refused})`, `const undici = require("undici");`],
+    ["undici request", `undici.request(${refused})`, `const undici = require("undici");`],
+    ["String object body", `fetch("ftp://127.0.0.1:1/", { method: "POST", body: new String(body) })`],
+    ["Request that carries the body", `fetch(new Request(${refused}))`],
+    ["init object as the first argument", `fetch({ url: "ftp://127.0.0.1:1/", method: "POST", body })`],
+  ];
+
+  // One child at a time: a debug build is too slow to run all of them at once.
+  test.each(cases)("%s", async (_name, call, setup = "") => {
+    const code = /* js */ `
+      ${setup}
+      const pad = Buffer.alloc(4 * 1024 * 1024, "a").toString();
+      let seq = 0;
+      async function run(calls) {
+        for (let i = 0; i < calls; i++) {
+          // A fresh string for each call: one reused string is one allocation.
+          const body = ++seq + pad;
+          try { await ${call}; } catch {}
+        }
+        Bun.gc(true);
+        return process.memoryUsage.rss();
+      }
+      const before = await run(8);
+      const after = await run(48);
+      console.log(JSON.stringify({ deltaMiB: (after - before) / 1024 / 1024 }));
+    `;
+    // Unfixed: 192 MiB, the 48 bodies of 4 MiB. Fixed: under 4 MiB on a release
+    // build and 8 to 45 MiB on a debug build, where a loop that only flattens
+    // the string measures the same.
+    await expectRssDeltaBelow(["--smol", "-e", code], { release: 48, debug: 96 });
+  });
+});
+
 test("fetch(RequestSubclass, undefined)", async () => {
   class MyRequest extends Request {
-    constructor(input: RequestInfo, init?: RequestInit) {
-      super(input, init);
+    constructor(input: string | URL | Request, init?: RequestInit) {
+      super(input as string, init);
       this.headers.set("hello", "world");
     }
   }
@@ -337,7 +411,7 @@ describe("does not send a request when", () => {
 
   test("Invalid redirect", async () => {
     const prevCount = requestCount;
-    expect(async () => await fetch(url, { redirect: "😀" })).toThrow("redirect must be");
+    expect(async () => await fetch(url, { redirect: "😀" as any })).toThrow("redirect must be");
     // Give it a chance to possibly send the request.
     await Bun.sleep(2);
     expect(requestCount).toBe(prevCount);
@@ -355,7 +429,7 @@ describe("does not send a request when", () => {
 
   test("Invalid ca in tls", async () => {
     const prevCount = requestCount;
-    expect(async () => await fetch(url, { tls: { ca: 123 } })).toThrow("TLSOptions.ca");
+    expect(async () => await fetch(url, { tls: { ca: 123 as any } })).toThrow("TLSOptions.ca");
     // Give it a chance to possibly send the request.
     await Bun.sleep(2);
     expect(requestCount).toBe(prevCount);
@@ -416,7 +490,7 @@ describe("does not send a request when", () => {
             get [propertyName]() {
               throw new Error("boom");
             },
-          }),
+          } as any),
       ).toThrow("boom");
       // Give it a chance to possibly send the request.
       await Bun.sleep(2);

@@ -1,4 +1,4 @@
-// @ts-expect-error - debug-only export
+// debug-only export
 import { sslCtxLiveCount } from "bun:internal-for-testing";
 import crypto from "crypto";
 import { readFileSync, realpathSync } from "fs";
@@ -539,7 +539,7 @@ describe("tls.createServer events", () => {
           });
         }
 
-        const promises = [];
+        const promises: Promise<void>[] = [];
         for (let i = 0; i < maxClients; i++) {
           promises.push(spawnClient());
         }
@@ -668,7 +668,7 @@ it("createServer registers the callback as a regular 'secureConnection' listener
 
 it("connectionListener should emit the right amount of times, and with alpnProtocol available", async () => {
   let count = 0;
-  const promises = [];
+  const promises: Promise<unknown>[] = [];
   const server: Server = createServer(
     {
       ...COMMON_CERT,
@@ -691,7 +691,7 @@ it("connectionListener should emit the right amount of times, and with alpnProto
       {
         ca: COMMON_CERT.cert,
         rejectUnauthorized: false,
-        port: server.address().port,
+        port: (server.address() as AddressInfo).port,
         host: "127.0.0.1",
         ALPNProtocols: ["bun"],
       },
@@ -720,7 +720,7 @@ it("destroying the socket from inside SNICallback or ALPNCallback does not crash
       },
     },
     {
-      SNICallback(_name: string, cb: (err: Error | null, ctx?: unknown) => void) {
+      SNICallback(_name: string, cb: (err: Error | null, ctx?: tls.SecureContext) => void) {
         connections.at(-1)?.destroy();
         cb(null, undefined);
       },
@@ -980,7 +980,7 @@ it("keeps socket.authorized false when a client without a certificate resumes a 
     const gotSession = session ? Promise.resolve([session]) : once(socket, "session");
     const closed = once(socket, "close");
     const chunks: Buffer[] = [];
-    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("data", (chunk: Buffer) => chunks.push(chunk));
     await once(socket, "secureConnect");
     const protocol = socket.getProtocol();
     const reused = socket.isSessionReused();
@@ -1013,9 +1013,9 @@ it("keeps req.socket.authorized false for an unverified client after the server 
   const { promise, resolve, reject } = Promise.withResolvers<{ before: Verdict; after: Verdict }>();
   const server = https.createServer({ ...COMMON_CERT, requestCert: true, rejectUnauthorized: false }, req => {
     const socket = req.socket as TLSSocket;
-    const before: Verdict = [socket.authorized, socket.authorizationError as string | null];
+    const before: Verdict = [socket.authorized, socket.authorizationError as unknown as string | null];
     socket.end(() => {
-      resolve({ before, after: [socket.authorized, socket.authorizationError as string | null] });
+      resolve({ before, after: [socket.authorized, socket.authorizationError as unknown as string | null] });
     });
   });
   server.on("error", reject);
@@ -1074,9 +1074,9 @@ it("createServer({pfx, requestCert}) verifies client certificates against the pf
 it("SNICallback errors abort the handshake and surface as tlsClientError", async () => {
   // Node drops the connection before the handshake completes (no TLS alert is
   // sent) and emits 'tlsClientError' on the server with the callback's error.
-  const cases: [string, (name: string, cb: (err: Error | null, ctx?: unknown) => void) => void, string][] = [
+  const cases: [string, NonNullable<tls.TlsOptions["SNICallback"]>, string][] = [
     ["cb(error)", (_name, cb) => cb(new Error("sni rejected")), "sni rejected"],
-    ["invalid context", (_name, cb) => cb(null, {}), "Invalid SNI context"],
+    ["invalid context", (_name, cb) => cb(null, {} as any), "Invalid SNI context"],
     [
       "throw",
       () => {
@@ -1108,7 +1108,7 @@ it("SNICallback errors abort the handshake and surface as tlsClientError", async
 });
 
 it("SNICallback returning no context falls through to the default context", async () => {
-  const server: Server = createServer({ ...COMMON_CERT, SNICallback: (_name, cb) => cb(null, null) }, socket => {
+  const server: Server = createServer({ ...COMMON_CERT, SNICallback: (_name, cb) => cb(null, null as any) }, socket => {
     socket.end();
   });
   server.on("tlsClientError", err => {
@@ -1533,7 +1533,7 @@ describe("setSecureContext() on a listening server", () => {
       expect(before.session).toBeDefined();
 
       // The shape @grpc/grpc-js passes on every reload: the flags ride along.
-      server.setSecureContext({ ...agent1, ca: ca2, requestCert: true, rejectUnauthorized: false });
+      server.setSecureContext({ ...agent1, ca: ca2, requestCert: true, rejectUnauthorized: false } as any);
       expect({
         removedCA: (await judged(port, agent1)).verdict,
         addedCA: (await judged(port, agent3)).verdict,
@@ -1747,7 +1747,7 @@ describe("setSecureContext() on a listening server", () => {
       const { port } = await listen(server);
       const offer = { host: "127.0.0.1", ALPNProtocols: ["http/1.1", "h2"] };
 
-      server.setSecureContext({ ...agent3, ALPNProtocols: ["http/1.1"] });
+      server.setSecureContext({ ...agent3, ALPNProtocols: ["http/1.1"] } as tls.SecureContextOptions);
       expect(await handshake({ ...offer, port })).toEqual({ cn: "agent3", alpn: "h2" });
 
       server.close();
@@ -2311,7 +2311,7 @@ describe("tls.Server secure-context options", () => {
       // One tick so _emitCloseIfDrained's nextTick'd spurious 'close' (the bug)
       // would have fired before the assertion.
       await new Promise(resolve => setImmediate(resolve));
-      expect({ closes, connections: tlsServer._connections }).toEqual({ closes: [], connections: 0 });
+      expect({ closes, connections: (tlsServer as any)._connections }).toEqual({ closes: [], connections: 0 });
     } finally {
       client?.destroy();
       rawServer.close();

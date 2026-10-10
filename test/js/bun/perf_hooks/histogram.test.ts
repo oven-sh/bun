@@ -63,7 +63,7 @@ describe("Histogram", () => {
 
     assert.throws(() => h.record(0), /out of range/);
     assert.throws(() => h.record(-1), /out of range/);
-    assert.throws(() => h.record("invalid"), /must be of type number/);
+    assert.throws(() => h.record("invalid" as any), /must be of type number/);
   });
 
   test("histogram with custom options", () => {
@@ -308,58 +308,58 @@ describe("Histogram", () => {
     test("createHistogram parameter validation", () => {
       assert.throws(
         () => createHistogram({ figures: -1 }),
-        err => {
+        (err: any) => {
           return err.code === "ERR_OUT_OF_RANGE" && err.message.includes("options.figures");
         },
       );
       assert.throws(
         () => createHistogram({ figures: 6 }),
-        err => {
+        (err: any) => {
           return err.code === "ERR_OUT_OF_RANGE" && err.message.includes("options.figures");
         },
       );
 
       assert.throws(
         () => createHistogram({ lowest: 0 }),
-        err => {
+        (err: any) => {
           return err.code === "ERR_OUT_OF_RANGE" && err.message.includes("options.lowest");
         },
       );
       assert.throws(
         () => createHistogram({ lowest: -1 }),
-        err => {
+        (err: any) => {
           return err.code === "ERR_OUT_OF_RANGE" && err.message.includes("options.lowest");
         },
       );
 
       assert.throws(
         () => createHistogram({ lowest: 10, highest: 15 }),
-        err => {
+        (err: any) => {
           return err.code === "ERR_OUT_OF_RANGE" && err.message.includes("options.highest");
         },
       );
       assert.throws(
         () => createHistogram({ lowest: 5, highest: 9 }),
-        err => {
+        (err: any) => {
           return err.code === "ERR_OUT_OF_RANGE" && err.message.includes("options.highest");
         },
       );
 
       assert.throws(
-        () => createHistogram({ figures: "invalid" }),
-        err => {
+        () => createHistogram({ figures: "invalid" as any }),
+        (err: any) => {
           return err.code === "ERR_INVALID_ARG_TYPE" && err.message.includes("options.figures");
         },
       );
       assert.throws(
-        () => createHistogram({ lowest: "invalid" }),
-        err => {
+        () => createHistogram({ lowest: "invalid" as any }),
+        (err: any) => {
           return err.code === "ERR_INVALID_ARG_TYPE" && err.message.includes("options.lowest");
         },
       );
       assert.throws(
-        () => createHistogram({ highest: "invalid" }),
-        err => {
+        () => createHistogram({ highest: "invalid" as any }),
+        (err: any) => {
           return err.code === "ERR_INVALID_ARG_TYPE" && err.message.includes("options.highest");
         },
       );
@@ -450,7 +450,7 @@ describe("Histogram", () => {
       }
 
       const percentiles = h.percentiles;
-      const percentilesBigInt = h.percentilesBigInt;
+      const percentilesBigInt: Map<any, bigint> = h.percentilesBigInt;
 
       assert.ok(typeof percentiles.size === "number");
       assert.ok(typeof percentiles.has === "function");
@@ -519,8 +519,8 @@ describe("Histogram", () => {
       h.record(20);
       h.record(30);
 
-      if (typeof h.toJSON === "function") {
-        const json = h.toJSON();
+      if (typeof (h as any).toJSON === "function") {
+        const json = (h as any).toJSON();
 
         assert.strictEqual(typeof json, "object");
         assert.strictEqual(json.count, 3);

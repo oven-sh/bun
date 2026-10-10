@@ -3,7 +3,7 @@ import { test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("node:http should not crash when server throws, and should abruptly close the socket", async () => {
-  const { promise: urlPromise, resolve: resolveUrl, reject: rejectUrl } = Promise.withResolvers();
+  const { promise: urlPromise, resolve: resolveUrl, reject: rejectUrl } = Promise.withResolvers<string>();
   const { promise: serverPromise, resolve: resolveServer, reject: rejectServer } = Promise.withResolvers();
   await using server = spawn({
     cwd: import.meta.dirname,

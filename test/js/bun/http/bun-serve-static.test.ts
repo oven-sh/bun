@@ -3,7 +3,7 @@ import { isBroken, isMacOS, tempDir } from "harness";
 import { routes, static_responses } from "./bun-serve-static-helpers";
 
 describe.todoIf(isBroken && isMacOS)("static", () => {
-  let server: Server;
+  let server: Bun.Server<undefined>;
   let handler = mock(req => {
     return new Response(req.url, {
       headers: {
@@ -18,6 +18,7 @@ describe.todoIf(isBroken && isMacOS)("static", () => {
 
   beforeAll(async () => {
     server = Bun.serve({
+      // @ts-expect-error legacy option name
       static: routes,
       port: 0,
       fetch: handler,
@@ -33,6 +34,7 @@ describe.todoIf(isBroken && isMacOS)("static", () => {
       },
     });
     server.reload({
+      // @ts-expect-error legacy option name
       static: modified,
 
       fetch: handler,
@@ -42,6 +44,7 @@ describe.todoIf(isBroken && isMacOS)("static", () => {
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("modified");
     server.reload({
+      // @ts-expect-error legacy option name
       static: routes,
       fetch: handler,
     });
@@ -96,7 +99,7 @@ describe.todoIf(isBroken && isMacOS)("static", () => {
 });
 
 describe("static route Content-Type", () => {
-  async function contentTypeOf(server: Server, path: string) {
+  async function contentTypeOf(server: Bun.Server<undefined>, path: string) {
     const res = await fetch(new URL(path, server.url));
     expect(res.status).toBe(200);
     await res.arrayBuffer();
@@ -120,6 +123,7 @@ describe("static route Content-Type", () => {
 
     using server = Bun.serve({
       port: 0,
+      // @ts-expect-error legacy option name
       static: { "/a": response, "/b": response },
       fetch: () => new Response("fallback"),
     });
@@ -130,6 +134,7 @@ describe("static route Content-Type", () => {
     }).toEqual({ a: expected, b: expected });
 
     // server.reload() re-registers the very same Response object.
+    // @ts-expect-error legacy option name
     server.reload({ static: { "/a": response }, fetch: () => new Response("fallback") });
     expect(await contentTypeOf(server, "/a")).toBe(expected);
   });
@@ -143,6 +148,7 @@ describe("static route Content-Type", () => {
 
     using server = Bun.serve({
       port: 0,
+      // @ts-expect-error legacy option name
       static: { "/untouched": untouched, "/touched": touched },
       fetch: () => new Response("fallback"),
     });
@@ -161,6 +167,7 @@ describe("static route Content-Type", () => {
 
     using server = Bun.serve({
       port: 0,
+      // @ts-expect-error legacy option name
       static: { "/a": response, "/b": response },
       fetch: () => new Response("fallback"),
     });
@@ -212,9 +219,9 @@ describe("static route Date header", () => {
     });
 
     expect({
-      static: await rawDateLines(server.port, "/static"),
-      handler: await rawDateLines(server.port, "/handler"),
-      fallback: await rawDateLines(server.port, "/fallback"),
+      static: await rawDateLines(server.port!, "/static"),
+      handler: await rawDateLines(server.port!, "/handler"),
+      fallback: await rawDateLines(server.port!, "/fallback"),
     }).toEqual({
       static: [`Date: ${pinned}`],
       handler: [`Date: ${pinned}`],
@@ -222,7 +229,7 @@ describe("static route Date header", () => {
     });
 
     // HEAD and 304 go through the same header-writing path.
-    expect(await rawDateLines(server.port, "/static", "HEAD")).toEqual([`Date: ${pinned}`]);
+    expect(await rawDateLines(server.port!, "/static", "HEAD")).toEqual([`Date: ${pinned}`]);
   });
 
   test("a user-set Date on a Bun.file route is sent exactly once", async () => {
@@ -236,7 +243,7 @@ describe("static route Date header", () => {
       fetch: () => new Response("fallback"),
     });
 
-    expect(await rawDateLines(server.port, "/file")).toEqual([`Date: ${pinned}`]);
+    expect(await rawDateLines(server.port!, "/file")).toEqual([`Date: ${pinned}`]);
   });
 
   test("without a user-set Date, exactly one auto Date is sent", async () => {
@@ -247,7 +254,7 @@ describe("static route Date header", () => {
       fetch: () => new Response("fallback"),
     });
 
-    const dates = await rawDateLines(server.port, "/static");
+    const dates = await rawDateLines(server.port!, "/static");
     expect(dates).toHaveLength(1);
     expect(dates[0]).not.toContain(pinned);
   });
@@ -260,7 +267,7 @@ describe("static route preconditions (RFC 9110 §13.2.2)", () => {
   const LM = "Wed, 21 Oct 2015 07:28:00 GMT";
   const EARLIER = "Mon, 01 Jan 2001 00:00:00 GMT";
   const LATER = "Sat, 01 Jan 2028 00:00:00 GMT";
-  let server: Server;
+  let server: Bun.Server<undefined>;
 
   beforeAll(() => {
     server = Bun.serve({

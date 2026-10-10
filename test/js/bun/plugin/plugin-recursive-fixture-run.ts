@@ -4,4 +4,5 @@ try {
   console.log(e.message);
 }
 
+// @ts-expect-error
 await import("recursive:recursive");

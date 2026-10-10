@@ -19,7 +19,7 @@ test("spawn can read from stdout multiple chunks", async () => {
           stderr: "ignore",
           env: bunEnv,
         });
-        var chunks = [];
+        var chunks: Uint8Array[] = [];
         let counter = 0;
         try {
           for await (var chunk of proc.stdout) {

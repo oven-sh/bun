@@ -382,19 +382,19 @@ for (let algorithmValue of algorithms) {
   const prefix = algorithmValue === "bcrypt" ? "$2" : "$" + (algorithmValue || defaultAlgorithm);
 
   describe(algorithmValue ? algorithmValue : "default", () => {
-    const hash = (value: string | TypedArray) => {
+    const hash = (value: string | NodeJS.TypedArray) => {
+      return algorithmValue ? password.hash(value, algorithmValue as any) : password.hash(value);
+    };
+
+    const hashSync = (value: string | NodeJS.TypedArray) => {
       return algorithmValue ? password.hashSync(value, algorithmValue as any) : password.hashSync(value);
     };
 
-    const hashSync = (value: string | TypedArray) => {
-      return algorithmValue ? password.hashSync(value, algorithmValue as any) : password.hashSync(value);
-    };
-
-    const verify = (pw: string | TypedArray, value: string | TypedArray) => {
+    const verify = (pw: string | NodeJS.TypedArray, value: string | NodeJS.TypedArray) => {
       return algorithmValue ? password.verify(pw, value, algorithmValue as any) : password.verify(pw, value);
     };
 
-    const verifySync = (pw: string | TypedArray, value: string | TypedArray) => {
+    const verifySync = (pw: string | NodeJS.TypedArray, value: string | NodeJS.TypedArray) => {
       return algorithmValue ? password.verifySync(pw, value, algorithmValue as any) : password.verifySync(pw, value);
     };
 

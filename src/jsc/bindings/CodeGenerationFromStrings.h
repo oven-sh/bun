@@ -6,7 +6,9 @@
 #include <JavaScriptCore/ThrowScope.h>
 #include <wtf/text/WTFString.h>
 
+#if !defined(BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS)
 extern "C" uint8_t Bun__codeGenerationFromStrings();
+#endif
 
 namespace Bun {
 
@@ -23,10 +25,20 @@ enum class CodeGenerationFromStrings : uint8_t {
     Disallowed = 2,
 };
 
+// A build configured with codeGenerationFromStrings off (scripts/build/config.ts) has the
+// level as a constant, as bun_core::code_generation_from_strings() is in it: no flag is read, and
+// the compiler drops what the level guards.
+#if defined(BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS)
+constexpr CodeGenerationFromStrings codeGenerationFromStrings()
+{
+    return CodeGenerationFromStrings::Disallowed;
+}
+#else
 inline CodeGenerationFromStrings codeGenerationFromStrings()
 {
     return static_cast<CodeGenerationFromStrings>(Bun__codeGenerationFromStrings());
 }
+#endif
 
 inline constexpr ASCIILiteral codeGenerationFromStringsDisallowedMessage = "Code generation from strings disallowed for this context"_s;
 
@@ -40,11 +52,15 @@ inline JSC::JSObject* createCodeGenerationFromStringsError(JSC::JSGlobalObject* 
     return JSC::createEvalError(globalObject, codeGenerationFromStringsDisallowedMessage);
 }
 
-inline void throwIfMayNotMakeScriptFromStrings(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope)
-{
-    if (mayNotMakeScriptFromStrings()) [[unlikely]]
-        JSC::throwException(globalObject, scope, createCodeGenerationFromStringsError(globalObject));
-}
+// Throws and returns the rest when nothing may make script from a string. Where the level is a
+// constant the return is unconditional, so an optimized build drops the code after it.
+#define RETURN_IF_MAY_NOT_MAKE_SCRIPT_FROM_STRINGS(globalObject, scope, ...)                                   \
+    do {                                                                                                       \
+        if (Bun::mayNotMakeScriptFromStrings()) [[unlikely]] {                                                 \
+            JSC::throwException(globalObject, scope, Bun::createCodeGenerationFromStringsError(globalObject)); \
+            return __VA_ARGS__;                                                                                \
+        }                                                                                                      \
+    } while (false)
 
 inline bool isDataOrBlobURL(const WTF::String& specifier)
 {

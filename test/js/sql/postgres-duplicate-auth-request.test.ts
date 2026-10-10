@@ -37,7 +37,7 @@ async function duplicateAuthRequest(first: Buffer, second: Buffer, limit: number
     let sawStartup = false;
     socket.on("error", () => {});
     socket.on("close", () => sockets.delete(socket));
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buf = Buffer.concat([buf, chunk]);
       for (;;) {
         if (!sawStartup) {

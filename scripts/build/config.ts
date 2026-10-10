@@ -138,6 +138,18 @@ export interface Config {
    * acquire atomic load per syscall, zero when compiled out.
    */
   socketFaultInjection: boolean;
+  /**
+   * Default true. Off builds a Bun where `--disallow-code-generation-from-strings=strict` is
+   * always on: the level is a compile-time constant in Rust and C++, so no flag, environment
+   * variable or API of the built binary lowers it. (Not named after the runtime flag:
+   * build.ts would then take that flag for its own.)
+   */
+  codeGenerationFromStrings: boolean;
+  /**
+   * Default true. Off builds a Bun with no `WebAssembly` global: the engine's `useWasm` option is
+   * false whatever `BUN_JSC_useWasm` says.
+   */
+  webAssembly: boolean;
   /** Bundle small .cpp files into unified TUs (WebKit-style). See unified.ts. */
   unifiedSources: boolean;
   /**
@@ -353,6 +365,8 @@ export interface PartialConfig {
   valgrind?: boolean;
   fuzzilli?: boolean;
   socketFaultInjection?: boolean;
+  codeGenerationFromStrings?: boolean;
+  webAssembly?: boolean;
   unifiedSources?: boolean;
   archiveDeps?: boolean;
   timeTrace?: boolean;
@@ -1287,6 +1301,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     valgrind,
     fuzzilli,
     socketFaultInjection,
+    codeGenerationFromStrings: partial.codeGenerationFromStrings ?? true,
+    webAssembly: partial.webAssembly ?? true,
     unifiedSources: partial.unifiedSources ?? true,
     archiveDeps: partial.archiveDeps ?? false,
     timeTrace: partial.timeTrace ?? false,
@@ -1659,6 +1675,8 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.socketFaultInjection !== cfg.asan) {
     features.push(`socket-fault-injection:${cfg.socketFaultInjection ? "on" : "off"}`);
   }
+  if (!cfg.codeGenerationFromStrings) features.push("code-generation-from-strings:off");
+  if (!cfg.webAssembly) features.push("webassembly:off");
   if (!cfg.canary) features.push("canary:off");
   // Non-default modes — show so you notice when a build is unusual.
   if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);

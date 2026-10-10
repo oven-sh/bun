@@ -4017,6 +4017,37 @@ describe.concurrent("bun lint", () => {
         },
       );
 
+      // The request is made by a thread of the pool, for which the others wait. With references it has threads of its own.
+      test.concurrent.each(["--infer-globals", "--infer-globals=fast"])(
+        "as many threads as the pool has, and a project with references: %s",
+        async flag => {
+          const names = Array.from({ length: 24 }, (_, i) => `r${i}`);
+          const long = Array.from({ length: 4000 }, (_, i) => `const x${i} = ${i};\nvoid x${i};\n`).join("");
+          const all = {
+            "tsconfig.json": tsconfig(
+              { lib: ["es2022"], types: [] },
+              { include: ["*.js", "*.d.ts"], references: names.map(it => ({ path: `./${it}` })) },
+            ),
+            "g.d.ts": "declare var mine: number;\n",
+            "h.d.ts": "declare var alsoMine: number;\n",
+            ...Object.fromEntries(
+              names.flatMap(it => [
+                [`${it}/tsconfig.json`, tsconfig({ lib: ["es2022"], types: [], composite: true, noEmit: false })],
+                [`${it}/a.ts`, "export const a = 1;\n"],
+              ]),
+            ),
+            ...Object.fromEntries(
+              [1, 2, 3, 4, 5, 6].map(it => [`a${it}.js`, `export {};\n${long}void [mine, alsoMine, typo];\n`]),
+            ),
+          };
+          const args = ["-f", "unix", flag, "--threads", "4", "a1.js", "a2.js", "a3.js", "a4.js", "a5.js", "a6.js"];
+          const runs = await Promise.all([1, 2, 3, 4].map(() => lint(all, args, { env: { GOMAXPROCS: "4" } })));
+          for (const { stdout } of runs) {
+            expect(reported(stdout, "no-undef").sort()).toEqual([1, 2, 3, 4, 5, 6].map(it => `a${it}.js typo`));
+          }
+        },
+      );
+
       test("each project has its own, and a file that no project includes has the environments", async () => {
         const text = "void [document, process, typo];\n";
         const { stdout, exitCode } = await lint(

@@ -375,6 +375,8 @@ impl<'a> File<'a> {
 
     /// What another crate computes from the file once and keeps as long as the file: one value of
     /// each type. `init` runs the first time. `None` if there are values of four other types.
+    /// All four are taken: jest, jsdoc, the React Compiler, the steps of react: a fifth type needs
+    /// a fifth place.
     pub fn extension<T: 'static>(&'a self, init: impl FnOnce() -> T) -> Option<&'a T> {
         let mut init = Some(init);
         self.lazy.extensions.iter().find_map(|slot| {

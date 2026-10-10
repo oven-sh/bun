@@ -13,7 +13,6 @@ const transferToNativeReadable = $newCppFunction(
 );
 const { errorOrDestroy } = require("internal/streams/destroy");
 
-const kRefCount = Symbol("refCount");
 const kCloseState = Symbol("closeState");
 const kConstructed = Symbol("constructed");
 const kHighWaterMark = Symbol("highWaterMark");
@@ -42,7 +41,6 @@ interface NativeReadable extends NodeReadable {
   $start?: typeof ensureConstructed;
   ref: typeof ref;
   unref: typeof unref;
-  [kRefCount]: number;
   [kCloseState]: [boolean];
   [kConstructed]: boolean;
   [kPendingRead]: boolean;
@@ -81,7 +79,6 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
   // Define the own property directly: an ordinary put would walk the prototype
   // chain, which user code can graft onto ReadableStream.prototype's accessors.
   $putByIdDirectPrivate(stream, "bunNativePtr", bunNativePtr);
-  stream[kRefCount] = 0;
   stream[kConstructed] = false;
   stream[kPendingRead] = false;
   stream[kHasResized] = !dynamicallyAdjustChunkSize();
@@ -288,19 +285,13 @@ function dropReadAhead(stream: NativeReadable) {
 }
 
 function ref(this: NativeReadable) {
-  const ptr = this.$bunNativePtr;
-  if (ptr === undefined) return;
-  if (this[kRefCount]++ === 0) {
-    ptr.updateRef(true);
-  }
+  this.$bunNativePtr?.updateRef(true);
+  return this;
 }
 
 function unref(this: NativeReadable) {
-  const ptr = this.$bunNativePtr;
-  if (ptr === undefined) return;
-  if (this[kRefCount]-- === 1) {
-    ptr.updateRef(false);
-  }
+  this.$bunNativePtr?.updateRef(false);
+  return this;
 }
 
 export default { constructNativeReadable };

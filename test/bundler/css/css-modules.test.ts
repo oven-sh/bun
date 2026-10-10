@@ -183,6 +183,40 @@ describe("css", () => {
     },
   });
 
+  // Class names in the `:nth-child()` of-list get the module hash. The default
+  // targets compile nesting away, so `&` in the of-list is the parent selector.
+  itBundled("css-module/NthChildOfList", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(styles.item);
+      `,
+      "/styles.module.css": `
+        .item:nth-child(2 of .active) { color: red }
+        .list { .item:nth-child(2 of & > .active) { color: blue } }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const css = api.readFile("/out/entry.css");
+      const item = css.match(/\.item_([A-Za-z0-9_-]+):/);
+      expect(item, ".item should be scoped").not.toBeNull();
+      const hash = item![1];
+
+      expect(css).toEqualIgnoringWhitespace(`
+        /* styles.module.css */
+        .item_${hash}:nth-child(2 of .active_${hash}) {
+          color: red;
+        }
+
+        .item_${hash}:nth-child(2 of .list_${hash} > .active_${hash}) {
+          color: #00f;
+        }
+      `);
+    },
+  });
+
   // The name inside `::view-transition-group(name)` (and `-old`, `-new`,
   // `-image-pair`) is a custom ident. It must get the same module hash as the
   // `view-transition-name` / `view-transition-class` / `view-transition-group`

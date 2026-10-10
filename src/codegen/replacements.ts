@@ -76,7 +76,10 @@ export const globalsToPrefix = [
   "WritableStream",
   "WritableStreamDefaultController",
   "WritableStreamDefaultWriter",
+  "clearImmediate",
   "isFinite",
+  "queueMicrotask",
+  "setImmediate",
   "undefined",
 ];
 

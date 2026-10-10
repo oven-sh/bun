@@ -1,6 +1,18 @@
 const { ok, strictEqual: eql } = require("assert");
 
-const globals = ["Blob", "fetch", "Headers", "Request", "Response", "setTimeout", "clearTimeout", "setInterval"];
+const globals = [
+  "Blob",
+  "fetch",
+  "Headers",
+  "Request",
+  "Response",
+  "setTimeout",
+  "clearTimeout",
+  "setInterval",
+  "setImmediate",
+  "clearImmediate",
+  "queueMicrotask",
+];
 for (let name of globals) {
   ok(delete globalThis[name]);
   eql(globalThis[name], undefined);

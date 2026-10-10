@@ -424,6 +424,7 @@ declare var $Buffer: {
   new (size: number): Buffer;
   new (string: string, encoding?: BufferEncoding): Buffer;
 };
+declare var $setImmediate: typeof setImmediate;
 
 declare interface Error {
   code?: string;

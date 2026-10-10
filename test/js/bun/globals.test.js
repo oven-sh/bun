@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, bunRun, tempDir } from "harness";
 import path from "path";
 
 it("ERR_INVALID_THIS", () => {
@@ -204,6 +204,279 @@ it("globals are deletable", () => {
 
   expect(stdout.toString().trim().endsWith("--pass--")).toBe(true);
   expect(exitCode).toBe(0);
+});
+
+// Built-in modules schedule their own work (a socket's 'close', an observer's
+// delivery, an abort listener) with setImmediate, clearImmediate and
+// queueMicrotask. They reach them through private names, so fake timers or
+// anything else that replaces or deletes the public globals cannot strand it.
+describe("built-in modules keep their own setImmediate, clearImmediate and queueMicrotask", () => {
+  /** Runs `source` as a file of that name in a fresh process. */
+  async function run(file, source) {
+    using dir = tempDir("globals-private-scheduling", { [file]: source });
+    return await bunRun(path.join(String(dir), file));
+  }
+  const exitedCleanly = { stderr: "", exitCode: 0, signalCode: null };
+
+  const requireModules = /* js */ `
+    const { PerformanceObserver, performance } = require("node:perf_hooks");
+    const events = require("node:events");
+    const fs = require("node:fs");
+    const timers = require("node:timers");
+    const timersPromises = require("node:timers/promises");
+  `;
+  const importModules = /* js */ `
+    import { PerformanceObserver, performance } from "node:perf_hooks";
+    import events from "node:events";
+    import fs from "node:fs";
+    import timers from "node:timers";
+    import timersPromises from "node:timers/promises";
+  `;
+  const keepOriginals = /* js */ `
+    const original = { setImmediate, clearImmediate };
+    const result = {};
+  `;
+  const replaceGlobals = /* js */ `
+    result.callsToTheReplacements = { setImmediate: 0, clearImmediate: 0, queueMicrotask: 0 };
+    for (const name in result.callsToTheReplacements) {
+      globalThis[name] = () => void result.callsToTheReplacements[name]++;
+    }
+  `;
+  const deleteGlobals = /* js */ `
+    delete globalThis.setImmediate;
+    delete globalThis.clearImmediate;
+    delete globalThis.queueMicrotask;
+  `;
+  // Each built-in here hands work to one of the three functions. All of that
+  // work is done by the time the process exits.
+  const useBuiltins = /* js */ `
+    new PerformanceObserver(list => {
+      result.performanceObserver = list.getEntries().map(entry => entry.name);
+    }).observe({ entryTypes: ["function"] });
+    performance.timerify(function timerified() {})();
+
+    events.addAbortListener(AbortSignal.abort(), () => {
+      result.abortListener = "called";
+    });
+
+    fs.watch(process.cwd(), { signal: AbortSignal.abort() }).on("close", () => {
+      result.watcher = "closed";
+    });
+
+    timersPromises.setImmediate("resolved").then(value => {
+      result.timersPromises = value;
+    });
+
+    const controller = new AbortController();
+    timersPromises.setImmediate("unreachable", { signal: controller.signal }).catch(error => {
+      result.abortedTimersPromises = error.name;
+    });
+    controller.abort();
+
+    result.nodeTimers = {
+      setImmediate: timers.setImmediate === original.setImmediate,
+      clearImmediate: timers.clearImmediate === original.clearImmediate,
+    };
+    process.on("exit", () => console.log(JSON.stringify(result)));
+  `;
+  const delivered = {
+    performanceObserver: ["timerified"],
+    abortListener: "called",
+    watcher: "closed",
+    timersPromises: "resolved",
+    abortedTimersPromises: "AbortError",
+    nodeTimers: { setImmediate: true, clearImmediate: true },
+  };
+  const deliveredPastTheReplacements = {
+    ...delivered,
+    callsToTheReplacements: { setImmediate: 0, clearImmediate: 0, queueMicrotask: 0 },
+  };
+
+  it.concurrent.each([
+    [
+      "replaced after the modules are loaded",
+      "entry.cjs",
+      keepOriginals + requireModules + replaceGlobals + useBuiltins,
+      deliveredPastTheReplacements,
+    ],
+    [
+      "replaced before the modules are loaded",
+      "entry.cjs",
+      keepOriginals + replaceGlobals + requireModules + useBuiltins,
+      deliveredPastTheReplacements,
+    ],
+    [
+      "deleted before the modules are loaded",
+      "entry.cjs",
+      keepOriginals + deleteGlobals + requireModules + useBuiltins,
+      delivered,
+    ],
+    [
+      "replaced in an ES module",
+      "entry.mjs",
+      importModules + keepOriginals + replaceGlobals + useBuiltins,
+      deliveredPastTheReplacements,
+    ],
+  ])("with the globals %s", async (_, file, source, expected) => {
+    const { stdout, ...exit } = await run(file, source);
+    expect({ result: stdout && JSON.parse(stdout), ...exit }).toEqual({ result: expected, ...exitedCleanly });
+  });
+
+  it("the public globals keep their name, length and attributes", () => {
+    const shape = {};
+    for (const name of ["setImmediate", "clearImmediate", "queueMicrotask"]) {
+      const { value, ...attributes } = Object.getOwnPropertyDescriptor(globalThis, name);
+      shape[name] = { name: value.name, length: value.length, ...attributes };
+    }
+    const attributes = { length: 1, writable: true, enumerable: true, configurable: true };
+    expect(shape).toEqual({
+      setImmediate: { name: "setImmediate", ...attributes },
+      clearImmediate: { name: "clearImmediate", ...attributes },
+      queueMicrotask: { name: "queueMicrotask", ...attributes },
+    });
+  });
+
+  // The next three children load node:test, node:net and node:http2, which
+  // takes a debug build 2.5 to 5 s each. The test above is not concurrent, so
+  // these three run as a group of their own: with the four children above at
+  // the same time, a debug build goes over the default timeout.
+  it.concurrent("node:test's mock.timers for setImmediate does not hold back a PerformanceObserver", async () => {
+    const result = await run(
+      "entry.cjs",
+      /* js */ `
+        const { PerformanceObserver, performance } = require("node:perf_hooks");
+        require("node:test").mock.timers.enable({ apis: ["setImmediate"] });
+        new PerformanceObserver(list => {
+          console.log(list.getEntries().map(entry => entry.name).join());
+        }).observe({ entryTypes: ["function"] });
+        performance.timerify(function timerified() {})();
+      `,
+    );
+    expect(result).toEqual({ stdout: "timerified", ...exitedCleanly });
+  });
+
+  // A socket's 'close' is scheduled with setImmediate. The two close orders
+  // are the tests of https://github.com/oven-sh/bun/pull/44366.
+  it.concurrent("a net.Socket emits 'close' with setImmediate replaced before node:net is loaded", async () => {
+    const { stdout, ...exit } = await run(
+      "entry.cjs",
+      /* js */ `
+        require("node:timers").setImmediate = globalThis.setImmediate = () => {};
+        const net = require("node:net");
+        const result = {};
+        function closeOrder(name, onConnection, onConnect) {
+          const seen = (result[name] = []);
+          const server = net.createServer(socket => {
+            server.close();
+            socket.resume();
+            onConnection(socket);
+          });
+          server.listen(0, "127.0.0.1", () => {
+            const client = net.connect(server.address().port, "127.0.0.1");
+            client.resume();
+            client.on("connect", () => onConnect(client));
+            client.on("end", () => seen.push("end"));
+            client.on("finish", () => seen.push("finish"));
+            client.on("close", hadError => seen.push("close:" + hadError));
+          });
+        }
+        closeOrder(
+          "ended by the peer",
+          socket => socket.end("hello"),
+          () => {},
+        );
+        closeOrder(
+          "ended by the socket itself",
+          socket => socket.on("end", () => socket.end()),
+          client => client.end("hello"),
+        );
+        process.on("exit", () => console.log(JSON.stringify(result)));
+      `,
+    );
+    expect({ result: stdout && JSON.parse(stdout), ...exit }).toEqual({
+      result: {
+        "ended by the peer": ["end", "finish", "close:false"],
+        "ended by the socket itself": ["finish", "end", "close:false"],
+      },
+      ...exitedCleanly,
+    });
+  });
+
+  it.concurrent(
+    "http2 sessions over TCP and over a Duplex close with setImmediate replaced",
+    async () => {
+      // A session whose close was handed to the replaced function never closes
+      // and keeps the process alive, so the child has a deadline. Over a Duplex
+      // the session also defers each write callback by one setImmediate. The
+      // test has its own timeout because a debug build needs 3 s to load
+      // node:http2 and about 5 s for the whole child.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
+            const http2 = require("node:http2");
+            const { duplexPair } = require("node:stream");
+            globalThis.setImmediate = () => {};
+            const respond = stream => {
+              stream.respond({ ":status": 200 });
+              stream.end("ok");
+            };
+
+            const overTcp = http2.createServer().on("stream", respond);
+            overTcp.on("close", () => console.log("tcp: server closed"));
+            overTcp.listen(0, "127.0.0.1", () => {
+              const client = http2.connect("http://127.0.0.1:" + overTcp.address().port);
+              client.on("close", () => console.log("tcp: session closed"));
+              const req = client.request({ ":path": "/" });
+              req.resume();
+              req.on("close", () => {
+                console.log("tcp: stream closed");
+                client.close();
+                overTcp.close();
+              });
+            });
+
+            const [clientSide, serverSide] = duplexPair();
+            http2.createServer().on("stream", respond).emit("connection", serverSide);
+            const client = http2.connect("http://localhost", { createConnection: () => clientSide });
+            client.on("close", () => console.log("duplex: session closed"));
+            const req = client.request({ ":path": "/", ":method": "POST" });
+            req.end("hello", () => console.log("duplex: request body written"));
+            req.resume();
+            req.on("end", () => console.log("duplex: response ended"));
+            req.on("close", () => {
+              console.log("duplex: stream closed");
+              client.close();
+            });
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 20_000,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({
+        events: stdout.split(/\r?\n/).filter(Boolean).sort(),
+        stderr: stderr.trim(),
+        exitCode,
+        signalCode: proc.signalCode,
+      }).toEqual({
+        events: [
+          "duplex: request body written",
+          "duplex: response ended",
+          "duplex: session closed",
+          "duplex: stream closed",
+          "tcp: server closed",
+          "tcp: session closed",
+          "tcp: stream closed",
+        ],
+        ...exitedCleanly,
+      });
+    },
+    30_000,
+  );
 });
 
 it("self is a getter", () => {

@@ -14,6 +14,8 @@ pub enum Error {
     Unknown,
     #[error("Lex")]
     Lex,
+    #[error("NestingTooDeep")]
+    NestingTooDeep,
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
 }
@@ -29,6 +31,7 @@ impl Error {
             Self::Unexpected => "Unexpected",
             Self::Unknown => "Unknown",
             Self::Lex => "Lex",
+            Self::NestingTooDeep => "NestingTooDeep",
             Self::Alloc(_) => "OutOfMemory",
         }
     }

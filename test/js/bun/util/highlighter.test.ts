@@ -80,6 +80,8 @@ test("bunfig error on a line ending in `${}` does not crash", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain("expected string");
-  expect(stdout).toContain("hi");
-  expect(exitCode).toBe(0);
+  // Printed after the highlighted line, so the highlighter returned.
+  expect(stderr).toContain("failed to load bunfig");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
 });

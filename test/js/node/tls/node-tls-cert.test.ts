@@ -11,14 +11,14 @@ const clientTls = {
   key: readFileSync(join(import.meta.dir, "fixtures", "ec10-key.pem"), "utf8"),
   cert: readFileSync(join(import.meta.dir, "fixtures", "ec10-cert.pem"), "utf8"),
   ca: readFileSync(join(import.meta.dir, "fixtures", "ca5-cert.pem"), "utf8"),
-};
+} as Certs;
 // The copy of ca2 under ./fixtures has a 1024-bit key, which Node rejects as "CA certificate key too weak".
 const upstreamKeys = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const serverTls = {
   key: readFileSync(join(upstreamKeys, "agent10-key.pem"), "utf8"),
   cert: readFileSync(join(upstreamKeys, "agent10-cert.pem"), "utf8"),
   ca: readFileSync(join(upstreamKeys, "ca2-cert.pem"), "utf8"),
-};
+} as Certs;
 
 function split(file: any, into: any) {
   const certs = /([^]*END CERTIFICATE-----\r?\n)(-----BEGIN[^]*)/.exec(file) as RegExpExecArray;
@@ -196,7 +196,7 @@ it("Request cert from TLS1.3 client that doesn't have one.", async () => {
     await closed;
 
     // BoringSSL and OpenSSL name the same alert differently.
-    const alert = process.features.openssl_is_boringssl
+    const alert = (process.features as { openssl_is_boringssl?: boolean }).openssl_is_boringssl
       ? "ERR_SSL_TLSV1_ALERT_CERTIFICATE_REQUIRED"
       : "ERR_SSL_TLSV13_ALERT_CERTIFICATE_REQUIRED";
     expect(events).toEqual(["secureConnect", `error ${alert}`, "end", "close false"]);

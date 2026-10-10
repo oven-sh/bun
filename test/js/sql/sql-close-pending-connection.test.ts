@@ -471,7 +471,7 @@ function tlsPeer(
             },
             error() {},
           },
-        });
+        } as Bun.TLSUpgradeOptions<undefined>);
       },
       close() {},
       error() {},
@@ -628,7 +628,7 @@ for (const [name, peer, url] of tlsDrivers) {
       query.catch(() => {});
       // The query is written at the end of this turn of the event loop.
       await new Promise(setImmediate);
-      await sql.close({ timeout: "0" });
+      await sql.close({ timeout: "0" as any });
       act(client);
       expect(await outcome.promise).toBe(expected);
       if (expected === "end") expect(received).toBeGreaterThan(64 * 1024);

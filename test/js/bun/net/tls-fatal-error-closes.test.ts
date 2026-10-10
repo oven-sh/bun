@@ -91,7 +91,7 @@ async function serverBehindRelay(
     };
     socket.on("error", () => {});
     socket.on("close", () => raw.destroy());
-    socket.on("data", chunk => onData(socket, chunk, fault));
+    socket.on("data", (chunk: Buffer) => onData(socket, chunk, fault));
   });
   const relay = await faultRelay(backend.port, "client");
   return {

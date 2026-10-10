@@ -3332,7 +3332,12 @@ it.concurrent.each([
         return new Response();
       },
     });
-    const client = nodeTls.connect({ port: server.port, host: "127.0.0.1", ca: tls.cert, allowHalfOpen: true });
+    const client = nodeTls.connect({
+      port: server.port,
+      host: "127.0.0.1",
+      ca: tls.cert,
+      allowHalfOpen: true,
+    } as nodeTls.ConnectionOptions);
     client.on("error", aborted.reject);
     try {
       await once(client, "secureConnect");

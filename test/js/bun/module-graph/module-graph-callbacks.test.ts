@@ -281,8 +281,8 @@ const dir = String(
 );
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-let hostHttp: Bun.Server;
-let hostHttps: Bun.Server;
+let hostHttp: Bun.Server<undefined>;
+let hostHttps: Bun.Server<undefined>;
 beforeAll(() => {
   hostHttps = Bun.serve({
     port: 0,

@@ -231,7 +231,7 @@ test("a client verifies an Ed25519 server certificate", async () => {
     sni: { "*": { keys: [key], certs: [cert] } },
     alpn: ["quic-test"],
   });
-  const session = await connect(server.address, { alpn: "quic-test", servername: "localhost", ca: [cert] });
+  const session = await connect(server.address!, { alpn: "quic-test", servername: "localhost", ca: [cert] });
   try {
     expect(await session.opened).toMatchObject({ validationErrorCode: undefined, validationErrorReason: undefined });
   } finally {
@@ -243,6 +243,10 @@ test("connect() refuses a servername with a NUL byte", async () => {
   await using server = await listen(ignoreErrors, { sni: { "*": identity1 }, alpn: ["quic-test"] });
   expect(
     (async () =>
-      connect(server.address, { alpn: "quic-test", servername: "agent2.example\0evil", verifyPeer: "manual" }))(),
+      connect(server.address!, {
+        alpn: "quic-test",
+        servername: "agent2.example\0evil",
+        verifyPeer: "manual",
+      } as SessionOptions))(),
   ).rejects.toThrow("servername must not contain null bytes");
 });

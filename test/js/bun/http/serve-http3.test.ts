@@ -4,7 +4,8 @@ import { createHash, createPrivateKey, randomBytes, X509Certificate } from "cryp
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
 import { once } from "node:events";
-import { connect, QuicEndpoint } from "node:quic";
+import type { SocketAddress } from "node:net";
+import { connect, QuicEndpoint, type SessionOptions } from "node:quic";
 import { connect as connectTLS } from "node:tls";
 import { join } from "path";
 
@@ -1917,9 +1918,9 @@ describe("Bun.serve HTTP/3 request validation", () => {
     };
     const lenient = { servername: "lenient.example.com" };
     const results = {
-      defaultNoCert: await h3Exchange(server.port, requestHeaders("/")),
-      lenientNoCert: await h3Exchange(server.port, requestHeaders("/", { ":authority": lenient.servername }), lenient),
-      lenientUnverifiable: await h3Exchange(server.port, requestHeaders("/", { ":authority": lenient.servername }), {
+      defaultNoCert: await h3Exchange(server.port!, requestHeaders("/")),
+      lenientNoCert: await h3Exchange(server.port!, requestHeaders("/", { ":authority": lenient.servername }), lenient),
+      lenientUnverifiable: await h3Exchange(server.port!, requestHeaders("/", { ":authority": lenient.servername }), {
         ...lenient,
         ...agent2,
       }),
@@ -2080,11 +2081,14 @@ describe("Bun.serve HTTP/3 SNI", () => {
   // fetch() lowercases the URL host. node:quic sends `servername` as written
   // and exposes the certificate the server picked.
   async function servedCN(port: number, servername: string): Promise<string> {
-    const session = await connect({ address: "127.0.0.1", port }, { alpn: "h3", servername, verifyPeer: "manual" });
+    const session = await connect(
+      { address: "127.0.0.1", port } as SocketAddress,
+      { alpn: "h3", servername, verifyPeer: "manual" } as SessionOptions,
+    );
     try {
       await session.opened;
       const cert = session.peerCertificate;
-      const x509 = cert instanceof X509Certificate ? cert : new X509Certificate(Buffer.from(cert));
+      const x509 = cert instanceof X509Certificate ? cert : new X509Certificate(Buffer.from(cert as any));
       return x509.subject.match(/CN=([^\s,]+)/)![1];
     } finally {
       await session.close();
@@ -2103,9 +2107,9 @@ describe("Bun.serve HTTP/3 SNI", () => {
       fetch: () => new Response("ok"),
     });
     const served = {
-      admin: await servedCN(server.port, "admin.example.com"),
-      dottedAdmin: await servedCN(server.port, "admin.example.com."),
-      other: await servedCN(server.port, "other.example.com"),
+      admin: await servedCN(server.port!, "admin.example.com"),
+      dottedAdmin: await servedCN(server.port!, "admin.example.com."),
+      other: await servedCN(server.port!, "other.example.com"),
     };
     // The TCP listener selects the same entry for these names.
     expect(served).toEqual({ admin: "agent3", dottedAdmin: "agent3", other: "agent1" });
@@ -2134,10 +2138,10 @@ describe("Bun.serve HTTP/3 SNI", () => {
       "wild.example",
       "other.example",
     ]) {
-      served[servername] = await servedCN(server.port, servername);
+      served[servername] = await servedCN(server.port!, servername);
       const socket = connectTLS({ host: "127.0.0.1", port: server.port, servername, rejectUnauthorized: false });
       await once(socket, "secureConnect");
-      overTCP[servername] = socket.getPeerCertificate().subject.CN;
+      overTCP[servername] = socket.getPeerCertificate().subject.CN as string;
       socket.destroy();
     }
     expect(overTCP).toEqual(served);
@@ -2179,7 +2183,7 @@ describe("Bun.serve HTTP/3 SNI", () => {
       "a.Gated.Example.",
     ];
     const exchange = (servername: string, options = {}) =>
-      h3Exchange(server.port, requestHeaders("/"), { servername, ...options });
+      h3Exchange(server.port!, requestHeaders("/"), { servername, ...options });
     const outcomes = await Promise.all(
       spellings.map(async name => [
         name,

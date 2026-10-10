@@ -456,7 +456,7 @@ describe("the wrapped socket goes away before it connected", () => {
       events.length = 0;
       raw.connect(port, "127.0.0.1");
       const received: Buffer[] = [];
-      raw.on("data", chunk => received.push(chunk));
+      raw.on("data", (chunk: Buffer) => received.push(chunk));
       await once(raw, "close");
       assert.deepStrictEqual([Buffer.concat(received).toString(), ...events], ["plain", "raw close"]);
     } finally {

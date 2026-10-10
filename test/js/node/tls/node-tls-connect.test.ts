@@ -281,7 +281,7 @@ async function withFaultProxy<T>(
       toServer = net.connect((upstream.address() as AddressInfo).port, "127.0.0.1");
       sockets.push(c, toServer);
       c.on("data", chunk => toServer!.write(chunk));
-      toServer.on("data", chunk => {
+      toServer.on("data", (chunk: Buffer) => {
         if (appendOnce) {
           chunk = Buffer.concat([chunk, appendOnce]);
           appendOnce = undefined;
@@ -477,7 +477,7 @@ for (const { name, connect } of tests) {
 
       expect(result).toEqual({
         kind: "error",
-        code: process.features.openssl_is_boringssl
+        code: (process.features as { openssl_is_boringssl?: boolean }).openssl_is_boringssl
           ? "ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE"
           : "ERR_SSL_SSL/TLS_ALERT_HANDSHAKE_FAILURE",
       });
@@ -867,7 +867,7 @@ describe("a fatal post-handshake SSL error over a Duplex", () => {
     // Good data and the bad record arrive in one chunk. The engine delivers
     // the data first, the listener's write hits the now-fatal SSL, and the
     // read's error must still be the one that surfaces.
-    const result = await withFaultProxy({ connect: duplexProxy }, async peers => {
+    const result = await withFaultProxy({ connect: duplexProxy as typeof tlsConnect }, async peers => {
       const { client, server, appendToNextServerChunk } = peers;
       const events = faultEvents(client, server);
       client.on("data", () => client.write("back"));
@@ -885,12 +885,15 @@ describe("a fatal post-handshake SSL error over a Duplex", () => {
   });
 
   it("sends its own fatal alert to the peer", async () => {
-    const code = await withFaultProxy({ connect: duplexProxy }, async ({ client, server, toClient }) => {
-      client.on("error", () => {});
-      const alerted = once(server, "error");
-      toClient.write(BAD_RECORD);
-      return (await alerted)[0].code;
-    });
+    const code = await withFaultProxy(
+      { connect: duplexProxy as typeof tlsConnect },
+      async ({ client, server, toClient }) => {
+        client.on("error", () => {});
+        const alerted = once(server, "error");
+        toClient.write(BAD_RECORD);
+        return (await alerted)[0].code;
+      },
+    );
     expect(code).toBe(ALERT_BAD_RECORD_MAC);
   });
 
@@ -1332,7 +1335,7 @@ describe("a TLS socket over a Duplex transport reads it with backpressure", () =
       rejectUnauthorized: false,
       // Only an onread socket stops its handle from pause().
       onread: { buffer: Buffer.alloc(64), callback: () => {} },
-    });
+    } as tls.ConnectionOptions);
     using _ = destroyedOnExit([client, server]);
     client.pause();
     await Promise.race([
@@ -2727,7 +2730,7 @@ describe("a TLS server wrap over a Duplex transport whose peer ends the handshak
   // as the peer's close at every point of the handshake. OpenSSL refuses one ahead of the ClientHello and reads one
   // behind it as the end of the stream. The client side runs in node-tls-duplex-end-verify.test.ts.
   const closeNotify = Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x01, 0x00]);
-  const isBoringSSL = process.features.openssl_is_boringssl;
+  const isBoringSSL = (process.features as { openssl_is_boringssl?: boolean }).openssl_is_boringssl;
   const aheadOfClientHello = isBoringSSL ? "ECONNRESET" : "ERR_SSL_UNEXPECTED_MESSAGE";
   const serverContext = (options: tls.SecureContextOptions = {}) => ({
     isServer: true,
@@ -3758,7 +3761,7 @@ describe("a TLS 1.3 Bun.connect client that closes once its handshake is done", 
     const fromClient: Buffer[] = [];
     const relay = net.createServer(downstream => {
       const upstream = net.connect(listener.port, "127.0.0.1");
-      downstream.on("data", chunk => {
+      downstream.on("data", (chunk: Buffer) => {
         fromClient.push(chunk);
         upstream.write(chunk);
       });
@@ -4539,7 +4542,7 @@ describe("how a TLS client's way of closing reaches the server", () => {
   });
 
   it.each(rows)("%s %s", async (version, mode, expected) => {
-    expect(await closeReport(mode, version)).toEqual(expected);
+    expect(await closeReport(mode, version)).toEqual<unknown>(expected);
   });
 
   // node gives this verdict too. It also reports the junk record as an error of the socket.
@@ -4588,7 +4591,7 @@ describe("a server that turns the client down once its handshake is done", () =>
   ] as const;
 
   it.each(rows)("%s %s", async (version, mode, expected) => {
-    expect(await refuseReport(mode, version)).toEqual(expected);
+    expect(await refuseReport(mode, version)).toEqual<unknown>(expected);
   });
 
   it.skipIf(!nodeExe())("node gives the same reports", async () => {
@@ -5255,7 +5258,7 @@ describe("signature algorithms a peer may sign with", () => {
     const server = net.createServer(socket => {
       let hello = Buffer.alloc(0);
       socket.on("error", () => {});
-      socket.on("data", chunk => {
+      socket.on("data", (chunk: Buffer) => {
         hello = Buffer.concat([hello, chunk]);
         if (hello.length < 5 || hello.length < 5 + hello.readUInt16BE(3)) return;
         // record header, handshake header, version, random; then session id, cipher suites, compression methods
@@ -5516,7 +5519,7 @@ describe("tls.connect() attaches onConnectEnd to 'end' exactly once", () => {
         rejectUnauthorized: false,
         autoSelectFamily: true,
         lookup: lookupIPv6LoopbackFirst,
-      });
+      } as tls.ConnectionOptions);
       const counts = await countsThroughHandshake(socket);
       expect({ ...counts, attempted: socket.autoSelectFamilyAttemptedAddresses }).toEqual({
         duringSecureConnect: 1,
@@ -5574,12 +5577,12 @@ describe("tls.connect() attaches onConnectEnd to 'end' exactly once", () => {
         rejectUnauthorized: false,
         autoSelectFamily: true,
         lookup: lookupIPv6LoopbackFirst,
-      });
+      } as tls.ConnectionOptions);
       try {
-        const received = Promise.withResolvers<string | false | undefined>();
+        const received = Promise.withResolvers<string | false | null>();
         server.once("secureConnection", serverSide => received.resolve(serverSide.servername));
         socket.on("error", received.reject);
-        socket.once("connectionAttemptFailed", () => socket.setServername("retry.example"));
+        socket.once("connectionAttemptFailed", () => (socket as any).setServername("retry.example"));
         expect(await received.promise).toBe("retry.example");
         expect(onConnectEndCount(socket)).toBe(0);
       } finally {
@@ -5762,7 +5765,7 @@ describe("tls.connect({ socket }) over a net.Socket that is still connecting", (
     raw.on("connect", () => log.push("wrapped socket's later 'connect' listener"));
     client.on("connect", () => {
       log.push(
-        `connect connecting=${client.connecting} pending=${client.pending} secureConnecting=${client.secureConnecting}`,
+        `connect connecting=${client.connecting} pending=${client.pending} secureConnecting=${(client as any).secureConnecting}`,
       );
       client.write("from connect;");
     });
@@ -5931,7 +5934,7 @@ describe("a setServername() made before TLSSocket#connect() is the SNI of the ha
   const NAME = "set.before.connect";
 
   async function names(options: (port: number) => net.TcpSocketConnectOpts) {
-    const seen = Promise.withResolvers<string | false | undefined>();
+    const seen = Promise.withResolvers<string | false | null>();
     await using server = tls.createServer(COMMON_CERT_, socket => {
       seen.resolve(socket.servername);
       socket.end();
@@ -5940,7 +5943,7 @@ describe("a setServername() made before TLSSocket#connect() is the SNI of the ha
     // @ts-expect-error @types/node requires a socket
     const socket: TLSSocket = new TLSSocket(undefined, { rejectUnauthorized: false });
     try {
-      socket.setServername(NAME);
+      (socket as any).setServername(NAME);
       socket.connect(options(portOf(server)), function (this: TLSSocket) {
         // @ts-expect-error not in @types/node
         this._start();
@@ -6257,7 +6260,7 @@ describe("over a duplex, 'session' is emitted before the data that followed it o
     held: Buffer[] | null = null;
     constructor(readonly raw: net.Socket) {
       super();
-      raw.on("data", chunk => {
+      raw.on("data", (chunk: Buffer) => {
         if (this.held) this.held.push(chunk);
         else this.push(chunk);
       });
@@ -6381,7 +6384,7 @@ describe("over a duplex, 'session' is emitted before the data that followed it o
 
 it("an HTTP/2 request completes over a Duplex that emits 'drain' in its _write()", async () => {
   const server = http2.createSecureServer(COMMON_CERT_);
-  server.on("stream", stream => {
+  server.on("stream", (stream: http2.ServerHttp2Stream) => {
     stream.respond({ ":status": 200 });
     stream.end("ok");
   });

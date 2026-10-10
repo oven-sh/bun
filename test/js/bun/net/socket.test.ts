@@ -1623,7 +1623,7 @@ describe("TLS write() that ends short while another TLS socket is stalled", () =
     using server = Bun.listen<Pair>({
       hostname: "127.0.0.1",
       port: 0,
-      tls: { ...tls, maxVersion },
+      tls: { ...tls, maxVersion } as Bun.TLSOptions,
       socket: side(accepted ? writer : reader),
     });
     const connect = () =>
@@ -6162,9 +6162,9 @@ describe("a fatal TLS alert that arrives after the handshake", () => {
       tls: { ca: tls.cert },
       socket: {
         handshake: (socket, success) => events.push(`handshake ${success} ${socket.getTLSVersion()}`),
-        data: () => events.push("data"),
+        data: (): any => events.push("data"),
         error: withErrorHandler
-          ? (_socket, err) => events.push(`error ${(err as Error & { code?: string }).code}: ${err.message}`)
+          ? (_socket, err): any => events.push(`error ${(err as Error & { code?: string }).code}: ${err.message}`)
           : undefined,
         close: (_socket, err) => {
           events.push(`close ${err}`);
@@ -6219,7 +6219,7 @@ describe("tls.secureContext with no other tls option", () => {
     // A client that sends no ClientHello is sent nothing.
     const raw = net.connect(listener.port, "127.0.0.1");
     const received: Buffer[] = [];
-    raw.on("data", chunk => received.push(chunk));
+    raw.on("data", (chunk: Buffer) => received.push(chunk));
     await once(raw, "connect");
     raw.end();
     await once(raw, "close");
@@ -6288,7 +6288,8 @@ describe.concurrent("Bun.listen() with tls.secureContext and the client certific
   };
   const native = (policy: object) => (createSecureContext({ key, cert, ca, ...policy }) as any).context;
   const socket = {
-    handshake: (socket: Socket) => void socket.end(socket.getPeerCertificate()?.subject?.CN ?? "no certificate"),
+    handshake: (socket: Socket) =>
+      void socket.end((socket.getPeerCertificate()?.subject?.CN ?? "no certificate") as string),
     data() {},
     error() {},
   };

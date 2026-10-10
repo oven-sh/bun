@@ -67,7 +67,7 @@ function upgrade(raw: net.Socket, leftover: Buffer) {
 const postgres = await listen(
   net.createServer(raw => {
     raw.on("error", () => {});
-    raw.once("data", chunk => {
+    raw.once("data", (chunk: Buffer) => {
       raw.write(pgSSLResponse("S"));
       upgrade(raw, chunk.subarray(8));
     });
@@ -78,7 +78,7 @@ const mysql = await listen(
     raw.on("error", () => {});
     raw.write(mysqlHandshakeV10({ capabilities: MYSQL_DEFAULT_CAPABILITIES | MYSQL_CLIENT_SSL }));
     let buffered = Buffer.alloc(0);
-    raw.on("data", function onData(chunk) {
+    raw.on("data", function onData(chunk: Buffer) {
       buffered = Buffer.concat([buffered, chunk]);
       const end = 4 + (buffered[0] | (buffered[1] << 8) | (buffered[2] << 16));
       if (buffered.length < 4 || buffered.length < end) return;

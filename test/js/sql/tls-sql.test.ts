@@ -496,7 +496,7 @@ async function queryServerWithoutTls(
     socket.on("error", () => {});
     let buffered = Buffer.alloc(0);
     let started = false;
-    socket.on("data", data => {
+    socket.on("data", (data: Buffer) => {
       buffered = Buffer.concat([buffered, data]);
       while (!started) {
         if (buffered[0] === 0x16) {
@@ -616,7 +616,7 @@ test.each([
       return;
     }
     let buffered = Buffer.alloc(0);
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
         if (!mysqlAckSessionSetup(socket, payload)) socket.write(mysqlOkPacket(seq + 1));
       });
@@ -626,7 +626,7 @@ test.each([
 
   // The client's plaintext request for TLS: the SSLRequest message, resp. packet.
   const requestLength = adapter === "postgres" ? 8 : 36;
-  let records = Buffer.alloc(0);
+  let records: Buffer = Buffer.alloc(0);
   const closed = Promise.withResolvers<void>();
   const { port, server } = await listeningServer(client => {
     client.on("error", () => {});
@@ -634,13 +634,13 @@ test.each([
     if (adapter === "mysql") {
       client.write(mysqlHandshakeV10({ capabilities: MYSQL_DEFAULT_CAPABILITIES | MYSQL_CLIENT_SSL }));
     }
-    client.once("data", request => {
+    client.once("data", (request: Buffer) => {
       if (adapter === "postgres") client.write(pgSSLResponse("S"));
       const upstream = net.connect((terminator.address() as net.AddressInfo).port, "127.0.0.1");
       upstream.on("error", () => {});
       records = request.subarray(requestLength);
       upstream.write(records);
-      client.on("data", chunk => {
+      client.on("data", (chunk: Buffer) => {
         records = Buffer.concat([records, chunk]);
       });
       client.pipe(upstream).pipe(client);

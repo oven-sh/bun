@@ -301,7 +301,7 @@ test("ERR_IPC_CHANNEL_CLOSED message from process.send() in the child", async ()
     cmd: [bunExe(), "child.js"],
     env: bunEnv,
     cwd: String(dir),
-    stdio: ["ignore", "pipe", "pipe", "ipc"],
+    stdio: ["ignore", "pipe", "pipe", "ipc" as any],
     ipc() {},
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

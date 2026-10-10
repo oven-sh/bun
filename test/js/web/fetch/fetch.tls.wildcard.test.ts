@@ -794,11 +794,11 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
       const { promise, resolve, reject } = Promise.withResolvers<unknown>();
       const socket = await Bun.connect({
         hostname: "127.0.0.1",
-        port: server.port,
+        port: server.port!,
         tls: { ca: material.cert, serverName },
         socket: {
           handshake(s) {
-            const error = s.getAuthorizationError();
+            const error = s.getAuthorizationError() as NodeJS.ErrnoException | null;
             resolve({ code: error?.code, message: error?.message });
           },
           data() {},
@@ -944,7 +944,6 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
         const url = `https://127.0.0.1:${(server.address() as AddressInfo).port}/`;
         const results: string[] = [];
         for (const serverName of ["fe80::1%eth0", "5.6.7.8", "::1", "name.test", "127.1", "fe80::1%br_lan"]) {
-          // @ts-expect-error Bun extension
           const response = fetch(url, { tls: { ca: zoneCert.cert, serverName }, keepalive: false });
           results.push(await response.then(r => r.text()).catch(e => e.code));
         }

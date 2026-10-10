@@ -171,7 +171,13 @@ describe("Bun.serve per-serverName client certificate policy", () => {
     cert: readFileSync(join(tlsFixtures, "agent1-cert.pem"), "utf8"),
   };
 
-  type ClientOptions = { key?: string; cert?: string; session?: Buffer; minVersion?: string; maxVersion?: string };
+  type ClientOptions = {
+    key?: string;
+    cert?: string;
+    session?: Buffer;
+    minVersion?: tls.SecureVersion;
+    maxVersion?: tls.SecureVersion;
+  };
   function request(port: number, servername: string, clientTls: ClientOptions = {}) {
     const { promise, resolve } = Promise.withResolvers<{ status: string; session: Buffer | undefined }>();
     const socket = tls.connect({ host: "127.0.0.1", port, servername, rejectUnauthorized: false, ...clientTls });
@@ -284,17 +290,17 @@ describe("Bun.serve per-serverName client certificate policy", () => {
       const outcomes = await Promise.all(
         spellings.map(async name => [
           name,
-          (await request(server.port, name, pinned)).status,
-          (await request(server.port, name, { ...pinned, ...untrustedClient })).status,
-          (await request(server.port, name, { ...pinned, ...trustedClient })).status,
+          (await request(server.port!, name, pinned)).status,
+          (await request(server.port!, name, { ...pinned, ...untrustedClient })).status,
+          (await request(server.port!, name, { ...pinned, ...trustedClient })).status,
         ]),
       );
       const closed = "connection closed without a response";
       expect(outcomes).toEqual(spellings.map(name => [name, closed, closed, "HTTP/1.1 200 OK"]));
       // Only A-Z folds: U+00E9 and U+00C9 differ by 0x20 in their last UTF-8 byte and stay two names.
       expect({
-        registered: (await request(server.port, "\u00e9.example", pinned)).status,
-        other: (await request(server.port, "\u00c9.example", pinned)).status,
+        registered: (await request(server.port!, "\u00e9.example", pinned)).status,
+        other: (await request(server.port!, "\u00c9.example", pinned)).status,
       }).toEqual({ registered: closed, other: "HTTP/1.1 200 OK" });
     },
   );
@@ -345,7 +351,7 @@ describe("Bun.serve per-serverName client certificate policy", () => {
     const { promise, resolve, reject } = Promise.withResolvers<string>();
     const socket = tls.connect({ host: "127.0.0.1", port, servername, rejectUnauthorized: false });
     socket.on("secureConnect", () => {
-      resolve(socket.getPeerCertificate()?.subject?.CN ?? "-");
+      resolve((socket.getPeerCertificate()?.subject?.CN ?? "-") as string);
       socket.destroy();
     });
     socket.on("error", reject);
@@ -396,10 +402,10 @@ describe("Bun.serve per-serverName client certificate policy", () => {
         tls: tlsConfig,
         fetch: req => new Response(`served ${req.headers.get("host")}`),
       });
-      const servedCN = await peerCN(server.port, "admin.example.com");
-      const { status: gatedNoCert } = await request(server.port, "admin.example.com");
-      const { status: gatedTrustedCert } = await request(server.port, "admin.example.com", trustedClient);
-      const { status: defaultNoCert } = await request(server.port, "localhost");
+      const servedCN = await peerCN(server.port!, "admin.example.com");
+      const { status: gatedNoCert } = await request(server.port!, "admin.example.com");
+      const { status: gatedTrustedCert } = await request(server.port!, "admin.example.com", trustedClient);
+      const { status: defaultNoCert } = await request(server.port!, "localhost");
       expect({ servedCN, gatedNoCert, gatedTrustedCert, defaultNoCert }).toEqual({
         servedCN: "agent3",
         gatedNoCert: "connection closed without a response",
@@ -420,8 +426,8 @@ describe("Bun.serve per-serverName client certificate policy", () => {
       ],
       fetch: () => new Response("served"),
     });
-    const servedCN = await peerCN(server.port, "admin.example.com");
-    const { status: noCert } = await request(server.port, "admin.example.com");
+    const servedCN = await peerCN(server.port!, "admin.example.com");
+    const { status: noCert } = await request(server.port!, "admin.example.com");
     expect({ servedCN, noCert }).toEqual({ servedCN: "agent3", noCert: "HTTP/1.1 200 OK" });
   });
 
@@ -447,7 +453,7 @@ describe("Bun.serve per-serverName client certificate policy", () => {
       // The loop runs a few handshakes per iteration and queues the rest, so
       // ClientHellos sent in one go are not all processed when the first
       // handshake completes.
-      for (let i = 0; i < 32; i++) raws.push(net.connect({ host: "127.0.0.1", port: server.port }));
+      for (let i = 0; i < 32; i++) raws.push(net.connect({ host: "127.0.0.1", port: server.port! }));
       for (const raw of raws) raw.on("error", () => {});
       await Promise.all(raws.map(raw => once(raw, "connect")));
 
@@ -458,7 +464,7 @@ describe("Bun.serve per-serverName client certificate policy", () => {
         let certificate = "no handshake";
         let received = "";
         const socket = tls.connect({ socket: raw, servername: "admin.example.com", rejectUnauthorized: false }, () => {
-          certificate = socket.getPeerCertificate().subject.CN;
+          certificate = socket.getPeerCertificate().subject.CN as string;
           firstHandshake.resolve();
           socket.write("GET / HTTP/1.1\r\nHost: admin.example.com\r\nConnection: close\r\n\r\n");
         });
@@ -499,7 +505,7 @@ test.each(["Bun.serve", "Bun.listen"] as const)("%s serves every identity of key
   function served(options: tls.ConnectionOptions) {
     const { promise, resolve } = Promise.withResolvers<string>();
     const socket = tls.connect({ port: server.port, host: "127.0.0.1", rejectUnauthorized: false, ...options }, () => {
-      resolve(socket.getPeerCertificate().subject.CN);
+      resolve(socket.getPeerCertificate().subject.CN as string);
       socket.destroy();
     });
     socket.on("error", e => resolve((e as NodeJS.ErrnoException).code!));
@@ -533,7 +539,7 @@ test.each(["Bun.serve", "Bun.listen"] as const)(
           : Bun.listen({ port: 0, hostname: "127.0.0.1", tls: identities, socket: { data() {} } });
       const { promise, resolve, reject } = Promise.withResolvers<string>();
       const socket = tls.connect({ port: server.port, host: "127.0.0.1", rejectUnauthorized: false }, () =>
-        resolve(socket.getPeerCertificate().subject.CN),
+        resolve(socket.getPeerCertificate().subject.CN as string),
       );
       socket.on("error", reject);
       try {
@@ -565,7 +571,7 @@ test("keyFile/certFile/caFile/dhParamsFile reject a path with a NUL byte instead
     expect(() => Bun.listen({ hostname: "127.0.0.1", port: 0, tls: options, socket: { data() {} } })).toThrow(
       thrown(field),
     );
-    expect(() => tls.createSecureContext(options as tls.SecureContextOptions)).toThrow(thrown(field));
+    expect(() => tls.createSecureContext(options as Bun.TLSOptions as tls.SecureContextOptions)).toThrow(thrown(field));
   }
   expect(() => Bun.serve({ port: 0, tls: { keyFile: "", certFile }, fetch: () => new Response() })).toThrow(
     "Unable to access keyFile path",

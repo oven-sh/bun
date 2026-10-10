@@ -112,7 +112,7 @@ function fdOf(socket: tls.TLSSocket): number {
 
 function collect(socket: tls.TLSSocket) {
   const chunks: Buffer[] = [];
-  socket.on("data", c => chunks.push(c));
+  socket.on("data", (c: Buffer) => chunks.push(c));
   return () => Buffer.concat(chunks);
 }
 
@@ -372,7 +372,7 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
       authorized: p.client.authorized,
       authorizationError: p.client.authorizationError,
       serverEncrypted: p.serverSock.encrypted,
-    }).toEqual({ authorized: true, authorizationError: null, serverEncrypted: true });
+    }).toEqual({ authorized: true, authorizationError: null as any, serverEncrypted: true });
   });
 
   test("recv → short reads at TLS record boundary (5 bytes = header only) still decrypt", async () => {

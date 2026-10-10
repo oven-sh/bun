@@ -42,7 +42,7 @@ export async function startMalformedServerHelloServer(path?: string) {
   const server = net.createServer(socket => {
     let received = Buffer.alloc(0);
     let answered = false;
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       received = Buffer.concat([received, chunk]);
       if (!answered && tlsRecords(received).length > 0) {
         answered = true;

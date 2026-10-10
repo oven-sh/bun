@@ -46,7 +46,7 @@ describe.concurrent("https.Server with no usable key and cert", () => {
   test.each<[string, (handler: http.RequestListener) => http.Server]>([
     ["createServer(requestListener)", handler => https.createServer(handler)],
     ["createServer({}, requestListener)", handler => https.createServer({}, handler)],
-    ["createServer(undefined, requestListener)", handler => https.createServer(undefined, handler)],
+    ["createServer(undefined, requestListener)", handler => https.createServer(undefined as any, handler)],
     ["createServer({ key: undefined, cert: undefined })", handler => https.createServer({ key: undefined, cert: undefined }, handler)], // prettier-ignore
     ["createServer({ requestCert: true })", handler => https.createServer({ requestCert: true }, handler)],
     ["new https.Server({}, requestListener)", handler => new https.Server({}, handler)],
@@ -94,7 +94,7 @@ test.skipIf(!process.versions.bun).each<[string, () => object]>([
 describe("new https.Server() applies the ALPN defaults of createServer()", () => {
   function wire(protocols: string[]) {
     const out = {} as { ALPNProtocols: Buffer };
-    tls.convertALPNProtocols(protocols, out);
+    (tls as any).convertALPNProtocols(protocols, out);
     return out.ALPNProtocols;
   }
 
@@ -277,7 +277,7 @@ describe("https.createServer forwards every TLS server option", () => {
     await using server = https.createServer({ ...validCert, [name]: value });
     expect(await handshake(await listen(server), {})).toStartWith("TLS_");
     if (!process.versions.bun) return;
-    await using viaHttp = http.createServer({ ...validCert, [name]: value });
+    await using viaHttp = http.createServer({ ...validCert, [name]: value } as http.ServerOptions);
     expect(await handshake(await listen(viaHttp), {})).toStartWith("TLS_");
   });
 

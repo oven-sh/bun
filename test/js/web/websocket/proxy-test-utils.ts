@@ -236,7 +236,7 @@ export async function startRawWssServer(
     departures.push(departure(socket));
     let request = "";
     let upgraded = false;
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       if (upgraded) return onFrames(socket, chunk);
       request += chunk.toString("latin1");
       if (!request.includes("\r\n\r\n")) return;

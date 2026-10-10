@@ -335,7 +335,7 @@ describe("HTTP/2 upgrade — the client closes its side first", () => {
     const log: string[] = [];
     const first = Buffer.alloc(16 * 1024 * 1024, "a");
     const writing = Promise.withResolvers<void>();
-    h2Server.on("error", err => log.push(`server 'error': ${err.code}`));
+    h2Server.on("error", (err: NodeJS.ErrnoException) => log.push(`server 'error': ${err.code}`));
     h2Server.on("unknownProtocol", socket => {
       socket.on("error", (err: NodeJS.ErrnoException) => log.push(`'error': ${err.code}`));
       socket.resume();
@@ -720,7 +720,9 @@ describe("HTTP/2 upgrade — failed handshake", () => {
       client.write(Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x01, 0x00])),
     );
     // BoringSSL reads the alert as the peer's close. OpenSSL refuses an alert ahead of the ClientHello.
-    const expected = process.features.openssl_is_boringssl ? "ECONNRESET" : "ERR_SSL_UNEXPECTED_MESSAGE";
+    const expected = (process.features as { openssl_is_boringssl?: boolean }).openssl_is_boringssl
+      ? "ECONNRESET"
+      : "ERR_SSL_UNEXPECTED_MESSAGE";
     assert.deepStrictEqual({ event, code }, { event: "tlsClientError", code: expected });
   });
 });

@@ -53,7 +53,7 @@ function handshakeFinished(socket: { setServername(name: string): void }): boole
 /** The connection must still carry data after the refused offer. */
 async function lateOnClient(
   client: tls.TLSSocket,
-  result = attempt(() => client.setSession(session)),
+  result = attempt(() => (client as any).setSession(session)),
 ): Promise<Result> {
   const echoed = new Promise<string>(resolve => client.once("data", d => resolve(String(d))));
   client.write("ping");
@@ -91,7 +91,10 @@ const doors: Record<string, () => Promise<Result>> = {
   async "node-duplex-in-flight"() {
     let result: { threw: string | null } | undefined;
     let client: tls.TLSSocket | undefined;
-    const socket = await duplexTo(port, () => client && (result ??= attempt(() => client!.setSession(session))));
+    const socket = await duplexTo(
+      port,
+      () => client && (result ??= attempt(() => (client as any).setSession(session))),
+    );
     client = tls.connect({ ...clientOptions, socket });
     client.on("error", () => {});
     await once(client, "secureConnect");
@@ -110,7 +113,7 @@ const doors: Record<string, () => Promise<Result>> = {
       ca: fs.readFileSync(path.join(keys, "ca1-cert.pem")),
       rejectUnauthorized: true,
       checkServerIdentity() {
-        result = attempt(() => client.setSession(session));
+        result = attempt(() => (client as any).setSession(session));
         return undefined;
       },
     });
@@ -146,7 +149,7 @@ const doors: Record<string, () => Promise<Result>> = {
     const { promise, resolve } = Promise.withResolvers<Result>();
     const own = tls.createServer(serverOptions, socket => {
       socket.on("error", () => {});
-      resolve({ ...attempt(() => socket.setSession(session)), side: "server" });
+      resolve({ ...attempt(() => (socket as any).setSession(session)), side: "server" });
     });
     await once(own.listen(0, "127.0.0.1"), "listening");
     poke((own.address() as net.AddressInfo).port);
@@ -162,7 +165,7 @@ const doors: Record<string, () => Promise<Result>> = {
         secureContext: tls.createSecureContext(serverOptions),
       });
       secure.on("error", () => {});
-      secure.on("secure", () => resolve({ ...attempt(() => secure.setSession(session)), side: "server" }));
+      secure.on("secure", () => resolve({ ...attempt(() => (secure as any).setSession(session)), side: "server" }));
     });
     await once(plain.listen(0, "127.0.0.1"), "listening");
     poke((plain.address() as net.AddressInfo).port);
@@ -313,7 +316,7 @@ async function fromEvent(event: "keylog" | "session", options: tls.ConnectionOpt
   const client = tls.connect({ ...clientOptions, ...options });
   client.on("error", () => {});
   const { promise, resolve } = Promise.withResolvers<{ threw: string | null }>();
-  client.once(event, () => resolve(attempt(() => client.setSession(session))));
+  client.once(event, () => resolve(attempt(() => (client as any).setSession(session))));
   const [result] = await Promise.all([promise, once(client, "secureConnect")]);
   return lateOnClient(client, result);
 }

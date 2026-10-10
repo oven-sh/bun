@@ -9,7 +9,7 @@ import net, { type AddressInfo, createServer } from "node:net";
 import * as path from "node:path";
 import tls from "node:tls";
 import { Worker } from "node:worker_threads";
-import { WebSocket as NodeWS, WebSocketServer } from "ws";
+import { type ClientOptions, WebSocket as NodeWS, WebSocketServer } from "ws";
 import { clientEvents, startRecordingProxy, startRenegotiatingWssServer } from "./proxy-test-utils";
 function test(
   label: string,
@@ -865,8 +865,8 @@ describe("WebSocket TLS server identity", () => {
           checkServerIdentity(hostname: string, cert: tls.PeerCertificate) {
             calls.push({
               hostname,
-              subject: cert.subject.CN,
-              altnames: cert.subjectaltname,
+              subject: cert.subject.CN as string,
+              altnames: cert.subjectaltname!,
               fingerprint256: cert.fingerprint256,
               raw: Buffer.isBuffer(cert.raw),
             });
@@ -1353,7 +1353,7 @@ describe("WebSocket TLS server identity", () => {
             return new Error("PIN-REJECT");
           },
         },
-      });
+      } as ClientOptions);
       // The first event decides. A close with no error before it must fail the assertion, not hang.
       const outcome = await new Promise<string>(resolve => {
         ws.on("open", () => resolve("open"));

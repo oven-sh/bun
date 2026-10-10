@@ -11,7 +11,8 @@ import net, { AddressInfo, connect } from "net";
 import fs from "node:fs";
 import path from "node:path";
 import tls, { type TLSSocket } from "tls";
-import { Server, WebSocket, WebSocketServer } from "ws";
+// @ts-expect-error @types/ws: no ESM `Server`
+import { type ClientOptions, Server, WebSocket, WebSocketServer } from "ws";
 
 const strings = [
   {

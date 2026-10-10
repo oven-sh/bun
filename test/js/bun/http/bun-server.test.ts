@@ -2246,8 +2246,8 @@ test("reading an upload whose client went away before the first read rejects", a
     },
   });
   const socket = await Bun.connect({
-    hostname: server.hostname,
-    port: server.port,
+    hostname: server.hostname!,
+    port: server.port!,
     socket: {
       open(socket) {
         socket.write("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n\r\npartial");

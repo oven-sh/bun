@@ -1878,7 +1878,7 @@ describe("setSecureContext() on a listening server", () => {
     const settings = cluster.settings;
     cluster.setupPrimary({ exec: join(import.meta.dir, "tls-cluster-set-secure-context-fixture.mjs"), execArgv: [] });
     const worker = cluster.fork(bunEnv);
-    cluster.settings = settings;
+    (cluster as any).settings = settings;
     const exited = once(worker, "exit");
     try {
       const served = await Promise.race([
@@ -2623,7 +2623,7 @@ describe("tls.Server secure-context options", () => {
     ["tls.createServer", createServer],
     ["http2.createSecureServer", http2.createSecureServer],
   ])("%s() itself throws on a certificate the native loader rejects", (_, create) => {
-    expect(() => create({ key: agent6Key, cert: "not a certificate" })).toThrow(
+    expect(() => (create as typeof createServer)({ key: agent6Key, cert: "not a certificate" })).toThrow(
       expect.objectContaining({ code: "ERR_OSSL_PEM_NO_START_LINE" }),
     );
   });
@@ -3905,7 +3905,7 @@ describe("key/cert arrays", () => {
         sigalgs: "rsa_pss_rsae_sha256",
         maxVersion: version,
       },
-      socket => resolve(socket.getPeerCertificate().subject?.CN),
+      socket => resolve(socket.getPeerCertificate().subject?.CN as string | undefined),
     );
     tlsServer.on("tlsClientError", reject);
     using server = await listen(tlsServer);
@@ -4037,7 +4037,7 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("server names after close() (%s)"
     const { promise, resolve } = Promise.withResolvers<string>();
     const options = { socket, servername, rejectUnauthorized: false, minVersion: version, maxVersion: version };
     const client = connect(options, () => {
-      resolve((client.getPeerCertificate() as PeerCertificate).subject.CN);
+      resolve((client.getPeerCertificate() as PeerCertificate).subject.CN as string);
       client.destroy();
     });
     client.on("error", () => {});
@@ -4208,7 +4208,7 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("addContext() on connections the 
   });
 
   it("a user SNICallback replaces the entries", async () => {
-    const tlsServer = createServer({ ...agent(1), SNICallback: (_, cb) => cb(null, null) });
+    const tlsServer = createServer({ ...agent(1), SNICallback: (_, cb) => cb(null, null as any) });
     tlsServer.addContext("exact.example", agent(2));
     using injected = await inject(tlsServer);
     expect(await injected.servedCN("exact.example")).toBe("agent1");
@@ -4250,11 +4250,14 @@ it("addContext() with a NUL in the name registers nothing under the part before 
     await Promise.all([once(server, "listening"), once(front, "listening")]);
     server.addContext("after.example\0evil", agent(2));
     const served: Record<string, string> = {};
-    for (const [path, { port }] of Object.entries({ accepted: server.address(), injected: front.address() })) {
+    for (const [path, { port }] of Object.entries({
+      accepted: server.address() as AddressInfo,
+      injected: front.address() as AddressInfo,
+    })) {
       for (const servername of ["before.example", "after.example"]) {
         const client = connect({ port, host: "127.0.0.1", servername, rejectUnauthorized: false });
         await once(client, "secureConnect");
-        served[`${path} ${servername}`] = (client.getPeerCertificate() as PeerCertificate).subject.CN;
+        served[`${path} ${servername}`] = (client.getPeerCertificate() as PeerCertificate).subject.CN as string;
         client.destroy();
       }
     }
@@ -4427,7 +4430,7 @@ it.each([
     const secure = Promise.withResolvers<string | undefined>();
     const rawServer = net.createServer(raw => {
       const socket = new TLSSocket(raw, { isServer: true, ...identity, ...options });
-      socket.on("secure", () => secure.resolve(socket.getPeerCertificate()?.subject?.CN));
+      socket.on("secure", () => secure.resolve(socket.getPeerCertificate()?.subject?.CN as string | undefined));
       socket.on("data", data => socket.write(data));
       socket.on("error", secure.reject);
     });
@@ -4880,7 +4883,7 @@ describe("fatal TLS error after the handshake", () => {
       const upstream = net.connect(serverPort, "127.0.0.1");
       upstream.pipe(downstream);
       let index = 0;
-      downstream.on("data", chunk => {
+      downstream.on("data", (chunk: Buffer) => {
         const [bytes, fin] = tamper(chunk, index++);
         if (fin) upstream.end(bytes);
         else upstream.write(bytes);

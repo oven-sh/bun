@@ -31,6 +31,7 @@ import {
   Server,
   Socket,
   SocketAddress,
+  // @ts-expect-error legacy alias
   Stream,
 } from "node:net";
 import { join } from "node:path";

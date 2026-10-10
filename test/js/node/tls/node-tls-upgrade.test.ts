@@ -376,7 +376,7 @@ test("a Duplex that is paused with the ClientHello buffered when it is wrapped s
 test("TLS over TLS: an outer socket that is paused with the inner ClientHello unshifted still handshakes", async () => {
   const server = tls.createServer(certs, outer => {
     outer.on("error", () => {});
-    outer.once("data", chunk => {
+    outer.once("data", (chunk: Buffer) => {
       outer.pause();
       if (chunk.length > 8) outer.unshift(chunk.subarray(8));
       wrapAndEcho(outer);

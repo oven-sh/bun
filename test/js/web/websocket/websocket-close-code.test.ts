@@ -263,7 +263,7 @@ describe.concurrent("wss:// after the close event", () => {
       peer.on("error", () => {});
       peer.pipe(client);
       client.on("close", () => peer.destroy());
-      client.on("data", chunk => {
+      client.on("data", (chunk: Buffer) => {
         fromClient = Buffer.concat([fromClient, chunk]);
         if (!frozen) peer.write(chunk);
       });

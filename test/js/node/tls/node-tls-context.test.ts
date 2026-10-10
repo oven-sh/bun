@@ -421,7 +421,7 @@ describe("tls.Server", () => {
             let received = "";
             const socket = tls.connect(
               { socket: raw, servername: servernames[i], rejectUnauthorized: false, key: agent3Key, cert: agent3Cert },
-              () => (certificate = socket.getPeerCertificate().subject.CN),
+              () => (certificate = socket.getPeerCertificate().subject.CN as string),
             );
             socket.on("data", chunk => (received += chunk));
             socket.on("error", () => {});
@@ -729,7 +729,7 @@ describe.each(["TLSv1.3", "TLSv1.2"] as const)("session resumption across SNI co
 describe.each(["TLSv1.2", "TLSv1.3"] as const)("ALPN after SNI selected a SecureContext (%s)", version => {
   const defaults = { key: agent2Key, cert: agent2Cert };
   const selected = { key: agent1Key, cert: agent1Cert };
-  type SNICb = (err: Error | null, ctx?: unknown) => void;
+  type SNICb = (err: Error | null, ctx?: any) => void;
   const sync = (_: string, cb: SNICb) => cb(null, tls.createSecureContext(selected));
   const deferred = (_: string, cb: SNICb) => void setImmediate(cb, null, tls.createSecureContext(selected));
 
@@ -1011,7 +1011,7 @@ describe("SNI matching is case-insensitive", () => {
   function servedCN(port: number, servername: string) {
     const { promise, resolve, reject } = Promise.withResolvers<string | undefined>();
     const socket = tls.connect({ host: "127.0.0.1", port, servername, rejectUnauthorized: false }, () => {
-      resolve(socket.getPeerCertificate()?.subject?.CN);
+      resolve(socket.getPeerCertificate()?.subject?.CN as string | undefined);
       socket.end();
     });
     socket.on("error", reject);
@@ -1123,10 +1123,10 @@ describe("SNI matching is case-insensitive", () => {
       fetch: () => new Response("OK"),
     });
     expect({
-      upper: await servedCN(server.port, "A.EXAMPLE.COM"),
-      mixed: await servedCN(server.port, "a.Example.com"),
-      wildcardUpper: await servedCN(server.port, "B.TEST.COM"),
-      noMatch: await servedCN(server.port, "other.example.org"),
+      upper: await servedCN(server.port!, "A.EXAMPLE.COM"),
+      mixed: await servedCN(server.port!, "a.Example.com"),
+      wildcardUpper: await servedCN(server.port!, "B.TEST.COM"),
+      noMatch: await servedCN(server.port!, "other.example.org"),
     }).toEqual({
       upper: "agent1",
       mixed: "agent1",
@@ -1552,11 +1552,10 @@ it("getCiphers() lists the supported cipher names, lower-cased and sorted", () =
 
 it("tls.SecureContext is the class of what createSecureContext() returns", () => {
   const context = tls.createSecureContext({});
-  expect(context).toBeInstanceOf(tls.SecureContext);
-  expect(context.constructor).toBe(tls.SecureContext);
-  expect(Object.keys(tls.SecureContext.prototype)).toEqual([]);
-  expect({}).not.toBeInstanceOf(tls.SecureContext);
-  expect(new tls.SecureContext()).toBeInstanceOf(tls.SecureContext);
-  // @ts-expect-error the types only admit `new`
-  expect(tls.SecureContext()).toBeInstanceOf(tls.SecureContext);
+  expect(context).toBeInstanceOf((tls as any).SecureContext);
+  expect(context.constructor).toBe((tls as any).SecureContext);
+  expect(Object.keys((tls as any).SecureContext.prototype)).toEqual([]);
+  expect({}).not.toBeInstanceOf((tls as any).SecureContext);
+  expect(new (tls as any).SecureContext()).toBeInstanceOf((tls as any).SecureContext);
+  expect((tls as any).SecureContext()).toBeInstanceOf((tls as any).SecureContext);
 });

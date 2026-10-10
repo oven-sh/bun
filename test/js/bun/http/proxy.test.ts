@@ -3422,7 +3422,7 @@ test("an https origin that ends the TLS handshake with close_notify fails the tu
   // so only the alert says that no TLS session will come.
   const closeNotify = Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x01, 0x00]);
   const established = Buffer.from("HTTP/1.1 200 Connection Established\r\n\r\n");
-  const outcomes = [];
+  const outcomes: unknown[] = [];
   // "with the reply": the alert is in the same write as the reply to CONNECT, ahead of the ClientHello.
   for (const alert of ["after the ClientHello", "with the reply"]) {
     const sockets: net.Socket[] = [];

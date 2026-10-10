@@ -748,16 +748,18 @@ pub(crate) fn post_process_js_chunk(
                 line_offset.advance(str);
             }
         }
-        options::OutputFormat::Cjs => {
-            if is_bun {
-                j.push_static(b"})\n");
-                line_offset.advance(b"})\n");
-            }
-        }
         _ => {}
     }
 
-    j.ensure_newline_at_end();
+    // Bun's loader evaluates a `@bun-cjs` file and takes its completion value as
+    // the module function, so the wrapper's `})` has to come last. That puts the
+    // footer inside the wrapper, the same as the banner.
+    let close_bun_cjs_wrapper = is_bun && output_format == options::OutputFormat::Cjs;
+
+    // With no footer, minified output keeps `})` right after the last statement.
+    if !close_bun_cjs_wrapper || !c.options.footer.is_empty() {
+        j.ensure_newline_at_end();
+    }
     // TODO: maybeAppendLegalComments
 
     if !c.options.footer.is_empty() {
@@ -769,6 +771,11 @@ pub(crate) fn post_process_js_chunk(
         line_offset.advance(c.options.footer);
         j.push_static(b"\n");
         line_offset.advance(b"\n");
+    }
+
+    if close_bun_cjs_wrapper {
+        j.push_static(b"})\n");
+        line_offset.advance(b"})\n");
     }
 
     // SAFETY: every borrowed node in `j` points into `chunk.compile_results_for_chunk`

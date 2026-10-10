@@ -334,6 +334,13 @@ impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
     fn drop(&mut self) {
         // Before `config`, which owns the arena the dev server's transpilers and views live in.
         drop(self.dev_server.take());
+        if let Some(plugins) = &self.plugins {
+            // SAFETY: intrusive refcount permits mutation through any owner. A
+            // server is freed from an event-loop task or a finalizer, never
+            // under a `ServePlugins` frame.
+            unsafe { &mut *plugins.as_ptr() }
+                .forget_server(AnyServer::from(std::ptr::from_ref::<Self>(self)));
+        }
         // The remaining owned fields (config, base_url, h3_alt_svc,
         // user_routes, all_closed_promise) drop automatically.
     }
@@ -4155,7 +4162,7 @@ impl AnyServer {
     /// - `Pending` if `callback` was stored. It will call `on_plugins_resolved` or `on_plugins_rejected` later.
     pub(crate) fn get_or_load_plugins(
         &self,
-        callback: ServePluginsCallback<'_>,
+        callback: ServePluginsCallback,
     ) -> GetOrStartLoadResult<'_> {
         any_server_dispatch_mut!(self, |s| s.get_or_load_plugins(callback))
     }

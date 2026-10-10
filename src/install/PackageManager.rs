@@ -545,6 +545,31 @@ impl Subcommand {
     pub(crate) fn should_chdir_to_root(self) -> bool {
         !matches!(self, Self::Link)
     }
+
+    /// Whether the command can link a bin and so needs `bin::init_exec_mode`.
+    #[cfg(not(windows))]
+    pub(crate) fn links_bins(self) -> bool {
+        match self {
+            Self::Install
+            | Self::Update
+            | Self::Add
+            | Self::Remove
+            | Self::Link
+            | Self::Patch
+            | Self::PatchCommit
+            | Self::Audit
+            | Self::Dedupe => true,
+            // `bun pm scan` can install the security scanner.
+            Self::Pm => true,
+            Self::Unlink
+            | Self::Outdated
+            | Self::Pack
+            | Self::Publish
+            | Self::Info
+            | Self::Why
+            | Self::Prune => false,
+        }
+    }
 }
 
 /// The resolved outcome of `--filter` for one install: the importer ids whose dependencies get installed.

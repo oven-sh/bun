@@ -900,6 +900,85 @@ describe("Bun.build", () => {
   //   throw new Error("test was not fully written");
   // });
 
+  // Two callers each await a build, write a new file into the directory that
+  // build listed, and await a build that imports it. A build that reuses the
+  // earlier listing fails to resolve the file ("missing") or, when an older file
+  // matches the same import, bundles the older one ("shadow": .ts comes before
+  // .js in the extension order). The listing used to stay until the bundle
+  // thread found its queue empty. One caller alone queues its next build before
+  // that on some rounds only, at a rate that depends on the machine. With two
+  // callers a build is queued behind nearly every build.
+  //
+  // Not concurrent: one bundle thread runs every Bun.build of this process, so
+  // these twelve builds would wait behind the builds of the tests around them.
+  test("a build sees a file written before the call while a second caller builds", async () => {
+    const rounds = [0, 1, 2];
+    const files: Record<string, string> = { "package.json": `{}`, "first.js": `export default 1;\n` };
+    for (const round of rounds) {
+      files[`missing-${round}.js`] = `import value from "./added-${round}.js";\nconsole.log(value);\n`;
+      files[`shadow-${round}.js`] = `import value from "./replaced-${round}";\nconsole.log(value);\n`;
+      files[`replaced-${round}.js`] = `export default "old";\n`;
+    }
+    using dir = tempDir("rebuild-sees-new-file", files);
+    const root = String(dir);
+
+    async function caller(form: "missing" | "shadow") {
+      const bundled: string[] = [];
+      for (const round of rounds) {
+        await Bun.build({ entrypoints: [join(root, "first.js")] });
+        const added = form === "missing" ? `added-${round}.js` : `replaced-${round}.ts`;
+        writeFileSync(join(root, added), `export default "new";\n`);
+        const build = await Bun.build({ entrypoints: [join(root, `${form}-${round}.js`)], throw: false });
+        if (build.success) {
+          bundled.push(/"(old|new)"/.exec(await build.outputs[0].text())?.[1] ?? "neither");
+        } else {
+          bundled.push(build.logs[0].message);
+        }
+      }
+      return bundled;
+    }
+
+    const [missing, shadow] = await Promise.all([caller("missing"), caller("shadow")]);
+    expect({ missing, shadow }).toEqual({
+      missing: ["new", "new", "new"],
+      shadow: ["new", "new", "new"],
+    });
+  });
+
+  // A script writes a file next to itself and then calls Bun.build for the first
+  // time. The runtime listed that directory, at generation 0, when it resolved
+  // the script. The first build of a process ran at generation 0 too when it was
+  // queued before the bundle thread first looked at its queue, and it then
+  // reused the runtime's listing. That was about half of all processes on many
+  // cores and nearly all on one or two, so this starts more than one process.
+  // They run one after another: side by side they lost that race less often.
+  test("the first build of a process sees a file written after the runtime listed the directory", async () => {
+    const processes = isDebug || isASAN ? 2 : 5;
+    for (let i = 0; i < processes; i++) {
+      using dir = tempDir("first-build-sees-new-file", {
+        "package.json": `{}`,
+        "entry.js": `import value from "./added.js";\nconsole.log(value);\n`,
+        "driver.ts": `
+          import { writeFileSync } from "node:fs";
+          writeFileSync("added.js", 'export default "new";\\n');
+          const build = await Bun.build({ entrypoints: ["./entry.js"], throw: false });
+          console.log(build.success ? "built" : build.logs[0].message);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "driver.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("built\n");
+      expect(exitCode).toBe(0);
+    }
+  });
+
   test.concurrent("loader map with an empty-string key is ignored without leaving uninitialized slots", async () => {
     // `JSPropertyIterator` skips empty-name properties, but `loader_names` was being
     // indexed by the property position instead of a dense counter, leaving garbage in

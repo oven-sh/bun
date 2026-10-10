@@ -444,7 +444,9 @@ describe.concurrent("--sourcemap never writes next to the entry point", () => {
     },
   );
 
-  test("a standalone html build with --sourcemap and no --outdir writes to the cwd", async () => {
+  // A standalone html build with no --outdir or --outfile prints the page to
+  // stdout (covered in standalone.test.ts), so the rows above apply to it too.
+  test("bare --sourcemap prints a standalone html page with an inline map to stdout", async () => {
     using dir = tempDir("build-sourcemap-standalone-html", fixture);
     const { stdout, stderr, exitCode } = await build(
       join(String(dir), "work"),
@@ -454,14 +456,10 @@ describe.concurrent("--sourcemap never writes next to the entry point", () => {
       "--sourcemap",
     );
     expect(stderr).toBe("");
-    expect(stdout).toContain("index.html");
+    expect(stdout).toContain("console.log(");
+    expect(stdout).toContain("//# sourceMappingURL=data:application/json;base64,");
+    expect(tree(String(dir))).toEqual(fixture);
     expect(exitCode).toBe(0);
-
-    const after = tree(String(dir));
-    const written = Object.keys(after).filter(file => !(file in fixture));
-    expect(written).toEqual([expect.stringMatching(/^work\/index(-\w+)?\.js\.map$/), "work/index.html"]);
-    expect(after["work/index.html"]).toContain("console.log(");
-    for (const file of Object.keys(fixture)) expect(after[file]).toBe(fixture[file]);
   });
 });
 

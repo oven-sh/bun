@@ -24,6 +24,7 @@ use bun_sys::windows::libuv as uv;
 use bun_threading::thread_pool as ThreadPool;
 
 use crate::install::{ExtractData, ExtractDataJson};
+use crate::package_manager_real::GIT_CLONE_FOLDER_NAME_BUF_LEN;
 use crate::package_manager_task::{self as Task, Tag};
 use crate::repository::{GitEnv, Repository, RepositoryExt as _, is_safe_resolved_tag};
 use crate::{Error, PackageManager};
@@ -90,9 +91,12 @@ impl Finalize {
                 git_clone: ManuallyDrop::new(fd),
             }),
             Finalize::PublishRepo(staging) => {
-                let name = task.request_git_clone().name.slice().to_vec();
+                let request = task.request_git_clone();
+                let name = request.name.slice().to_vec();
+                let mut folder_buf = [0u8; GIT_CLONE_FOLDER_NAME_BUF_LEN];
+                let folder_name = bare_repo_folder_name(&mut folder_buf, request.url.slice());
                 staging
-                    .publish(&mut task.log, &name, &bare_repo_folder_name(task.id))
+                    .publish(&mut task.log, &name, folder_name.as_bytes())
                     .map(|dir| Task::Data {
                         git_clone: ManuallyDrop::new(dir.into_raw()),
                     })
@@ -333,9 +337,12 @@ impl CacheStaging {
     }
 }
 
-/// `<hex(clone task id)>.git`: the cache folder of a bare clone.
-fn bare_repo_folder_name(clone_id: Task::Id) -> Vec<u8> {
-    format!("{}.git", bun_core::fmt::hex_int_lower::<16>(clone_id.get())).into_bytes()
+/// `<url digest>.git`: the cache folder of the bare clone of `url`.
+fn bare_repo_folder_name<'a>(
+    buf: &'a mut [u8; GIT_CLONE_FOLDER_NAME_BUF_LEN],
+    url: &[u8],
+) -> &'a bun_core::ZStr {
+    crate::package_manager_real::cached_git_clone_folder_name_print(buf, url)
 }
 
 // `finish_*` release the owning ref (freeing `this`), so everything on a path to
@@ -446,6 +453,8 @@ impl GitSubprocess {
     fn begin_clone(this: ThisPtr<Self>) -> Result<(), Error> {
         bun_analytics::features::git_dependencies.fetch_add(1, Ordering::Relaxed);
         let url = this.task().request_git_clone().url.slice().to_vec();
+        let mut folder_buf = [0u8; GIT_CLONE_FOLDER_NAME_BUF_LEN];
+        let folder_name = bare_repo_folder_name(&mut folder_buf, &url);
         // Pushed in reverse so `pop` yields the https form first.
         this.urls.with_mut(|urls| {
             urls.extend(Repository::try_ssh(&url));
@@ -457,10 +466,7 @@ impl GitSubprocess {
 
         let offline = this.manager().options.offline
             == crate::package_manager_real::options::OfflineMode::Offline;
-        let folder_name = bare_repo_folder_name(this.task().id);
-        match bun_sys::Dir::borrow(&this.cache_dir)
-            .open_dir_z(&bun_core::ZBox::from_bytes(&folder_name))
-        {
+        match bun_sys::Dir::borrow(&this.cache_dir).open_dir_z(folder_name) {
             Ok(dir) => {
                 // --prefer-offline still fetches: a stale clone may lack the pinned commit.
                 if offline {
@@ -469,7 +475,7 @@ impl GitSubprocess {
                 }
                 let path = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
                     &this.manager().cache_directory_path,
-                    &[&folder_name],
+                    &[folder_name.as_bytes()],
                 )
                 .to_vec();
                 this.step.set(Step::Fetch(dir));
@@ -517,11 +523,8 @@ impl GitSubprocess {
     fn begin_commit(this: ThisPtr<Self>) -> Result<(), Error> {
         let req = this.task().request_git_commit();
         let committish = req.committish.slice().to_vec();
-        let path = Path::resolve_path::join_abs_string::<Path::platform::Auto>(
-            &this.manager().cache_directory_path,
-            &[&bare_repo_folder_name(req.clone_id)],
-        )
-        .to_vec();
+        let mut repo_path_buf = Path::path_buffer_pool::get();
+        let path = bun_sys::get_fd_path(req.repo_dir, &mut repo_path_buf)?.to_vec();
         this.step.set(Step::Log);
         if committish.is_empty() {
             Self::spawn(this, &[b"-C", &path, b"log", b"--format=%H", b"-1"])

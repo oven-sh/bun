@@ -488,6 +488,16 @@ impl<'a> ByteCursor<'a> {
         self.put(bun_fmt::u64_hex_var_lower(&mut tmp, n));
     }
 
+    /// `sha256(url)[..URL_DIGEST_BYTES]` as lower hex.
+    #[inline(always)]
+    fn put_url_digest(&mut self, url: &[u8]) {
+        use bun_sha_hmac::sha::hashers::SHA256;
+        let mut digest = [0u8; SHA256::DIGEST];
+        SHA256::hash(url, &mut digest);
+        let prefix = &digest[..URL_DIGEST_BYTES];
+        self.at += bun_fmt::bytes_to_hex_lower(prefix, &mut self.buf[self.at..]);
+    }
+
     /// `@@@{d}` when set.
     #[inline(always)]
     fn put_cache_version(&mut self, v: Option<usize>) {
@@ -524,6 +534,23 @@ pub fn cached_git_folder_name_print<'a>(
     w.put(b"@G@");
     w.put(resolved);
     w.put_patch_hash(patch_hash);
+    w.finish_z()
+}
+
+/// Bytes of `sha256(url)` in a cache entry's name; collision-resistant on purpose.
+const URL_DIGEST_BYTES: usize = 16;
+
+/// Bytes in `<url digest>.git` and its NUL.
+pub const GIT_CLONE_FOLDER_NAME_BUF_LEN: usize = URL_DIGEST_BYTES * 2 + b".git".len() + 1;
+
+/// `<url digest>.git`: the bare clone of the repository at `url`.
+pub fn cached_git_clone_folder_name_print<'a>(
+    buf: &'a mut [u8; GIT_CLONE_FOLDER_NAME_BUF_LEN],
+    url: &[u8],
+) -> &'a ZStr {
+    let mut w = ByteCursor::new(buf);
+    w.put_url_digest(url);
+    w.put(b".git");
     w.finish_z()
 }
 
@@ -726,6 +753,7 @@ pub fn cached_npm_package_folder_print_basename<'a>(
     w.finish_z()
 }
 
+/// `@T@<url digest>@@@<cache version>`: the extracted tarball fetched from `url`.
 pub fn cached_tarball_folder_name_print<'a>(
     buf: &'a mut [u8],
     url: &[u8],
@@ -733,7 +761,7 @@ pub fn cached_tarball_folder_name_print<'a>(
 ) -> &'a ZStr {
     let mut w = ByteCursor::new(buf);
     w.put(b"@T@");
-    w.put_u64_hex16::<true>(Semver::semver_string::Builder::string_hash(url));
+    w.put_url_digest(url);
     w.put_cache_version(Some(CacheVersion::CURRENT));
     w.put_patch_hash(patch_hash);
     w.finish_z()

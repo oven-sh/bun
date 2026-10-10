@@ -522,6 +522,57 @@ it("int52", () => {
   expect(db.query("SELECT * FROM test").get().int64).toBe(Number.MAX_SAFE_INTEGER);
 });
 
+it("binds every safe integer number as INTEGER", () => {
+  const db = new Database(":memory:");
+  const bound = db.query("SELECT typeof(?1) AS type, CAST(?1 AS TEXT) AS text");
+
+  // A Float64Array element is a double in JSC, also when its value fits in an int32.
+  const sevenAsDouble = new Float64Array([7])[0];
+  const safeIntegers = [
+    0,
+    sevenAsDouble,
+    2 ** 31,
+    -(2 ** 31) - 1,
+    2 ** 51 - 1,
+    2 ** 51,
+    2 ** 52 + 1,
+    Number.MAX_SAFE_INTEGER,
+    -(2 ** 51),
+    -(2 ** 51) - 1,
+    Number.MIN_SAFE_INTEGER,
+  ];
+  expect(safeIntegers.map(value => bound.get(value))).toEqual([
+    { type: "integer", text: "0" },
+    { type: "integer", text: "7" },
+    { type: "integer", text: "2147483648" },
+    { type: "integer", text: "-2147483649" },
+    { type: "integer", text: "2251799813685247" },
+    { type: "integer", text: "2251799813685248" },
+    { type: "integer", text: "4503599627370497" },
+    { type: "integer", text: "9007199254740991" },
+    { type: "integer", text: "-2251799813685248" },
+    { type: "integer", text: "-2251799813685249" },
+    { type: "integer", text: "-9007199254740991" },
+  ]);
+
+  // These are not safe integers. They keep the REAL type.
+  const reals = [2 ** 53, -(2 ** 53), 2 ** 63, 1e300, 1.5, -0, Infinity];
+  expect(reals.map(value => bound.get(value).type)).toEqual(["real", "real", "real", "real", "real", "real", "real"]);
+  expect(Object.is(db.query("SELECT ? AS value").get(-0).value, -0)).toBe(true);
+  // sqlite3_bind_double() turns NaN into NULL.
+  expect(bound.get(NaN)).toEqual({ type: "null", text: null });
+
+  // A column with no type affinity stores the type of the bound value.
+  db.run("CREATE TABLE events (id)");
+  const insert = db.query("INSERT INTO events VALUES (?)");
+  for (const id of [2 ** 51 - 1, 2 ** 51, Number.MAX_SAFE_INTEGER]) insert.run(id);
+  expect(db.query("SELECT id, typeof(id) AS type, CAST(id AS TEXT) AS text FROM events").all()).toEqual([
+    { id: 2251799813685247, type: "integer", text: "2251799813685247" },
+    { id: 2251799813685248, type: "integer", text: "2251799813685248" },
+    { id: 9007199254740991, type: "integer", text: "9007199254740991" },
+  ]);
+});
+
 it("typechecks", () => {
   const db = Database.open(":memory:");
   db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");

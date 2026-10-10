@@ -94,16 +94,19 @@ static auto createStringEntry(const String& name, const String& value) -> DOMFor
 
 void DOMFormData::append(const String& name, const String& value)
 {
+    Locker locker { m_itemsLock };
     m_items.append(createStringEntry(name, value));
 }
 
 void DOMFormData::append(const String& name, RefPtr<Blob> blob, const String& filename)
 {
     blob->setFileName(replaceUnpairedSurrogatesWithReplacementCharacter(String(filename)));
+    Locker locker { m_itemsLock };
     m_items.append({ replaceUnpairedSurrogatesWithReplacementCharacter(String(name)), blob });
 }
 void DOMFormData::remove(const StringView name)
 {
+    Locker locker { m_itemsLock };
     m_items.removeAllMatching([name](const auto& item) {
         return item.name == name;
     });
@@ -154,6 +157,7 @@ void DOMFormData::set(const String& name, RefPtr<Blob> blob, const String& filen
 
 void DOMFormData::set(const String& name, Item&& item)
 {
+    Locker locker { m_itemsLock };
     std::optional<size_t> initialMatchLocation;
 
     // Find location of the first item with a matching name.

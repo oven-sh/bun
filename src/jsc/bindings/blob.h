@@ -3,6 +3,8 @@
 #include "root.h"
 #include "JSDOMGlobalObject.h"
 #include "BunClientData.h"
+#include <JavaScriptCore/Weak.h>
+#include <JavaScriptCore/WeakInlines.h>
 
 namespace WebCore {
 
@@ -73,6 +75,18 @@ public:
         m_fileName = fileName;
     }
 
+    JSC::JSObject* wrapper() const
+    {
+        return m_wrapper.get();
+    }
+
+    void setWrapper(JSC::VM&, const JSC::JSCell* owner, JSC::JSObject*);
+
+    template<typename Visitor> void visitWrapper(Visitor& visitor) const
+    {
+        visitor.append(m_wrapper);
+    }
+
     size_t memoryCost() const;
 
 private:
@@ -92,6 +106,8 @@ private:
 
     BlobRefPtr m_impl;
     String m_fileName;
+    // Cached JS wrapper so FormData accessors return the same object each time.
+    JSC::Weak<JSC::JSObject> m_wrapper;
 };
 
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, Blob&);

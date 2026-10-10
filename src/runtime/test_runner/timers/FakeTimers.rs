@@ -378,21 +378,33 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
             return Err(global.throw_invalid_arguments(format_args!(
                 "useFakeTimers() expects an options object"
             )));
-        } else if let Some(now) = options_value.get(global, "now")? {
-            if now.is_number() {
-                js_now = now.as_number();
-            } else if now.is_date() {
-                js_now = now.get_unix_timestamp();
-            } else {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "'now' must be a number or Date"
-                )));
+        } else {
+            for unsupported in ["toFake", "doNotFake"] {
+                if let Some(value) = options_value.get(global, unsupported)? {
+                    if !value.is_undefined() {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "useFakeTimers() does not support the `{unsupported}` option"
+                        )));
+                    }
+                }
             }
-            // NaN is `JSGlobalObject::overridenDateNow`'s "no override" sentinel.
-            if !js_now.is_finite() {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "'now' must be a finite number or a valid Date"
-                )));
+
+            if let Some(now) = options_value.get(global, "now")? {
+                if now.is_number() {
+                    js_now = now.as_number();
+                } else if now.is_date() {
+                    js_now = now.get_unix_timestamp();
+                } else {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "'now' must be a number or Date"
+                    )));
+                }
+                // NaN is `JSGlobalObject::overridenDateNow`'s "no override" sentinel.
+                if !js_now.is_finite() {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "'now' must be a finite number or a valid Date"
+                    )));
+                }
             }
         }
     }

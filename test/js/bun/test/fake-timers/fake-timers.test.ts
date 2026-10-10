@@ -907,6 +907,14 @@ describe("useFakeTimers with options", () => {
     expect(diff).toBeLessThan(100);
   });
 
+  test.each(["toFake", "doNotFake"])("rejects unsupported %s option", option => {
+    expect(() => vi.useFakeTimers({ [option]: ["Date"] } as any)).toThrow(
+      `useFakeTimers() does not support the \`${option}\` option`,
+    );
+    expect(vi.isFakeTimers()).toBe(false);
+  });
+
+
   test("timers scheduled with custom now work correctly", () => {
     const targetTime = 5000000000000;
     vi.useFakeTimers({ now: targetTime });

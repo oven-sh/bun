@@ -25,6 +25,7 @@
 #include "JSWritableStreamDefaultWriter.h"
 #include "ObjectBindings.h"
 #include "VectorSizeLimit.h"
+#include "ZigGeneratedClasses.h"
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/InternalFieldTuple.h>
@@ -496,6 +497,14 @@ void readableStreamReaderGenericInitialize(JSGlobalObject* globalObject, JSReada
     switch (stream->m_state) {
     case ReadableStreamState::Readable:
         reader->m_closedPromise.set(vm, reader, JSPromise::create(vm, globalObject->promiseStructure()));
+        // Bun: a paused process.stdin stops the native source it shares with Bun.stdin.stream(); the next reader resumes it.
+        if (stream->m_controllerKind == ControllerKind::Default && defaultControllerOf(stream)->m_algorithms.kind == SourceKind::Native) {
+            const auto* adapter = uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(defaultControllerOf(stream)->m_algorithms.algorithmContext.get());
+            if (auto* source = dynamicDowncast<WebCore::JSFileInternalReadableStreamSource>(adapter->handle())) {
+                FileReader__setFlowing(source->wrapped(), true);
+                RETURN_IF_EXCEPTION(scope, void());
+            }
+        }
         return;
     case ReadableStreamState::Closed: {
         auto* closedPromise = promiseFulfilledWith(globalObject, JSC::jsUndefined());

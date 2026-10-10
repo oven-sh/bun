@@ -2936,17 +2936,9 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     if (session) {
       const native = session[bunHTTP2Native];
       if (native) {
-        let wireChunk = chunk;
-        let wireEncoding = encoding;
-        if (typeof chunk === "string" && (encoding === "utf-16le" || encoding === "utf16le" || encoding === "ucs-2")) {
-          // The native write path does not know the utf-16 aliases; encode here. Diagnostics
-          // subscribers still see the user-provided string and encoding.
-          wireChunk = Buffer.from(chunk, encoding);
-          wireEncoding = undefined;
-        }
         if (session[kTimeout]) session[kTimeout].refresh();
         const endStream = isFinalWrite(this, chunk.length);
-        const status = native.writeStream(this.#id, wireChunk, wireEncoding, endStream, callback, true);
+        const status = native.writeStream(this.#id, chunk, encoding, endStream, callback, true);
         if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
         if (endStream) {
           this[bunHTTP2StreamStatus] |= StreamState.EndStreamSent;

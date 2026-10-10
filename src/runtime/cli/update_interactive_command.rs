@@ -393,16 +393,10 @@ impl UpdateInteractiveCommand {
                 let version_with_prefix =
                     preserve_version_prefix(original_version, &update.target_version)?;
 
-                // Update the version using hash map put
-                // `Expr::init` would put the `E.String` *node*
-                // in the Store, which `install_with_manager` resets via
-                // `initialize_store()` before re-reading this cached `root`.
-                // Allocate into the entry's own `json_arena` instead so the
-                // node lives as long as the cached AST. The string *bytes* go
-                // through the CLI arena (matches PackageJSONEditor `leak_str`).
+                // Not `Expr::init`: install resets the Store before it reads this cached `root` again.
                 let interned: &'static [u8] = crate::cli::cli_dupe(&version_with_prefix);
                 let new_expr = Expr::allocate(
-                    &package_json.json_arena,
+                    crate::cli::cli_arena(),
                     E::EString::init(interned),
                     version_query.expr.loc,
                 );
@@ -495,7 +489,7 @@ impl UpdateInteractiveCommand {
             edit_catalog_definitions(
                 &mut updates_for_workspace[..],
                 &mut package_json.root,
-                &package_json.json_arena,
+                crate::cli::cli_arena(),
             )?;
 
             // Save the updated package.json
@@ -2214,7 +2208,7 @@ fn leak_dup(bytes: &[u8]) -> &'static [u8] {
     crate::cli::cli_dupe(bytes)
 }
 
-// `bump` is the cache entry's `json_arena`: nodes spliced into the cached `root` must outlive the `initialize_store()` reset that install performs.
+// `bump` is the CLI arena: nodes spliced into the cached `root` must outlive the `initialize_store()` reset that install performs.
 fn edit_catalog_definitions(
     updates: &mut [CatalogUpdateRequest],
     current_package_json: &mut Expr,

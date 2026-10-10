@@ -7,10 +7,12 @@ import {
   assertManifestsPopulated,
   bunEnv as baseEnv,
   bunExe,
+  expectRssDeltaBelow,
   isWindows,
   readdirSorted,
   runBunInstall,
   runBunUpdate,
+  tempDir,
   toMatchNodeModulesAt,
   VerdaccioRegistry,
 } from "harness";
@@ -2882,4 +2884,106 @@ test.concurrent("a copyfile install over a workspace's hardlinked files does not
   expect(cached).toHaveLength(1);
   expect(readJson(join(cacheDir, cached[0], "package.json"))).toEqual({ name: "no-deps", version: "2.0.0" });
   expect(statSync(join(cacheDir, cached[0], "index.js")).size).toBeGreaterThan(0);
+});
+
+// The npm lockfile migration reads each workspace package.json through the cache of the package manager.
+test.concurrent("the package.json cache keeps no mimalloc heap for each file", async () => {
+  await acquireSlot();
+  using _slot = { [Symbol.dispose]: releaseSlot };
+  const files: Record<string, string> = {};
+  for (const workspaces of [1, 5, 50]) {
+    const packages: Record<string, object> = { "": { name: "root", workspaces: ["packages/*"] } };
+    for (let i = 0; i < workspaces; i++) {
+      files[`${workspaces}/packages/p${i}/package.json`] = JSON.stringify({ name: `p${i}`, version: "1.0.0" });
+      packages[`node_modules/p${i}`] = { resolved: `packages/p${i}`, link: true };
+      packages[`packages/p${i}`] = { name: `p${i}`, version: "1.0.0" };
+    }
+    files[`${workspaces}/package.json`] = JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"] });
+    files[`${workspaces}/package-lock.json`] = JSON.stringify({ name: "root", lockfileVersion: 3, packages });
+  }
+  using dir = tempDir("workspace-package-json-heap-count", files);
+
+  const count = `
+    const { heapStats } = require("bun:jsc");
+    const { parseLockfile } = require("bun:internal-for-testing").install_test_helpers;
+    const [root] = process.argv.slice(1);
+    const result = {};
+    // The call for 1 workspace also creates the heaps of the package manager itself.
+    for (const workspaces of [1, 5, 50]) {
+      const before = heapStats().mimalloc.heaps;
+      const lockfile = parseLockfile(root + "/" + workspaces);
+      const after = heapStats().mimalloc.heaps;
+      result[workspaces] = {
+        packages: lockfile.packages.length,
+        created: after.total - before.total,
+        live: after.current - before.current,
+      };
+    }
+    console.log(JSON.stringify(result));
+  `;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", count, String(dir)],
+    env: baseEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = JSON.parse(stdout.trim().split("\n").at(-1) || "null");
+  expect({
+    stderr: stderr.includes("error"),
+    packages: [result?.[5].packages, result?.[50].packages],
+    liveGrowth: result?.[50].live - result?.[5].live,
+  }).toEqual({ stderr: false, packages: [6, 51], liveGrowth: 0 });
+  // `process_workspace_name` still creates one scratch heap for each workspace and destroys it at once.
+  expect(result[50].created - result[5].created).toBeLessThanOrEqual(45);
+  expect(exitCode).toBe(0);
+});
+
+// With a mimalloc heap for each cached package.json, each size class of escaped string costs one 64 KiB page
+// for each workspace. In a shared heap the two repos, which hold the same bytes, cost the same.
+test.concurrent("install does not keep a mimalloc heap for each workspace package.json", async () => {
+  await acquireSlot();
+  using _slot = { [Symbol.dispose]: releaseSlot };
+  const lengths: number[] = [];
+  for (let length = 8; length <= 1024; length += Math.max(8, length >> 2)) lengths.push(length);
+  const mean = Math.ceil(lengths.reduce((sum, length) => sum + length) / lengths.length);
+  const repos = { varied: lengths, uniform: lengths.map(() => mean) };
+
+  const files: Record<string, string> = {};
+  for (const [repo, scriptLengths] of Object.entries(repos)) {
+    const scripts = Object.fromEntries(
+      scriptLengths.map((length, i) => [`s${i}`, `"${Buffer.alloc(length - 2, "x").toString()}"`]),
+    );
+    files[`${repo}/package.json`] = JSON.stringify({ name: repo, private: true, workspaces: ["packages/*"] });
+    for (let i = 0; i < 1000; i++) {
+      files[`${repo}/packages/p${i}/package.json`] = JSON.stringify({ name: `p${i}`, version: "1.0.0", scripts });
+    }
+  }
+  using dir = tempDir("workspace-package-json-heaps", files);
+
+  // A child's maxRSS on Linux is never below the peak RSS of its parent, so this small script spawns the installs.
+  const measure = `
+    const [root] = process.argv.slice(1);
+    async function installPeakRSS(repo) {
+      const proc = Bun.spawn({
+        cmd: [process.execPath, "install"],
+        cwd: root + "/" + repo,
+        env: { ...process.env, BUN_INSTALL_CACHE_DIR: root + "/.cache" },
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) throw new Error(stderr);
+      return proc.resourceUsage().maxRSS;
+    }
+    const uniform = await installPeakRSS("uniform");
+    const varied = await installPeakRSS("varied");
+    console.log(JSON.stringify({ deltaMiB: (varied - uniform) / 1024 / 1024 }));
+  `;
+  await expectRssDeltaBelow(["-e", measure, String(dir)], { release: 48, debug: 48 });
+
+  for (const repo of Object.keys(repos)) {
+    const lockfile = Bun.JSONC.parse(await file(join(String(dir), repo, "bun.lock")).text()) as any;
+    expect(Object.keys(lockfile.workspaces)).toHaveLength(1001);
+  }
 });

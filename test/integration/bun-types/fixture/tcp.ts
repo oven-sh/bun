@@ -69,6 +69,17 @@ Bun.listen({
 });
 
 Bun.listen({
+  socket: {
+    data() {},
+  },
+  hostname: "::",
+  port: 0,
+  reusePort: true,
+  ipv6Only: true,
+  allowHalfOpen: true,
+});
+
+Bun.listen({
   data: { arg: "asdf" },
   socket: {
     data(socket) {

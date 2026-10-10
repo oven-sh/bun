@@ -35,12 +35,10 @@
 #include <JavaScriptCore/ScriptCallStackFactory.h>
 #include "headers.h"
 
-#include "CachedScript.h"
-
 namespace WebCore {
 using namespace JSC;
 
-void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* exception, CachedScript* cachedScript, bool fromModule, ExceptionDetails* exceptionDetails)
+void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* exception)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     RELEASE_ASSERT(vm.currentThreadIsHoldingAPILock());
@@ -64,23 +62,11 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSC::Exception* except
     //         return;
     // }
 
-    int lineNumber = 0;
-    int columnNumber = 0;
-    String exceptionSourceURL;
-
     Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
     RETURN_IF_EXCEPTION(scope, );
-
-    if (exceptionDetails) {
-        auto errorMessage = retrieveErrorMessage(*lexicalGlobalObject, vm, exception->value(), scope);
-        exceptionDetails->message = errorMessage;
-        exceptionDetails->lineNumber = lineNumber;
-        exceptionDetails->columnNumber = columnNumber;
-        exceptionDetails->sourceURL = exceptionSourceURL;
-    }
 }
 
-void reportException(JSGlobalObject* lexicalGlobalObject, JSValue exceptionValue, CachedScript* cachedScript, bool fromModule)
+void reportException(JSGlobalObject* lexicalGlobalObject, JSValue exceptionValue)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     RELEASE_ASSERT(vm.currentThreadIsHoldingAPILock());
@@ -91,24 +77,7 @@ void reportException(JSGlobalObject* lexicalGlobalObject, JSValue exceptionValue
             exception = JSC::Exception::create(lexicalGlobalObject->vm(), exceptionValue, JSC::Exception::StackCaptureAction::DoNotCaptureStack);
     }
 
-    reportException(lexicalGlobalObject, exception, cachedScript, fromModule);
-}
-
-String retrieveErrorMessage(JSGlobalObject& lexicalGlobalObject, VM& vm, JSValue exception, TopExceptionScope& topExceptionScope)
-{
-    // FIXME: <http://webkit.org/b/115087> Web Inspector: WebCore::reportException should not evaluate JavaScript handling exceptions
-    // If this is a custom exception object, call toString on it to try and get a nice string representation for the exception.
-    String errorMessage;
-    if (auto* error = dynamicDowncast<ErrorInstance>(exception))
-        errorMessage = error->sanitizedToString(&lexicalGlobalObject);
-    else
-        errorMessage = exception.toWTFString(&lexicalGlobalObject);
-
-    // We need to clear any new exception that may be thrown in the toString() call above.
-    // reportException() is not supposed to be making new exceptions.
-    (void)topExceptionScope.tryClearException();
-    vm.clearLastException();
-    return errorMessage;
+    reportException(lexicalGlobalObject, exception);
 }
 
 JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec, const String& message, const String& extra)

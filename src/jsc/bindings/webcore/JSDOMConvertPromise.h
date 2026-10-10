@@ -32,33 +32,6 @@
 
 namespace WebCore {
 
-template<typename T> struct Converter<IDLPromise<T>> : DefaultConverter<IDLPromise<T>> {
-    using ReturnType = RefPtr<DOMPromise>;
-
-    // https://webidl.spec.whatwg.org/#es-promise
-    template<typename ExceptionThrower = DefaultExceptionThrower>
-    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower = ExceptionThrower())
-    {
-        auto& vm = JSC::getVM(&lexicalGlobalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        auto* globalObject = dynamicDowncast<JSDOMGlobalObject>(&lexicalGlobalObject);
-        if (!globalObject)
-            return nullptr;
-
-        // 1. Let resolve be the original value of %Promise%.resolve.
-        // 2. Let promise be the result of calling resolve with %Promise% as the this value and V as the single argument value.
-        auto* promise = JSC::JSPromise::resolvedPromise(globalObject, value);
-        if (scope.exception()) [[unlikely]] {
-            exceptionThrower(lexicalGlobalObject, scope);
-            return nullptr;
-        }
-        ASSERT(promise);
-
-        // 3. Return the IDL promise type value that is a reference to the same object as promise.
-        return DOMPromise::create(*globalObject, *promise);
-    }
-};
-
 template<typename T> struct JSConverter<IDLPromise<T>> {
     static constexpr bool needsState = true;
     static constexpr bool needsGlobalObject = true;

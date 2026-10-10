@@ -249,7 +249,7 @@ declare module "bun" {
        */
       root: string;
       /**
-       * The prefix to serve this directory on.
+       * The URL path to mount this directory on. With `/docs`, `about.tsx` is served at `/docs/about`.
        * @default "/"
        */
       prefix?: string | undefined;

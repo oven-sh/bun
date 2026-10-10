@@ -1274,6 +1274,8 @@ impl NodeHTTPResponse {
         handle_ended_if_necessary(state, global_object)?;
 
         raw_response.write_continue();
+        // Node writes a 1xx to the socket inside the call. The request dispatch holds the cork, and a close drops what it holds.
+        raw_response.send_corked();
         Ok(JSValue::UNDEFINED)
     }
 
@@ -1321,6 +1323,7 @@ impl NodeHTTPResponse {
         };
         handle_ended_if_necessary(raw_response.state(), global_object)?;
         raw_response.write_informational(string_or_buffer.slice());
+        raw_response.send_corked();
         Ok(JSValue::UNDEFINED)
     }
 }

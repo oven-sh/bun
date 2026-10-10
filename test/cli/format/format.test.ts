@@ -3698,6 +3698,14 @@ describe.concurrent("what else is called format in the project", () => {
     expect(result.files).toEqual({ "a.js": formatted });
     expect(result.exitCode).toBe(0);
   });
+
+  // On macOS a directory that can be searched is executable for `which`.
+  test("nor beside package.json", async () => {
+    const files = { "package.json": "{}\n", "format/notes.txt": "x", "a.js": ugly };
+    const result = await format(files, [], { reads: ["a.js"] });
+    expect(result.files).toEqual({ "a.js": formatted });
+    expect(result.exitCode).toBe(0);
+  });
 });
 
 // What the formatter takes from the process that it runs in: the terminal, the arguments, the streams, the stack, a way to run a

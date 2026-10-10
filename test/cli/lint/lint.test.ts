@@ -5281,6 +5281,17 @@ describe.concurrent("a lint script in package.json", () => {
     },
   );
 
+  // git keeps a link to `/dev/zero` as it is. `bun run` stops at such a file, and finds no script in it.
+  test.skipIf(isWindows)("a package.json that is a link to a device has no script, and the one above is not asked", async () => {
+    using dir = tempDir("bun-lint-name", { ...files, "sub/eslint.config.js": files["eslint.config.js"], "sub/b.js": "debugger;\n" });
+    symlinkSync("/dev/null", join(String(dir), "sub/package.json"));
+    const cmd = [bunExe(), "lint", "-f", "unix"];
+    await using proc = spawn({ cmd, env, cwd: join(String(dir), "sub"), stdout: "pipe", stderr: "pipe" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toContain("b.js:1:1: ");
+    expect(exitCode).toBe(1);
+  });
+
   test("--cwd lint lint: the first is a directory", async () => {
     const { "package.json": __, ...rest } = files;
     using dir = tempDir("bun-lint-name", {
@@ -5299,6 +5310,19 @@ describe.concurrent("a lint script in package.json", () => {
     const { stdout, exitCode } = await lint({ ...rest, "lint/notes.txt": "x" }, ["-f", "unix", "a.js"]);
     expect(stdout).toContain("[Error/no-debugger]");
     expect(exitCode).toBe(1);
+  });
+
+  // On macOS a directory that can be searched is executable for `which`.
+  test("a directory of that name beside package.json does not, further down either", async () => {
+    const all = { ...files, "package.json": "{}", "lint/notes.txt": "x", "sub/b.js": "debugger;\n" };
+    const [here, below] = await Promise.all([
+      lint(all, ["-f", "unix", "a.js"]),
+      lint(all, ["-f", "unix", "b.js"], { cwd: "sub" }),
+    ]);
+    expect(here.stdout).toContain("[Error/no-debugger]");
+    expect(here.exitCode).toBe(1);
+    expect(below.stdout).toContain("[Error/no-debugger]");
+    expect(below.exitCode).toBe(1);
   });
 
   test.each(["lint.json", "lint/index.json"])("%s, which cannot be run, does not", async name => {

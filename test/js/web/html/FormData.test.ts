@@ -255,6 +255,13 @@ describe("FormData", () => {
     }
   });
 
+  it("formData() of a sliced Blob parses only its own range and leaves the parent intact", async () => {
+    const parent = new Blob(["a=1&b=2&c=3"]);
+    const slice = parent.slice(4, 7, "application/x-www-form-urlencoded");
+    expect([...(await slice.formData()).entries()]).toEqual([["b", "2"]]);
+    expect(await parent.text()).toBe("a=1&b=2&c=3");
+  });
+
   // RFC 2045 §5.1 / RFC 7231 §3.1.1.1: media type/subtype and parameter
   // attribute names are case-insensitive; the boundary VALUE is byte-exact.
   describe("Content-Type case-insensitivity", () => {

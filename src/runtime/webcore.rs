@@ -413,6 +413,6 @@ pub(crate) enum Lifetime {
     Clone,
     Transfer,
     Share,
-    /// When reading from a fifo like STDIN/STDERR
+    /// The bytes are a `Box<[u8]>` that the callee now owns (a finished file read).
     Temporary,
 }

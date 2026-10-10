@@ -332,6 +332,21 @@ for (let credentials of allCredentials) {
               expect(text).toBe("Hello Bun!");
             });
 
+            it("should download file via json(), bytes(), arrayBuffer() and formData()", async () => {
+              await using tmpfile = await tmp();
+              const file = bucket.file(tmpfile.name, options!);
+              const json = { hello: "Bun!", list: [1, 2, 3] };
+              const text = JSON.stringify(json);
+              await file.write(text);
+              expect(await file.json()).toEqual(json);
+              expect(Buffer.from(await file.bytes()).toString()).toBe(text);
+              expect(Buffer.from(await file.arrayBuffer()).toString()).toBe(text);
+
+              await file.write('--zz\r\nContent-Disposition: form-data; name="hello"\r\n\r\nBun!\r\n--zz--\r\n');
+              const typed = bucket.file(tmpfile.name, { ...options, type: "multipart/form-data; boundary=zz" });
+              expect([...(await typed.formData()).entries()]).toEqual([["hello", "Bun!"]]);
+            });
+
             it("should download range", async () => {
               await using tmpfile = await tmp();
               const file = bucket.file(tmpfile.name, options!);

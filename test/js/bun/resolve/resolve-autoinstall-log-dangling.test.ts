@@ -58,16 +58,19 @@ test("repeated failing auto-install resolves at varying stack depth don't read a
   expect(exitCode).toBe(0);
 });
 
-// Auto-install's `sleep_until` ticks the JS event loop while waiting for the
-// manifest response. JS that runs during that tick (module transpile) swaps
-// `PackageManager.log` (and the related resolver/linker/transpiler log
-// pointers) and restores them from `transpiler.log` — which the outer resolve
-// hadn't swapped — instead of the resolve's scoped log. The next `run_tasks`
+// Auto-install's `sleep_until` used to tick the JS event loop while it waited
+// for the manifest response. JS that ran during that tick (module transpile)
+// swapped `PackageManager.log` (and the related resolver/linker/transpiler log
+// pointers) and restored them from `transpiler.log`, which the outer resolve
+// had not swapped, instead of the resolve's scoped log. The next `run_tasks`
 // poll then wrote its 404 diagnostic into the VM's persistent log, which is
 // dumped to stderr at process exit. With enough interleaving across REPRL
 // iterations this escalated to `pm.log` pointing at dead stack memory (ASAN
 // stack-buffer-overflow).
-test("module transpile during auto-install's event-loop tick doesn't desync pm.log", async () => {
+//
+// The wait blocks the thread now, so the module loads queued before each
+// resolve run after the loop and never inside a resolve.
+test("module loads queued before a failing auto-install resolve run after it, and pm.log stays in sync", async () => {
   let hits = 0;
   await using server = Bun.serve({
     port: 0,
@@ -98,7 +101,8 @@ test("module transpile during auto-install's event-loop tick doesn't desync pm.l
         } catch {}
       }
 
-      console.log("ok " + n);
+      console.log("inside " + n);
+      setImmediate(() => console.log("after " + n));
     `,
   });
 
@@ -117,8 +121,7 @@ test("module transpile during auto-install's event-loop tick doesn't desync pm.l
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
-  expect(stdout).toMatch(/^ok \d+$/m);
-  expect(Number(stdout.trim().slice(3))).toBeGreaterThan(0);
+  expect(stdout).toBe("inside 0\nafter 40\n");
   expect(hits).toBeGreaterThan(0);
   expect(exitCode).toBe(0);
 });

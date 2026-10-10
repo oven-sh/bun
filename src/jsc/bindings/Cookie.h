@@ -37,6 +37,9 @@ class Cookie : public RefCounted<Cookie> {
 public:
     ~Cookie();
     static constexpr int64_t emptyExpiresAtValue = std::numeric_limits<int64_t>::min();
+    // RFC 6265bis section 5.6: a user agent ignores a cookie attribute whose value is longer than this.
+    static constexpr unsigned maxAttributeValueLength = 1024;
+
     static ExceptionOr<Ref<Cookie>> create(const String& name, const String& value,
         const String& domain, const String& path,
         int64_t expires, bool secure, CookieSameSite sameSite,
@@ -70,6 +73,9 @@ public:
         if (!isValidCookieDomain(domain)) {
             return Exception { TypeError, "Invalid cookie domain: contains invalid characters"_s };
         }
+        if (domain.length() > maxAttributeValueLength) {
+            return Exception { TypeError, "Invalid cookie domain: longer than 1024 characters, so browsers would ignore it"_s };
+        }
         m_domain = domain;
         return {};
     }
@@ -79,6 +85,9 @@ public:
     {
         if (!isValidCookiePath(path)) {
             return Exception { TypeError, "Invalid cookie path: contains invalid characters"_s };
+        }
+        if (path.length() > maxAttributeValueLength) {
+            return Exception { TypeError, "Invalid cookie path: longer than 1024 characters, so browsers would ignore it"_s };
         }
         m_path = path;
         return {};

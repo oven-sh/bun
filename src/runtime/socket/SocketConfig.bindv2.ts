@@ -1,5 +1,5 @@
-import * as b from "bindgenv2";
-import { SSLConfig } from "./SSLConfig.bindv2";
+import * as b from "../../codegen/bindgenv2/lib.ts";
+import { SSLConfig } from "./SSLConfig.bindv2.ts";
 
 export const BinaryType = b.enumeration("SocketConfigBinaryType", [
   ["arraybuffer", "ArrayBuffer"],

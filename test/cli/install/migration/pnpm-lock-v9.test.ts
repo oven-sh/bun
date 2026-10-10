@@ -1645,7 +1645,8 @@ ${variants}`;
       );
       expect(migrated).toContain(`"has-peer/peer": ["peer@file:vendor/peer", {}]`);
       expect(migrated).toContain(`"with/peer": ["peer@file:vendor/peer", {}]`);
-      expect(migrated).toContain(`"with/has-peer/peer": ["peer@file:vendor/peer", {}]`);
+      // the peer of with/has-peer dedupes against the sibling copy at with/peer
+      expect(migrated).not.toContain(`"with/has-peer/peer"`);
       expect(migrated).not.toContain(`"optionalPeers"`);
 
       const install = await run(packageDir, "install", "--frozen-lockfile");
@@ -2389,7 +2390,7 @@ snapshots:
 `;
 
     const goneRegistry = () => Bun.serve({ port: 0, fetch: () => new Response("gone", { status: 404 }) });
-    const project = (registry: Bun.Server, group: string) =>
+    const project = (registry: Bun.Server<undefined>, group: string) =>
       tempDir("pnpm-v9-manifest-gone", {
         "package.json": JSON.stringify({ name: "manifest-gone", [group]: { "no-deps": "1.0.1" } }),
         "bunfig.toml": `[install]\nregistry = "${registry.url.href}"\n`,

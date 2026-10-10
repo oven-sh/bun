@@ -84,6 +84,20 @@ pub enum ImportKind {
 // - packages/bun-types/bun.d.ts
 
 impl ImportKind {
+    /// With code splitting, whether an edge of this kind puts its target in a
+    /// chunk of its own that is loaded when the expression runs, rather than
+    /// in the importer's static closure. `require()` qualifies only when the
+    /// output runs in Bun, which loads the chunk synchronously through
+    /// `import.meta.require`.
+    #[inline]
+    pub fn can_be_lazy_chunk(self, target_is_bun: bool) -> bool {
+        match self {
+            ImportKind::Dynamic => true,
+            ImportKind::Require => target_is_bun,
+            _ => false,
+        }
+    }
+
     #[inline]
     pub fn label(self) -> &'static [u8] {
         match self {
@@ -123,6 +137,11 @@ impl ImportKind {
     #[inline]
     pub fn is_common_js(self) -> bool {
         matches!(self, Self::Require | Self::RequireResolve)
+    }
+
+    #[inline]
+    pub fn is_entry_point(self) -> bool {
+        matches!(self, Self::EntryPointRun | Self::EntryPointBuild)
     }
 
     pub fn is_from_css(self) -> bool {
@@ -580,6 +599,25 @@ impl Default for Loc {
 impl Loc {
     pub const EMPTY: Loc = Loc { start: -1 };
 
+    /// Whether `start` is not a source offset but an index, marked by bit 30. Only the parse for
+    /// the type checker creates such a location (`bun_js_parser::sema::notes`).
+    #[inline]
+    pub const fn is_index(self) -> bool {
+        self.start >= 1 << 30
+    }
+
+    #[inline]
+    pub const fn from_index(index: usize) -> Loc {
+        Loc {
+            start: index as i32 | 1 << 30,
+        }
+    }
+
+    #[inline]
+    pub const fn index(self) -> usize {
+        (self.start & !(1 << 30)) as usize
+    }
+
     #[inline]
     pub fn to_nullable(self) -> Option<Loc> {
         if self.start == -1 { None } else { Some(self) }
@@ -617,15 +655,16 @@ pub struct Location {
     // - 4-byte fields last: i32
     // This eliminates padding between differently-sized fields.
     //
-    // `file` / `line_text` are `Cow` (not `Str`) because
+    // `file` / `namespace` / `line_text` are `Cow` (not `Str`) because
     // `Location::clone()` must deep-dupe them so a
     // `BuildMessage`/`ResolveMessage` that outlives the
-    // `Source.contents` it borrowed from doesn't read poisoned memory. The
+    // `Source` it borrowed from doesn't read poisoned memory. The
     // borrowed arm covers the common case where the slice points into
-    // arena-owned source text.
+    // the bundle's arena.
     pub file: Cow<'static, [u8]>,
-    pub namespace: Str,
-    /// Text on the line, avoiding the need to refetch the source code
+    pub namespace: Cow<'static, [u8]>,
+    /// Text on the line, avoiding the need to refetch the source code. It may be prefixed by the
+    /// preceding lines, which are printed too.
     pub line_text: Option<Cow<'static, [u8]>>,
     /// Number of bytes this location should highlight.
     /// 0 to just point at a single character
@@ -643,9 +682,9 @@ pub struct Location {
     pub column: i32,
 }
 
-// NOT `#[derive(Clone)]`. `file` / `line_text` are
+// NOT `#[derive(Clone)]`. `file` / `namespace` / `line_text` are
 // `Cow<'static, [u8]>` whose `Borrowed` arm may carry a lifetime-erased view
-// into `Source.contents` (see `init_or_null`, `css_parser.rs`, `error.rs`,
+// into a `Source` (see `init_or_null`, `css_parser.rs`, `error.rs`,
 // `JSBundler.rs`). The derived `Cow::clone` would re-borrow that pointer, so a
 // `BuildMessage` cloned via `Option<Location>::clone()` / `Vec<Data>::clone()`
 // could outlive the source buffer and read poisoned memory. Instead,
@@ -654,7 +693,7 @@ impl Clone for Location {
     fn clone(&self) -> Self {
         Location {
             file: Cow::Owned(self.file.to_vec()),
-            namespace: self.namespace,
+            namespace: Cow::Owned(self.namespace.to_vec()),
             line: self.line,
             column: self.column,
             length: self.length,
@@ -668,7 +707,7 @@ impl Default for Location {
     fn default() -> Self {
         Location {
             file: Cow::Borrowed(b""),
-            namespace: b"file",
+            namespace: Cow::Borrowed(b"file"),
             line_text: None,
             length: 0,
             offset: 0,
@@ -691,7 +730,7 @@ impl Location {
 
     pub fn count(&self, builder: &mut StringBuilder) {
         builder.count(self.file.as_ref().into_str());
-        builder.count(self.namespace);
+        builder.count(self.namespace.as_ref().into_str());
         if let Some(text) = &self.line_text {
             builder.count(text.as_ref().into_str());
         }
@@ -713,7 +752,7 @@ impl Location {
         // single-buffer packing.
         Location {
             file: Cow::Owned(self.file.to_vec()),
-            namespace: self.namespace,
+            namespace: Cow::Owned(self.namespace.to_vec()),
             line: self.line,
             column: self.column,
             length: self.length,
@@ -734,7 +773,7 @@ impl Location {
     ) -> Location {
         Location {
             file: Cow::Borrowed(file),
-            namespace,
+            namespace: Cow::Borrowed(namespace),
             line,
             column,
             length: length as usize,
@@ -767,7 +806,7 @@ impl Location {
             if r.is_empty() {
                 return Some(Location {
                     file: Cow::Borrowed(source.path.text),
-                    namespace: source.path.namespace,
+                    namespace: Cow::Borrowed(source.path.namespace),
                     line: -1,
                     column: -1,
                     length: 0,
@@ -775,6 +814,7 @@ impl Location {
                     offset: 0,
                 });
             }
+            debug_assert!(!r.loc.is_index());
             let data = match tracker {
                 Some(tracker) => tracker.error_position(source, r.loc),
                 None => source.init_error_position(r.loc),
@@ -802,7 +842,7 @@ impl Location {
 
             return Some(Location {
                 file: Cow::Borrowed(source.path.text),
-                namespace: source.path.namespace,
+                namespace: Cow::Borrowed(source.path.namespace),
                 line: usize2loc(data.line_count).start,
                 column: usize2loc(data.column_count).start,
                 length: if r.len > -1 {
@@ -961,9 +1001,31 @@ impl Data {
             if let Some(line_text_) = location.line_text.as_deref() {
                 let line_text_right_trimmed = bun_core::trim_right(line_text_, b" \r\n\t");
                 let line_text = bun_core::trim_left(line_text_right_trimmed, b"\n\r");
+                // The creator of the location may have included the lines preceding its own line.
+                let mut lines_before: Vec<&[u8]> =
+                    bun_core::strings::split(line_text, b"\n").collect();
+                let line_text = lines_before.pop().unwrap_or_default();
                 if location.column > 0 && !line_text.is_empty() {
                     let mut line_offset_for_second_line: usize =
                         usize::try_from(location.column - 1).expect("int cast");
+                    let gutter = bun_core::fmt::digit_count(location.line);
+                    for (line, text) in
+                        (location.line - lines_before.len() as i32..).zip(lines_before)
+                    {
+                        pretty_write!("<d>{:>1$} | <r>", line, gutter)?;
+                        writeln!(
+                            to,
+                            "{}",
+                            bun_core::fmt::fmt_javascript(
+                                text,
+                                bun_core::fmt::HighlighterOptions {
+                                    enable_colors: ENABLE_ANSI_COLORS,
+                                    redact_sensitive_information,
+                                    ..Default::default()
+                                },
+                            )
+                        )?;
+                    }
 
                     if location.line > -1 {
                         let bold = matches!(kind, Kind::Err | Kind::Warn);
@@ -1208,6 +1270,22 @@ impl Msg {
 pub enum Metadata {
     Build,
     Resolve(MetadataResolve),
+    /// An error of TypeScript's, by its code: `TS2322`.
+    TypeScript {
+        code: u32,
+        kind: TypeScriptKind,
+    },
+}
+
+/// How TypeScript reports an error, which decides what suppresses it.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum TypeScriptKind {
+    /// `parseErrorAtRange`
+    Parse,
+    /// `grammarErrorOnNode`
+    Grammar,
+    /// `Checker.error`
+    Checker,
 }
 
 #[derive(Copy, Clone)]
@@ -2217,32 +2295,25 @@ pub struct AddErrorOptions<'a> {
 /// `AddErrorOptions`.
 pub type ErrorOpts<'a> = AddErrorOptions<'a>;
 
-/// Call-site helper: rewrites `<red>..<r>` markup
-/// in the *literal* format string via `bun_core::pretty_fmt!` (compile-time),
-/// then formats. Expands to a `fmt::Arguments` so it drops in wherever a
-/// pre-built `fmt::Arguments` was previously passed to `alloc_print`.
+/// `alloc_print!(fmt, args..)` — markup-aware form of [`alloc_print`]: rewrites
+/// `<red>..<r>` markup in the *literal* format string via `bun_core::pretty_fmt!`
+/// (compile-time), then formats into an owned buffer. Message text with markup
+/// must go through this; a raw `format_args!` passed to the function form
+/// below keeps the tags verbatim.
 ///
-/// Callers that build messages with markup must use this (or `alloc_print!`) so
-/// the tags are converted/stripped; passing a raw `format_args!` through the
-/// function form below leaves the markup verbatim.
-#[macro_export]
-macro_rules! pretty_format_args {
-    ($fmt:literal $(, $arg:expr)* $(,)?) => {{
-        if ::bun_core::Output::ENABLE_ANSI_COLORS_STDERR
-            .load(::core::sync::atomic::Ordering::Relaxed)
-        {
-            ::core::format_args!(::bun_core::pretty_fmt!($fmt, true) $(, $arg)*)
-        } else {
-            ::core::format_args!(::bun_core::pretty_fmt!($fmt, false) $(, $arg)*)
-        }
-    }};
-}
-
-/// `alloc_print!(fmt, args..)` — owned-buffer form of `pretty_format_args!`.
+/// Each branch holds the whole call: a `format_args!` in block-tail position
+/// is dropped with the block (E0716), so it cannot be handed out of an
+/// `if`/`else`. Only one branch executes, so each `$arg` evaluates once.
 #[macro_export]
 macro_rules! alloc_print {
     ($fmt:literal $(, $arg:expr)* $(,)?) => {
-        $crate::alloc_print($crate::pretty_format_args!($fmt $(, $arg)*))
+        if ::bun_core::Output::ENABLE_ANSI_COLORS_STDERR
+            .load(::core::sync::atomic::Ordering::Relaxed)
+        {
+            $crate::alloc_print(::core::format_args!(::bun_core::pretty_fmt!($fmt, true) $(, $arg)*))
+        } else {
+            $crate::alloc_print(::core::format_args!(::bun_core::pretty_fmt!($fmt, false) $(, $arg)*))
+        }
     };
 }
 
@@ -2301,8 +2372,8 @@ pub fn alloc_print(args: fmt::Arguments<'_>) -> Cow<'static, [u8]> {
     // Markup conversion happens over the *format-string literal only*;
     // interpolated values are never inspected for `<..>` markup.
     // With `fmt::Arguments` the literal is opaque, so callers that need markup
-    // conversion must go through `pretty_format_args!` / `alloc_print!` above
-    // (which do the rewrite at the macro call site). The function form here
+    // conversion must go through `alloc_print!` above (which does the rewrite
+    // at the macro call site). The function form here
     // renders `args` verbatim: do NOT run a runtime markup pass over the
     // rendered bytes, or user-supplied argument values containing `<`
     // (`<stdin>`, `Array<string>`, JSX/HTML snippets) get mangled.
@@ -2856,6 +2927,7 @@ pub mod server_component_boundary;
 pub mod stmt;
 pub mod symbol;
 pub mod ts;
+pub mod ts_syntax;
 pub mod use_directive;
 
 pub mod lexer_log;

@@ -253,13 +253,6 @@ pub use bun_css_derive::{DefineEnumProperty, Parse, ToCss};
 pub trait EnumProperty: Sized + Copy + Into<&'static str> {
     fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self>;
 
-    fn eql(lhs: &Self, rhs: &Self) -> bool
-    where
-        Self: PartialEq,
-    {
-        lhs == rhs
-    }
-
     fn parse(input: &mut Parser) -> CssResult<Self> {
         enum_property_util::parse(input)
     }
@@ -267,20 +260,6 @@ pub trait EnumProperty: Sized + Copy + Into<&'static str> {
     fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         let s: &'static str = (*self).into();
         dest.write_str(s.as_bytes())
-    }
-
-    #[inline]
-    fn deep_clone(&self) -> Self {
-        *self
-    }
-
-    fn hash(&self, hasher: &mut bun_wyhash::Wyhash)
-    where
-        Self: Into<u32>,
-    {
-        // The hash value never leaves the process, so a fixed u32 tag width is fine.
-        let tag: u32 = (*self).into();
-        hasher.update(&tag.to_ne_bytes());
     }
 }
 
@@ -2322,7 +2301,12 @@ pub struct StyleSheet<AtRule> {
     pub sources: Vec<Box<[u8]>>,
     pub source_map_urls: Vec<Option<Box<[u8]>>>,
     pub license_comments: Vec<&'static [u8]>, // TODO: lifetime — arena
-    pub options: ParserOptions<'static>,      // TODO: lifetime
+    /// [`ParserOptions::filename`] of the parse.
+    pub filename: &'static [u8], // TODO: lifetime
+    /// [`ParserOptions::css_modules`] of the parse.
+    pub css_modules: Option<css_modules::Config>,
+    /// [`ParserOptions::flags`] of the parse.
+    pub flags: ParserFlags,
     pub layer_names: Vec<LayerName>,
 
     /// Used when css modules is enabled. Maps `local name string` -> `Ref`.
@@ -2341,7 +2325,9 @@ impl<AtRule> StyleSheet<AtRule> {
             sources: Vec::new(),
             source_map_urls: Vec::new(),
             license_comments: Vec::new(),
-            options: ParserOptions::default(None),
+            filename: b"",
+            css_modules: None,
+            flags: ParserFlags::default(),
             layer_names: Vec::new(),
             local_scope: LocalScope::default(),
             local_properties: LocalPropertyUsage::default(),
@@ -2378,7 +2364,7 @@ mod stylesheet_impl {
             // here and create a lookup table by name.
             let custom_media: Option<
                 ArrayHashMap<Box<[u8]>, css_rules::custom_media::CustomMediaRule>,
-            > = if self.options.flags.contains(ParserFlags::CUSTOM_MEDIA)
+            > = if self.flags.contains(ParserFlags::CUSTOM_MEDIA)
                 && options
                     .targets
                     .should_compile_same(compat::Feature::CustomMediaQueries)
@@ -2403,7 +2389,7 @@ mod stylesheet_impl {
                 handler_context: ctx,
                 unused_symbols: &options.unused_symbols,
                 custom_media,
-                css_modules: self.options.css_modules.is_some(),
+                css_modules: self.css_modules.is_some(),
                 extra,
                 err: None,
                 selector_expansion_multiplier: 1,
@@ -2422,7 +2408,7 @@ mod stylesheet_impl {
                     .sources
                     .get(e.loc.source_index as usize)
                     .map(|source| &**source)
-                    .unwrap_or(self.options.filename);
+                    .unwrap_or(self.filename);
                 let minify_error = Err {
                     kind: e.kind,
                     loc: Some(ErrorLocation {
@@ -2482,7 +2468,7 @@ mod stylesheet_impl {
                 printer.newline()?;
             }
 
-            if let Some(config) = &self.options.css_modules {
+            if let Some(config) = &self.css_modules {
                 let mut references = CssModuleReferences::default();
                 let references_ptr: *mut CssModuleReferences<'_> = &raw mut references;
                 // SAFETY: `'bump`-erasure — `Printer<'a>` stores `CssModule<'a>` which
@@ -2541,7 +2527,7 @@ mod stylesheet_impl {
         pub fn parse(
             arena: &'static Bump,
             code: &[u8],
-            options: ParserOptions<'static>,
+            options: ParserOptions<'_>,
             import_records: Option<&mut Vec<ImportRecord>>,
             source_index: SrcIndex,
         ) -> Maybe<(StyleSheet<DefaultAtRule>, StylesheetExtra), Err<ParserError>> {
@@ -2566,13 +2552,10 @@ mod stylesheet_impl {
         }
 
         /// Parse a style sheet from a string.
-        // TODO: `ParserOptions<'static>` matches the `StyleSheet.options`
-        // field's `'static` erasure; re-threads to `<'bump>` alongside the rest of
-        // the crate.
         pub(crate) fn parse_with<P: CustomAtRuleParser<AtRule = AtRule>>(
             arena: &'static Bump,
             code: &[u8],
-            options: ParserOptions<'static>,
+            options: ParserOptions<'_>,
             at_rule_parser: &mut P,
             import_records: Option<core::ptr::NonNull<Vec<ImportRecord>>>,
             source_index: SrcIndex,
@@ -2660,7 +2643,9 @@ mod stylesheet_impl {
                     sources,
                     source_map_urls,
                     license_comments,
-                    options,
+                    filename: options.filename,
+                    css_modules: options.css_modules,
+                    flags: options.flags,
                     layer_names,
                     local_scope: parser_extra.local_scope,
                     local_properties,
@@ -2746,27 +2731,17 @@ mod stylesheet_impl {
         pub fn parse_bundler(
             arena: &'static Bump,
             code: &[u8],
-            options: ParserOptions<'static>,
+            options: ParserOptions<'_>,
             import_records: &mut Vec<ImportRecord>,
             source_index: SrcIndex,
         ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
             // `import_records` is shared by both `BundlerAtRuleParser` and the
-            // inner `Parser`, and `options` is both borrowed by the at-rule
-            // parser and passed by value:
-            // - `import_records`: derive a single raw `NonNull` from the unique
-            //   borrow; both the at-rule parser and `Parser::new` store copies of
-            //   that raw pointer. Neither holds a
-            //   long-lived `&mut`, so interleaved writes from `on_import_rule` and
-            //   `add_import_record`/`state`/`reset` each create a fresh short-lived
-            //   `&mut` from the shared SharedRW provenance — sound under SB.
-            // - `options`: bitwise-duplicate via `ptr::read` and wrap the
-            //   original in `ManuallyDrop` so
-            //   only the moved copy drops — `ParserOptions` transitively owns a
-            //   `SmallList` (via `css_modules::Config::pattern`) which has a real
-            //   `Drop`, so both copies must not run their destructors.
-            let options = core::mem::ManuallyDrop::new(options);
-            // SAFETY: original is `ManuallyDrop`; only `options_for_parse` drops.
-            let options_for_parse = unsafe { core::ptr::read(&raw const *options) };
+            // inner `Parser`: derive a single raw `NonNull` from the unique
+            // borrow; both the at-rule parser and `Parser::new` store copies of
+            // that raw pointer. Neither holds a
+            // long-lived `&mut`, so interleaved writes from `on_import_rule` and
+            // `add_import_record`/`state`/`reset` each create a fresh short-lived
+            // `&mut` from the shared SharedRW provenance — sound under SB.
             let import_records_ptr = core::ptr::NonNull::from(import_records);
             let mut at_rule_parser = BundlerAtRuleParser {
                 arena,
@@ -2779,7 +2754,7 @@ mod stylesheet_impl {
             Self::parse_with(
                 arena,
                 code,
-                options_for_parse,
+                options,
                 &mut at_rule_parser,
                 Some(import_records_ptr),
                 source_index,
@@ -2922,10 +2897,9 @@ pub struct ParserOptions<'a> {
     /// Stored as a raw `NonNull<Log>` so `warn(&self)`
     /// can soundly write through it. Deriving `&mut Log` from a `&self`-reachable
     /// `&'a mut Log` (the previous representation) is UB under Stacked Borrows
-    /// — see PORTING.md §Forbidden patterns. The caller that constructs
-    /// `ParserOptions` guarantees the pointee outlives `'a` and is not aliased
-    /// for the duration of parsing.
-    pub logger: Option<core::ptr::NonNull<Log>>,
+    /// — see PORTING.md §Forbidden patterns. Only `default` sets it, from a
+    /// `&'a mut Log`.
+    logger: Option<core::ptr::NonNull<Log>>,
     /// Feature flags to enable.
     pub flags: ParserFlags,
     _lt: core::marker::PhantomData<&'a mut Log>,
@@ -5286,11 +5260,15 @@ impl Token {
                 writer.write_all(b"@")?;
                 serializer::serialize_identifier(v, writer)
             }
-            Token::UnrestrictedHash(v) | Token::IdHash(v) => {
+            Token::UnrestrictedHash(v) => {
                 writer.write_all(b"#")?;
                 serializer::serialize_name(v, writer)
             }
-            Token::QuotedString(x) => serializer::serialize_name(x, writer),
+            Token::IdHash(v) => {
+                writer.write_all(b"#")?;
+                serializer::serialize_identifier(v, writer)
+            }
+            Token::QuotedString(x) => serializer::serialize_string(x, writer),
             Token::UnquotedUrl(x) => {
                 writer.write_all(b"url(")?;
                 serializer::serialize_unquoted_url(x, writer)?;
@@ -5365,101 +5343,24 @@ impl Token {
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
-            Token::Ident(value) => dest.serialize_identifier(value),
-            Token::AtKeyword(value) => {
-                dest.write_str("@")?;
-                dest.serialize_identifier(value)
-            }
-            Token::UnrestrictedHash(value) => {
-                dest.write_str("#")?;
-                dest.serialize_name(value)
-            }
-            Token::IdHash(value) => {
-                dest.write_str("#")?;
-                dest.serialize_identifier(value)
-            }
-            Token::QuotedString(value) => dest.serialize_string(value),
-            Token::UnquotedUrl(value) => {
-                dest.write_str("url(")?;
-                serializer::serialize_unquoted_url(value, dest)
-                    .map_err(|_| dest.add_fmt_error())?;
-                dest.write_str(")")
-            }
-            Token::Delim(value) => {
-                debug_assert!(*value <= 0x7F);
-                dest.write_char(*value as u8)
-            }
-            Token::Number(num) => {
-                serializer::write_numeric(num.value, num.int_value, num.has_sign, dest)
-                    .map_err(|_| dest.add_fmt_error())
-            }
-            Token::Percentage {
-                unit_value,
-                int_value,
-                has_sign,
-            } => {
-                serializer::write_numeric(*unit_value * 100.0, *int_value, *has_sign, dest)
-                    .map_err(|_| dest.add_fmt_error())?;
-                dest.write_str("%")
-            }
-            Token::Dimension(dim) => {
-                serializer::write_numeric(dim.num.value, dim.num.int_value, dim.num.has_sign, dest)
-                    .map_err(|_| dest.add_fmt_error())?;
-                let unit = dim.unit;
-                if unit == b"e"
-                    || unit == b"E"
-                    || unit.starts_with(b"e-")
-                    || unit.starts_with(b"E-")
-                {
-                    dest.write_str("\\65 ")?;
-                    dest.serialize_name(&unit[1..])
-                } else {
-                    dest.serialize_identifier(unit)
-                }
-            }
+            // Raw payloads can hold newlines, which only `write_bytes` counts.
             Token::Whitespace(content) => dest.write_bytes(content),
             Token::Comment(content) => {
                 dest.write_str("/*")?;
                 dest.write_bytes(content)?;
                 dest.write_str("*/")
             }
-            Token::Colon => dest.write_str(":"),
-            Token::Semicolon => dest.write_str(";"),
-            Token::Comma => dest.write_str(","),
-            Token::IncludeMatch => dest.write_str("~="),
-            Token::DashMatch => dest.write_str("|="),
-            Token::PrefixMatch => dest.write_str("^="),
-            Token::SuffixMatch => dest.write_str("$="),
-            Token::SubstringMatch => dest.write_str("*="),
-            Token::Cdo => dest.write_str("<!--"),
-            Token::Cdc => dest.write_str("-->"),
-            Token::Function(name) => {
-                dest.serialize_identifier(name)?;
-                dest.write_str("(")
-            }
-            Token::OpenParen => dest.write_str("("),
-            Token::OpenSquare => dest.write_str("["),
-            Token::OpenCurly => dest.write_str("{"),
             Token::BadUrl(contents) => {
                 dest.write_str("url(")?;
                 dest.write_bytes(contents)?;
                 dest.write_char(b')')
             }
-            Token::BadString(value) => {
-                dest.write_char(b'"')?;
-                let mut sw = serializer::CssStringWriter::new(dest);
-                sw.write_str(value).map_err(|_| dest.add_fmt_error())
-            }
-            Token::CloseParen => dest.write_str(")"),
-            Token::CloseSquare => dest.write_str("]"),
-            Token::CloseCurly => dest.write_str("}"),
+            _ => self
+                .to_css_generic(dest)
+                .map_err(|_| PrintErr::CSSPrintError),
         }
     }
 }
-
-// `impl Display for Token` lives at crate root (lib.rs) — minimal rendering
-// for error messages only. The CSS-serialization-correct form is
-// `Token::to_css_generic` above.
 
 /// Byte-writer trait for `serializer` and `to_css_generic`.
 /// Aliased to the canonical `bun_io::Write`; the associated

@@ -43,7 +43,7 @@ function fakeServer(serverOpts: tls.TlsOptions): tls.Server {
     let buf = Buffer.alloc(0);
     let seen = 0;
     socket.on("data", chunk => {
-      buf = Buffer.concat([buf, chunk]);
+      buf = Buffer.concat([buf, chunk as Buffer]);
       let consumed: number;
       while ((consumed = consumeRespArray(buf)) > 0) {
         buf = buf.subarray(consumed);

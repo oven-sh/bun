@@ -246,6 +246,21 @@ impl Environment {
         id
     }
 
+    /// Name the temporary `#t<declaration id>` so it survives as a variable.
+    pub fn promote_temporary(&mut self, identifier_id: IdentifierId) {
+        self.promote_temporary_with_kind(identifier_id, b't');
+    }
+
+    /// `#T<declaration id>`: a JSX tag must start with a capital letter.
+    pub fn promote_temporary_jsx_tag(&mut self, identifier_id: IdentifierId) {
+        self.promote_temporary_with_kind(identifier_id, b'T');
+    }
+
+    fn promote_temporary_with_kind(&mut self, identifier_id: IdentifierId, kind: u8) {
+        let identifier = &mut self.identifiers[identifier_id.0 as usize];
+        identifier.name = Some(IdentifierName::promoted(kind, identifier.declaration_id.0));
+    }
+
     /// Allocate a new ReactiveScope in the arena, returns its ScopeId.
     pub fn next_scope_id(&mut self) -> ScopeId {
         let id = ScopeId(self.next_scope_id_counter);
@@ -307,10 +322,6 @@ impl Environment {
     /// which aborts the current operation.
     pub fn has_invariant_errors(&self) -> bool {
         self.errors.has_invariant_errors()
-    }
-
-    pub fn errors(&self) -> &CompilerError {
-        &self.errors
     }
 
     pub fn take_errors(&mut self) -> CompilerError {
@@ -678,11 +689,6 @@ impl Environment {
     /// property resolution fallback when a property name looks like a hook.
     pub fn get_custom_hook_type_opt(&mut self) -> Option<Global> {
         Some(self.get_custom_hook_type())
-    }
-
-    /// Get a reference to the shapes registry.
-    pub fn shapes(&self) -> &ShapeRegistry {
-        &self.shapes
     }
 
     /// Get a reference to the globals registry.

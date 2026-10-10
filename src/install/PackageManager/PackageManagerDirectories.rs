@@ -180,7 +180,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
             }
         };
 
-    let mut tmpbuf = PathBuffer::uninit();
+    let mut tmpbuf = bun_paths::path_buffer_pool::get();
     let tmpname =
         FileSystem::tmpname(b"hm", &mut tmpbuf, bun_core::fast_random()).expect("unreachable");
 
@@ -280,7 +280,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
     if let Some(timer) = timer.as_mut() {
         let elapsed = timer.read();
         if elapsed > bun_core::time::NS_PER_MS * 100 {
-            let mut path_buf = PathBuffer::uninit();
+            let mut path_buf = bun_paths::path_buffer_pool::get();
             let cache_dir_path: &[u8] = match sys::get_fd_path(cache_directory_fd, &mut path_buf) {
                 Ok(p) => &p[..],
                 Err(_) => b"it",
@@ -293,7 +293,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
     }
 
     #[cfg(windows)]
-    let mut buf = PathBuffer::uninit();
+    let mut buf = bun_paths::path_buffer_pool::get();
     #[cfg(windows)]
     let temp_dir_path = match sys::get_fd_path_z(Fd::from_std_dir(&tempdir), &mut buf) {
         Ok(p) => p,
@@ -762,7 +762,7 @@ pub fn is_package_in_cache_at(cache_dir: Fd, folder_path: &ZStr, tag: Resolution
         ResolutionTag::Git => b".bun-tag",
         _ => return sys::directory_exists_at(cache_dir, folder_path).unwrap_or(false),
     };
-    let mut buf = PathBuffer::uninit();
+    let mut buf = bun_paths::path_buffer_pool::get();
     let marker_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
         &mut buf.0,
         &[folder_path.as_bytes(), marker],
@@ -782,7 +782,7 @@ pub fn is_package_in_cache(
 
 pub fn setup_global_dir(manager: &mut PackageManager, ctx: &Command::Context) -> Result<(), Error> {
     manager.options.global_bin_dir = options::open_global_bin_dir(ctx.install.as_deref())?;
-    let mut out_buffer = PathBuffer::uninit();
+    let mut out_buffer = bun_paths::path_buffer_pool::get();
     let result = sys::get_fd_path_z(manager.options.global_bin_dir, &mut out_buffer)?;
     let path = FileSystem::instance()
         .dirname_store()
@@ -830,7 +830,7 @@ pub fn global_link_dir(this: &mut PackageManager) -> Fd {
     let link_fd = link_dir.fd();
     this.global_dir = Some(global_dir);
     this.global_link_dir = Some(link_dir);
-    let mut buf = PathBuffer::uninit();
+    let mut buf = bun_paths::path_buffer_pool::get();
     let path_ = match sys::get_fd_path(link_fd, &mut buf) {
         Ok(p) => p,
         Err(err) => {
@@ -861,7 +861,7 @@ pub fn path_for_cached_npm_path<'a>(
     package_name: &[u8],
     version: Semver::Version,
 ) -> Result<&'a mut [u8], Error> {
-    let mut cache_path_buf = PathBuffer::uninit();
+    let mut cache_path_buf = bun_paths::path_buffer_pool::get();
 
     let cache_path = cached_npm_package_folder_name_print(
         this,
@@ -882,7 +882,7 @@ pub fn path_for_cached_npm_path<'a>(
     #[cfg(windows)]
     {
         let _ = cache_dir;
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         let cache_path = ZStr::from_buf(&cache_path_buf, cache_path_len);
         let joined = path::resolve_path::join_abs_string_buf_z::<path::platform::Windows>(
             &this.cache_directory_path,

@@ -722,6 +722,8 @@ impl Expr {
 pub enum EFlags {
     None,
     TsDecorator,
+    /// Between the `?` and `:` of a conditional, where an arrow return type is ambiguous.
+    AfterQuestionAndBeforeColon,
 }
 
 // `is_missing` lives in the `init`/`allocate` impl block below.
@@ -2012,6 +2014,7 @@ impl Data {
                     optional_chain: el.optional_chain,
                     can_be_removed_if_unused: el.can_be_removed_if_unused,
                     call_can_be_unwrapped_if_unused: el.call_can_be_unwrapped_if_unused,
+                    is_import_property_use: el.is_import_property_use,
                 });
                 Ok(Data::EDot(StoreRef::from_bump(item)))
             }
@@ -2020,6 +2023,7 @@ impl Data {
                     target: el.target.deep_clone_no_detach(bump)?,
                     index: el.index.deep_clone_no_detach(bump)?,
                     optional_chain: el.optional_chain,
+                    is_import_property_use: el.is_import_property_use,
                 });
                 Ok(Data::EIndex(StoreRef::from_bump(item)))
             }
@@ -2054,6 +2058,7 @@ impl Data {
                     key_prop_index: el.key_prop_index,
                     flags: el.flags,
                     close_tag_loc: el.close_tag_loc,
+                    syntax: el.syntax,
                 });
                 Ok(Data::EJsxElement(StoreRef::from_bump(item)))
             }
@@ -2123,6 +2128,7 @@ impl Data {
                     expr: el.expr.deep_clone_no_detach(bump)?,
                     options: el.options.deep_clone_no_detach(bump)?,
                     import_record_index: el.import_record_index,
+                    namespace_ref: el.namespace_ref,
                 });
                 Ok(Data::EImport(StoreRef::from_bump(item)))
             }
@@ -2166,6 +2172,22 @@ impl Data {
         H: bun_core::Hasher + ?Sized,
         S: crate::base::SymbolTable + ?Sized,
     {
+        self.write_to_hasher_with_check(hasher, symbol_table, bun_core::StackCheck::init());
+    }
+
+    fn write_to_hasher_with_check<H, S>(
+        &self,
+        hasher: &mut H,
+        symbol_table: &mut S,
+        stack_check: bun_core::StackCheck,
+    ) where
+        H: bun_core::Hasher + ?Sized,
+        S: crate::base::SymbolTable + ?Sized,
+    {
+        if !stack_check.is_safe_to_recurse() {
+            return;
+        }
+
         // Local mirror of `bun.writeAnyToHasher` for padding-free POD —
         // `bun_core::write_any_to_hasher` is bound by `AsBytes` (ints only) and
         // we cannot extend that trait from this crate-file scope. `NoUninit`
@@ -2195,18 +2217,42 @@ impl Data {
                 raw(hasher, e.was_originally_macro);
                 raw(hasher, e.items.len_u32());
                 for item in e.items.slice() {
-                    item.data.write_to_hasher(hasher, symbol_table);
+                    item.data
+                        .write_to_hasher_with_check(hasher, symbol_table, stack_check);
                 }
             }
             Data::EUnary(e) => {
                 raw(hasher, e.flags.bits());
                 raw(hasher, e.op as u8);
-                e.value.data.write_to_hasher(hasher, symbol_table);
+                e.value
+                    .data
+                    .write_to_hasher_with_check(hasher, symbol_table, stack_check);
             }
             Data::EBinary(e) => {
-                raw(hasher, e.op as u8);
-                e.left.data.write_to_hasher(hasher, symbol_table);
-                e.right.data.write_to_hasher(hasher, symbol_table);
+                // Not recursive on the left: the parser builds `a + b + …` in a loop, to any depth.
+                let mut node = *e;
+                let mut parents: Vec<StoreRef<E::Binary>> = Vec::new();
+                loop {
+                    raw(hasher, node.op as u8);
+                    let Data::EBinary(left) = node.left.data else {
+                        break;
+                    };
+                    raw(hasher, node.left.data.tag() as u8);
+                    parents.push(node);
+                    node = left;
+                }
+                node.left
+                    .data
+                    .write_to_hasher_with_check(hasher, symbol_table, stack_check);
+                node.right
+                    .data
+                    .write_to_hasher_with_check(hasher, symbol_table, stack_check);
+                while let Some(parent) = parents.pop() {
+                    parent
+                        .right
+                        .data
+                        .write_to_hasher_with_check(hasher, symbol_table, stack_check);
+                }
             }
             Data::EClass(_) => {}
             Data::ENew(_) | Data::ECall(_) => {}
@@ -2234,13 +2280,19 @@ impl Data {
                 // the prior raw-byte reinterpretation produced.
                 raw(hasher, e.optional_chain.map_or(2u8, |c| c as u8));
                 raw(hasher, e.name.len());
-                e.target.data.write_to_hasher(hasher, symbol_table);
+                e.target
+                    .data
+                    .write_to_hasher_with_check(hasher, symbol_table, stack_check);
                 hasher.update(&e.name);
             }
             Data::EIndex(e) => {
                 raw(hasher, e.optional_chain.map_or(2u8, |c| c as u8));
-                e.target.data.write_to_hasher(hasher, symbol_table);
-                e.index.data.write_to_hasher(hasher, symbol_table);
+                e.target
+                    .data
+                    .write_to_hasher_with_check(hasher, symbol_table, stack_check);
+                e.index
+                    .data
+                    .write_to_hasher_with_check(hasher, symbol_table, stack_check);
             }
             Data::EArrow(_) => {}
             Data::EJsxElement(_e) => {
@@ -2250,17 +2302,23 @@ impl Data {
                 // autofix
             }
             Data::ESpread(e) => {
-                e.value.data.write_to_hasher(hasher, symbol_table);
+                e.value
+                    .data
+                    .write_to_hasher_with_check(hasher, symbol_table, stack_check);
             }
             Data::EAwait(e) => {
-                e.value.data.write_to_hasher(hasher, symbol_table);
+                e.value
+                    .data
+                    .write_to_hasher_with_check(hasher, symbol_table, stack_check);
             }
             Data::EYield(e) => {
                 // Hash the `Option` discriminant, then recurse into the value.
                 raw(hasher, e.is_star);
                 raw(hasher, e.value.is_some());
                 if let Some(value) = &e.value {
-                    value.data.write_to_hasher(hasher, symbol_table);
+                    value
+                        .data
+                        .write_to_hasher_with_check(hasher, symbol_table, stack_check);
                 }
             }
             Data::ETemplate(_e) => {
@@ -2309,7 +2367,9 @@ impl Data {
             }
             Data::EInlinedEnum(e) => {
                 // pretend there is no comment
-                e.value.data.write_to_hasher(hasher, symbol_table);
+                e.value
+                    .data
+                    .write_to_hasher_with_check(hasher, symbol_table, stack_check);
             }
             // no data
             Data::ERequireCallTarget

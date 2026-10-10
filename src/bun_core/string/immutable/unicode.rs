@@ -409,6 +409,23 @@ pub(super) fn convert_utf8_bytes_into_utf16(bytes: &[u8]) -> UTF16Replacement {
     convert_utf8_bytes_into_utf16_with_length(sequence, sequence_length, bytes.len())
 }
 
+/// Codepoint at the front of non-empty `bytes`; ill-formed input is U+FFFD per maximal subpart.
+pub fn utf8_codepoint_with_fffd(bytes: &[u8]) -> UTF16Replacement {
+    let lead = bytes[0];
+    if lead < 0x80 {
+        return UTF16Replacement {
+            code_point: u32::from(lead),
+            len: 1,
+            ..Default::default()
+        };
+    }
+    let r = convert_utf8_bytes_into_utf16(bytes);
+    UTF16Replacement {
+        len: r.len.max(1),
+        ..r
+    }
+}
+
 // SWAR body moved down into `crate::strings_impl` (T0) so the canonical
 // `copy_latin1_into_utf8` is the spec-faithful fast path. Re-export here so
 // `pub use unicode_draft::copy_latin1_into_utf8_stop_on_non_ascii` in
@@ -535,17 +552,11 @@ pub fn copy_latin1_into_ascii(dest: &mut [u8], src: &[u8]) {
 pub enum BOM {
     Utf8,
     Utf16Le,
-    Utf16Be,
-    Utf32Le,
-    Utf32Be,
 }
 
 impl BOM {
     pub const UTF8_BYTES: [u8; 3] = [0xef, 0xbb, 0xbf];
     pub(crate) const UTF16_LE_BYTES: [u8; 2] = [0xff, 0xfe];
-    pub(crate) const UTF16_BE_BYTES: [u8; 2] = [0xfe, 0xff];
-    pub(crate) const UTF32_LE_BYTES: [u8; 4] = [0xff, 0xfe, 0x00, 0x00];
-    pub(crate) const UTF32_BE_BYTES: [u8; 4] = [0x00, 0x00, 0xfe, 0xff];
 
     pub fn detect(bytes: &[u8]) -> Option<BOM> {
         if bytes.len() < 3 {
@@ -555,12 +566,8 @@ impl BOM {
             return Some(BOM::Utf8);
         }
         if eql_ignore_len(bytes, &Self::UTF16_LE_BYTES) {
-            // if (bytes.len > 4 and eqlComptimeIgnoreLen(bytes[2..], utf32_le_bytes[2..]))
-            //   return .utf32_le;
             return Some(BOM::Utf16Le);
         }
-        // if (eqlComptimeIgnoreLen(bytes, utf16_be_bytes)) return .utf16_be;
-        // if (bytes.len > 4 and eqlComptimeIgnoreLen(bytes, utf32_le_bytes)) return .utf32_le;
         None
     }
 
@@ -576,9 +583,6 @@ impl BOM {
         match self {
             BOM::Utf8 => &Self::UTF8_BYTES,
             BOM::Utf16Le => &Self::UTF16_LE_BYTES,
-            BOM::Utf16Be => &Self::UTF16_BE_BYTES,
-            BOM::Utf32Le => &Self::UTF32_LE_BYTES,
-            BOM::Utf32Be => &Self::UTF32_BE_BYTES,
         }
     }
 
@@ -590,9 +594,6 @@ impl BOM {
         match self {
             BOM::Utf8 => "utf8",
             BOM::Utf16Le => "utf16_le",
-            BOM::Utf16Be => "utf16_be",
-            BOM::Utf32Le => "utf32_le",
-            BOM::Utf32Be => "utf32_be",
         }
     }
 
@@ -612,11 +613,6 @@ impl BOM {
                 let out = crate::strings_impl::to_utf8_alloc_from_le_bytes(trimmed_bytes);
                 drop(bytes);
                 out
-            }
-            _ => {
-                // TODO: this needs to re-encode, for now we just remove the BOM
-                crate::vec::drain_front(&mut bytes, self.get_header().len());
-                bytes
             }
         }
     }
@@ -644,13 +640,6 @@ impl BOM {
                 // Return the list slice (not `out`, the new alloc) to honor the
                 // "always points to the base of the input" doc comment.
                 &list[..]
-            }
-            _ => {
-                // TODO: this needs to re-encode, for now we just remove the BOM
-                let n = self.get_header().len();
-                let len = list.len();
-                list.copy_within(n.., 0);
-                &list[..len - n]
             }
         }
     }

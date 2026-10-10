@@ -67,7 +67,7 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
       for (let cycle = 0; cycle < maxCount; cycle++) {
         // Update all files simultaneously
         const timestamp = Date.now() + cycle;
-        const updatePromises = [];
+        const updatePromises: Promise<number>[] = [];
 
         for (let i = 0; i < dirCount; i++) {
           const dirName = `dir-${i.toString().padStart(4, "0")}`;

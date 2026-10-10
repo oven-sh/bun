@@ -858,6 +858,112 @@ describe("package-lock.json migration fixes", () => {
     await frozen(dir);
   });
 
+  // Minimal codeload-style tarball: a single root directory that wraps the
+  // package contents. GitHub names it `<Owner>-<repo>-<short sha>`, which a
+  // package-lock.json migration cannot know ahead of the download.
+  function githubTarball(rootDir: string, files: Record<string, string>): Uint8Array {
+    const octal = (n: number, width: number) => n.toString(8).padStart(width - 1, "0") + "\0";
+    const header = (name: string, size: number, type: "0" | "5") => {
+      const buf = Buffer.alloc(512, 0);
+      buf.write(name, 0, 100, "utf8");
+      buf.write(octal(type === "5" ? 0o755 : 0o644, 8), 100); // mode
+      buf.write(octal(0, 8), 108); // uid
+      buf.write(octal(0, 8), 116); // gid
+      buf.write(octal(size, 12), 124); // size
+      buf.write(octal(0, 12), 136); // mtime
+      buf.fill(" ", 148, 156); // checksum placeholder
+      buf.write(type, 156);
+      buf.write("ustar\0", 257);
+      buf.write("00", 263);
+      let sum = 0;
+      for (let i = 0; i < 512; i++) sum += buf[i];
+      buf.write(octal(sum, 8), 148);
+      return buf;
+    };
+    const chunks: Buffer[] = [header(`${rootDir}/`, 0, "5")];
+    for (const [path, contents] of Object.entries(files)) {
+      const body = Buffer.from(contents, "utf8");
+      chunks.push(
+        header(`${rootDir}/${path}`, body.length, "0"),
+        body,
+        Buffer.alloc((512 - (body.length % 512)) % 512),
+      );
+    }
+    chunks.push(Buffer.alloc(1024));
+    return Bun.gzipSync(Buffer.concat(chunks));
+  }
+
+  // #40489: a github: dependency migrated from package-lock.json was
+  // downloaded and extracted, but never written to node_modules, and the
+  // install still exited 0. The migrated bun-tag (the commit sha) never
+  // matches the cache folder, which is named after the tarball's root
+  // directory and only known after extraction.
+  test.concurrent("github dependency from package-lock.json is installed (#40489)", async () => {
+    const sha = "0123456789abcdef0123456789abcdef01234567";
+    const rootDir = "User-repo-0123456";
+    const tgz = githubTarball(rootDir, {
+      "package.json": JSON.stringify({ name: "@scope/internal-name", version: "2.0.1" }),
+      "index.js": "module.exports = 42;\n",
+    });
+    const requests: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        requests.push(new URL(req.url).pathname);
+        return new Response(tgz, { headers: { "content-type": "application/gzip" } });
+      },
+    });
+    const spec = `git+https://github.com/user/repo#${sha}`;
+    using dir = synthetic("npm-migrate-github-install", {
+      "package.json": JSON.stringify({ name: "gh-install", dependencies: { alias: spec } }),
+      "package-lock.json": npmLock("gh-install", {
+        "": { name: "gh-install", dependencies: { alias: spec } },
+        "node_modules/alias": {
+          name: "@scope/internal-name",
+          version: "2.0.1",
+          resolved: `git+ssh://git@github.com/user/repo.git#${sha}`,
+        },
+      }),
+    });
+    const install = async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        env: {
+          ...bunEnv,
+          BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"),
+          GITHUB_API_URL: `http://localhost:${server.port}`,
+        },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+
+    const first = await install();
+    expect(first.stderr).toContain("Saved lockfile");
+    expect(first.stdout).toContain("1 package installed");
+    expect(first.exitCode).toBe(0);
+    expect(requests).toEqual([`/repos/user/repo/tarball/${sha}`]);
+    const installed = JSON.parse(fs.readFileSync(join(String(dir), "node_modules/alias/package.json"), "utf8"));
+    expect(installed.name).toBe("@scope/internal-name");
+
+    // The saved lockfile keeps the migrated bun-tag (the commit sha), and the
+    // cache folder is keyed by it, not by the archive's root directory name.
+    const { lock } = await readLock(dir);
+    expect(lock.packages.alias[0]).toBe(`@scope/internal-name@github:user/repo#${sha}`);
+    expect(lock.packages.alias[2]).toBe(sha);
+
+    // Reinstall from the saved bun.lock and the warm cache: no new download.
+    fs.rmSync(join(String(dir), "node_modules"), { recursive: true, force: true });
+    const second = await install();
+    expect(second.stdout).toContain("1 package installed");
+    expect(second.exitCode).toBe(0);
+    expect(requests).toHaveLength(1);
+    expect(fs.existsSync(join(String(dir), "node_modules/alias/index.js"))).toBeTrue();
+  });
+
   test.concurrent("root bundleDependencies keeps its subtree (B2)", async () => {
     using dir = fixture("testing-rebuild-bundle--a");
     const { text, lock } = await migrate(dir);
@@ -1346,6 +1452,52 @@ describe("package-lock.json migration fixes", () => {
     },
   );
 
+  // A workspace whose ranges link to sibling workspaces (`^1.0.0` on a versioned one, `*` on a
+  // versionless one) is unchanged by the migration, so its registry pins survive the install that
+  // migrates and every install after it. A changed workspace would re-resolve `no-deps@^1.0.0` to 1.1.0.
+  test.concurrent("workspace ranges that link to sibling workspaces keep the migrated pins", async () => {
+    using registry = localRegistry();
+    const a = { name: "a", version: "1.0.0", dependencies: { b: "^1.0.0", c: "*", "no-deps": "^1.0.0" } };
+    using dir = synthetic(
+      "npm-migrate-ws-links",
+      {
+        "package.json": JSON.stringify({ name: "ws-links", workspaces: ["packages/*"] }),
+        "packages/a/package.json": JSON.stringify(a),
+        "packages/b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
+        "packages/c/package.json": JSON.stringify({ name: "c" }),
+        "package-lock.json": npmLock("ws-links", {
+          "": { name: "ws-links", workspaces: ["packages/*"] },
+          "node_modules/a": { resolved: "packages/a", link: true },
+          "node_modules/b": { resolved: "packages/b", link: true },
+          "node_modules/c": { resolved: "packages/c", link: true },
+          "node_modules/no-deps": {
+            version: "1.0.0",
+            resolved: registry.tarball("no-deps", "1.0.0"),
+            integrity: registry.integrity("no-deps", "1.0.0"),
+          },
+          "packages/a": a,
+          "packages/b": { name: "b", version: "1.0.0" },
+          "packages/c": { name: "c" },
+        }),
+      },
+      registry.url,
+    );
+
+    const { stderr, exitCode } = await run(dir, "install");
+    expect(stderr).toContain("migrated lockfile from package-lock.json");
+    expect(exitCode).toBe(0);
+    expect(await Bun.file(join(String(dir), "node_modules", "no-deps", "package.json")).json()).toStrictEqual({
+      name: "no-deps",
+      version: "1.0.0",
+    });
+    expect(registry.requests).toStrictEqual(["/no-deps/-/no-deps-1.0.0.tgz"]);
+
+    const second = await run(dir, "install");
+    expect(second.stdout).toContain("(no changes)");
+    expect(second.exitCode).toBe(0);
+    expect(registry.requests).toStrictEqual(["/no-deps/-/no-deps-1.0.0.tgz"]);
+  });
+
   test.concurrent(
     "a registry entry naming a dep in dependencies and peerDependencies keeps one edge; the root keeps both",
     async () => {
@@ -1535,6 +1687,82 @@ describe("package-lock.json migration fixes", () => {
     expect(fs.existsSync(join(project.dir, "node_modules", "o", "node_modules", "p"))).toBeFalse();
     expect(fs.existsSync(join(project.oSource, "node_modules"))).toBeFalse();
     expect(storeEntries(project.dir)).toStrictEqual(linker === "isolated" ? [project.o.replaceAll(/[/:]/g, "+")] : []);
+  });
+
+  // A file: path written in an out-of-tree file: package's own package.json is trusted like a
+  // root dependency, the same as a fresh `bun install` does, even when it leaves the project.
+  test.concurrent("a file: dependency declared by an out-of-tree file: package migrates", async () => {
+    const dependencies = { plugin: "file:../packages/plugin" };
+    using copy = tempDir("npm-migrate-folder-declares-file-dep", {
+      "root/package.json": JSON.stringify({ name: "root", dependencies }),
+      "root/package-lock.json": npmLock("root", {
+        "": { name: "root", dependencies },
+        "../packages/plugin": { version: "1.0.0", dependencies: { "shared-lib": "file:../shared-lib" } },
+        "../packages/plugin/node_modules/shared-lib": { resolved: "../packages/shared-lib", link: true },
+        "../packages/shared-lib": { version: "1.0.0" },
+        "node_modules/plugin": { resolved: "../packages/plugin", link: true },
+      }),
+      "packages/plugin/package.json": JSON.stringify({
+        name: "plugin",
+        version: "1.0.0",
+        dependencies: { "shared-lib": "file:../shared-lib" },
+      }),
+      "packages/shared-lib/package.json": JSON.stringify({ name: "shared-lib", version: "1.0.0" }),
+    });
+    const dir = join(String(copy), "root");
+    writeExtra(dir, {});
+
+    const { stderr, exitCode, lock } = await migrate(dir);
+    expect(stderr).not.toContain("outside the project");
+    expect(exitCode).toBe(0);
+    expect(lock.packages).toStrictEqual({
+      plugin: ["plugin@file:../packages/plugin", { dependencies: { "shared-lib": "file:../shared-lib" } }],
+      "plugin/shared-lib": ["shared-lib@file:../packages/shared-lib", {}],
+    });
+    await frozen(dir);
+
+    // The same lockfile a fresh `bun install` writes, and the installer links the nested package.
+    const install = await run(dir, "install", "--frozen-lockfile");
+    expect(install.stderr).not.toContain("error");
+    expect(install.exitCode).toBe(0);
+    expect(
+      await Bun.file(join(dir, "node_modules", "plugin", "node_modules", "shared-lib", "package.json")).json(),
+    ).toHaveProperty("name", "shared-lib");
+  });
+
+  // A folder that a registry package ships inside itself is a `Folder` entry too, but the registry
+  // package declared it, so a `file:` path in its package.json that leaves the project is still skipped.
+  test.concurrent("a file: dependency declared by a registry package's own folder is still skipped", async () => {
+    const dependencies = { evil: "1.0.0" };
+    using copy = tempDir("npm-migrate-registry-folder-declares-file-dep", {
+      "root/package.json": JSON.stringify({ name: "root", dependencies }),
+      "root/package-lock.json": npmLock("root", {
+        "": { name: "root", dependencies },
+        "node_modules/evil": {
+          version: "1.0.0",
+          resolved: `${OFFLINE_REGISTRY}evil/-/evil-1.0.0.tgz`,
+          dependencies: { inner: "file:./inner" },
+        },
+        "node_modules/evil/node_modules/inner": { resolved: "node_modules/evil/inner", link: true },
+        "node_modules/evil/inner": { version: "1.0.0", dependencies: { loot: "file:../../../../secret" } },
+        "node_modules/evil/inner/node_modules/loot": { resolved: "../secret", link: true },
+        "../secret": { version: "1.0.0" },
+      }),
+      "secret/package.json": JSON.stringify({ name: "loot", version: "1.0.0" }),
+      "secret/credentials.txt": "do-not-link-me",
+    });
+    const dir = join(String(copy), "root");
+    writeExtra(dir, {});
+
+    const { stderr, exitCode, text, lock } = await migrate(dir);
+    expect(stderr).toContain(
+      'skipped "loot" from package-lock.json: transitive folder dependency "../secret" is outside the project',
+    );
+    expect(exitCode).toBe(0);
+    expect(Object.keys(lock.packages).sort()).toStrictEqual(["evil", "evil/inner"]);
+    expect(lock.packages["evil/inner"]).toStrictEqual(["inner@file:node_modules/evil/inner", {}]);
+    expect(text).not.toContain("../secret");
+    expect(text).not.toContain("loot");
   });
 
   test.concurrent("lockfileVersion 5 is refused, and install falls back to a fresh resolve", async () => {

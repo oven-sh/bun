@@ -28,7 +28,7 @@ use bun_core::strings;
 use bun_core::{self, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_libarchive::lib;
 use bun_paths::resolve_path::{self, platform};
-use bun_paths::{self, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
+use bun_paths::{self, OSPathChar, OSPathSliceZ};
 #[cfg(not(windows))]
 use bun_sys::FdDirExt;
 use bun_sys::{self, Dir, Fd, FdExt, FileKind, Mode, O};
@@ -227,7 +227,19 @@ impl TarballStream {
         );
 
         let npm_mode = tarball.resolution.tag != ResolutionTag::Github;
-        let want_first_dirname = tarball.resolution.tag == ResolutionTag::Github;
+        // An existing lockfile bun-tag keys the cache lookup; prefer it over the root dir name.
+        let lockfile_github_tag = tarball.github_resolved.slice();
+        let resolved_github_dirname: &'static [u8] =
+            if tarball.resolution.tag == ResolutionTag::Github && !lockfile_github_tag.is_empty() {
+                FileSystem::instance()
+                    .dirname_store()
+                    .append(lockfile_github_tag)
+                    .expect("unreachable")
+            } else {
+                b""
+            };
+        let want_first_dirname =
+            tarball.resolution.tag == ResolutionTag::Github && resolved_github_dirname.is_empty();
         let hasher = integrity::Streaming::init(
             &if tarball.skip_verify {
                 Integrity::default()
@@ -261,7 +273,7 @@ impl TarballStream {
             dest: None,
             tmpname: ZBox::from_bytes(b""),
             hasher,
-            resolved_github_dirname: b"",
+            resolved_github_dirname,
             want_first_dirname,
             npm_mode,
             #[cfg(unix)]
@@ -696,7 +708,7 @@ impl TarballStream {
                 self.invalid_name = true;
                 return Err(crate::Error::InstallFailed);
             };
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let tmpname = FileSystem::tmpname(tmpname_suffix, &mut buf[..], bun_core::fast_random())?;
         // allocator.dupeZ → owned NUL-terminated copy.
         self.tmpname = ZBox::from_bytes(tmpname.as_bytes());
@@ -793,7 +805,7 @@ impl TarballStream {
         // `OSPathSliceZ` suffix view here.
         let rest: &[OSPathChar] = tokenize_rest_after_first(&pathname[..]);
 
-        let mut norm_buf = OSPathBuffer::uninit();
+        let mut norm_buf = bun_paths::os_path_buffer_pool::get();
         if rest.len() >= norm_buf.len() {
             bun_core::warn!(
                 "Skipping entry with a path longer than the maximum path length: {}\n",
@@ -1415,26 +1427,14 @@ fn open_output_file(
 }
 
 fn make_directory(entry: &mut lib::Entry, dest_fd: Fd, path: OSPathZ, path_slice: &[OSPathChar]) {
-    let mut mode = i32::try_from(entry.perm()).expect("int cast");
-    // if dirs are readable, then they should be listable
-    // https://github.com/npm/node-tar/blob/main/lib/mode-fix.js
-    if (mode & 0o400) != 0 {
-        mode |= 0o100;
-    }
-    if (mode & 0o40) != 0 {
-        mode |= 0o10;
-    }
-    if (mode & 0o4) != 0 {
-        mode |= 0o1;
-    }
     #[cfg(windows)]
     {
         let _ = bun_sys::make_path::make_path::<u16>(Dir::borrow(&dest_fd), &path[..]);
-        let _ = (path_slice, mode);
+        let _ = (entry, path_slice);
     }
     #[cfg(not(windows))]
     {
-        match bun_sys::mkdirat_z(dest_fd, path, Mode::try_from(mode).expect("int cast")) {
+        match bun_sys::mkdirat_z(dest_fd, path, bun_libarchive::directory_mode(entry.perm())) {
             Ok(()) => {}
             Err(e) => match e.get_errno() {
                 bun_sys::E::EEXIST | bun_sys::E::ENOTDIR => {}

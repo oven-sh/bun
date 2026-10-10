@@ -18,7 +18,7 @@ impl Expect {
 
         let arguments = frame.arguments();
 
-        if arguments.len() < 1 {
+        if arguments.len() < 2 {
             return Err(global.throw_invalid_arguments(format_args!(
                 "toBeWithin() requires 2 arguments"
             )));

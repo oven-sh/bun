@@ -1320,7 +1320,18 @@ function registerCustomAssertion(name: string, fn: Function) {
   customAssertions[name] = fn;
 }
 
-const assert = {
+type NodeAssert = typeof nodeAssert;
+
+interface TestRunnerAssert extends Omit<NodeAssert, "AssertionError" | "strict"> {
+  AssertionError?: NodeAssert["AssertionError"];
+  CallTracker?: typeof import("internal/assert/calltracker").default;
+  strict?: NodeAssert["strict"];
+  fileSnapshot: typeof fileSnapshot;
+  snapshot: typeof snapshot;
+  register: typeof registerCustomAssertion;
+}
+
+const assert: TestRunnerAssert = {
   ...nodeAssert,
   fileSnapshot,
   snapshot,
@@ -1464,7 +1475,7 @@ function planCount(node: TestNode) {
 // Tags
 // -----------------------------------------------------------------------------
 
-const kEmptyTags: string[] = Object.freeze([]) as string[];
+const kEmptyTags: readonly string[] = Object.freeze([]);
 
 function canonicalizeTags(tags: unknown, name: string): string[] {
   validateArray(tags, name);
@@ -1543,14 +1554,14 @@ class TestNode {
   error: unknown = null;
   // Inline subtests are serialized through this chain. `concurrency` is
   // validated for Node-compat error codes but subtests always run serially.
-  subtestChain: Promise<void> = Promise.resolve();
+  subtestChain: Promise<unknown> = Promise.resolve();
   failedSubtests = 0;
   firstSubtestError: unknown = undefined;
   // First failure from a before hook created while this test was running.
   hookFailure: unknown = undefined;
   #ctx: TestContext | undefined;
   #suiteCtx: SuiteContext | undefined;
-  #tags: string[] | undefined;
+  #tags: readonly string[] | undefined;
 
   constructor(
     name: string,
@@ -1576,7 +1587,7 @@ class TestNode {
     this.expectFailure = parseExpectFailure(options.expectFailure) || parent?.expectFailure || false;
   }
 
-  get tags(): string[] {
+  get tags(): readonly string[] {
     if (this.#tags === undefined) {
       const parentTags = this.parent?.tags ?? kEmptyTags;
       const own = this.ownTags ?? kEmptyTags;
@@ -1585,7 +1596,7 @@ class TestNode {
       } else {
         const merged = new Set<string>(parentTags);
         for (const tag of own) merged.add(tag);
-        this.#tags = Object.freeze(Array.from(merged)) as string[];
+        this.#tags = Object.freeze(Array.from(merged));
       }
     }
     return this.#tags;
@@ -1708,7 +1719,7 @@ class TestContext {
     return Number(process.env.NODE_TEST_WORKER_ID) || undefined;
   }
 
-  get tags(): string[] {
+  get tags(): readonly string[] {
     return this.#node.tags;
   }
 
@@ -1951,7 +1962,7 @@ function validateTimeoutAndSignal(options: TestOptions | HookOptions) {
 // Port of Node's parseExpectFailure (test.js:528). A string is a label, a
 // function or RegExp validates the error, an object may carry both, and any
 // other object is itself the validation.
-type ExpectFailure = false | { label?: string; match?: unknown };
+type ExpectFailure = false | { label?: string; match?: import("node:assert").AssertPredicate };
 
 function parseExpectFailure(expectFailure: unknown): ExpectFailure {
   if (expectFailure === undefined || expectFailure === false) return false;
@@ -2685,7 +2696,7 @@ function addSuite(
     // (Node's Suite.run awaits buildPromise before iterating subtests). The
     // callback has not returned yet so its promise does not exist; seed the
     // chain through a gate the callback's settlement opens.
-    const gate = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<unknown>();
     suite.subtestChain = runningNode.subtestChain.then(() => gate.promise);
     // Build the suite eagerly (Node also runs describe callbacks immediately),
     // collecting children onto the suite's own subtest chain.

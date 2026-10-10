@@ -1,10 +1,10 @@
-import { $, ShellOutput } from "bun";
+import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { lstatSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry } from "harness";
 import { isAbsolute, join, sep } from "path";
 
-const expectNoError = (o: ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
+const expectNoError = (o: $.ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
 // const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", sep) : path);
 const platformPath = (path: string) => path;
 
@@ -96,11 +96,13 @@ describe("packages whose label is longer than 1024 bytes", () => {
     return packageDir;
   }
 
+  // CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`. Two of these concurrent
+  // tests install the same tarball spec; sharing one cache, they replace each other's `@T@<hash>` folder on Windows.
   async function runBun(cwd: string, ...args: string[]) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args],
       cwd,
-      env: bunEnv,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -445,7 +447,7 @@ describe("bun patch <pkg>", async () => {
         return { subdir, absPath };
       }
 
-      async function check(tempdir: string, commit: ShellOutput) {
+      async function check(tempdir: string, commit: $.ShellOutput) {
         expect(commit.stderr.toString()).not.toContain("ENOENT");
         expect(commit.stderr.toString()).not.toContain("error");
         expect(commit.exitCode).toBe(0);

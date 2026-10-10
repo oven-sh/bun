@@ -123,7 +123,7 @@ describe("app.router", function () {
   it("should be .use()able", function (done) {
     var app = express();
 
-    var calls = [];
+    var calls: string[] = [];
 
     app.use(function (req, res, next) {
       calls.push("before");
@@ -183,7 +183,7 @@ describe("app.router", function () {
 
     it("should ensure regexp matches path prefix", function (done) {
       var app = express();
-      var p = [];
+      var p: string[] = [];
 
       app.use(/\/api.*/, function (req, res, next) {
         p.push("a");
@@ -731,7 +731,7 @@ describe("app.router", function () {
   describe.todo("when next() is called", function () {
     it("should continue lookup", function (done) {
       var app = express(),
-        calls = [];
+        calls: string[] = [];
 
       app.get("/foo{/:bar}", function (req, res, next) {
         calls.push("/foo/:bar?");
@@ -808,7 +808,7 @@ describe("app.router", function () {
   describe("when next(err) is called", function () {
     it.todo("should break out of app.router", function (done) {
       var app = express(),
-        calls = [];
+        calls: string[] = [];
 
       app.get("/foo{/:bar}", function (req, res, next) {
         calls.push("/foo/:bar?");
@@ -1004,7 +1004,7 @@ describe("app.router", function () {
 
   it.todo("should run in order added", function (done) {
     var app = express();
-    var path = [];
+    var path: number[] = [];
 
     app.get("/*path", function (req, res, next) {
       path.push(0);

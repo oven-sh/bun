@@ -1,6 +1,6 @@
 import type { Server, ServerWebSocket, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
-import { heapStats } from "bun:jsc";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, forceGuardMalloc, isWindows, tempDir } from "harness";
 import net, { isIP } from "node:net";
@@ -64,7 +64,7 @@ const binaryTypes = [
   },
 ] as const;
 
-let servers: Server[] = [];
+let servers: Server<unknown>[] = [];
 let clients: Subprocess[] = [];
 
 it.concurrent("should work fine if you repeatedly call methods on closed websockets", async () => {
@@ -126,7 +126,7 @@ it.concurrent("websocket/4443", async () => {
     },
   });
 
-  var clients = [];
+  var clients: WebSocket[] = [];
   var closedCount = 0;
   var onClientsOpened = Promise.withResolvers();
 
@@ -174,7 +174,7 @@ describe("Server", () => {
   }));
 
   it.concurrent("subscriptions - basic usage", async () => {
-    const { promise, resolve } = Promise.withResolvers();
+    const { promise, resolve } = Promise.withResolvers<string[]>();
     const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
 
     using server = serve({
@@ -212,7 +212,7 @@ describe("Server", () => {
         close() {
           onClose();
         },
-      },
+      } as Partial<WebSocketHandler<undefined>> as WebSocketHandler<undefined>,
     });
 
     const ws = new WebSocket(`ws://localhost:${server.port}`);
@@ -226,7 +226,7 @@ describe("Server", () => {
   });
 
   it.concurrent("subscriptions - all unsubscribed", async () => {
-    const { promise, resolve } = Promise.withResolvers();
+    const { promise, resolve } = Promise.withResolvers<string[]>();
     const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
 
     using server = serve({
@@ -257,7 +257,7 @@ describe("Server", () => {
         close() {
           onClose();
         },
-      },
+      } as Partial<WebSocketHandler<undefined>> as WebSocketHandler<undefined>,
     });
 
     const ws = new WebSocket(`ws://localhost:${server.port}`);
@@ -293,7 +293,7 @@ describe("Server", () => {
           resolve(subsAfterClose);
           onClose();
         },
-      },
+      } as Partial<WebSocketHandler<undefined>> as WebSocketHandler<undefined>,
     });
 
     const ws = new WebSocket(`ws://localhost:${server.port}`);
@@ -438,7 +438,7 @@ describe("Server", () => {
   });
 
   it.concurrent("subscriptions - duplicate subscriptions", async () => {
-    const { promise, resolve } = Promise.withResolvers();
+    const { promise, resolve } = Promise.withResolvers<string[]>();
     const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
 
     using server = serve({
@@ -463,7 +463,7 @@ describe("Server", () => {
         close() {
           onClose();
         },
-      },
+      } as Partial<WebSocketHandler<undefined>> as WebSocketHandler<undefined>,
     });
 
     const ws = new WebSocket(`ws://localhost:${server.port}`);
@@ -476,7 +476,7 @@ describe("Server", () => {
   });
 
   it.concurrent("subscriptions - multiple cycles", async () => {
-    const { promise, resolve } = Promise.withResolvers();
+    const { promise, resolve } = Promise.withResolvers<string[]>();
     const { promise: onClosePromise, resolve: onClose } = Promise.withResolvers();
 
     using server = serve({
@@ -514,7 +514,7 @@ describe("Server", () => {
         close() {
           onClose();
         },
-      },
+      } as Partial<WebSocketHandler<undefined>> as WebSocketHandler<undefined>,
     });
 
     const ws = new WebSocket(`ws://localhost:${server.port}`);
@@ -532,7 +532,7 @@ describe("Server", () => {
     const ready = { a: Promise.withResolvers<void>(), b: Promise.withResolvers<void>() };
     const publishResults: number[] = [];
 
-    using server = serve({
+    using server = serve<{ id: string }>({
       port: 0,
       fetch(req, server) {
         const id = new URL(req.url).searchParams.get("id")!;
@@ -677,7 +677,7 @@ describe("Server", () => {
       },
       message(ws) {
         queueMicrotask(() => done());
-        return new Error("returned, not thrown");
+        return new Error("returned, not thrown") as any;
       },
       error(error) {
         done(error);
@@ -942,25 +942,15 @@ describe("ServerWebSocket", () => {
           },
         },
       });
-      // Stays alive until the end, so it is part of both measurements.
       const payload = new Uint8Array(2 * 1024 * 1024);
-      let before = 0;
       const client = new WebSocket(`ws://${server.hostname}:${server.port}`);
       client.onerror = () => reject(new Error("client error"));
-      client.onopen = () => {
-        // Both sockets exist at this point, so only the transfer separates the two measurements.
-        Bun.gc(true);
-        before = heapStats().extraMemorySize;
-        client.send(payload);
-      };
+      client.onopen = () => client.send(payload);
       try {
         const blob = await promise;
-        Bun.gc(true);
-        const reported = heapStats().extraMemorySize - before;
         expect(blob.size).toBe(payload.byteLength);
-        // Without the report this is close to 0. Memory that earlier tests release in the
-        // meantime lowers the number a little, so half the payload is the bound.
-        expect(reported).toBeGreaterThanOrEqual(payload.byteLength / 2);
+        // The size the Blob's visitChildren reports; close to 0 when the bytes are not reported.
+        expect(estimateShallowMemoryUsageOf(blob)).toBeGreaterThanOrEqual(payload.byteLength);
       } finally {
         client.close();
       }
@@ -974,7 +964,7 @@ describe("ServerWebSocket", () => {
         },
         message(_, received) {
           if (typeof received === "string") {
-            expect(received).toBe(message);
+            expect(received).toBe(message as string);
           } else {
             expect(received).toEqual(Buffer.from(bytes));
           }
@@ -1036,7 +1026,7 @@ describe("ServerWebSocket", () => {
         if (e.data === "done") return flushed.resolve();
         received.push(typeof e.data === "string" ? e.data : Buffer.from(e.data));
       };
-      c.onerror = c.onclose = ev => {
+      c.onerror = c.onclose = (ev: Event) => {
         const err = new Error(`client ${ev.type}`);
         opened.reject(err);
         flushed.reject(err);
@@ -1353,7 +1343,7 @@ describe("ServerWebSocket", () => {
         const received = Promise.withResolvers<string | ArrayBuffer>();
         const published = Promise.withResolvers<number>();
         let nextId = 0;
-        using server = serve({
+        using server = serve<{ id: number }>({
           port: 0,
           fetch(req, server) {
             if (server.upgrade(req, { data: { id: nextId++ } })) return;
@@ -1453,8 +1443,11 @@ describe("ServerWebSocket", () => {
     let count = 0;
     return {
       open(ws) {
+        // @ts-expect-error
         expect(() => ws.cork()).toThrow();
+        // @ts-expect-error
         expect(() => ws.cork(undefined)).toThrow();
+        // @ts-expect-error
         expect(() => ws.cork({})).toThrow();
         expect(() =>
           ws.cork(() => {
@@ -1601,7 +1594,7 @@ function test(
   fn: (
     done: (err?: unknown) => void,
     connect: () => Promise<void>,
-    options: { server: Server },
+    options: { server: Server<{ id: number }> },
   ) => Partial<WebSocketHandler<{ id: number }>>,
   timeout?: number,
 ) {
@@ -1621,9 +1614,9 @@ function test(
       };
       let id = 0;
       var options = {
-        server: undefined,
+        server: undefined as Server<{ id: number }> | undefined,
       };
-      const server: Server = serve({
+      const server: Server<{ id: number }> = serve({
         port: 0,
         fetch(request, server) {
           const data = { id: id++ };
@@ -1654,7 +1647,7 @@ function test(
   );
 }
 
-async function connect(server: Server, clientList: Subprocess[] = clients): Promise<void> {
+async function connect(server: Server<unknown>, clientList: Subprocess[] = clients): Promise<void> {
   const url = new URL(`ws://${server.hostname}:${server.port}/`);
   const pathname = path.resolve(import.meta.dir, "./websocket-client-echo.mjs");
   const { promise, resolve } = Promise.withResolvers();
@@ -1718,6 +1711,83 @@ it.concurrent("server.upgrade() from the error() handler after fetch() threw com
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout).toBe("opened:error\necho:hi\nclosed 1000\n");
   expect(exitCode).toBe(0);
+});
+
+// A handler that calls server.upgrade() before it returns leaves the server no
+// response to send, so the server does not subscribe to the handler's promise.
+// A rejection of that promise must stay unhandled and reach
+// process.on("unhandledRejection"), whether it has settled when the handler
+// returns or not. The server subscribes to the promise of a handler that
+// upgrades after an await, so that case is not covered here.
+describe.concurrent("a handler that calls server.upgrade() before it returns", () => {
+  async function runChild(handlers: string) {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.on("unhandledRejection", e => console.log("unhandledRejection:", e.message));
+         const server = Bun.serve({
+           port: 0,
+           ${handlers}
+           websocket: {
+             open(ws) { ws.send("hi"); },
+             message() {},
+           },
+         });
+         const ws = new WebSocket(server.url.href.replace(/^http/, "ws"));
+         ws.onerror = () => { console.log("ws error"); process.exit(1); };
+         ws.onmessage = e => { console.log("ws got:", e.data); ws.close(); };
+         ws.onclose = () => server.stop(true);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // A then() or catch() promise is rejected by a reaction job. It is a
+  // separate case: JSC does not set its first-resolving-function flag.
+  it.each([
+    [
+      "fetch() is async and throws after an await",
+      `async fetch(req, srv) { srv.upgrade(req); await 0; throw new Error("E"); },
+       error(e) { console.log("error() saw:", e.message); },`,
+    ],
+    [
+      "fetch() returns Promise.reject()",
+      `fetch(req, srv) { srv.upgrade(req); return Promise.reject(new Error("E")); },
+       error(e) { console.log("error() saw:", e.message); },`,
+    ],
+    [
+      "fetch() returns a then() promise that throws",
+      `fetch(req, srv) { srv.upgrade(req); return Promise.resolve().then(() => { throw new Error("E"); }); },
+       error(e) { console.log("error() saw:", e.message); },`,
+    ],
+    [
+      "fetch() returns a catch() promise that rethrows",
+      `fetch(req, srv) { srv.upgrade(req); return Promise.reject(new Error("E")).catch(e => { throw e; }); },
+       error(e) { console.log("error() saw:", e.message); },`,
+    ],
+    [
+      "fetch() returns a then() promise that passes a rejection through",
+      `fetch(req, srv) { srv.upgrade(req); return Promise.reject(new Error("E")).then(x => x); },
+       error(e) { console.log("error() saw:", e.message); },`,
+    ],
+    [
+      "error() upgrades and returns Promise.reject()",
+      `fetch(req) { throw Object.assign(new Error("boom"), { req }); },
+       error(err) { server.upgrade(err.req); return Promise.reject(new Error("E")); },`,
+    ],
+  ])("reports a rejection to unhandledRejection when %s", async (_, handlers) => {
+    const { stdout, stderr, exitCode } = await runChild(handlers);
+    expect({ stdoutLines: stdout.trim().split("\n").sort(), stderr, exitCode }).toEqual({
+      stdoutLines: ["unhandledRejection: E", "ws got: hi"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 it("server.upgrade() does not blank the Request's url/headers read afterwards", async () => {
@@ -1909,11 +1979,11 @@ describe.concurrent("publish() return value reflects subscriber backpressure", (
   // One paused raw-TCP subscriber; the server-side handle is captured so the
   // test can compare publish() to send() on the same socket.
   async function withSlowSubscriber(
-    run: (ctx: { server: Server; slow: ServerWebSocket<string>; sender: ServerWebSocket<string> }) => void,
+    run: (ctx: { server: Server<string>; slow: ServerWebSocket<string>; sender: ServerWebSocket<string> }) => void,
   ) {
     const sockets: Record<string, ServerWebSocket<string>> = {};
     const opened = { slow: Promise.withResolvers<void>(), sender: Promise.withResolvers<void>() };
-    await using server = serve<string, {}>({
+    await using server = serve<string>({
       port: 0,
       websocket: {
         backpressureLimit: 64 * 1024,
@@ -1950,7 +2020,7 @@ describe.concurrent("publish() return value reflects subscriber backpressure", (
     // "slow": raw RFC6455 client that handshakes then pauses its read side so
     // the server accumulates backpressure for it.
     const handshake = Promise.withResolvers<void>();
-    const slow = net.connect({ port: server.port, host: "127.0.0.1" }, () => {
+    const slow = net.connect({ port: server.port!, host: "127.0.0.1" }, () => {
       slow.write(
         "GET /slow HTTP/1.1\r\n" +
           "Host: x\r\n" +
@@ -2119,7 +2189,7 @@ it.each(["server", "client"] as const)(
 // whose Upgrade token, Sec-WebSocket-Key, or Sec-WebSocket-Version is invalid.
 describe("server.upgrade() validates the opening handshake", () => {
   let opened = 0;
-  let server: Server;
+  let server: Server<undefined>;
   afterEach(() => server?.stop(true));
 
   const rawHandshake = (headers: string[]) =>
@@ -2134,7 +2204,7 @@ describe("server.upgrade() validates the opening handshake", () => {
         const m = head.match(/^HTTP\/1\.[01] (\d+)/);
         resolve({ status: m ? +m[1] : null, headers: head });
       };
-      const sock = net.connect({ port: server.port, host: "127.0.0.1" }, () => {
+      const sock = net.connect({ port: server.port!, host: "127.0.0.1" }, () => {
         sock.write("GET /ws HTTP/1.1\r\nHost: x\r\n" + headers.join("\r\n") + "\r\n\r\n");
       });
       sock.on("data", d => {
@@ -2266,7 +2336,7 @@ describe.concurrent("server.upgrade() after an await on a connection the HTTP la
   async function upgradeAfterAwait(opts: {
     requestLine: string;
     headers: string[];
-    beforeUpgrade?: (server: Server) => void;
+    beforeUpgrade?: (server: Server<undefined>) => void;
     sync?: boolean;
   }) {
     const events: string[] = [];
@@ -2299,14 +2369,14 @@ describe.concurrent("server.upgrade() after an await on a connection the HTTP la
       },
     });
 
-    const socket = net.connect({ port: server.port, host: "127.0.0.1" });
+    const socket = net.connect({ port: server.port!, host: "127.0.0.1" });
     const socketClosed = Promise.withResolvers<never>();
     // Only observed through the races in `until` below.
     socketClosed.promise.catch(() => {});
     socket.on("error", error => socketClosed.reject(error));
     socket.on("close", () => socketClosed.reject(new Error("the server closed the socket")));
 
-    let buffered = Buffer.alloc(0);
+    let buffered: Buffer = Buffer.alloc(0);
     let onData = () => {};
     socket.on("data", (chunk: Buffer) => {
       buffered = Buffer.concat([buffered, chunk]);
@@ -2399,12 +2469,12 @@ describe.concurrent("request handlers run to completion before the callbacks the
     order.push("rest of handler");
   }
 
-  function wsUrl(server: Server, pathname: string) {
+  function wsUrl(server: Server<undefined>, pathname: string) {
     return new URL(pathname, server.url.href.replace(/^http/, "ws"));
   }
 
   // Resolves once the server has closed the socket (or the handshake failed).
-  function connectUntilClosed(server: Server, pathname: string) {
+  function connectUntilClosed(server: Server<undefined>, pathname: string) {
     const { promise, resolve } = Promise.withResolvers<void>();
     const ws = new WebSocket(wsUrl(server, pathname));
     ws.onerror = () => resolve();
@@ -2412,13 +2482,13 @@ describe.concurrent("request handlers run to completion before the callbacks the
     return promise;
   }
 
-  const upgradeHandler = (order: string[]) => (req: Request, srv: Server) => {
+  const upgradeHandler = (order: string[]) => (req: Request, srv: Server<undefined>) => {
     queueThen(order, () => {
       if (!srv.upgrade(req)) order.push("upgrade() failed");
     });
   };
 
-  const websocket = (order: string[], onOpen: (ws: ServerWebSocket<unknown>) => void) =>
+  const websocket = (order: string[], onOpen: (ws: ServerWebSocket<undefined>) => void) =>
     ({
       open(ws) {
         onOpen(ws);
@@ -2427,7 +2497,7 @@ describe.concurrent("request handlers run to completion before the callbacks the
       close() {
         order.push("close()");
       },
-    }) satisfies WebSocketHandler<unknown>;
+    }) satisfies WebSocketHandler<undefined>;
 
   it("fetch() calling server.upgrade()", async () => {
     const order: string[] = [];
@@ -2460,7 +2530,7 @@ describe.concurrent("request handlers run to completion before the callbacks the
   });
 
   // Opens a websocket on `/ws` and hands back the server side of it.
-  async function openHeldSocket(server: Server, opened: Promise<ServerWebSocket<unknown>>) {
+  async function openHeldSocket(server: Server<undefined>, opened: Promise<ServerWebSocket<undefined>>) {
     const closed = connectUntilClosed(server, "/ws");
     const held = await opened;
     return { held, closed };
@@ -2468,8 +2538,8 @@ describe.concurrent("request handlers run to completion before the callbacks the
 
   it("fetch() closing an open ServerWebSocket", async () => {
     const order: string[] = [];
-    const opened = Promise.withResolvers<ServerWebSocket<unknown>>();
-    let held: ServerWebSocket<unknown>;
+    const opened = Promise.withResolvers<ServerWebSocket<undefined>>();
+    let held: ServerWebSocket<undefined>;
     using server = serve({
       port: 0,
       fetch(req, srv) {
@@ -2491,8 +2561,8 @@ describe.concurrent("request handlers run to completion before the callbacks the
 
   it("a route handler closing an open ServerWebSocket", async () => {
     const order: string[] = [];
-    const opened = Promise.withResolvers<ServerWebSocket<unknown>>();
-    let held: ServerWebSocket<unknown>;
+    const opened = Promise.withResolvers<ServerWebSocket<undefined>>();
+    let held: ServerWebSocket<undefined>;
     using server = serve({
       port: 0,
       routes: {
@@ -2514,7 +2584,7 @@ describe.concurrent("request handlers run to completion before the callbacks the
 
   it("a request's abort listener closing an open ServerWebSocket", async () => {
     const order: string[] = [];
-    const opened = Promise.withResolvers<ServerWebSocket<unknown>>();
+    const opened = Promise.withResolvers<ServerWebSocket<undefined>>();
     const reachedHandler = Promise.withResolvers<void>();
     let held: ServerWebSocket<unknown>;
     using server = serve({
@@ -2549,8 +2619,8 @@ describe.concurrent("request handlers run to completion before the callbacks the
   // that ordering is not what this test is about.
   it("the continuation of an async fetch() closing an open ServerWebSocket", async () => {
     const order: string[] = [];
-    const opened = Promise.withResolvers<ServerWebSocket<unknown>>();
-    let held: ServerWebSocket<unknown>;
+    const opened = Promise.withResolvers<ServerWebSocket<undefined>>();
+    let held: ServerWebSocket<undefined>;
     using server = serve({
       port: 0,
       async fetch(req, srv) {

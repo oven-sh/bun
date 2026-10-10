@@ -1214,6 +1214,36 @@ pub(crate) fn edit(
                 break;
             }
 
+            // For a non-aliased git/github/tarball/folder request, `get_name()` is the
+            // URL or path literal: the before-install edit keys its entry by that
+            // literal, and the slot above was just re-keyed to the resolved package
+            // name. If the list already declared this package under the resolved name
+            // with a different literal (e.g. a new commit hash), that stale entry is
+            // still present, so drop it or the file ends up with a duplicate key.
+            if !request.is_aliased && k < new_dependencies.len() {
+                let resolved_name = request.get_resolved_name(&manager.lockfile);
+                let mut j = new_dependencies.len();
+                while j > 0 {
+                    j -= 1;
+                    if j == k {
+                        continue;
+                    }
+                    if let Some(key) = &new_dependencies[j].key {
+                        if key
+                            .data
+                            .e_string()
+                            .expect("infallible: variant checked")
+                            .eql_bytes(resolved_name)
+                        {
+                            new_dependencies.remove(j);
+                            if j < k {
+                                k -= 1;
+                            }
+                        }
+                    }
+                }
+            }
+
             // There are no early-exit
             // paths between the top of this `for` body and here, so a plain post-loop assert
             // suffices (and avoids a `scopeguard` borrow conflict on

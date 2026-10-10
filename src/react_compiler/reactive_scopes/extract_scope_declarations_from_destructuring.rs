@@ -11,7 +11,7 @@
 use std::collections::HashSet;
 
 use crate::hir::{
-    DeclarationId, IdentifierId, IdentifierName, InstructionKind, InstructionValue, LValue, Place,
+    DeclarationId, IdentifierId, InstructionKind, InstructionValue, LValue, Place,
     ReactiveFunction, ReactiveInstruction, ReactiveScopeBlock, ReactiveStatement, ReactiveValue,
     environment::Environment, visitors,
 };
@@ -121,16 +121,13 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
                     }
                     // Create a temporary place (matches TS clonePlaceToTemporary)
                     let temp_id = env.next_identifier_id();
-                    let decl_id = env.identifiers[temp_id.0 as usize].declaration_id;
                     // Copy type from original identifier to temporary
                     let original_type = env.identifiers[place.identifier.0 as usize].type_;
                     env.identifiers[temp_id.0 as usize].type_ = original_type;
                     // Set identifier loc to the place's source location
                     // (matches TS makeTemporaryIdentifier which receives place.loc)
                     env.identifiers[temp_id.0 as usize].loc = place.loc.clone();
-                    // Promote the temporary
-                    env.identifiers[temp_id.0 as usize].name =
-                        Some(IdentifierName::promoted(b't', decl_id.0));
+                    env.promote_temporary(temp_id);
                     let temporary = Place {
                         identifier: temp_id,
                         effect: place.effect,

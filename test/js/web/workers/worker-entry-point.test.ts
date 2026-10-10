@@ -47,4 +47,22 @@ describe.concurrent("package.json imports alias as the entry point", () => {
     expect(stdout).toBe("message: hi\nclosed\n");
     expect(exitCode).toBe(0);
   });
+
+  test("an alias of a builtin fires the error event", async () => {
+    // `new Worker("node:fs")` fails to resolve. An alias of a builtin resolves to the builtin marked
+    // external, and that used to start a worker running node:fs as its entry point.
+    const { stdout, stderr, exitCode } = await runWorkerFixture({
+      "package.json": JSON.stringify({ name: "app", imports: { "#fs": "node:fs" } }),
+      "main.js": `
+        const worker = new Worker("#fs");
+        worker.addEventListener("error", event => console.log("error:", event.message));
+        worker.addEventListener("close", () => console.log("closed"));
+      `,
+    });
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      'error: BuildMessage: Cannot use "#fs" as an entry point: it resolves to a builtin module\nclosed\n',
+    );
+    expect(exitCode).toBe(0);
+  });
 });

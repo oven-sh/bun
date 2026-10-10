@@ -1,4 +1,4 @@
-/// <reference path="../../src/bake/bake.d.ts" />
+/// <reference path="../../src/runtime/bake/bake.d.ts" />
 /* Dev server tests can be run with `bun test` or in interactive mode with `bun run test.ts "name filter"`
  *
  * Env vars:
@@ -127,6 +127,12 @@ export interface DevServerTest {
    * Avoid if possible, this is to reproduce specific bugs.
    */
   mainDir?: string;
+  /**
+   * Working directory of the dev server process, relative to the test root.
+   * `Bun.serve` HTML routes use this as the project root, so files outside of
+   * it get `../` relative paths.
+   */
+  cwd?: string;
 
   skip?: ("win32" | "darwin" | "linux" | "ci")[];
   /**
@@ -1725,7 +1731,6 @@ async function writeAll(root: string, files: FileObject) {
     fs.mkdirSync(path.dirname(filename), { recursive: true });
     const formattedContents =
       typeof contents === "string" ? dedent(contents).replaceAll("{{root}}", root.replaceAll("\\", "\\\\")) : contents;
-    // @ts-expect-error the type of Bun.write is too strict
     promises.push(Bun.write(filename, formattedContents));
   }
   await Promise.all(promises);
@@ -2080,8 +2085,8 @@ function testImpl<T extends DevServerTest>(
     };
 
     await using devProcess = Bun.spawn({
-      cwd: root,
-      cmd: [process.execPath, "./harness_start.ts"],
+      cwd: path.join(root, options.cwd ?? "."),
+      cmd: [process.execPath, path.join(root, "harness_start.ts")],
       env: mergeWindowEnvs([
         bunEnv,
         {

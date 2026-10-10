@@ -184,6 +184,65 @@ describe("Bun.CSRF", () => {
     expect(() => CSRF.verify(token, { secret, sessionId: 123 })).toThrow();
   });
 
+  describe.each([
+    ["expiresIn", (value: unknown) => CSRF.generate(secret, { expiresIn: value as number })],
+    ["maxAge", (value: unknown) => CSRF.verify(CSRF.generate(secret), { secret, maxAge: value as number })],
+  ])("%s option validation", (field, call) => {
+    function thrown(value: unknown) {
+      try {
+        call(value);
+      } catch (error: any) {
+        return { constructor: error.constructor, code: error.code, message: error.message };
+      }
+      throw new Error(`expected ${field}: ${String(value)} to throw`);
+    }
+
+    test("NaN is treated as an absent option", () => {
+      expect(() => call(NaN)).not.toThrow();
+      expect(CSRF.verify(CSRF.generate(secret, { expiresIn: NaN }), { secret, maxAge: NaN })).toBe(true);
+
+      // The token embeds expiresIn as a big-endian u64 at bytes 24..32, after
+      // the timestamp and the nonce. 0 there means the token never expires.
+      const embeddedExpiresIn = (options?: { expiresIn: number }) =>
+        Buffer.from(CSRF.generate(secret, options), "base64url").readBigUInt64BE(24);
+      expect(embeddedExpiresIn({ expiresIn: 0 })).toBe(0n);
+      expect(embeddedExpiresIn({ expiresIn: NaN })).toBe(embeddedExpiresIn());
+      expect(embeddedExpiresIn({ expiresIn: NaN })).toBe(BigInt(24 * 60 * 60 * 1000));
+    });
+
+    test("out-of-range values throw RangeError [ERR_OUT_OF_RANGE]", () => {
+      const prefix = `The value of "${field}" is out of range. It must be >= 0 and <= 9007199254740991.`;
+      expect(thrown(-1)).toEqual({
+        constructor: RangeError,
+        code: "ERR_OUT_OF_RANGE",
+        message: `${prefix} Received -1`,
+      });
+      expect(thrown(2 ** 53)).toEqual({
+        constructor: RangeError,
+        code: "ERR_OUT_OF_RANGE",
+        message: `${prefix} Received 9007199254740992`,
+      });
+      expect(thrown(Infinity)).toEqual({
+        constructor: RangeError,
+        code: "ERR_OUT_OF_RANGE",
+        message: `${prefix} Received Infinity`,
+      });
+    });
+
+    test("non-integer and non-number values throw TypeError [ERR_INVALID_ARG_TYPE]", () => {
+      expect(thrown(1.5)).toEqual({
+        constructor: TypeError,
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "${field}" property must be of type integer. Received number`,
+      });
+      expect(thrown("100")).toEqual({
+        constructor: TypeError,
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "${field}" property must be of type number. Received string`,
+      });
+    });
+  });
+
   test("rejects encodings that are not token formats", () => {
     const token = CSRF.generate(secret);
     const message = "Invalid format: must be 'base64', 'base64url', or 'hex'";

@@ -4,7 +4,6 @@ use core::mem::ManuallyDrop;
 use bun_collections::index_sort;
 use bun_core::Output;
 use bun_core::strings;
-use bun_paths::PathBuffer;
 use bun_semver as semver;
 use bun_semver::{SlicedString, String as SemverString};
 
@@ -196,7 +195,7 @@ impl PackageManager {
                 self.lockfile.buffers.string_bytes.as_slice(),
                 tags_buf.as_slice(),
             ) {
-                let mut buf = PathBuffer::uninit();
+                let mut buf = bun_paths::path_buffer_pool::get();
                 let npm_package_path = match super::path_for_cached_npm_path(
                     self,
                     &mut buf,
@@ -326,11 +325,10 @@ impl PackageManager {
                     continue;
                 }
 
-                let features = match pkg_resolutions[parent_id].tag {
-                    ResolutionTag::Root | ResolutionTag::Workspace | ResolutionTag::Folder => {
-                        self.options.local_package_features
-                    }
-                    _ => self.options.remote_package_features,
+                let features = if pkg_resolutions[parent_id].tag.is_local_package() {
+                    self.options.local_package_features
+                } else {
+                    self.options.remote_package_features
                 };
                 // even if optional dependencies are enabled, it's still allowed to fail
                 if failed_dep.behavior.is_optional() || !failed_dep.behavior.is_enabled(features) {

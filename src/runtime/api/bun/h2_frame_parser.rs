@@ -1008,6 +1008,29 @@ impl Drop for Keepalive<'_> {
     }
 }
 
+/// A [`Keepalive`] that counts a ref the frame already owns (a queued task's).
+struct OwnedKeepalive(RefPtr<H2FrameParser>);
+
+impl OwnedKeepalive {
+    fn adopt(parser: RefPtr<H2FrameParser>) -> Self {
+        parser
+            .native_keepalives
+            .set(parser.native_keepalives.get() + 1);
+        Self(parser)
+    }
+}
+
+impl Drop for OwnedKeepalive {
+    fn drop(&mut self) {
+        let parser = &self.0;
+        debug_assert!(parser.native_keepalives.get() > 0);
+        // The field's own drop releases the ref after this, and can free the parser.
+        parser
+            .native_keepalives
+            .set(parser.native_keepalives.get() - 1);
+    }
+}
+
 /// A `&mut Stream` that only exists inside an armed dispatch scope (`enter_stream_dispatch`):
 /// while it is live, rewrite_read defers stream frees, so user JS that re-enters `read()`
 /// (option getters, header-value `toString`) cannot free the stream out from under the borrow.
@@ -1147,11 +1170,13 @@ pub(crate) struct H2FrameParser {
     /// True while flush() has bytes out in an onWrite dispatch to a JS-backed socket.
     js_socket_flushing: Cell<bool>,
     /// A native write returned a terminal result (socket closed, shut down, or the kernel
-    /// rejected the send). Latched once; the deferred tick closes the transport.
+    /// rejected the send). Latched once; the deferred tick queues the transport's close.
     transport_write_fatal: Cell<bool>,
     /// An outbound header block the HPACK encoder could not emit. Latched once; the deferred
     /// tick reports it, because it is detected inside a user submit call.
     pending_header_compression_error: Cell<bool>,
+    /// A `FatalWriteCloseTask` is in the event loop's task queue.
+    fatal_write_close_queued: Cell<bool>,
     /// Frames written by the legacy outbound encoder (perf_hooks http2 session stats).
     frames_sent_legacy: Cell<u64>,
     /// Engine counters mirrored at the end of each rewrite_read batch, so reading them
@@ -3027,7 +3052,21 @@ impl H2FrameParser {
         }
     }
 
-    /// Runs from the deferred tick (never under a write): closes the native socket so the
+    /// The close must not run inside the deferred task queue: it can run under `on_native_read`.
+    fn queue_transport_close_after_fatal_write(&self) {
+        if self.fatal_write_close_queued.replace(true) {
+            return;
+        }
+        let event_loop = self.global_this.bun_vm().event_loop_mut();
+        event_loop.enqueue_task(bun_event_loop::Task::from_boxed(Box::new(
+            FatalWriteCloseTask(self.ref_guard()),
+        )));
+        // A queued task does not shorten the libuv poll.
+        #[cfg(windows)]
+        event_loop.wakeup();
+    }
+
+    /// Runs from `FatalWriteCloseTask` (never under a write): closes the native socket so the
     /// normal socket-close teardown runs (native callback detach, JS 'close', session
     /// destroy) - the same path a peer disconnect takes. Closes WITHOUT detaching: a
     /// close_and_detach here severed the JS wrapper before on_close could dispatch, so
@@ -3059,17 +3098,14 @@ impl H2FrameParser {
         if self.transport_write_fatal.get() {
             // Returning `false` makes DeferredTaskQueue::run remove the entry
             // itself, so only the registration's flag and ref are released here
-            // - never a re-entrant map mutation from inside run(). The flag is
-            // cleared before the close so the teardown paths the close re-enters
-            // (detach -> unregister_auto_flush) see an unregistered flusher and
-            // early-return instead of removing a map entry run() still owns.
+            // - never a re-entrant map mutation from inside run().
             self.auto_flusher.get().registered.set(false);
             self.deref();
             // An empty write buffer here means a later write in the same flush()
             // cycle already drained the bytes the failing send left behind (racy
             // one-off errnos, e.g. macOS EPROTOTYPE) - the transport recovered.
             if self.has_backpressure() {
-                self.close_transport_after_fatal_write();
+                self.queue_transport_close_after_fatal_write();
             } else {
                 self.transport_write_fatal.set(false);
             }
@@ -3374,6 +3410,40 @@ extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
     // `register_auto_flush`; `DeferredTaskQueue::run` feeds it back unchanged
     // on the JS thread. `on_auto_flush` takes `&self`.
     unsafe { (*(ctx.cast_const().cast::<H2FrameParser>())).on_auto_flush() }
+}
+
+/// Keeps the parser alive in the task queue.
+pub(crate) struct FatalWriteCloseTask(RefPtr<H2FrameParser>);
+
+impl FatalWriteCloseTask {
+    #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
+    pub(crate) fn run(self: Box<Self>) {
+        let Self(queued_ref) = *self;
+        // Counted, so `finalize` can release it if `process.exit()` strands this frame.
+        let keepalive = OwnedKeepalive::adopt(queued_ref);
+        let parser: &H2FrameParser = &keepalive.0;
+        parser.fatal_write_close_queued.set(false);
+        // JS ran since the deferred tick queued this task: decide again, the way that tick does.
+        if parser.transport_write_fatal.get() {
+            if parser.has_backpressure() {
+                parser.close_transport_after_fatal_write();
+            } else {
+                parser.transport_write_fatal.set(false);
+            }
+        }
+    }
+}
+
+impl bun_event_loop::Taskable for FatalWriteCloseTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::H2FatalWriteClose;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract, boxed in `queue_transport_close_after_fatal_write`.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
+    /// The socket's own close: its handlers enter their context before they call script.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 // (`JsValueArrayPush` / `VmReportExtraMemory` shims removed —
@@ -7544,6 +7614,7 @@ impl H2FrameParser {
             js_socket_flushing: Cell::new(false),
             transport_write_fatal: Cell::new(false),
             pending_header_compression_error: Cell::new(false),
+            fatal_write_close_queued: Cell::new(false),
             frames_sent_legacy: Cell::new(0),
             engine_frames_received: Cell::new(0),
             engine_frames_sent: Cell::new(0),

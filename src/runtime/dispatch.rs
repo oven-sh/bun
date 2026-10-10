@@ -351,6 +351,15 @@ pub(crate) fn run_task(
             }
             .run()?;
         }
+        task_tag::H2FatalWriteClose => {
+            // SAFETY: boxed in `queue_transport_close_after_fatal_write`; the arm consumes it.
+            unsafe {
+                bun_core::heap::take(cast_ptr!(
+                    crate::api::h2_frame_parser_body::FatalWriteCloseTask
+                ))
+            }
+            .run();
+        }
         task_tag::HandledPromise => {
             // SAFETY: boxed in `handle_handled_promise`; the arm consumes it.
             unsafe {
@@ -727,7 +736,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 83,
+    task_tag::COUNT == 84,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1423,6 +1432,9 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::RunTestsTask => release!(crate::test_runner::bun_test::RunTestsTask),
         task_tag::ValkeyDeferredFailure => release!(crate::valkey_jsc::valkey::DeferredFailure),
         task_tag::DnsErrorDeferred => release!(crate::dns_jsc::cares_jsc::ErrorDeferredTask),
+        task_tag::H2FatalWriteClose => {
+            release!(crate::api::h2_frame_parser_body::FatalWriteCloseTask)
+        }
         task_tag::HandledPromise => release!(bun_jsc::virtual_machine_exports::HandledPromiseTask),
         task_tag::GraphContextStopAgain => {
             release!(bun_jsc::virtual_machine::GraphContextStopAgain)

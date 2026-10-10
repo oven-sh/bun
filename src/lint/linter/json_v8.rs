@@ -1,6 +1,7 @@
 //! `JSON.parse` as V8 implements it, for its error messages: ESLint quotes them in what it reports
 //! about an `/* eslint .. */` comment that it cannot read.
 
+use crate::json::RoomToNest;
 use crate::options::Json;
 
 /// `kMaxContextCharacters`
@@ -26,6 +27,7 @@ enum Token {
 struct Parser<'t> {
     text: &'t [u16],
     at: usize,
+    room: RoomToNest,
 }
 
 type Parsed<T> = Result<T, Vec<u8>>;
@@ -256,7 +258,7 @@ impl Parser<'_> {
     }
 
     fn value(&mut self) -> Parsed<Json> {
-        if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        if !self.room.has_more() {
             return Err(b"Maximum call stack size exceeded".to_vec());
         }
         self.skip_whitespace();
@@ -338,6 +340,7 @@ pub fn parse(text: &[u8]) -> Result<Json, Vec<u8>> {
     let mut parser = Parser {
         text: &units,
         at: 0,
+        room: RoomToNest::new(),
     };
     let value = parser.value()?;
     match parser.check(Token::Eos) {

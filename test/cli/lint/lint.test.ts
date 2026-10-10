@@ -2374,6 +2374,22 @@ describe.concurrent("bun lint", () => {
       expect({ off: off.exitCode, error: error.exitCode }).toEqual({ off: 0, error: 1 });
       expect(off.raw).toBe("");
     });
+
+    // What reads the comment stops where the stack ends: how deep that is depends on the build and on the system. A
+    // little before that depth, the rest of the value was given up at the bottom of the stack, which overflowed.
+    test("an `eslint` comment that is nested about as deep as the stack holds", async () => {
+      const files: Record<string, string> = { ".eslintrc.json": '{ "root": true }' };
+      for (let depth = 1_000; depth < 30_000; depth = Math.ceil(depth * 1.025)) {
+        const arrays = "[".repeat(depth) + "]".repeat(depth);
+        const objects = `${'{"a":'.repeat(depth)}1${"}".repeat(depth)}`;
+        files[`arrays-${depth}.js`] = `/* eslint no-restricted-syntax: [error, ${arrays}] */\n`;
+        files[`objects-${depth}.js`] = `/* eslint "no-restricted-syntax": ["error", ${objects}] */\n`;
+      }
+      const { raw, exitCode } = await lint(files, ["-f", "json"]);
+      expect(exitCode).toBe(1);
+      const results: { errorCount: number }[] = JSON.parse(raw);
+      expect(results.map(it => it.errorCount)).toEqual(Array(Object.keys(files).length - 1).fill(1));
+    });
   });
 
   // A file to which links give several names, and rules that look at several files. It must be the same in every run.

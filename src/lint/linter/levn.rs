@@ -1,6 +1,7 @@
 //! `levn.parse("Object", text)`: the liberal notation that ESLint reads an `/* eslint .. */`
 //! comment in before it tries JSON.
 
+use crate::json::RoomToNest;
 use crate::options::Json;
 
 fn is_special(byte: u8) -> bool {
@@ -92,6 +93,7 @@ enum Node {
 struct Tokens<'t> {
     tokens: Vec<&'t [u8]>,
     at: usize,
+    room: RoomToNest,
 }
 
 impl<'t> Tokens<'t> {
@@ -161,7 +163,7 @@ impl<'t> Tokens<'t> {
     }
 
     fn element(&mut self, until: &[&[u8]]) -> Option<Node> {
-        if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        if !self.room.has_more() {
             return None;
         }
         match self.peek() {
@@ -218,13 +220,18 @@ fn unquote(text: &[u8]) -> Vec<u8> {
 
 /// The `*` cast. `None` where levn throws, and for a regular expression, which JSON cannot
 /// express. A date stays a string.
-fn cast(node: &Node) -> Option<Json> {
-    if !bun_core::StackCheck::init().is_safe_to_recurse() {
+fn cast(node: &Node, room: RoomToNest) -> Option<Json> {
+    if !room.has_more() {
         return None;
     }
     Some(match node {
-        Node::List(items) => Json::Array(items.iter().map(cast).collect::<Option<_>>()?),
-        Node::Fields(fields) => Json::Object(cast_fields(fields)?),
+        Node::List(items) => Json::Array(
+            items
+                .iter()
+                .map(|it| cast(it, room))
+                .collect::<Option<_>>()?,
+        ),
+        Node::Fields(fields) => Json::Object(cast_fields(fields, room)?),
         Node::Value(text) => match &text[..] {
             b"undefined" | b"null" => Json::Null,
             b"NaN" => Json::Number(f64::NAN),
@@ -248,10 +255,10 @@ fn cast(node: &Node) -> Option<Json> {
     })
 }
 
-fn cast_fields(fields: &[(Vec<u8>, Node)]) -> Option<Vec<(Vec<u8>, Json)>> {
+fn cast_fields(fields: &[(Vec<u8>, Node)], room: RoomToNest) -> Option<Vec<(Vec<u8>, Json)>> {
     let mut out: Vec<(Vec<u8>, Json)> = Vec::with_capacity(fields.len());
     for (key, value) in fields {
-        let (key, value) = (unquote(key), cast(value)?);
+        let (key, value) = (unquote(key), cast(value, room)?);
         match out.iter_mut().find(|it| it.0 == key) {
             Some(entry) => entry.1 = value,
             None => out.push((key, value)),
@@ -266,6 +273,7 @@ pub fn parse_object(text: &[u8]) -> Option<Vec<(Vec<u8>, Json)>> {
     let mut tokens = Tokens {
         tokens: tokenize(text),
         at: 0,
+        room: RoomToNest::new(),
     };
     let has_delimiters = tokens.peek() == Some(b"{");
     let Node::Fields(fields) = tokens.fields(has_delimiters)? else {
@@ -273,6 +281,6 @@ pub fn parse_object(text: &[u8]) -> Option<Vec<(Vec<u8>, Json)>> {
     };
     // levn reads what has tokens left over as a tuple, which is no object.
     (tokens.at == tokens.tokens.len())
-        .then(|| cast_fields(&fields))
+        .then(|| cast_fields(&fields, tokens.room))
         .flatten()
 }

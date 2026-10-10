@@ -132,7 +132,8 @@ impl<'a> PropertyHandlerContext<'a> {
                 rules: css::CssRuleList {
                     v: vec![css::CssRule::Style(css::StyleRule {
                         selectors: style_rule.selectors.deep_clone(),
-                        vendor_prefix: css::VendorPrefix::NONE,
+                        // Not minified again, so no `update_prefix` computes it.
+                        vendor_prefix: style_rule.vendor_prefix,
                         declarations: css::DeclarationBlock {
                             declarations: self.clone_decls(&entry.declarations),
                             important_declarations: self.clone_decls(&entry.important_declarations),

@@ -442,3 +442,95 @@ impl Drop for MiniEventLoop {
         debug_assert!(self.concurrent_tasks.is_empty());
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
+
+    /// What the test passes as the uws loop.
+    #[derive(Default)]
+    struct FakeLoop {
+        mini_freed: AtomicBool,
+        wakes: AtomicUsize,
+    }
+
+    /// Stands in for uSockets' wake: returns once the owner has freed the `MiniEventLoop`.
+    // SAFETY: no uSockets is linked into this test binary, so this is the only
+    // definition of the symbol a post calls; Miri resolves the call to it as well.
+    #[unsafe(no_mangle)]
+    extern "C" fn us_wakeup_loop(loop_: *mut UwsLoop) {
+        // SAFETY: only the test below reaches this, with its live `FakeLoop`.
+        let fake = unsafe { &*loop_.cast::<FakeLoop>() };
+        while !fake.mini_freed.load(Ordering::Acquire) {
+            std::thread::yield_now();
+        }
+        fake.wakes.fetch_add(1, Ordering::Relaxed);
+    }
+
+    struct Request {
+        ran_on_owner: bool,
+        task: AnyTaskWithExtraContext,
+    }
+
+    fn run_on_owner(request: *mut Request, _: *mut ()) {
+        // SAFETY: `request` is the live context the test posted.
+        unsafe { (*request).ran_on_owner = true };
+    }
+
+    // Miri fails this if a post reads the loop after it queues the task, or holds a `&` to it.
+    #[test]
+    fn owner_may_free_the_loop_once_the_task_is_queued() {
+        let fake = FakeLoop::default();
+        let mini = AtomicPtr::new(Box::into_raw(Box::new(MiniEventLoop {
+            tasks: Queue::init(),
+            concurrent_tasks: ConcurrentTaskQueue::default(),
+            loop_: (&raw const fake).cast_mut().cast::<UwsLoop>(),
+            file_polls: None,
+            env: None,
+            top_level_dir: Box::default(),
+            after_event_loop_callback_ctx: None,
+            after_event_loop_callback: None,
+            pipe_read_scratch: Box::new(bun_io::PipeReadScratch::new()),
+        })));
+        let mut request = Request {
+            ran_on_owner: false,
+            task: AnyTaskWithExtraContext::default(),
+        };
+
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let mini = mini.load(Ordering::Relaxed);
+                // SAFETY: this thread owns the loop until it frees it; the task it
+                // pops is `request.task`, which outlives the scope.
+                unsafe {
+                    let task = loop {
+                        let task = (*mini).concurrent_tasks.pop();
+                        if !task.is_null() {
+                            break task;
+                        }
+                        std::thread::yield_now();
+                    };
+                    (*task).run(core::ptr::null_mut());
+                    // The waiting pass returns here, with the poster still inside its call.
+                    drop(Box::from_raw(mini));
+                }
+                fake.mini_freed.store(true, Ordering::Release);
+            });
+
+            // SAFETY: the loop is live until the task is queued, which is all the
+            // post requires; `request` outlives the scope.
+            unsafe {
+                MiniEventLoop::enqueue_task_concurrent_with_extra_ctx::<Request, ()>(
+                    mini.load(Ordering::Relaxed),
+                    &raw mut request,
+                    run_on_owner,
+                    core::mem::offset_of!(Request, task),
+                );
+            }
+        });
+
+        assert!(request.ran_on_owner);
+        assert_eq!(fake.wakes.load(Ordering::Relaxed), 1);
+    }
+}

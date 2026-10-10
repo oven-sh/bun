@@ -30,14 +30,14 @@ use crate::host::{self, output, output_line};
 use crate::{str_of, text};
 use bun_lint::ast::{File, Node};
 use bun_lint::language::LanguageOptions;
-use bun_lint::linter::{LintOptions, Linter, Registry, ResolvedConfig, RuleId};
+use bun_lint::linter::{LintOptions, Registry, ResolvedConfig, RuleId};
 use bun_lint::options::Json;
 use bun_lint::rule::Plugin;
 use bun_lint::runner::RuleEntry;
 use bun_lint::types::{
     ObjectFlags, SymbolFlags, SyntaxKind, TsNode, TsSymbol, Type, TypeFlags, tsutils, utils,
 };
-use bun_lint_conformance::{Outcome, Tally, config_of, expected_messages, problem_of};
+use bun_lint_conformance::{Counts, Outcome, Tally, config_of, expected_messages, problem_of};
 use bun_sema::program::FileId;
 use bun_threading::Guarded;
 use std::fmt::Write as _;
@@ -61,6 +61,8 @@ pub(crate) struct Project<'a> {
 fn checks_like_an_editor() -> bool {
     host::variable("BUN_LINT_CHECKS_LIKE_TSC").is_none()
 }
+
+type Linter = bun_lint::linter::Linter<bun_lint_driver::rules::Rules>;
 
 fn linter() -> &'static Linter {
     static LINTER: std::sync::OnceLock<Linter> = std::sync::OnceLock::new();
@@ -181,6 +183,7 @@ fn check_project(
         compiler_options: &command_line.compiler_options,
         cwd: project.cwd.as_bytes(),
         project: command_line.project.as_deref(),
+        listed_projects: None,
         build: false,
         errors: &[],
         paths: &command_line.paths,
@@ -889,7 +892,7 @@ fn dump_fixtures(args: &[String]) {
 /// What is wrong with what the rule reports for `case`.
 fn problem_of_case(entry: &'static RuleEntry, project_root: &str, case: &Json) -> Option<String> {
     let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
-    let config = config_of(linter(), entry, case);
+    let config = config_of(linter().registry(), entry, case);
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         with_case(project_root, case, &config.language, &|file| {
             lint_file(entry, file, code, &config)
@@ -927,7 +930,7 @@ fn problem_of_outcome(
 ) -> Option<String> {
     match outcome {
         Err(_) => Some("panicked".to_owned()),
-        Ok(outcome) => problem_of(outcome, case).map(|it| {
+        Ok(outcome) => problem_of(outcome, case, &Counts::default()).map(|it| {
             format!("{}\n{}", it.summary, it.details)
                 .trim_end()
                 .to_owned()
@@ -1083,7 +1086,7 @@ fn run_one(args: &[String]) {
             with_the_parser_of_typescript_eslint(),
         ),
     ]);
-    let config = config_of(linter(), entry, &case);
+    let config = config_of(linter().registry(), entry, &case);
     let outcomes = lint_project(project, &config.language, &|file| {
         lint_file(entry, file, &code, &config)
     });

@@ -31,6 +31,9 @@ mod run;
 mod suppressions;
 mod typed;
 
+/// With all the rules that there are.
+pub(crate) type Linter = bun_lint::linter::Linter<rules::Rules>;
+
 pub use args::Param;
 pub use bun_lint::js_plugin;
 pub(crate) use bun_lint::paths;

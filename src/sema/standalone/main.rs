@@ -336,6 +336,7 @@ fn run(args: &[String]) {
                 compiler_options: &command_line.compiler_options,
                 cwd: cwd.as_bytes(),
                 project: command_line.project.as_deref(),
+                listed_projects: None,
                 build: command_line.build,
                 errors: &command_line.errors,
                 paths: &command_line.paths,

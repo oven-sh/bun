@@ -288,9 +288,7 @@ impl Rule for Quotes {
             b'\'' => b"\"`",
             _ => b"\"'",
         };
-        if strings::index_of_any(file.text(), other_quotes).is_none() {
-            return None;
-        }
+        strings::index_of_any(file.text(), other_quotes)?;
         Some(State::default())
     }
 

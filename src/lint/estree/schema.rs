@@ -46,10 +46,10 @@ pub struct FieldEntry {
     pub get: for<'a> fn(VNode<'a>) -> Value<'a>,
 }
 
-/// Gives `sink` a field. `None`: a `?` in it has given up.
+/// Gives `sink` the field that `get` makes. `None`: a `?` in it has given up.
 #[inline]
-fn emit<'a>(value: Option<impl Emit<'a>>, sink: &mut impl Sink<'a>) {
-    match value {
+fn emit<'a, T: Emit<'a>>(get: impl FnOnce() -> Option<T>, sink: &mut impl Sink<'a>) {
+    match get() {
         Some(value) => value.emit(sink),
         None => sink.undefined(),
     }
@@ -111,7 +111,7 @@ macro_rules! estree_schema {
                     $(NodeType::$name => {
                         let $v = v;
                         let _ = ($v, is_espree, &mut *sink);
-                        $(estree_schema!(@emit $row is_espree, emit((|| Some($value))(), sink));)*
+                        $(estree_schema!(@emit $row is_espree, emit(|| Some($value), sink));)*
                     })*
                 }
             }

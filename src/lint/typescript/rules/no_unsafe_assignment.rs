@@ -45,7 +45,10 @@ type Context<'a> = Cx<'a, NoUnsafeAssignment>;
 
 /// `createData(senderType).sender`
 fn describe_sender(sender_type: Type, cx: &Context) -> &'static str {
-    match (is_intrinsic_error_type(sender_type), cx.language().is_oxlint) {
+    match (
+        is_intrinsic_error_type(sender_type),
+        cx.language().is_oxlint,
+    ) {
         (true, _) => "error typed",
         (false, false) => "`any`",
         (false, true) => "any",
@@ -128,7 +131,9 @@ impl<'a> Destructured<'a> {
 /// tsgolint's `assignmentRelationRange`: the `=` or the `:` before what is assigned, in `whole`.
 fn relation_span(sender_node: Expr, whole: Span) -> Span {
     let file = sender_node.file();
-    let sender = sender_node.jsx_container_span().unwrap_or_else(|| sender_node.outer_span());
+    let sender = sender_node
+        .jsx_container_span()
+        .unwrap_or_else(|| sender_node.outer_span());
     let end = file.end_of_token_before(sender.start);
     match file.text().get(end.wrapping_sub(1) as usize) {
         Some(b'=' | b':') if end > whole.start => Span::new(end - 1, end),
@@ -152,12 +157,22 @@ fn check_destructure<'a>(
 ) {
     // oxlint points at what is assigned.
     let place = |span: Span| Place {
-        shown: if cx.language().is_oxlint { sender_node.outer_span() } else { span },
+        shown: if cx.language().is_oxlint {
+            sender_node.outer_span()
+        } else {
+            span
+        },
         of_comments: span,
     };
     // Not by recursion: a pattern is nested as deeply as the parser allows. The last is the next.
     let mut parts = Vec::new();
-    check_pattern(cx, receiver_node, place(receiver_span), sender_type, &mut parts);
+    check_pattern(
+        cx,
+        receiver_node,
+        place(receiver_span),
+        sender_type,
+        &mut parts,
+    );
     while let Some(part) = parts.pop() {
         let sender_type = match part.sender {
             Sender::Type(ty) => ty,
@@ -169,7 +184,13 @@ fn check_destructure<'a>(
                 .comments_apply_at(part.span)
                 .data("sender", describe_sender(sender_type, cx));
         } else if !part.has_default {
-            check_pattern(cx, part.target, place(part.target.span()), sender_type, &mut parts);
+            check_pattern(
+                cx,
+                part.target,
+                place(part.target.span()),
+                sender_type,
+                &mut parts,
+            );
         }
     }
 }
@@ -315,7 +336,14 @@ fn check_assignment_of_type<'a>(
         report_any_assignment(cx, sender_node, sender_type, reporting_node);
         return true;
     }
-    compares && report_unsafe_assignment(cx, receiver_type(), sender_node, sender_type, reporting_node)
+    compares
+        && report_unsafe_assignment(
+            cx,
+            receiver_type(),
+            sender_node,
+            sender_type,
+            reporting_node,
+        )
 }
 
 /// Whether it is reported.
@@ -329,7 +357,11 @@ fn report_unsafe_assignment<'a>(
     let Some(result) = is_unsafe_assignment(sender_type, receiver_type, sender_node) else {
         return false;
     };
-    let place = if cx.language().is_oxlint { sender_node.outer_span() } else { reporting_node };
+    let place = if cx.language().is_oxlint {
+        sender_node.outer_span()
+    } else {
+        reporting_node
+    };
     cx.report(place, UNSAFE_ASSIGNMENT)
         .comments_apply_at(relation_span(sender_node, reporting_node))
         .data("receiver", in_backticks(result.receiver))
@@ -430,7 +462,7 @@ fn check_property<'a>(cx: &Context<'a>, node: Prop<'a>, value: Expr<'a>) {
 
 impl NoUnsafeAssignment {
     // `AssignmentExpression[operator = "="]`, and an `AssignmentPattern` in an assignment.
-    fn assign<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+    fn assign<'a>(node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let ExprKind::Assign {
             op: None,
             target,
@@ -449,7 +481,7 @@ impl NoUnsafeAssignment {
     }
 
     // `ArrayExpression > SpreadElement`
-    fn spread<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+    fn spread<'a>(node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Spread(argument) = node.kind() else {
             return;
         };
@@ -459,7 +491,11 @@ impl NoUnsafeAssignment {
         }
         let rest_type = argument.ty();
         if is_type_any_type(rest_type) || is_type_any_array_type(rest_type) {
-            let place = if cx.language().is_oxlint { argument.outer_span() } else { node.span() };
+            let place = if cx.language().is_oxlint {
+                argument.outer_span()
+            } else {
+                node.span()
+            };
             cx.report(place, UNSAFE_ARRAY_SPREAD)
                 .comments_apply_at(node)
                 .data("sender", describe_sender(rest_type, cx));
@@ -467,49 +503,9 @@ impl NoUnsafeAssignment {
     }
 }
 
-impl Rule for NoUnsafeAssignment {
-    const META: Meta = Meta::typescript("no-unsafe-assignment", Kind::Problem)
-        .presets(Presets::RECOMMENDED_TYPE_CHECKED)
-        .requires_types();
-    const ON: On = On::new()
-        .members()
-        .exprs(&[ExprTag::Assign, ExprTag::Spread])
-        .params()
-        .pats(&[PatTag::Array, PatTag::Object])
-        .var_decls()
-        .props();
-    no_state!();
-
-    fn new(_: &Options) -> Self {
-        NoUnsafeAssignment
-    }
-
-    // `AccessorProperty[value != null]`, `PropertyDefinition[value != null]`
-    fn member<'a>(&self, node: Member<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(value) = node.init() else {
-            return;
-        };
-        if node.kind() != MemberKind::Property
-            || node.is_signature()
-            || node.flags().contains(Flags::ABSTRACT)
-        {
-            return;
-        }
-        let file = cx.file();
-        let receiver_type = || type_of_key(file, node.key(), || NameOf(node).ty());
-        check_assignment(cx, &receiver_type, value, node.span(), node.ty().is_some());
-    }
-
-    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        match node.tag() {
-            ExprTag::Assign => self.assign(node, cx),
-            ExprTag::Spread => self.spread(node, cx),
-            _ => {}
-        }
-    }
-
+impl NoUnsafeAssignment {
     // An `AssignmentPattern` in a declaration.
-    fn param<'a>(&self, node: Param<'a>, cx: &mut Cx<'a, Self>) {
+    fn check_param<'a>(node: Param<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(right) = node.default() {
             let left = Target::Pat(node.pat());
             check_assignment_to_target(
@@ -523,7 +519,7 @@ impl Rule for NoUnsafeAssignment {
         }
     }
 
-    fn pat<'a>(&self, pattern: Pat<'a>, cx: &mut Cx<'a, Self>) {
+    fn check_pattern<'a>(pattern: Pat<'a>, cx: &mut Cx<'a, Self>) {
         match pattern.kind() {
             PatKind::Array(elements) => {
                 for element in elements {
@@ -560,7 +556,7 @@ impl Rule for NoUnsafeAssignment {
     }
 
     // `VariableDeclarator[init != null]`
-    fn var_decl<'a>(&self, node: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+    fn check_declarator<'a>(node: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(init) = node.init() {
             // Without an annotation the type of the variable is inferred, thus equal.
             let compares = node.ty().is_some();
@@ -572,6 +568,89 @@ impl Rule for NoUnsafeAssignment {
                 node.span(),
                 compares,
             );
+        }
+    }
+}
+
+/// What has a target and a value.
+pub enum Assignment<'a> {
+    Expr(Expr<'a>),
+    Param(Param<'a>),
+    Pattern(Pat<'a>),
+    Declarator(VarDecl<'a>),
+}
+
+impl Rule for NoUnsafeAssignment {
+    const META: Meta = Meta::typescript("no-unsafe-assignment", Kind::Problem)
+        .presets(Presets::RECOMMENDED_TYPE_CHECKED)
+        .requires_types();
+    const ON: On = On::new()
+        .members()
+        .exprs(&[ExprTag::Assign, ExprTag::Spread])
+        .params()
+        .pats(&[PatTag::Array, PatTag::Object])
+        .var_decls()
+        .props()
+        .finish();
+    /// They are checked at the end, the outer ones first: two of them can report at one place, and ESLint has them in that order.
+    type State<'a> = Vec<(Span, Assignment<'a>)>;
+
+    fn new(_: &Options) -> Self {
+        NoUnsafeAssignment
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(Vec::new())
+    }
+
+    // `AccessorProperty[value != null]`, `PropertyDefinition[value != null]`
+    fn member<'a>(&self, node: Member<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(value) = node.init() else {
+            return;
+        };
+        if node.kind() != MemberKind::Property
+            || node.is_signature()
+            || node.flags().contains(Flags::ABSTRACT)
+        {
+            return;
+        }
+        let file = cx.file();
+        let receiver_type = || type_of_key(file, node.key(), || NameOf(node).ty());
+        check_assignment(cx, &receiver_type, value, node.span(), node.ty().is_some());
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match node.tag() {
+            ExprTag::Assign => cx.state.push((node.span(), Assignment::Expr(node))),
+            ExprTag::Spread => Self::spread(node, cx),
+            _ => {}
+        }
+    }
+
+    fn pat<'a>(&self, pattern: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        cx.state
+            .push((pattern.span(), Assignment::Pattern(pattern)));
+    }
+
+    fn param<'a>(&self, node: Param<'a>, cx: &mut Cx<'a, Self>) {
+        cx.state
+            .push((node.span_without_modifiers(), Assignment::Param(node)));
+    }
+
+    fn var_decl<'a>(&self, node: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        cx.state.push((node.span(), Assignment::Declarator(node)));
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let mut assignments = std::mem::take(&mut cx.state);
+        assignments.sort_by_key(|it| (it.0.start, std::cmp::Reverse(it.0.end)));
+        for (_, assignment) in assignments {
+            match assignment {
+                Assignment::Expr(node) => Self::assign(node, cx),
+                Assignment::Param(node) => Self::check_param(node, cx),
+                Assignment::Pattern(pattern) => Self::check_pattern(pattern, cx),
+                Assignment::Declarator(node) => Self::check_declarator(node, cx),
+            }
         }
     }
 

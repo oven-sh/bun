@@ -1,6 +1,7 @@
 //! Lints the files that have rules which need types.
 //!
-//! Each is type checked with the `tsconfig.json` that an editor uses for it, and as an editor does
+//! Each is type checked with the `tsconfig.json` that an editor uses for it, or with the first that includes it of those
+//! that `parserOptions.project` names, and as an editor does
 //! it: what it imports is only looked at as far as its types are asked for, and a project that is
 //! referenced is read from its sources. A file is linted right after it is checked, by the thread
 //! that checked it, while its types are there. Type errors are not reported, that is what
@@ -21,6 +22,7 @@ use bun_lint::linter::{
     Details, LintMessage, LintResult, MAX_AUTOFIX_PASSES, ResolvedConfig, RuleId, apply_fixes,
     grows_too_much, is_parse_error, max_fixed_len,
 };
+use bun_sema::json::Json;
 use bun_sema::program::FileId;
 use bun_sema::resolve::{inside, to_file_name_lower_case};
 use bun_sema::util::FxHashMap;
@@ -135,6 +137,137 @@ impl ByPath {
     }
 }
 
+/// `parserOptions.project` where it names files.
+struct Listed<'t> {
+    by_path: &'t ByPath,
+    /// For each file in `by_path`, where its list is in `lists`.
+    of_file: Vec<usize>,
+    lists: Vec<Vec<Vec<u8>>>,
+}
+
+impl bun_sema_driver::ListedProjects for Listed<'_> {
+    fn of(&self, path: &[u8], is_case_sensitive: bool) -> &[Vec<u8>] {
+        let at = self.by_path.get(path, is_case_sensitive);
+        at.map_or(&[], |at| &self.lists[self.of_file[at]])
+    }
+}
+
+impl<'t> Listed<'t> {
+    fn new(by_path: &'t ByPath, files: &[Typed], indices: &[usize], cwd: &[u8]) -> Listed<'t> {
+        let cwd = crate::paths::from_native(cwd);
+        // The files of one configuration have one list, and so have the configurations that say the same.
+        let mut by_config: FxHashMap<*const ResolvedConfig, usize> = FxHashMap::default();
+        let mut by_text: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
+        let mut lists = Vec::new();
+        let of_file = indices.iter().map(|&index| {
+            let config = files[index].config;
+            *by_config.entry(Arc::as_ptr(config)).or_insert_with(|| {
+                let options = &config.language.parser_options;
+                let mut text = Vec::new();
+                for name in [
+                    &b"project"[..],
+                    b"projectService",
+                    b"tsconfigRootDir",
+                    b"projectFolderIgnoreList",
+                ] {
+                    let value = options.get(name).unwrap_or(&Json::Null);
+                    value.stringify(&mut text);
+                    text.push(b'\n');
+                }
+                *by_text.entry(text).or_insert_with(|| {
+                    lists.push(resolve_project_list(options, &cwd));
+                    lists.len() - 1
+                })
+            })
+        });
+        Listed {
+            by_path,
+            of_file: of_file.collect(),
+            lists,
+        }
+    }
+}
+
+/// `resolveProjectList` of typescript-estree 8.71: the names that are no patterns first, in their order, wherever they stand,
+/// then what each pattern finds. In the checker's format. Empty: `project` names nothing, or `projectService` overrides it.
+fn resolve_project_list(options: &Json, cwd: &[u8]) -> Vec<Vec<u8>> {
+    fn strings_of(value: Option<&Json>) -> Vec<&[u8]> {
+        match value {
+            Some(Json::String(one)) => vec![&one[..]],
+            Some(Json::Array(items)) => items.iter().filter_map(Json::as_str).collect(),
+            _ => Vec::new(),
+        }
+    }
+    let written = strings_of(options.get(b"project"));
+    if written.is_empty() || options.get(b"projectService").is_some_and(Json::is_truthy) {
+        return Vec::new();
+    }
+    let root = match options.get(b"tsconfigRootDir").and_then(Json::as_str) {
+        Some(root) => crate::paths::resolve(cwd, &crate::paths::portable(cwd, root)),
+        None => cwd.to_vec(),
+    };
+    let ignored = match options.get(b"projectFolderIgnoreList") {
+        Some(list @ Json::Array(_)) => strings_of(Some(list)),
+        _ => vec![&b"**/node_modules/**"[..]],
+    };
+    let (patterns, names): (Vec<&[u8]>, Vec<&[u8]>) =
+        (written.iter().copied()).partition(|it| bun_glob::scan::is_glob(it));
+    let names = names.iter();
+    let mut list: Vec<Vec<u8>> = names
+        .map(|it| crate::paths::resolve(&root, &crate::paths::portable(&root, it)))
+        .collect();
+    for pattern in patterns {
+        list.extend(files_matching(&root, pattern, &ignored));
+    }
+    let mut seen = bun_sema::util::FxHashSet::default();
+    list.retain(|it| seen.insert(it.clone()));
+    let in_the_format_of_the_checker = |it: Vec<u8>| from_native(&crate::paths::to_native(it));
+    list.into_iter().map(in_the_format_of_the_checker).collect()
+}
+
+/// What tinyglobby finds for `pattern` below `root`, sorted: it has them in the order in which it reads the directories.
+/// A link to a directory is not followed.
+fn files_matching(root: &[u8], pattern: &[u8], ignored: &[&[u8]]) -> Vec<Vec<u8>> {
+    let options = bun_glob::Options {
+        dot: false,
+        ..bun_glob::Options::MICROMATCH_DOT
+    };
+    let pattern = pattern.strip_prefix(b"./").unwrap_or(pattern);
+    let pattern = bun_glob::Pattern::new(pattern, options);
+    let ignored: Vec<bun_glob::Pattern> = (ignored.iter())
+        .map(|it| bun_glob::Pattern::new(it, options))
+        .collect();
+    let is_ignored = |relative: &[u8]| ignored.iter().any(|it| it.matches(relative));
+    let mut found = Vec::new();
+    // From `root`. A loop: directories can be nested to any depth.
+    let mut pending: Vec<Vec<u8>> = vec![Vec::new()];
+    while let Some(directory) = pending.pop() {
+        let path = crate::paths::resolve(root, &directory);
+        let Some(listing) = crate::fs::list(&crate::paths::to_native(path)) else {
+            continue;
+        };
+        for entry in listing.entries {
+            let relative = match directory.is_empty() {
+                true => entry.name,
+                false => [&directory[..], b"/", &entry.name].concat(),
+            };
+            if entry.is_directory {
+                let inside = [&relative[..], b"/"].concat();
+                if pattern.may_match_inside(&relative) && !is_ignored(&inside) {
+                    pending.push(relative);
+                }
+            } else if pattern.matches(&relative) && !is_ignored(&relative) {
+                let path = crate::paths::resolve(root, &relative);
+                if !entry.is_link || crate::fs::is_file(&crate::paths::to_native(path.clone())) {
+                    found.push(path);
+                }
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
 fn check_and_lint_in(
     context: &Context,
     environment: &Environment,
@@ -212,12 +345,15 @@ fn check_and_lint_in(
         .iter()
         .map(|&index| files[index].path.to_vec())
         .collect();
+    let listed = matches!(project, Project::Nearest)
+        .then(|| Listed::new(&by_path, files, indices, &environment.cwd));
     let request = bun_sema_driver::Request {
         cwd: &environment.cwd,
         project: match project {
             Project::This(config) => Some(config),
             Project::Nearest | Project::Including => context.options.project.as_deref(),
         },
+        listed_projects: (listed.as_ref()).map(|it| it as &dyn bun_sema_driver::ListedProjects),
         build: false,
         errors: &[],
         paths: &paths,

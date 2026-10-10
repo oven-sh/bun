@@ -14,7 +14,7 @@
 //! on top:
 //!
 //! ```ignore
-//! let linter = Linter::new(Registry::new(&[bun_lint_eslint::RULES, bun_lint_typescript::RULES]));
+//! let linter = Linter::<Rules>::new(Registry::new(&[bun_lint_eslint::RULES, bun_lint_typescript::RULES]));
 //! let config = Config::from_flat_json(linter.registry(), directory_of_the_configuration, &json)?;
 //! // On any thread, for each file:
 //! let FileConfig::Matched(resolved) = config.get(linter.registry(), path) else { continue };
@@ -73,7 +73,8 @@ use crate::context::{Diagnostic, Severity};
 use crate::js_plugin;
 use crate::options::{Json, Options};
 use crate::rule::Meta;
-use crate::runner::{AnyRule, Enabled, RuleEntry};
+use crate::rule_set::RuleSet;
+use crate::runner::{Enabled, RuleEntry};
 use crate::span::Span;
 use directives::{ConfigComment, Label};
 use instances::Instances;
@@ -166,14 +167,17 @@ pub struct LintResult {
     pub thrown: Option<Vec<u8>>,
 }
 
-pub struct Linter {
+/// `S`: the rules that it has.
+pub struct Linter<S: RuleSet> {
     registry: Registry,
+    /// For each rule of `registry`, its number in `S`.
+    numbers: Vec<u16>,
     /// What the configurations name by numbers.
-    instances: Instances<Box<dyn AnyRule>>,
+    instances: Instances<S>,
 }
 
 /// A rule as it runs on the file: as it is configured, or as a comment changes that.
-struct Running<'r> {
+struct Running<'r, S> {
     entry: &'static RuleEntry,
     /// [`ConfiguredRule::reported_as`]
     reported_as: &'static Meta,
@@ -182,12 +186,12 @@ struct Running<'r> {
     /// [`ConfiguredRule::or_else`]
     or_else: Option<&'r ConfiguredJsRule>,
     severity: Severity,
-    rule: RuleRef<'r>,
+    rule: RuleRef<'r, S>,
     /// [`ConfiguredRule::refusal`]
     refusal: Option<Cow<'r, [u8]>>,
 }
 
-impl Running<'_> {
+impl<S> Running<'_, S> {
     /// ESLint's `ruleId` of what it reports.
     fn id(&self) -> RuleId {
         match self.name {
@@ -197,10 +201,10 @@ impl Running<'_> {
     }
 }
 
-enum RuleRef<'r> {
-    Shared(&'r dyn AnyRule),
+enum RuleRef<'r, S> {
+    Shared(&'r S),
     /// Made for this file, from the options in a comment.
-    Own(Box<dyn AnyRule>),
+    Own(Box<S>),
 }
 
 /// The same for a rule of a JavaScript plugin.
@@ -312,25 +316,42 @@ fn is_same_json(a: &Json, b: &Json) -> bool {
     }
 }
 
-impl Linter {
-    pub fn new(registry: Registry) -> Linter {
+impl<S: RuleSet> Linter<S> {
+    /// `registry`: rules of `S`.
+    pub fn new(registry: Registry) -> Linter<S> {
+        let mut numbers = vec![u16::MAX; registry.all().len()];
+        for (number, meta) in S::METAS.iter().enumerate() {
+            if let Some(index) = meta.and_then(|it| registry.index_of_meta(it)) {
+                numbers[index] = number as u16;
+            }
+        }
         Linter {
             registry,
+            numbers,
             instances: Instances::new(),
         }
     }
 
+    /// The rule at `index` of the registry, made from `options`.
+    fn build(&self, index: usize, options: &[Json]) -> Option<S> {
+        S::build(*self.numbers.get(index)?, &Options::new(options))
+    }
+
     /// `rule` made from its options. `None` if it is off.
-    fn instance(&self, rule: &ConfiguredRule) -> Option<&dyn AnyRule> {
+    fn instance(&self, rule: &ConfiguredRule) -> Option<&S> {
         if rule.severity == Severity::Off {
             return None;
         }
-        let at = *rule.instance.get_or_init(|| {
-            let index = self.registry.index_of(rule.entry);
-            let make = || (rule.entry.build)(&Options::new(&rule.options));
-            self.instances.of(index, &rule.options, make)
-        });
-        self.instances.get(at).map(|it| &**it)
+        let at = match rule.instance.get() {
+            Some(at) => *at,
+            None => {
+                let index = self.registry.index_of(rule.entry)?;
+                let make = || self.build(index, &rule.options);
+                let at = self.instances.of(index, &rule.options, make)?;
+                *rule.instance.get_or_init(|| at)
+            }
+        };
+        self.instances.get(at)
     }
 
     pub fn registry(&self) -> &Registry {
@@ -364,7 +385,7 @@ impl Linter {
         }
         let is_refused = !problems.is_empty();
         let mut result = LintResult::default();
-        let mut running: Vec<Running> = Vec::with_capacity(config.rules.len());
+        let mut running: Vec<Running<S>> = Vec::with_capacity(config.rules.len());
         for rule in (config.rules.iter()).filter(|it| !is_refused || it.entry.meta.requires_types) {
             if let Some(instance) = self.instance(rule) {
                 running.push(Running {
@@ -568,7 +589,7 @@ impl Linter {
                 break;
             }
         }
-        let enabled: Vec<Enabled> = (running.iter())
+        let enabled: Vec<Enabled<S>> = (running.iter())
             .map(|it| Enabled {
                 rule: match &it.rule {
                     RuleRef::Shared(rule) => *rule,
@@ -986,8 +1007,8 @@ fn js_failure(
 }
 
 /// Applies the comments of a file to its configuration.
-struct Inline<'i, 'c, 'a> {
-    linter: &'c Linter,
+struct Inline<'i, 'c, 'a, S: RuleSet> {
+    linter: &'c Linter<S>,
     file: &'a File<'a>,
     config: &'c ResolvedConfig,
     locator: &'i Locator<'a>,
@@ -997,7 +1018,7 @@ struct Inline<'i, 'c, 'a> {
     configured: Vec<Named<'c>>,
 }
 
-impl<'c, 'a> Inline<'_, 'c, 'a> {
+impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
     fn error(&mut self, comment: &ConfigComment, rule_id: Option<RuleId>, message: Vec<u8>) {
         self.problems.push(
             self.locator
@@ -1062,7 +1083,7 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
     fn apply(
         &mut self,
         comment: &ConfigComment,
-        running: &mut Vec<Running<'c>>,
+        running: &mut Vec<Running<'c, S>>,
         running_js: &mut Vec<RunningJs<'c>>,
     ) {
         match comment.label {
@@ -1225,7 +1246,7 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
                 }
             };
             let name = existing.and_then(ConfiguredRule::name);
-            let is_it = |it: &Running| is_same_rule(it.entry, entry) && it.name == name;
+            let is_it = |it: &Running<S>| is_same_rule(it.entry, entry) && it.name == name;
             let linter = self.linter;
             let shared = existing
                 .filter(|_| keeps_options)
@@ -1245,7 +1266,13 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
                     running.retain(|it| !is_it(it));
                     continue;
                 }
-                None => RuleRef::Own((entry.build)(&Options::new(options))),
+                None => {
+                    let index = linter.registry.index_of(entry);
+                    match index.and_then(|it| linter.build(it, options)) {
+                        Some(rule) => RuleRef::Own(Box::new(rule)),
+                        None => continue,
+                    }
+                }
             };
             let new = Running {
                 entry,
@@ -1389,7 +1416,6 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
 /// All threads share these.
 const _: fn() = || {
     fn is_shared<T: Send + Sync>() {}
-    is_shared::<Linter>();
     is_shared::<Config>();
     is_shared::<ResolvedConfig>();
 };

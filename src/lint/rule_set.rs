@@ -30,7 +30,7 @@ impl RuleBits {
     }
 
     #[inline]
-    pub const fn or(mut self, other: RuleBits) -> RuleBits {
+    pub const fn or(mut self, other: &RuleBits) -> RuleBits {
         let mut word = 0;
         while word < RuleBits::WORDS {
             self.0[word] |= other.0[word];
@@ -40,7 +40,7 @@ impl RuleBits {
     }
 
     #[inline]
-    pub const fn and(mut self, other: RuleBits) -> RuleBits {
+    pub const fn and(mut self, other: &RuleBits) -> RuleBits {
         let mut word = 0;
         while word < RuleBits::WORDS {
             self.0[word] &= other.0[word];
@@ -61,7 +61,7 @@ impl RuleBits {
 
     /// What is in this one and not in `other`.
     #[inline]
-    pub const fn and_not(mut self, other: RuleBits) -> RuleBits {
+    pub const fn and_not(mut self, other: &RuleBits) -> RuleBits {
         let mut word = 0;
         while word < RuleBits::WORDS {
             self.0[word] &= !other.0[word];
@@ -103,7 +103,7 @@ const fn of_kinds(rows: &[RuleBits; On::ROWS]) -> [RuleBits; On::KINDS.len()] {
     while sort < all.len() {
         let (mut row, end) = On::KINDS[sort];
         while row < end {
-            all[sort] = all[sort].or(rows[row]);
+            all[sort] = all[sort].or(&rows[row]);
             row += 1;
         }
         sort += 1;
@@ -192,7 +192,7 @@ macro_rules! rules_as_a_set {
         /// One of them at work on a file.
         #[allow(non_camel_case_types, clippy::enum_variant_names)]
         pub enum Runs<'r, 'a> {
-            $($module($crate::runner::Started<'r, 'a, rules::$module::$rule>),)*
+            $($module(Box<$crate::runner::Later<'r, 'a, rules::$module::$rule>>),)*
         }
 
         #[allow(non_camel_case_types, clippy::enum_variant_names)]
@@ -258,16 +258,23 @@ macro_rules! rules_as_a_set {
 
         impl<'a> $crate::runner::Running<'a> for Runs<'_, 'a> {
             #[inline]
-            fn listeners_of_walk(&self, add: &mut dyn FnMut($crate::runner::WalkListener)) {
+            fn walks(&self) -> ($crate::rule::NodeTags, $crate::rule::NodeTags) {
                 match self {
-                    $(Runs::$module(run) => run.listeners_of_walk(add),)*
+                    $(Runs::$module(run) => run.walks(),)*
                 }
             }
 
             #[inline]
-            fn call(&mut self, entry: u16, node: $crate::ast::Node<'a>) {
+            fn enter(&mut self, node: $crate::ast::Node<'a>) {
                 match self {
-                    $(Runs::$module(run) => run.call(entry, node),)*
+                    $(Runs::$module(run) => run.enter(node),)*
+                }
+            }
+
+            #[inline]
+            fn exit(&mut self, node: $crate::ast::Node<'a>) {
+                match self {
+                    $(Runs::$module(run) => run.exit(node),)*
                 }
             }
 
@@ -381,16 +388,23 @@ macro_rules! rule_sets {
 
         impl<'a> $crate::runner::Running<'a> for $runs<'_, 'a> {
             #[inline]
-            fn listeners_of_walk(&self, add: &mut dyn FnMut($crate::runner::WalkListener)) {
+            fn walks(&self) -> ($crate::rule::NodeTags, $crate::rule::NodeTags) {
                 match self {
-                    $($runs::$name(run) => run.listeners_of_walk(add),)*
+                    $($runs::$name(run) => run.walks(),)*
                 }
             }
 
             #[inline]
-            fn call(&mut self, entry: u16, node: $crate::ast::Node<'a>) {
+            fn enter(&mut self, node: $crate::ast::Node<'a>) {
                 match self {
-                    $($runs::$name(run) => run.call(entry, node),)*
+                    $($runs::$name(run) => run.enter(node),)*
+                }
+            }
+
+            #[inline]
+            fn exit(&mut self, node: $crate::ast::Node<'a>) {
+                match self {
+                    $($runs::$name(run) => run.exit(node),)*
                 }
             }
 

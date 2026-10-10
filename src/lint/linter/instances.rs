@@ -46,32 +46,29 @@ impl<R> Instances<R> {
         self.chunks.get(chunk)?.get()?.get(at)?.get()
     }
 
-    /// The one for the rule at `index` of the registry, if it is there, and `options`. `make` makes it if there is none yet.
+    /// The one for the rule at `index` of the registry and `options`. `make` makes it if there is none yet. `None`: it makes none.
     pub(super) fn of(
         &self,
-        index: Option<usize>,
+        index: usize,
         options: &Arc<[Json]>,
-        make: impl FnOnce() -> R,
-    ) -> Instance {
+        make: impl FnOnce() -> Option<R>,
+    ) -> Option<Instance> {
         let mut made = self.made.lock();
-        if let Some(index) = index {
-            if made.by_rule.len() <= index {
-                made.by_rule.resize_with(index + 1, Vec::new);
-            }
-            if let Some(found) = made.by_rule[index].iter().find(|it| it.0 == *options) {
-                return found.1;
-            }
+        if made.by_rule.len() <= index {
+            made.by_rule.resize_with(index + 1, Vec::new);
         }
+        if let Some(found) = made.by_rule[index].iter().find(|it| it.0 == *options) {
+            return Some(found.1);
+        }
+        let rule = make()?;
         let it = Instance(made.len);
         let (chunk, at) = place(it.0);
         let places = self.chunks[chunk]
             .get_or_init(|| (0..FIRST << chunk).map(|_| OnceLock::new()).collect());
         // Nobody else has this place.
-        let _ = places[at].set(make());
+        let _ = places[at].set(rule);
         made.len += 1;
-        if let Some(index) = index {
-            made.by_rule[index].push((Arc::clone(options), it));
-        }
-        it
+        made.by_rule[index].push((Arc::clone(options), it));
+        Some(it)
     }
 }

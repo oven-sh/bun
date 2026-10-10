@@ -832,12 +832,22 @@ pub enum Libs<'a> {
     Directory(&'a [u8]),
 }
 
+/// `Request::listed_projects`
+pub trait ListedProjects: Sync {
+    /// The configuration files for the file at `path`: absolute, in the checker's format.
+    fn of(&self, path: &[u8], is_case_sensitive: bool) -> &[Vec<u8>];
+}
+
 #[derive(Clone, Copy)]
 pub struct Request<'a> {
     /// The working directory, as a native path.
     pub cwd: &'a [u8],
     /// `--project`: a configuration file, or a directory with a `tsconfig.json` in it.
     pub project: Option<&'a [u8]>,
+    /// `parserOptions.project` of typescript-eslint, without `project`: a file of `paths` is checked in the first of these
+    /// projects that has it among its root files (`getWatchProgramsForProjects`). The projects that one references are not
+    /// asked. A file that none of them has is checked as if there were no list.
+    pub listed_projects: Option<&'a dyn ListedProjects>,
     /// `-b`: `tscBuildCompilation`, also for a project without `references`. Without `project`, the
     /// one of `paths` is the project, or else the working directory.
     pub build: bool,
@@ -1504,6 +1514,7 @@ impl Projects {
         request: &Request,
         config: &[u8],
         file: &[u8],
+        follows_references: bool,
     ) -> Option<Vec<u8>> {
         let is_case_sensitive = disk.is_case_sensitive();
         let mut seen: Vec<Vec<u8>> = Vec::new();
@@ -1523,6 +1534,7 @@ impl Projects {
             let references = project.references.iter().rev();
             pending.extend(
                 references
+                    .filter(|_| follows_references)
                     .map(|it| config::resolve_config_file_name_of_project_reference(&it.path)),
             );
             if is_new {
@@ -1596,7 +1608,7 @@ impl Projects {
         let Some(nearest) = nearest else {
             return if has_to_include { Err(None) } else { Ok(None) };
         };
-        if let Some(owner) = self.find_project_with(disk, request, &nearest, path) {
+        if let Some(owner) = self.find_project_with(disk, request, &nearest, path, true) {
             return Ok(Some(owner));
         }
         // `getAncestorConfigFileName`
@@ -1611,7 +1623,7 @@ impl Projects {
             let Some(above) = parent.and_then(|it| config::find_config(disk, it)) else {
                 break;
             };
-            if let Some(owner) = self.find_project_with(disk, request, &above, path) {
+            if let Some(owner) = self.find_project_with(disk, request, &above, path, true) {
                 return Ok(Some(owner));
             }
             below = above;
@@ -1849,6 +1861,14 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
     };
     for path in &paths {
         if !disk.is_dir(path) {
+            let listed = (request.listed_projects.filter(|_| explicit.is_none()))
+                .map_or(&[][..], |it| it.of(path, is_case_sensitive));
+            let first = (listed.iter())
+                .find_map(|it| projects.find_project_with(disk, request, it, path, false));
+            if first.is_some() {
+                add(first, Extent::Project, path.clone());
+                continue;
+            }
             let nearest = config_in(dirname::<Posix>(path));
             match projects.owner_of(disk, request, nearest, path) {
                 Err(_) if request.plan_options.only_in_a_project_that_includes => {}

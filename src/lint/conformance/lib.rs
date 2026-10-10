@@ -20,7 +20,7 @@ mod test_only_rules;
 pub use bun_format_conformance::{Bundle, read_file, write_line};
 use compare::problem_of_oxlint;
 pub use compare::{
-    Edit, Outcome, Problem, Reported, Suggested, expected_messages, problem_of, string_of,
+    Counts, Edit, Outcome, Problem, Reported, Suggested, expected_messages, problem_of, string_of,
 };
 
 use bstr::BStr;
@@ -28,14 +28,14 @@ use bun_core::strings;
 use bun_format_conformance::output_line;
 use bun_lint::ast::File;
 use bun_lint::context::Severity;
-use bun_lint::linter::{Config, FileConfig, LintMessage, Linter, ResolvedConfig};
+use bun_lint::linter::{Config, FileConfig, LintMessage, Registry, ResolvedConfig};
 use bun_lint::options::Json;
 use bun_lint::rule::Plugin;
 use bun_lint::runner::RuleEntry;
 use std::borrow::Cow;
 use std::fmt::Write as _;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 
 /// Where the code of a case is linted.
 #[derive(Copy, Clone)]
@@ -63,7 +63,8 @@ pub struct Case<'a> {
 
 /// What lints.
 pub trait Host: Sync {
-    fn linter(&self) -> &Linter;
+    /// That of its linter.
+    fn registry(&self) -> &Registry;
 
     /// The messages about a case. `None`: it cannot be linted that way.
     fn lint(&self, case: &Case<'_>) -> Option<Vec<LintMessage>>;
@@ -101,6 +102,8 @@ pub struct Flags<'a> {
     /// `--extract`, they are written there first.
     pub projects: Option<&'a [u8]>,
     pub extract: bool,
+    /// `--in-order`: a case fails whose messages are the recorded ones in another order.
+    pub in_order: bool,
 }
 
 impl<'a> Flags<'a> {
@@ -129,6 +132,7 @@ impl<'a> Flags<'a> {
             threads: number(b"threads").unwrap_or(1).max(1),
             projects: flag(b"projects"),
             extract: has(b"extract"),
+            in_order: has(b"in-order"),
         }
     }
 }
@@ -218,7 +222,7 @@ fn write_file(path: &[u8], contents: &[u8]) {
 
 /// The configuration that the `RuleTester` of the plugin lints a case with: only that rule, as an
 /// error.
-pub fn config_of(linter: &Linter, entry: &'static RuleEntry, case: &Json) -> ResolvedConfig {
+pub fn config_of(registry: &Registry, entry: &'static RuleEntry, case: &Json) -> ResolvedConfig {
     let config = Json::Object(vec![
         (
             b"languageOptions".to_vec(),
@@ -229,7 +233,7 @@ pub fn config_of(linter: &Linter, entry: &'static RuleEntry, case: &Json) -> Res
             case.get(b"settings").cloned().unwrap_or(Json::Null),
         ),
     ]);
-    let mut config = ResolvedConfig::from_json(linter.registry(), &config, &mut Vec::new());
+    let mut config = ResolvedConfig::from_json(registry, &config, &mut Vec::new());
     // Not by its name: in a configuration that is the rule of the package, as long as the plugin is not whole here.
     let options = case.get(b"options").and_then(Json::as_array);
     config.configure(entry, Severity::Error, options.unwrap_or_default());
@@ -244,7 +248,7 @@ pub fn config_of(linter: &Linter, entry: &'static RuleEntry, case: &Json) -> Res
 /// The configuration that oxlint's `Tester` lints a case with: an `.oxlintrc.json` with only that rule, and with what the case
 /// has in `oxlintrc`. `directory`: of the rule in the bundle, which is what oxlint calls its plugin.
 fn oxlint_config_of(
-    linter: &Linter,
+    registry: &Registry,
     directory: &str,
     entry: &'static RuleEntry,
     case: &Json,
@@ -287,11 +291,9 @@ fn oxlint_config_of(
             )]),
         ),
     ]);
-    let config = Config::from_rc_json(linter.registry(), b"/", &Json::Object(file), &mut |_, _| {
-        None
-    });
+    let config = Config::from_rc_json(registry, b"/", &Json::Object(file), &mut |_, _| None);
     let absolute = [b"/", path.strip_prefix(b"/").unwrap_or(path)].concat();
-    match config.ok()?.get(linter.registry(), &absolute) {
+    match config.ok()?.get(registry, &absolute) {
         FileConfig::Matched(config) => Some((*config).clone()),
         _ => None,
     }
@@ -334,16 +336,16 @@ fn run_case(
     fixture: &Fixture,
     case: &Json,
     kind: Kind,
-    lacking_help: &AtomicUsize,
+    counts: &Counts,
 ) -> Result<Option<Problem>, ()> {
     let entry = fixture.entry;
     let code = string_of(case, b"code").unwrap_or_default();
     let filename = string_of(case, b"filename").unwrap_or(b"file.js");
     let config = match fixture.plugin_of_oxlint() {
         Some(directory) => {
-            oxlint_config_of(host.linter(), directory, entry, case, filename).ok_or(())?
+            oxlint_config_of(host.registry(), directory, entry, case, filename).ok_or(())?
         }
-        None => config_of(host.linter(), entry, case),
+        None => config_of(host.registry(), entry, case),
     };
     let in_directory = |directory: &[u8]| match filename.first() {
         Some(b'<' | b'/') => Some(filename.to_vec()),
@@ -399,19 +401,18 @@ fn run_case(
                 lint(&path, Place::Program(&tsconfig), None)
                     .map(|it| Outcome::new(entry, code, &it)),
                 case,
+                counts,
             ));
         }
     };
     if fixture.plugin_of_oxlint().is_some() {
-        return Ok(problem_of_oxlint(
-            entry,
-            code,
-            &messages,
-            case,
-            lacking_help,
-        ));
+        return Ok(problem_of_oxlint(entry, code, &messages, case, counts));
     }
-    Ok(problem_of(Some(Outcome::new(entry, code, &messages)), case))
+    Ok(problem_of(
+        Some(Outcome::new(entry, code, &messages)),
+        case,
+        counts,
+    ))
 }
 
 #[derive(Default, Clone, Copy)]
@@ -533,7 +534,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
             let id = format!("{directory}/{}", BStr::new(name));
             // oxlint has `react-hooks/exhaustive-deps` as `react/exhaustive-deps`.
             let is_of_oxlint = directory.starts_with("oxlint/");
-            let registry = host.linter().registry();
+            let registry = host.registry();
             let Some(entry) = registry.get_preferring(*plugin, name, is_of_oxlint) else {
                 missing += 1;
                 continue;
@@ -589,7 +590,10 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
     order.sort_by_key(|&at| chosen[at].kind != Kind::Typed);
     let results: Vec<OnceLock<Result<Option<Problem>, ()>>> =
         chosen.iter().map(|_| OnceLock::new()).collect();
-    let lacking_help = AtomicUsize::new(0);
+    let counts = Counts {
+        fails_on_order: flags.in_order,
+        ..Counts::default()
+    };
     host.for_each(flags.threads, chosen.len(), &|at| {
         let at = order[at];
         let (it, fixture) = (chosen[at], &fixtures[chosen[at].fixture]);
@@ -599,7 +603,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
             fixture,
             &fixture.cases()[it.index],
             it.kind,
-            &lacking_help,
+            &counts,
         ));
     });
 
@@ -653,9 +657,13 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
     if fixtures.iter().any(|it| it.plugin_of_oxlint().is_some()) {
         output_line!(
             "\n{} messages lack the help that oxlint has",
-            lacking_help.load(Ordering::Relaxed)
+            counts.lacking_help.load(Ordering::Relaxed)
         );
     }
+    output_line!(
+        "\n{} cases have their messages in another order",
+        counts.in_another_order.load(Ordering::Relaxed)
+    );
     output_line!(
         "\n{} rules, {perfect} without failures, {missing} not implemented\n{} cases passed, {} failed, {} skipped",
         fixtures.len(),

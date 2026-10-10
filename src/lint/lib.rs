@@ -59,7 +59,7 @@ pub mod prelude {
     pub use crate::no_state;
     pub use crate::options::{Json, Object, Options};
     pub use crate::regex::Regex;
-    pub use crate::rule::{Fixable, Kind, Listeners, Message, Meta, NodeTags, On, Presets, Rule};
+    pub use crate::rule::{Fixable, Kind, Message, Meta, NodeTags, On, Presets, Rule};
     pub use crate::semantic::{
         Declaration, DeclarationKind, Reference, ReferenceFlags, Scope, ScopeKind, Symbol,
     };

@@ -8,34 +8,35 @@
 //!
 //! impl Rule for NoDebugger {
 //!     const META: Meta = Meta::eslint("no-debugger", Kind::Problem).recommended();
-//!     type State<'a> = ();
+//!     const ON: On = On::new().stmts(&[StmtTag::Debugger]);
+//!     no_state!();
 //!
 //!     fn new(_: &Options) -> Self {
 //!         NoDebugger
 //!     }
 //!
-//!     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-//!         on.stmts([StmtTag::Debugger], |_, stmt, cx| {
-//!             cx.report(stmt, UNEXPECTED);
-//!         });
+//!     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+//!         cx.report(stmt, UNEXPECTED);
 //!     }
 //! }
 //! ```
 //!
-//! A rule is created once for each distinct set of options, and shared by all threads. For each
-//! file it says what it listens for, and returns the state it keeps while that file is linted.
+//! A rule is created once for each distinct set of options, and shared by all threads. What it
+//! listens to is a constant, [`Rule::ON`]: which of its methods are called is known when it is
+//! compiled. For each file that has something of that, [`Rule::start`] returns the state that it
+//! keeps while the file is linted.
 //!
 //! How rules are run is designed around the HIR, which stores the nodes of a file in one vector
 //! per sort:
-//! - What a rule registers with [`Listeners::exprs`], [`Listeners::stmts`] and the like is called
-//!   with every such node of the file, one listener after the other, each in a tight loop over the
-//!   nodes of the kinds it asked for. There is no walk over the tree, and no work for a node that
-//!   nobody listens for. The nodes come **in no particular order**.
+//! - [`Rule::expr`], [`Rule::stmt`] and the like are called with every such node of the file, one
+//!   sort after the other, each in a tight loop over the nodes of the kinds that `ON` names. There
+//!   is no walk over the tree, and no work for a node that nobody listens for. The nodes come **in
+//!   no particular order**.
 //! - A rule that depends on the order, because it pushes on entering a function and pops on
-//!   leaving it, registers with [`Listeners::enter`] and [`Listeners::exit`]. The file is walked
-//!   once for all of these, and only if there are any. Most rules do not need it: from any node
-//!   the way up is a few loads ([`Node::ancestors`](crate::ast::Node::ancestors)).
-//! - [`Listeners::finish`] is called last.
+//!   leaving it, has [`Rule::enter`] and [`Rule::exit`]. The nodes that are listened for so are
+//!   put in order once for all rules, and only if there are any. Most rules do not need it: from
+//!   any node the way up is a few loads ([`Node::ancestors`](crate::ast::Node::ancestors)).
+//! - [`Rule::finish`] is called last.
 
 use crate::ast::{
     BinOp, Case, Class, EnumMember, ExportSpec, Expr, ExprTag, File, Func, ImportSpec, Member,
@@ -44,10 +45,8 @@ use crate::ast::{
 use crate::context::Cx;
 use crate::literal::Literal;
 use crate::options::Options;
-use crate::runner;
 use crate::semantic::Symbol;
 use bun_wyhash::hash_const;
-use smallvec::SmallVec;
 
 /// A message that a rule reports. `{{name}}` in `text` is replaced by what
 /// [`Report::data`](crate::context::Report::data) provides.
@@ -420,7 +419,7 @@ pub trait Rule: Send + Sync + Sized + 'static {
     const META: Meta;
 
     /// What it listens to: the methods below that are called. A file that has none of it is passed over without a call.
-    const ON: On = On::REGISTERS;
+    const ON: On;
 
     /// What the rule keeps while one file is linted: [`Cx::state`]. [`no_state!`](crate::no_state) writes this line and
     /// [`Rule::start`] for a rule that keeps nothing.
@@ -434,11 +433,6 @@ pub trait Rule: Send + Sync + Sized + 'static {
         Ok(())
     }
 
-    /// Called for each file, like ESLint's `create`. Of a rule that does not say what it is [`Rule::ON`].
-    fn register<'a>(&self, _on: &mut Listeners<'a, Self>, _file: &'a File<'a>) -> Self::State<'a> {
-        unreachable!("a rule has `ON` or `register`")
-    }
-
     /// What of [`Rule::ON`] the rule listens to with its options, in this file: for a rule that is about fewer kinds then, or
     /// about kinds that only its options know. What is not in `ON` does not count: which methods are called is a constant.
     #[inline(always)]
@@ -446,39 +440,66 @@ pub trait Rule: Send + Sync + Sized + 'static {
         Self::ON
     }
 
-    /// Once for each file that has something of that. `None`: not this file.
-    fn start<'a>(&self, _file: &'a File<'a>) -> Option<Self::State<'a>> {
-        None
-    }
+    /// Once for each file that has something of that, like ESLint's `create`. `None`: not this file.
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>>;
 
     // In no particular order within a kind. The sorts in this order, the kinds of a sort in the order of their `enum`.
 
+    /// Every expression of one of these kinds.
     fn expr<'a>(&self, _expr: Expr<'a>, _cx: &mut Cx<'a, Self>) {}
+    /// Every `Dot`, `Index` and `Call` that is part of an optional chain ([`Expr::chain`] is not `Chain::No`): in
+    /// `a?.b.c()` that is `a?.b`, `a?.b.c` and `a?.b.c()`. Not the `!` in a chain.
     fn optional_chain<'a>(&self, _expr: Expr<'a>, _cx: &mut Cx<'a, Self>) {}
+    /// Every [`ExprKind::Binary`](crate::ast::ExprKind::Binary) with one of these operators. A rule that is about `==`
+    /// is not called with the other operators, and not at all in a file without a `==`.
     fn binary<'a>(&self, _expr: Expr<'a>, _cx: &mut Cx<'a, Self>) {}
+    /// Every [`ExprKind::Unary`](crate::ast::ExprKind::Unary) with one of these operators.
     fn unary<'a>(&self, _expr: Expr<'a>, _cx: &mut Cx<'a, Self>) {}
+    /// Every statement of one of these kinds.
     fn stmt<'a>(&self, _stmt: Stmt<'a>, _cx: &mut Cx<'a, Self>) {}
+    /// Every type of one of these kinds.
     fn ty<'a>(&self, _ty: TypeNode<'a>, _cx: &mut Cx<'a, Self>) {}
+    /// Every binding pattern of one of these kinds.
     fn pat<'a>(&self, _pat: Pat<'a>, _cx: &mut Cx<'a, Self>) {}
+    /// Every function-like: declarations, expressions, arrow functions, methods, accessors,
+    /// constructors, static blocks, signatures, function types.
     fn func<'a>(&self, _func: Func<'a>, _cx: &mut Cx<'a, Self>) {}
+    /// Every class declaration and expression.
     fn class<'a>(&self, _class: Class<'a>, _cx: &mut Cx<'a, Self>) {}
+    /// Every member of a class, an interface or a type literal.
     fn member<'a>(&self, _member: Member<'a>, _cx: &mut Cx<'a, Self>) {}
+    /// Every property of an object literal and every attribute of a JSX element.
     fn prop<'a>(&self, _prop: Prop<'a>, _cx: &mut Cx<'a, Self>) {}
+    /// Every parameter.
     fn param<'a>(&self, _param: Param<'a>, _cx: &mut Cx<'a, Self>) {}
+    /// Every type parameter.
     fn type_param<'a>(&self, _type_param: TypeParam<'a>, _cx: &mut Cx<'a, Self>) {}
+    /// Every `pat: ty = init` of a variable statement, and every `catch` parameter.
     fn var_decl<'a>(&self, _var_decl: VarDecl<'a>, _cx: &mut Cx<'a, Self>) {}
+    /// Every `case` and `default` clause.
     fn case<'a>(&self, _case: Case<'a>, _cx: &mut Cx<'a, Self>) {}
+    /// Every member of an enum.
     fn enum_member<'a>(&self, _enum_member: EnumMember<'a>, _cx: &mut Cx<'a, Self>) {}
+    /// Every `a as b` in the braces of an import.
     fn import_spec<'a>(&self, _import_spec: ImportSpec<'a>, _cx: &mut Cx<'a, Self>) {}
+    /// Every `a as b` in the braces of an export.
     fn export_spec<'a>(&self, _export_spec: ExportSpec<'a>, _cx: &mut Cx<'a, Self>) {}
+    /// Everything that the file declares in a scope: variables, functions, classes, parameters,
+    /// imports, types, namespaces, enums.
     fn symbol<'a>(&self, _symbol: Symbol<'a>, _cx: &mut Cx<'a, Self>) {}
+    /// Every string in quotes, which is a `Literal` for ESLint: not only the expressions, also the keys of properties and
+    /// members, literal types, module specifiers, the names in quotes of imports and exports. Not the text in JSX.
     fn string_literal<'a>(&self, _literal: Literal<'a>, _cx: &mut Cx<'a, Self>) {}
+    /// The same for numbers, including `1n`.
     fn number_literal<'a>(&self, _literal: Literal<'a>, _cx: &mut Cx<'a, Self>) {}
+    /// Every node of one of these kinds: for a rule that learns from its options which kinds it is about.
     fn node<'a>(&self, _node: Node<'a>, _cx: &mut Cx<'a, Self>) {}
 
     // After those of all rules, in the order of the source.
 
+    /// Every node of one of these kinds, before its children.
     fn enter<'a>(&self, _node: Node<'a>, _cx: &mut Cx<'a, Self>) {}
+    /// Every node of one of these kinds, after its children.
     fn exit<'a>(&self, _node: Node<'a>, _cx: &mut Cx<'a, Self>) {}
 
     /// At the end.
@@ -497,8 +518,7 @@ macro_rules! no_state {
     };
 }
 
-/// What a rule listens to: [`Rule::ON`]. Each method here names the method of [`Rule`] that is then called, and is documented at
-/// the method of [`Listeners`] of the same name.
+/// What a rule listens to: [`Rule::ON`]. Each method here names the method of [`Rule`] that is then called.
 ///
 /// `On::new().exprs(&[ExprTag::Call, ExprTag::New]).binaries(&[BinOp::EqEq]).funcs().finish()`
 #[derive(Copy, Clone)]
@@ -550,12 +570,6 @@ macro_rules! on_sorts {
 }
 
 impl On {
-    /// The rule has [`Rule::register`] instead.
-    pub const REGISTERS: On = On {
-        sorts: 1 << 31,
-        ..On::new()
-    };
-
     pub const fn new() -> On {
         On {
             exprs: 0,
@@ -641,10 +655,7 @@ impl On {
     /// The rows that it names: the first of some rows, and a bit for each from there on.
     pub(crate) const fn rows(self) -> [(usize, u64); 8] {
         let in_every_file = On::SYMBOLS | On::STRING_LITERALS | On::NUMBER_LITERALS;
-        let is_always = self.registers()
-            || self.has_later()
-            || self.has(in_every_file)
-            || !self.nodes.is_empty();
+        let is_always = self.has_later() || self.has(in_every_file) || !self.nodes.is_empty();
         [
             (0, self.exprs),
             (On::BINARIES, self.binaries),
@@ -659,7 +670,7 @@ impl On {
 
     /// What is in both.
     #[inline]
-    pub(crate) const fn and(self, other: On) -> On {
+    pub(crate) const fn and(self, other: &On) -> On {
         On {
             exprs: self.exprs & other.exprs,
             binaries: self.binaries & other.binaries,
@@ -672,11 +683,6 @@ impl On {
             enter: self.enter.and(other.enter),
             exit: self.exit.and(other.exit),
         }
-    }
-
-    #[inline]
-    pub(crate) const fn registers(self) -> bool {
-        self.sorts & On::REGISTERS.sorts != 0
     }
 
     /// `sort`: one or more of the constants.
@@ -692,271 +698,7 @@ impl On {
     }
 }
 
-/// A function of the rule `R` that is called with an `N`.
-pub type Listener<'a, R, N> = fn(&R, N, &mut Cx<'a, R>);
-
-/// What a rule listens for in one file. What the file has no node for is not kept.
-pub struct Listeners<'a, R: Rule> {
-    pub(crate) entries: Entries<'a, R>,
-    /// One of them is called in the order of the source or at the end.
-    pub(crate) has_later: bool,
-    file: &'a File<'a>,
-}
-
-pub(crate) type Entries<'a, R> = SmallVec<[Kept<'a, R>; 4]>;
-
-/// Calls the listener of an entry with all that it is for.
-pub(crate) type Runs<'a, R> = fn(&Entry<'a, R>, &R, &'a File<'a>, &mut Cx<'a, R>);
-
-/// A listener, and what calls it with the nodes in no particular order. `None`: it is called later.
-///
-/// That is a function for each kind of entry, and not one function with a `match`: see `number_literals` in `runner.rs`.
-pub(crate) struct Kept<'a, R: Rule> {
-    pub(crate) entry: Entry<'a, R>,
-    pub(crate) runs: Option<Runs<'a, R>>,
-}
-
-macro_rules! sorts {
-    ($($(#[$doc:meta])* $method:ident $variant:ident $handle:ident $runs:ident $has_any:expr;)*) => {
-        pub(crate) enum Entry<'a, R: Rule> {
-            Exprs(ExprTag, Listener<'a, R, Expr<'a>>),
-            Stmts(StmtTag, Listener<'a, R, Stmt<'a>>),
-            Types(TypeTag, Listener<'a, R, TypeNode<'a>>),
-            Pats(PatTag, Listener<'a, R, Pat<'a>>),
-            Chained(ExprTag, Listener<'a, R, Expr<'a>>),
-            Binaries(BinOp, Listener<'a, R, Expr<'a>>),
-            Unaries(UnOp, Listener<'a, R, Expr<'a>>),
-            $($variant(Listener<'a, R, $handle<'a>>),)*
-            Nodes(NodeTags, Listener<'a, R, Node<'a>>),
-            Enter(NodeTags, Listener<'a, R, Node<'a>>),
-            Exit(NodeTags, Listener<'a, R, Node<'a>>),
-            Finish(fn(&R, &mut Cx<'a, R>)),
-        }
-
-        impl<'a, R: Rule> Listeners<'a, R> {
-            $(
-                $(#[$doc])*
-                /// In no particular order.
-                #[inline]
-                pub fn $method(&mut self, listener: Listener<'a, R, $handle<'a>>) {
-                    let has_any: fn(&File) -> bool = $has_any;
-                    if has_any(self.file) {
-                        self.unordered(Entry::$variant(listener), runner::$runs);
-                    }
-                }
-            )*
-        }
-    };
-}
-
-sorts! {
-    /// Every function-like: declarations, expressions, arrow functions, methods, accessors,
-    /// constructors, static blocks, signatures, function types.
-    funcs Funcs Func run_funcs |file| !file.hir.fns.is_empty();
-    /// Every class declaration and expression.
-    classes Classes Class run_classes |file| !file.hir.classes.is_empty();
-    /// Every member of a class, an interface or a type literal.
-    members Members Member run_members |file| !file.hir.members.is_empty();
-    /// Every property of an object literal and every attribute of a JSX element.
-    props Props Prop run_props |file| !file.hir.props.is_empty();
-    /// Every parameter.
-    params Params Param run_params |file| !file.hir.params.is_empty();
-    /// Every type parameter.
-    type_params TypeParams TypeParam run_type_params |file| !file.hir.type_params.is_empty();
-    /// Every `pat: ty = init` of a variable statement, and every `catch` parameter.
-    var_decls VarDecls VarDecl run_var_decls |file| !file.hir.var_decls.is_empty();
-    /// Every `case` and `default` clause.
-    cases Cases Case run_cases |file| !file.hir.cases.is_empty();
-    /// Every member of an enum.
-    enum_members EnumMembers EnumMember run_enum_members |file| !file.hir.enum_members.is_empty();
-    /// Every `a as b` in the braces of an import.
-    import_specs ImportSpecs ImportSpec run_import_specs |file| !file.hir.import_specs.is_empty();
-    /// Every `a as b` in the braces of an export.
-    export_specs ExportSpecs ExportSpec run_export_specs |file| !file.hir.export_specs.is_empty();
-    /// Everything that the file declares in a scope: variables, functions, classes, parameters,
-    /// imports, types, namespaces, enums.
-    symbols Symbols Symbol run_symbols |_| true;
-    /// Every string in quotes, which is a `Literal` for ESLint: not only the expressions, also the keys of properties and
-    /// members, literal types, module specifiers, the names in quotes of imports and exports. Not the text in JSX.
-    string_literals StringLiterals Literal run_string_literals |_| true;
-    /// The same for numbers, including `1n`.
-    number_literals NumberLiterals Literal run_number_literals |_| true;
-}
-
-impl<'a, R: Rule> Listeners<'a, R> {
-    pub(crate) fn new(file: &'a File<'a>) -> Self {
-        Listeners {
-            entries: SmallVec::new(),
-            has_later: false,
-            file,
-        }
-    }
-
-    // Those that follow are not inlined: they look neither into the rule nor into its state, so they are the same code for all
-    // rules, of which the linker then keeps one copy. `register` has a call for each kind that it names.
-
-    #[inline(never)]
-    fn later(&mut self, entry: Entry<'a, R>) {
-        self.has_later = true;
-        self.entries.push(Kept { entry, runs: None });
-    }
-
-    #[inline(never)]
-    fn unordered(&mut self, entry: Entry<'a, R>, runs: Runs<'a, R>) {
-        self.entries.push(Kept {
-            entry,
-            runs: Some(runs),
-        });
-    }
-
-    #[inline(never)]
-    fn one_of_exprs(&mut self, tag: ExprTag, listener: Listener<'a, R, Expr<'a>>) {
-        if self.file.has_exprs([tag]) {
-            self.unordered(Entry::Exprs(tag, listener), runner::run_exprs);
-        }
-    }
-
-    #[inline(never)]
-    fn one_of_optional_chains(&mut self, tag: ExprTag, listener: Listener<'a, R, Expr<'a>>) {
-        if !self.file.chained_exprs_of(tag).is_empty() {
-            self.unordered(Entry::Chained(tag, listener), runner::run_chained);
-        }
-    }
-
-    #[inline(never)]
-    fn one_of_binaries(&mut self, tag: BinOp, listener: Listener<'a, R, Expr<'a>>) {
-        if !self.file.binaries_of(tag).is_empty() {
-            self.unordered(Entry::Binaries(tag, listener), runner::run_binaries);
-        }
-    }
-
-    #[inline(never)]
-    fn one_of_unaries(&mut self, tag: UnOp, listener: Listener<'a, R, Expr<'a>>) {
-        if !self.file.unaries_of(tag).is_empty() {
-            self.unordered(Entry::Unaries(tag, listener), runner::run_unaries);
-        }
-    }
-
-    #[inline(never)]
-    fn one_of_stmts(&mut self, tag: StmtTag, listener: Listener<'a, R, Stmt<'a>>) {
-        if self.file.has_stmts([tag]) {
-            self.unordered(Entry::Stmts(tag, listener), runner::run_stmts);
-        }
-    }
-
-    #[inline(never)]
-    fn one_of_types(&mut self, tag: TypeTag, listener: Listener<'a, R, TypeNode<'a>>) {
-        if !self.file.types_of(tag).is_empty() {
-            self.unordered(Entry::Types(tag, listener), runner::run_types);
-        }
-    }
-
-    #[inline(never)]
-    fn one_of_pats(&mut self, tag: PatTag, listener: Listener<'a, R, Pat<'a>>) {
-        if !self.file.pats_of(tag).is_empty() {
-            self.unordered(Entry::Pats(tag, listener), runner::run_pats);
-        }
-    }
-
-    /// Every expression of one of these kinds, in no particular order.
-    pub fn exprs(
-        &mut self,
-        tags: impl IntoIterator<Item = ExprTag>,
-        listener: Listener<'a, R, Expr<'a>>,
-    ) {
-        for tag in tags {
-            self.one_of_exprs(tag, listener);
-        }
-    }
-
-    /// Every `Dot`, `Index` and `Call` that is part of an optional chain ([`Expr::chain`] is not `Chain::No`), in no particular
-    /// order: in `a?.b.c()` that is `a?.b`, `a?.b.c` and `a?.b.c()`. Not the `!` in a chain.
-    pub fn optional_chains(&mut self, listener: Listener<'a, R, Expr<'a>>) {
-        for tag in [ExprTag::Dot, ExprTag::Index, ExprTag::Call] {
-            self.one_of_optional_chains(tag, listener);
-        }
-    }
-
-    /// Every [`ExprKind::Binary`](crate::ast::ExprKind::Binary) with one of these operators, in no particular order. A rule that
-    /// is about `==` is not called with the other operators, and not at all in a file without a `==`.
-    pub fn binaries(
-        &mut self,
-        ops: impl IntoIterator<Item = BinOp>,
-        listener: Listener<'a, R, Expr<'a>>,
-    ) {
-        for op in ops {
-            self.one_of_binaries(op, listener);
-        }
-    }
-
-    /// Every [`ExprKind::Unary`](crate::ast::ExprKind::Unary) with one of these operators, in no particular order.
-    pub fn unaries(
-        &mut self,
-        ops: impl IntoIterator<Item = UnOp>,
-        listener: Listener<'a, R, Expr<'a>>,
-    ) {
-        for op in ops {
-            self.one_of_unaries(op, listener);
-        }
-    }
-
-    /// Every statement of one of these kinds, in no particular order.
-    pub fn stmts(
-        &mut self,
-        tags: impl IntoIterator<Item = StmtTag>,
-        listener: Listener<'a, R, Stmt<'a>>,
-    ) {
-        for tag in tags {
-            self.one_of_stmts(tag, listener);
-        }
-    }
-
-    /// Every type of one of these kinds, in no particular order.
-    pub fn types(
-        &mut self,
-        tags: impl IntoIterator<Item = TypeTag>,
-        listener: Listener<'a, R, TypeNode<'a>>,
-    ) {
-        for tag in tags {
-            self.one_of_types(tag, listener);
-        }
-    }
-
-    /// Every binding pattern of one of these kinds, in no particular order.
-    pub fn pats(
-        &mut self,
-        tags: impl IntoIterator<Item = PatTag>,
-        listener: Listener<'a, R, Pat<'a>>,
-    ) {
-        for tag in tags {
-            self.one_of_pats(tag, listener);
-        }
-    }
-
-    /// Every node of one of these kinds, in no particular order: for a rule that learns from its options which kinds it is about.
-    pub fn nodes(&mut self, tags: impl Into<NodeTags>, listener: Listener<'a, R, Node<'a>>) {
-        self.unordered(Entry::Nodes(tags.into(), listener), runner::run_nodes);
-    }
-
-    /// Every node of one of these kinds, in source order, before its children.
-    ///
-    /// This makes the linter walk the file, which the listeners above do not need.
-    pub fn enter(&mut self, tags: impl Into<NodeTags>, listener: Listener<'a, R, Node<'a>>) {
-        self.later(Entry::Enter(tags.into(), listener));
-    }
-
-    /// Every node of one of these kinds, in source order, after its children.
-    pub fn exit(&mut self, tags: impl Into<NodeTags>, listener: Listener<'a, R, Node<'a>>) {
-        self.later(Entry::Exit(tags.into(), listener));
-    }
-
-    /// Once, after everything else.
-    pub fn finish(&mut self, listener: fn(&R, &mut Cx<'a, R>)) {
-        self.later(Entry::Finish(listener));
-    }
-}
-
-/// A set of kinds of nodes, for [`Listeners::enter`] and [`Listeners::exit`].
+/// A set of kinds of nodes, for [`On::nodes`], [`On::enter`] and [`On::exit`].
 ///
 /// An [`ExprTag`], a [`StmtTag`], a [`TypeTag`] or an array of them converts to one, and `|`
 /// combines them: `NodeTags::FUNC | StmtTag::Block.into()`.

@@ -654,6 +654,8 @@ pub struct Options {
     pub specifies_module_resolution: bool,
     /// `moduleResolution` is `classic`, which only `AS_BEFORE_6` has.
     pub is_classic: bool,
+    /// `moduleResolution` is `node10`, which only `AS_BEFORE_6` has: it lacks `NodeResolutionFeatures.SelfName`.
+    pub forbids_self_name_references: bool,
     /// `allowSyntheticDefaultImports` is off, which only `AS_BEFORE_6` has.
     pub forbids_synthetic_default_imports: bool,
     /// `GetEmitModuleDetectionKind`: the effective `moduleDetection`, specified or defaulted.
@@ -999,6 +1001,7 @@ impl Options {
             _ => Some(true),
         };
         options.is_classic = old == Some(true);
+        options.forbids_self_name_references = old == Some(false);
         // `IsTrueOrUnknown`
         let is_not_off = |name: &[u8]| specified(name) != Some(false) && old.is_none();
         options.resolve_package_json_exports = is_not_off(b"resolvePackageJsonExports");
@@ -2727,7 +2730,9 @@ impl<'h> Resolver<'h> {
         if self.options.has_imports_feature() && spec.starts_with(b"#") {
             found = self.package_imports(spec, from_dir, look);
         }
-        if let Found::No = found {
+        if let Found::No = found
+            && !self.options.forbids_self_name_references
+        {
             found = self.self_name(spec, from_dir, look);
         }
         if let Found::No = found {

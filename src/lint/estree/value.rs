@@ -38,9 +38,9 @@ pub(crate) trait Sink<'a> {
     fn number(&mut self, value: f64);
     fn str(&mut self, value: &'a [u8]);
     fn node(&mut self, node: VNode<'a>);
-    fn nodes(&mut self, nodes: Nodes<'a>);
+    fn nodes(&mut self, nodes: &Nodes<'a>);
     /// A `RegExp`, a `bigint`, an [`Object`].
-    fn other(&mut self, value: Value<'a>);
+    fn other(&mut self, value: &Value<'a>);
 }
 
 /// What converts to a [`Value`] goes to a [`Sink`] without one being made: which call it is, is known where the field is written
@@ -82,7 +82,7 @@ impl<'a> Emit<'a> for VNode<'a> {
 impl<'a> Emit<'a> for Nodes<'a> {
     #[inline]
     fn emit(self, sink: &mut impl Sink<'a>) {
-        sink.nodes(self);
+        sink.nodes(&self);
     }
 }
 /// `None` is `null`.
@@ -104,8 +104,8 @@ impl<'a> Emit<'a> for Value<'a> {
             Value::Number(value) => sink.number(value),
             Value::Str(value) => sink.str(value),
             Value::Node(node) => sink.node(node),
-            Value::Nodes(nodes) => sink.nodes(nodes),
-            Value::Regex { .. } | Value::BigInt(_) | Value::Object(_) => sink.other(self),
+            Value::Nodes(nodes) => sink.nodes(&nodes),
+            Value::Regex { .. } | Value::BigInt(_) | Value::Object(_) => sink.other(&self),
         }
     }
 }

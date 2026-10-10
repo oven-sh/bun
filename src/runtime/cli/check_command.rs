@@ -334,6 +334,7 @@ fn request<'a>(
     Request {
         cwd,
         project,
+        listed_projects: None,
         build: command_line.is_some_and(|it| it.build),
         errors: command_line.map_or(&[][..], |it| &it.errors[..]),
         paths: entries.paths,

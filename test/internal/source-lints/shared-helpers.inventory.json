@@ -131,6 +131,7 @@
     "is_line_break",
     "is_line_terminator",
     "is_lower_case",
+    "is_lowercase",
     "is_name_byte",
     "is_regex_word",
     "is_regex_word_byte",
@@ -141,6 +142,7 @@
     "is_unicode_blank",
     "is_unicode_whitespace",
     "is_upper_case",
+    "is_uppercase",
     "is_valid_identifier",
     "is_valid_js_identifier",
     "is_white_space",
@@ -644,7 +646,9 @@
       "without_spaces": 1
     },
     "src/lint/unicorn/rules/unicorn_filename_case.rs": {
-      "is_digit": 1
+      "is_digit": 1,
+      "is_lowercase": 1,
+      "is_uppercase": 1
     },
     "src/lint/unicorn/rules/unicorn_relative_url_style.rs": {
       "trim_end": 1

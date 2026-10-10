@@ -87,7 +87,7 @@ const FAMILIES: [family: string, names: string, use: string, note?: string][] = 
   ],
   [
     "case",
-    "to_lower to_lowercase to_upper to_uppercase kebab_case camel_case pascal_case snake_case capitalize to_lower_case to_upper_case lowercase push_lowercase cow_to_ascii_lowercase eq_lower_case starts_with_upper starts_with_uppercase starts_with_upper_case is_upper_case is_lower_case",
+    "to_lower to_lowercase to_upper to_uppercase kebab_case camel_case pascal_case snake_case capitalize to_lower_case to_upper_case lowercase push_lowercase cow_to_ascii_lowercase eq_lower_case starts_with_upper starts_with_uppercase starts_with_upper_case is_upper_case is_lower_case is_uppercase is_lowercase",
     "bun_core::strings::{copy_lowercase, copy_lowercase_if_needed, eql_case_insensitive_ascii}",
   ],
   [

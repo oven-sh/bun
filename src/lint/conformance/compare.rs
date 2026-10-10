@@ -173,6 +173,17 @@ pub fn expected_messages(case: &Json) -> Vec<Reported> {
     reported.collect()
 }
 
+/// What is counted beside the cases that fail.
+#[derive(Default)]
+pub struct Counts {
+    /// Messages without a help for which oxlint has one.
+    pub lacking_help: AtomicUsize,
+    /// Cases whose messages are the recorded ones in another order.
+    pub in_another_order: AtomicUsize,
+    /// `--in-order`: such a case fails.
+    pub fails_on_order: bool,
+}
+
 /// The order of what starts at the same place depends on the order in which ESLint visits the
 /// nodes.
 fn in_order(mut messages: Vec<Reported>) -> Vec<Reported> {
@@ -195,14 +206,13 @@ pub struct Problem {
 }
 
 /// What is wrong with `messages`, which are about `code`, where oxlint is the judge: the messages without their fixes, and the code
-/// after the fixes that each further flag of oxlint applies. A help that is there has to be oxlint's. `lacking` counts the messages
-/// without one for which oxlint has one.
+/// after the fixes that each further flag of oxlint applies. A help that is there has to be oxlint's.
 pub(crate) fn problem_of_oxlint(
     entry: &'static RuleEntry,
     code: &[u8],
     messages: &[LintMessage],
     case: &Json,
-    lacking: &AtomicUsize,
+    counts: &Counts,
 ) -> Option<Problem> {
     let mut outcome = Outcome::new(entry, code, messages);
     for message in &mut outcome.messages {
@@ -212,7 +222,7 @@ pub(crate) fn problem_of_oxlint(
     }
     // `output` is compared below.
     outcome.output = string_of(case, b"output").map(<[u8]>::to_vec);
-    if let Some(problem) = problem_of(Some(outcome), case) {
+    if let Some(problem) = problem_of(Some(outcome), case, counts) {
         return Some(problem);
     }
     let expected = case.get(b"messages").and_then(Json::as_array);
@@ -227,7 +237,7 @@ pub(crate) fn problem_of_oxlint(
         let helps: Vec<&bstr::BStr> = helps.map(bstr::BStr::new).collect();
         match message.help() {
             "" => {
-                lacking.fetch_add(usize::from(!helps.is_empty()), Ordering::Relaxed);
+                (counts.lacking_help).fetch_add(usize::from(!helps.is_empty()), Ordering::Relaxed);
             }
             help if helps.iter().any(|it| **it == help) => {}
             help => {
@@ -278,7 +288,7 @@ pub(crate) fn problem_of_oxlint(
 }
 
 /// What is wrong with `outcome`, which is `None` if the code was not linted at all.
-pub fn problem_of(outcome: Option<Outcome>, case: &Json) -> Option<Problem> {
+pub fn problem_of(outcome: Option<Outcome>, case: &Json, counts: &Counts) -> Option<Problem> {
     let problem = |summary, details| Some(Problem { summary, details });
     let Some(outcome) = outcome else {
         return problem("the file is not part of the program", String::new());
@@ -286,15 +296,21 @@ pub fn problem_of(outcome: Option<Outcome>, case: &Json) -> Option<Problem> {
     if outcome.has_parse_errors {
         return problem("the parser rejects the code", String::new());
     }
-    let (actual, expected) = (
-        in_order(outcome.messages),
-        in_order(expected_messages(case)),
-    );
+    let (actual, expected) = (outcome.messages, expected_messages(case));
     if actual != expected {
-        return problem(
-            "messages differ",
-            format!("  expected: {expected:#?}\n  actual: {actual:#?}"),
-        );
+        let order = || format!("  expected: {expected:#?}\n  actual: {actual:#?}");
+        let as_they_came = counts.fails_on_order.then(order);
+        let (actual, expected) = (in_order(actual), in_order(expected));
+        if actual != expected {
+            return problem(
+                "messages differ",
+                format!("  expected: {expected:#?}\n  actual: {actual:#?}"),
+            );
+        }
+        counts.in_another_order.fetch_add(1, Ordering::Relaxed);
+        if let Some(details) = as_they_came {
+            return problem("the order differs", details);
+        }
     }
     let (actual, expected) = (
         outcome.output.as_deref().map(bstr::BStr::new),

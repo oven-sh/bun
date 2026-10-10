@@ -1,7 +1,7 @@
 //! The rules that exist, by name.
 
 use super::config::oxlint_category;
-use crate::rule::Plugin;
+use crate::rule::{Meta, Plugin};
 use crate::runner::RuleEntry;
 use bun_core::strings;
 
@@ -232,7 +232,11 @@ impl Registry {
 
     /// The position of a rule in [`Registry::all`].
     pub fn index_of(&self, entry: &RuleEntry) -> Option<usize> {
-        let key = (entry.meta.plugin as u8, entry.meta.name);
+        self.index_of_meta(entry.meta)
+    }
+
+    pub(super) fn index_of_meta(&self, meta: &Meta) -> Option<usize> {
+        let key = (meta.plugin as u8, meta.name);
         self.rules
             .binary_search_by(|it| (it.meta.plugin as u8, it.meta.name).cmp(&key))
             .ok()

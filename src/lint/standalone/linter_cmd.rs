@@ -27,14 +27,16 @@ use bun_lint::language::{Global, LanguageOptions, Parser, SourceType};
 use bun_lint::linter::config::Dotfiles;
 use bun_lint::linter::{
     Config, FileConfig, LegacyFailure, LegacyFile, LegacyKind, LegacyOptions, LintMessage,
-    LintOptions, Linter, Registry, ResolvedConfig, RuleId, TypesInJavaScript, Utf16Offsets,
-    severity_of, testing,
+    LintOptions, Registry, ResolvedConfig, RuleId, TypesInJavaScript, Utf16Offsets, severity_of,
+    testing,
 };
 use bun_lint::options::Json;
 use bun_sema::atom::Interner;
 use bun_sema::bind::{BindOptions, Recycled, bind_for_lint_in};
 use bun_sema::session::Session;
 use std::sync::OnceLock;
+
+pub(crate) type Linter = bun_lint::linter::Linter<bun_lint_driver::rules::Rules>;
 
 pub(crate) fn linter() -> &'static Linter {
     static LINTER: OnceLock<Linter> = OnceLock::new();

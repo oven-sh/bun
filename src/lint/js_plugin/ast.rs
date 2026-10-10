@@ -257,11 +257,11 @@ impl<'a> Sink<'a> for Fields<'_, 'a, '_> {
         });
     }
 
-    fn nodes(&mut self, nodes: Nodes<'a>) {
+    fn nodes(&mut self, nodes: &Nodes<'a>) {
         let (lists, open) = (&mut self.writer.tree.lists, &mut self.writer.open);
         let at = lists.len();
         lists.push(0);
-        for node in nodes {
+        for node in *nodes {
             if let Some(node) = node {
                 open.push(Pending {
                     node,
@@ -275,7 +275,7 @@ impl<'a> Sink<'a> for Fields<'_, 'a, '_> {
         self.put(word(Tag::List, at));
     }
 
-    fn other(&mut self, value: Value<'a>) {
+    fn other(&mut self, value: &Value<'a>) {
         let word = self.writer.other(value, self.span);
         self.put(word);
     }
@@ -338,8 +338,8 @@ impl<'a> Writer<'a, '_> {
     }
 
     /// The word for a `RegExp`, a `bigint` or an object in a field of the node at `span`.
-    fn other(&mut self, value: Value<'a>, span: Span) -> u32 {
-        match value {
+    fn other(&mut self, value: &Value<'a>, span: Span) -> u32 {
+        match *value {
             Value::Regex { pattern, flags } => self.pair(Tag::RegExp, Some(pattern), flags, span),
             Value::BigInt(digits) => {
                 let digits = self.string(digits, span);

@@ -7,7 +7,7 @@ use crate::discover::{Status, Target};
 use crate::embedded::Framework;
 use crate::results::{Counts, FileResult, Linted};
 use crate::run::{Fatal, Timing};
-use crate::{fs, paths};
+use crate::{Linter, fs, paths};
 use bun_core::strings;
 use bun_lint::ast::{File, VueScript};
 use bun_lint::context::Severity;
@@ -16,8 +16,8 @@ use bun_lint::formats::{Formats, Reason};
 use bun_lint::js_plugin::{Host, Route};
 use bun_lint::language::Parser;
 use bun_lint::linter::{
-    Again, LintMessage, LintOptions, LintResult, Linter, ResolvedConfig, RuleId, Suggestion,
-    apply_fixes, grows_too_much, is_parse_error, max_fixed_len, may_be_misread,
+    Again, LintMessage, LintOptions, LintResult, ResolvedConfig, RuleId, Suggestion, apply_fixes,
+    grows_too_much, is_parse_error, max_fixed_len, may_be_misread,
 };
 use bun_lint::rule::{Kind, Plugin};
 use bun_lint_graph::Graph;

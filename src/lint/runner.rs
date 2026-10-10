@@ -8,7 +8,7 @@ use crate::ast::{
 use crate::context::{Cx, CxBase, Diagnostic, Severity};
 use crate::literal::Literal;
 use crate::options::Options;
-use crate::rule::{Entries, Entry, Kept, Listeners, Meta, NodeTags, On, Rule};
+use crate::rule::{Meta, NodeTags, On, Rule};
 use crate::rule_set::{RuleBits, RuleSet};
 use crate::span::Span;
 use bun_sema::hir;
@@ -26,6 +26,8 @@ pub(crate) struct Grouped<const KINDS: usize> {
 }
 
 const MOST_KINDS: usize = 2 * ExprTag::COUNT;
+// `Grouped::present` has a bit for each.
+const _: () = assert!(MOST_KINDS <= 128);
 
 /// At `kind + 1`: how many of `kinds` are `kind`.
 fn count_kinds(kinds: &[u8]) -> [u32; MOST_KINDS + 2] {
@@ -69,7 +71,7 @@ impl<const KINDS: usize> Grouped<KINDS> {
         kinds: &[u8],
         counts: &[u32; MOST_KINDS + 2],
     ) -> Self {
-        const { assert!(KINDS <= MOST_KINDS && KINDS <= 128) };
+        const { assert!(KINDS <= MOST_KINDS) };
         let (mut starts, mut present) = (*counts, 0u128);
         for kind in 0..KINDS {
             present |= u128::from(starts[kind + 1] != 0) << kind;
@@ -276,11 +278,6 @@ impl File<'_> {
     }
 
     #[inline]
-    pub(crate) fn binaries_of(&self, op: BinOp) -> &[u32] {
-        self.binaries_at(op as usize)
-    }
-
-    #[inline]
     fn binaries(&self) -> &Grouped<{ BinOp::Comma as usize + 1 }> {
         self.by_kind().binaries.get_or_init(|| {
             Grouped::of_ids(
@@ -297,11 +294,6 @@ impl File<'_> {
     #[inline(never)]
     fn binaries_at(&self, op: usize) -> &[u32] {
         self.binaries().of(op)
-    }
-
-    #[inline]
-    pub(crate) fn unaries_of(&self, op: UnOp) -> &[u32] {
-        self.unaries_at(op as usize)
     }
 
     #[inline]
@@ -429,7 +421,7 @@ every! {
 }
 
 impl<'a> File<'a> {
-    /// The expressions of a kind, in no particular order. For [`Rule::register`] to look closer than [`File::has_exprs`] does.
+    /// The expressions of a kind, in no particular order. For [`Rule::start`] to look closer than [`File::has_exprs`].
     pub fn exprs_of_kind(&'a self, tag: ExprTag) -> impl Iterator<Item = Expr<'a>> {
         self.exprs_of(tag)
             .iter()
@@ -443,14 +435,14 @@ impl<'a> File<'a> {
             .map(|&id| Stmt::from_raw(self, id))
     }
 
-    /// The same for functions: what [`Listeners::funcs`] is called with.
+    /// The same for functions: what [`Rule::func`] is called with.
     pub fn funcs(&'a self) -> impl Iterator<Item = Func<'a>> {
         (0..self.hir.fns.len())
             .map(|i| Func::from_raw(self, i as u32))
             .filter(|it| it.is_in_tree())
     }
 
-    /// The same for classes: what [`Listeners::classes`] is called with.
+    /// The same for classes: what [`Rule::class`] is called with.
     pub fn classes(&'a self) -> impl Iterator<Item = Class<'a>> {
         (0..self.hir.classes.len())
             .map(|i| Class::from_raw(self, i as u32))
@@ -586,8 +578,7 @@ pub trait AnyRule: Send + Sync + 'static {
 #[derive(Copy, Clone)]
 pub struct Start<'a> {
     file: &'a File<'a>,
-    /// Of the rule. It comes from whoever starts the rule and not from its type, with which [`run_started`] would be
-    /// other code for each rule.
+    /// Of the rule.
     meta: &'static Meta,
     rule: u16,
     severity: Severity,
@@ -613,11 +604,8 @@ impl<R: Rule> AnyRule for R {
     }
 
     fn start<'r, 'a: 'r>(&'r self, start: Start<'a>) -> Option<Box<dyn Running<'a> + 'r>> {
-        // It becomes a `Box<dyn ..>` here, in code of the rule: that takes a table of which each rule has its own.
-        Some(match started(self, start)? {
-            Started::On(run) => run,
-            Started::Registered(run) => run,
-        })
+        let run: Box<dyn Running<'a> + 'r> = started(self, start)?;
+        Some(run)
     }
 }
 
@@ -636,7 +624,7 @@ pub trait Starts: Send + Sync {
 }
 
 impl<R: Rule> Starts for R {
-    type Run<'r, 'a: 'r> = Started<'r, 'a, R>;
+    type Run<'r, 'a: 'r> = Box<Later<'r, 'a, R>>;
 
     #[inline]
     fn meta(&self) -> &'static Meta {
@@ -644,7 +632,7 @@ impl<R: Rule> Starts for R {
     }
 
     #[inline]
-    fn start<'r, 'a: 'r>(&'r self, start: Start<'a>) -> Option<Started<'r, 'a, R>> {
+    fn start<'r, 'a: 'r>(&'r self, start: Start<'a>) -> Option<Box<Later<'r, 'a, R>>> {
         started(self, start)
     }
 }
@@ -663,15 +651,20 @@ impl Starts for dyn AnyRule {
     }
 }
 
-impl<'a> Running<'a> for Box<dyn Running<'a> + '_> {
+impl<'a, T: ?Sized + Running<'a>> Running<'a> for Box<T> {
     #[inline]
-    fn listeners_of_walk(&self, add: &mut dyn FnMut(WalkListener)) {
-        (**self).listeners_of_walk(add);
+    fn walks(&self) -> (NodeTags, NodeTags) {
+        (**self).walks()
     }
 
     #[inline]
-    fn call(&mut self, entry: u16, node: Node<'a>) {
-        (**self).call(entry, node);
+    fn enter(&mut self, node: Node<'a>) {
+        (**self).enter(node);
+    }
+
+    #[inline]
+    fn exit(&mut self, node: Node<'a>) {
+        (**self).exit(node);
     }
 
     #[inline]
@@ -680,95 +673,28 @@ impl<'a> Running<'a> for Box<dyn Running<'a> + '_> {
     }
 }
 
-/// A rule at work on a file, after what takes the nodes in no particular order.
-#[doc(hidden)]
-pub enum Started<'r, 'a, R: Rule> {
-    On(Box<Later<'r, 'a, R>>),
-    Registered(Box<Run<'r, 'a, R>>),
-}
-
-impl<'a, R: Rule> Running<'a> for Started<'_, 'a, R> {
-    #[inline]
-    fn listeners_of_walk(&self, add: &mut dyn FnMut(WalkListener)) {
-        match self {
-            Started::On(run) => run.listeners_of_walk(add),
-            Started::Registered(run) => run.listeners_of_walk(add),
-        }
-    }
-
-    #[inline]
-    fn call(&mut self, entry: u16, node: Node<'a>) {
-        match self {
-            Started::On(run) => run.call(entry, node),
-            Started::Registered(run) => run.call(entry, node),
-        }
-    }
-
-    #[inline]
-    fn finish(&mut self) {
-        match self {
-            Started::On(run) => run.finish(),
-            Started::Registered(run) => run.finish(),
-        }
-    }
-}
-
 /// `None`: nothing is left to call.
 #[inline(always)]
-fn started<'r, 'a: 'r, R: Rule>(rule: &'r R, start: Start<'a>) -> Option<Started<'r, 'a, R>> {
-    if !R::ON.registers() {
-        let file = start.file;
-        let on = R::ON.and(rule.narrow(file));
-        if !has_any_of(file, on) {
-            return None;
-        }
-        let mut cx = Cx {
-            state: Rule::start(rule, file)?,
-            base: start.base(),
-        };
-        call_unordered(rule, file, on, &mut cx);
-        if !on.has_later() {
-            return None;
-        }
-        return Some(Started::On(Box::new(Later { rule, on, cx })));
-    }
-    let mut on = Listeners::new(start.file);
-    let state = rule.register(&mut on, start.file);
-    if on.entries.is_empty() {
+fn started<'r, 'a: 'r, R: Rule>(rule: &'r R, start: Start<'a>) -> Option<Box<Later<'r, 'a, R>>> {
+    let file = start.file;
+    let on = R::ON.and(&rule.narrow(file));
+    if !has_any_of(file, on) {
         return None;
     }
-    run_started(rule, on, state, start).map(Started::Registered)
+    let mut cx = Cx {
+        state: Rule::start(rule, file)?,
+        base: start.base(),
+    };
+    call_unordered(rule, file, &on, &mut cx);
+    on.has_later().then(|| Box::new(Later { rule, on, cx }))
 }
 
 /// For [`rules!`](crate::rules): an arm of a `match` on the rules of a crate is a call of this.
 #[doc(hidden)]
 #[inline(never)]
-pub fn start<'r, 'a: 'r, R: Rule>(rule: &'r R, start: Start<'a>) -> Option<Started<'r, 'a, R>> {
+pub fn start<'r, 'a: 'r, R: Rule>(rule: &'r R, start: Start<'a>) -> Option<Box<Later<'r, 'a, R>>> {
     started(rule, start)
 }
-
-/// Not inlined: it is the same code for all rules whose states are as large, of which the linker then keeps one copy.
-/// `None`: nothing is left to call.
-#[inline(never)]
-fn run_started<'r, 'a: 'r, R: Rule>(
-    rule: &'r R,
-    on: Listeners<'a, R>,
-    state: R::State<'a>,
-    start: Start<'a>,
-) -> Option<Box<Run<'r, 'a, R>>> {
-    let mut run = Run {
-        rule,
-        entries: on.entries,
-        cx: Cx {
-            state,
-            base: start.base(),
-        },
-    };
-    run_unordered(rule, &run.entries, start.file, &mut run.cx);
-    on.has_later.then(|| Box::new(run))
-}
-
-// ───────────── a rule that says in a constant what it listens to ─────────────
 
 /// Calls `visit` with the number of each bit that is set, from the lowest.
 #[inline(always)]
@@ -824,7 +750,7 @@ const CHAINED: [ExprTag; 3] = [ExprTag::Dot, ExprTag::Index, ExprTag::Call];
 
 /// Calls what takes the nodes in no particular order, in the order in which [`Rule`] has the methods.
 #[inline]
-fn call_unordered<'a, R: Rule>(rule: &R, file: &'a File<'a>, on: On, cx: &mut Cx<'a, R>) {
+fn call_unordered<'a, R: Rule>(rule: &R, file: &'a File<'a>, on: &On, cx: &mut Cx<'a, R>) {
     each_bit(on.exprs, |kind| {
         for &id in file.exprs_of(EXPR_TAGS[kind]) {
             rule.expr(Expr::from_raw(file, id), cx);
@@ -902,7 +828,7 @@ fn call_unordered<'a, R: Rule>(rule: &R, file: &'a File<'a>, on: On, cx: &mut Cx
     }
 }
 
-/// Such a rule at work on a file, after `call_unordered`.
+/// A rule at work on a file, after `call_unordered`.
 #[doc(hidden)]
 pub struct Later<'r, 'a, R: Rule> {
     rule: &'r R,
@@ -912,21 +838,19 @@ pub struct Later<'r, 'a, R: Rule> {
 }
 
 impl<'a, R: Rule> Running<'a> for Later<'_, 'a, R> {
-    fn listeners_of_walk(&self, add: &mut dyn FnMut(WalkListener)) {
-        if !self.on.enter.is_empty() {
-            add(WalkListener::Enter(self.on.enter, 0));
-        }
-        if !self.on.exit.is_empty() {
-            add(WalkListener::Exit(self.on.exit, 1));
-        }
+    #[inline]
+    fn walks(&self) -> (NodeTags, NodeTags) {
+        (self.on.enter, self.on.exit)
     }
 
     #[inline]
-    fn call(&mut self, entry: u16, node: Node<'a>) {
-        match entry {
-            0 => self.rule.enter(node, &mut self.cx),
-            _ => self.rule.exit(node, &mut self.cx),
-        }
+    fn enter(&mut self, node: Node<'a>) {
+        self.rule.enter(node, &mut self.cx);
+    }
+
+    #[inline]
+    fn exit(&mut self, node: Node<'a>) {
+        self.rule.exit(node, &mut self.cx);
     }
 
     fn finish(&mut self) {
@@ -955,11 +879,6 @@ impl RuleEntry {
     }
 }
 
-// Lists, and not functions that are given a `&mut dyn FnMut`: in `run_unordered` that would be made of a closure that has
-// the type of the rule, with a table of its own for each rule. The linker of macOS folds code alone, so to it functions
-// that refer to tables with the same content are not the same. Neither are, on arm64, functions with a `match` of many arms:
-// that is made with a table of its own as well. So an entry has a function that runs it.
-
 #[inline(never)]
 fn number_literals<'a>(file: &'a File<'a>) -> Vec<Literal<'a>> {
     let mut all = Vec::new();
@@ -977,187 +896,23 @@ fn nodes_of<'a>(file: &'a File<'a>, tags: NodeTags) -> Vec<Node<'a>> {
 /// A rule at work on a file.
 #[doc(hidden)]
 pub trait Running<'a> {
-    /// Tells which of its listeners the walk has to call.
-    fn listeners_of_walk(&self, add: &mut dyn FnMut(WalkListener));
-    /// Calls the listener at `entry` with `node`.
-    fn call(&mut self, entry: u16, node: Node<'a>);
+    /// The kinds of nodes that it is to [enter](Running::enter), and those that it is to [leave](Running::exit).
+    fn walks(&self) -> (NodeTags, NodeTags);
+    fn enter(&mut self, node: Node<'a>);
+    fn exit(&mut self, node: Node<'a>);
     fn finish(&mut self);
-}
-
-#[doc(hidden)]
-pub enum WalkListener {
-    Enter(NodeTags, u16),
-    Exit(NodeTags, u16),
-}
-
-#[doc(hidden)]
-pub struct Run<'r, 'a, R: Rule> {
-    rule: &'r R,
-    entries: Entries<'a, R>,
-    cx: Cx<'a, R>,
-}
-
-/// It looks neither into the rule nor into its state, so it is the same code for all rules, of which the linker then keeps
-/// one copy.
-fn run_unordered<'a, R: Rule>(
-    rule: &R,
-    entries: &[Kept<'a, R>],
-    file: &'a File<'a>,
-    cx: &mut Cx<'a, R>,
-) {
-    for kept in entries {
-        if let Some(runs) = kept.runs {
-            runs(&kept.entry, rule, file, cx);
-        }
-    }
-}
-
-// What [`Kept::runs`] is. Of each the linker keeps one copy, as of `run_unordered`.
-
-macro_rules! runs_by_kind {
-    ($($name:ident $variant:ident $list:ident $handle:ident;)*) => {
-        $(
-            #[inline(never)]
-            pub(crate) fn $name<'a, R: Rule>(
-                entry: &Entry<'a, R>,
-                rule: &R,
-                file: &'a File<'a>,
-                cx: &mut Cx<'a, R>,
-            ) {
-                if let Entry::$variant(kind, listener) = *entry {
-                    for &id in file.$list(kind) {
-                        listener(rule, $handle::from_raw(file, id), cx);
-                    }
-                }
-            }
-        )*
-    };
-}
-
-runs_by_kind! {
-    run_exprs Exprs exprs_of Expr;
-    run_stmts Stmts stmts_of Stmt;
-    run_types Types types_of TypeNode;
-    run_pats Pats pats_of Pat;
-    run_chained Chained chained_exprs_of Expr;
-    run_binaries Binaries binaries_of Expr;
-    run_unaries Unaries unaries_of Expr;
-}
-
-macro_rules! runs_every {
-    ($($name:ident $variant:ident $every:ident;)*) => {
-        $(
-            #[inline(never)]
-            pub(crate) fn $name<'a, R: Rule>(
-                entry: &Entry<'a, R>,
-                rule: &R,
-                file: &'a File<'a>,
-                cx: &mut Cx<'a, R>,
-            ) {
-                if let Entry::$variant(listener) = *entry {
-                    file.$every(|it| listener(rule, it, cx));
-                }
-            }
-        )*
-    };
-}
-
-runs_every! {
-    run_funcs Funcs every_func;
-    run_classes Classes every_class;
-    run_members Members every_member;
-    run_props Props every_prop;
-    run_params Params every_param;
-    run_type_params TypeParams every_type_param;
-    run_var_decls VarDecls every_var_decl;
-    run_cases Cases every_case;
-    run_enum_members EnumMembers every_enum_member;
-    run_import_specs ImportSpecs every_import_spec;
-    run_export_specs ExportSpecs every_export_spec;
-    run_string_literals StringLiterals every_string_literal;
-}
-
-#[inline(never)]
-pub(crate) fn run_number_literals<'a, R: Rule>(
-    entry: &Entry<'a, R>,
-    rule: &R,
-    file: &'a File<'a>,
-    cx: &mut Cx<'a, R>,
-) {
-    if let Entry::NumberLiterals(listener) = *entry {
-        for it in number_literals(file) {
-            listener(rule, it, cx);
-        }
-    }
-}
-
-#[inline(never)]
-pub(crate) fn run_symbols<'a, R: Rule>(
-    entry: &Entry<'a, R>,
-    rule: &R,
-    file: &'a File<'a>,
-    cx: &mut Cx<'a, R>,
-) {
-    if let Entry::Symbols(listener) = *entry {
-        for symbol in file.symbols() {
-            listener(rule, symbol, cx);
-        }
-    }
-}
-
-#[inline(never)]
-pub(crate) fn run_nodes<'a, R: Rule>(
-    entry: &Entry<'a, R>,
-    rule: &R,
-    file: &'a File<'a>,
-    cx: &mut Cx<'a, R>,
-) {
-    if let Entry::Nodes(tags, listener) = *entry {
-        for node in nodes_of(file, tags) {
-            listener(rule, node, cx);
-        }
-    }
-}
-
-impl<'a, R: Rule> Running<'a> for Run<'_, 'a, R> {
-    fn listeners_of_walk(&self, add: &mut dyn FnMut(WalkListener)) {
-        for (i, kept) in self.entries.iter().enumerate() {
-            match &kept.entry {
-                Entry::Enter(tags, _) => add(WalkListener::Enter(*tags, i as u16)),
-                Entry::Exit(tags, _) => add(WalkListener::Exit(*tags, i as u16)),
-                _ => {}
-            }
-        }
-    }
-
-    #[inline]
-    fn call(&mut self, entry: u16, node: Node<'a>) {
-        if let Some(&(Entry::Enter(_, listener) | Entry::Exit(_, listener))) =
-            self.entries.get(entry as usize).map(|it| &it.entry)
-        {
-            listener(self.rule, node, &mut self.cx);
-        }
-    }
-
-    fn finish(&mut self) {
-        for kept in &self.entries {
-            if let Entry::Finish(listener) = kept.entry {
-                listener(self.rule, &mut self.cx);
-            }
-        }
-    }
 }
 
 // ───────────────────────────── the walk ─────────────────────────────
 
-/// The listeners for each kind of node: the rule and its listener.
+/// The rules that listen for each kind of node.
 #[derive(Default)]
 struct ByTag {
-    /// In the order in which they are registered.
-    registered: Vec<(NodeTags, u16, u16)>,
+    /// In the order of the rules.
+    registered: Vec<(NodeTags, u16)>,
     /// By `NodeTags::index_of`: where those for the kind start in `listeners`. One more than there are kinds.
     starts: Vec<u16>,
-    listeners: Vec<(u16, u16)>,
+    listeners: Vec<u16>,
     tags: NodeTags,
 }
 
@@ -1173,17 +928,17 @@ impl ByTag {
             self.starts[index + 1] += self.starts[index];
         }
         let mut next = self.starts.clone();
-        self.listeners = vec![(0, 0); self.starts[NodeTags::COUNT] as usize];
-        for &(tags, rule, entry) in &self.registered {
+        self.listeners = vec![0; self.starts[NodeTags::COUNT] as usize];
+        for &(tags, rule) in &self.registered {
             for index in tags.indices() {
-                self.listeners[next[index as usize] as usize] = (rule, entry);
+                self.listeners[next[index as usize] as usize] = rule;
                 next[index as usize] += 1;
             }
         }
     }
 
     #[inline]
-    fn of(&self, node: Node) -> &[(u16, u16)] {
+    fn of(&self, node: Node) -> &[u16] {
         let index = NodeTags::index_of(node) as usize;
         &self.listeners[self.starts[index] as usize..self.starts[index + 1] as usize]
     }
@@ -1202,8 +957,8 @@ impl<T> Walk<'_, T> {
     where
         T: Running<'a>,
     {
-        for &(rule, entry) in self.enter.of(node) {
-            self.running[rule as usize].call(entry, node);
+        for &rule in self.enter.of(node) {
+            self.running[rule as usize].enter(node);
         }
     }
 
@@ -1212,8 +967,8 @@ impl<T> Walk<'_, T> {
     where
         T: Running<'a>,
     {
-        for &(rule, entry) in self.exit.of(node) {
-            self.running[rule as usize].call(entry, node);
+        for &rule in self.exit.of(node) {
+            self.running[rule as usize].exit(node);
         }
     }
 }
@@ -1385,14 +1140,14 @@ fn sorted(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
 }
 
 /// Those of `enabled` for which `file` has something: all others would not be started.
-pub fn listening<'a, S: RuleSet>(file: &'a File<'a>, enabled: RuleBits) -> RuleBits {
+pub fn listening<'a, S: RuleSet>(file: &'a File<'a>, enabled: &RuleBits) -> RuleBits {
     let rows = S::LISTENS;
     let mut all = rows[On::ALWAYS];
     // What groups the nodes of a sort is called only if a rule wants that sort.
     macro_rules! kinds {
         ($($sort:literal $present:ident;)*) => {
-            $(if !enabled.and(S::LISTENS_TO_KINDS[$sort]).is_empty() {
-                each_bit(file.$present(), |kind| all = all.or(rows[On::KINDS[$sort].0 + kind]));
+            $(if !enabled.and(&S::LISTENS_TO_KINDS[$sort]).is_empty() {
+                each_bit(file.$present(), |kind| all = all.or(&rows[On::KINDS[$sort].0 + kind]));
             })*
         };
     }
@@ -1404,14 +1159,14 @@ pub fn listening<'a, S: RuleSet>(file: &'a File<'a>, enabled: RuleBits) -> RuleB
         4 present_types;
         5 present_pats;
     }
-    if !enabled.and(rows[On::SORTS]).is_empty() && file.present_chained() != 0 {
-        all = all.or(rows[On::SORTS]);
+    if !enabled.and(&rows[On::SORTS]).is_empty() && file.present_chained() != 0 {
+        all = all.or(&rows[On::SORTS]);
     }
     // After `optional_chains`, in the order of the bits of `On`.
     macro_rules! sorts {
         ($($bit:literal $field:ident;)*) => {
             $(if !file.hir.$field.is_empty() {
-                all = all.or(rows[On::SORTS + $bit]);
+                all = all.or(&rows[On::SORTS + $bit]);
             })*
         };
     }
@@ -1428,7 +1183,7 @@ pub fn listening<'a, S: RuleSet>(file: &'a File<'a>, enabled: RuleBits) -> RuleB
         10 import_specs;
         11 export_specs;
     }
-    enabled.and(all)
+    enabled.and(&all)
 }
 
 fn run_rules<'r, 'a: 'r, S: ?Sized + Starts>(file: &'a File<'a>, rules: &'r [Enabled<'r, S>]) {
@@ -1449,10 +1204,13 @@ fn run_rules<'r, 'a: 'r, S: ?Sized + Starts>(file: &'a File<'a>, rules: &'r [Ena
 
     let (mut enter, mut exit) = (ByTag::default(), ByTag::default());
     for (i, rule) in running.iter().enumerate() {
-        rule.listeners_of_walk(&mut |listener| match listener {
-            WalkListener::Enter(tags, entry) => enter.registered.push((tags, i as u16, entry)),
-            WalkListener::Exit(tags, entry) => exit.registered.push((tags, i as u16, entry)),
-        });
+        let (entered, left) = rule.walks();
+        if !entered.is_empty() {
+            enter.registered.push((entered, i as u16));
+        }
+        if !left.is_empty() {
+            exit.registered.push((left, i as u16));
+        }
     }
     if !enter.registered.is_empty() || !exit.registered.is_empty() {
         enter.finish();

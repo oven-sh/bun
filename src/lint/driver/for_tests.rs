@@ -2,6 +2,7 @@
 //! file and its configuration. For `bun lint --run-eslint-tests`, which only debug and canary
 //! builds have.
 
+use crate::Linter;
 use crate::cli::Options;
 use crate::embedded::Framework;
 use crate::lint::Context;
@@ -12,7 +13,7 @@ use bun_lint::context::Severity;
 use bun_lint::js_plugin;
 use bun_lint::linter::config::Dotfiles;
 use bun_lint::linter::{
-    Config, FileConfig, LegacyFailure, LegacyFile, LegacyKind, LegacyOptions, LintMessage, Linter,
+    Config, FileConfig, LegacyFailure, LegacyFile, LegacyKind, LegacyOptions, LintMessage,
     Registry, RuleId, write_json,
 };
 use bun_lint::options::Json;
@@ -29,8 +30,8 @@ struct Tester<'e> {
 }
 
 impl Host for Tester<'_> {
-    fn linter(&self) -> &Linter {
-        &self.linter
+    fn registry(&self) -> &Registry {
+        self.linter.registry()
     }
 
     fn lint(&self, case: &Case<'_>) -> Option<Vec<LintMessage>> {

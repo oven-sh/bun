@@ -6,7 +6,7 @@
 use crate::host::{self, error_line};
 use crate::linter_cmd::{linter, with_file};
 use crate::types_cmd::{Project, lint_project};
-use bun_lint::linter::{Again, LintMessage, LintOptions, LintResult, Linter};
+use bun_lint::linter::{Again, LintMessage, LintOptions, LintResult, Registry};
 use bun_lint::options::Json;
 use bun_lint::rule::Plugin;
 use bun_lint::runner::RuleEntry;
@@ -19,8 +19,8 @@ use std::sync::OnceLock;
 struct Harness;
 
 impl Host for Harness {
-    fn linter(&self) -> &Linter {
-        linter()
+    fn registry(&self) -> &Registry {
+        linter().registry()
     }
 
     fn lint(&self, case: &Case<'_>) -> Option<Vec<LintMessage>> {
@@ -111,7 +111,7 @@ pub(crate) fn lint(
         (b"languageOptions".to_vec(), language_options.clone()),
         (b"settings".to_vec(), settings.clone()),
     ]);
-    let config = bun_lint_conformance::config_of(linter(), entry, &case);
+    let config = bun_lint_conformance::config_of(linter().registry(), entry, &case);
     let directory = if entry.meta.plugin == Plugin::Node {
         "n-project"
     } else {

@@ -14,13 +14,13 @@ use crate::cli::{Options, Tool};
 use crate::embedded::Framework;
 use crate::gitignore::{self, Chain};
 use crate::run::{Environment, Fatal};
-use crate::{eslintrc, evaluate, fs, paths, rulesdir};
+use crate::{Linter, eslintrc, evaluate, fs, paths, rulesdir};
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::js_plugin::{Configuration, Host, Route};
 use bun_lint::linter::{
-    Config, InJavaScript, LegacyFile, LegacyOptions, Linter, ResolvedConfig,
-    oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, plugin_of_oxlint,
+    Config, InJavaScript, LegacyFile, LegacyOptions, ResolvedConfig, oxlint_category_of_key,
+    oxlint_filter_keys, oxlint_rule_key, plugin_of_oxlint,
 };
 use bun_lint::options::Json;
 use bun_lint::rule::minor_of;

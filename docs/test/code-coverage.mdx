@@ -68,7 +68,7 @@ coverageThreshold = 0.9
 coverageThreshold = { lines = 0.9, functions = 0.9 }
 ```
 
-Setting either key makes `bun test --coverage` exit with a non-zero exit code when line or function coverage is below its threshold; a key you omit keeps the `0.9` default. Bun accepts a `statements` key but does not currently enforce it. Outside `--parallel`, the check only runs when the `text` reporter is enabled (the default); a run with only `--coverage-reporter=lcov` currently exits 0 regardless of the threshold.
+Setting either key makes `bun test --coverage` exit with a non-zero exit code when line or function coverage is below its threshold, whichever coverage reporters are enabled. Only the keys you list are enforced. Bun accepts a `statements` key but does not currently enforce it.
 
 ## Coverage Reporters
 

@@ -6841,6 +6841,75 @@ describe.concurrent("nativePluginRules", () => {
     timeout,
   );
 
+  // As ESLint 10.12. No rule of the plugin is on, so nothing of a plugin that is built in has to run in JavaScript: what rules it
+  // has is known all the same.
+  test.each([
+    ["react/nope", "eslint-plugin-react", false],
+    // oxlint has it in its `react`.
+    ["react/only-export-components", "eslint-plugin-react", false],
+    ["import/nope", "eslint-plugin-import", false],
+    ["n/nope", "eslint-plugin-n", false],
+    ["react-hooks/nope", "eslint-plugin-react-hooks", false],
+    ["@typescript-eslint/nope", "@typescript-eslint/eslint-plugin", false],
+    // A later version, or a copy with a rule of its own.
+    ["react/other", "eslint-plugin-react", true],
+    ["import/other", "eslint-plugin-import", true],
+    // Another package.
+    ["import-x/other", "eslint-plugin-import-x", true],
+    ["import-x/nope", "eslint-plugin-import-x", false],
+    ["import/other", "eslint-plugin-import-x", true],
+    ["react/other", "@eslint-react/eslint-plugin", true],
+    ["react/jsx-key", "@eslint-react/eslint-plugin", false],
+  ] as const)(
+    "%s, that only a comment names, with %s",
+    async (id, name, exists) => {
+      const prefix = id.slice(0, id.lastIndexOf("/"));
+      const files = {
+        ...standIn(name, ["other"]),
+        "eslint.config.js": `module.exports = [{ plugins: { ${JSON.stringify(prefix)}: require("${name}") } }];`,
+        "disables.js": `// eslint-disable-next-line ${id}\nmodule.exports = 1;\n`,
+        "turns-on.js": `/* eslint ${id}: "error" */\nmodule.exports = 1;\n`,
+      };
+      const { raw } = await lint(files, ["-f", "json", "disables.js", "turns-on.js"], { mayFail: true });
+      const said = (JSON.parse(raw) as { messages: any[] }[]).map(it =>
+        it.messages.map(it => `${it.line}:${it.column} ${it.ruleId} ${it.message}`),
+      );
+      const missed = [`1:1 ${id} Definition for rule '${id}' was not found.`];
+      const unused = [`1:1 null Unused eslint-disable directive (no problems were reported from '${id}').`];
+      expect(said).toEqual(exists ? [unused, [`1:1 ${id} the package ran`]] : [missed, missed]);
+    },
+    timeout,
+  );
+
+  // As ESLint 10.12 with eslint-plugin-react 7.37.5, 98 of whose rules have no `meta.type`.
+  test(
+    "a rule that says no type: --fix-type leaves its fix alone, and the metadata have no type",
+    async () => {
+      const files = {
+        ...standIn("eslint-plugin-react", ["self-closing-comp", "jsx-key"]),
+        "eslint.config.js": `module.exports = [{
+          languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
+          plugins: { react: require("eslint-plugin-react") },
+          rules: { "react/self-closing-comp": "error", "react/jsx-key": "error", "no-var": "error" },
+        }];`,
+        "a.js": "var a = [<b></b>];\nexport { a };\n",
+      };
+      const json = async (...flags: string[]) =>
+        JSON.parse((await lint(files, [...flags, "a.js"], { mayFail: true })).raw);
+      const fixed = async (...flags: string[]) => (await json("--fix-dry-run", ...flags, "-f", "json"))[0].output;
+      expect(await fixed()).toBe("let a = [<b />];\nexport { a };\n");
+      const withoutIt = "let a = [<b></b>];\nexport { a };\n";
+      expect(await fixed("--fix-type", "suggestion")).toBe(withoutIt);
+      expect(await fixed("--fix-type", "problem,suggestion,layout,directive")).toBe(withoutIt);
+      expect(await fixed("--fix-type", "layout")).toBeUndefined();
+      const { rulesMeta } = (await json("-f", "json-with-metadata")).metadata;
+      expect(rulesMeta["no-var"].type).toBe("suggestion");
+      expect(rulesMeta["react/self-closing-comp"]).toEqual({ fixable: "code" });
+      expect(rulesMeta["react/jsx-key"]).toEqual({});
+    },
+    timeout,
+  );
+
   // `plugins` of an .oxlintrc.json names what is built into oxlint, and what `jsPlugins` names runs in JavaScript anyway.
   test(
     "it changes nothing under the configuration of oxlint",

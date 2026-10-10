@@ -218,12 +218,12 @@ fn unquote(text: &[u8]) -> Vec<u8> {
 
 /// The `*` cast. `None` where levn throws, and for a regular expression, which JSON cannot
 /// express. A date stays a string.
-fn cast(node: Node) -> Option<Json> {
+fn cast(node: &Node) -> Option<Json> {
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return None;
     }
     Some(match node {
-        Node::List(items) => Json::Array(items.into_iter().map(cast).collect::<Option<_>>()?),
+        Node::List(items) => Json::Array(items.iter().map(cast).collect::<Option<_>>()?),
         Node::Fields(fields) => Json::Object(cast_fields(fields)?),
         Node::Value(text) => match &text[..] {
             b"undefined" | b"null" => Json::Null,
@@ -240,18 +240,18 @@ fn cast(node: Node) -> Option<Json> {
             {
                 return None;
             }
-            _ => match bun_core::fmt::js_string_to_number(&text) {
-                number if number.is_nan() => Json::String(unquote(&text)),
+            _ => match bun_core::fmt::js_string_to_number(text) {
+                number if number.is_nan() => Json::String(unquote(text)),
                 number => Json::Number(number),
             },
         },
     })
 }
 
-fn cast_fields(fields: Vec<(Vec<u8>, Node)>) -> Option<Vec<(Vec<u8>, Json)>> {
+fn cast_fields(fields: &[(Vec<u8>, Node)]) -> Option<Vec<(Vec<u8>, Json)>> {
     let mut out: Vec<(Vec<u8>, Json)> = Vec::with_capacity(fields.len());
     for (key, value) in fields {
-        let (key, value) = (unquote(&key), cast(value)?);
+        let (key, value) = (unquote(key), cast(value)?);
         match out.iter_mut().find(|it| it.0 == key) {
             Some(entry) => entry.1 = value,
             None => out.push((key, value)),
@@ -273,6 +273,6 @@ pub fn parse_object(text: &[u8]) -> Option<Vec<(Vec<u8>, Json)>> {
     };
     // levn reads what has tokens left over as a tuple, which is no object.
     (tokens.at == tokens.tokens.len())
-        .then(|| cast_fields(fields))
+        .then(|| cast_fields(&fields))
         .flatten()
 }

@@ -550,6 +550,8 @@ public:
     // Created by db.query(); close(false) finalizes these but leaves db.prepare() statements usable.
     bool ownedByDatabase : 1 = false;
     bool finalizedByClose : 1 = false;
+    // An INSERT, UPDATE or DELETE: every run sets sqlite3_changes64(), so run() reads no other counter.
+    bool countsChanges : 1 = false;
 
 protected:
     JSSQLStatement(JSC::Structure* structure, JSDOMGlobalObject& globalObject, sqlite3_stmt* stmt, VersionSqlite3* version_db, int64_t memorySizeChange = 0)
@@ -1469,6 +1471,12 @@ static bool isSkippedInSQLiteQuery(const char c)
     return c == ' ' || c == ';' || (c >= '\t' && c <= '\r');
 }
 
+// sqlite3_changes64() persists across statements, so only a statement that moved the total reports it (#43306).
+static sqlite3_int64 directChangesSince(sqlite3* db, sqlite3_int64 totalChangesBefore)
+{
+    return sqlite3_total_changes64(db) == totalChangesBefore ? 0 : sqlite3_changes64(db);
+}
+
 // This runs a query one-off
 // without the overhead of a long-lived statement object
 // does not return anything
@@ -1541,7 +1549,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
     bool strict = internalFlagsValue.isInt32() && (internalFlagsValue.asInt32() & kStrictFlag) != 0;
     bool safeIntegers = internalFlagsValue.isInt32() && (internalFlagsValue.asInt32() & kSafeIntegersFlag) != 0;
 
-    const int total_changes_before = sqlite3_total_changes(db);
+    sqlite3_int64 changes = 0;
 
     while (sqlStringHead && sqlStringHead < end) {
         if (isSkippedInSQLiteQuery(*sqlStringHead)) [[unlikely]] {
@@ -1599,9 +1607,16 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
             didSetBindings = true;
         }
 
+        // COMMIT, SAVEPOINT and RELEASE are read-only but can flush FTS5, which moves sqlite3_total_changes64().
+        const bool canChangeRows = !sqlite3_stmt_readonly(sql.stmt);
+        const sqlite3_int64 total_changes_before = canChangeRows ? sqlite3_total_changes64(db) : 0;
+
         do {
             rc = sqlite3_step(sql.stmt);
         } while (rc == SQLITE_ROW);
+
+        if (canChangeRows)
+            changes += directChangesSince(db, total_changes_before);
 
         didExecuteAny = true;
         sqlStringHead = tail;
@@ -1618,9 +1633,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
     }
 
     if (auto* diff = dynamicDowncast<JSC::InternalFieldTuple>(diffValue)) {
-        const int total_changes_after = sqlite3_total_changes(db);
         int64_t last_insert_rowid = sqlite3_last_insert_rowid(db);
-        diff->putInternalField(vm, 0, JSC::jsNumber(total_changes_after - total_changes_before));
+        diff->putInternalField(vm, 0, JSC::jsNumber(changes));
         if (safeIntegers) {
             auto* bigInt = JSBigInt::createFrom(lexicalGlobalObject, last_insert_rowid);
             RETURN_IF_EXCEPTION(scope, {});
@@ -2630,10 +2644,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
     }
 
     auto* db = sqlite3_db_handle(stmt);
-    int total_changes_before = sqlite3_total_changes(db);
+    const bool canChangeRows = !sqlite3_stmt_readonly(stmt);
+    // Each counter read locks the connection mutex, so only a statement of unknown kind reads the total.
+    const bool checkTotal = canChangeRows && !castedThis->countsChanges;
+    const sqlite3_int64 total_changes_before = checkTotal ? sqlite3_total_changes64(db) : 0;
 
     int status = sqlite3_step(stmt);
-    if (!sqlite3_stmt_readonly(stmt)) {
+    if (canChangeRows) {
         castedThis->version_db->version++;
     }
 
@@ -2656,9 +2673,16 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
     }
 
     if (auto* diff = dynamicDowncast<JSC::InternalFieldTuple>(diffValue)) {
-        const int total_changes_after = sqlite3_total_changes(db);
         int64_t last_insert_rowid = sqlite3_last_insert_rowid(db);
-        diff->putInternalField(vm, 0, JSC::jsNumber(total_changes_after - total_changes_before));
+        sqlite3_int64 changes = 0;
+        if (castedThis->countsChanges) {
+            changes = sqlite3_changes64(db);
+        } else if (checkTotal) {
+            changes = directChangesSince(db, total_changes_before);
+            // SQLite rejects bound parameters in DDL and PRAGMA, so a statement that has them and changed rows is DML.
+            castedThis->countsChanges = changes != 0 && sqlite3_bind_parameter_count(stmt) > 0;
+        }
+        diff->putInternalField(vm, 0, JSC::jsNumber(changes));
         if (castedThis->useBigInt64) {
             JSValue lastRowIdBigInt = JSBigInt::createFrom(lexicalGlobalObject, last_insert_rowid);
             RETURN_IF_EXCEPTION(scope, {});

@@ -229,11 +229,11 @@ hasher.update(new ArrayBuffer(10));
 
 For strings, an optional second parameter specifies the encoding (default `'utf-8'`). The following encodings are supported:
 
-| Category                   | Encodings                                 |
-| -------------------------- | ----------------------------------------- |
-| Binary encodings           | `"base64"` `"base64url"` `"hex"`          |
-| Character encodings        | `"utf8"` `"utf-8"` `"utf16le"` `"latin1"` |
-| Legacy character encodings | `"ascii"` `"binary"` `"ucs2"` `"ucs-2"`   |
+| Category                   | Encodings                                              |
+| -------------------------- | ------------------------------------------------------ |
+| Binary encodings           | `"base64"` `"base64url"` `"hex"`                       |
+| Character encodings        | `"utf8"` `"utf-8"` `"utf16le"` `"utf-16le"` `"latin1"` |
+| Legacy character encodings | `"ascii"` `"binary"` `"ucs2"` `"ucs-2"`                |
 
 ```ts
 hasher.update("hello world"); // defaults to utf8

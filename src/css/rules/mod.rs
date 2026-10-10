@@ -1116,7 +1116,6 @@ fn merge_style_rules<R>(
     src_compat: &mut Option<bool>,
     dst_compat: &mut Option<bool>,
 ) -> bool {
-    use css::VendorPrefix;
     // Merge declarations if the selectors are equivalent, and both are compatible with all targets.
     // Does not apply if css modules are enabled.
     if src.selectors.eql(&dst.selectors)
@@ -1149,18 +1148,18 @@ fn merge_style_rules<R>(
 
     if src.declarations.eql(&dst.declarations) && src.rules.v.is_empty() && dst.rules.v.is_empty() {
         // If both selectors are potentially vendor prefixable, and they are
-        // equivalent minus prefixes, add the prefix to the last rule.
+        // equivalent minus prefixes, add the prefixes to the last rule.
         if !src.vendor_prefix.is_empty()
             && !dst.vendor_prefix.is_empty()
             && css::selector::is_equivalent(src.selectors.v.slice(), dst.selectors.v.slice())
+            && css::selector::merge_prefixes(
+                dst.selectors.v.slice_mut(),
+                src.selectors.v.slice(),
+                context.targets,
+            )
         {
-            if src.vendor_prefix.contains(VendorPrefix::NONE)
-                && context.targets.should_compile_selectors()
-            {
-                dst.vendor_prefix = src.vendor_prefix;
-            } else {
-                dst.vendor_prefix.insert(src.vendor_prefix);
-            }
+            dst.vendor_prefix = css::selector::prefix_passes(dst.selectors.v.slice());
+            *dst_compat = None;
             return true;
         }
 
@@ -1179,13 +1178,7 @@ fn merge_style_rules<R>(
             // Both sides were just proven compatible, so the combined selector
             // list is too.
             *dst_compat = Some(true);
-            if src.vendor_prefix.contains(VendorPrefix::NONE)
-                && context.targets.should_compile_selectors()
-            {
-                dst.vendor_prefix = src.vendor_prefix;
-            } else {
-                dst.vendor_prefix.insert(src.vendor_prefix);
-            }
+            dst.vendor_prefix.insert(src.vendor_prefix);
             return true;
         }
     }

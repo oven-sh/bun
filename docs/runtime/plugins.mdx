@@ -60,7 +60,7 @@ type Loader =
 
 ## Usage
 
-A plugin is a JavaScript object containing a `name` property and a `setup` function.
+A plugin is a JavaScript object containing a `name` property and a `setup` function. `Bun.build` requires `name`. `Bun.plugin` only requires `setup`.
 
 ```tsx myPlugin.ts icon="/icons/typescript.svg"
 import type { BunPlugin } from "bun";

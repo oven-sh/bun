@@ -255,6 +255,8 @@ pub(crate) struct Components<'a> {
     is_finished: bool,
     /// See [`Components::closest_candidate`].
     candidates: FxHashMap<Scope<'a>, Option<Scope<'a>>>,
+    /// [`get_name_of_wrapped_component`], by the first argument: it looks through a whole body.
+    wrapped: FxHashMap<Expr<'a>, Option<Name<'a>>>,
     /// [`may_have_explicit_components`]
     may_have_explicit: OnceCell<bool>,
     /// For [`is_explicit_component_function`].
@@ -301,6 +303,7 @@ impl<'a> Components<'a> {
             is_started: false,
             is_finished: false,
             candidates: FxHashMap::default(),
+            wrapped: FxHashMap::default(),
             may_have_explicit: OnceCell::new(),
             documented_at: AncestorMemo::default(),
         }
@@ -617,7 +620,10 @@ impl<'a> Components<'a> {
     /// `nodeWrapsComponent`: whether `memo` or `forwardRef` wraps a component that is detected by
     /// now, or makes a new one.
     fn node_wraps_component(&mut self, node: Call<'a>) -> bool {
-        let child_component = get_name_of_wrapped_component(node.args());
+        let child_component = node.args().first().and_then(|first| {
+            let wrapped = self.wrapped.entry(first);
+            *wrapped.or_insert_with(|| get_name_of_wrapped_component(node.args()))
+        });
         // `getDetectedComponents` asks for the list, which moves the props that are used.
         if !self.stages.is_empty() {
             self.list.list_in_the_walk();

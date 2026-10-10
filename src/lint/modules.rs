@@ -71,8 +71,8 @@ pub struct Request<'a> {
     /// `import type`, `import { type A, type B }`, `export type * from`. What else counts depends on the [`Flavor`].
     pub is_only_importing_types: bool,
     /// With [`Flavor::Oxlint`]: a statement with this specifier exports names: `export { a } from "m"`,
-    /// `export * as a from "m"`, or `import { a } from "m"` beside `export { a }`. A module may do that with itself: that is
-    /// no import then.
+    /// `export * as a from "m"`, or `import { a } from "m"` beside `export { a }`. A module may do that with itself:
+    /// that is no import then.
     pub may_be_itself: bool,
 }
 

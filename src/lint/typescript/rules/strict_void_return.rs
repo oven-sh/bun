@@ -201,13 +201,17 @@ impl StrictVoidReturn {
             FuncNode::Expr(e) => e.ty(),
             FuncNode::Method(func) => func.type_at_location(),
         };
-        tsutils::get_call_signatures_of_type(actual_type.get_apparent_type())
-            .iter()
-            .any(|signature| {
-                !tsutils::union_constituents(signature.get_return_type())
-                    .iter()
-                    .all(|ty| self.is_allowed_return_type(ty))
-            })
+        let apparent_type = actual_type.get_apparent_type();
+        let returns_a_value = |signature: Signature| {
+            !tsutils::union_constituents(signature.get_return_type())
+                .iter()
+                .all(|ty| self.is_allowed_return_type(ty))
+        };
+        // tsgolint asks the type itself, and a union with `undefined` has no signatures: `a ? () => 1 : undefined`.
+        match apparent_type.file().language().is_oxlint {
+            true => apparent_type.get_call_signatures().iter().any(returns_a_value),
+            false => tsutils::get_call_signatures_of_type(apparent_type).iter().any(|it| returns_a_value(*it)),
+        }
     }
 
     fn is_candidate(&self, node: Expr) -> bool {

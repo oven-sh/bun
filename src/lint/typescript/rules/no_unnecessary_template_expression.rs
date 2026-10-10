@@ -223,7 +223,8 @@ fn report_single_interpolation<'a>(node: Node<'a>, interpolation: Node<'a>, cx: 
     // For tsgolint parentheses are a part of what is in them.
     if let (Node::Expr(template), Node::Expr(moved), true) = (node, interpolation, cx.language().is_oxlint) {
         let span = moved.outer_span();
-        cx.report(Span::new(span.start.saturating_sub(2), span.end + 1), NO_UNNECESSARY_TEMPLATE_EXPRESSION)
+        // From the `${`, which is all that is before it, whatever space follows.
+        cx.report(Span::new(template.span().start + 1, span.end + 1), NO_UNNECESSARY_TEMPLATE_EXPRESSION)
             .fix(|fixer| match is_wrapped_by_tsgolint(template, moved) {
                 true => fixer.replace(node, [&b"("[..], moved.text(), b")"].concat()),
                 false => fixer.replace(node, cx.slice(span)),

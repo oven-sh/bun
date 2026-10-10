@@ -5141,5 +5141,20 @@
  "no-unsafe-assignment/methods-and-accessors-are-left-alone": [
   "a.ts:10:24+9 typescript(no-unsafe-assignment)",
   "a.ts:16:52+1 typescript(no-unsafe-assignment)"
+ ],
+ "prefer-optional-chain/not-in-jsx": [
+  "a.tsx:16:33+8 typescript(prefer-optional-chain)",
+  "a.tsx:19:41+8 typescript(prefer-optional-chain)",
+  "a.tsx:4:19+8 typescript(prefer-optional-chain)",
+  "a.tsx:5:25+9 typescript(prefer-optional-chain)",
+  "b.tsx:10:19+10 typescript(prefer-optional-chain)",
+  "b.tsx:11:35+8 typescript(prefer-optional-chain)",
+  "b.tsx:11:72+8 typescript(prefer-optional-chain)",
+  "b.tsx:3:25+11 typescript(prefer-optional-chain)",
+  "b.tsx:4:25+11 typescript(prefer-optional-chain)",
+  "b.tsx:5:23+11 typescript(prefer-optional-chain)",
+  "b.tsx:6:19+11 typescript(prefer-optional-chain)",
+  "b.tsx:7:19+23 typescript(prefer-optional-chain)",
+  "b.tsx:8:19+39 typescript(prefer-optional-chain)"
  ]
 }

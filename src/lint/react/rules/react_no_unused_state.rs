@@ -6,6 +6,7 @@ use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::source::mention_bit;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::estree_compat::{Target, TargetKind, estree_parent, estree_type_name};
 use bun_lint::utils::sort;
 use rustc_hash::FxHashSet;
@@ -140,11 +141,18 @@ struct Walk<'a> {
     class_info: Option<ClassInfo<'a>>,
     /// [`state_parameter`] of the functions around the node.
     state_parameters: Vec<Option<Name<'a>>>,
+    /// The innermost function around a node.
+    enclosing_functions: AncestorMemo<'a, Func<'a>>,
     /// What is reported.
     unused: Vec<(Prop<'a>, Cow<'a, [u8]>)>,
 }
 
 impl<'a> Walk<'a> {
+    /// The functions around `node`, the innermost first.
+    fn functions_around(&mut self, node: Node<'a>) -> impl Iterator<Item = Func<'a>> + use<'a> {
+        successors(self.enclosing_functions.find(node, |_, parent| parent.as_func()), |it| it.enclosing())
+    }
+
     /// `isES5Component`, of an `ObjectExpression`.
     fn is_es5_component(&self, node: Expr<'a>) -> bool {
         matches!(node.parent(), Node::Expr(parent) if parent.callee().is_some())
@@ -371,7 +379,7 @@ impl<'a> Walk<'a> {
         let unwrapped_left = unwrap_ts_as_expression(target);
         let unwrapped_right = unwrap_ts_as_expression(value);
         if unwrapped_right.tag() == ExprTag::Object && is_member_of_this(unwrapped_left, b"state") {
-            let mut functions = successors(Node::Expr(node).enclosing_function(), |it| it.enclosing());
+            let mut functions = self.functions_around(Node::Expr(node));
             let function = functions.find(|it| estree_type_name(Node::Func(*it)) == "FunctionExpression");
             if function.is_some_and(|it| matches!(it.owner(), Node::Member(parent) if parent.is_constructor())) {
                 self.add_state_fields(unwrapped_right);
@@ -508,15 +516,21 @@ impl Rule for NoUnusedState {
             components.extend(objects.filter(|it| is_es5_component(*it, &pragmas)));
         }
         sort::sort_unstable_by_key(&mut components, |it| it.span().start);
-        let mut walk = Walk { file, pragmas, class_info: None, state_parameters: Vec::new(), unused: Vec::new() };
+        let mut walk = Walk {
+            file,
+            pragmas,
+            class_info: None,
+            state_parameters: Vec::new(),
+            enclosing_functions: AncestorMemo::default(),
+            unused: Vec::new(),
+        };
         let mut walked_to = 0;
         for component in components {
             if component.span().start < walked_to {
                 continue;
             }
             walked_to = component.span().end;
-            let functions = successors(component.enclosing_function(), |it| it.enclosing());
-            walk.state_parameters = functions.filter_map(state_parameter).collect();
+            walk.state_parameters = walk.functions_around(component).filter_map(state_parameter).collect();
             walk_node(component, &mut walk);
         }
         for (node, name) in walk.unused {

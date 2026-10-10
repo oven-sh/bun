@@ -1051,6 +1051,15 @@ impl Modules for Graph<'_> {
                 // `removeQuerystring`
                 let end = strings::last_index_of_char(specifier, b'?').unwrap_or(specifier.len());
                 let specifier = &specifier[..end];
+                let names_directory = specifier.starts_with(b".") && specifier.ends_with(b"/");
+                if names_directory
+                    && !self
+                        .store
+                        .disk()
+                        .is_dir(&join(directory_of(&from), specifier))
+                {
+                    return None;
+                }
                 let real = self.store.disk().realpath(&from);
                 match self.resolve_any_path(&real, specifier, is_require) {
                     Some(found) => found.0.into_owned(),

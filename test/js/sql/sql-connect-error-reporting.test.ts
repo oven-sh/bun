@@ -24,6 +24,7 @@
 
 import { SQL } from "bun";
 import { expect, mock, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import type net from "node:net";
 import {
   closedPort,
@@ -413,4 +414,80 @@ test("mysql: connectionTimeout: 0 disables connect retries", async () => {
     await db.close({ timeout: 0 });
     server.close();
   }
+});
+
+// The pool reads `sql.options` again for every new connection, so a value
+// assigned to it after construction reaches the native connection constructor
+// without a pass through the option parser. The child process does the
+// assignments because a regression here aborts the process.
+test.concurrent.each([
+  ["postgres", "ERR_POSTGRES_CONNECTION_REFUSED"],
+  ["mysql", "ERR_MYSQL_CONNECTION_REFUSED"],
+])("%s: invalid values assigned to sql.options do not crash the next connection", async (adapter, refused) => {
+  const port = await closedPort();
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const timeouts = ["idleTimeout", "connectionTimeout", "maxLifetime"];
+async function attempt(assign) {
+  const sql = new Bun.SQL({ url: process.env.SQL_URL, max: 1 });
+  assign(sql.options);
+  try {
+    await sql.connect();
+    return "connected";
+  } catch (e) {
+    return e.code ?? e.name;
+  } finally {
+    await sql.close({ timeout: 0 });
+  }
+}
+const results = {};
+for (const [label, value] of [["object", {}], ["string", "abc"], ["negative", -1]]) {
+  results["timeouts " + label] = await attempt(options => {
+    for (const key of timeouts) options[key] = value;
+  });
+}
+for (const key of timeouts) {
+  results[key + " symbol"] = await attempt(options => {
+    options[key] = Symbol();
+  });
+  results[key + " valueOf throws"] = await attempt(options => {
+    options[key] = {
+      valueOf() {
+        throw Object.assign(new Error("from valueOf"), { code: "FROM_VALUE_OF" });
+      },
+    };
+  });
+}
+for (const [label, value] of [["object", {}], ["string", "require"], ["negative", -1], ["out of range", 5]]) {
+  results["sslMode " + label] = await attempt(options => {
+    options.sslMode = value;
+  });
+}
+console.log(JSON.stringify(results));`,
+    ],
+    env: { ...bunEnv, SQL_URL: `${adapter}://user@127.0.0.1:${port}/db` },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    "timeouts object": refused,
+    "timeouts string": refused,
+    "timeouts negative": refused,
+    "idleTimeout symbol": "TypeError",
+    "idleTimeout valueOf throws": "FROM_VALUE_OF",
+    "connectionTimeout symbol": "TypeError",
+    "connectionTimeout valueOf throws": "FROM_VALUE_OF",
+    "maxLifetime symbol": "TypeError",
+    "maxLifetime valueOf throws": "FROM_VALUE_OF",
+    // A mode that the native side cannot map must not fall back to a plaintext connection.
+    "sslMode object": "ERR_INVALID_ARG_TYPE",
+    "sslMode string": "ERR_INVALID_ARG_TYPE",
+    "sslMode negative": "ERR_INVALID_ARG_TYPE",
+    "sslMode out of range": "ERR_INVALID_ARG_TYPE",
+  });
+  expect(exitCode).toBe(0);
 });

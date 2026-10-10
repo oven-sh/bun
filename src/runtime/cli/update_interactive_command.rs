@@ -756,16 +756,22 @@ impl UpdateInteractiveCommand {
     fn group_catalog_dependencies(
         packages: Vec<OutdatedPackage>,
     ) -> crate::Result<Vec<OutdatedPackage>> {
-        // Create a map to track catalog dependencies by name
+        // Key by (name, catalog) so each catalog definition is its own row.
         let mut catalog_map: StringHashMap<Vec<OutdatedPackage>> = StringHashMap::default();
 
         let mut result: Vec<OutdatedPackage> = Vec::new();
+        let mut key_buf: Vec<u8> = Vec::new();
 
-        // Group catalog dependencies
         for pkg in packages {
             if pkg.is_catalog {
+                key_buf.clear();
+                key_buf.extend_from_slice(&pkg.name);
+                if let Some(catalog_name) = &pkg.catalog_name {
+                    key_buf.push(b':');
+                    key_buf.extend_from_slice(catalog_name);
+                }
                 let entry = catalog_map
-                    .get_or_put(&pkg.name)
+                    .get_or_put(&key_buf)
                     .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
                 if !entry.found_existing {
                     *entry.value_ptr = Vec::new();
@@ -1018,8 +1024,13 @@ impl UpdateInteractiveCommand {
             if a_priority != b_priority {
                 return a_priority.cmp(&b_priority);
             }
-            // Then by name
-            strings::order(&a.name, &b.name)
+            // Then by name, then by catalog name (default catalog sorts first).
+            strings::order(&a.name, &b.name).then_with(|| {
+                strings::order(
+                    a.catalog_name.as_deref().unwrap_or(b""),
+                    b.catalog_name.as_deref().unwrap_or(b""),
+                )
+            })
         });
 
         Ok((grouped_result, checked))

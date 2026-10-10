@@ -45,6 +45,8 @@ pub struct JSMySQLQuery {
     vm: BackRef<VirtualMachine>,
     global_object: BackRef<JSGlobalObject>,
     query: JsCell<MySQLQuery>,
+    /// `run()` is encoding this query, which runs user code that can call `cancel()` on it.
+    encoding: Cell<bool>,
 }
 
 impl JSMySQLQuery {
@@ -100,6 +102,7 @@ impl JSMySQLQuery {
                 bigint,
                 simple,
             )),
+            encoding: Cell::new(false),
         }));
         // `heap::into_raw` is `Box::into_raw` — never null. Uniquely owned here
         // until handed to the JS wrapper. R-2: every field is interior-mutable,
@@ -173,12 +176,20 @@ impl JSMySQLQuery {
     }
 
     pub fn do_cancel(
-        _this: &Self,
-        _global_object: &JSGlobalObject,
+        this: &Self,
+        global_object: &JSGlobalObject,
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // TODO: we can cancel a query that is pending aka not pipelined yet we just need fail it
-        // if is running is not worth/viable to cancel the whole connection
+        // MySQL stops a query that it has only with KILL QUERY on a second connection.
+        if this.encoding.get() || !this.query.get().is_unwritten() {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let err = mysql_error_to_js(
+            global_object,
+            "Query cancelled",
+            AnyMySQLError::Error::QueryCancelled,
+        );
+        this.reject_with_js_value(JSValue::ZERO, err);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -432,10 +443,12 @@ impl JSMySQLQuery {
         // such path and is not reachable from a binding getter in well-formed
         // SQL usage. This mirrors the pre-R-2 behaviour but with the *outer*
         // `&mut self` UB structurally eliminated.
-        if let Err(err) = self
+        let was_encoding = self.encoding.replace(true);
+        let result = self
             .query
-            .with_mut(|q| q.run_query(connection, global_object, columns_value, binding_value))
-        {
+            .with_mut(|q| q.run_query(connection, global_object, columns_value, binding_value));
+        self.encoding.set(was_encoding);
+        if let Err(err) = result {
             debug!("run failed to execute query");
             if !global_object.has_exception() {
                 // Throw for side-effect and map to the enum variant.

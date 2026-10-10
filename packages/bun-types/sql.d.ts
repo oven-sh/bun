@@ -470,7 +470,11 @@ declare module "bun" {
       cancelled: boolean;
 
       /**
-       * Cancels the executing query
+       * Cancels the query.
+       *
+       * For MySQL and MariaDB, a query that waits behind another query on its
+       * connection never runs. It rejects with `ERR_MYSQL_QUERY_CANCELLED`. A
+       * query that Bun has started to send cannot be stopped.
        */
       cancel(): Query<T>;
 

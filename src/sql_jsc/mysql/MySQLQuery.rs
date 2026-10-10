@@ -50,6 +50,8 @@ impl Flags {
     /// head, and the rest of its response is skipped, until the terminator of
     /// its last result set.
     const DISCARD_RESPONSE: u8 = 1 << 5;
+    /// This request wrote the COM_STMT_PREPARE of its statement.
+    const PREPARE_WRITTEN: u8 = 1 << 6;
 
     #[inline]
     fn bigint(self) -> bool {
@@ -78,6 +80,14 @@ impl Flags {
     #[inline]
     fn set_discard_response(&mut self) {
         self.0 |= Self::DISCARD_RESPONSE;
+    }
+    #[inline]
+    fn prepare_written(self) -> bool {
+        self.0 & Self::PREPARE_WRITTEN != 0
+    }
+    #[inline]
+    fn set_prepare_written(&mut self) {
+        self.0 |= Self::PREPARE_WRITTEN;
     }
     #[inline]
     fn result_mode(self) -> SQLQueryResultMode {
@@ -399,6 +409,7 @@ impl MySQLQuery {
                     self.get_statement()
                         .expect("self.statement set above")
                         .status = my_sql_statement::Status::Parsing;
+                    self.flags.set_prepare_written();
                 }
             }
         }
@@ -518,6 +529,12 @@ impl MySQLQuery {
     #[inline]
     pub(crate) fn is_pending(&self) -> bool {
         self.status == Status::Pending
+    }
+
+    /// Nothing of this request is on the wire, not even the COM_STMT_PREPARE of its statement.
+    #[inline]
+    pub(crate) fn is_unwritten(&self) -> bool {
+        self.status == Status::Pending && !self.flags.prepare_written()
     }
 
     #[inline]

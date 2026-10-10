@@ -469,13 +469,18 @@ const result = await sql.unsafe("SELECT * FROM users WHERE id = :id", { id: 1 })
 ### Execute and Cancelling Queries
 
 Queries are lazy: they only start executing when awaited or run with `.execute()`.
-To cancel a running query, call `cancel()` on the query object.
+To cancel a query, call `cancel()` on the query object.
 
 ```ts
 const query = sql`SELECT * FROM users`.execute();
 setTimeout(() => query.cancel(), 100);
 await query;
 ```
+
+On MySQL and MariaDB, what `cancel()` does depends on how far the query got:
+
+- A query that waits behind another query on its connection never runs. It rejects with `ERR_MYSQL_QUERY_CANCELLED`. A connection sends one query at a time, so a query that starts while another one runs waits for its turn.
+- A query that Bun has started to send cannot be stopped. `cancel()` has no effect on it.
 
 ---
 

@@ -1074,79 +1074,585 @@ impl DeferredSymlink {
     }
 }
 
-#[cfg(unix)]
-fn open_dir_with_stat(dir_fd: Fd, sub_path: &[u8]) -> Option<(Fd, bun_sys::Stat)> {
-    let fd = bun_sys::open_dir_at(dir_fd, sub_path).ok()?;
-    match bun_sys::fstat(fd) {
-        Ok(st) => Some((fd, st)),
-        Err(_) => {
-            fd.close();
-            None
-        }
+/// `("a/b", 4..5)` for `"a/b/c/"`: the parent, then where the last component is.
+#[cfg(not(windows))]
+fn split_entry_parent(path: &[u8]) -> Option<(&[u8], core::ops::Range<usize>)> {
+    let mut end = path.len();
+    while end > 0 && path[end - 1] == b'/' {
+        end -= 1;
+    }
+    if end == 0 {
+        return None;
+    }
+    match strings::last_index_of_char(&path[..end], b'/') {
+        Some(i) => Some((&path[..i], i + 1..end)),
+        None => Some((b"", 0..end)),
     }
 }
 
-#[cfg(unix)]
-pub fn create_deferred_symlinks(dir_fd: Fd, symlinks: &[DeferredSymlink], log: bool) -> u32 {
-    let mut parents: Vec<Option<bun_sys::Stat>> = Vec::with_capacity(symlinks.len());
-    for symlink in symlinks {
-        let dirname = bun_paths::dirname_simple(symlink.path.as_bytes());
-        if dirname.is_empty() {
-            parents.push(None);
-            continue;
+/// The one answer to a symlink in the destination where the entry `path` needs a directory.
+#[cfg(not(windows))]
+pub fn link_in_the_way(path: &[u8], log: bool) -> crate::Error {
+    if log {
+        bun_core::warn!(
+            "Refusing to extract through a symlink in the destination: {}\n",
+            bstr::BStr::new(path),
+        );
+    }
+    crate::Error::LinkInTheWay(Box::from(path))
+}
+
+/// Creates entries below `root` through no symlink that is already there. `Ok(None)`: `link_in_the_way`.
+#[cfg(not(windows))]
+pub struct ContainedDir {
+    root: Fd,
+    /// `false` once `openat_no_symlinks` said `None`. Then parents are walked with `O_NOFOLLOW` and cached.
+    kernel: bool,
+    /// The innermost directory the walk keeps open, relative to `root`.
+    path: Vec<u8>,
+    /// One level per component of `path`, outermost first.
+    dirs: Vec<WalkedDir>,
+    /// How many levels the walk keeps open. Fewer after EMFILE.
+    limit: usize,
+    /// The parent of the last call, when `dirs` does not own it. The next call closes it.
+    spill: Option<Fd>,
+}
+
+#[cfg(not(windows))]
+struct WalkedDir {
+    /// Where this component ends in `ContainedDir::path`.
+    end: usize,
+    fd: Fd,
+    /// The walk made the directory, so a child is created without a lookup first.
+    created: bool,
+}
+
+#[cfg(not(windows))]
+impl ContainedDir {
+    /// One fd per level the walk keeps open. Deeper levels are reopened per call.
+    const MAX_DEPTH: usize = 128;
+
+    /// For the open that refuses symlinks itself. The walk adds `O_NOFOLLOW`.
+    const FILE_FLAGS: i32 = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
+
+    /// `O_PATH` or `O_SEARCH`: the `*at` calls need search permission on the directory, not read.
+    const DIR_FLAGS: i32 =
+        bun_sys::O::PATH | bun_sys::O::SEARCH | bun_sys::O::DIRECTORY | bun_sys::O::CLOEXEC;
+
+    pub const fn new(root: Fd) -> ContainedDir {
+        ContainedDir {
+            root,
+            kernel: true,
+            path: Vec::new(),
+            dirs: Vec::new(),
+            limit: Self::MAX_DEPTH,
+            spill: None,
         }
-        let _ = dir_fd.make_path_u8(dirname);
-        parents.push(open_dir_with_stat(dir_fd, dirname).map(|(fd, st)| {
+    }
+
+    /// Creates or truncates the file `path`. A symlink under its own name is replaced, as tar does.
+    pub fn create_file(&mut self, path: &ZStr, mode: bun_sys::Mode) -> bun_sys::Maybe<Option<Fd>> {
+        use bun_sys::E;
+        let (dirname, name) = Self::split(path, false)?;
+        self.close_spill();
+        let Some(first) = self.open_in_kernel(path, Self::FILE_FLAGS, mode) else {
+            return self.create_file_by_walk(dirname, name, mode);
+        };
+        let opened = match first {
+            Err(err) if err.get_errno() == E::ENOENT && !dirname.is_empty() => {
+                if !self.make_missing(dirname)? {
+                    return Ok(None);
+                }
+                self.open_in_kernel(path, Self::FILE_FLAGS, mode)
+                    .unwrap_or(Err(err))
+            }
+            first => first,
+        };
+        match opened {
+            Ok(fd) => Ok(Some(fd)),
+            // The symlink is the name itself only if the parent opens.
+            Err(err) if matches!(err.get_errno(), E::ELOOP | E::EMLINK) => {
+                let Some((parent, _)) = self.parent(dirname, false)? else {
+                    return Ok(None);
+                };
+                Self::replace_symlink(parent, name, mode).map(Some)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    /// Makes the directory `path`. `mode` gets whether its parent had to be made.
+    pub fn make_dir(
+        &mut self,
+        path: &ZStr,
+        mode: impl FnOnce(bool) -> bun_sys::Mode,
+    ) -> bun_sys::Maybe<Option<()>> {
+        let (dirname, name) = Self::split(path, true)?;
+        let Some((parent, made)) = self.parent(dirname, true)? else {
+            return Ok(None);
+        };
+        // With a trailing `/`, POSIX lets `mkdirat` go through a symlink under the name.
+        let mut bare = name.as_bytes();
+        while let [rest @ .., b'/'] = bare {
+            bare = rest;
+        }
+        let mut name_buf = bun_paths::path_buffer_pool::get();
+        let name = Self::z(bare, &mut name_buf[..])?;
+        bun_sys::mkdirat_z(parent, name, mode(made)).map(Some)
+    }
+
+    /// Makes the directory that the entry `path` goes in.
+    fn make_parent(&mut self, path: &ZStr) -> bun_sys::Maybe<Option<()>> {
+        let (dirname, _) = Self::split(path, false)?;
+        Ok(self.parent(dirname, true)?.map(|_| ()))
+    }
+
+    /// Makes the symlink `path`. Its parent is made when it is missing.
+    pub fn symlink(&mut self, path: &ZStr, target: &ZStr) -> bun_sys::Maybe<Option<()>> {
+        let (dirname, name) = Self::split(path, false)?;
+        let Some((parent, _)) = self.parent(dirname, true)? else {
+            return Ok(None);
+        };
+        bun_sys::symlinkat(target, parent, name).map(Some)
+    }
+
+    /// Removes the file `path`.
+    pub fn unlink(&mut self, path: &ZStr) -> bun_sys::Maybe<Option<()>> {
+        let (dirname, name) = Self::split(path, false)?;
+        let Some((parent, _)) = self.parent(dirname, false)? else {
+            return Ok(None);
+        };
+        bun_sys::unlinkat(parent, name).map(Some)
+    }
+
+    /// Opens what is at `path`, creates nothing. `Ok(None)` also for a symlink under the name itself.
+    pub fn open_existing(&mut self, path: &ZStr, flags: i32) -> bun_sys::Maybe<Option<Fd>> {
+        use bun_sys::E;
+        let (dirname, name) = Self::split(path, false)?;
+        self.close_spill();
+        let opened = match self.open_in_kernel(path, flags, 0) {
+            Some(opened) => opened,
+            None => {
+                let Some((parent, _)) = self.parent(dirname, false)? else {
+                    return Ok(None);
+                };
+                bun_sys::openat(parent, name, flags | bun_sys::O::NOFOLLOW, 0)
+            }
+        };
+        match opened {
+            Ok(fd) => Ok(Some(fd)),
+            Err(err) if matches!(err.get_errno(), E::ELOOP | E::EMLINK) => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn invalid(errno: bun_sys::E) -> bun_sys::Error {
+        bun_sys::Error::from_code(errno, bun_sys::Tag::open)
+    }
+
+    /// The parent of `path` and its name. Refuses a leading `/` and `..`: the kernel arm would follow them.
+    fn split(path: &ZStr, directory: bool) -> bun_sys::Maybe<(&[u8], &ZStr)> {
+        use bun_sys::E;
+        let bytes = path.as_bytes();
+        let escapes = bytes.starts_with(b"/")
+            || (strings::contains(bytes, b"..")
+                && strings::split(bytes, b"/").any(|component| strings::eql(component, b"..")));
+        let Some((dirname, name)) = split_entry_parent(bytes).filter(|_| !escapes) else {
+            return Err(Self::invalid(E::EINVAL));
+        };
+        // With a trailing `/`, the kernel can resolve the name through a symlink.
+        if !directory && name.end != bytes.len() {
+            return Err(Self::invalid(E::EISDIR));
+        }
+        let name = ZStr::from_slice_with_nul(&path.as_bytes_with_nul()[name.start..]);
+        Ok((dirname, name))
+    }
+
+    /// `name`, NUL-terminated in `buf`.
+    fn z<'b>(name: &[u8], buf: &'b mut [u8]) -> bun_sys::Maybe<&'b ZStr> {
+        if name.len() >= buf.len() {
+            return Err(Self::invalid(bun_sys::E::ENAMETOOLONG));
+        }
+        buf[..name.len()].copy_from_slice(name);
+        buf[name.len()] = 0;
+        Ok(ZStr::from_slice_with_nul(&buf[..=name.len()]))
+    }
+
+    /// One component of a directory path, NUL-terminated in `buf`.
+    fn component<'b>(name: &[u8], buf: &'b mut [u8]) -> bun_sys::Maybe<&'b ZStr> {
+        if name.is_empty() || strings::eql(name, b".") || strings::eql(name, b"..") {
+            return Err(Self::invalid(bun_sys::E::EINVAL));
+        }
+        Self::z(name, buf)
+    }
+
+    /// `None`: the kernel cannot refuse symlinks, so the walk has to.
+    fn open_in_kernel(
+        &mut self,
+        path: &ZStr,
+        flags: i32,
+        mode: bun_sys::Mode,
+    ) -> Option<bun_sys::Maybe<Fd>> {
+        if !self.kernel {
+            return None;
+        }
+        let opened = bun_sys::openat_no_symlinks(self.root, path, flags, mode);
+        self.kernel = opened.is_some();
+        opened
+    }
+
+    fn close_spill(&mut self) {
+        if let Some(fd) = self.spill.take() {
             fd.close();
-            st
-        }));
+        }
+    }
+
+    /// `Ok(None)` if `name` is a symlink: ELOOP, EMLINK or ENOTDIR by platform. A file is ENOTDIR too.
+    fn unless_symlink<T>(
+        parent: Fd,
+        name: &ZStr,
+        err: bun_sys::Error,
+    ) -> bun_sys::Maybe<Option<T>> {
+        use bun_sys::E;
+        let is_symlink = match err.get_errno() {
+            E::ELOOP | E::EMLINK => true,
+            E::ENOTDIR => bun_sys::lstatat(parent, name).is_ok_and(|st| {
+                bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode) == bun_sys::FileKind::SymLink
+            }),
+            _ => false,
+        };
+        if is_symlink { Ok(None) } else { Err(err) }
+    }
+
+    /// A symlink holds the name. The file takes its place.
+    fn replace_symlink(parent: Fd, name: &ZStr, mode: bun_sys::Mode) -> bun_sys::Maybe<Fd> {
+        let _ = bun_sys::unlinkat(parent, name);
+        let flags =
+            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::EXCL | bun_sys::O::NOFOLLOW;
+        bun_sys::openat(parent, name, flags, mode)
+    }
+
+    /// The directory `dirname` and whether this call made it. The fd is good until the next call.
+    fn parent(&mut self, dirname: &[u8], create: bool) -> bun_sys::Maybe<Option<(Fd, bool)>> {
+        self.close_spill();
+        if dirname.is_empty() {
+            return Ok(Some((self.root, false)));
+        }
+        if let Some(parent) = self.parent_from_kernel(dirname, create) {
+            return parent;
+        }
+        loop {
+            match self.walk(dirname, create) {
+                Err(err) if Self::out_of_fds(&err) && self.shed() => {}
+                parent => return parent,
+            }
+        }
+    }
+
+    fn parent_from_kernel(
+        &mut self,
+        dirname: &[u8],
+        create: bool,
+    ) -> Option<bun_sys::Maybe<Option<(Fd, bool)>>> {
+        use bun_sys::E;
+        if !self.kernel {
+            return None;
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let path = match Self::z(dirname, &mut buf[..]) {
+            Ok(path) => path,
+            Err(err) => return Some(Err(err)),
+        };
+        let mut made = false;
+        loop {
+            let err = match self.open_in_kernel(path, Self::DIR_FLAGS, 0)? {
+                Ok(fd) => {
+                    self.spill = Some(fd);
+                    return Some(Ok(Some((fd, made))));
+                }
+                Err(err) => err,
+            };
+            return Some(match err.get_errno() {
+                E::ELOOP | E::EMLINK => Ok(None),
+                E::ENOENT if create && !made => match self.make_missing(dirname) {
+                    Ok(true) => {
+                        made = true;
+                        continue;
+                    }
+                    Ok(false) => Ok(None),
+                    Err(err) => Err(err),
+                },
+                _ => Err(err),
+            });
+        }
+    }
+
+    /// Makes the missing components of `dirname` for the kernel arm. `false`: one is a symlink.
+    fn make_missing(&mut self, dirname: &[u8]) -> bun_sys::Maybe<bool> {
+        use bun_sys::E;
+        let mut buf = bun_paths::path_buffer_pool::get();
+        Self::z(dirname, &mut buf[..])?;
+
+        // The deepest ancestor that exists. The root always does.
+        let (mut current, mut owned) = (self.root, false);
+        let mut missing_from = 0usize;
+        let mut end = dirname.len();
+        while let Some(slash) = strings::last_index_of_char(&dirname[..end], b'/') {
+            buf[slash] = 0;
+            let ancestor = ZStr::from_slice_with_nul(&buf[..=slash]);
+            match self.open_in_kernel(ancestor, Self::DIR_FLAGS, 0) {
+                Some(Ok(fd)) => {
+                    (current, owned) = (fd, true);
+                    missing_from = slash + 1;
+                    break;
+                }
+                Some(Err(err)) => match err.get_errno() {
+                    E::ENOENT => end = slash,
+                    E::ELOOP | E::EMLINK => return Ok(false),
+                    _ => return Err(err),
+                },
+                None => return Err(Self::invalid(E::ENOSYS)),
+            }
+        }
+
+        // `O_NOFOLLOW` refuses a symlink put where this loop just made a directory.
+        let mut components = strings::split(&dirname[missing_from..], b"/").peekable();
+        let mut made = Ok(true);
+        while let Some(component) = components.next() {
+            let name = match Self::component(component, &mut buf[..]) {
+                Ok(name) => name,
+                Err(err) => {
+                    made = Err(err);
+                    break;
+                }
+            };
+            // 0o755: what `mkdir_recursive_at` gave these parents before.
+            if let Err(err) = bun_sys::mkdirat_z(current, name, 0o755)
+                && err.get_errno() != E::EEXIST
+            {
+                made = Err(err);
+                break;
+            }
+            if components.peek().is_none() {
+                break;
+            }
+            let flags = Self::DIR_FLAGS | bun_sys::O::NOFOLLOW;
+            let next = match bun_sys::openat(current, name, flags, 0) {
+                Ok(fd) => Ok(Some(fd)),
+                Err(err) => Self::unless_symlink(current, name, err),
+            };
+            if owned {
+                current.close();
+            }
+            match next {
+                Ok(Some(fd)) => (current, owned) = (fd, true),
+                Ok(None) => return Ok(false),
+                Err(err) => return Err(err),
+            }
+        }
+        if owned {
+            current.close();
+        }
+        made
+    }
+
+    fn create_file_by_walk(
+        &mut self,
+        dirname: &[u8],
+        name: &ZStr,
+        mode: bun_sys::Mode,
+    ) -> bun_sys::Maybe<Option<Fd>> {
+        use bun_sys::E;
+        loop {
+            let Some((parent, _)) = self.parent(dirname, true)? else {
+                return Ok(None);
+            };
+            let flags = Self::FILE_FLAGS | bun_sys::O::NOFOLLOW;
+            let opened = match bun_sys::openat(parent, name, flags, mode) {
+                Err(err) if matches!(err.get_errno(), E::ELOOP | E::EMLINK) => {
+                    Self::replace_symlink(parent, name, mode)
+                }
+                opened => opened,
+            };
+            match opened {
+                Ok(fd) => return Ok(Some(fd)),
+                Err(err) if Self::out_of_fds(&err) && self.shed() => {}
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
+    fn truncate(&mut self, len: usize) {
+        while self.dirs.len() > len {
+            if let Some(dir) = self.dirs.pop() {
+                dir.fd.close();
+            }
+        }
+        self.path
+            .truncate(self.dirs.last().map_or(0, |dir| dir.end));
+    }
+
+    fn out_of_fds(err: &bun_sys::Error) -> bool {
+        matches!(err.get_errno(), bun_sys::E::EMFILE | bun_sys::E::ENFILE)
+    }
+
+    /// Keeps half as many directories open. `false` when none is open.
+    fn shed(&mut self) -> bool {
+        if self.dirs.is_empty() {
+            return false;
+        }
+        self.limit = self.dirs.len() / 2;
+        self.truncate(self.limit);
+        true
+    }
+
+    /// The fd of `name` and whether this call made the directory.
+    fn open_component(
+        parent: Fd,
+        parent_created: bool,
+        name: &ZStr,
+        create: bool,
+    ) -> bun_sys::Maybe<Option<(Fd, bool)>> {
+        use bun_sys::E;
+        let open = || bun_sys::openat(parent, name, Self::DIR_FLAGS | bun_sys::O::NOFOLLOW, 0);
+
+        if !(create && parent_created) {
+            match open() {
+                Ok(fd) => return Ok(Some((fd, false))),
+                Err(err) if create && err.get_errno() == E::ENOENT => {}
+                Err(err) => return Self::unless_symlink(parent, name, err),
+            }
+        }
+        // 0o755: what `mkdir_recursive_at` gave these parents before.
+        let created = match bun_sys::mkdirat_z(parent, name, 0o755) {
+            Ok(()) => true,
+            Err(err) if err.get_errno() == E::EEXIST => false,
+            Err(err) => return Err(err),
+        };
+        match open() {
+            Ok(fd) => Ok(Some((fd, created))),
+            Err(err) => Self::unless_symlink(parent, name, err),
+        }
+    }
+
+    fn walk(&mut self, dirname: &[u8], create: bool) -> bun_sys::Maybe<Option<(Fd, bool)>> {
+        self.close_spill();
+        // Most entries sit beside the one before them.
+        if let Some(dir) = self.dirs.last()
+            && strings::eql(dirname, &self.path)
+        {
+            return Ok(Some((dir.fd, false)));
+        }
+
+        let mut reused = 0usize;
+        let mut offset = 0usize;
+        for component in strings::split(dirname, b"/") {
+            let end = offset + component.len();
+            match self.dirs.get(reused) {
+                Some(dir) if dir.end == end && strings::eql(&self.path[offset..end], component) => {
+                    reused += 1;
+                    offset = end + 1;
+                }
+                _ => break,
+            }
+        }
+        self.truncate(reused);
+
+        let (mut current, mut created) = self
+            .dirs
+            .last()
+            .map_or((self.root, false), |dir| (dir.fd, dir.created));
+        let mut remaining = strings::split(dirname, b"/").skip(reused).peekable();
+        if remaining.peek().is_none() {
+            return Ok(Some((current, false)));
+        }
+
+        let mut name_buf = bun_paths::path_buffer_pool::get();
+        for component in remaining {
+            let name = Self::component(component, &mut name_buf[..])?;
+            let Some((fd, made)) = Self::open_component(current, created, name, create)? else {
+                return Ok(None);
+            };
+            if self.dirs.len() < self.limit {
+                if !self.path.is_empty() {
+                    self.path.push(b'/');
+                }
+                self.path.extend_from_slice(component);
+                self.dirs.push(WalkedDir {
+                    end: self.path.len(),
+                    fd,
+                    created: made,
+                });
+            } else if let Some(previous) = self.spill.replace(fd) {
+                previous.close();
+            }
+            (current, created) = (fd, made);
+        }
+
+        Ok(Some((current, created)))
+    }
+}
+
+#[cfg(not(windows))]
+impl Drop for ContainedDir {
+    fn drop(&mut self) {
+        self.close_spill();
+        self.truncate(0);
+    }
+}
+
+/// Creates the symlinks of an archive after its other entries. Returns how many, or `link_in_the_way`.
+#[cfg(unix)]
+pub fn create_deferred_symlinks(
+    dir_fd: Fd,
+    symlinks: &[DeferredSymlink],
+    log: bool,
+) -> crate::Result<u32> {
+    let warn_not_created = |symlink: &DeferredSymlink| {
+        if log {
+            bun_core::warn!(
+                "Skipping symlink that could not be created: {} -> {}\n",
+                bstr::BStr::new(symlink.path.as_bytes()),
+                bstr::BStr::new(symlink.target.as_bytes()),
+            );
+        }
+    };
+    let mut destination = ContainedDir::new(dir_fd);
+    let mut refused: Option<&DeferredSymlink> = None;
+
+    // Parents first: no symlink of this archive is then in the way of another one.
+    let mut skip = vec![false; symlinks.len()];
+    for (symlink, skip) in symlinks.iter().zip(&mut skip) {
+        match destination.make_parent(symlink.path.as_zstr()) {
+            Ok(Some(())) => {}
+            Ok(None) => {
+                *skip = true;
+                refused.get_or_insert(symlink);
+            }
+            Err(_) => {
+                *skip = true;
+                warn_not_created(symlink);
+            }
+        }
     }
 
     let mut created: u32 = 0;
-    for (symlink, expected) in symlinks.iter().zip(parents) {
-        let dirname = bun_paths::dirname_simple(symlink.path.as_bytes());
-        let target = symlink.target.as_zstr();
-        let result = if dirname.is_empty() {
-            bun_sys::symlinkat(target, dir_fd, symlink.path.as_zstr())
-        } else {
-            let name =
-                ZStr::from_slice_with_nul(&symlink.path.as_bytes_with_nul()[dirname.len() + 1..]);
-            match (open_dir_with_stat(dir_fd, dirname), expected) {
-                (Some((parent, st)), Some(expected))
-                    if st.st_dev == expected.st_dev && st.st_ino == expected.st_ino =>
-                {
-                    let result = bun_sys::symlinkat(target, parent, name);
-                    parent.close();
-                    result
-                }
-                (parent, _) => {
-                    if let Some((parent, _)) = parent {
-                        parent.close();
-                    }
-                    if log {
-                        bun_core::warn!(
-                            "Skipping symlink whose parent directory changed during extraction: {}\n",
-                            bstr::BStr::new(symlink.path.as_bytes()),
-                        );
-                    }
-                    continue;
-                }
+    for (symlink, skip) in symlinks.iter().zip(skip) {
+        if skip {
+            continue;
+        }
+        match destination.symlink(symlink.path.as_zstr(), symlink.target.as_zstr()) {
+            Ok(Some(())) => created += 1,
+            Ok(None) => {
+                refused.get_or_insert(symlink);
             }
-        };
-        match result {
-            Ok(()) => created += 1,
-            Err(_) => {
-                if log {
-                    bun_core::warn!(
-                        "Skipping symlink that could not be created: {} -> {}\n",
-                        bstr::BStr::new(symlink.path.as_bytes()),
-                        bstr::BStr::new(symlink.target.as_bytes()),
-                    );
-                }
-            }
+            Err(_) => warn_not_created(symlink),
         }
     }
-    created
+    match refused {
+        Some(symlink) => Err(link_in_the_way(symlink.path.as_bytes(), log)),
+        None => Ok(created),
+    }
 }
 
 /// Recursive mkdir over a WTF-16 path: component-iterates the
@@ -1208,12 +1714,23 @@ pub mod archiver {
         }
     }
 
+    /// What can already be in the directory an archive is extracted into.
+    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    pub enum DestinationKind {
+        /// Anything, a symlink included. No entry is created through one.
+        #[default]
+        CallerProvided,
+        /// Only what this extraction puts there. Each entry is created with one call on its whole path.
+        PrivateFresh,
+    }
+
     #[derive(Clone, Copy)]
     pub struct ExtractOptions {
         pub depth_to_skip: usize,
         pub close_handles: bool,
         pub log: bool,
         pub npm: bool,
+        pub destination: DestinationKind,
     }
 
     impl Default for ExtractOptions {
@@ -1223,12 +1740,13 @@ pub mod archiver {
                 close_handles: true,
                 log: false,
                 npm: false,
+                destination: DestinationKind::CallerProvided,
             }
         }
     }
 }
 
-pub use archiver::{Context, ExtractOptions, Plucker};
+pub use archiver::{Context, DestinationKind, ExtractOptions, Plucker};
 
 pub trait ArchiveAppender {
     /// Mirrors `@hasDecl(Child, "onFirstDirectoryName")`.
@@ -1281,6 +1799,9 @@ impl Archiver {
         // Fd has no Drop impl; close explicitly on every return path to avoid leaking
         // a directory HANDLE on Windows. Mirrors the guard pattern in extract_to_disk.
         let _close_dir_guard = scopeguard::guard(dir, |d| d.close());
+
+        #[cfg(not(windows))]
+        let mut destination = ContainedDir::new(dir);
 
         let mut normalized_buf = bun_paths::path_buffer_pool::get();
 
@@ -1344,6 +1865,7 @@ impl Archiver {
                         bun_paths::platform::Auto,
                     >(pathname, &mut normalized_buf[..]);
                     let normalized_len = normalized.len();
+                    normalized_buf[normalized_len] = 0;
                     let pathname: &[u8] = &normalized_buf[..normalized_len];
                     if pathname.is_empty() || pathname == b"." {
                         continue 'loop_;
@@ -1359,14 +1881,31 @@ impl Archiver {
                     let size: usize =
                         usize::try_from(lib::Entry::opaque_ref(entry).size().max(0)).unwrap();
                     if size > 0 {
-                        let Ok(opened) = bun_sys::openat_a(dir, pathname, bun_sys::O::WRONLY, 0)
-                        else {
-                            continue 'loop_;
+                        #[cfg(windows)]
+                        let existing = match bun_sys::openat_a(dir, pathname, bun_sys::O::WRONLY, 0)
+                        {
+                            Ok(opened) => Some(opened),
+                            Err(_) => continue 'loop_,
                         };
-                        let _close_guard = scopeguard::guard(opened, |fd| fd.close());
-                        let stat_size = bun_sys::get_file_size(opened)?;
+                        // `None`: a symlink. `O_NONBLOCK`: a FIFO without a reader does not block.
+                        #[cfg(not(windows))]
+                        let existing = match destination.open_existing(
+                            ZStr::from_slice_with_nul(&normalized_buf[..=normalized_len]),
+                            bun_sys::O::WRONLY | bun_sys::O::NONBLOCK,
+                        ) {
+                            Ok(existing) => existing,
+                            Err(_) => continue 'loop_,
+                        };
+                        // A symlink conflicts too: the extraction replaces it or stops at it.
+                        let conflicts = match existing {
+                            Some(opened) => {
+                                let _close_guard = scopeguard::guard(opened, |fd| fd.close());
+                                bun_sys::get_file_size(opened)? > 0
+                            }
+                            None => true,
+                        };
 
-                        if stat_size > 0 {
+                        if conflicts {
                             let is_already_top_level = dirname.is_empty();
                             let path_to_use_: &[u8] = 'brk: {
                                 let __pathname: &[u8] = pathname;
@@ -1424,6 +1963,12 @@ impl Archiver {
 
         #[cfg(unix)]
         let mut deferred_symlinks: Vec<DeferredSymlink> = Vec::new();
+
+        #[cfg(not(windows))]
+        let mut contained = match options.destination {
+            DestinationKind::CallerProvided => Some(ContainedDir::new(dir_fd)),
+            DestinationKind::PrivateFresh => None,
+        };
 
         let mut normalized_buf = bun_paths::os_path_buffer_pool::get();
         let mut use_pwrite = cfg!(unix);
@@ -1601,6 +2146,12 @@ impl Archiver {
                         );
                     }
 
+                    // SAFETY: normalized_buf[path_slice.len()] == 0 (written above),
+                    // so path_slice is a NUL-terminated [:0]u8.
+                    #[cfg(not(windows))]
+                    let path_z: &ZStr =
+                        unsafe { ZStr::from_raw(path_slice.as_ptr(), path_slice.len()) };
+
                     count += 1;
 
                     match kind {
@@ -1613,12 +2164,30 @@ impl Archiver {
                             {
                                 // SAFETY: entry valid
                                 let mode = directory_mode(lib::Entry::opaque_ref(entry).perm());
-                                // SAFETY: normalized_buf[path_slice.len()] == 0 (written above),
-                                // so path_slice is a NUL-terminated [:0]u8.
-                                let path_z: &ZStr = unsafe {
-                                    ZStr::from_raw(path_slice.as_ptr(), path_slice.len())
+                                let made = match &mut contained {
+                                    None => bun_sys::mkdirat_z(dir_fd, path_z, mode),
+                                    Some(destination) => {
+                                        // The mode of the retry below: 0o755 if the name ends in `/`.
+                                        let retry = if path_slice.ends_with(b"/") {
+                                            0o755
+                                        } else {
+                                            0o777
+                                        };
+                                        let mode =
+                                            |parent_made| if parent_made { retry } else { mode };
+                                        match destination.make_dir(path_z, mode) {
+                                            Ok(Some(())) => Ok(()),
+                                            Ok(None) => {
+                                                return Err(link_in_the_way(
+                                                    path_slice,
+                                                    options.log,
+                                                ));
+                                            }
+                                            Err(err) => Err(err),
+                                        }
+                                    }
                                 };
-                                match bun_sys::mkdirat_z(dir_fd, path_z, mode) {
+                                match made {
                                     Ok(()) => {}
                                     Err(err) => {
                                         // It's possible for some tarballs to return a directory twice, with and
@@ -1629,7 +2198,7 @@ impl Archiver {
                                             _ => {}
                                         }
                                         let dirname = bun_paths::dirname_simple(path_slice);
-                                        if dirname.is_empty() {
+                                        if dirname.is_empty() || contained.is_some() {
                                             return Err(err.into());
                                         }
                                         let _ = dir.make_path_u8(dirname);
@@ -1709,13 +2278,13 @@ impl Archiver {
                                 };
 
                             #[cfg(not(windows))]
-                            let file_handle_native: Fd = {
+                            let file_handle_native: Fd = match &mut contained {
+                                Some(destination) => match destination.create_file(path_z, mode)? {
+                                    Some(fd) => fd,
+                                    None => return Err(link_in_the_way(path_slice, options.log)),
+                                },
                                 // dir.createFileZ(.{truncate, mode}) → bun_sys::openat
-                                // SAFETY: normalized_buf[path_slice.len()] == 0 (written above).
-                                let path_z: &ZStr = unsafe {
-                                    ZStr::from_raw(path_slice.as_ptr(), path_slice.len())
-                                };
-                                match bun_sys::openat(dir_fd, path_z, flags, mode) {
+                                None => match bun_sys::openat(dir_fd, path_z, flags, mode) {
                                     Ok(fd) => fd,
                                     Err(err) => match err.get_errno() {
                                         bun_sys::E::EACCES
@@ -1730,7 +2299,7 @@ impl Archiver {
                                         }
                                         _ => return Err(err.into()),
                                     },
-                                }
+                                },
                             };
 
                             let file_handle: Fd = {
@@ -1897,8 +2466,12 @@ impl Archiver {
             }
         }
 
+        // Its descriptors are free for the directories of the symlinks.
+        #[cfg(not(windows))]
+        drop(contained);
+
         #[cfg(unix)]
-        create_deferred_symlinks(dir_fd, &deferred_symlinks, options.log);
+        create_deferred_symlinks(dir_fd, &deferred_symlinks, options.log)?;
 
         Ok(count)
     }

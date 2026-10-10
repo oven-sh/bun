@@ -10,6 +10,9 @@ pub enum Error {
     MakeLibUvOwned(#[from] bun_sys::MakeLibUvOwnedError),
     #[error(transparent)]
     Paths(#[from] bun_paths::Error),
+    /// A symlink in the destination stands where this entry needs a directory.
+    #[error("ELOOP")]
+    LinkInTheWay(Box<[u8]>),
 }
 
 impl Error {
@@ -20,6 +23,7 @@ impl Error {
             Self::Alloc(_) => "OutOfMemory",
             Self::MakeLibUvOwned(e) => <&'static str>::from(e),
             Self::Paths(e) => e.name(),
+            Self::LinkInTheWay(_) => "ELOOP",
         }
     }
 }

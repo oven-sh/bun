@@ -15,7 +15,7 @@ use bun_install::npm::{self as Npm};
 use bun_install::package_manager_real::PackageManager;
 use bun_install::package_manager_real::directories;
 use bun_install::resolution::{Resolution, Tag as ResolutionTag};
-use bun_libarchive::{ArchiveAppender, ExtractOptions};
+use bun_libarchive::{ArchiveAppender, DestinationKind, ExtractOptions};
 use bun_resolver::fs::FileSystem;
 #[cfg(windows)]
 use bun_sys::FdDirExt;
@@ -377,6 +377,7 @@ impl ExtractTarball {
                             // for GitHub tarballs, the root dir is always <user>-<repo>-<commit_id>
                             depth_to_skip: 1,
                             log: PackageManager::verbose_install(),
+                            destination: DestinationKind::PrivateFresh,
                             ..Default::default()
                         },
                     )?;
@@ -425,6 +426,7 @@ impl ExtractTarball {
                             depth_to_skip: 1,
                             npm: true,
                             log: PackageManager::verbose_install(),
+                            destination: DestinationKind::PrivateFresh,
                             ..Default::default()
                         },
                     )?;

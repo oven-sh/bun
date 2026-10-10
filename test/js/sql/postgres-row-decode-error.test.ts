@@ -1,6 +1,6 @@
 // A DataRow can be framed correctly and still hold a value this client cannot
-// turn into a JS value: a binary int4[] with two dimensions, a text array with
-// explicit bounds, and so on. That is the failure of the query that asked for
+// turn into a JS value: a binary int4[] with two dimensions, a text json[] that
+// nests too deep, and so on. That is the failure of the query that asked for
 // the value. The connection treated it as its own failure: it closed the socket
 // and rejected every other query on it with the first query's error. With
 // pipelining the server had already executed those other queries, so the
@@ -76,12 +76,13 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
     await using sql = connect();
     const [{ pid }] = await sql`select pg_backend_pid() as pid`;
 
-    // The text array decoder refuses explicit bounds. The failing row is in the
+    // The text array decoder follows 100 levels of nesting, and the server prints
+    // a JSON array with no comma in it unquoted: {[[]]}. The failing row is in the
     // second of three result sets, after a result set that was already delivered.
     expect(
       await settle([
         sql`select 'A' as v`.simple(),
-        sql`select 'B' as v; select v::int4[] as v, 'tail' as t from (values ('{1}'), ('[0:1]={2,3}'), ('{4}')) t(v); select 'C' as v`.simple(),
+        sql`select 'B' as v; select v::json[] as v, 'tail' as t from (values ('{1}'), ('{' || repeat('[', 101) || repeat(']', 101) || '}'), ('{4}')) t(v); select 'C' as v`.simple(),
         sql`select 'D' as v`.simple(),
       ]),
     ).toEqual([[{ v: "A" }], undecodable("ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT"), [{ v: "D" }]]);
@@ -163,11 +164,11 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
   });
 });
 
-// Fault-injection tests: a healthy server validates json on input, so it never
-// sends a jsonb column that is not JSON, and it does not stop in the middle of a
-// response on demand. DO NOT COPY THIS PATTERN: anything a real server can
-// produce belongs in describeWithContainer. All wire-protocol bytes come from
-// test/js/sql/wire-frames.ts.
+// Fault-injection tests: a healthy server closes every array it sends and
+// validates json on input, so it never sends a jsonb column that is not JSON,
+// and it does not stop in the middle of a response on demand. DO NOT COPY THIS
+// PATTERN: anything a real server can produce belongs in describeWithContainer.
+// All wire-protocol bytes come from test/js/sql/wire-frames.ts.
 //
 // The mock speaks the extended protocol for one statement shape, `select $1 as
 // v`. It answers an Execute with one DataRow per ';'-separated piece of the
@@ -178,9 +179,9 @@ describeWithContainer("postgres", { image: "postgres_plain", concurrent: true },
 // The two column kinds fail in the two places a row can fail: a text[] cell is
 // decoded while the DataRow is read, a jsonb cell when the row becomes a JS object.
 const columnKinds = {
-  "text[] with explicit bounds": {
+  "text[] with no closing brace": {
     typeOid: 1009,
-    cell: (piece: string) => (piece === "bad" ? "[0:1]={a,b}" : `{${piece}}`),
+    cell: (piece: string) => (piece === "bad" ? "{a,b" : `{${piece}}`),
     value: (piece: string): unknown => [piece],
     rejection: undecodable("ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT"),
   },

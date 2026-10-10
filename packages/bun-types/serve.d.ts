@@ -225,12 +225,13 @@ declare module "bun" {
 
     /**
      * Returns an array of all topics the client is currently subscribed to.
+     * The order of the topics is not specified.
      *
      * @example
      * ```ts
      * ws.subscribe("chat");
      * ws.subscribe("notifications");
-     * console.log(ws.subscriptions); // ["chat", "notifications"]
+     * console.log(ws.subscriptions); // ["chat", "notifications"] or ["notifications", "chat"]
      * ```
      */
     readonly subscriptions: string[];
@@ -399,7 +400,7 @@ declare module "bun" {
      * Bun.serve({
      *   websocket: {
      *     data: {} as { name: string }, // ← Specify the type of `ws.data` like this
-     *     message: (ws, message) => console.log(ws.data.name, 'says:', message);
+     *     message: (ws, message) => console.log(ws.data.name, 'says:', message),
      *   },
      *   // ...
      * });

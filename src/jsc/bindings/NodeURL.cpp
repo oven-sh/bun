@@ -3,32 +3,15 @@
 #include "ErrorCode.h"
 #include "wtf/URL.h"
 #include "wtf/URLParser.h"
+#include "wtf/text/StringBuilder.h"
 #include <unicode/uidna.h>
 
 namespace Bun {
 
-// The UTS #46 instances Node used: CheckHyphens and VerifyDnsLength are
-// handled by filtering the corresponding errors after the fact.
-static UIDNA* toASCIIIDNA()
+// The host parser's error filter: CheckHyphens and VerifyDnsLength are off.
+static bool hasIDNAError(const UIDNAInfo& info)
 {
-    static UIDNA* instance = [] {
-        UErrorCode status = U_ZERO_ERROR;
-        UIDNA* idna = uidna_openUTS46(UIDNA_CHECK_BIDI | UIDNA_CHECK_CONTEXTJ | UIDNA_NONTRANSITIONAL_TO_ASCII, &status);
-        RELEASE_ASSERT(U_SUCCESS(status));
-        return idna;
-    }();
-    return instance;
-}
-
-static UIDNA* toUnicodeIDNA()
-{
-    static UIDNA* instance = [] {
-        UErrorCode status = U_ZERO_ERROR;
-        UIDNA* idna = uidna_openUTS46(UIDNA_NONTRANSITIONAL_TO_UNICODE, &status);
-        RELEASE_ASSERT(U_SUCCESS(status));
-        return idna;
-    }();
-    return instance;
+    return info.errors & ~WTF::URLParser::allowedNameToASCIIErrors;
 }
 
 enum class IDNAMode : uint8_t {
@@ -36,28 +19,38 @@ enum class IDNAMode : uint8_t {
     Lenient,
 };
 
-// Runs a uidna_nameTo* conversion with the U_BUFFER_OVERFLOW_ERROR retry
-// protocol; on completion `status`/`info` hold the final results.
+// Runs a uidna_*To* conversion on the host parser's UTS #46 instance. The returned span points into `buffer`.
 using UIDNAFunction = int32_t (*)(const UIDNA*, const char16_t*, int32_t, char16_t*, int32_t, UIDNAInfo*, UErrorCode*);
+using UIDNABuffer = Vector<char16_t, 256>;
 
-static String runUIDNA(UIDNAFunction convert, const UIDNA* idna, const String& input, UErrorCode& status, UIDNAInfo& info)
+static std::optional<std::span<const char16_t>> runUIDNA(UIDNAFunction convert, std::span<const char16_t> input, UIDNABuffer& buffer, UIDNAInfo& info)
 {
-    String domain = input;
-    if (domain.is8Bit())
-        domain.convertTo16Bit();
-    const auto span = domain.span16();
-
-    Vector<char16_t, 256> buffer(256);
-    int32_t length = convert(idna, span.data(), span.size(), buffer.begin(), buffer.size(), &info, &status);
+    const UIDNA* idna = &WTF::URLParser::internationalDomainNameTranscoder();
+    UErrorCode status = U_ZERO_ERROR;
+    buffer.grow(buffer.capacity());
+    int32_t length = convert(idna, input.data(), input.size(), buffer.begin(), buffer.size(), &info, &status);
     if (status == U_BUFFER_OVERFLOW_ERROR) {
         status = U_ZERO_ERROR;
         info = UIDNA_INFO_INITIALIZER;
         buffer.grow(length);
-        length = convert(idna, span.data(), span.size(), buffer.begin(), buffer.size(), &info, &status);
+        length = convert(idna, input.data(), input.size(), buffer.begin(), buffer.size(), &info, &status);
     }
     if (U_FAILURE(status))
+        return std::nullopt;
+    return buffer.span().first(length);
+}
+
+static String runUIDNA(UIDNAFunction convert, const String& input, UIDNAInfo& info)
+{
+    String domain = input;
+    if (domain.is8Bit())
+        domain.convertTo16Bit();
+
+    UIDNABuffer buffer;
+    auto output = runUIDNA(convert, domain.span16(), buffer, info);
+    if (!output)
         return {};
-    return String(std::span { buffer.begin(), static_cast<size_t>(length) });
+    return String(*output);
 }
 
 // Port of Node's icu-based ToASCII (removed in nodejs/node#55156):
@@ -73,20 +66,9 @@ static String icuToASCII(const String& input, IDNAMode mode)
             return lowered;
     }
 
-    UErrorCode status = U_ZERO_ERROR;
     UIDNAInfo info = UIDNA_INFO_INITIALIZER;
-    auto result = runUIDNA(uidna_nameToASCII, toASCIIIDNA(), input, status, info);
-
-    // CheckHyphens = false
-    info.errors &= ~UIDNA_ERROR_HYPHEN_3_4;
-    info.errors &= ~UIDNA_ERROR_LEADING_HYPHEN;
-    info.errors &= ~UIDNA_ERROR_TRAILING_HYPHEN;
-    // VerifyDnsLength = false
-    info.errors &= ~UIDNA_ERROR_EMPTY_LABEL;
-    info.errors &= ~UIDNA_ERROR_LABEL_TOO_LONG;
-    info.errors &= ~UIDNA_ERROR_DOMAIN_NAME_TOO_LONG;
-
-    if (result.isNull() || (mode != IDNAMode::Lenient && info.errors != 0))
+    auto result = runUIDNA(uidna_nameToASCII, input, info);
+    if (result.isNull() || (mode != IDNAMode::Lenient && hasIDNAError(info)))
         return {};
     return result;
 }
@@ -95,9 +77,56 @@ static String icuToASCII(const String& input, IDNAMode mode)
 // ToUnicode always produces output, so info.errors is deliberately ignored.
 static String icuToUnicode(const String& input)
 {
-    UErrorCode status = U_ZERO_ERROR;
     UIDNAInfo info = UIDNA_INFO_INITIALIZER;
-    return runUIDNA(uidna_nameToUnicode, toUnicodeIDNA(), input, status, info);
+    return runUIDNA(uidna_nameToUnicode, input, info);
+}
+
+static bool hasACEPrefix(std::span<const char16_t> label)
+{
+    return label.size() >= 4 && label[0] == 'x' && label[1] == 'n' && label[2] == '-' && label[3] == '-';
+}
+
+// Per-label ToUnicode of a parsed host: uidna_nameToUnicode moves the rest of the name for each decoded label.
+static String icuParsedHostToUnicode(const String& host)
+{
+    if (!host.contains("xn--"_s))
+        return host;
+
+    String domain = host;
+    if (domain.is8Bit())
+        domain.convertTo16Bit();
+    const auto span = domain.span16();
+
+    StringBuilder result { OverflowPolicy::RecordOverflow };
+    result.reserveCapacity(span.size());
+    UIDNABuffer buffer;
+    size_t labelStart = 0;
+    while (true) {
+        size_t labelEnd = labelStart;
+        while (labelEnd < span.size() && span[labelEnd] != '.')
+            labelEnd++;
+        auto label = span.subspan(labelStart, labelEnd - labelStart);
+
+        if (hasACEPrefix(label)) {
+            UIDNAInfo info = UIDNA_INFO_INITIALIZER;
+            auto unicode = runUIDNA(uidna_labelToUnicode, label, buffer, info);
+            if (!unicode)
+                return {};
+            // ada::idna::to_unicode keeps a label that fails UTS #46. ICU before 76 accepts a decoded "xn--" prefix.
+            result.append(hasIDNAError(info) || hasACEPrefix(*unicode) ? label : *unicode);
+        } else {
+            result.append(label);
+        }
+
+        if (labelEnd == span.size())
+            break;
+        result.append('.');
+        labelStart = labelEnd + 1;
+    }
+    // The decoded labels can add up to more than String::MaxLength.
+    if (result.hasOverflowed()) [[unlikely]]
+        return {};
+    return result.toString();
 }
 
 // WebKit's host parser fast-paths all-ASCII hosts without decoding xn--
@@ -202,7 +231,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject,
     if (host.isNull())
         return JSC::JSValue::encode(jsEmptyString(vm));
 
-    auto unicode = icuToUnicode(host);
+    auto unicode = icuParsedHostToUnicode(host);
     if (unicode.isNull())
         return JSC::JSValue::encode(jsEmptyString(vm));
     return JSC::JSValue::encode(JSC::jsString(vm, unicode));

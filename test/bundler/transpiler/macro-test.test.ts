@@ -646,7 +646,8 @@ describe("constant arguments", () => {
   }
 
   // The three ways a file reaches the parser. Most cases load the file in this process,
-  // because a debug build needs about a second to start.
+  // because a debug build needs about a second to start. They run one at a time: together
+  // they share the bundler threads, and each case then takes as long as the whole group.
   const modes = [
     { mode: "the runtime transpiler", minifySyntax: null },
     { mode: "Bun.build", minifySyntax: false },
@@ -777,7 +778,7 @@ describe("constant arguments", () => {
     "function",
   ]);
 
-  test.concurrent.each(modes)("$mode accepts a const in any statement position", async ({ minifySyntax }) => {
+  test.each(modes)("$mode accepts a const in any statement position", async ({ minifySyntax }) => {
     expect(await resultOf(header + accepted, minifySyntax, acceptedFiles)).toEqual({ result: acceptedOutput });
   });
 
@@ -791,37 +792,26 @@ describe("constant arguments", () => {
     using dir = tempDir("macro-constant-arguments-cli", { "m.ts": macroFile, "entry.ts": header + entry });
     const { stdout, stderr, exitCode } = await bun(String(dir), ...args, "entry.ts");
     // Debug builds print "[macro] call id" to stdout, so only the last line is compared.
-    expect({ line: stdout.trimEnd().split("\n").at(-1), stderr, exitCode }).toEqual({
-      line,
-      stderr: expect.any(String),
-      exitCode: 0,
-    });
+    expect({ line: stdout.trimEnd().split("\n").at(-1), stderr, exitCode }).toEqual({ line, stderr: "", exitCode: 0 });
   });
 
-  // Bun.Transpiler resolves the macro import from the working directory, so this case needs a process.
-  test.concurrent("Bun.Transpiler accepts a const in any statement position", async () => {
-    using dir = tempDir("macro-constant-arguments-api", {
-      "m.ts": macroFile,
-      "entry.ts": header + accepted.replace(`import { fromOther } from "./other.ts";`, "const fromOther = [9, 9];"),
-      "api.ts": `
-        const source = await Bun.file("entry.ts").text();
-        const options = { "default": {}, "inline": { inline: true }, "minify": { minify: { syntax: true } } };
-        for (const [name, option] of Object.entries(options)) {
-          const file = "./transpiled-" + name + ".js";
-          await Bun.write(file, new Bun.Transpiler({ loader: "ts", ...option }).transformSync(source));
-          console.log((await import(file)).result);
-        }
-      `,
-    });
-    const { stdout, stderr, exitCode } = await bun(String(dir), "run", "api.ts");
-    expect({ lines: stdout.split("\n").filter(line => line.startsWith("[5,")), stderr, exitCode }).toEqual({
-      lines: [acceptedOutput, acceptedOutput, acceptedOutput],
-      stderr: expect.any(String),
-      exitCode: 0,
-    });
+  // Bun.Transpiler has no file, so the macro import is an absolute path here.
+  test("Bun.Transpiler accepts a const in any statement position", async () => {
+    using dir = tempDir("macro-constant-arguments-api", { "m.ts": macroFile });
+    const source = (header + accepted)
+      .replace(`import { fromOther } from "./other.ts";`, "const fromOther = [9, 9];")
+      .replaceAll(`"./m.ts"`, JSON.stringify(path.join(String(dir), "m.ts")));
+    const options = { default: {}, inline: { inline: true }, minify: { minify: { syntax: true } } };
+    const results: unknown[] = [];
+    for (const [name, option] of Object.entries(options)) {
+      const file = path.join(String(dir), "transpiled-" + name + ".js");
+      await Bun.write(file, new Bun.Transpiler({ loader: "ts", ...option }).transformSync(source));
+      results.push((await import(file)).result);
+    }
+    expect(results).toEqual([acceptedOutput, acceptedOutput, acceptedOutput]);
   });
 
-  test.concurrent("the example of docs/bundler/macros.mdx builds", async () => {
+  test("the example of docs/bundler/macros.mdx builds", async () => {
     using dir = tempDir("macro-constant-arguments-docs", {
       "getText.ts": `export function getText(url) { return "<" + url + ">"; }`,
       "getFoo.ts": `export function getFoo() { return "foo"; }`,
@@ -849,7 +839,7 @@ describe("constant arguments", () => {
 
   // A macro call is replaced when the file is built. It does not read the binding when the
   // program runs, so the TDZ of the const does not apply to it: plain JS throws here.
-  test.concurrent.each(modes)("$mode: an argument is a value at build time", async ({ minifySyntax }) => {
+  test.each(modes)("$mode: an argument is a value at build time", async ({ minifySyntax }) => {
     const entry = `
       const early = below();
       console.log("a statement");
@@ -861,7 +851,7 @@ describe("constant arguments", () => {
   });
 
   // The macro runtime does not run a macro that a macro module imports. It keeps the call.
-  test.concurrent("a call that the macro runtime keeps reads the const by name", async () => {
+  test("a call that the macro runtime keeps reads the const by name", async () => {
     const files = {
       "inner.ts": `export function answer(x) { return x; }`,
       "outer.ts": `
@@ -882,7 +872,7 @@ describe("constant arguments", () => {
   });
 
   // The macro gives undefined, so the binding holds its default when the program runs.
-  test.concurrent.each(modes)("$mode: a binding that takes its default holds the default", async ({ minifySyntax }) => {
+  test.each(modes)("$mode: a binding that takes its default holds the default", async ({ minifySyntax }) => {
     const entry = `
       const { a = 5 } = getUndefined();
       const { list: [x = 8, y = 9] } = getUndefined();
@@ -900,7 +890,7 @@ describe("constant arguments", () => {
   });
 
   // A module is strict, so a var that a direct eval declares stays inside the eval.
-  test.concurrent.each(modes)("$mode: a direct eval does not hide the const", async ({ minifySyntax }) => {
+  test.each(modes)("$mode: a direct eval does not hide the const", async ({ minifySyntax }) => {
     const entry = `
       function helper(s) { return eval(s); }
       console.log("a statement");
@@ -914,7 +904,7 @@ describe("constant arguments", () => {
     expect(await resultOf(header + entry, minifySyntax, {}, "entry.js")).toEqual({ result: "[5,2,5,5]" });
   });
 
-  test.concurrent("a joined flag name in an argument is read whole", async () => {
+  test("a joined flag name in an argument is read whole", async () => {
     const entry = `
       import { feature } from "bun:bundle";
       console.log("a statement");
@@ -1006,13 +996,13 @@ describe("constant arguments", () => {
   ];
 
   // With no minify option: one error, and it is the error of the row.
-  test.concurrent.each(rejected)("Bun.build rejects $what", async ({ entry, error, entryFile }) => {
+  test.each(rejected)("Bun.build rejects $what", async ({ entry, error, entryFile }) => {
     expect(await resultOf(header + entry, false, {}, entryFile)).toEqual({ errors: [error] });
   });
 
   // The table that macro arguments read must not change what happens to other code in the
   // same file: a const below a statement is not inlined there, so its TDZ error stays.
-  test.concurrent("code outside the arguments keeps the rules of the inliner", async () => {
+  test("code outside the arguments keeps the rules of the inliner", async () => {
     const tdz = `
       let thrown;
       try { read(); thrown = "no throw"; } catch (e) { thrown = e.name; }
@@ -1058,7 +1048,7 @@ describe("constant arguments", () => {
 
   // Under inlining a const can hold a joined string or what a macro returned, and a function
   // that an argument holds can fold away.
-  test.concurrent.each([modes[0], modes[2]])("$mode keeps what inlining accepts", async ({ minifySyntax }) => {
+  test.each([modes[0], modes[2]])("$mode keeps what inlining accepts", async ({ minifySyntax }) => {
     const entry = `
       const base = "https://example.com";
       const url = base + "/api";
@@ -1094,6 +1084,14 @@ describe("constant arguments", () => {
     });
   });
 
-  // The join of a non-ASCII piece belongs to the string folds: #42019.
-  test.todo("a template or a + with a non-ASCII piece");
+  // The folds do not join a UTF-16 piece, so today each mode stops with
+  // "Cannot convert argument type to JS". That join belongs to the string folds: #42019.
+  test.todo("a template or a + with a non-ASCII piece", async () => {
+    const entry = `
+      const s = "αβγ";
+      export const result = JSON.stringify([id(\`©\${""}\`), id(\`p/\${s}\`), id("é" + s)]);
+    `;
+    const results = await Promise.all(modes.map(({ minifySyntax }) => resultOf(header + entry, minifySyntax)));
+    expect(results).toEqual(modes.map(() => ({ result: '["©","p/αβγ","éαβγ"]' })));
+  });
 });

@@ -347,6 +347,10 @@ JSC_DEFINE_HOST_FUNCTION(selectServerName, (JSC::JSGlobalObject * globalObject, 
         // No ClientHello can carry a NUL.
         if (view->contains('\0')) continue;
         values.append(value);
+        if (values.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            break;
+        }
         sni_add(tree, view->utf8().legacyCStringPointer(), reinterpret_cast<void*>(static_cast<uintptr_t>(values.size())));
     }
     auto selected = reinterpret_cast<uintptr_t>(sni_find(tree, byteCast<char>(servername.spanIncludingNullTerminator()).data()));

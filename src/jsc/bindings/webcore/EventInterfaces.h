@@ -28,6 +28,7 @@
 namespace WebCore {
 
 enum EventInterface {
+    ClipboardEventInterfaceType = 53,
     CloseEventInterfaceType = 54,
     CustomEventInterfaceType = 56,
     ErrorEventInterfaceType = 58,

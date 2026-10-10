@@ -844,11 +844,7 @@ unsafe extern "system" {
     ) -> HRESULT;
     fn GetHGlobalFromStream(stream: *mut IUnknown, out: *mut *mut c_void) -> HRESULT;
 }
-#[link(name = "kernel32")]
-unsafe extern "system" {
-    fn GlobalLock(h: *mut c_void) -> *mut c_void;
-    fn GlobalUnlock(h: *mut c_void) -> c_int;
-}
+use bun_sys::windows::kernel32::{GlobalLock, GlobalUnlock};
 
 /// `WICConvertBitmapSource` is the one flat export from windowscodecs.dll we
 /// need. Loaded lazily (LoadLibraryA inside `loadFactory`) so the binary
@@ -934,27 +930,16 @@ fn load_factory() {
 
 // ───────────────────────────── Win32 clipboard ──────────────────────────────
 //
-// JS-thread only — `OpenClipboard` is process-serialised and the static
-// `fromClipboard()` accessor calls this synchronously, so no cross-thread
-// HGLOBAL hand-off. We prefer the registered "PNG" format (Chrome/Edge/
+// Called synchronously on the JS thread by the static `fromClipboard()`
+// accessor: a clipboard busy in this process or another reads as no image.
+// We prefer the registered "PNG" format (Chrome/Edge/
 // Snipping Tool put it; no transcode loss) and fall back to CF_DIBV5/CF_DIB,
 // which we re-wrap as a BMP file by prepending the 14-byte BITMAPFILEHEADER
 // the clipboard omits. Either way the result is bytes the regular Bun.Image
 // decoder understands; nothing is decoded here.
 
-#[link(name = "user32")]
-unsafe extern "system" {
-    fn OpenClipboard(hwnd: *mut c_void) -> c_int;
-    fn CloseClipboard() -> c_int;
-    fn IsClipboardFormatAvailable(format: c_uint) -> c_int;
-    fn GetClipboardData(format: c_uint) -> *mut c_void;
-    fn RegisterClipboardFormatA(name: *const core::ffi::c_char) -> c_uint;
-    fn GetClipboardSequenceNumber() -> u32;
-}
-#[link(name = "kernel32")]
-unsafe extern "system" {
-    fn GlobalSize(h: *mut c_void) -> usize;
-}
+use crate::webcore::clipboard::win32::{OpenedClipboard, register_format};
+use bun_sys::windows::user32::{GetClipboardSequenceNumber, IsClipboardFormatAvailable};
 
 const CF_DIB: c_uint = 8;
 const CF_DIBV5: c_uint = 17;
@@ -965,23 +950,17 @@ const CF_DIBV5: c_uint = 17;
 const NAMED_FORMATS: [&CStr; 4] = [c"PNG", c"image/png", c"JFIF", c"image/webp"];
 
 pub(crate) fn clipboard_change_count() -> i64 {
-    // SAFETY: GetClipboardSequenceNumber has no preconditions.
-    unsafe { GetClipboardSequenceNumber() as i64 }
+    GetClipboardSequenceNumber() as i64
 }
 
 pub(crate) fn has_clipboard_image() -> bool {
     // IsClipboardFormatAvailable doesn't require OpenClipboard.
-    // SAFETY: no preconditions.
-    if unsafe { IsClipboardFormatAvailable(CF_DIBV5) } != 0
-        || unsafe { IsClipboardFormatAvailable(CF_DIB) } != 0
-    {
+    if IsClipboardFormatAvailable(CF_DIBV5) != 0 || IsClipboardFormatAvailable(CF_DIB) != 0 {
         return true;
     }
     for name in NAMED_FORMATS {
-        // SAFETY: name is a static NUL-terminated C string.
-        let id = unsafe { RegisterClipboardFormatA(name.as_ptr()) };
-        // SAFETY: no preconditions.
-        if id != 0 && unsafe { IsClipboardFormatAvailable(id) } != 0 {
+        let id = register_format(name);
+        if id != 0 && IsClipboardFormatAvailable(id) != 0 {
             return true;
         }
     }
@@ -991,42 +970,31 @@ pub(crate) fn has_clipboard_image() -> bool {
 // The wider `BackendError` type matches the macOS backend so the caller in
 // Image.rs handles both identically.
 pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
-    // hwnd=null associates the open with the current task; fine for read-only.
-    // SAFETY: null hwnd is documented as valid.
-    if unsafe { OpenClipboard(ptr::null_mut()) } == 0 {
-        return Err(BackendUnavailable);
-    }
-    scopeguard::defer! {
-        // SAFETY: clipboard is open.
-        let _ = unsafe { CloseClipboard() };
-    }
+    let mut clipboard = OpenedClipboard::try_open().ok_or(BackendUnavailable)?;
 
     // 1. Registered file-format chunks — copy verbatim.
     for name in NAMED_FORMATS {
-        // SAFETY: name is a static NUL-terminated C string.
-        let id = unsafe { RegisterClipboardFormatA(name.as_ptr()) };
+        let id = register_format(name);
         if id != 0 {
-            // SAFETY: clipboard is open.
-            let h = unsafe { GetClipboardData(id) };
-            if !h.is_null() {
-                if let Some(b) = dup_global::<0>(h)? {
-                    return Ok(Some(b));
-                }
+            if let Some(b) = dup_global::<0>(&mut clipboard, id)? {
+                return Ok(Some(b));
             }
         }
     }
-    // 2. Packed DIB — needs a synthetic BITMAPFILEHEADER so the BMP sniffer
-    //    and decoder accept it. CF_DIBV5 first (carries alpha mask). The
-    //    clipboard is writable by any local process, so treat the payload as
-    //    hostile: a 1-byte CF_DIB or a header with biSize≈u32::MAX must drop
-    //    the format, not panic the process.
+    // 2. Packed DIB.
+    Ok(dib_as_bmp(&mut clipboard)?)
+}
+
+/// The clipboard's packed DIB — needs a synthetic BITMAPFILEHEADER so the BMP
+/// sniffer and decoder accept it. CF_DIBV5 first (carries alpha mask). The
+/// clipboard is writable by any local process, so treat the payload as
+/// hostile: a 1-byte CF_DIB or a header with biSize≈u32::MAX must drop
+/// the format, not panic the process.
+pub(crate) fn dib_as_bmp(
+    clipboard: &mut OpenedClipboard,
+) -> Result<Option<Vec<u8>>, bun_alloc::AllocError> {
     for cf in [CF_DIBV5, CF_DIB] {
-        // SAFETY: clipboard is open.
-        let h = unsafe { GetClipboardData(cf) };
-        if h.is_null() {
-            continue;
-        }
-        let Some(mut buf) = dup_global::<14>(h)? else {
+        let Some(mut buf) = dup_global::<14>(clipboard, cf)? else {
             continue;
         };
         if buf.len() < 14 + 40 || buf.len() as u64 > u32::MAX as u64 {
@@ -1034,22 +1002,45 @@ pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
             continue;
         }
         // BITMAPFILEHEADER: 'BM' · u32 file-size · 2×u16 reserved ·
-        // u32 bfOffBits. bfOffBits = 14 + biSize + colour-table; for the
-        // 24/32-bit DIBs clipboards emit there's no colour table, but a
-        // 40-byte header with BI_BITFIELDS appends 12 bytes of masks.
+        // u32 bfOffBits. bfOffBits = 14 + biSize + masks + colour-table. The
+        // table has biClrUsed entries, or every entry of a paletted (<= 8 bit)
+        // image when that is 0.
         let ih_size: u64 =
             u32::from_le_bytes(buf[14..18].try_into().expect("infallible: size matches")) as u64;
+        let bit_count = u16::from_le_bytes([buf[14 + 14], buf[14 + 15]]);
         let compression = u32::from_le_bytes(
             buf[14 + 16..14 + 16 + 4]
                 .try_into()
                 .expect("infallible: size matches"),
         );
-        let masks: u64 = if ih_size == 40 && compression == 3 {
+        let colors_used = u32::from_le_bytes(
+            buf[14 + 32..14 + 32 + 4]
+                .try_into()
+                .expect("infallible: size matches"),
+        ) as u64;
+        // BI_BITFIELDS: three colour masks follow a 40-byte header. A V4/V5
+        // header holds its masks itself, but the CF_DIBV5 that Windows
+        // synthesizes for a bitmap repeats them after the header all the
+        // same, and a producer's own V5 DIB does not. So look for the repeat.
+        const BI_BITFIELDS: u32 = 3;
+        let repeats_header_masks = || {
+            let after_header = usize::try_from(14 + ih_size).ok()?;
+            let repeated = buf.get(after_header..after_header.checked_add(12)?)?;
+            Some(repeated == buf.get(14 + 40..14 + 52)?)
+        };
+        let masks: u64 = if compression == BI_BITFIELDS
+            && (ih_size == 40 || (ih_size >= 52 && repeats_header_masks() == Some(true)))
+        {
             12
         } else {
             0
         };
-        let off = 14 + ih_size + masks;
+        let table_entries = if colors_used == 0 && (1..=8).contains(&bit_count) {
+            1u64 << bit_count
+        } else {
+            colors_used
+        };
+        let off = 14 + ih_size + masks + table_entries * 4;
         if ih_size < 40 || off > buf.len() as u64 {
             continue;
         }
@@ -1067,25 +1058,14 @@ pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
 /// Copy a clipboard HGLOBAL into the global allocator, optionally leaving
 /// `PREFIX` zero bytes at the front for the caller to fill (BITMAPFILEHEADER).
 fn dup_global<const PREFIX: usize>(
-    h: *mut c_void,
+    clipboard: &mut OpenedClipboard,
+    format: c_uint,
 ) -> Result<Option<Vec<u8>>, bun_alloc::AllocError> {
-    // SAFETY: h is a non-null HGLOBAL from GetClipboardData.
-    let size = unsafe { GlobalSize(h) };
-    if size == 0 {
-        return Ok(None);
-    }
-    // SAFETY: h is a non-null HGLOBAL.
-    let ptr_ = unsafe { GlobalLock(h) };
-    if ptr_.is_null() {
-        return Ok(None);
-    }
-    let ptr_ = ptr_ as *const u8;
-    scopeguard::defer! {
-        // SAFETY: h is locked.
-        let _ = unsafe { GlobalUnlock(h) };
-    }
-    let mut out = vec![0u8; PREFIX + size];
-    // SAFETY: ptr_ points to `size` valid bytes inside the locked HGLOBAL.
-    out[PREFIX..].copy_from_slice(unsafe { bun_core::ffi::slice(ptr_, size) });
-    Ok(Some(out))
+    Ok(clipboard
+        .with_data(format, |bytes| {
+            let mut out = vec![0u8; PREFIX + bytes.len()];
+            out[PREFIX..].copy_from_slice(bytes);
+            out
+        })
+        .filter(|out| out.len() > PREFIX))
 }

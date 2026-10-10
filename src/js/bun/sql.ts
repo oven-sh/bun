@@ -63,6 +63,15 @@ function settleReservedTransaction(
   settle(value);
 }
 
+/// The pool calls a queued `onConnected` in the async context of whatever released the connection, not the caller's.
+function inCallerAsyncContext(onConnected: (err: Error | null, pooledConnection) => void) {
+  // Inside a Bun.ModuleGraph the pool's context stays: a transaction that runs as a disposed graph may never release.
+  if (AsyncContextFrame.currentGraph() !== undefined) return onConnected;
+  const frame = AsyncContextFrame.current();
+  return (err: Error | null, pooledConnection) =>
+    AsyncContextFrame.run(frame, onConnected, undefined, err, pooledConnection);
+}
+
 function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions): Adapter | ListenableAdapter {
   switch (options.adapter) {
     case "postgres":
@@ -1034,7 +1043,10 @@ const SQL = function SQL(
     }
     const { promise, resolve, reject } = Promise.withResolvers();
     const useReserved = pool.supportsReservedConnections?.() ?? true;
-    pool.connect(onTransactionConnected.bind(null, callback, name, resolve, reject, false, true), useReserved);
+    pool.connect(
+      inCallerAsyncContext(onTransactionConnected.bind(null, callback, name, resolve, reject, false, true)),
+      useReserved,
+    );
     return promise;
   };
 
@@ -1055,7 +1067,10 @@ const SQL = function SQL(
     }
     const { promise, resolve, reject } = Promise.withResolvers();
     const useReserved = pool.supportsReservedConnections?.() ?? true;
-    pool.connect(onTransactionConnected.bind(null, callback, options, resolve, reject, false, false), useReserved);
+    pool.connect(
+      inCallerAsyncContext(onTransactionConnected.bind(null, callback, options, resolve, reject, false, false)),
+      useReserved,
+    );
     return promise;
   };
   sql.connect = () => {

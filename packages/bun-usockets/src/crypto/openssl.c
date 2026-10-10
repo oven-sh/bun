@@ -453,6 +453,7 @@ extern void us_internal_socket_raw_shutdown(struct us_socket_t *s);
 
 static void ssl_update_handshake(struct us_socket_t *s, int fin_ends_handshake);
 static int ssl_flush_write_batch(struct loop_ssl_data *loop_ssl_data, struct us_socket_t *s);
+static int ssl_spill_append(struct loop_ssl_data *loop_ssl_data, const char *data, unsigned int length);
 static int us_ssl_inline_reject_tripped(struct us_socket_t *s);
 static inline int ssl_gone(struct us_socket_t *s);
 
@@ -582,6 +583,25 @@ static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
     BIO_clear_retry_flags(bio);
     return length;
   }
+
+  if (loop_ssl_data->ssl_spill_owner && loop_ssl_data->ssl_spill_owner == loop_ssl_data->ssl_socket) {
+    /* This socket has ciphertext of its own parked in the spill slot. SSL was
+     * told that those records were written, and they have not left yet.
+     * us_internal_ssl_write takes no new plaintext in that state, but SSL also
+     * seals records from inside SSL_read and SSL_do_handshake: a renegotiation
+     * flight, a fatal alert. Written to the fd now, such a record lands in the
+     * middle of the parked one and the peer fails the MAC on it. Park it
+     * behind the spill; the writable event sends both in order. */
+    if (!ssl_spill_append(loop_ssl_data, data, (unsigned int)length)) {
+      /* Same verdict as the other allocation failures with sealed ciphertext
+       * in flight: SSL's sequence numbers have advanced past records that
+       * cannot be delivered in order any more. */
+      loop_ssl_data->ssl_socket->ssl_fatal_error = 1;
+    }
+    BIO_clear_retry_flags(bio);
+    return length;
+  }
+
   int written = us_socket_raw_write(loop_ssl_data->ssl_socket, data, length);
 
   BIO_clear_retry_flags(bio);
@@ -676,6 +696,20 @@ static int ssl_drain_spill(struct loop_ssl_data *loop_ssl_data, struct us_socket
     return 1;
   }
   return 0;
+}
+
+/* Park one more sealed record behind the ciphertext already spilled for its
+ * socket. Returns 0 when the allocation fails. The drained prefix stays in the
+ * buffer: a spill is short-lived, and only a handshake flight or an alert is
+ * ever added to it. */
+static int ssl_spill_append(struct loop_ssl_data *loop_ssl_data, const char *data, unsigned int length) {
+  unsigned int needed = loop_ssl_data->ssl_spill_len + length;
+  char *grown = us_realloc(loop_ssl_data->ssl_spill, needed);
+  if (!grown) return 0;
+  memcpy(grown + loop_ssl_data->ssl_spill_len, data, (size_t)length);
+  loop_ssl_data->ssl_spill = grown;
+  loop_ssl_data->ssl_spill_len = needed;
+  return 1;
 }
 
 /* Release the spill slot when its owner dies (close path). */
@@ -2399,7 +2433,12 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
    * direction. */
   if (ssl_is_uws_http_tls(s) && us_internal_ssl_is_shut_down(s)) return s;
 
-  if (s->ssl_handshake_state == HANDSHAKE_COMPLETED) {
+  /* Only the first handshake holds this dispatch back: its owner has not been
+   * told yet that the socket is up. A renegotiation must not hold it back. The
+   * event that arrives while one runs is for bytes that were written before it
+   * began, and loop.c delivers it once. A write made inside the renegotiation
+   * parks on WANT_READ, and ssl_retry_parked_write comes back here after it. */
+  if (s->ssl_handshake_state != HANDSHAKE_PENDING) {
     s->ssl_write_parked = 0;
     s = us_dispatch_writable(s);
   }
@@ -2575,8 +2614,12 @@ restart:
          * (SSL_in_init throttles to 5/tick) reorder the server's
          * secureConnection event past the client's close under fan-out
          * loads. The save/restore below makes this safe even if the JS
-         * callback writes; with read==0 the buffer is empty anyway. */
-        if (s->ssl_handshake_state == HANDSHAKE_PENDING && SSL_is_init_finished(s_ssl(s))) {
+         * callback writes; with read==0 the buffer is empty anyway.
+         * A renegotiation that ends this way is reported here too. Without
+         * that the state stays at HANDSHAKE_RENEGOTIATION_PENDING until the
+         * peer sends data, and a close in that state reports a handshake that
+         * never finished. */
+        if (s->ssl_handshake_state != HANDSHAKE_COMPLETED && SSL_is_init_finished(s_ssl(s))) {
           ssl_trigger_handshake(s, 1);
           if (ssl_gone(s)) return NULL;
           /* A write parked before the handshake (node:https queues its request

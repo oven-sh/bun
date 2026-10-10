@@ -673,3 +673,188 @@ it("Bun.connect sends the client certificate a renegotiation asks for", async ()
     socket.end();
   }
 });
+
+async function* lines(stream: ReadableStream<Uint8Array>) {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffered = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) return;
+    buffered += decoder.decode(value, { stream: true });
+    let newline: number;
+    while ((newline = buffered.indexOf("\n")) >= 0) {
+      yield buffered.slice(0, newline);
+      buffered = buffered.slice(newline + 1);
+    }
+  }
+}
+
+// A node TLS 1.2 server that reads and renegotiates only when told to, shared
+// by the tests below: see renegotiation-backpressure-fixture.js.
+async function startBackpressureServer() {
+  const server = Bun.spawn(["node", join(import.meta.dir, "renegotiation-backpressure-fixture.js")], {
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "inherit",
+    env: { ...bunEnv, SERVER_CERT: tls.cert, SERVER_KEY: tls.key },
+  });
+  const output = lines(server.stdout);
+  const ready = await output.next();
+  return {
+    port: Number(String(ready.value).slice("READY ".length)),
+    kill: () => server.kill(),
+    // The server's side of the connection that was opened last. Its reports
+    // come without the connection number; reports of earlier connections are
+    // skipped.
+    async accepted() {
+      let prefix = "";
+      const nextLine = async () => {
+        while (true) {
+          const line = await output.next();
+          if (line.done) return "the server exited";
+          if (!prefix && / OPEN /.test(line.value)) prefix = line.value.slice(0, line.value.indexOf(" ") + 1);
+          if (prefix && line.value.startsWith(prefix)) return line.value.slice(prefix.length);
+        }
+      };
+      expect(await nextLine()).toBe("OPEN mismatchAt=-1");
+      return {
+        nextLine,
+        say(command: string) {
+          server.stdin.write(command + "\n");
+          server.stdin.flush();
+        },
+      };
+    },
+  };
+}
+let backpressureServer: ReturnType<typeof startBackpressureServer> | undefined;
+afterAll(async () => {
+  (await backpressureServer)?.kill();
+});
+
+// byte[i] === i % 251. The fixture checks every byte it reads against this, so
+// it also catches a splice that the cipher accepts.
+const uploadPattern = Buffer.alloc(251 * 262);
+for (let i = 0; i < uploadPattern.length; i++) uploadPattern[i] = i % 251;
+
+// Upload until a write comes back short, let the server open room for one
+// record, then take the HelloRequest. Resolves to what the server saw.
+async function renegotiateAgainstAParkedUpload() {
+  const server = await (backpressureServer ??= startBackpressureServer());
+  const parked = Promise.withResolvers<void>();
+  let sent = 0;
+  let writing = true;
+  const pump = (socket: { write(chunk: Uint8Array): number }) => {
+    while (writing) {
+      const start = sent % 251;
+      const chunk = uploadPattern.subarray(start, start + 64 * 1024);
+      const written = socket.write(chunk);
+      sent += Math.max(0, written);
+      if (written < chunk.length) {
+        parked.resolve();
+        return;
+      }
+    }
+  };
+
+  using socket = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    tls: { rejectUnauthorized: false },
+    socket: { handshake: pump, drain: pump, data() {} },
+  });
+  const peer = await server.accepted();
+
+  // The server reads nothing, so the upload fills the connection and parks.
+  // usockets now holds ciphertext for this socket in its spill buffer.
+  await parked.promise;
+  // One read opens room for a record without making the socket writable, so
+  // nothing drains the spill before the HelloRequest arrives.
+  peer.say("A");
+  expect(await peer.nextLine()).toBe("READ mismatchAt=-1");
+  writing = false;
+  peer.say("R");
+  expect(await peer.nextLine()).toBe("RENEG_REQUEST mismatchAt=-1");
+  // Let the server read the rest, so the renegotiation can finish.
+  peer.say("D");
+  return await peer.nextLine();
+}
+
+// A HelloRequest that arrives while the upload is parked on backpressure used
+// to put the renegotiation ClientHello in the middle of an application record
+// that usockets still held in its spill buffer. The server then failed the MAC
+// on that record. Repeated, because the kernel can make the socket writable at
+// the wrong moment, which drains the spill before the HelloRequest lands.
+it("keeps sealed ciphertext in order when a renegotiation starts under write backpressure", async () => {
+  const seen: string[] = [];
+  for (let attempt = 0; attempt < 3; attempt++) {
+    seen.push(await renegotiateAgainstAParkedUpload());
+  }
+  expect(seen).toEqual([
+    "RENEG_DONE err=null mismatchAt=-1",
+    "RENEG_DONE err=null mismatchAt=-1",
+    "RENEG_DONE err=null mismatchAt=-1",
+  ]);
+});
+
+// After a renegotiation that the server follows with no data, the socket used
+// to get no writable event again: an upload that ran into backpressure, or a
+// write that landed while the renegotiation was still running, waited for
+// 'drain' for ever.
+it("delivers drain to an upload that hits backpressure after a renegotiation", async () => {
+  const server = await (backpressureServer ??= startBackpressureServer());
+  const secure = Promise.withResolvers<void>();
+  const parked = Promise.withResolvers<void>();
+  let sent = 0;
+  let total = Infinity;
+  let uploading = false;
+  const pump = (socket: { write(chunk: Uint8Array): number }) => {
+    while (uploading && sent < total) {
+      const start = sent % 251;
+      const chunk = uploadPattern.subarray(start, start + Math.min(64 * 1024, total - sent));
+      const written = socket.write(chunk);
+      sent += Math.max(0, written);
+      if (written < chunk.length) {
+        if (total === Infinity) {
+          // The first short write. One more megabyte has to follow it, and
+          // that needs a 'drain'.
+          total = sent + 1024 * 1024;
+          parked.resolve();
+        }
+        return;
+      }
+    }
+  };
+
+  using socket = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    tls: { rejectUnauthorized: false },
+    socket: {
+      handshake(socket) {
+        secure.resolve();
+        pump(socket);
+      },
+      drain: pump,
+      data() {},
+    },
+  });
+  const peer = await server.accepted();
+
+  // Wait for the first handshake report, so the HelloRequest cannot arrive in
+  // the same read as the server's Finished.
+  await secure.promise;
+  peer.say("R");
+  expect(await peer.nextLine()).toBe("RENEG_REQUEST mismatchAt=-1");
+  expect(await peer.nextLine()).toBe("RENEG_DONE err=null mismatchAt=-1");
+
+  // The server reads nothing, so the upload parks: on the full connection, or
+  // at once when the client has not yet read the end of the renegotiation.
+  uploading = true;
+  pump(socket);
+  await parked.promise;
+  peer.say(`E ${total}`);
+  peer.say("D");
+  expect(await peer.nextLine()).toBe("GOT_ALL mismatchAt=-1");
+});

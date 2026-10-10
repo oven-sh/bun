@@ -266,13 +266,14 @@ describe("WebSocket send queue", () => {
   }
 
   it("grows a queue that wraps around its buffer at the cost of one that does not", async () => {
-    let linear = Infinity;
-    let wrapped = Infinity;
-    // Other work on the machine can inflate one sample: keep the lowest of up to 3.
-    for (let i = 0; i < 3 && !(wrapped < 6 * Math.max(linear, FLOOR_MS)); i++) {
+    let linear = await growCost(false);
+    let wrapped = await growCost(true);
+    const limit = () => 6 * Math.max(linear, FLOOR_MS);
+    // Other work on the machine can inflate a sample by some ms. A send of a second is not that.
+    if (wrapped >= limit() && wrapped < 1000) {
       linear = Math.min(linear, await growCost(false));
       wrapped = Math.min(wrapped, await growCost(true));
     }
-    expect(wrapped).toBeLessThan(6 * Math.max(linear, FLOOR_MS));
-  }, 30_000);
+    expect(wrapped).toBeLessThan(limit());
+  });
 });

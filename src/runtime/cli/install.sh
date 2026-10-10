@@ -262,7 +262,7 @@ bash)
 
     commands=(
         "export $install_env=$quoted_install_dir"
-        "export PATH=\"$bin_env:\$PATH\""
+        "case \":\$PATH:\" in *\":\$BUN_INSTALL/bin:\"*) ;; *) export PATH=\"$bin_env:\$PATH\" ;; esac"
     )
 
     bash_configs=(
@@ -284,19 +284,24 @@ bash)
         tilde_bash_config=$(tildify "$bash_config")
 
         if [[ -w $bash_config ]]; then
-            {
-                echo -e '\n# bun'
+            if ! grep -Fq '# bun' "$bash_config"; then
+                {
+                    echo -e '\n# bun'
 
-                for command in "${commands[@]}"; do
-                    echo "$command"
-                done
-            } >>"$bash_config"
+                    for command in "${commands[@]}"; do
+                        echo "$command"
+                    done
+                } >>"$bash_config"
 
-            info "Added \"$tilde_bin_dir\" to \$PATH in \"$tilde_bash_config\""
+                info "Added \"$tilde_bin_dir\" to \$PATH in \"$tilde_bash_config\""
+            else
+                info "Bun is already configured in \"$tilde_bash_config\""
+            fi
 
-            refresh_command="source $bash_config"
+            if [[ -z $refresh_command ]]; then
+                refresh_command="source $bash_config"
+            fi
             set_manually=false
-            break
         fi
     done
 

@@ -137,7 +137,8 @@ fn utf16_result_into<'a>(buf: &'a mut PathBuffer, result: &[u16]) -> &'a ZStr {
 // Like /usr/bin/which but without needing to exec a child process
 // Remember to resolve the symlink if necessary
 pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -> Option<&'a ZStr> {
-    if bin.len() >= MAX_PATH_BYTES {
+    // A path with a NUL byte names no file: the syscall would read only the bytes before it.
+    if bin.len() >= MAX_PATH_BYTES || strings::contains_char(bin, 0) {
         return None;
     }
     bun_core::scoped_log!(
@@ -181,7 +182,7 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
         }
 
         if strings::index_of_char(bin, b'/').is_some() {
-            if !cwd.is_empty() {
+            if !cwd.is_empty() && !strings::contains_char(cwd, 0) {
                 if let Some(len) = is_valid(
                     buf,
                     b"",
@@ -197,13 +198,24 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
         }
 
         let cwd_for_relative_segment: &[u8] = if is_absolute(cwd) { cwd_trimmed } else { b"" };
+        let path_has_nul = strings::contains_char(path, 0);
+        // Scanned once, when the first relative segment needs the cwd.
+        let mut cwd_has_nul: Option<bool> = None;
         for segment in strings::tokenize(path, &[DELIMITER]) {
+            if path_has_nul && strings::contains_char(segment, 0) {
+                continue;
+            }
             // execvp resolves relative $PATH entries after the child's chdir.
             let cwd_prefix: &[u8] = if is_absolute(segment) {
                 b""
             } else {
                 cwd_for_relative_segment
             };
+            if !cwd_prefix.is_empty()
+                && *cwd_has_nul.get_or_insert_with(|| strings::contains_char(cwd_prefix, 0))
+            {
+                continue;
+            }
             if let Some(len) = is_valid(buf, cwd_prefix, segment, bin) {
                 // SAFETY: is_valid wrote NUL at buf[len]
                 return Some(ZStr::from_buf(&buf[..], len as usize));
@@ -410,6 +422,9 @@ pub(crate) fn which_win<'a>(
 
     // check if bin is in cwd
     if has_dir {
+        if strings::contains_char(cwd, 0) {
+            return None;
+        }
         // NLL/Polonius limitation — raw-ptr reborrow so the None branch can
         // fall through without `buf` appearing borrowed.
         // SAFETY: bin_path borrow does not escape this block on the None path.
@@ -462,7 +477,11 @@ fn search_bin_in_path_list<'a>(
     try_as_spelled: bool,
     extensions: &[&[u16]],
 ) -> Option<&'a mut [u16]> {
+    let path_has_nul = strings::contains_char(path, 0);
     for segment_part in strings::tokenize(path, b";") {
+        if path_has_nul && strings::contains_char(segment_part, 0) {
+            continue;
+        }
         // NLL/Polonius limitation — re-borrowing `buf` across loop iterations
         // when returning a reference tied to its lifetime.
         // SAFETY: on None the borrow ends; on Some we return immediately.

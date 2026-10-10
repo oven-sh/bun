@@ -170,6 +170,7 @@ unsafe extern "C" {
         stopped_by_parent: bool,
     );
     safe fn WebWorker__parentContextWillDestroy(proxy: *mut c_void);
+    safe fn WebWorker__generateContextIdentifier() -> u32;
     safe fn WebWorker__entrySettled(global: &JSGlobalObject);
     /// Loads `node:worker_threads` in this VM (it rebinds process stdio and
     /// registers parentPort). May leave an exception pending.
@@ -293,7 +294,7 @@ impl WebWorker {
         error_message: &mut BunString,
         error_is_invalid_exec_argv: &mut bool,
         _parent_context_id: u32,
-        this_context_id: u32,
+        this_context_id: &mut u32,
         mini: bool,
         eval_mode: bool,
         is_node_worker: bool,
@@ -306,7 +307,6 @@ impl WebWorker {
         preload_modules_len: usize,
     ) -> *mut WebWorker {
         jsc::mark_binding();
-        log!("[{}] create", this_context_id);
 
         let spec_slice = specifier_str.to_utf8();
         let mut temp_log = bun_ast::Log::default();
@@ -381,6 +381,9 @@ impl WebWorker {
             }
         }
 
+        // Node assigns the threadId here too, after its option checks: a rejected option uses none.
+        *this_context_id = WebWorker__generateContextIdentifier();
+        log!("[{}] create", *this_context_id);
         // SAFETY: `parent` is the calling thread's live VM.
         let parent_ref = unsafe { &*parent };
         // The construction ref, handed to C++.
@@ -392,7 +395,7 @@ impl WebWorker {
                 && parent_ref.is_main_thread()
                 && bun_core::env_var::feature_flag::BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE::get()
                     .unwrap_or(false),
-            execution_context_id: this_context_id,
+            execution_context_id: *this_context_id,
             mini,
             eval_mode,
             is_node_worker,

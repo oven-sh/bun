@@ -51,6 +51,8 @@ public:
     // Validates the options and allocates the worker. start() spawns its thread.
     static ExceptionOr<Ref<Worker>> create(ScriptExecutionContext&, const String& url, WorkerOptions&&);
     ExceptionOr<void> start(Ref<SerializedScriptValue>&& workerDataAndEnvironmentData, Vector<TransferredMessagePort>&& dataMessagePorts, RefPtr<Bun::SharedEnvStore>&&);
+    // For a constructor that throws between create() and start(): releases the worker that has no thread.
+    void discardUnstarted();
     ~Worker();
 
     // ActiveDOMObject.

@@ -91,6 +91,11 @@ ExceptionOr<void> Worker::start(Ref<SerializedScriptValue>&& workerDataAndEnviro
     return m_contextProxy->startWorkerGlobalScope(WTF::move(workerDataAndEnvironmentData), WTF::move(dataMessagePorts), WTF::move(sharedEnvStore));
 }
 
+void Worker::discardUnstarted()
+{
+    m_contextProxy->discardUnstartedWorkerGlobalScope();
+}
+
 Worker::~Worker()
 {
     m_contextProxy->workerObjectDestroyed();
@@ -196,6 +201,11 @@ extern "C" void WebWorker__workerGlobalScopeDestroyed(WorkerMessagingProxy* prox
 extern "C" void WebWorker__parentContextWillDestroy(WorkerMessagingProxy* proxy)
 {
     proxy->parentContextWillDestroy();
+}
+
+extern "C" ScriptExecutionContextIdentifier WebWorker__generateContextIdentifier()
+{
+    return ScriptExecutionContext::generateIdentifier();
 }
 
 // An uncaught error inside the worker: dispatch 'error' on the worker's own global scope, then report

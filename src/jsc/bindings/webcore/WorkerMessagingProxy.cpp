@@ -57,7 +57,7 @@ void* WebWorker__create(
     BunString* errorMessage,
     bool* errorIsInvalidExecArgv,
     uint32_t parentContextId,
-    uint32_t contextId,
+    uint32_t* contextId,
     bool miniMode,
     bool evalMode,
     bool isNodeWorker,
@@ -89,7 +89,6 @@ WorkerMessagingProxy::WorkerMessagingProxy(Worker& workerObject, ScriptExecution
     , m_workerObject(&workerObject)
     , m_loaderContextIdentifier(parentContext.identifier())
     , m_loaderLoopKind(parentContext.currentLoopKind())
-    , m_workerContextIdentifier(ScriptExecutionContext::generateIdentifier())
     , m_options(WTF::move(options))
 {
     ASSERT(parentContext.isContextThread());
@@ -155,7 +154,7 @@ ExceptionOr<void> WorkerMessagingProxy::prepareWorkerGlobalScope(const String& s
         &errorMessage,
         &errorIsInvalidExecArgv,
         m_loaderContextIdentifier,
-        m_workerContextIdentifier,
+        &m_workerContextIdentifier,
         m_options.mini,
         m_options.evalMode,
         m_options.kind == WorkerOptions::Kind::Node,
@@ -179,18 +178,30 @@ ExceptionOr<void> WorkerMessagingProxy::prepareWorkerGlobalScope(const String& s
 ExceptionOr<void> WorkerMessagingProxy::startWorkerGlobalScope(Ref<SerializedScriptValue>&& workerDataAndEnvironmentData, Vector<TransferredMessagePort>&& dataMessagePorts, RefPtr<Bun::SharedEnvStore>&& sharedEnvStore)
 {
     ASSERT(!m_scriptExecutionContext || m_scriptExecutionContext->isContextThread());
+
+    // Stopped at birth, or by script that ran while workerData was serialized: nothing starts or takes the data.
+    if (m_askedToTerminate) {
+        discardUnstartedWorkerGlobalScope();
+        return {};
+    }
     m_options.workerDataAndEnvironmentData = WTF::move(workerDataAndEnvironmentData);
     m_options.dataMessagePorts = WTF::move(dataMessagePorts);
     m_options.sharedEnvStore = WTF::move(sharedEnvStore);
-
-    // Stopped at birth: prepareWorkerGlobalScope() made no thread object.
-    if (!m_workerThread)
-        return {};
     if (!WebWorker__start(m_workerThread, m_options.unref)) {
-        releaseWorkerThread();
+        discardUnstartedWorkerGlobalScope();
         return Exception { TypeError, "Failed to spawn worker thread"_s };
     }
     return {};
+}
+
+void WorkerMessagingProxy::discardUnstartedWorkerGlobalScope()
+{
+    ASSERT(!m_scriptExecutionContext || m_scriptExecutionContext->isContextThread());
+    // The Worker object, which calls this, holds a ref: the one dropped here is not the last.
+    releaseWorkerThread();
+    // Nothing reads the options of a worker that never ran: free them now, not when the Worker is collected.
+    m_options = {};
+    m_scriptExecutionContext = nullptr;
 }
 
 void WorkerMessagingProxy::terminateWorkerGlobalScope()

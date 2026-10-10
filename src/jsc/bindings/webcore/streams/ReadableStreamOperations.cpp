@@ -25,6 +25,7 @@
 #include "JSWritableStreamDefaultWriter.h"
 #include "ObjectBindings.h"
 #include "VectorSizeLimit.h"
+#include "ZigGeneratedClasses.h"
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/InternalFieldTuple.h>
@@ -486,6 +487,19 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
     return result;
 }
 
+// Bun: a FileReader source (the only kind with an event-loop ref) drops that ref while no reader holds the stream.
+static void setNativeSourceReaderLocked(JSReadableStream* stream, bool locked)
+{
+    if (stream->m_controllerKind != ControllerKind::Default)
+        return;
+    auto* controller = defaultControllerOf(stream);
+    if (controller->m_algorithms.kind != SourceKind::Native)
+        return;
+    const auto* adapter = uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get());
+    if (auto* source = dynamicDowncast<WebCore::JSFileInternalReadableStreamSource>(adapter->handle()))
+        FileReader__setReaderLocked(source->wrapped(), locked);
+}
+
 // ReadableStreamReaderGenericInitialize(reader, stream)
 void readableStreamReaderGenericInitialize(JSGlobalObject* globalObject, JSReadableStreamReaderBase* reader, JSReadableStream* stream)
 {
@@ -496,6 +510,7 @@ void readableStreamReaderGenericInitialize(JSGlobalObject* globalObject, JSReada
     switch (stream->m_state) {
     case ReadableStreamState::Readable:
         reader->m_closedPromise.set(vm, reader, JSPromise::create(vm, globalObject->promiseStructure()));
+        setNativeSourceReaderLocked(stream, true);
         return;
     case ReadableStreamState::Closed: {
         auto* closedPromise = promiseFulfilledWith(globalObject, JSC::jsUndefined());
@@ -551,27 +566,10 @@ void readableStreamReaderGenericRelease(JSGlobalObject* globalObject, JSReadable
         }
         break;
     }
-    case ControllerKind::Default: {
-        auto* controller = defaultControllerOf(stream);
-        controller->releaseSteps();
-        // Bun: drop the native handle's event-loop ref when its consumer releases the lock.
-        if (controller->m_algorithms.kind == SourceKind::Native) {
-            const auto* adapter = uncheckedDowncast<WebCore::JSNativeStreamSourceAdapter>(controller->m_algorithms.algorithmContext.get());
-            if (auto* handle = adapter->handle()) {
-                JSValue updateRef = handle->getIfPropertyExists(globalObject, builtinNames(vm).updateRefPublicName());
-                RETURN_IF_EXCEPTION(scope, void());
-                if (updateRef && updateRef.isCallable()) {
-                    auto callData = JSC::getCallData(updateRef);
-                    MarkedArgumentBuffer args;
-                    args.append(jsBoolean(false));
-                    ASSERT(!args.hasOverflowed());
-                    JSC::call(globalObject, updateRef, callData, handle, args);
-                    RETURN_IF_EXCEPTION(scope, void());
-                }
-            }
-        }
+    case ControllerKind::Default:
+        defaultControllerOf(stream)->releaseSteps();
+        setNativeSourceReaderLocked(stream, false);
         break;
-    }
     case ControllerKind::Byte:
         byteControllerOf(stream)->releaseSteps();
         break;

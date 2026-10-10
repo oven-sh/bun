@@ -31,7 +31,7 @@ const MAX_STEPS: u32 = 100_000;
 
 /// How many parts of all the declarations of a file: n components can have one declaration of n
 /// parts.
-const MAX_STEPS_IN_A_FILE: u32 = 1 << 17;
+const MAX_STEPS_IN_A_FILE: u32 = 1 << 19;
 
 /// What upstream throws where that has no end: `const a = PropTypes.arrayOf(a)`.
 pub(crate) struct RangeError;

@@ -66,7 +66,7 @@ fn resolve_node_value(mut node: Expr<'_>) -> Option<Expr<'_>> {
 }
 
 /// How many default props of a file are looked at: n components can have one object of n.
-const MAX_DEFAULT_PROPS_IN_A_FILE: u32 = 1 << 17;
+const MAX_DEFAULT_PROPS_IN_A_FILE: u32 = 1 << 19;
 
 /// `getDefaultPropsFromObjectExpression`. `found`: how many the file has had so far: after
 /// [`MAX_DEFAULT_PROPS_IN_A_FILE`] all are `"unresolved"`.

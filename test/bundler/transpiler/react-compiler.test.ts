@@ -1089,7 +1089,7 @@ describe("bundler", () => {
         "http://a.b http:||a.b false 3 false",
         "https://A// A|| true 3 true",
         "https://a.b a.b false 1 false",
-      ].join("\\n"),
+      ].join("\n"),
     },
     onAfterBundle(api) {
       expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");

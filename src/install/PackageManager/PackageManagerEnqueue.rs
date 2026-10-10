@@ -2218,7 +2218,7 @@ fn local_tarball_base_dir<'a>(
     Some(lockfile.str(base_dir))
 }
 
-fn update_name_and_name_hash_from_version_replacement(
+pub(crate) fn update_name_and_name_hash_from_version_replacement(
     lockfile: &Lockfile::Lockfile,
     original_name: SemverString,
     original_name_hash: PackageNameHash,

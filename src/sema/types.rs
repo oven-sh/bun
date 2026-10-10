@@ -527,6 +527,9 @@ bitflags::bitflags! {
         const HAS_NON_UNIFORM_TYPE = 1 << 15;
         const HAS_LITERAL_TYPE = 1 << 16;
         const ABSTRACT = 1 << 17;
+        /// On a member that a class or an interface has inherited: `instantiateSymbol` returned it
+        /// itself (`m.MapsThisOnly() && isThisless(symbol)`), and does so for every heir.
+        const THISLESS = 1 << 18;
         /// Without any of these a property is accessible everywhere except through `super`
         /// (`checkPropertyAccessibilityAtLocation`). For accessors the accessor in use decides, so
         /// they are inspected.

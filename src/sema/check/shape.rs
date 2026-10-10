@@ -2353,9 +2353,9 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(members) = members else { return };
         let mapper = members.mapper;
         b.reserve(members.shape().props.len());
-        // The mapper of the most recent property that had its own, and its composition with
-        // `mapper`.
-        let mut composed = (MapperId::IDENTITY, mapper);
+        // The mapper of the most recent property that had its own, whether that is a member, and
+        // the composition with `mapper`.
+        let mut composed = (MapperId::IDENTITY, true, mapper);
         for prop in &members.shape().props {
             if b.has(prop.name) {
                 continue;
@@ -2363,11 +2363,32 @@ impl<'p, 's> Checker<'p, 's> {
             let mut prop = prop.clone_in(self.arena);
             match &mut prop.source {
                 PropSource::Type(t) | PropSource::Copy(t, ..) => *t = self.instantiate(*t, mapper),
-                _ => {
-                    if prop.mapper != composed.0 {
-                        composed = (prop.mapper, self.compose(prop.mapper, mapper));
+                // `instantiateSymbol` returns it itself. One that it has instantiated for a base
+                // type has a mapper.
+                PropSource::Symbol(_) if prop.flags.contains(PropFlags::THISLESS) => {}
+                &mut PropSource::Symbol(sym)
+                    if prop.mapper == MapperId::IDENTITY
+                        && self.is_thisless_for_this_mapper(sym) =>
+                {
+                    prop.flags |= PropFlags::THISLESS;
+                }
+                source => {
+                    let is_member = matches!(source, PropSource::Symbol(_));
+                    if prop.mapper == MapperId::IDENTITY {
+                        prop.mapper = mapper;
+                    } else {
+                        if (prop.mapper, is_member) != (composed.0, composed.1) {
+                            // The mapper of a member maps the type parameters of the class or the
+                            // interface that declares it, and `mapper` those of `base`, which the
+                            // declaration cannot mention: it would grow with every level.
+                            let both = match is_member {
+                                true => self.map_mapper(prop.mapper, mapper),
+                                false => self.compose(prop.mapper, mapper),
+                            };
+                            composed = (prop.mapper, is_member, both);
+                        }
+                        prop.mapper = composed.2;
                     }
-                    prop.mapper = composed.1;
                 }
             }
             b.add_new(prop);
@@ -4897,7 +4918,10 @@ impl<'p, 's> Checker<'p, 's> {
             ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES | ObjectFlags::HAS_OTHER_INSTANTIATION;
         let is_instantiated = self.types().object_flags(base).intersects(is_changed)
             && match prop.source {
-                PropSource::Symbol(sym) => !self.is_thisless_for_this_mapper(sym),
+                PropSource::Symbol(sym) => {
+                    !prop.flags.contains(PropFlags::THISLESS)
+                        && !self.is_thisless_for_this_mapper(sym)
+                }
                 _ => true,
             };
         let ty = if is_instantiated {

@@ -354,7 +354,9 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
     }
 
     if (md == nullptr && zigHasher == nullptr) [[unlikely]] {
-        throwCryptoError(globalObject, scope, ERR_get_error(), "Digest method not supported"_s);
+        // A name lookup miss pushes nothing to the BoringSSL error queue. Reading
+        // it here would report whatever an earlier, unrelated call left behind.
+        throwCryptoError(globalObject, scope, 0, "Digest method not supported"_s);
         return {};
     }
 

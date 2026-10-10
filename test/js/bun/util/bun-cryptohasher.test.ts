@@ -358,8 +358,17 @@ describe("HMAC", () => {
     expect(new Bun.CryptoHasher(algorithm).algorithm).toBe(algorithm);
   });
 
+  // A failed PEM parse leaves ERR_OSSL_PEM_NO_START_LINE in the error queue and
+  // nothing drains it. update() must decide success from HMAC_Update itself.
+  test("update() after a failed tls.createSecureContext is unaffected", () => {
+    const hmac = () => new Bun.CryptoHasher("sha256", "key").update("data").digest("hex");
+    const hash = () => new Bun.CryptoHasher("sha256").update("data").digest("hex");
+    const expected = { hmac: hmac(), hash: hash() };
+    expect(() => createSecureContext({ key: "not a pem", cert: "not a pem" })).toThrow();
+    expect({ hmac: hmac(), hash: hash() }).toEqual(expected);
+  });
+
   test("the unsupported-algorithm error is not replaced by a stale BoringSSL error", () => {
-    // A failed PEM parse leaves ERR_OSSL_PEM_NO_START_LINE in the error queue.
     expect(() => createSecureContext({ key: "not a pem", cert: "not a pem" })).toThrow();
     expect(() => new Bun.CryptoHasher("shake128", "key")).toThrow("HMAC is not supported for this algorithm yet");
   });

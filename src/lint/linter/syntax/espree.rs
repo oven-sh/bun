@@ -25,7 +25,7 @@ use bun_sema::atom::{Atom, known};
 use bun_sema::hir::{
     self, BinOp, Chain, Diagnostic, DiagnosticKind, Flags, FnKind, ModifierKind, UnOp,
 };
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 struct Checks<'a, 'c> {
@@ -1270,9 +1270,17 @@ impl<'a, 'c> Checks<'a, 'c> {
                     }
                 });
             }
-            let clash = (names.iter().enumerate())
-                .find(|&(i, it)| names[..i].iter().any(|before| before.0 == it.0));
-            let (Some((_, &(_, at))), func) = (clash, Func::from_raw(file, i as u32)) else {
+            // The first that is there before. Nearly every list is short.
+            let clash = match names.len() {
+                ..=8 => (names.iter().enumerate())
+                    .find(|&(i, it)| names[..i].iter().any(|before| before.0 == it.0))
+                    .map(|it| it.1),
+                _ => {
+                    let mut seen = FxHashSet::default();
+                    names.iter().find(|it| !seen.insert(it.0))
+                }
+            };
+            let (Some(&(_, at)), func) = (clash, Func::from_raw(file, i as u32)) else {
                 continue;
             };
             let allows = are_simple

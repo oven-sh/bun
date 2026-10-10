@@ -454,6 +454,8 @@ describe.concurrent("bun lint", () => {
       // acorn skips a comment before the string of an attribute, which can have a line break.
       "a6.jsx": ['<a b=/* c */"x\ny" />;'],
       "a7.js": ["a = => 1;", "1:5: Parsing error: Unexpected token =>"],
+      // What is in parentheses is no mix with `??`, however many parentheses follow it.
+      "a8.js": ["(a || b) ?? ((c)); (a && b) ?? [((c))]; f((a || b) ?? !((c)));"],
     };
     const files = Object.fromEntries(Object.entries(cases).map(([name, [code]]) => [name, code + "\n"]));
     const settings = `export default [
@@ -2648,11 +2650,17 @@ describe.concurrent("bun lint", () => {
       expect(JSON.parse(result.raw)[0].output).toBe("let a = 1;\nif (a == 2) { debugger; }\n");
     });
 
-    test.each(["--fix", "--fix-dry-run"])("%s beside an .oxlintrc.json: ESLint's json formats have the fixed text", async flag => {
-      const files = { ".oxlintrc.json": `{ "rules": { "no-var": "error" } }`, "a.js": "var a = 1;\nexport default a;\n" };
-      const { raw } = await lint(files, [flag, "-f", "json-with-metadata", "a.js"]);
-      expect(JSON.parse(raw).results[0].output).toBe("const a = 1;\nexport default a;\n");
-    });
+    test.each(["--fix", "--fix-dry-run"])(
+      "%s beside an .oxlintrc.json: ESLint's json formats have the fixed text",
+      async flag => {
+        const files = {
+          ".oxlintrc.json": `{ "rules": { "no-var": "error" } }`,
+          "a.js": "var a = 1;\nexport default a;\n",
+        };
+        const { raw } = await lint(files, [flag, "-f", "json-with-metadata", "a.js"]);
+        expect(JSON.parse(raw).results[0].output).toBe("const a = 1;\nexport default a;\n");
+      },
+    );
 
     describe("fixes after which the text cannot be parsed are not written", () => {
       const warning = (rules: string, file: string) =>
@@ -3934,6 +3942,22 @@ describe.concurrent("bun lint", () => {
           const { stdout, exitCode } = await lint(all, ["-f", "unix", "--infer-globals=fast"]);
           expect(reported(stdout, "no-undef")).toEqual(names.map(it => `a.js ${it}`));
           expect(exitCode).toBe(1);
+        });
+
+        // The search for files has seen the configuration files below where it began. The system is asked for the others.
+        test("the project is the same, however the file is come by", async () => {
+          const all = {
+            "tsconfig.json": tsconfig({ lib: ["es2022"], types: [] }),
+            "sub/deep/a.js": "void [document, typo];\n",
+            "sub/web/tsconfig.json": tsconfig({ lib: ["es2022", "dom"], types: [] }),
+            "sub/web/src/b.js": "void [document, typo];\n",
+            ".gitignore": "sub/web/tsconfig.json\n",
+          };
+          const expected = ["sub/deep/a.js document", "sub/deep/a.js typo", "sub/web/src/b.js typo"];
+          for (const paths of [["."], ["sub"], ["sub/deep", "sub/web/src"], ["sub/deep/a.js", "sub/web/src/b.js"]]) {
+            const { stdout } = await lint(all, ["-f", "unix", "--infer-globals=fast", ...paths]);
+            expect(reported(stdout, "no-undef").sort()).toEqual(expected);
+          }
         });
 
         test("which project has a file is asked of `files`, `include`, `exclude` and `references`", async () => {

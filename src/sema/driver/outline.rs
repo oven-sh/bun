@@ -3,7 +3,7 @@
 //!
 //! The project of a file is the one that `Projects::owner_of` finds under
 //! `PlanOptions::only_in_a_project_that_includes`. It is found otherwise: the configuration files by asking for them,
-//! directory by directory, and what a project includes by its patterns. No directory is listed.
+//! directory by directory, or of who has listed the directories; what a project includes by its patterns.
 
 use crate::host::{Asking, from_native};
 use crate::{installed_major, lacks_its_packages};
@@ -15,7 +15,7 @@ use bun_sema::resolve::{Host, Options, ancestors, contains_path, inside, is_same
 use bun_sema::session::Session;
 use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_threading::Guarded;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, Weak};
 
 pub struct Outline {
     /// In the checker's format.
@@ -36,7 +36,12 @@ struct Project {
     /// Made when a file of the project asks. `None`: what it depends on is not installed, so what its files can use is
     /// not known.
     outline: OnceLock<Option<Arc<Outline>>>,
+    /// `Outlines::reached_from`. `Outlines::projects` keeps them.
+    reached: OnceLock<Vec<Weak<Project>>>,
 }
+
+/// Where a project is read into, by the first that asks for it. `None`: it cannot be read.
+type Place = Arc<OnceLock<Option<Arc<Project>>>>;
 
 /// The outlines of the projects of a run. Each is made when a file of it is first asked about.
 pub struct Outlines {
@@ -48,10 +53,10 @@ pub struct Outlines {
     listed: FxHashSet<Vec<u8>>,
     /// By directory.
     nearest: Guarded<FxHashMap<Vec<u8>, Option<Vec<u8>>>>,
-    /// By configuration file. `None`: it cannot be read.
-    projects: Guarded<FxHashMap<Vec<u8>, Arc<OnceLock<Option<Arc<Project>>>>>>,
-    /// By configuration file: `Outlines::reached_from`.
-    reached: Guarded<FxHashMap<Vec<u8>, Arc<Vec<Arc<Project>>>>>,
+    /// By directory: `Outlines::above`.
+    above: Guarded<FxHashMap<Vec<u8>, Arc<Vec<(Vec<u8>, Place)>>>>,
+    /// By configuration file.
+    projects: Guarded<FxHashMap<Vec<u8>, Place>>,
 }
 
 impl Outlines {
@@ -75,36 +80,56 @@ impl Outlines {
             listed_below: listed_below.iter().map(|it| from_native(it)).collect(),
             listed: listed.iter().map(as_it_is_asked_for).collect(),
             nearest: Default::default(),
+            above: Default::default(),
             projects: Default::default(),
-            reached: Default::default(),
         }
     }
 
     /// Of the project that includes the file at `path`, a native path. `None`: there is none, or `Project::outline`.
     pub fn of(&self, path: &[u8]) -> Option<Arc<Outline>> {
         let path = from_native(path);
-        let nearest = self.nearest_to(dirname::<Posix>(&path));
-        let mut config = nearest.or_else(|| self.nearest_to(&self.cwd))?;
         let host = self.asking(false);
         let file = Asked::new(&path);
-        loop {
-            let has_it = |it: &Arc<Project>| it.roots.has(&file, &|path| host.is_file(path));
+        let has_it = |it: &Arc<Project>| it.roots.has(&file, &|path| host.is_file(path));
+        for (config, place) in self.above(dirname::<Posix>(&path)).iter() {
+            let Some(project) = self.read_into(place, config) else {
+                continue;
+            };
             // What it references is read only if it has not got the file itself.
-            let own = self.load(&config).filter(has_it);
-            let owner = own.or_else(|| {
-                self.reached_from(&config)
-                    .iter()
-                    .find(|it| has_it(it))
-                    .cloned()
-            });
+            let owner = match has_it(project) {
+                true => Some(Arc::clone(project)),
+                false => {
+                    let reached = project.reached.get_or_init(|| self.reached_from(project));
+                    reached.iter().filter_map(Weak::upgrade).find(has_it)
+                }
+            };
             if let Some(owner) = owner {
                 let outline = || self.outline(&owner.options);
                 return owner.outline.get_or_init(outline).clone();
             }
-            // `getAncestorConfigFileName`
-            let above = self.nearest_to(ancestors(dirname::<Posix>(&config)).nth(1)?)?;
-            config = above;
         }
+        None
+    }
+
+    /// The configuration files that are asked for a file in `directory`, in that order: the nearest, then
+    /// `getAncestorConfigFileName`. None is read for it.
+    fn above(&self, directory: &[u8]) -> Arc<Vec<(Vec<u8>, Place)>> {
+        if let Some(known) = self.above.lock().get(directory) {
+            return Arc::clone(known);
+        }
+        let mut all = Vec::new();
+        let nearest = self.nearest_to(directory);
+        let mut next = nearest.or_else(|| self.nearest_to(&self.cwd));
+        while let Some(config) = next {
+            let parent = ancestors(dirname::<Posix>(&config)).nth(1);
+            next = parent.and_then(|it| self.nearest_to(it));
+            let place = self.place_of(&config);
+            all.push((config, place));
+        }
+        let all = Arc::new(all);
+        let mut above = self.above.lock();
+        above.insert(directory.to_vec(), Arc::clone(&all));
+        all
     }
 
     /// The `N` of each `/// <reference lib="N" />` in the `index.d.ts` of the package at `path`, of `Outline::types`.
@@ -150,44 +175,40 @@ impl Outlines {
         found
     }
 
-    /// The project of `config`, then those that it references, directly or not, in the order in which
-    /// `Projects::find_project_with` asks them for a file.
-    fn reached_from(&self, config: &[u8]) -> Arc<Vec<Arc<Project>>> {
-        if let Some(known) = self.reached.lock().get(config) {
-            return Arc::clone(known);
-        }
+    /// The projects that `project` references, directly or not, in the order in which `Projects::find_project_with`
+    /// asks them for a file.
+    fn reached_from(&self, project: &Project) -> Vec<Weak<Project>> {
         let is_case_sensitive = self.host.is_case_sensitive();
         let mut all = Vec::new();
-        let mut seen: Vec<Vec<u8>> = Vec::new();
+        let mut seen = vec![project.options.config_path.clone()];
         // Those to look at, the next one last.
-        let mut pending = vec![config.to_vec()];
+        let mut pending: Vec<Vec<u8>> = project.references.iter().rev().cloned().collect();
         while let Some(config) = pending.pop() {
             if (seen.iter()).any(|it| is_same_path(it, &config, is_case_sensitive)) {
                 continue;
             }
-            let project = self.load(&config);
+            let place = self.place_of(&config);
+            if let Some(project) = self.read_into(&place, &config) {
+                pending.extend(project.references.iter().rev().cloned());
+                all.push(Arc::downgrade(project));
+            }
             seen.push(config);
-            let Some(project) = project else {
-                continue;
-            };
-            pending.extend(project.references.iter().rev().cloned());
-            all.push(project);
         }
-        let all = Arc::new(all);
-        let mut reached = self.reached.lock();
-        reached.insert(config.to_vec(), Arc::clone(&all));
         all
     }
 
-    fn load(&self, config: &[u8]) -> Option<Arc<Project>> {
-        let known = self.projects.lock().get(config).cloned();
-        let project = known.unwrap_or_else(|| {
-            let mut projects = self.projects.lock();
-            Arc::clone(projects.entry(config.to_vec()).or_default())
-        });
-        // One thread reads it. The others wait: they have nothing to lint before they know.
+    fn place_of(&self, config: &[u8]) -> Place {
+        let mut projects = self.projects.lock();
+        match projects.get(config) {
+            Some(known) => Arc::clone(known),
+            None => Arc::clone(projects.entry(config.to_vec()).or_default()),
+        }
+    }
+
+    /// One thread reads it. The others wait: they have nothing to lint before they know.
+    fn read_into<'p>(&self, place: &'p Place, config: &[u8]) -> Option<&'p Arc<Project>> {
         let read = || self.read(config).map(Arc::new);
-        project.get_or_init(read).clone()
+        place.get_or_init(read).as_ref()
     }
 
     fn read(&self, config: &[u8]) -> Option<Project> {
@@ -201,6 +222,7 @@ impl Outlines {
                 .collect(),
             options: project.options,
             outline: OnceLock::new(),
+            reached: OnceLock::new(),
         })
     }
 

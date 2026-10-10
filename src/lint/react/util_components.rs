@@ -237,6 +237,8 @@ struct Returning {
     answers: u8,
 }
 
+const MAX_ASKED: u32 = 1 << 22;
+
 /// What a rule gets from `Components.detect`: `components` and `utils`.
 pub(crate) struct Components<'a> {
     file: &'a File<'a>,
@@ -252,6 +254,10 @@ pub(crate) struct Components<'a> {
     stages: Vec<Option<Box<dyn Instructions<'a> + 'a>>>,
     is_started: bool,
     is_finished: bool,
+    /// See [`Components::closest_candidate`].
+    candidates: FxHashMap<Scope<'a>, Option<Scope<'a>>>,
+    /// How many scopes [`Components::get_parent_stateless_component`] has asked about.
+    asked: u32,
     /// [`may_have_explicit_components`]
     may_have_explicit: OnceCell<bool>,
     /// For [`is_explicit_component_function`].
@@ -297,6 +303,8 @@ impl<'a> Components<'a> {
             stages: Vec::new(),
             is_started: false,
             is_finished: false,
+            candidates: FxHashMap::default(),
+            asked: 0,
             may_have_explicit: OnceCell::new(),
             documented_at: AncestorMemo::default(),
         }
@@ -812,10 +820,58 @@ impl<'a> Components<'a> {
         Some(node)
     }
 
-    /// `getParentStatelessComponent`
+    /// Whether `node` is given to something with the name of a wrapper function: only then what
+    /// `get_stateless_component` says of it depends on the time, and the list is asked for.
+    fn is_given_to_wrapper(&self, node: Node<'a>) -> bool {
+        let Parent::CallExpression(call) = Parent::of(normalize(node)) else {
+            return false;
+        };
+        let name = call.callee().and_then(Components::name_of_callee);
+        self.wrapper_functions()
+            .iter()
+            .any(|it| it.property == name)
+    }
+
+    /// The closest scope at or above `scope` whose function is a stateless component, or is given
+    /// to a wrapper. Many nodes under many functions go up these once.
+    fn closest_candidate(&mut self, scope: Scope<'a>) -> Option<Scope<'a>> {
+        let mut passed: SmallVec<[Scope<'a>; 8]> = SmallVec::new();
+        let mut current = Some(scope);
+        let found = loop {
+            let Some(it) = current else {
+                break None;
+            };
+            if let Some(&known) = self.candidates.get(&it) {
+                break known;
+            }
+            passed.push(it);
+            let node = it.node();
+            if self.is_given_to_wrapper(node) || self.get_stateless_component(node).is_some() {
+                break Some(it);
+            }
+            current = it.parent();
+        };
+        let passed = passed.into_iter().map(|it| (it, found));
+        self.candidates.extend(passed);
+        found
+    }
+
+    /// `getParentStatelessComponent`. After [`MAX_ASKED`] there is none: many nodes under many
+    /// functions that are given to wrappers.
     pub(crate) fn get_parent_stateless_component(&mut self, node: Node<'a>) -> Option<Node<'a>> {
-        let mut scopes = node.scope().chain();
-        scopes.find_map(|scope| self.get_stateless_component(scope.node()))
+        let mut scope = Some(node.scope());
+        while let Some(candidate) = scope.and_then(|it| self.closest_candidate(it)) {
+            self.asked = self.asked.saturating_add(1);
+            if self.asked > MAX_ASKED {
+                return None;
+            }
+            let found = self.get_stateless_component(candidate.node());
+            if found.is_some() {
+                return found;
+            }
+            scope = candidate.parent();
+        }
+        None
     }
 
     /// `getRelatedComponent`, for a `MemberExpression`. It adds what it finds to the list.

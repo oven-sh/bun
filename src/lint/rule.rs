@@ -105,8 +105,8 @@ struct Names {
     has: Has,
 }
 
-/// How many of the rules of a plugin exist here. With a part of them, a rule that does not is one of the package, and
-/// no mistake.
+/// How many of the rules of a plugin exist here. With a part of them, a rule that does not, and that only a comment
+/// names, is one of the package, and no mistake.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Has {
     Whole,
@@ -150,7 +150,7 @@ plugins! {
     /// `react-hooks/rules-of-hooks`
     ReactHooks: ["react-hooks", "react_hooks"], InPlaceOf(Some("eslint-plugin-react-hooks"), "7.1.1"), Part;
     /// `import/no-cycle`
-    Import: ["import", "import-x"], InPlaceOf(Some("eslint-plugin-import"), "2.32.0"), Part;
+    Import: ["import", "import-x"], InPlaceOf(Some("eslint-plugin-import"), "2.32.0"), Whole;
     /// `n/no-unsupported-features/es-syntax`
     Node: ["n", "node"], InPlaceOf(Some("eslint-plugin-n"), "18.4.1"), Part;
     /// `oxc/no-accumulating-spread`
@@ -158,7 +158,7 @@ plugins! {
     /// `unicorn/no-null`
     Unicorn: ["unicorn"], Package, Part;
     /// `react/jsx-key`
-    React: ["react", "react-hooks", "react_hooks"], InPlaceOf(Some("eslint-plugin-react"), "7.37.5"), Part;
+    React: ["react", "react-hooks", "react_hooks"], InPlaceOf(Some("eslint-plugin-react"), "7.37.5"), Whole;
     /// `react-perf/jsx-no-new-object-as-prop`
     ReactPerf: ["react-perf", "react_perf"], Package, Part;
     /// `jsx-a11y/alt-text`

@@ -36,7 +36,7 @@ class Node {
 
 // The fields that a node does not have at all, where the others are `undefined`: rules ask whether a `Literal` has a `regex`.
 // espree also leaves out the `directive` of a statement that is none.
-const leftOut = new Set(["Literal.regex", "Literal.bigint", "TSModuleDeclaration.body"]);
+const leftOut = new Set(["Literal.regex", "Literal.bigint", "JSXText.bigint", "TSModuleDeclaration.body"]);
 
 // By node: the node that typescript-estree makes for a deprecated property of it.
 const madeFor = new WeakMap();

@@ -1198,6 +1198,12 @@ estree_schema! {
             Part::Whitespace(_) => v.file().slice(v.span()),
             _ => jsx_text_value(v.expr()?)?,
         };
+        // acorn reads the text with `parseLiteral`, which takes what ends in `n` for a `bigint`.
+        es_data Bigint = match v.part {
+            _ if !v.file().slice(v.span()).ends_with(b"n") => return None,
+            Part::Whitespace(_) => v.file().slice(v.span()),
+            _ => jsx_text_value(v.expr()?)?,
+        };
     }
 
     // ───────────────────────────── types of nodes that no syntax is converted to ─────────────────────────────

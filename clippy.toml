@@ -8,6 +8,11 @@ disallowed-methods = [
   { path = "std::fs::create_dir_all", reason = "use bun_sys::dir" },
   { path = "std::fs::metadata", reason = "use bun_sys::file" },
   { path = "std::fs::canonicalize", reason = "use bun_paths" },
+  { path = "std::fs::rename", reason = "use bun_sys::file" },
+  { path = "std::fs::read_dir", reason = "use bun_sys::dir" },
+  { path = "std::fs::read_link", reason = "use bun_sys::file" },
+  { path = "std::fs::symlink_metadata", reason = "use bun_sys::file" },
+  { path = "std::os::unix::fs::symlink", reason = "use bun_sys::file" },
   { path = "std::env::var", reason = "use bun_core::env_var" },
   { path = "std::env::var_os", reason = "use bun_core::env_var" },
   { path = "std::thread::spawn", reason = "use bun_threading::spawn_named or ThreadPool" },
@@ -46,7 +51,7 @@ disallowed-methods = [
   { path = "str::rmatch_indices", reason = "use bun_core::strings on .as_bytes() (highway SIMD)" },
   { path = "str::replace", reason = "use bun_core::strings::replace_owned on .as_bytes() (highway SIMD)" },
   { path = "str::replacen", reason = "use bun_core::strings::replace_owned on .as_bytes() (highway SIMD)" },
-  { path = "slice::windows", reason = "substring search must use bun_core::strings::index_of / index_of_t (highway memmem); for genuine sliding-window iteration, #[allow] with a reason" },
+  { path = "slice::windows", reason = "substring search must use bun_core::strings::index_of (highway memmem); for genuine sliding-window iteration, #[allow] with a reason" },
   { path = "memchr::memchr", reason = "use bun_core::strings::index_of_char (highway SIMD)" },
   { path = "memchr::memchr2", reason = "use bun_core::strings::index_of_any (highway SIMD)" },
   { path = "memchr::memchr3", reason = "use bun_core::strings::index_of_any (highway SIMD)" },
@@ -82,6 +87,7 @@ disallowed-types = [
   { path = "std::collections::HashSet", reason = "use bun_collections (wyhash)" },
   { path = "std::fs::File", reason = "use bun_sys::File" },
   { path = "std::process::Command", reason = "use bun_core::util::spawn_sync_inherit (CLI helpers) or bun_spawn_sys (full control)" },
+  { path = "std::backtrace::Backtrace", reason = "release builds compile std without its `backtrace` feature (scripts/build/rust.ts), so this captures frames it cannot symbolize; use bun_core::dump_current_stack_trace (bun_crash_handler)" },
 ]
 
 disallowed-macros = [

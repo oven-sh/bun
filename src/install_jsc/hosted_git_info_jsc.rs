@@ -1,5 +1,6 @@
 //! JSC bridges for `bun_install::hosted_git_info`.
 
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 
 /// Extension trait providing `.to_js()` on `HostedGitInfo`.
@@ -14,23 +15,23 @@ impl HostedGitInfoJsc for bun_install::hosted_git_info::HostedGitInfo {
         obj.put(
             go,
             b"type",
-            BunString::from_bytes(self.host_provider.type_str().as_bytes()).to_js(go)?,
+            BunString::static_(self.host_provider.type_str()).to_js(go)?,
         );
         obj.put(
             go,
             b"domain",
-            BunString::from_bytes(self.host_provider.domain()).to_js(go)?,
+            bun_string_jsc::create_utf8_for_js(go, self.host_provider.domain())?,
         );
         obj.put(
             go,
             b"project",
-            BunString::from_bytes(self.project()).to_js(go)?,
+            bun_string_jsc::create_utf8_for_js(go, self.project())?,
         );
         obj.put(
             go,
             b"user",
             if let Some(user) = self.user() {
-                BunString::from_bytes(user).to_js(go)?
+                bun_string_jsc::create_utf8_for_js(go, user)?
             } else {
                 JSValue::NULL
             },
@@ -39,7 +40,7 @@ impl HostedGitInfoJsc for bun_install::hosted_git_info::HostedGitInfo {
             go,
             b"committish",
             if let Some(committish) = self.committish() {
-                BunString::from_bytes(committish).to_js(go)?
+                bun_string_jsc::create_utf8_for_js(go, committish)?
             } else {
                 JSValue::NULL
             },
@@ -73,11 +74,9 @@ pub fn js_parse_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
 
     // TODO(markovejnovic): This feels like there's too much going on all
     // to give us a slice. Maybe there's a better way to code this up.
-    let npa_str = bun_core::OwnedString::new(arg0.to_bun_string(go)?);
-    // `ZigStringSlice` is read-only, so take an owned copy via `into_vec()`
-    // (`parse_url` itself only needs `&[u8]`).
-    let mut as_utf8 = npa_str.to_utf8().into_vec();
-    let parsed = match hgi::parse_url(as_utf8.as_mut_slice()) {
+    let npa_str = arg0.to_bun_string(go)?;
+    let as_utf8 = npa_str.to_utf8();
+    let parsed = match hgi::parse_url(as_utf8.slice()) {
         Ok(p) => p,
         Err(err) => {
             return Err(go.throw(format_args!(
@@ -112,11 +111,9 @@ pub fn js_from_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
 
     // TODO(markovejnovic): This feels like there's too much going on all to give us a slice.
     // Maybe there's a better way to code this up.
-    let npa_str = bun_core::OwnedString::new(arg0.to_bun_string(go)?);
-    // `ZigStringSlice` is read-only, so take an owned copy
-    // (`from_url` itself only needs `&[u8]`).
-    let mut as_utf8 = npa_str.to_utf8().into_vec();
-    let parsed = match HostedGitInfo::from_url(as_utf8.as_mut_slice()) {
+    let npa_str = arg0.to_bun_string(go)?;
+    let as_utf8 = npa_str.to_utf8();
+    let parsed = match HostedGitInfo::from_url(as_utf8.slice()) {
         Ok(Some(p)) => p,
         Ok(None) => return Ok(JSValue::NULL),
         Err(err) => {

@@ -43,6 +43,7 @@ impl YAML {
         cyclic_aliases: CyclicAliases,
     ) -> Result<Expr, YamlParseError> {
         bun_core::analytics::Features::yaml_parse_inc();
+        source.check_parseable_len(log, "YAML document")?;
 
         let mut parser: Parser<Utf8> = Parser::init(bump, source.contents(), cyclic_aliases);
 
@@ -88,6 +89,13 @@ pub enum YamlParseError {
 }
 
 bun_core::oom_from_alloc!(YamlParseError);
+
+/// Already logged, like every other `SyntaxError`.
+impl From<bun_ast::SourceTooLarge> for YamlParseError {
+    fn from(_: bun_ast::SourceTooLarge) -> Self {
+        YamlParseError::SyntaxError
+    }
+}
 
 impl From<YamlParseError> for crate::Error {
     fn from(e: YamlParseError) -> Self {
@@ -422,6 +430,17 @@ pub trait Encoding: Copy + 'static {
     }
 }
 
+#[inline]
+fn byte_literal(s: &'static [u8]) -> EncLit<u8> {
+    debug_assert!(s.len() <= 8, "Enc::literal: bump EncLit cap");
+    let mut buf = [0u8; 8];
+    buf[..s.len()].copy_from_slice(s);
+    EncLit {
+        buf,
+        len: s.len() as u8,
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct Latin1;
 #[derive(Clone, Copy)]
@@ -438,13 +457,7 @@ impl Encoding for Latin1 {
     }
     #[inline]
     fn literal(s: &'static [u8]) -> EncLit<u8> {
-        debug_assert!(s.len() <= 8, "Enc::literal: bump EncLit cap");
-        let mut buf = [0u8; 8];
-        buf[..s.len()].copy_from_slice(s);
-        EncLit {
-            buf,
-            len: s.len() as u8,
-        }
+        byte_literal(s)
     }
     #[inline]
     fn key_bytes(s: &[u8]) -> &[u8] {
@@ -470,13 +483,7 @@ impl Encoding for Utf8 {
     }
     #[inline]
     fn literal(s: &'static [u8]) -> EncLit<u8> {
-        debug_assert!(s.len() <= 8, "Enc::literal: bump EncLit cap");
-        let mut buf = [0u8; 8];
-        buf[..s.len()].copy_from_slice(s);
-        EncLit {
-            buf,
-            len: s.len() as u8,
-        }
+        byte_literal(s)
     }
     #[inline]
     fn key_bytes(s: &[u8]) -> &[u8] {
@@ -704,8 +711,6 @@ pub enum ParseError {
     UnexpectedDocumentEnd,
     #[error("MultipleYamlDirectives")]
     MultipleYamlDirectives,
-    #[error("InvalidIndentation")]
-    InvalidIndentation,
     #[error("StackOverflow")]
     StackOverflow,
     #[error("ExcessiveAliasing")]
@@ -1934,7 +1939,6 @@ pub enum ParseResultError {
     UnexpectedDocumentStart { pos: Pos },
     UnexpectedDocumentEnd { pos: Pos },
     MultipleYamlDirectives { pos: Pos },
-    InvalidIndentation { pos: Pos },
     ExcessiveAliasing { pos: Pos },
     CyclicAlias { pos: Pos },
     CyclicMerge { pos: Pos },
@@ -1991,9 +1995,6 @@ impl ParseResultError {
             }
             ParseResultError::MultipleYamlDirectives { pos } => {
                 log.add_error(Some(source), pos.loc(), b"Multiple YAML directives");
-            }
-            ParseResultError::InvalidIndentation { pos } => {
-                log.add_error(Some(source), pos.loc(), b"Invalid indentation");
             }
             ParseResultError::ExcessiveAliasing { pos } => {
                 log.add_error(Some(source), pos.loc(), b"Excessive aliasing");
@@ -2068,9 +2069,6 @@ impl ParseResultError {
             ParseError::MultipleYamlDirectives => ParseResultError::MultipleYamlDirectives {
                 pos: parser.token.start,
             },
-            ParseError::InvalidIndentation => {
-                ParseResultError::InvalidIndentation { pos: parser.pos }
-            }
             ParseError::ExcessiveAliasing => ParseResultError::ExcessiveAliasing {
                 pos: parser.token.start,
             },
@@ -5220,7 +5218,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     }
 
     fn scan_literal_scalar(&mut self) -> Result<Token<Enc>, ParseError> {
-        // defer self.whitespace_buf.clearRetainingCapacity();
         let start = self.pos;
         let line = self.line;
 

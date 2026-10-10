@@ -14,6 +14,7 @@ pub enum Tag {
     AutoCommand,
     BuildCommand,
     BunxCommand,
+    CheckCommand,
     CreateCommand,
     DiscordCommand,
     GetCompletionsCommand,
@@ -42,6 +43,8 @@ pub enum Tag {
     PublishCommand,
     AuditCommand,
     WhyCommand,
+    DedupeCommand,
+    PruneCommand,
     FuzzilliCommand,
 }
 
@@ -55,6 +58,7 @@ impl Tag {
             Tag::AutoCommand => b'a',
             Tag::BuildCommand => b'b',
             Tag::BunxCommand => b'B',
+            Tag::CheckCommand => b'K',
             Tag::CreateCommand => b'c',
             Tag::DiscordCommand => b'D',
             Tag::GetCompletionsCommand => b'g',
@@ -82,6 +86,8 @@ impl Tag {
             Tag::PublishCommand => b'k',
             Tag::AuditCommand => b'A',
             Tag::WhyCommand => b'W',
+            Tag::DedupeCommand => b'd',
+            Tag::PruneCommand => b'N',
             Tag::FuzzilliCommand => b'F',
         }
     }
@@ -100,6 +106,8 @@ impl Tag {
                 | Tag::OutdatedCommand
                 | Tag::PublishCommand
                 | Tag::AuditCommand
+                | Tag::DedupeCommand
+                | Tag::PruneCommand
         )
     }
 
@@ -119,6 +127,8 @@ impl Tag {
                 | Tag::OutdatedCommand
                 | Tag::PublishCommand
                 | Tag::AuditCommand
+                | Tag::DedupeCommand
+                | Tag::PruneCommand
         )
     }
 
@@ -134,6 +144,7 @@ impl Tag {
         Self::AutoCommand,
         Self::BuildCommand,
         Self::BunxCommand,
+        Self::CheckCommand,
         Self::CreateCommand,
         Self::DiscordCommand,
         Self::GetCompletionsCommand,
@@ -161,6 +172,8 @@ impl Tag {
         Self::PublishCommand,
         Self::AuditCommand,
         Self::WhyCommand,
+        Self::DedupeCommand,
+        Self::PruneCommand,
         Self::FuzzilliCommand,
     ];
 
@@ -218,6 +231,8 @@ pub static LOADS_CONFIG: TagTable<bool> = TagTable({
     a[Tag::UpdateInteractiveCommand as usize] = true;
     a[Tag::PublishCommand as usize] = true;
     a[Tag::AuditCommand as usize] = true;
+    a[Tag::DedupeCommand as usize] = true;
+    a[Tag::PruneCommand as usize] = true;
     a
 });
 
@@ -237,6 +252,8 @@ pub static ALWAYS_LOADS_CONFIG: TagTable<bool> = TagTable({
     a[Tag::UpdateInteractiveCommand as usize] = true;
     a[Tag::PublishCommand as usize] = true;
     a[Tag::AuditCommand as usize] = true;
+    a[Tag::DedupeCommand as usize] = true;
+    a[Tag::PruneCommand as usize] = true;
     a
 });
 
@@ -244,7 +261,10 @@ pub static USES_GLOBAL_OPTIONS: TagTable<bool> = TagTable({
     let mut a = [true; Tag::COUNT];
     a[Tag::AddCommand as usize] = false;
     a[Tag::AuditCommand as usize] = false;
+    a[Tag::DedupeCommand as usize] = false;
+    a[Tag::PruneCommand as usize] = false;
     a[Tag::BunxCommand as usize] = false;
+    a[Tag::CheckCommand as usize] = false;
     a[Tag::CreateCommand as usize] = false;
     a[Tag::InfoCommand as usize] = false;
     a[Tag::InstallCommand as usize] = false;

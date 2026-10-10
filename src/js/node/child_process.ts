@@ -1,6 +1,5 @@
 // Hardcoded module "node:child_process"
 const EventEmitter = require("node:events");
-const OsModule = require("node:os");
 const { kHandle } = require("internal/shared");
 const {
   validateBoolean,
@@ -20,7 +19,10 @@ var BufferConcat = Buffer.concat;
 var BufferIsEncoding = Buffer.isEncoding;
 
 var kEmptyObject = ObjectCreate(null);
-var signals = OsModule.constants.signals;
+let signals;
+function getSignals() {
+  return (signals ??= require("node:os").constants.signals);
+}
 
 var ArrayPrototypeJoin = Array.prototype.join;
 var ArrayPrototypeIncludes = Array.prototype.includes;
@@ -42,6 +44,30 @@ var StringPrototypeStartsWith = String.prototype.startsWith;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 const MAX_BUFFER = 1024 * 1024;
+
+interface ExecException extends Error {
+  cmd?: string;
+}
+
+interface ExecResult {
+  stdout: string | Buffer;
+  stderr: string | Buffer;
+}
+
+interface ExecPromiseWithResolvers extends PromiseWithResolvers<ExecResult> {
+  promise: Promise<ExecResult> & { child?: ChildProcess };
+}
+
+interface SpawnSyncResult {
+  signal: string | null;
+  status: number | null;
+  output: (Buffer | string | null | undefined)[] | null;
+  pid: number;
+  stdout?: Buffer | string | null;
+  stderr?: Buffer | string | null;
+  error?: SystemError;
+}
+
 const kFromNode = Symbol("kFromNode");
 
 // Pass DEBUG_CHILD_PROCESS=1 to enable debug output
@@ -208,7 +234,7 @@ function spawn(file, args, options) {
  *   ) => any} [callback]
  * @returns {ChildProcess}
  */
-function execFile(file, args, options, callback) {
+function execFile(file, args, options?, callback?) {
   ({ file, args, options, callback } = normalizeExecFileArgs(file, args, options, callback));
 
   options = {
@@ -260,7 +286,7 @@ function execFile(file, args, options, callback) {
   let exited = false;
   let timeoutId;
 
-  let ex: Error | null = null;
+  let ex: ExecException | null = null;
 
   let cmd = file;
 
@@ -332,7 +358,7 @@ function execFile(file, args, options, callback) {
     try {
       child.kill(options.killSignal);
     } catch (e) {
-      ex = e;
+      ex = e as Error;
       exitHandler();
     }
   }
@@ -431,7 +457,7 @@ const kCustomPromisifySymbol = Symbol.for("nodejs.util.promisify.custom");
 
 const customPromiseExecFunction = orig => {
   return (...args) => {
-    const { resolve, reject, promise } = Promise.withResolvers();
+    const { resolve, reject, promise }: ExecPromiseWithResolvers = Promise.withResolvers();
 
     promise.child = orig(...args, (err, stdout, stderr) => {
       if (err !== null) {
@@ -493,7 +519,7 @@ execFile[kCustomPromisifySymbol][kCustomPromisifySymbol] = execFile[kCustomPromi
  *   error: Error;
  *   }}
  */
-function spawnSync(file, args, options) {
+function spawnSync(file, args, options?): SpawnSyncResult {
   options = {
     __proto__: null,
     maxBuffer: MAX_BUFFER,
@@ -558,6 +584,10 @@ function spawnSync(file, args, options) {
       exitedDueToTimeout,
       exitedDueToMaxBuffer,
       pid,
+    }: Omit<Bun.SyncSubprocess, "exitCode" | "stdout" | "stderr"> & {
+      exitCode: number | null;
+      stdout?: Buffer | number | null;
+      stderr?: Buffer | number | null;
     } = Bun.spawnSync({
       // normalizeSpawnargs has already prepended argv0 to the spawnargs array
       // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
@@ -580,10 +610,16 @@ function spawnSync(file, args, options) {
       killSignal: options.killSignal,
       maxBuffer: options.maxBuffer,
     });
-  } catch (err) {
+  } catch (err: any) {
     error = err;
     stdout = null;
     stderr = null;
+    // Bun.spawnSync puts `pid`, `exitCode` and `signalCode` on the error it throws when the process ran and its
+    // output was lost. Any other error means the process never ran, which node reports as `status: null` and
+    // `pid: 0`.
+    exitCode = err?.exitCode ?? null;
+    signalCode = err?.signalCode;
+    pid = err?.pid ?? 0;
   }
 
   // When stdio is redirected to a file descriptor, Bun.spawnSync returns the fd number
@@ -591,11 +627,13 @@ function spawnSync(file, args, options) {
   const outputStdout = typeof stdout === "number" ? null : stdout;
   const outputStderr = typeof stderr === "number" ? null : stderr;
 
-  const result = {
-    signal: signalCode ?? null,
+  const result: SpawnSyncResult = {
+    // A signal with no name (a number from Bun.spawn) is "" in node: https://github.com/nodejs/node/blob/v26.3.0/src/spawn_sync.cc#L732
+    signal: typeof signalCode === "number" ? "" : (signalCode ?? null),
     status: exitCode,
     // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
-    output: [null, outputStdout, outputStderr],
+    // node: `output` is null when the process never ran.
+    output: error !== undefined && error?.pid === undefined ? null : [null, outputStdout, outputStderr],
     pid,
   };
 
@@ -603,16 +641,19 @@ function spawnSync(file, args, options) {
     result.error = error;
   }
 
-  if (outputStdout && encoding && encoding !== "buffer") {
-    result.output[1] = result.output[1]?.toString(encoding);
+  const output = result.output;
+  if (output) {
+    if (outputStdout && encoding && encoding !== "buffer") {
+      output[1] = output[1]?.toString(encoding);
+    }
+
+    if (outputStderr && encoding && encoding !== "buffer") {
+      output[2] = output[2]?.toString(encoding);
+    }
   }
 
-  if (outputStderr && encoding && encoding !== "buffer") {
-    result.output[2] = result.output[2]?.toString(encoding);
-  }
-
-  result.stdout = result.output[1];
-  result.stderr = result.output[2];
+  result.stdout = output?.[1];
+  result.stderr = output?.[2];
 
   if (exitedDueToTimeout && error == null) {
     result.error = new SystemError(
@@ -760,7 +801,7 @@ function stdioStringToArray(stdio, channel) {
  *   }} [options]
  * @returns {ChildProcess}
  */
-function fork(modulePath, args = [], options) {
+function fork(modulePath, args: string[] | Record<string, unknown> | null = [], options?) {
   modulePath = getValidatedPath(modulePath, "modulePath");
 
   // Get options and args arguments.
@@ -817,7 +858,7 @@ function convertToValidSignal(signal) {
   if (typeof signal === "number" && getSignalsToNamesMapping()[signal]) return signal;
 
   if (typeof signal === "string") {
-    const signalName = signals[StringPrototypeToUpperCase.$call(signal)];
+    const signalName = getSignals()[StringPrototypeToUpperCase.$call(signal)];
     if (signalName) return signalName;
   }
 
@@ -837,14 +878,15 @@ function getSignalsToNamesMapping() {
   if (signalsToNamesMapping !== undefined) return signalsToNamesMapping;
 
   signalsToNamesMapping = ObjectCreate(null);
-  for (const key in signals) {
-    signalsToNamesMapping[signals[key]] = key;
+  const names = getSignals();
+  for (const key in names) {
+    signalsToNamesMapping[names[key]] = key;
   }
 
   return signalsToNamesMapping;
 }
 
-function normalizeExecFileArgs(file, args, options, callback) {
+function normalizeExecFileArgs(file, args, options, callback?) {
   if ($isJSArray(args)) {
     args = ArrayPrototypeSlice.$call(args);
   } else if (args != null && typeof args === "object") {
@@ -906,7 +948,7 @@ function normalizeExecArgs(command, options, callback) {
 }
 
 const kBunEnv = Symbol("bunEnv");
-function normalizeSpawnArguments(file, args, options) {
+function normalizeSpawnArguments(file, args, options?) {
   validateString(file, "file");
   validateArgumentNullCheck(file, "file");
 
@@ -1103,8 +1145,11 @@ class ChildProcess extends EventEmitter {
   #closesNeeded = 1;
   #closesGot = 0;
 
-  signalCode = null;
-  exitCode = null;
+  declare send?: (message, handle?, options?, callback?) => boolean;
+  declare disconnect?: () => void;
+
+  signalCode: string | null = null;
+  exitCode: number | null = null;
   spawnfile;
   spawnargs;
   pid;
@@ -1118,10 +1163,11 @@ class ChildProcess extends EventEmitter {
   }
 
   #handleOnExit(exitCode, signalCode, err) {
-    if (signalCode) {
+    if (typeof signalCode === "string") {
       this.signalCode = signalCode;
     } else {
-      this.exitCode = exitCode;
+      // A signal with no name (a number from Bun.spawn) is "" in node, which then stores libuv's exit status, 0: https://github.com/nodejs/node/blob/v26.3.0/src/process_wrap.cc#L410
+      this.exitCode = typeof signalCode === "number" ? 0 : exitCode;
     }
 
     // Drain stdio streams
@@ -1401,6 +1447,18 @@ class ChildProcess extends EventEmitter {
       validateArray(options.args, "options.args");
       spawnargs = this.spawnargs = options.args;
     }
+    // What script of a disposed Bun.ModuleGraph starts does not start, and reports nothing: a
+    // child without a handle, as after a failed spawn, but with no 'error' and no 'close'.
+    if (require("internal/shared").isStoppedModuleGraphRunning()) {
+      this.#handle = null;
+      // (fork() always gives its child a channel: this one sends nothing.)
+      if (has_ipc) {
+        this.send = () => false;
+        this.disconnect = () => {};
+      }
+      return;
+    }
+
     // normalizeSpawnargs has already prepended argv0 to the spawnargs array
     // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
     // so we have to set argv0 to spawnargs[0] and cmd[0] to file
@@ -1471,7 +1529,8 @@ class ChildProcess extends EventEmitter {
         }
       }
     } catch (ex) {
-      const exCode = ex != null && typeof ex === "object" && Object.hasOwn(ex, "code") ? ex.code : undefined;
+      const exCode =
+        ex != null && typeof ex === "object" && Object.hasOwn(ex, "code") ? (ex as SystemError).code : undefined;
       if (
         // node sends these errors on the next tick rather than throwing
         exCode === "EACCES" ||
@@ -1481,8 +1540,8 @@ class ChildProcess extends EventEmitter {
         exCode === "ENOENT"
       ) {
         this.#handle = null;
-        ex.syscall = "spawn " + this.spawnfile;
-        ex.spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
+        (ex as SystemError).syscall = "spawn " + this.spawnfile;
+        (ex as SystemError).spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
         process.nextTick(() => {
           this.emit("error", ex);
           this.emit("close", (ex as SystemError).errno ?? -1);
@@ -1497,7 +1556,7 @@ class ChildProcess extends EventEmitter {
         if (exCode !== undefined) {
           // Node throws errors that are not in the deferred list above
           // synchronously, with `syscall: "spawn"` (no file appended).
-          ex.syscall = "spawn";
+          (ex as SystemError).syscall = "spawn";
         }
         throw ex;
       }
@@ -1694,6 +1753,12 @@ function streamFdOf(item): number | undefined {
   const itemFd = ObjectHasOwn(item, "fd") ? item.fd : undefined;
   if (typeof itemFd === "number") return itemFd;
 
+  // The descriptor under a tls.TLSSocket carries TLS records, not the stream's bytes. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L1063-L1083
+  if (typeof item[Symbol.for("::buntls::")] === "function") {
+    // The message gets the class name only: a fully inspected TLSSocket reaches its key and passphrase.
+    throw $ERR_INVALID_ARG_VALUE("stdio", require("internal/util/inspect").inspect(item, { depth: -1 }));
+  }
+
   const handle = item._handle;
   const handleFd = handle ? handle.fd : undefined;
   if (typeof handleFd === "number") return handleFd;
@@ -1709,7 +1774,7 @@ function streamFdOf(item): number | undefined {
   return undefined;
 }
 
-function nodeToBun(item: string, index: number): string | number | null | NodeJS.TypedArray | ArrayBufferView {
+function nodeToBun(item: string, index: number): Bun.Spawn.NodeStdio[number] {
   // If not defined, use the default.
   // For stdin/stdout/stderr, it's pipe. For others, it's ignore.
   if (item == null) {
@@ -1952,137 +2017,6 @@ function genericNodeError(message, errorProperties) {
   return err;
 }
 
-// const messages = new Map();
-
-// Utility function for registering the error codes. Only used here. Exported
-// *only* to allow for testing.
-// function E(sym, val, def) {
-//   messages.set(sym, val);
-//   def = makeNodeErrorWithCode(def, sym);
-//   errorCodes[sym] = def;
-// }
-
-// function makeNodeErrorWithCode(Base, key) {
-//   return function NodeError(...args) {
-//     // const limit = Error.stackTraceLimit;
-//     // if (isErrorStackTraceLimitWritable()) Error.stackTraceLimit = 0;
-//     const error = new Base();
-//     // Reset the limit and setting the name property.
-//     // if (isErrorStackTraceLimitWritable()) Error.stackTraceLimit = limit;
-//     const message = getMessage(key, args);
-//     error.message = message;
-//     // captureLargerStackTrace(error);
-//     error.code = key;
-//     return error;
-//   };
-// }
-
-// function getMessage(key, args) {
-//   const msgFn = messages.get(key);
-//   if (args.length !== msgFn.length)
-//     throw new Error(
-//       `Invalid number of args for error message ${key}. Got ${args.length}, expected ${msgFn.length}.`
-//     );
-//   return msgFn(...args);
-// }
-
-// E(
-//   "ERR_INVALID_ARG_TYPE",
-//   (name, expected, actual) => {
-//     assert(typeof name === "string", "'name' must be a string");
-//     if (!$isJSArray(expected)) {
-//       expected = [expected];
-//     }
-
-//     let msg = "The ";
-//     if (StringPrototypeEndsWith(name, " argument")) {
-//       // For cases like 'first argument'
-//       msg += `${name} `;
-//     } else {
-//       const type = StringPrototypeIncludes(name, ".") ? "property" : "argument";
-//       msg += `"${name}" ${type} `;
-//     }
-//     msg += "must be ";
-
-//     const types = [];
-//     const instances = [];
-//     const other = [];
-
-//     for (const value of expected) {
-//       assert(
-//         typeof value === "string",
-//         "All expected entries have to be of type string"
-//       );
-//       if (ArrayPrototypeIncludes.$call(kTypes, value)) {
-//         ArrayPrototypePush(types, StringPrototypeToLowerCase(value));
-//       } else if (RegExpPrototypeExec(classRegExp, value) !== null) {
-//         ArrayPrototypePush(instances, value);
-//       } else {
-//         assert(
-//           value !== "object",
-//           'The value "object" should be written as "Object"'
-//         );
-//         ArrayPrototypePush(other, value);
-//       }
-//     }
-
-//     // Special handle `object` in case other instances are allowed to outline
-//     // the differences between each other.
-//     if (instances.length > 0) {
-//       const pos = ArrayPrototypeIndexOf(types, "object");
-//       if (pos !== -1) {
-//         ArrayPrototypeSplice.$call(types, pos, 1);
-//         $arrayPush(instances, "Object");
-//       }
-//     }
-
-//     if (types.length > 0) {
-//       if (types.length > 2) {
-//         const last = ArrayPrototypePop(types);
-//         msg += `one of type ${ArrayPrototypeJoin(types, ", ")}, or ${last}`;
-//       } else if (types.length === 2) {
-//         msg += `one of type ${types[0]} or ${types[1]}`;
-//       } else {
-//         msg += `of type ${types[0]}`;
-//       }
-//       if (instances.length > 0 || other.length > 0) msg += " or ";
-//     }
-
-//     if (instances.length > 0) {
-//       if (instances.length > 2) {
-//         const last = ArrayPrototypePop(instances);
-//         msg += `an instance of ${ArrayPrototypeJoin(
-//           instances,
-//           ", "
-//         )}, or ${last}`;
-//       } else {
-//         msg += `an instance of ${instances[0]}`;
-//         if (instances.length === 2) {
-//           msg += ` or ${instances[1]}`;
-//         }
-//       }
-//       if (other.length > 0) msg += " or ";
-//     }
-
-//     if (other.length > 0) {
-//       if (other.length > 2) {
-//         const last = ArrayPrototypePop(other);
-//         msg += `one of ${ArrayPrototypeJoin.$call(other, ", ")}, or ${last}`;
-//       } else if (other.length === 2) {
-//         msg += `one of ${other[0]} or ${other[1]}`;
-//       } else {
-//         if (StringPrototypeToLowerCase(other[0]) !== other[0]) msg += "an ";
-//         msg += `${other[0]}`;
-//       }
-//     }
-
-//     msg += `. Received ${determineSpecificType(actual)}`;
-
-//     return msg;
-//   },
-//   TypeError
-// );
-
 function ERR_UNKNOWN_SIGNAL(name) {
   const err = new TypeError(`Unknown signal: ${name}`);
   err.code = "ERR_UNKNOWN_SIGNAL";
@@ -2096,6 +2030,8 @@ function ERR_INVALID_OPT_VALUE(name, value) {
 }
 
 class SystemError extends Error {
+  declare spawnargs?: string[];
+  declare pid?: number;
   path;
   syscall;
   errno;

@@ -133,9 +133,9 @@ if (isDockerEnabled()) {
         const [{ x }] = await sql`select CAST(${value} as NUMERIC(30,20)) as x`;
         expect(x).toBe(value);
       }
-      // zero specifically
+      // zero specifically: it keeps the scale like every other value
       const [{ x }] = await sql`select CAST(${"0.00000000000000000000"} as NUMERIC(30,20)) as x`;
-      expect(x).toBe("0");
+      expect(x).toBe("0.00000000000000000000");
     });
 
     describe("Array helpers", () => {
@@ -265,7 +265,7 @@ if (isDockerEnabled()) {
         }
         {
           const [{ x }] =
-            await sql`select ${sql.array(Int32Array.from([100000, -2147483648, 2147483647]), "INT")} as x`;
+            await sql`select ${sql.array(Int32Array.from([100000, -2147483648, 2147483647]) as any, "INT")} as x`;
           expect(x).toEqual(new Int32Array([100000, -2147483648, 2147483647]));
         }
       });
@@ -473,15 +473,22 @@ if (isDockerEnabled()) {
         (NULL, NULL)
     `;
 
-          // Query the data
+          // Query the data. The bound parameter makes Bind request binary
+          // results (a parameterless statement is prepared and executed in one
+          // round trip and gets text), which is what routes `time` through the
+          // binary decoder this test is about; the float4 sentinel proves the
+          // rows really arrived in binary (text "0.1" would decode to 0.1).
           const result = await db`
       SELECT
         id,
         regular_time,
-        time_with_tz
+        time_with_tz,
+        0.1::real AS fmt
       FROM bun_time_test
+      WHERE id >= ${0}
       ORDER BY id
     `;
+          expect(result[0].fmt).toBe(Math.fround(0.1));
 
           // Verify that time values are returned as strings, not binary data
           expect(result[0].regular_time).toBe("09:00:00");
@@ -730,7 +737,7 @@ if (isDockerEnabled()) {
 
         // Every selected value shows up exactly once across the row's properties.
         const expectedValues = [1000, ...Array.from({ length: namedCount }, (_, i) => i + 1)].sort((a, b) => a - b);
-        expect(Object.values(row).sort((a, b) => a - b)).toEqual(expectedValues);
+        expect(Object.values<number>(row).sort((a, b) => a - b)).toEqual(expectedValues);
       });
 
       for (let size of [50, 60, 62, 64, 70, 100]) {
@@ -748,6 +755,9 @@ if (isDockerEnabled()) {
               expect(column).toBe(value);
               value++;
             }
+            // sizes past JSFinalObject::maxInlineCapacity take SQLClient.cpp's
+            // null-structure fallback; the row must still be spreadable.
+            expect({ ...result[0] }).toEqual(result[0]);
           });
         }
       }
@@ -803,7 +813,7 @@ if (isDockerEnabled()) {
     });
 
     test("Idle timeout is reset when a query is run", async () => {
-      const onClosePromise = Promise.withResolvers();
+      const onClosePromise = Promise.withResolvers<SQL.PostgresError>();
       const onclose = mock(err => {
         onClosePromise.resolve(err);
       });
@@ -853,6 +863,19 @@ if (isDockerEnabled()) {
       expect(error).toBeInstanceOf(SQL.SQLError);
       expect(error).toBeInstanceOf(SQL.PostgresError);
       expect(error.code).toBe(`ERR_POSTGRES_LIFETIME_TIMEOUT`);
+    });
+
+    // https://github.com/oven-sh/bun/issues/39940
+    // close() used to fire onclose once per pool slot, even for slots whose
+    // handshake never completed, so onconnect/onclose pairing drifted.
+    test("close() fires onclose only for connections that fired onconnect", async () => {
+      const onconnect = mock();
+      const onclose = mock();
+      const sql = postgres({ ...options, max: 10, onconnect, onclose });
+      await sql`select 1`;
+      await sql.close();
+      expect(onconnect).toHaveBeenCalled();
+      expect(onclose).toHaveBeenCalledTimes(onconnect.mock.calls.length);
     });
 
     // Last one wins.
@@ -1198,7 +1221,7 @@ if (isDockerEnabled()) {
           await sql
             .begin(async sql => {
               await sql`insert into test values(1)`;
-              await sql.savepoit("watpoint", async sql => {
+              await (sql as any).savepoit("watpoint", async sql => {
                 await sql`insert into test values(2)`;
                 throw new Error("fail");
               });
@@ -2984,7 +3007,7 @@ if (isDockerEnabled()) {
         try {
           await sql`select 1`;
           throw new Error("should not reach");
-        } catch (e) {
+        } catch (e: any) {
           expect(e).toBeInstanceOf(Error);
           expect(e).toBeInstanceOf(SQL.SQLError);
           expect(e).toBeInstanceOf(SQL.PostgresError);
@@ -11513,7 +11536,7 @@ CREATE TABLE ${table_name} (
           { area: "D", price: "NaN" },
         ];
         const results = await sql`INSERT INTO ${sql(random_name)} ${sql(body)} RETURNING *`;
-        expect(results[0].price).toEqual("0");
+        expect(results[0].price).toEqual("0.0000");
         expect(results[1].price).toEqual("0.0001");
         expect(results[2].price).toEqual("0.0010");
         expect(results[3].price).toEqual("0.0100");
@@ -11542,7 +11565,7 @@ CREATE TABLE ${table_name} (
         expect(results[23].price).toEqual("999999.9999");
 
         // negative numbers
-        expect(results[24].price).toEqual("0");
+        expect(results[24].price).toEqual("0.0000");
         expect(results[25].price).toEqual("-0.0001");
         expect(results[26].price).toEqual("-0.0010");
         expect(results[27].price).toEqual("-0.0100");
@@ -11617,7 +11640,7 @@ CREATE TABLE ${table_name} (
         ];
         const results = await sql`INSERT INTO ${sql(random_name)} ${sql(body)} RETURNING *`;
         results.forEach(row => {
-          expect(row.price).toBe("0");
+          expect(row.price).toBe("0.0000");
         });
       });
 
@@ -11776,7 +11799,7 @@ CREATE TABLE ${table_name} (
         try {
           await sql`UPDATE ${sql(random_name)} SET ${sql({ name: undefined, age: undefined })} WHERE id IN ${sql([1, 2])} RETURNING *`;
           expect.unreachable();
-        } catch (e) {
+        } catch (e: any) {
           expect(e).toBeInstanceOf(SyntaxError);
           expect(e.message).toBe("Update needs to have at least one column");
         }
@@ -11995,7 +12018,7 @@ CREATE TABLE ${table_name} (
           const sql = new Bun.SQL("postgres://localhost:5432/testdb", {
             adapter: "sqlite",
             filename: ":memory:",
-          });
+          } as Bun.SQL.Options);
 
           // Verify it's actually SQLite by checking the adapter type
           expect(sql.options.adapter).toBe("sqlite");
@@ -12030,7 +12053,7 @@ CREATE TABLE ${table_name} (
           }
 
           expect(error).toBeInstanceOf(Error);
-          expect(error.message).toMatchInlineSnapshot(
+          expect((error as Error).message).toMatchInlineSnapshot(
             `"Invalid URL 'sqlite://:memory:' for postgres. Did you mean to specify \`{ adapter: "sqlite" }\`?"`,
           );
           expect(sql).toBeUndefined();
@@ -12079,15 +12102,18 @@ CREATE TABLE ${table_name} (
 
         test("explicit adapter overrides even with conflicting connection string patterns", async () => {
           // Test that adapter explicitly set to sqlite works even with postgres-like connection info
-          const sql = new Bun.SQL(undefined as never, {
-            adapter: "sqlite",
-            filename: ":memory:",
-            hostname: "localhost", // These would normally suggest postgres
-            port: 5432,
-            username: "postgres",
-            password: "password",
-            database: "testdb",
-          });
+          const sql = new Bun.SQL(
+            undefined as never,
+            {
+              adapter: "sqlite",
+              filename: ":memory:",
+              hostname: "localhost", // These would normally suggest postgres
+              port: 5432,
+              username: "postgres",
+              password: "password",
+              database: "testdb",
+            } as Bun.SQL.Options,
+          );
 
           expect(sql.options.adapter).toBe("sqlite");
 
@@ -12362,7 +12388,7 @@ CREATE TABLE ${table_name} (
               try {
                 await db`INSERT INTO users (email) VALUES ('test@example.com')`;
                 throw new Error("Should have thrown an error");
-              } catch (e) {
+              } catch (e: any) {
                 expect(e).toBeInstanceOf(SQL.SQLiteError);
                 expect(e).toBeInstanceOf(SQL.SQLError);
                 expect(e.message).toContain("UNIQUE constraint failed");
@@ -12381,7 +12407,7 @@ CREATE TABLE ${table_name} (
               try {
                 await db`SELCT * FROM nonexistent`;
                 throw new Error("Should have thrown an error");
-              } catch (e) {
+              } catch (e: any) {
                 expect(e).toBeInstanceOf(SQL.SQLiteError);
                 expect(e).toBeInstanceOf(SQL.SQLError);
                 expect(e.message).toContain("syntax error");
@@ -12406,7 +12432,7 @@ CREATE TABLE ${table_name} (
               try {
                 await db2`INSERT INTO test (id) VALUES (2)`;
                 throw new Error("Should have thrown an error");
-              } catch (e) {
+              } catch (e: any) {
                 expect(e).toBeInstanceOf(SQL.SQLiteError);
                 expect(e).toBeInstanceOf(SQL.SQLError);
                 expect(e.code).toBe("SQLITE_BUSY");

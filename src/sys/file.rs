@@ -5,7 +5,6 @@
 //! are safe to drop). Use [`File::into_raw`] to hand the fd off,
 //! [`File::borrow`] for a non-owning `&File` view of someone else's fd.
 //! All methods preserve OS errno via [`crate::Maybe`].
-#![allow(clippy::module_inception)]
 
 use super::*;
 
@@ -144,9 +143,6 @@ impl File {
     pub fn read(&self, buf: &mut [u8]) -> Maybe<usize> {
         read(self.handle, buf)
     }
-    pub fn write(&self, buf: &[u8]) -> Maybe<usize> {
-        write(self.handle, buf)
-    }
     pub fn write_all(&self, mut buf: &[u8]) -> Maybe<()> {
         while !buf.is_empty() {
             let n = write(self.handle, buf)?;
@@ -227,25 +223,6 @@ impl File {
             }
         })
     }
-    /// Reads until
-    /// `buf` is full or EOF; returns the filled prefix.
-    pub fn read_fill_buf<'b>(&self, buf: &'b mut [u8]) -> Maybe<&'b mut [u8]> {
-        let mut read_amount: usize = 0;
-        while read_amount < buf.len() {
-            // POSIX uses pread() from offset 0 so a pre-advanced cursor
-            // doesn't truncate; Windows falls back to read().
-            #[cfg(unix)]
-            let rc = pread(self.handle, &mut buf[read_amount..], read_amount as i64);
-            #[cfg(not(unix))]
-            let rc = read(self.handle, &mut buf[read_amount..]);
-            match rc {
-                Err(err) => return Err(err),
-                Ok(0) => break,
-                Ok(n) => read_amount += n,
-            }
-        }
-        Ok(&mut buf[..read_amount])
-    }
     pub fn pwrite_all(&self, mut buf: &[u8], mut off: i64) -> Maybe<()> {
         while !buf.is_empty() {
             let n = pwrite(self.handle, buf, off)?;
@@ -302,9 +279,9 @@ impl File {
         {
             let rt = windows::GetFileType(self.handle.native());
             if rt == windows::FILE_TYPE_UNKNOWN {
-                let err = windows::get_last_win32_error();
+                let err = windows::Win32Error::get();
                 if err != windows::Win32Error::SUCCESS {
-                    return Err(Error::from_code(err.to_e(), Tag::fstat));
+                    return Err(Error::from_win32(err, Tag::fstat));
                 }
             }
             Ok(match rt {
@@ -389,7 +366,7 @@ impl File {
         input_path: &[u8],
     ) -> Maybe<Vec<u8>> {
         let dir = dir.as_fd();
-        let mut buf = bun_paths::PathBuffer::default();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Loose>(
             top_level_dir,
             &mut buf.0,

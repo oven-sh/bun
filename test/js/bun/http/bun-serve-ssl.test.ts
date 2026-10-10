@@ -133,7 +133,7 @@ describe("Bun.serve SSL validations", () => {
             tls: {
               rejectUnauthorized: false,
             },
-            keepAlive: false,
+            keepalive: false,
           });
           expect(res.status).toBe(200);
           expect(await res.text()).toBe("Hello, world!");
@@ -146,7 +146,7 @@ describe("Bun.serve SSL validations", () => {
           tls: {
             rejectUnauthorized: false,
           },
-          keepAlive: false,
+          keepalive: false,
         });
       });
     }
@@ -211,17 +211,44 @@ describe("Bun.serve per-serverName client certificate policy", () => {
       ],
       fetch: req => new Response(`served ${req.headers.get("host")}`),
     });
-    const { status: gatedNoCert } = await request(server.port, "admin.example.com");
-    const { status: gatedTrustedCert } = await request(server.port, "admin.example.com", trustedClient);
-    const { status: gatedUntrustedCert } = await request(server.port, "admin.example.com", untrustedClient);
-    const { status: lenientNoCert } = await request(server.port, "lenient.example.com");
-    const { status: defaultNoCert } = await request(server.port, "localhost");
+    const { status: gatedNoCert } = await request(server.port!, "admin.example.com");
+    const { status: gatedTrustedCert } = await request(server.port!, "admin.example.com", trustedClient);
+    const { status: gatedUntrustedCert } = await request(server.port!, "admin.example.com", untrustedClient);
+    const { status: lenientNoCert } = await request(server.port!, "lenient.example.com");
+    const { status: defaultNoCert } = await request(server.port!, "localhost");
     expect({ gatedNoCert, gatedTrustedCert, gatedUntrustedCert, lenientNoCert, defaultNoCert }).toEqual({
       gatedNoCert: "connection closed without a response",
       gatedTrustedCert: "HTTP/1.1 200 OK",
       gatedUntrustedCert: "connection closed without a response",
       lenientNoCert: "HTTP/1.1 200 OK",
       defaultNoCert: "HTTP/1.1 200 OK",
+    });
+  });
+
+  test("a serverName of more than 10 labels is selected at the handshake", async () => {
+    // The native SNI tree used to stop matching at 10 labels, so the entry
+    // was registered but the default certificate was served for it.
+    const longName = "a.b.c.d.e.f.g.h.i.j.k.example";
+    using server = Bun.serve({
+      port: 0,
+      tls: [
+        { key: serverKey, cert: serverCert },
+        {
+          serverName: longName,
+          key: serverKey,
+          cert: serverCert,
+          ca: clientCa,
+          requestCert: true,
+          rejectUnauthorized: true,
+        },
+      ],
+      fetch: req => new Response(`served ${req.headers.get("host")}`),
+    });
+    const { status: noCert } = await request(server.port!, longName);
+    const { status: trustedCert } = await request(server.port!, longName, trustedClient);
+    expect({ noCert, trustedCert }).toEqual({
+      noCert: "connection closed without a response",
+      trustedCert: "HTTP/1.1 200 OK",
     });
   });
 
@@ -243,10 +270,10 @@ describe("Bun.serve per-serverName client certificate policy", () => {
     });
     // Establish a resumable session on the open default name, then offer it on
     // the gated name without presenting a client certificate.
-    const { status: defaultFresh, session } = await request(server.port, "localhost");
+    const { status: defaultFresh, session } = await request(server.port!, "localhost");
     expect(session).toBeInstanceOf(Buffer);
-    const { status: defaultResumed } = await request(server.port, "localhost", { session });
-    const { status: gatedResumed } = await request(server.port, "admin.example.com", { session });
+    const { status: defaultResumed } = await request(server.port!, "localhost", { session });
+    const { status: gatedResumed } = await request(server.port!, "admin.example.com", { session });
     expect({ defaultFresh, defaultResumed, gatedResumed }).toEqual({
       defaultFresh: "HTTP/1.1 200 OK",
       defaultResumed: "HTTP/1.1 200 OK",

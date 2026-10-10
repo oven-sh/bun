@@ -1,4 +1,4 @@
-import { define } from "../../codegen/class-definitions";
+import { define } from "../../codegen/class-definitions.ts";
 
 function generate(ssl) {
   return define({
@@ -197,10 +197,6 @@ function generate(ssl) {
         cache: true,
       },
 
-      //   cork: {
-      //     fn: "cork",
-      //     length: 1,
-      //   },
       data: {
         getter: "getData",
         cache: true,
@@ -209,10 +205,6 @@ function generate(ssl) {
       readyState: {
         getter: "getReadyState",
       },
-
-      // topics: {
-      //   getter: "getTopics",
-      // },
 
       remoteFamily: {
         getter: "getRemoteFamily",
@@ -254,7 +246,7 @@ function generate(ssl) {
       },
       ...(ssl ? sslOnly : {}),
     },
-    finalize: true,
+    refCounted: true,
     construct: true,
     klass: {},
   });
@@ -498,7 +490,7 @@ export default [
     name: "BlockList",
     construct: true,
     call: false,
-    finalize: true,
+    refCounted: true,
     estimatedSize: true,
     // inspectCustom: true,
     structuredClone: { transferable: false, tag: 251, storable: false },

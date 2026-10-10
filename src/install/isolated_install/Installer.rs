@@ -133,14 +133,6 @@ pub(crate) enum OccupiedLink {
     },
 }
 
-impl OccupiedLink {
-    fn link(&self) -> &[u8] {
-        match self {
-            OccupiedLink::Moved { link, .. } | OccupiedLink::Kept { link, .. } => link,
-        }
-    }
-}
-
 impl<'a> Installer<'a> {
     // BACKREF accessors — `manager` points outside `Self`; see field doc.
     #[inline]
@@ -2155,58 +2147,70 @@ impl<'a> Installer<'a> {
 
     /// Main thread, when the tasks are done or the install stops.
     pub(crate) fn report_occupied_links(&self) {
-        let mut occupied = core::mem::take(&mut *self.occupied_links.lock());
+        let occupied = core::mem::take(&mut *self.occupied_links.lock());
         if occupied.is_empty() || self.manager().options.log_level.is_silent() {
             return;
         }
-        // The tasks add in any order, and the example has to be the same in each run.
-        occupied.sort_unstable_by(|a, b| a.link().cmp(b.link()));
-
-        let mut moved = occupied.iter().filter_map(|occupied| match occupied {
-            OccupiedLink::Moved { link, aside } => Some((link, aside)),
-            OccupiedLink::Kept { .. } => None,
-        });
-        if let Some((link, aside)) = moved.next() {
-            match moved.count() {
-                0 => bun_core::note!(
-                    "{} was a folder, not a link. Moved it to {}",
-                    bun_core::fmt::quote(link),
-                    bun_core::fmt::quote(aside),
-                ),
-                more => bun_core::note!(
-                    "{} folders were where dependency links belong. Moved each to a new <b>{}\\<name\\>-\\<id\\><r> folder beside its link, for example {} to {}",
-                    more + 1,
-                    bstr::BStr::new(symlinker::DISPLACED_PREFIX),
-                    bun_core::fmt::quote(link),
-                    bun_core::fmt::quote(aside),
-                ),
+        // The tasks add in any order, and the example has to be the same in each run: it is the
+        // link with the smallest path.
+        let mut moved: Option<(usize, &[u8], &[u8])> = None;
+        let mut kept: Option<(usize, &[u8], &sys::Error)> = None;
+        for occupied in &occupied {
+            match occupied {
+                OccupiedLink::Moved { link, aside } => {
+                    moved = Some(match moved {
+                        Some((count, first, _)) if &**link < first => (count + 1, link, aside),
+                        Some((count, first, first_aside)) => (count + 1, first, first_aside),
+                        None => (1, link, aside),
+                    });
+                }
+                OccupiedLink::Kept { link, err } => {
+                    kept = Some(match kept {
+                        Some((count, first, _)) if &**link < first => (count + 1, link, err),
+                        Some((count, first, first_err)) => (count + 1, first, first_err),
+                        None => (1, link, err),
+                    });
+                }
             }
         }
 
-        let mut kept = occupied.iter().filter_map(|occupied| match occupied {
-            OccupiedLink::Kept { link, err } => Some((link, err)),
-            OccupiedLink::Moved { .. } => None,
-        });
-        if let Some((link, err)) = kept.next() {
+        match moved {
+            None => {}
+            Some((1, link, aside)) => bun_core::note!(
+                "{} was a folder, not a link. Moved it to {}",
+                bun_core::fmt::quote(link),
+                bun_core::fmt::quote(aside),
+            ),
+            Some((count, link, aside)) => bun_core::note!(
+                "{} folders were where dependency links belong. Moved each to a new <b>{}\\<name\\>-\\<id\\><r> folder beside its link, for example {} to {}",
+                count,
+                bstr::BStr::new(symlinker::DISPLACED_PREFIX),
+                bun_core::fmt::quote(link),
+                bun_core::fmt::quote(aside),
+            ),
+        }
+
+        if let Some((count, link, err)) = kept {
             let name = bstr::BStr::new(err.name());
             let message = bstr::BStr::new(err.msg().unwrap_or(b"unknown error"));
             let syscall = <&'static str>::from(err.syscall);
-            match kept.count() {
-                0 => bun_core::warn!(
+            if count == 1 {
+                bun_core::warn!(
                     "{} is a folder where a dependency link belongs, and bun install cannot move it: {}: {} <d>({})<r>",
                     bun_core::fmt::quote(link),
                     name,
                     message,
                     syscall,
-                ),
-                more => bun_core::warn!(
+                );
+            } else {
+                bun_core::warn!(
                     "{} folders are where dependency links belong, and bun install cannot move them, for example {}: {}: {} <d>({})<r>",
-                    more + 1,
+                    count,
                     bun_core::fmt::quote(link),
                     name,
                     message,
                     syscall,
-                ),
+                );
             }
             bun_core::note!("Remove or rename each folder, then run <cyan>bun install<r> again");
         }

@@ -2214,6 +2214,58 @@ describe("a real directory where a dependency link belongs", () => {
     }
   });
 
+  test("a directory behind a link stays where it is", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "app",
+          workspaces: ["packages/m", "packages/linked"],
+          dependencies: { "@types/is-number": "1.0.0" },
+        }),
+        "packages/m/package.json": JSON.stringify({
+          name: "m",
+          version: "1.0.0",
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+        "outside/scope/is-number/mine.txt": "mine",
+        "outside/modules/no-deps/mine.txt": "mine",
+        "outside/member/package.json": JSON.stringify({
+          name: "linked",
+          version: "1.0.0",
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+        "outside/member/node_modules/no-deps/mine.txt": "mine",
+      },
+    });
+    const outside = join(packageDir, "outside");
+    const scope = join(packageDir, "node_modules", "@types");
+    const memberModules = join(packageDir, "packages", "m", "node_modules");
+    // The folder of a workspace is a link.
+    await symlink(join(outside, "member"), join(packageDir, "packages", "linked"), "dir");
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+
+    // A scope directory and the node_modules of a workspace are links.
+    await rm(scope, { recursive: true, force: true });
+    await symlink(join(outside, "scope"), scope, "dir");
+    await rm(memberModules, { recursive: true, force: true });
+    await symlink(join(outside, "modules"), memberModules, "dir");
+
+    for (const args of [["install"], ["install", "--force"]]) {
+      const install = await run(packageDir, args);
+      expect(install.stderr).not.toContain("note:");
+      expect(install.stderr).not.toContain("warn:");
+      expect(install.stderr).not.toContain("error:");
+      expect(await readdirSorted(join(outside, "scope"))).toEqual(["is-number"]);
+      expect(await readdirSorted(join(outside, "scope", "is-number"))).toEqual(["mine.txt"]);
+      expect(await readdirSorted(join(outside, "modules"))).toEqual(["no-deps"]);
+      expect(await readdirSorted(join(outside, "modules", "no-deps"))).toEqual(["mine.txt"]);
+      expect(await readdirSorted(join(outside, "member", "node_modules"))).toEqual(["no-deps"]);
+      expect(await readdirSorted(join(outside, "member", "node_modules", "no-deps"))).toEqual(["mine.txt"]);
+      expect(install.exitCode).toBe(0);
+    }
+  });
+
   describe("bun patch keeps the link of a dependency", () => {
     // `bun patch` prints the folder to edit and the command that commits it.
     function printed(stdout: string) {
@@ -2224,7 +2276,7 @@ describe("a real directory where a dependency link belongs", () => {
     }
     const copyOf = (nodeModules: string, key: string) => join(nodeModules, ".bun-patches", key);
 
-    test("the link points at the copy until --commit, and installs keep it", async () => {
+    test("the link points at the copy until --commit", async () => {
       const { packageDir } = await registry.createTestDir({
         bunfigOpts: { linker: "isolated" },
         files: rootWithNoDeps,
@@ -2244,15 +2296,6 @@ describe("a real directory where a dependency link belongs", () => {
       await write(join(slot, "index.js"), edit);
       // The copy is not the store entry.
       expect(await file(join(nodeModules, storeLink("no-deps", "1.0.0"), "index.js")).text()).not.toBe(edit);
-
-      for (const args of [["install"], ["install", "--force"], ["add", "a-dep@1.0.1"]]) {
-        const install = await run(packageDir, args);
-        expect(install.stderr).not.toContain("note:");
-        expect(install.stderr).not.toContain("warn:");
-        expect(readlinkSync(slot)).toBe(join(".bun-patches", "no-deps@1.0.0"));
-        expect(await file(join(slot, "index.js")).text()).toBe(edit);
-        expect(install.exitCode).toBe(0);
-      }
       const loaded = await run(packageDir, ["-p", "require('no-deps')"]);
       expect(loaded.stdout).toBe("EDITED\n");
 
@@ -2261,6 +2304,52 @@ describe("a real directory where a dependency link belongs", () => {
       expect(readlinkSync(slot)).toBe(join(".bun-patches", "no-deps@1.0.0"));
       expect(await file(join(slot, "index.js")).text()).not.toBe(edit);
     });
+
+    test.each(["install", "install --force", "add a-dep@1.0.1"])("bun %s keeps the link to the copy", async command => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: rootWithNoDeps,
+      });
+      const slot = join(packageDir, "node_modules", "no-deps");
+      expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+      expect((await run(packageDir, ["patch", "no-deps"])).exitCode).toBe(0);
+      await write(join(slot, "index.js"), edit);
+
+      const install = await run(packageDir, command.split(" "));
+      expect(install.stderr).not.toContain("note:");
+      expect(install.stderr).not.toContain("warn:");
+      expect(readlinkSync(slot)).toBe(join(".bun-patches", "no-deps@1.0.0"));
+      expect(await file(join(slot, "index.js")).text()).toBe(edit);
+      expect(install.exitCode).toBe(0);
+    });
+
+    test.each(["is gone", "has no package.json"])(
+      "a link to a copy that %s is a link with a wrong target",
+      async state => {
+        const { packageDir } = await registry.createTestDir({
+          bunfigOpts: { linker: "isolated" },
+          files: rootWithNoDeps,
+        });
+        const nodeModules = join(packageDir, "node_modules");
+        const slot = join(nodeModules, "no-deps");
+        expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+        expect((await run(packageDir, ["patch", "no-deps"])).exitCode).toBe(0);
+
+        if (state === "is gone") {
+          await rm(copyOf(nodeModules, "no-deps@1.0.0"), { recursive: true, force: true });
+        } else {
+          // The user removes the files of the package through the link.
+          await unlink(join(slot, "index.js"));
+          await unlink(join(slot, "package.json"));
+        }
+
+        const install = await run(packageDir, ["install"]);
+        expect(install.stderr).not.toContain("error:");
+        expect(readlinkSync(slot)).toBe(storeLink("no-deps", "1.0.0"));
+        expect(await version(slot)).toBe("1.0.0");
+        expect(install.exitCode).toBe(0);
+      },
+    );
 
     test.each([
       "node_modules/no-deps",
@@ -2305,6 +2394,41 @@ describe("a real directory where a dependency link belongs", () => {
         expect(install.exitCode).toBe(0);
       },
     );
+
+    test.each([
+      ["./node_modules/no-deps", "no-deps"],
+      ["node_modules//no-deps", "no-deps"],
+      ["node_modules/no-deps/.", "no-deps"],
+      ["node_modules/no-deps/", "no-deps"],
+      ["./node_modules/@types//is-number/", "@types/is-number"],
+    ])("bun patch %s and --commit of the same path", async (argument, name) => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: {
+          "package.json": JSON.stringify({ name: "app", dependencies: { [name]: "1.0.0" } }),
+        },
+      });
+      const nodeModules = join(packageDir, "node_modules");
+      const slot = join(nodeModules, name);
+      const key = `${name.replace("/", "%2F")}@1.0.0`;
+      expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+
+      const patch = await run(packageDir, ["patch", argument]);
+      expect(patch.stderr).not.toContain("error:");
+      expect(printed(patch.stdout)).toBe(`node_modules/${name}`);
+      expect(readlinkSync(slot)).toBe(join(name.startsWith("@") ? ".." : "", ".bun-patches", key));
+      expect(await readdirSorted(copyOf(nodeModules, key))).toContain("package.json");
+      expect(patch.exitCode).toBe(0);
+      await write(join(slot, "index.js"), edit);
+
+      const commit = await run(packageDir, ["patch", "--commit", argument]);
+      expect(commit.stderr).not.toContain("error:");
+      expect(commit.exitCode).toBe(0);
+      expect(await file(join(packageDir, "patches", `${key}.patch`)).text()).toContain("+module.exports = 'EDITED';");
+      expect(await readdirSorted(nodeModules)).toEqual([".bun", name.split("/")[0]]);
+      expect(readlinkSync(slot)).toContain(join(".bun", `${name.replace("/", "+")}@1.0.0`));
+      expect(await file(join(slot, "index.js")).text()).toBe(edit);
+    });
 
     test("a workspace and a scoped name: the copy is in the node_modules of the link", async () => {
       const { packageDir } = await registry.createTestDir({
@@ -2394,6 +2518,76 @@ describe("a real directory where a dependency link belongs", () => {
         expect(await version(join(nodeModules, "no-deps"))).toBe("2.0.0");
       },
     );
+
+    test("a link to a folder that bun patch did not make is a link with a wrong target", async () => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: {
+          ...rootWithNoDeps,
+          // The name of the directory of the copies is in this path, but this folder is not in node_modules.
+          "shared/.bun-patches/work/package.json": JSON.stringify({ name: "no-deps", version: "1.0.0" }),
+          "shared/.bun-patches/work/index.js": edit,
+        },
+      });
+      const slot = join(packageDir, "node_modules", "no-deps");
+      const work = join(packageDir, "shared", ".bun-patches", "work");
+      expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+      await unlink(slot);
+      await symlink(work, slot, "dir");
+
+      const refused = await run(packageDir, ["patch", "--commit", "node_modules/no-deps"]);
+      expect(refused.stderr).toMatch(
+        /^error: "node_modules\/no-deps" is a link to ".+work", not a folder that bun patch prepared$/m,
+      );
+      expect(existsSync(join(packageDir, "patches"))).toBe(false);
+      expect(refused.exitCode).toBe(1);
+
+      // An install writes the link that bun.lock names, and does not touch the folder.
+      const install = await run(packageDir, ["install"]);
+      expect(install.stderr).not.toContain("note:");
+      expect(readlinkSync(slot)).toBe(storeLink("no-deps", "1.0.0"));
+      expect(install.exitCode).toBe(0);
+
+      expect(await readdirSorted(work)).toEqual(["index.js", "package.json"]);
+      expect(await file(join(work, "index.js")).text()).toBe(edit);
+    });
+
+    test("--commit names the copy of an earlier bun patch when its link is gone", async () => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: rootWithNoDeps,
+      });
+      const nodeModules = join(packageDir, "node_modules");
+      const slot = join(nodeModules, "no-deps");
+      const copy = "node_modules/.bun-patches/no-deps@1.0.0";
+      expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+      expect((await run(packageDir, ["patch", "no-deps"])).exitCode).toBe(0);
+      await write(join(slot, "index.js"), edit);
+
+      // The user removes the link, and an install writes the link into the store.
+      await unlink(slot);
+      expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+      expect(readlinkSync(slot)).toBe(storeLink("no-deps", "1.0.0"));
+      expect(await file(join(packageDir, copy, "index.js")).text()).toBe(edit);
+
+      const refused = await run(packageDir, ["patch", "--commit", "node_modules/no-deps"]);
+      expect(refused.stderr).toContain(
+        `error: "node_modules/no-deps" is a link to "${storeLink("no-deps", "1.0.0")}", not a folder that bun patch prepared\n` +
+          `note: An earlier bun patch prepared a copy. To commit that copy, run bun patch --commit '${copy}'\n` +
+          `note: To prepare a new copy, run bun patch 'node_modules/no-deps'\n`,
+      );
+      expect(await file(join(packageDir, copy, "index.js")).text()).toBe(edit);
+      expect(refused.exitCode).toBe(1);
+
+      const commit = await run(packageDir, ["patch", "--commit", copy]);
+      expect(commit.stderr).not.toContain("error:");
+      expect(commit.exitCode).toBe(0);
+      expect(await file(join(packageDir, "patches", "no-deps@1.0.0.patch")).text()).toContain(
+        "+module.exports = 'EDITED';",
+      );
+      expect(await readdirSorted(nodeModules)).toEqual([".bun", "no-deps"]);
+      expect(await file(join(slot, "index.js")).text()).toBe(edit);
+    });
 
     test("a copy that an earlier bun made in place of the link moves aside, and --commit of that folder works", async () => {
       const { packageDir } = await registry.createTestDir({

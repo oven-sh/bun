@@ -146,14 +146,22 @@ impl Symlinker {
     }
 
     /// `bun patch` points the link of a dependency at its copy until `bun patch --commit`. A
-    /// link to a copy that is gone is a link with a wrong target.
+    /// link to a copy that is gone, or that has no package.json, is a link with a wrong target.
     #[cold]
     fn is_link_to_patch_copy(&mut self, current_link: &[u8]) -> bool {
-        is_patch_copy_link(current_link)
-            && !matches!(
-                bun_sys::stat(self.dest.slice_z()).map_err(|err| err.get_errno()),
-                Err(Errno::ENOENT | Errno::ENOTDIR)
-            )
+        if !is_patch_copy_link(self.dest.slice(), current_link) {
+            return false;
+        }
+        let manifest = [self.dest.slice(), &[bun_paths::SEP], b"package.json"].concat();
+        // `Path::from` does not check the length.
+        if manifest.len() >= bun_paths::MAX_PATH_BYTES {
+            return true;
+        }
+        let mut manifest = bun_paths::Path::<u8>::from(&*manifest).assume_ok();
+        !matches!(
+            bun_sys::stat(manifest.slice_z()).map_err(|err| err.get_errno()),
+            Err(Errno::ENOENT | Errno::ENOTDIR)
+        )
     }
 
     fn dest_is_directory(&mut self) -> bool {
@@ -168,6 +176,21 @@ impl Symlinker {
             bun_sys::lstat(self.dest.slice_z())
                 .is_ok_and(|st| bun_sys::posix::s_isdir(st.st_mode as u32))
         }
+    }
+
+    /// True when a directory between the project and `dest` is a link: a scope directory, a
+    /// `node_modules`, or the folder of a workspace. What is behind that link is not in a
+    /// `node_modules` of this project.
+    fn dest_is_behind_link(&self) -> bool {
+        let project = strings::without_trailing_slash(bun_core::top_level_dir());
+        let mut dir = self.dest.dirname();
+        while let Some(path) = dir.filter(|path| path.len() > project.len()) {
+            if is_link(path) {
+                return true;
+            }
+            dir = bun_paths::dirname(path);
+        }
+        false
     }
 
     fn replace_file(&mut self) -> bun_sys::Result<Link> {
@@ -189,8 +212,9 @@ impl Symlinker {
     /// Nothing is deleted, and a directory that cannot move stays and is not an error.
     #[cold]
     fn replace_occupant(&mut self) -> bun_sys::Result<Link> {
-        // `.bun`, `.bin` and `.cache` are directories of node_modules itself.
-        if self.dest.basename().first() == Some(&b'.') {
+        // `.bun`, `.bin` and `.cache` are directories of node_modules itself. Behind a link, a
+        // move would rename a directory that is not in this project.
+        if self.dest.basename().first() == Some(&b'.') || self.dest_is_behind_link() {
             return self.replace_file_keep_directory();
         }
         #[cfg(windows)]
@@ -268,6 +292,18 @@ impl Symlinker {
             );
         }
         Ok(Link::Moved(aside.into_boxed_slice()))
+    }
+}
+
+fn is_link(path: &[u8]) -> bool {
+    let mut path = bun_paths::Path::<u8>::from(path).assume_ok();
+    #[cfg(windows)]
+    {
+        bun_sys::get_file_attributes(path.slice_z()).is_some_and(|a| a.is_reparse_point)
+    }
+    #[cfg(not(windows))]
+    {
+        bun_sys::lstat(path.slice_z()).is_ok_and(|st| bun_sys::posix::s_islnk(st.st_mode as u32))
     }
 }
 

@@ -1,180 +1,92 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { once } from "node:events";
+import type { IncomingMessage } from "node:http";
+import type { AddressInfo } from "node:net";
+import { WebSocket, WebSocketServer } from "ws";
 
 // https://github.com/oven-sh/bun/issues/3613
-// WebSocketServer handleProtocols option should set the selected protocol in the upgrade response
+// WebSocketServer handleProtocols option should set the selected protocol in the upgrade response.
+
+async function upgradeRequest(wss: WebSocketServer, clientProtocols: string) {
+  await once(wss, "listening");
+  const { port } = wss.address() as AddressInfo;
+
+  const connection = once(wss, "connection");
+  const res = await fetch(`http://127.0.0.1:${port}`, {
+    headers: {
+      Upgrade: "websocket",
+      Connection: "Upgrade",
+      "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+      "Sec-WebSocket-Version": "13",
+      "Sec-WebSocket-Protocol": clientProtocols,
+    },
+  });
+  await res.body?.cancel();
+  // If the upgrade was rejected, let the caller's status assertion fail with the
+  // actual status instead of hanging on a connection event that will never fire.
+  const ws = res.status === 101 ? ((await connection)[0] as WebSocket) : undefined;
+  return { res, ws };
+}
+
 test("ws WebSocketServer handleProtocols sets selected protocol", async () => {
-  using dir = tempDir("ws-handle-protocols", {
-    "server.js": `
-import { WebSocketServer } from 'ws';
-
-const wss = new WebSocketServer({
-  port: 0,
-  handleProtocols: (protocols, request) => {
-    return 'selected-protocol';
-  }
-});
-
-wss.on('listening', async () => {
-  const port = wss.address().port;
-  console.log('PORT:' + port);
-
-  // Test using fetch to verify the actual response headers
+  let receivedProtocols: Set<string> | undefined;
+  let receivedRequest: IncomingMessage | undefined;
+  const wss = new WebSocketServer({
+    port: 0,
+    handleProtocols: (protocols, request) => {
+      receivedProtocols = protocols;
+      receivedRequest = request;
+      return "selected-protocol";
+    },
+  });
+  let ws: WebSocket | undefined;
   try {
-    const res = await fetch('http://127.0.0.1:' + port, {
-      headers: {
-        "Upgrade": "websocket",
-        "Connection": "Upgrade",
-        "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
-        "Sec-WebSocket-Version": "13",
-        "Sec-WebSocket-Protocol": "custom-protocol, selected-protocol"
-      }
-    });
-    console.log("STATUS:" + res.status);
-    console.log("PROTOCOL:" + res.headers.get("sec-websocket-protocol"));
-  } catch (e) {
-    console.log("ERROR:" + e.message);
+    const result = await upgradeRequest(wss, "custom-protocol, selected-protocol");
+    ws = result.ws;
+
+    expect(receivedProtocols).toBeInstanceOf(Set);
+    expect([...receivedProtocols!]).toEqual(["custom-protocol", "selected-protocol"]);
+    expect(receivedRequest?.headers["sec-websocket-protocol"]).toBe("custom-protocol, selected-protocol");
+
+    expect(result.res.status).toBe(101);
+    expect(result.res.headers.get("sec-websocket-protocol")).toBe("selected-protocol");
+    expect(ws?.protocol).toBe("selected-protocol");
+  } finally {
+    ws?.close();
+    wss.close();
   }
-
-  wss.close();
-  process.exit(0);
-});
-
-wss.on('connection', (ws) => {
-  console.log('SERVER_WS_PROTOCOL:' + ws.protocol);
-});
-`,
-  });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "server.js"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  // The server should respond with the protocol selected by handleProtocols
-  expect(stdout).toContain("STATUS:101");
-  expect(stdout).toContain("PROTOCOL:selected-protocol");
-  expect(stdout).toContain("SERVER_WS_PROTOCOL:selected-protocol");
-  expect(exitCode).toBe(0);
 });
 
 test("ws WebSocketServer handleProtocols with no protocol", async () => {
-  using dir = tempDir("ws-handle-protocols-empty", {
-    "server.js": `
-import { WebSocketServer } from 'ws';
-
-const wss = new WebSocketServer({
-  port: 0,
-  handleProtocols: (protocols, request) => {
-    // Return empty string - should not set a protocol header
-    return '';
-  }
-});
-
-wss.on('listening', async () => {
-  const port = wss.address().port;
-  console.log('PORT:' + port);
-
+  const wss = new WebSocketServer({
+    port: 0,
+    handleProtocols: () => "",
+  });
+  let ws: WebSocket | undefined;
   try {
-    const res = await fetch('http://127.0.0.1:' + port, {
-      headers: {
-        "Upgrade": "websocket",
-        "Connection": "Upgrade",
-        "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
-        "Sec-WebSocket-Version": "13",
-        "Sec-WebSocket-Protocol": "custom-protocol"
-      }
-    });
-    console.log("STATUS:" + res.status);
-    // When handleProtocols returns empty, Bun falls back to client's first protocol
-    console.log("PROTOCOL:" + res.headers.get("sec-websocket-protocol"));
-  } catch (e) {
-    console.log("ERROR:" + e.message);
+    const result = await upgradeRequest(wss, "custom-protocol");
+    ws = result.ws;
+
+    expect(result.res.status).toBe(101);
+    expect(ws?.protocol).toBe("");
+  } finally {
+    ws?.close();
+    wss.close();
   }
-
-  wss.close();
-  process.exit(0);
-});
-
-wss.on('connection', (ws) => {
-  console.log('SERVER_WS_PROTOCOL:' + JSON.stringify(ws.protocol));
-});
-`,
-  });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "server.js"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  // The server should respond with 101 status
-  expect(stdout).toContain("STATUS:101");
-  expect(exitCode).toBe(0);
 });
 
 test("ws WebSocketServer without handleProtocols uses first client protocol", async () => {
-  using dir = tempDir("ws-no-handle-protocols", {
-    "server.js": `
-import { WebSocketServer } from 'ws';
-
-const wss = new WebSocketServer({
-  port: 0,
-  // No handleProtocols - should default to first client protocol
-});
-
-wss.on('listening', async () => {
-  const port = wss.address().port;
-  console.log('PORT:' + port);
-
+  const wss = new WebSocketServer({ port: 0 });
+  let ws: WebSocket | undefined;
   try {
-    const res = await fetch('http://127.0.0.1:' + port, {
-      headers: {
-        "Upgrade": "websocket",
-        "Connection": "Upgrade",
-        "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
-        "Sec-WebSocket-Version": "13",
-        "Sec-WebSocket-Protocol": "first-protocol, second-protocol"
-      }
-    });
-    console.log("STATUS:" + res.status);
-    console.log("PROTOCOL:" + res.headers.get("sec-websocket-protocol"));
-  } catch (e) {
-    console.log("ERROR:" + e.message);
+    const result = await upgradeRequest(wss, "first-protocol, second-protocol");
+    ws = result.ws;
+
+    expect(result.res.status).toBe(101);
+    expect(result.res.headers.get("sec-websocket-protocol")).toBe("first-protocol");
+    expect(ws?.protocol).toBe("first-protocol");
+  } finally {
+    ws?.close();
+    wss.close();
   }
-
-  wss.close();
-  process.exit(0);
-});
-
-wss.on('connection', (ws) => {
-  console.log('SERVER_WS_PROTOCOL:' + ws.protocol);
-});
-`,
-  });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "server.js"],
-    cwd: String(dir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  // Without handleProtocols, should default to first client protocol
-  expect(stdout).toContain("STATUS:101");
-  expect(stdout).toContain("PROTOCOL:first-protocol");
-  expect(stdout).toContain("SERVER_WS_PROTOCOL:first-protocol");
-  expect(exitCode).toBe(0);
 });

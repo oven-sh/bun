@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import fs, { readdirSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, mergeWindowEnvs, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 // Whether `bun init` emits CLAUDE.md depends on a `claude` binary being on
@@ -542,5 +542,148 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(fs.existsSync(path.join(temp, "README.md"))).toBe(false);
     expect(fs.existsSync(path.join(temp, "CLAUDE.md"))).toBe(false);
     expect(fs.existsSync(path.join(temp, ".cursor"))).toBe(false);
+  });
+
+  describe("agent rules", () => {
+    const cursorRule = ".cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc";
+    const ruleFrontmatter = "---\ndescription: Use Bun instead of Node.js, npm, pnpm, or vite.\n";
+    const ruleBody = "Default to using Bun instead of Node.js.\n";
+    // The frontmatter strip leaves the blank line that followed it.
+    const strippedRule = "\n" + ruleBody;
+
+    // A PATH whose only `claude` is a stub in `binDir`, so the result does not
+    // depend on whether Claude Code is installed on this machine.
+    function pathWithStubClaude(binDir: string): string {
+      const rest = (bunEnv.PATH ?? process.env.PATH ?? "")
+        .split(path.delimiter)
+        .filter(dir => dir && !Bun.which("claude", { PATH: dir }));
+      return [binDir, ...rest].join(path.delimiter);
+    }
+
+    async function initWith(
+      env: Record<string, string | undefined>,
+      files: Record<string, string> = {},
+      setup: (dir: string) => void = () => {},
+    ) {
+      const bin = tempDir("bun-init-claude-bin", {
+        "claude.cmd": "@echo off\r\necho stub\r\n",
+        "claude": "#!/bin/sh\necho stub\n",
+      });
+      fs.chmodSync(path.join(bin, "claude"), 0o755);
+      const temp = tempDir("bun-init-agent-rule", files);
+      setup(String(temp));
+      const dispose = async () => {
+        await bin[Symbol.asyncDispose]();
+        await temp[Symbol.asyncDispose]();
+      };
+
+      // Drop the detection switches the machine may carry. The test sets its own.
+      const base: Record<string, string | undefined> = {};
+      for (const [key, value] of Object.entries(bunEnv)) {
+        if (
+          !/^(BUN_AGENT_RULE_DISABLED|CLAUDE_CODE_AGENT_RULE_DISABLED|CURSOR_AGENT_RULE_DISABLED|CURSOR_TRACE_ID)$/i.test(
+            key,
+          )
+        ) {
+          base[key] = value;
+        }
+      }
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "init", "-y"],
+        cwd: String(temp),
+        stdio: ["ignore", "pipe", "pipe"],
+        // mergeWindowEnvs: on Windows bunEnv carries `Path`, and the child reads
+        // the first case-insensitive match, so a plain `PATH` override loses.
+        env: mergeWindowEnvs([base, { PATH: pathWithStubClaude(String(bin)), ...env }]),
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) {
+        await dispose();
+        expect(exitCode, stdout + stderr).toBe(0);
+      }
+      return { temp: String(temp), stdout, [Symbol.asyncDispose]: dispose };
+    }
+
+    test("claude on PATH writes CLAUDE.md without the cursor frontmatter", async () => {
+      await using init = await initWith({ CURSOR_AGENT_RULE_DISABLED: "1" });
+      const { temp, stdout } = init;
+
+      expect(stdout).toContain(" + CLAUDE.md");
+      expect(fs.readFileSync(path.join(temp, "CLAUDE.md"), "utf8")).toStartWith(strippedRule);
+      expect(fs.existsSync(path.join(temp, ".cursor"))).toBe(false);
+    });
+
+    test("CLAUDE_CODE_AGENT_RULE_DISABLED skips CLAUDE.md", async () => {
+      await using init = await initWith({ CURSOR_AGENT_RULE_DISABLED: "1", CLAUDE_CODE_AGENT_RULE_DISABLED: "1" });
+      const { temp } = init;
+
+      expect(fs.existsSync(path.join(temp, "CLAUDE.md"))).toBe(false);
+    });
+
+    test("an existing CLAUDE.md is kept", async () => {
+      await using init = await initWith({ CURSOR_AGENT_RULE_DISABLED: "1" }, { "CLAUDE.md": "mine\n" });
+      const { temp, stdout } = init;
+
+      expect(stdout).not.toContain(" + CLAUDE.md");
+      expect(fs.readFileSync(path.join(temp, "CLAUDE.md"), "utf8")).toBe("mine\n");
+    });
+
+    test("cursor only writes the cursor rule and no CLAUDE.md", async () => {
+      await using init = await initWith({ CLAUDE_CODE_AGENT_RULE_DISABLED: "1", CURSOR_TRACE_ID: "test-trace-id" });
+      const { temp } = init;
+
+      expect(fs.existsSync(path.join(temp, "CLAUDE.md"))).toBe(false);
+      expect(fs.lstatSync(path.join(temp, cursorRule)).isFile()).toBe(true);
+      expect(fs.readFileSync(path.join(temp, cursorRule), "utf8")).toStartWith(ruleFrontmatter);
+    });
+
+    test("an existing cursor rule is kept and CLAUDE.md is written without the frontmatter", async () => {
+      await using init = await initWith({ CURSOR_TRACE_ID: "test-trace-id" }, { [cursorRule]: "mine\n" });
+      const { temp, stdout } = init;
+
+      expect(stdout).toContain(" + CLAUDE.md");
+      expect(stdout).not.toContain(" + " + cursorRule);
+      expect(fs.lstatSync(path.join(temp, cursorRule)).isFile()).toBe(true);
+      expect(fs.readFileSync(path.join(temp, cursorRule), "utf8")).toBe("mine\n");
+      expect(fs.readFileSync(path.join(temp, "CLAUDE.md"), "utf8")).toStartWith(strippedRule);
+    });
+
+    test.skipIf(isWindows)("an existing symlink to CLAUDE.md keeps the frontmatter in CLAUDE.md", async () => {
+      await using init = await initWith({ CURSOR_TRACE_ID: "test-trace-id" }, {}, dir => {
+        fs.mkdirSync(path.join(dir, ".cursor", "rules"), { recursive: true });
+        fs.symlinkSync("../../CLAUDE.md", path.join(dir, cursorRule));
+      });
+      const { temp, stdout } = init;
+
+      expect(stdout).toContain(" + CLAUDE.md");
+      expect(fs.readlinkSync(path.join(temp, cursorRule))).toBe("../../CLAUDE.md");
+      expect(fs.readFileSync(path.join(temp, "CLAUDE.md"), "utf8")).toStartWith(ruleFrontmatter);
+    });
+
+    test("claude and cursor write CLAUDE.md and the cursor rule", async () => {
+      await using init = await initWith({ CURSOR_TRACE_ID: "test-trace-id" });
+      const { temp, stdout } = init;
+
+      const claudeMd = fs.readFileSync(path.join(temp, "CLAUDE.md"), "utf8");
+      const rule = fs.readFileSync(path.join(temp, cursorRule), "utf8");
+      expect(rule).toStartWith(ruleFrontmatter);
+      expect(rule).toContain(ruleBody);
+
+      if (isWindows) {
+        // Symlinks on Windows need Developer Mode or admin, so both are files.
+        expect(fs.lstatSync(path.join(temp, cursorRule)).isFile()).toBe(true);
+        expect(claudeMd).toStartWith(strippedRule);
+        expect(stdout).toContain(" + CLAUDE.md");
+        expect(stdout).toContain(" + " + cursorRule);
+      } else {
+        // The cursor rule is a symlink to CLAUDE.md, so CLAUDE.md keeps the frontmatter.
+        expect(fs.lstatSync(path.join(temp, cursorRule)).isSymbolicLink()).toBe(true);
+        expect(fs.readlinkSync(path.join(temp, cursorRule))).toBe("../../CLAUDE.md");
+        expect(claudeMd).toStartWith(ruleFrontmatter);
+        expect(stdout).toContain(" + CLAUDE.md");
+        expect(stdout).toContain(` + ${cursorRule} -> CLAUDE.md`);
+      }
+    });
   });
 });

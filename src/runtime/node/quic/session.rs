@@ -266,6 +266,14 @@ pub(super) struct DeferredAbort {
     marker: u64,
 }
 
+/// The second argument of `ondatagramstatus` (node's `quic::DatagramStatus`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum DatagramStatus {
+    Acknowledged,
+    Lost,
+    Abandoned,
+}
+
 pub(super) enum SessionEvent {
     HandshakeDone {
         ok: bool,
@@ -317,13 +325,11 @@ pub(super) enum SessionEvent {
         payload: Vec<u8>,
         early: bool,
     },
+    /// `count` datagrams, with consecutive ids from `first_id`, got `status`.
     DatagramStatus {
-        id: u64,
-        sent: bool,
-    },
-    DatagramAckStatus {
-        count: u32,
-        acked: bool,
+        first_id: u64,
+        count: u64,
+        status: DatagramStatus,
     },
     EarlyDataFailed,
     /// HTTP/3 ORIGIN frame payload (RFC 9412).
@@ -377,7 +383,6 @@ pub(crate) struct QuicSession {
     datagram_queue: JsCell<VecDeque<(u64, Vec<u8>)>>,
     /// Monotonic id assigned by `sendDatagram` (Node returns it as a BigInt).
     next_datagram_id: Cell<u64>,
-    inflight_datagrams: JsCell<VecDeque<u64>>,
     ticket_delivered: Cell<bool>,
     pending_tickets: JsCell<VecDeque<(u64, Vec<u8>)>>,
     close_after_streams: Cell<bool>,
@@ -425,7 +430,6 @@ impl QuicSession {
             qlog_fin_sent: Cell::new(false),
             datagram_queue: JsCell::new(VecDeque::new()),
             next_datagram_id: Cell::new(1),
-            inflight_datagrams: JsCell::new(VecDeque::new()),
             ticket_delivered: Cell::new(false),
             pending_tickets: JsCell::new(VecDeque::new()),
             close_after_streams: Cell::new(false),
@@ -1246,27 +1250,31 @@ impl QuicSession {
                     );
                 }
             }
-            SessionEvent::DatagramStatus { id, sent } => {
-                if sent {
-                    self.add_stat(IDX_STATS_SESSION_DATAGRAMS_SENT, 1);
-                    self.inflight_datagrams.with_mut(|q| q.push_back(id));
-                    return Ok(());
+            SessionEvent::DatagramStatus {
+                first_id,
+                count,
+                status,
+            } => {
+                let stat = match status {
+                    DatagramStatus::Acknowledged => Some(IDX_STATS_SESSION_DATAGRAMS_ACKNOWLEDGED),
+                    DatagramStatus::Lost => Some(IDX_STATS_SESSION_DATAGRAMS_LOST),
+                    DatagramStatus::Abandoned => None,
+                };
+                // Each datagram is counted even when its status cannot be delivered.
+                let mut undelivered = Ok(());
+                for id in first_id..first_id + count {
+                    if let Some(stat) = stat {
+                        self.add_stat(stat, 1);
+                    }
+                    if undelivered.is_ok() {
+                        undelivered = self.emit_datagram_status(global, id, status);
+                    }
+                    // `ondatagramstatus` can destroy this session, which ends the run.
+                    if self.destroyed.get() {
+                        break;
+                    }
                 }
-                if !self.has_listener(LISTENER_FLAG_DATAGRAM_STATUS) {
-                    return Ok(());
-                }
-                let id_js = JSValue::from_uint64_no_truncate(global, id)?;
-                let status_js = global.common_strings().quic_datagram_abandoned();
-                if let Some(cb) = callbacks::get(global, "onSessionDatagramStatus") {
-                    let vm = global.bun_vm().as_mut();
-                    vm.event_loop_ref().run_callback(
-                        bun_event_loop::ContextId::NONE,
-                        cb,
-                        global,
-                        self.handle(),
-                        &[id_js, status_js],
-                    );
-                }
+                undelivered?;
             }
             SessionEvent::EarlyDataFailed => {
                 // Node parity: their `closed` promises reject with an
@@ -1284,47 +1292,6 @@ impl QuicSession {
                         stream.cancel_early_rejected(code);
                     }
                 }
-            }
-            SessionEvent::DatagramAckStatus { count, acked } => {
-                let status_js = if acked {
-                    global.common_strings().quic_datagram_acknowledged()
-                } else {
-                    global.common_strings().quic_datagram_lost()
-                };
-                // Every acknowledged/lost datagram is popped and counted even
-                // when its status cannot be delivered.
-                let mut undelivered = Ok(());
-                for _ in 0..count {
-                    let Some(id) = self.inflight_datagrams.with_mut(VecDeque::pop_front) else {
-                        break;
-                    };
-                    if acked {
-                        self.add_stat(IDX_STATS_SESSION_DATAGRAMS_ACKNOWLEDGED, 1);
-                    } else {
-                        self.add_stat(IDX_STATS_SESSION_DATAGRAMS_LOST, 1);
-                    }
-                    if !self.has_listener(LISTENER_FLAG_DATAGRAM_STATUS) || undelivered.is_err() {
-                        continue;
-                    }
-                    let id_js = match JSValue::from_uint64_no_truncate(global, id) {
-                        Ok(id_js) => id_js,
-                        Err(err) => {
-                            undelivered = Err(err);
-                            continue;
-                        }
-                    };
-                    if let Some(cb) = callbacks::get(global, "onSessionDatagramStatus") {
-                        let vm = global.bun_vm().as_mut();
-                        vm.event_loop_ref().run_callback(
-                            bun_event_loop::ContextId::NONE,
-                            cb,
-                            global,
-                            self.handle(),
-                            &[id_js, status_js],
-                        );
-                    }
-                }
-                undelivered?;
             }
             SessionEvent::VersionNegotiation { server_versions } => {
                 let Some((requested, min)) = self.verneg.get() else {
@@ -2145,7 +2112,7 @@ impl QuicSession {
             // Node reports the abandonment synchronously from within
             // sendDatagram.
             if self.datagram_drop_newest.get() {
-                self.report_datagram_abandoned(global, id)?;
+                self.emit_datagram_status(global, id, DatagramStatus::Abandoned)?;
                 // SAFETY: as above.
                 unsafe { (&raw mut (*self.state_mut()).last_datagram_id).write_unaligned(id) };
                 return JSValue::from_uint64_no_truncate(global, id);
@@ -2153,7 +2120,7 @@ impl QuicSession {
             if let Some((dropped_id, _)) = self.datagram_queue.with_mut(VecDeque::pop_front) {
                 // Runs the user's `ondatagramstatus`, which can destroy this
                 // session or close the conn before we get back here.
-                self.report_datagram_abandoned(global, dropped_id)?;
+                self.emit_datagram_status(global, dropped_id, DatagramStatus::Abandoned)?;
                 if self.destroyed.get() || self.conn.get().is_null() {
                     return JSValue::from_uint64_no_truncate(global, 0);
                 }
@@ -2169,14 +2136,23 @@ impl QuicSession {
         self.schedule_process();
         JSValue::from_uint64_no_truncate(global, id)
     }
-    /// Runs inside `sendDatagram`: what building the status left pending is
-    /// thrown from there.
-    fn report_datagram_abandoned(&self, global: &JSGlobalObject, id: u64) -> JsResult<()> {
+    /// One `ondatagramstatus(id, status)` call. Inside `sendDatagram`, an `Err` is thrown from there.
+    fn emit_datagram_status(
+        &self,
+        global: &JSGlobalObject,
+        id: u64,
+        status: DatagramStatus,
+    ) -> JsResult<()> {
         if !self.has_listener(LISTENER_FLAG_DATAGRAM_STATUS) {
             return Ok(());
         }
         let id_js = JSValue::from_uint64_no_truncate(global, id)?;
-        let status_js = global.common_strings().quic_datagram_abandoned();
+        let strings = global.common_strings();
+        let status_js = match status {
+            DatagramStatus::Acknowledged => strings.quic_datagram_acknowledged(),
+            DatagramStatus::Lost => strings.quic_datagram_lost(),
+            DatagramStatus::Abandoned => strings.quic_datagram_abandoned(),
+        };
         if let Some(cb) = callbacks::get(global, "onSessionDatagramStatus") {
             let vm = global.bun_vm().as_mut();
             vm.event_loop_ref().run_callback(
@@ -2565,7 +2541,11 @@ lsquic_callback! {
             let max = session.with_state(|s| s.max_datagram_size) as usize;
             if max == 0 || len > max {
                 session.datagram_queue.with_mut(VecDeque::pop_front);
-                session.push_event(SessionEvent::DatagramStatus { id, sent: false });
+                session.push_event(SessionEvent::DatagramStatus {
+                    first_id: id,
+                    count: 1,
+                    status: DatagramStatus::Abandoned,
+                });
                 // SAFETY: the conn is live for this callback.
                 if let Some(c) = unsafe { lsquic::Conn::from_raw(session.conn.get()) } {
                     c.want_datagram_write(!session.datagram_queue.get().is_empty());
@@ -2580,23 +2560,40 @@ lsquic_callback! {
         unsafe {
             core::ptr::copy_nonoverlapping(payload.as_ptr(), buf.cast::<u8>(), payload.len())
         };
-        session.push_event(SessionEvent::DatagramStatus { id, sent: true });
-        if !session.datagram_queue.get().is_empty() {
-            // SAFETY: the conn is live for this callback.
-            if let Some(c) = unsafe { lsquic::Conn::from_raw(session.conn.get()) } {
+        session.add_stat(IDX_STATS_SESSION_DATAGRAMS_SENT, 1);
+        // SAFETY: the conn is live for this callback.
+        if let Some(c) = unsafe { lsquic::Conn::from_raw(session.conn.get()) } {
+            c.set_datagram_id(id);
+            if !session.datagram_queue.get().is_empty() {
                 c.want_datagram_write(true);
             }
         }
         payload.len() as isize
     }
 
-    pub(super) fn on_datagram_status(session: &QuicSession, count: c_uint, acked: c_int) {
-        if count == 0 {
-            return;
-        }
-        session.push_event(SessionEvent::DatagramAckStatus {
-            count,
-            acked: acked != 0,
+    pub(super) fn on_datagram_status(session: &QuicSession, id: u64, status: c_int) {
+        let status = match status {
+            lsquic::LSQ_DG_ACKED => DatagramStatus::Acknowledged,
+            lsquic::LSQ_DG_LOST => DatagramStatus::Lost,
+            // Node keeps a datagram it cannot send queued and retries it: https://github.com/nodejs/node/blob/v26.3.0/src/quic/application.cc#L280-L349
+            lsquic::LSQ_DG_UNSENT => DatagramStatus::Lost,
+            _ => {
+                debug_assert!(false, "unknown lsquic_dg_status");
+                DatagramStatus::Lost
+            }
+        };
+        // A run of consecutive ids with one status is one event.
+        session.events.with_mut(|events| match events.last_mut() {
+            Some(SessionEvent::DatagramStatus {
+                first_id,
+                count,
+                status: last,
+            }) if *last == status && *first_id + *count == id => *count += 1,
+            _ => events.push(SessionEvent::DatagramStatus {
+                first_id: id,
+                count: 1,
+                status,
+            }),
         });
     }
 

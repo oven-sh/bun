@@ -11,12 +11,13 @@ use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 use std::borrow::Cow;
 
+use crate::api::h2::stream_table::StreamTable;
 use crate::api::socket::{TCPSocket, TLSSocket};
 use crate::node::{Encoding, StringOrBuffer};
 use crate::socket::NativeCallbacks;
 use crate::webcore::AutoFlusher;
 use bstr::BStr;
-use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, VecExt};
+use bun_collections::{ByteVecExt, HiveArrayFallback, VecExt};
 use bun_core::strings;
 use bun_http::lshpack;
 use bun_jsc::AbortSignal;
@@ -842,6 +843,58 @@ impl Handlers {
 /// thunk in `generated_js2native.rs` (the generator snake-cases the export name).
 pub(crate) use JSH2FrameParser::get_constructor as h2_frame_parser_constructor;
 
+/// `http2StreamTables(parser)` of `bun:internal-for-testing`.
+pub(crate) fn stream_tables_for_testing(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let Some(parser) = H2FrameParser::from_js(callframe.argument(0)) else {
+        return Err(global.throw_invalid_arguments(format_args!("Expected an H2FrameParser")));
+    };
+    // SAFETY: `from_js` returned the live payload of the wrapper that argument 0 keeps alive.
+    let parser = unsafe { &*parser };
+    let Ok(engine) = parser.engine.try_borrow() else {
+        return Err(global.throw(format_args!("The session is in a frame dispatch")));
+    };
+    let table = |len: usize, walk_positions: usize, ids: Vec<u32>| -> JsResult<JSValue> {
+        let entry = JSValue::create_empty_object(global, 3);
+        entry.put(global, b"len", JSValue::js_number(len as f64));
+        entry.put(
+            global,
+            b"walkPositions",
+            JSValue::js_number(walk_positions as f64),
+        );
+        let open_order = JSValue::create_empty_array(global, ids.len())?;
+        for (i, id) in ids.iter().enumerate() {
+            open_order.put_index(global, i as u32, JSValue::js_number(*id as f64))?;
+        }
+        entry.put(global, b"ids", open_order);
+        Ok(entry)
+    };
+    let streams = parser.streams.get();
+    let contexts = parser.sctx.get();
+    let (engine_len, engine_walk, engine_ids) = engine.as_ref().map_or((0, 0, Vec::new()), |c| {
+        (c.streams.len(), c.streams.walk_positions(), c.streams.ids())
+    });
+    let result = JSValue::create_empty_object(global, 3);
+    result.put(
+        global,
+        b"streams",
+        table(streams.len(), streams.walk_positions(), streams.ids())?,
+    );
+    result.put(
+        global,
+        b"contexts",
+        table(contexts.len(), contexts.walk_positions(), contexts.ids())?,
+    );
+    result.put(
+        global,
+        b"engine",
+        table(engine_len, engine_walk, engine_ids)?,
+    );
+    Ok(result)
+}
+
 use bun_io::FixedBufferStream;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1139,7 +1192,7 @@ pub(crate) struct H2FrameParser {
     // TODO: this will be removed when I re-add header and data priorization
     outbound_queue_size: Cell<usize>,
 
-    streams: JsCell<BunHashMap<u32, *mut Stream>>,
+    streams: JsCell<StreamTable<*mut Stream>>,
 
     hpack: JsCell<Option<lshpack::HpackHandle>>,
 
@@ -1180,7 +1233,7 @@ pub(crate) struct H2FrameParser {
     /// on_headers_complete dispatches onStreamPush instead of onStreamHeaders).
     rewrite_pending_push: Cell<u32>,
     /// stream id -> JS stream context object, for the rewrite engine's Sink callbacks.
-    sctx: JsCell<BunHashMap<u32, StrongOptional>>,
+    sctx: JsCell<StreamTable<StrongOptional>>,
     /// In-progress decoded header array + sensitive-name array, accumulated across on_header.
     /// Packed name/value bytes of the header block being decoded (reused per block).
     hdr_block: JsCell<Vec<u8>>,
@@ -1236,7 +1289,7 @@ impl H2FrameParser {
     fn abort_stream_for_signal(&self, stream_id: u32, reason: JSValue) {
         bun_output::scoped_log!(H2FrameParser, "abortListener");
         reason.ensure_still_alive();
-        let Some(stream) = self.streams.get().get(&stream_id).copied() else {
+        let Some(stream) = self.streams.get().get(stream_id).copied() else {
             return;
         };
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
@@ -1269,15 +1322,7 @@ impl H2FrameParser {
     }
 }
 
-/// The streams hashmap may mutate when growing we use this when we need to make sure its safe to iterate over it
-///
-/// `bun_collections::HashMap` is backed by `std::collections::HashMap`, which
-/// exposes no bucket index and randomises iteration order on every mutation,
-/// so iterating while mutating is not possible directly. Instead we snapshot
-/// the stream IDs at `init` and re-look-up
-/// each one on demand: streams removed mid-loop are skipped, streams added
-/// mid-loop are not visited, and nothing is yielded twice. That's the
-/// guarantee the call sites actually rely on (flush / emit-to-all / detach).
+/// Walks a snapshot of the stream ids, so the loop body can run JS that opens or closes streams.
 pub(crate) struct StreamResumableIterator {
     // Note: `streams`
     // is `JsCell`-backed, so a shared backref suffices and the in-loop
@@ -1291,7 +1336,7 @@ pub(crate) struct StreamResumableIterator {
 }
 impl StreamResumableIterator {
     pub(crate) fn init(parser: &H2FrameParser) -> Self {
-        let ids = parser.streams.get().keys().copied().collect();
+        let ids = parser.streams.get().ids();
         Self {
             parser: bun_ptr::ParentRef::new(parser),
             ids,
@@ -1304,7 +1349,7 @@ impl StreamResumableIterator {
         let streams = self.parser.streams.get();
         while let Some(&id) = self.ids.get(self.index) {
             self.index += 1;
-            if let Some(&stream) = streams.get(&id) {
+            if let Some(&stream) = streams.get(id) {
                 return Some(stream);
             }
         }
@@ -1956,7 +2001,7 @@ impl Stream {
             // Release the engine-dispatch context root too; without this the Strong JS
             // stream object lives until the session dies.
             client.sctx.with_mut(|m| {
-                m.remove(&self.id);
+                m.take(self.id);
             });
         }
         self.detach_context();
@@ -3421,8 +3466,28 @@ impl H2FrameParser {
             return None;
         }
 
-        // already exists
-        if let Some(stream) = self.streams.get().get(&stream_identifier).copied() {
+        // One lookup finds the stream or opens a new one.
+        let mut is_new = false;
+        let stream = self.streams.with_mut(|streams| {
+            *streams.get_or_insert_with(stream_identifier, || {
+                is_new = true;
+                let local_window_size = if self.outstanding_settings.get() > 0 {
+                    DEFAULT_WINDOW_SIZE as u32
+                } else {
+                    self.local_settings.get().initial_window_size
+                };
+                bun_core::heap::into_raw(Box::new(Stream::init(
+                    stream_identifier,
+                    local_window_size,
+                    self.remote_settings
+                        .get()
+                        .map(|s| s.initial_window_size)
+                        .unwrap_or(DEFAULT_WINDOW_SIZE as u32),
+                    self.padding_strategy.get(),
+                )))
+            })
+        });
+        if !is_new {
             return Some(stream);
         }
 
@@ -3435,24 +3500,6 @@ impl H2FrameParser {
         {
             self.last_peer_stream_id.set(stream_identifier);
         }
-
-        // new stream open
-        let local_window_size = if self.outstanding_settings.get() > 0 {
-            DEFAULT_WINDOW_SIZE as u32
-        } else {
-            self.local_settings.get().initial_window_size
-        };
-        let stream = bun_core::heap::into_raw(Box::new(Stream::init(
-            stream_identifier,
-            local_window_size,
-            self.remote_settings
-                .get()
-                .map(|s| s.initial_window_size)
-                .unwrap_or(DEFAULT_WINDOW_SIZE as u32),
-            self.padding_strategy.get(),
-        )));
-        self.streams
-            .with_mut(|s| s.insert(stream_identifier, stream));
 
         let Some(this_value) = self.strong_this.get().try_get() else {
             return Some(stream);
@@ -3562,10 +3609,10 @@ impl H2FrameParser {
     /// by setStreamContext, i.e. server-side inbound streams) or the legacy stream's own context
     /// (populated directly by the legacy request() for client-initiated streams).
     fn rewrite_stream_ctx(&self, stream_id: u32) -> JSValue {
-        if let Some(ctx) = self.sctx.get().get(&stream_id).and_then(|s| s.get()) {
+        if let Some(ctx) = self.sctx.get().get(stream_id).and_then(|s| s.get()) {
             return ctx;
         }
-        if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+        if let Some(stream) = self.streams.get().get(stream_id).copied() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             return unsafe { (*stream).get_identifier() };
         }
@@ -3654,11 +3701,11 @@ impl H2FrameParser {
                 // client never sends frames on would otherwise park its entry forever
                 // (and get scanned on every read).
                 v.retain(|&(id, n)| {
-                    if let Some(s) = engine.streams.get_mut(&id) {
+                    if let Some(s) = engine.streams.get_mut(id) {
                         s.send_window.consume(n as i64);
                         false
                     } else {
-                        self.streams.get().contains_key(&id)
+                        self.streams.get().contains_key(id)
                     }
                 });
             });
@@ -3676,7 +3723,7 @@ impl H2FrameParser {
                 self.pending_engine_stream_closes.with_mut(|v| {
                     for id in v.drain(..) {
                         engine.close_stream(id);
-                        if let Some(stream) = self.streams.with_mut(|m| m.remove(&id)) {
+                        if let Some(stream) = self.streams.with_mut(|m| m.take(id)) {
                             // SAFETY: stream is the heap::alloc'd *mut Stream owned by the
                             // map entry just removed; free_resources ran when it was queued,
                             // dispatch_depth == 0 means no caller below us on the stack holds
@@ -3972,7 +4019,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         if stream_id == 0 {
             self.remote_window_size
                 .set(self.remote_window_size.get() + increment as u64);
-        } else if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+        } else if let Some(stream) = self.streams.get().get(stream_id).copied() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             unsafe { (*stream).remote_window_size += increment as u64 };
         }
@@ -4006,7 +4053,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     fn is_local_stream(&self, stream_id: u32) -> bool {
         // The legacy outbound created an entry in the legacy streams map for every locally
         // initiated stream (request/respond), so membership there means "we sent HEADERS on it".
-        self.streams.get().contains_key(&stream_id)
+        self.streams.get().contains_key(stream_id)
     }
 
     fn goaway_sent(&self) -> bool {
@@ -4020,7 +4067,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     }
 
     fn is_stream_reading(&self, stream_id: u32) -> bool {
-        match self.streams.get().get(&stream_id).copied() {
+        match self.streams.get().get(stream_id).copied() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             Some(stream) => unsafe { !(*stream).reading_paused },
             None => true,
@@ -4109,7 +4156,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
 
     fn on_headers_complete(&self, stream_id: u32, end_stream: bool, flags: u8) {
         // Bridge: the JS endAfterHeaders getter reads the legacy stream's end_after_headers flag.
-        if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+        if let Some(stream) = self.streams.get().get(stream_id).copied() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             unsafe { (*stream).end_after_headers = end_stream };
         }
@@ -4171,7 +4218,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         // state: remote-closed (6) on a stream whose local half is closed (5/7) is fully CLOSED (7),
         // mirroring the legacy handle_data/headers END_STREAM logic.
         let mut effective = state;
-        if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+        if let Some(stream) = self.streams.get().get(stream_id).copied() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             let legacy_state = unsafe { (*stream).state };
             if state == 6
@@ -4203,15 +4250,15 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             // local side during the HEADERS dispatch, so the legacy send-close branch saw
             // OPEN and skipped its teardown — free the legacy context here or it (its Strong
             // JS stream root, and the engine's map entry) leaks per request.
-            if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+            if let Some(stream) = self.streams.get().get(stream_id).copied() {
                 // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
                 unsafe { (*stream).free_resources::<false>(self) };
+            } else {
+                // No legacy entry, so free_resources did not release the JS context root.
+                self.sctx.with_mut(|m| {
+                    m.take(stream_id);
+                });
             }
-            // Release the per-stream JS context root so it can be collected (also done by
-            // free_resources, but a stream may have no legacy entry).
-            self.sctx.with_mut(|m| {
-                m.remove(&stream_id);
-            });
         }
     }
 
@@ -4243,7 +4290,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         // Bridge: mark the legacy stream closed with the rst code (capturing the prior state for
         // the aborted dispatch below).
         let mut old_state: u8 = StreamState::OPEN as u8;
-        if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+        if let Some(stream) = self.streams.get().get(stream_id).copied() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             unsafe {
                 old_state = (*stream).state as u8;
@@ -4270,13 +4317,14 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         }
         // The reset closes the stream; free the legacy slot (queueing the engine eviction)
         // and release its JS context root, mirroring the on_stream_end full-close path.
-        if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+        if let Some(stream) = self.streams.get().get(stream_id).copied() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             unsafe { (*stream).free_resources::<false>(self) };
+        } else {
+            self.sctx.with_mut(|m| {
+                m.take(stream_id);
+            });
         }
-        self.sctx.with_mut(|m| {
-            m.remove(&stream_id);
-        });
     }
 }
 
@@ -4964,7 +5012,7 @@ impl H2FrameParser {
         }
         if stream_id > 0 {
             // dont error but dont send frame to invalid stream id
-            if this.streams.get().get(&stream_id).is_none() {
+            if this.streams.get().get(stream_id).is_none() {
                 return Ok(JSValue::UNDEFINED);
             }
         }
@@ -4999,7 +5047,7 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         }
 
-        let Some(stream) = this.streams.get().get(&stream_id).copied() else {
+        let Some(stream) = this.streams.get().get(stream_id).copied() else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
 
@@ -5027,7 +5075,7 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         }
 
-        let Some(stream) = this.streams.get().get(&stream_id).copied() else {
+        let Some(stream) = this.streams.get().get(stream_id).copied() else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
@@ -5114,7 +5162,7 @@ impl H2FrameParser {
             }
         }
 
-        let Some(stream) = this.streams.get().get(&stream_id).copied() else {
+        let Some(stream) = this.streams.get().get(stream_id).copied() else {
             // Streams the legacy bookkeeping never registered (e.g. peer-initiated pushed streams
             // surfaced by the rewrite engine) get the RST_STREAM written directly. The frame is
             // built here rather than through the engine so this stays callable from inside an
@@ -5446,7 +5494,7 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         }
 
-        let Some(stream) = this.streams.get().get(&stream_id).copied() else {
+        let Some(stream) = this.streams.get().get(stream_id).copied() else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
@@ -5496,7 +5544,7 @@ impl H2FrameParser {
         }
         let stream_id = stream_arg.to_u32();
         let reading = reading_arg.to_boolean();
-        let Some(stream) = this.streams.get().get(&stream_id).copied() else {
+        let Some(stream) = this.streams.get().get(stream_id).copied() else {
             // The stream already finished (or never reached the wire); nothing to backpressure.
             return Ok(JSValue::UNDEFINED);
         };
@@ -5613,7 +5661,7 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         }
 
-        let Some(stream_ptr) = this.streams.get().get(&stream_id).copied() else {
+        let Some(stream_ptr) = this.streams.get().get(stream_id).copied() else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
         // The header/sensitive-object getters and value coercions below can run user JS
@@ -5943,7 +5991,7 @@ impl H2FrameParser {
         }
         let close = close_arg.to_boolean();
 
-        let Some(stream_ptr) = this.streams.get().get(&stream_id).copied() else {
+        let Some(stream_ptr) = this.streams.get().get(stream_id).copied() else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
         // Coercing `data_arg` (a String subclass's toString) can run user JS while `stream`
@@ -6341,7 +6389,7 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Expected stream_id to be a number")));
         }
 
-        let Some(stream) = this.streams.get().get(&stream_id_arg.to_u32()).copied() else {
+        let Some(stream) = this.streams.get().get(stream_id_arg.to_u32()).copied() else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
 
@@ -6370,7 +6418,7 @@ impl H2FrameParser {
             // Release: a pushed stream torn down before its PUSH_PROMISE left has no reset
             // dispatch coming, so the JS layer drops the context root explicitly.
             this.sctx.with_mut(|m| {
-                m.remove(&stream_id);
+                m.take(stream_id);
             });
             return Ok(JSValue::UNDEFINED);
         }
@@ -6388,7 +6436,7 @@ impl H2FrameParser {
         });
 
         // Legacy path: also set on the legacy stream if it still exists (best-effort).
-        if let Some(stream) = this.streams.get().get(&stream_id).copied() {
+        if let Some(stream) = this.streams.get().get(stream_id).copied() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             unsafe { (*stream).set_context(context_arg, global_object) };
         }
@@ -7538,7 +7586,7 @@ impl H2FrameParser {
             write_buffer: JsCell::new(Vec::<u8>::default()),
             write_buffer_offset: Cell::new(0),
             outbound_queue_size: Cell::new(0),
-            streams: JsCell::new(BunHashMap::default()),
+            streams: JsCell::new(StreamTable::default()),
             hpack: JsCell::new(None),
             has_nonnative_backpressure: Cell::new(false),
             js_socket_flushing: Cell::new(false),
@@ -7553,7 +7601,7 @@ impl H2FrameParser {
             engine: core::cell::RefCell::new(None),
             rewrite_tail: JsCell::new(Vec::new()),
             rewrite_pending_push: Cell::new(0),
-            sctx: JsCell::new(BunHashMap::default()),
+            sctx: JsCell::new(StreamTable::default()),
             hdr_block: JsCell::new(Vec::new()),
             hdr_meta: JsCell::new(Vec::new()),
         };
@@ -7835,7 +7883,7 @@ impl Drop for H2FrameParser {
         self.detach();
         // Note: take the map out first so `self` is free for
         // `free_resources(self)` while we walk the entries.
-        let streams = self.streams.replace(BunHashMap::default());
+        let streams = self.streams.replace(StreamTable::default());
         for (_, item) in streams.iter() {
             let stream = *item;
             // SAFETY: stream is *mut Stream from self.streams; this is final teardown, freed exactly once via heap::take
@@ -7855,7 +7903,7 @@ impl H2FrameParser {
         if VirtualMachine::get().is_shutting_down() {
             // Free the streams first: `free_resources` releases the refs their signals hold.
             // The map is emptied so a later `Drop` won't double-free.
-            let streams = self.streams.replace(BunHashMap::default());
+            let streams = self.streams.replace(StreamTable::default());
             for (_, item) in streams.iter() {
                 let stream = *item;
                 // SAFETY: map has been emptied; each entry is freed exactly once.

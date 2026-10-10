@@ -9,4 +9,5 @@ pub(crate) mod flow_control;
 pub(crate) mod hpack;
 pub(crate) mod settings;
 pub(crate) mod stream;
+pub(crate) mod stream_table;
 pub(crate) mod wire;

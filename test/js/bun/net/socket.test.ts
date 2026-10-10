@@ -1762,7 +1762,7 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
   };
 
   // In the order they connect. Half-open: a peer that reads the close_notify does not answer it.
-  const [PROBE, SILENT, DRIPPING, UNANSWERING, DESTROYED] = [0, 1, 2, 3, 4];
+  const [PROBE, SILENT, DRIPPING, UNANSWERING, LATE, DESTROYED] = [0, 1, 2, 3, 4, 5];
   const peers: Socket<{ received: number }>[] = [];
   const lastPeerPaused = Promise.withResolvers<void>();
   const keepsReading = (peer: Socket<{ received: number }>) => peer === peers[PROBE] || peer === peers[UNANSWERING];
@@ -1794,15 +1794,21 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
   let timeouts = 0;
   const reported: number[] = [0];
   const endedAt: number[] = [];
-  // A write that ends short leaves ciphertext unsent, and end() in the same tick finds it there.
-  const fillAndEnd = (socket: Socket) => {
+  const fill = (socket: Socket) => {
     let total = 0;
     for (let wrote = step.length; wrote === step.length; total += Math.max(wrote, 0)) wrote = socket.write(step);
     reported.push(total);
+  };
+  const end = (socket: Socket) => {
     // The owner's own timeout is over with its close.
     socket.timeout(1);
     socket.end();
     endedAt.push(performance.now());
+  };
+  // A write that ends short leaves ciphertext unsent, and end() in the same tick finds it there.
+  const fillAndEnd = (socket: Socket) => {
+    fill(socket);
+    end(socket);
   };
 
   const probeReady = Promise.withResolvers<Socket>();
@@ -1814,6 +1820,17 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
     closed.push(promise);
     await connected(fillAndEnd, () => resolve(performance.now()));
   }
+  const lateClosed = Promise.withResolvers<number>();
+  closed.push(lateClosed.promise);
+  const lateFilled = Promise.withResolvers<Socket>();
+  await connected(
+    socket => {
+      fill(socket);
+      lateFilled.resolve(socket);
+    },
+    () => lateClosed.resolve(performance.now()),
+  );
+  const late = await lateFilled.promise;
   const destroyed = tlsConnect({ port: server.port, host: "127.0.0.1", ca: tls.cert });
   await Promise.all([once(destroyed, "secureConnect"), lastPeerPaused.promise]);
   const destroyedFd: number = (destroyed as any)._handle.fd;
@@ -1825,6 +1842,12 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
   const openAfterDestroy = fdIsOpen(destroyedFd);
   if (refuses) socketFaultInjection.clear();
   await once(destroyed, "close");
+  // The kernel takes the unsent rest after a while, and the next write with it. The close_notify then goes out too, and
+  // all that this close waits for is the reply of a peer that reads none of it.
+  for (let tries = 0; tries < 200 && late.write("a") !== 1; tries++) await Bun.sleep(10);
+  // With no timeout of the owner's that could end the wait by chance.
+  late.end();
+  endedAt.push(performance.now());
 
   // Three reads of at most 512 KiB ahead of the deadline: progress that does not put it off, and well short of what is left.
   const drip = setInterval(() => peers[DRIPPING].resume(), 3000);
@@ -1850,7 +1873,10 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
         timeouts,
         cutShort: [missing(SILENT) > 0, missing(DRIPPING) > 0],
         // 10 s on a 4 s tick is 8 to 12 s after the end().
-        atTheDeadline: measured.closedAfterMs.slice(0, 2).map(ms => ms > 7_000 && ms < 16_000),
+        atTheDeadline: [SILENT, DRIPPING, LATE].map(peer => {
+          const ms = closedAfterMs[peer - 1];
+          return ms > 7_000 && ms < 16_000;
+        }),
         missing: missing(UNANSWERING),
       },
       JSON.stringify(measured),
@@ -1861,7 +1887,7 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
       timeouts: 0,
       // Outside Linux the loopback buffers can take all that a writer has left, and then its peer stalls nothing.
       cutShort: isLinux ? [true, true] : [expect.any(Boolean), expect.any(Boolean)],
-      atTheDeadline: isLinux ? [true, true] : [expect.any(Boolean), expect.any(Boolean)],
+      atTheDeadline: isLinux ? [true, true, true] : [expect.any(Boolean), expect.any(Boolean), true],
       missing: 0,
     });
   } finally {

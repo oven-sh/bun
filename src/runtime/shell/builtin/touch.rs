@@ -282,13 +282,8 @@ impl ShellTouchTask {
 
         // Call the bun_sys layer directly (uv_fs_utime on Windows) to avoid
         // the heavyweight NodeFS state.
-        let milliseconds = bun_core::time::milli_timestamp();
-        let atime = bun_sys::TimeLike {
-            sec: milliseconds.div_euclid(1_000),
-            nsec: milliseconds.rem_euclid(1_000) * 1_000_000,
-        };
-        let mtime = atime;
-        if let Err(err) = bun_sys::utimens(filepath, atime, mtime) {
+        let now = bun_sys::TimeLike::NOW;
+        if let Err(err) = bun_sys::utimens(filepath, now, now) {
             'out: {
                 if err.get_errno() == bun_sys::E::ENOENT {
                     const PERM: bun_sys::Mode = 0o664;

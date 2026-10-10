@@ -3481,6 +3481,11 @@ pub struct TimeLike {
     pub nsec: i64,
 }
 impl TimeLike {
+    /// The OS reads the clock. As both times of `utimens` it needs write access, not ownership.
+    pub const NOW: Self = Self {
+        sec: 0,
+        nsec: UTIME_NOW,
+    };
     #[inline]
     #[cfg(not(windows))]
     pub(crate) fn to_timespec(self) -> libc::timespec {
@@ -4173,16 +4178,21 @@ mod windows_impl {
         }
     }
     pub fn utimens(path: &ZStr, atime: TimeLike, mtime: TimeLike) -> Maybe<()> {
-        let a = atime.sec as f64 + atime.nsec as f64 / 1e9;
-        let m = mtime.sec as f64 + mtime.nsec as f64 / 1e9;
+        let to_uv = |time: TimeLike| {
+            if time.nsec == UTIME_NOW {
+                uv::UV_FS_UTIME_NOW
+            } else {
+                time.sec as f64 + time.nsec as f64 / 1e9
+            }
+        };
         let mut req = uv::fs_t::uninitialized();
         let rc = unsafe {
             uv::uv_fs_utime(
                 core::ptr::null_mut(),
                 &mut req,
                 path.as_ptr().cast::<_>(),
-                a,
-                m,
+                to_uv(atime),
+                to_uv(mtime),
                 None,
             )
         };

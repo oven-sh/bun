@@ -2109,6 +2109,86 @@ test("runs lifecycle scripts correctly", async () => {
   expect(allLifecycleScriptsDir).toEqual(["all-lifecycle-scripts"]);
 });
 
+test("optional dependency with a failing lifecycle script is removed along with the links to it", async () => {
+  // optional-lifecycle-fail@1.1.1 has `lifecycle-fail@1.1.1` in its
+  // optionalDependencies, and lifecycle-fail's preinstall script exits 1.
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "test-pkg-failed-optional-dependency",
+      dependencies: {
+        "optional-lifecycle-fail": "1.1.1",
+      },
+      trustedDependencies: ["lifecycle-fail"],
+    }),
+  );
+
+  const bunDir = join(packageDir, "node_modules", ".bun");
+  const dependentNodeModules = join(bunDir, "optional-lifecycle-fail@1.1.1", "node_modules");
+
+  async function expectFailedOptionalDependencyRemoved() {
+    expect(
+      await Promise.all([
+        readdirSorted(join(packageDir, "node_modules")),
+        readdirSorted(join(bunDir, "lifecycle-fail@1.1.1", "node_modules")),
+        // Neither the dependent's `node_modules/lifecycle-fail` link nor the
+        // hidden `.bun/node_modules/lifecycle-fail` link may be left behind
+        // pointing at the deleted package.
+        readdirSorted(dependentNodeModules),
+        readdirSorted(join(bunDir, "node_modules")),
+      ]),
+    ).toEqual([[".bun", "optional-lifecycle-fail"], [], ["optional-lifecycle-fail"], ["optional-lifecycle-fail"]]);
+
+    const requireFromDependent = createRequire(join(dependentNodeModules, "optional-lifecycle-fail", "package.json"));
+    let code: string | undefined;
+    try {
+      requireFromDependent.resolve("lifecycle-fail");
+    } catch (e: any) {
+      code = e.code;
+    }
+    expect(code).toBe("MODULE_NOT_FOUND");
+  }
+
+  await runBunInstall(bunEnv, packageDir);
+  await expectFailedOptionalDependencyRemoved();
+
+  // The failed package is installed (and removed) again on the next install;
+  // relinking the packages that depend on it must not leave links behind either.
+  await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+  await expectFailedOptionalDependencyRemoved();
+});
+
+test("direct optional dependency with a failing postinstall script is removed along with the links to it", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "test-pkg-failed-direct-optional-dependency",
+      dependencies: {
+        "no-deps": "1.0.0",
+      },
+      optionalDependencies: {
+        "lifecycle-failing-postinstall": "1.0.0",
+      },
+      trustedDependencies: ["lifecycle-failing-postinstall"],
+    }),
+  );
+
+  await runBunInstall(bunEnv, packageDir);
+
+  const bunDir = join(packageDir, "node_modules", ".bun");
+  expect(
+    await Promise.all([
+      readdirSorted(join(packageDir, "node_modules")),
+      readdirSorted(join(bunDir, "lifecycle-failing-postinstall@1.0.0", "node_modules")),
+      readdirSorted(join(bunDir, "node_modules")),
+    ]),
+  ).toEqual([[".bun", "no-deps"], [], ["no-deps"]]);
+});
+
 // Self-contained HTTP server that serves package manifests & tarballs
 // directly from the Verdaccio fixtures, with Cache-Control: max-age=300
 // to replicate npmjs.org behavior (fully synchronous on warm cache).

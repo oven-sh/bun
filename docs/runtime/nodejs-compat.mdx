@@ -495,6 +495,8 @@ The following list covers the globals implemented by Node.js and Bun's compatibi
 
 🟢 Fully implemented. `binaryType` defaults to `"nodebuffer"`, so binary messages arrive as `Buffer`s. Node.js defaults to `"blob"`.
 
+The `ws` package replacement emits text messages as `Buffer`s on clients and server connections, regardless of `binaryType`. The `isBinary` argument is `false` for text messages.
+
 ### [`WritableStream`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStream)
 
 🟢 Fully implemented. Cannot be transferred with `postMessage()` or `structuredClone()`.

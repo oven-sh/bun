@@ -676,6 +676,7 @@ fn is_exiting() -> bool {
 // calls. `#[link_name]` avoids colliding with this module's own `pub fn exit`.
 #[allow(suspicious_runtime_symbol_definitions)] // signatures are ABI-identical; `safe fn` is intentional (above)
 unsafe extern "C" {
+    #[cfg(windows)]
     #[link_name = "abort"]
     safe fn libc_abort() -> !;
     #[link_name = "raise"]
@@ -683,6 +684,8 @@ unsafe extern "C" {
     #[cfg(unix)]
     #[link_name = "exit"]
     safe fn libc_exit(code: c_int) -> !;
+    #[cfg(not(windows))]
+    safe fn _exit(code: c_int) -> !;
     #[cfg(all(unix, not(target_os = "macos")))]
     safe fn quick_exit(code: c_int) -> !;
 }
@@ -772,22 +775,50 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
         }
     }
 
-    // clear signal handler
     #[cfg(not(windows))]
+    raise_default_action(sig);
+
+    #[cfg(windows)]
     {
-        // SAFETY: zeroed sigset + SIG_DFL handler is a valid Sigaction.
-        unsafe {
-            let mut sa: libc::sigaction = crate::ffi::zeroed();
-            sa.sa_sigaction = libc::SIG_DFL;
-            libc::sigemptyset(&raw mut sa.sa_mask);
-            sa.sa_flags = libc::SA_RESETHAND;
-            let _ = libc::sigaction(sig, &raw const sa, core::ptr::null_mut());
-        }
+        // kill self; `raise` has no preconditions (see the `safe fn` decl above).
+        let _ = libc_raise(sig);
+        // The CRT's raise() returns for SIGTERM and for signals it does not know.
+        libc_abort()
+    }
+}
+
+/// Die from `sig`, or exit 128 + signo when the kernel discards it (PID 1 of a pid namespace). Async-signal-safe.
+#[cfg(not(windows))]
+pub fn raise_default_action(sig: c_int) -> ! {
+    // SAFETY: zeroed sigset + SIG_DFL handler is a valid Sigaction.
+    unsafe {
+        let mut sa: libc::sigaction = crate::ffi::zeroed();
+        sa.sa_sigaction = libc::SIG_DFL;
+        libc::sigemptyset(&raw mut sa.sa_mask);
+        sa.sa_flags = libc::SA_RESETHAND;
+        let _ = libc::sigaction(sig, &raw const sa, core::ptr::null_mut());
     }
 
-    // kill self — `raise`/`abort` have no preconditions (see `safe fn` decls above).
+    // Whatever left `sig` blocked (an inherited mask, or its own handler
+    // running right now), raise() would only make it pending.
+    // SAFETY: zeroed sigset is valid; sigemptyset/sigaddset initialize it.
+    unsafe {
+        let mut set: libc::sigset_t = crate::ffi::zeroed();
+        libc::sigemptyset(&raw mut set);
+        libc::sigaddset(&raw mut set, sig);
+        let _ = libc::pthread_sigmask(libc::SIG_UNBLOCK, &raw const set, core::ptr::null_mut());
+    }
+
+    // kill self; `raise` has no preconditions (see the `safe fn` decl above).
     let _ = libc_raise(sig);
-    libc_abort();
+    _exit(128 + sig)
+}
+
+/// `raise_default_action` for the C++ side (`onExitSignal` in c-bindings.cpp).
+#[cfg(not(windows))]
+#[unsafe(no_mangle)]
+extern "C" fn Bun__raiseDefaultAction(sig: c_int) -> ! {
+    raise_default_action(sig)
 }
 
 #[derive(Default)]
@@ -853,6 +884,8 @@ extern "C" fn Bun__onExit() {
     run_exit_callbacks();
     Output::flush();
     crate::keep_symbols!(Bun__atexit);
+    #[cfg(not(windows))]
+    crate::keep_symbols!(Bun__raiseDefaultAction);
 
     Output::source::stdio::restore();
 }

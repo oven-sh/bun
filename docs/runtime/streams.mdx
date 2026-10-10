@@ -144,6 +144,34 @@ const response = new Response(
 await response.text(); // "hello"
 ```
 
+When the consumer leaves before the body ends, Bun calls the iterator's `return()` method at once. The consumer leaves when an HTTP client disconnects, when a write to a file or a pipe fails, or when you call `cancel()` on the body. Bun never calls `throw()`, so a `catch` block does not see why the consumer left.
+
+A generator acts on `return()` at a `yield`: its `finally` block runs there. A generator that waits in an `await` stays there until that `await` settles. To end such a wait when an HTTP client disconnects, pass `req.signal` to the call that waits.
+
+```ts
+import { EventEmitter, once } from "node:events";
+
+const emitter = new EventEmitter();
+
+Bun.serve({
+  fetch(req) {
+    return new Response(
+      (async function* () {
+        try {
+          while (true) {
+            // `req.signal` ends this wait when the client disconnects.
+            const [message] = await once(emitter, "message", { signal: req.signal });
+            yield message;
+          }
+        } finally {
+          console.log("the client left");
+        }
+      })(),
+    );
+  },
+});
+```
+
 For more control over the stream, `yield` returns the direct `ReadableStream` controller.
 
 ```ts

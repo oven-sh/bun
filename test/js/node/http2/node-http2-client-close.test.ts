@@ -40,7 +40,7 @@ function rawH2Server(): net.Server {
     let buf = Buffer.alloc(0);
     let pre = false;
     s.on("error", () => {});
-    s.on("data", d => {
+    s.on("data", (d: Buffer) => {
       buf = Buffer.concat([buf, d]);
       if (!pre) {
         if (buf.length < PREFACE.length) return;
@@ -216,7 +216,7 @@ async function closeIn(site: Site, code: number, defer: boolean): Promise<string
   const ignoreErrors = (stream: http2.Http2Stream) => stream.on("error", () => {});
 
   const server = http2.createServer();
-  server.on("stream", stream => {
+  server.on("stream", (stream: http2.ServerHttp2Stream) => {
     switch (site) {
       case "server 'stream'":
       case "server 'stream', request open":

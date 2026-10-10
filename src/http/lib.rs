@@ -1099,7 +1099,7 @@ pub enum AlpnOffer {
 
 /// Sets SNI (when `hostname` is non-empty), the legacy-server-connect option,
 /// the ALPN protocol list for `offer`, and enables SCT/OCSP stapling. Called
-/// from `on_open` for every TLS socket — must run even when the hostname is an
+/// before a TLS socket's first handshake. It must run even when the hostname is an
 /// IP literal (with empty SNI) so ALPN is still advertised.
 ///
 // `ssl` is the live SSL handle for a just-opened socket (BoringSSL never
@@ -1844,14 +1844,21 @@ impl<'a> HTTPClient<'a> {
             self.state.request_stage = RequestStage::Opened;
         }
 
+        if !IS_SSL {
+            self.first_call::<IS_SSL>(socket);
+        }
+        Ok(())
+    }
+
+    /// Valid only before the handshake starts, so [`Self::on_connect`] is the only caller.
+    fn configure_tls<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
         if IS_SSL {
             // SAFETY: socket.get_native_handle() returns a valid *mut SSL on TLS sockets
             let ssl_ptr: *mut boringssl::c::SSL = socket
                 .get_native_handle()
                 .map(|p| p.cast())
                 .unwrap_or(core::ptr::null_mut());
-            // SAFETY: ssl_ptr is a live *mut SSL for the just-opened TLS socket
-            if !ssl_ptr.is_null() && unsafe { boringssl::c::SSL_is_init_finished(ssl_ptr) } == 0 {
+            if !ssl_ptr.is_null() {
                 let raw_hostname = get_tls_hostname(self, self.http_proxy.is_some());
 
                 // Build a NUL-terminated SNI string only when the hostname is not an
@@ -1895,9 +1902,9 @@ impl<'a> HTTPClient<'a> {
                     .filter(|_| crate::session_cache::eligible(self))
                 {
                     let want_tunnel = self.http_proxy.is_some() && self.url.is_https();
-                    // SAFETY: `ssl_ptr` is live and pre-handshake (guarded by
-                    // `SSL_is_init_finished == 0` above); `get_ssl_ctx` returns
-                    // the static `https_context` or the heap context this
+                    // SAFETY: `ssl_ptr` is live and pre-handshake (uSockets starts
+                    // the handshake when the open callback returns); `get_ssl_ctx`
+                    // returns the static `https_context` or the heap context this
                     // client holds a strong ref on, both of which outlive
                     // every SSL attached to their socket group.
                     unsafe {
@@ -1917,10 +1924,7 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
             }
-        } else {
-            self.first_call::<IS_SSL>(socket);
         }
-        Ok(())
     }
 
     /// Runs once per connection, from the uSockets open callback. A socket
@@ -1954,7 +1958,12 @@ impl<'a> HTTPClient<'a> {
             let _ = socket.set_keep_alive(true, 60);
         }
 
-        self.on_open::<IS_SSL>(socket)
+        self.on_open::<IS_SSL>(socket)?;
+        // `on_open` starts the request on a plain socket, which can free `self`.
+        if IS_SSL {
+            self.configure_tls::<IS_SSL>(socket);
+        }
+        Ok(())
     }
 
     /// Whether to advertise "h2" in the TLS ALPN list. Restricted to request

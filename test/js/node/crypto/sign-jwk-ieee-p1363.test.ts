@@ -35,7 +35,7 @@ test("crypto.Sign should handle JWK EC keys with ieee-p1363 encoding", () => {
     format: "jwk",
     type: "pkcs8",
     dsaEncoding: "ieee-p1363",
-  });
+  } as crypto.SignJsonWebKeyInput);
 
   // IEEE P1363 format for P-256 should be exactly 64 bytes (32 bytes for r, 32 bytes for s)
   expect(signature.length).toBe(64);
@@ -100,7 +100,7 @@ test("crypto.Sign should handle JWK EC keys with different encodings", () => {
       key: jwkKey,
       format: "jwk",
       type: "pkcs8",
-    });
+    } as crypto.JsonWebKeyInput);
 
     const signer = crypto.createSign("sha256");
     signer.update(testData);

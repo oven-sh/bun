@@ -3,13 +3,13 @@ import { describe, expect, test } from "bun:test";
 import { createHash, createPrivateKey, randomBytes } from "crypto";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
-import { connect, QuicEndpoint } from "node:quic";
+import { connect, QuicEndpoint, type SessionOptions } from "node:quic";
 import { join } from "path";
 
 // Native HTTP/3 fetch wrapper. Every request in this file forces
 // `protocol: "http3"` so a regression that silently falls back to TCP
 // surfaces as a connect failure (the fixtures bind UDP via `http3: true`).
-const fetchH3 = (port: number, path: string, init: RequestInit & { signal?: AbortSignal } = {}) =>
+const fetchH3 = (port: number, path: string, init: RequestInit = {}) =>
   fetch(`https://127.0.0.1:${port}${path}`, {
     ...init,
     protocol: "http3",
@@ -519,7 +519,10 @@ describe("Bun.serve HTTP/3", () => {
 // Cases ported from h2o t/40http3 and aioquic interop. Each test gets its own
 // server (withServer) so they can run concurrently.
 describe("Bun.serve HTTP/3 adversarial", () => {
-  const md5 = (b: Uint8Array | ArrayBuffer) => createHash("md5").update(Buffer.from(b)).digest("hex");
+  const md5 = (b: Uint8Array | ArrayBuffer) =>
+    createHash("md5")
+      .update(Buffer.from(b as Uint8Array))
+      .digest("hex");
 
   test("64 concurrent streams on one connection", async () => {
     // h2o uses 1000; 64 stays inside lsquic's default initial-max-streams
@@ -1227,7 +1230,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       transportParams: { maxIdleTimeout: 5 },
       onerror() {},
       ongoaway: () => goaway.resolve(),
-    });
+    } as SessionOptions);
     const closed = client.closed.then(
       () => "closed",
       (err: Error) => `closed: ${err.message}`,
@@ -1237,8 +1240,8 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       let status = "";
       const stream = await client.createBidirectionalStream({
         headers: requestHeaders("/after-stop"),
-        onheaders(received: Record<string, string>) {
-          status = received[":status"];
+        onheaders(received) {
+          status = received[":status"] as string;
         },
       });
       stream.closed.catch(() => {});
@@ -1249,8 +1252,8 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
 
     let status = "";
     const stream = await client.createBidirectionalStream({
-      onheaders(received: Record<string, string>) {
-        status = received[":status"];
+      onheaders(received) {
+        status = received[":status"] as string;
       },
     });
     stream.closed.catch(() => {});
@@ -1534,7 +1537,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
           fetch: () => new Response(bodies[kind]()),
         });
 
-        const text = await fetchH3(server.port, "/", requests[request]).then(res => res.text());
+        const text = await fetchH3(server.port!, "/", requests[request]).then(res => res.text());
         expect({ text, pendingRequests: server.pendingRequests }).toEqual({ text: "streamed", pendingRequests: 0 });
         // A request that never ends keeps a graceful stop pending.
         await server.stop();
@@ -1565,7 +1568,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
           ),
       });
 
-      const text = await fetchH3(server.port, "/").then(res => res.text());
+      const text = await fetchH3(server.port!, "/").then(res => res.text());
       expect({ text, pendingRequests: server.pendingRequests }).toEqual({ text: "streamed", pendingRequests: 0 });
       await server.stop();
     });
@@ -1710,7 +1713,7 @@ async function h3Exchange(
     transportParams: { maxIdleTimeout: 5 },
     onerror() {},
     ...options,
-  });
+  } as SessionOptions);
   const outcome = Promise.withResolvers<string>();
   client.closed.then(
     () => outcome.resolve("closed"),
@@ -1722,8 +1725,8 @@ async function h3Exchange(
       let status = "";
       const stream = await client.createBidirectionalStream({
         headers,
-        onheaders(received: Record<string, string>) {
-          status = received[":status"];
+        onheaders(received) {
+          status = received[":status"] as string;
         },
       });
       stream.closed.catch(() => {});
@@ -1762,10 +1765,10 @@ describe("Bun.serve HTTP/3 request validation", () => {
 
     const results: Record<string, string> = {};
     for (const value of ["a\r\nb: c", "a\nb", "a\rb"]) {
-      results[JSON.stringify(value)] = await h3Exchange(server.port, requestHeaders("/", { "x-probe": value }));
+      results[JSON.stringify(value)] = await h3Exchange(server.port!, requestHeaders("/", { "x-probe": value }));
     }
-    results.wellFormed = await h3Exchange(server.port, requestHeaders("/", { "x-probe": "plain" }));
-    results.after = await h3Exchange(server.port, requestHeaders("/"));
+    results.wellFormed = await h3Exchange(server.port!, requestHeaders("/", { "x-probe": "plain" }));
+    results.after = await h3Exchange(server.port!, requestHeaders("/"));
 
     expect(results).toEqual({
       [JSON.stringify("a\r\nb: c")]: "closed ERR_QUIC_APPLICATION_ERROR 270",
@@ -1808,8 +1811,8 @@ describe("Bun.serve HTTP/3 request validation", () => {
       url: "https://localhost/",
     };
     const results = {
-      authority: await h3Exchange(server.port, { ...requestHeaders("/", fields), ":authority": " \tlocalhost \t" }),
-      literalHost: await h3Exchange(server.port, {
+      authority: await h3Exchange(server.port!, { ...requestHeaders("/", fields), ":authority": " \tlocalhost \t" }),
+      literalHost: await h3Exchange(server.port!, {
         ":method": "GET",
         ":path": "/",
         ":scheme": "https",
@@ -1843,9 +1846,9 @@ describe("Bun.serve HTTP/3 request validation", () => {
     ];
     const results: Record<string, string> = {};
     for (const authority of authorities) {
-      results[authority] = await h3Exchange(server.port, { ...requestHeaders("/index"), ":authority": authority });
+      results[authority] = await h3Exchange(server.port!, { ...requestHeaders("/index"), ":authority": authority });
     }
-    results["example.com:8443"] = await h3Exchange(server.port, {
+    results["example.com:8443"] = await h3Exchange(server.port!, {
       ...requestHeaders("/index"),
       ":authority": "example.com:8443",
     });
@@ -1884,8 +1887,8 @@ describe("Bun.serve HTTP/3 request validation", () => {
       keys: [createPrivateKey(pem(`${name}-key.pem`))],
       certs: [readFileSync(join(keysDir, `${name}-cert.pem`))],
     });
-    const selfSigned = await h3Exchange(server.port, requestHeaders("/"), clientIdentity("agent2"));
-    const chained = await h3Exchange(server.port, requestHeaders("/"), clientIdentity("agent1"));
+    const selfSigned = await h3Exchange(server.port!, requestHeaders("/"), clientIdentity("agent2"));
+    const chained = await h3Exchange(server.port!, requestHeaders("/"), clientIdentity("agent1"));
 
     expect({ selfSigned, chained }).toEqual({ selfSigned: "closed", chained: "200 1" });
   });
@@ -1897,7 +1900,7 @@ describe("Bun.serve HTTP/3 request validation", () => {
 // on its own. The client waits for the event, with no timer: a server that
 // keeps the 100 until the final response makes the test time out.
 describe.concurrent("Bun.serve HTTP/3 sends the automatic 100 Continue ahead of the final response", () => {
-  async function exchange(server: { port: number }, { handshakeFirst }: { handshakeFirst: boolean }) {
+  async function exchange(server: Bun.Server<undefined>, { handshakeFirst }: { handshakeFirst: boolean }) {
     // A session or a stream that ends before a response fails the test with
     // its reason. Once a response is in, these rejections do nothing.
     const firstResponse = Promise.withResolvers<void>();
@@ -1909,17 +1912,17 @@ describe.concurrent("Bun.serve HTTP/3 sends the automatic 100 Continue ahead of 
       verifyPeer: "manual",
       transportParams: { maxIdleTimeout: 5 },
       onerror: firstResponse.reject,
-    });
+    } as SessionOptions);
     client.closed.then(endedEarly("the session"), firstResponse.reject);
     if (handshakeFirst) await client.opened;
 
     const seen: string[] = [];
     const stream = await client.createBidirectionalStream({
-      oninfo(received: Record<string, string>) {
+      oninfo(received) {
         seen.push("info " + received[":status"]);
         firstResponse.resolve();
       },
-      onheaders(received: Record<string, string>) {
+      onheaders(received) {
         seen.push("headers " + received[":status"]);
         firstResponse.resolve();
       },
@@ -2015,8 +2018,8 @@ describe("Bun.serve HTTP/3 request handlers run to completion before the callbac
     });
 
     const responses = {
-      fetch: await h3Exchange(server.port, requestHeaders("/")),
-      route: await h3Exchange(server.port, requestHeaders("/route")),
+      fetch: await h3Exchange(server.port!, requestHeaders("/")),
+      route: await h3Exchange(server.port!, requestHeaders("/route")),
     };
     await Promise.all([viaFetch.closed, viaRoute.closed]);
 

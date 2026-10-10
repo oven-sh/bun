@@ -78,7 +78,7 @@ export function generateXmlByteClass(cfg: Pick<Config, "codegenDir">): { h: stri
 
   const table: string[] = [];
   for (let row = 0; row < 256; row += 16) {
-    const cells = [];
+    const cells: string[] = [];
     for (let b = row; b < row + 16; b++) cells.push(hex(classOf(b)));
     table.push(`    ${cells.join(", ")},`);
   }

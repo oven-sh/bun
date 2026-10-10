@@ -4,7 +4,7 @@ import { chmodSync } from "fs";
 import { bunEnv as bunEnv_, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { basename, join } from "path";
 
-const bunEnv = {
+const bunEnv: typeof bunEnv_ = {
   ...bunEnv_,
   BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN: "1",
 };

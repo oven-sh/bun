@@ -100,7 +100,7 @@ fn testing_impl(
     let arena = Arena::new();
     // The CSS parser allocates into this bump arena; freed when it drops.
     //
-    // SAFETY: `StyleSheet::parse` requires `&'static Bump` / `ParserOptions<'static>`
+    // SAFETY: `StyleSheet::parse` requires `&'static Bump`
     // because the rule tree stores lifetime-erased refs (see the css_parser.rs
     // notes on `'bump` threading). The arena strictly outlives every value parsed
     // out of it below.
@@ -132,18 +132,10 @@ fn testing_impl(
     let browser_options_arg = arguments.next_eat();
 
     let mut log = Log::init();
-    // SAFETY: `ParserOptions<'static>` stores the log as `NonNull<Log>` and only
-    // writes through it during parsing; `log` outlives the parsed stylesheet and
-    // is not aliased for the duration. Erasing to `'static` matches the
-    // `&'static Bump` erasure above (re-threads to `'bump` with the rest of bun_css).
-    let log_ptr: *mut Log = &raw mut log;
-    // SAFETY: `log` is a stack-local that outlives the parsed stylesheet and
-    // is not aliased for the duration of the parse.
-    let log_ref = unsafe { &mut *log_ptr };
 
     let mut browsers: Option<Browsers> = None;
     let parser_options = {
-        let mut opts = ParserOptions::default(Some(log_ref));
+        let mut opts = ParserOptions::default(Some(&mut log));
         // if (test_kind == .prefix) break :parser_options opts;
 
         match test_category {

@@ -486,7 +486,7 @@ describe("Bun.stripANSI", () => {
   });
 
   test("multiple sequences in long string", () => {
-    const parts = [];
+    const parts: string[] = [];
     for (let i = 0; i < 1000; i++) {
       parts.push(`\x1b[${30 + (i % 8)}mword${i}\x1b[39m`);
     }

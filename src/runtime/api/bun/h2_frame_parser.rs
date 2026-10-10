@@ -239,10 +239,10 @@ const MAX_WINDOW_SIZE_F64: f64 = MAX_WINDOW_SIZE as f64;
 const MAX_HEADER_TABLE_SIZE_F64: f64 = MAX_HEADER_TABLE_SIZE as f64;
 const MAX_FRAME_SIZE_F64: f64 = MAX_FRAME_SIZE as f64;
 // writeStream() return-value flag (bitwise-OR'd with the settled stream state, which is < 8):
-// the data was handed to the socket without queueing, so no onStreamWriteDone follows and the
-// JS caller (Http2Stream._write/_writev) completes its write asynchronously. Mirrored in
-// src/js/node/http2.ts (kWriteFlushed).
-const WRITE_FLUSHED: u32 = 0x10;
+// the data was flushed without queueing and the engine did not invoke the write callback —
+// the JS caller (Http2Stream._write/_writev) completes it asynchronously. Mirrored in
+// src/js/node/http2.ts (kWriteFlushedWithoutCallback).
+const WRITE_FLUSHED_WITHOUT_CALLBACK: u32 = 0x10;
 // RFC 7541 Section 4.1: Each header entry has 32 bytes of overhead
 // for the HPACK dynamic table entry structure
 const HPACK_ENTRY_OVERHEAD: usize = 32;
@@ -786,8 +786,7 @@ impl Handlers {
         handler_pair!(onOrigin, "origin");
         handler_pair!(onFrameError, "frameError");
         handler_pair!(onStreamPush, "streamPush");
-        // Not bound to the async context of this call: the handler completes a write of the
-        // stream, and that callback runs in the context of whatever flushed the queue.
+        // Unbound: a write callback must not run in the async context of this constructor call.
         handler_pair!(onStreamWriteDone, "streamWriteDone", async_context: false);
 
         if let Some(callback_value) = opts.fast_get(global_object, bun_jsc::BuiltinName::Error)? {
@@ -915,9 +914,7 @@ struct SendDataOptions {
     close: bool,
     /// Report a HALF_CLOSED_LOCAL transition through the return value instead of onStreamEnd.
     suppress_half_closed_local_dispatch: bool,
-    /// The JS writers of this payload: a mask that http2.ts chooses, 0 when no JS write waits
-    /// for it. If any of the payload is queued, onStreamWriteDone names the writers once its
-    /// last frame has left the queue.
+    /// Mask of the JS writers whose write this payload ends (0: none), for onStreamWriteDone.
     writers: u8,
 }
 
@@ -1434,9 +1431,7 @@ struct PendingFrame {
     len: u32,         // actually payload size
     offset: u32,      // offset into the buffer (if partial flush due to flow control)
     buffer: Vec<u8>,  // allocated buffer if len > 0
-    /// The JS writers whose write ends in this frame (see `SendDataOptions::writers`).
-    /// onStreamWriteDone names them once the whole frame has left the queue for the socket.
-    /// A frame that is dropped reports nothing: the JS stream fails that write when it is destroyed.
+    /// JS writers whose write ends in this frame: onStreamWriteDone names them when it leaves.
     writers: u8,
 }
 
@@ -1689,8 +1684,7 @@ impl Stream {
         }
     }
 
-    /// `writers`: the JS writers whose write ends with `bytes`, 0 for bytes in the middle of a
-    /// write. A frame that also takes the end of another writer's write names both.
+    /// `writers`: mask of the JS writers whose write ends with `bytes`, 0 in the middle of one.
     pub(crate) fn queue_frame(
         &mut self,
         client: &H2FrameParser,
@@ -4139,9 +4133,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 JSValue::js_number(old_state as f64),
             );
         } else {
-            // The third argument is the state that the inbound reset found: the peer's
-            // RST_STREAM, or a stream error the engine raised. emit_error_to_all_streams
-            // dispatches the same event without it.
+            // Only an inbound reset passes the state it found as the third argument.
             self.dispatch_with_2_extra(
                 JSH2FrameParser::Gc::onStreamError,
                 stream_ctx,
@@ -5059,9 +5051,7 @@ impl H2FrameParser {
         ))
     }
 
-    /// Returns `(settled_state, flushed)`: the state the close tail settled on (5 =
-    /// HALF_CLOSED_LOCAL, 7 = CLOSED, 0 = none) and whether the whole payload went to the
-    /// socket with nothing queued.
+    /// Returns the settled state (5, 7, or 0) and whether the payload was flushed, not queued.
     fn send_data(
         &self,
         stream: &mut Stream,
@@ -5867,13 +5857,12 @@ impl H2FrameParser {
 
         // 5 = HALF_CLOSED_LOCAL: the JS caller runs markWritableDone itself instead of
         // the engine re-entering the VM with an onStreamEnd(5) dispatch.
-        // WRITE_FLUSHED: the data was handed to the socket synchronously, the JS caller completes
-        // its write. Without the bit the write is queued and onStreamWriteDone names its writer
-        // once the last frame has left the queue. A stream that cannot send returned `false`
-        // above: nothing was taken and nothing is reported.
+        // WRITE_FLUSHED_WITHOUT_CALLBACK: the data was handed to the socket synchronously and
+        // the write callback was not (and will not be) invoked by the engine; the JS caller
+        // completes the Writable callback asynchronously.
         let mut result = settled_state as u32;
         if flushed {
-            result |= WRITE_FLUSHED;
+            result |= WRITE_FLUSHED_WITHOUT_CALLBACK;
         }
         Ok(JSValue::js_number(result as f64))
     }

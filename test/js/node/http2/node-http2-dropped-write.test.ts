@@ -1136,6 +1136,43 @@ describe("client: the request ends before its HEADERS frame is sent", () => {
     }
   });
 
+  // Bun rejects this :path in request() and destroys the request, which never gets an id. node
+  // sends the request, and the server rejects it.
+  describe("the session rejects the request", { skip: !isBun }, () => {
+    test("a write gets an error", async () => {
+      const peer = await rawServer();
+      const session = connectOverTcp(peer.port);
+      try {
+        session.on("error", () => {});
+        await once(session, "connect");
+        const request = session.request({ ":method": "POST", ":path": "/a b" });
+        assert.deepStrictEqual(await writeAndEnd(request, "chunk", () => {}), ["close", "write:ECANCELED"]);
+      } finally {
+        session.destroy();
+        peer.close();
+      }
+    });
+
+    // close() must not send RST_STREAM for a request with no id.
+    test("request.close() closes the request", async () => {
+      const peer = await rawServer();
+      const session = connectOverTcp(peer.port);
+      try {
+        session.on("error", () => {});
+        await once(session, "connect");
+        const request = session.request({ ":path": "/a b" });
+        request.on("error", () => {});
+        const closed = closeOf(request);
+        request.close();
+        await closed;
+        await turns(2);
+      } finally {
+        session.destroy();
+        peer.close();
+      }
+    });
+  });
+
   // The upload of the first request blocks the socket: the peer opens every window and reads
   // nothing. The second request waits behind the peer's stream limit, ends and closes. When it
   // gets its id, its END_STREAM frame waits for the socket, and close() sends RST_STREAM right

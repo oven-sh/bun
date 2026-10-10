@@ -1754,30 +1754,47 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
   await Promise.all([once(destroyed, "secureConnect"), lastPeerPaused.promise]);
   const destroyedFd: number = (destroyed as any)._handle.fd;
   destroyed.write(Buffer.alloc(12 * step.length, "a"));
+  // The close tries the unsent rest of the last record once more, and whether the kernel takes it by now is the kernel's call.
+  const refuses = socketFaultInjection.available();
+  if (refuses) socketFaultInjection.set({ syscall: "send", action: "zero", fd: destroyedFd, repeat: -1 });
   destroyed.destroy();
   const openAfterDestroy = fdIsOpen(destroyedFd);
+  if (refuses) socketFaultInjection.clear();
   await once(destroyed, "close");
 
   const drip = setInterval(() => peers[DRIPPING].resume(), 2000);
   try {
     const before = { fdIsOpen: openAfterDestroy, wrote: probeBatching(probe) };
+    const waitedFrom = performance.now();
+    const closedAfter = closed.map(promise => promise.then(() => Math.round(performance.now() - waitedFrom)));
     await Promise.all(closed);
+    // Its own deadline: the other closes end early where their peers' kernel buffers took everything.
+    while (fdIsOpen(destroyedFd) && performance.now() - waitedFrom < 16_000) await Bun.sleep(100);
     const after = { fdIsOpen: fdIsOpen(destroyedFd), wrote: probeBatching(probe) };
     const batches = socketFaultInjection.available();
     const missing = (peer: number) => reported[peer] - peers[peer].data.received;
-    expect({
-      before,
-      after,
-      timeouts,
-      cutShort: [missing(SILENT) > 0, missing(DRIPPING) > 0],
-      missing: missing(UNANSWERING),
-    }).toEqual({
+    // Whether the peers stalled their writers at all is up to the kernel's buffers.
+    const measured = {
+      reported,
+      received: peers.map(peer => peer.data.received),
+      closedAfterMs: await Promise.all(closedAfter),
+    };
+    expect(
+      {
+        before,
+        after,
+        timeouts,
+        cutShort: [missing(SILENT) > 0, missing(DRIPPING) > 0],
+        missing: missing(UNANSWERING),
+      },
+      JSON.stringify(measured),
+    ).toEqual({
       // fstat() does not take a Windows socket handle.
-      before: { fdIsOpen: !isWindows, wrote: batches ? 16 * 1024 : undefined },
+      before: { fdIsOpen: isWindows ? false : refuses || expect.any(Boolean), wrote: batches ? 16 * 1024 : undefined },
       after: { fdIsOpen: false, wrote: batches ? 64 * 1024 : undefined },
       timeouts: 0,
-      // Loopback buffers outside Linux are small enough for the drips to read everything in time.
-      cutShort: [true, isLinux ? true : expect.any(Boolean)],
+      // Outside Linux the loopback buffers can take all that a writer has left, and then its peer stalls nothing.
+      cutShort: isLinux ? [true, true] : [expect.any(Boolean), expect.any(Boolean)],
       missing: 0,
     });
   } finally {

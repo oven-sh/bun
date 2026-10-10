@@ -8,6 +8,7 @@ import {
   CFunction,
   CString,
   dlopen,
+  FFIType,
   JSCallback,
   linkSymbols,
   ptr,
@@ -892,6 +893,89 @@ describe("CFunction", () => {
   });
 });
 
+// A signature can spell each type as its name or as its FFIType number (buffer = 20,
+// buffer_length = 21). Both spellings resolve to the same tag, so binding and the per-entry-point
+// rejections must come out the same either way.
+describe("FFIType numbers for buffer and buffer_length", () => {
+  it("linkSymbols() binds them like the string spellings: data pointer and byteLength of the view", () => {
+    const echoLen = new JSCallback((_buf, len) => len, { args: ["ptr", "u64"], returns: "u64" });
+    const echoPtr = new JSCallback(buf => buf, { args: ["ptr"], returns: "ptr" });
+    try {
+      const lib = linkSymbols({
+        len: { ptr: echoLen.ptr, args: [FFIType.buffer, FFIType.buffer_length], returns: FFIType.u64 },
+        addr: { ptr: echoPtr.ptr, args: [FFIType.buffer], returns: FFIType.ptr },
+      });
+      try {
+        const u8 = new Uint8Array([10, 20, 30, 40, 50, 60, 70, 80]);
+        const sub = u8.subarray(2, 5);
+        const dv = new DataView(u8.buffer, 1, 4);
+        const f64 = new Float64Array(3);
+        expect([
+          lib.symbols.len(u8, u8),
+          lib.symbols.len(sub, sub),
+          lib.symbols.len(dv, dv),
+          lib.symbols.len(f64, f64),
+        ]).toEqual([8n, 3n, 4n, 24n]);
+        expect([lib.symbols.addr(u8), lib.symbols.addr(sub), lib.symbols.addr(dv)]).toEqual([
+          ptr(u8),
+          ptr(u8) + 2,
+          ptr(u8) + 1,
+        ]);
+        expect(() => lib.symbols.len(u8, 8)).toThrow(TypeError);
+      } finally {
+        lib.close();
+      }
+    } finally {
+      echoLen.close();
+      echoPtr.close();
+    }
+  });
+
+  it("viewSource() generates the same source for the number as for the name", () => {
+    expect(viewSource({ f: { args: [FFIType.buffer, FFIType.i32], returns: FFIType.void } })).toEqual(
+      viewSource({ f: { args: ["buffer", "i32"], returns: "void" } }),
+    );
+    expect(viewSource({ args: [FFIType.buffer], returns: FFIType.void }, true)).toBe(
+      viewSource({ args: ["buffer"], returns: "void" }, true),
+    );
+  });
+
+  it("CFunction() and JSCallback accept FFIType.buffer as an argument type", () => {
+    expect(() => new CFunction({ args: [FFIType.buffer], returns: FFIType.void })).toThrow(/missing a "ptr" field/);
+    const cb = new JSCallback(() => {}, { args: [FFIType.buffer], returns: FFIType.void });
+    cb.close();
+  });
+
+  it("as return types they get the argument-only errors, not 'invalid ABI type'", () => {
+    const cannotReturnBuffer = "Cannot return a buffer to JavaScript";
+    const argumentOnly = "buffer_length is an argument-only type";
+    expect(() => viewSource({ f: { args: [], returns: FFIType.buffer } })).toThrow(cannotReturnBuffer);
+    expect(() => viewSource({ args: [], returns: FFIType.buffer }, true)).toThrow(cannotReturnBuffer);
+    expect(() => linkSymbols({ f: { ptr: 8, args: [], returns: FFIType.buffer } })).toThrow(cannotReturnBuffer);
+    expect(() => new CFunction({ ptr: 8, args: [], returns: FFIType.buffer })).toThrow(cannotReturnBuffer);
+    expect(() => new JSCallback(() => {}, { args: [], returns: FFIType.buffer })).toThrow(cannotReturnBuffer);
+    expect(() => viewSource({ f: { args: [], returns: FFIType.buffer_length } })).toThrow(argumentOnly);
+    expect(() => linkSymbols({ f: { ptr: 8, args: [], returns: FFIType.buffer_length } })).toThrow(argumentOnly);
+    expect(() => new CFunction({ ptr: 8, args: [], returns: FFIType.buffer_length })).toThrow(argumentOnly);
+    expect(() => new JSCallback(() => {}, { args: [], returns: FFIType.buffer_length })).toThrow(argumentOnly);
+  });
+
+  it("FFIType.buffer_length is rejected by viewSource() and JSCallback the same way 'buffer_length' is", () => {
+    const notSupportedHere = "buffer_length is only supported for bun:ffi dlopen/linkSymbols/CFunction arguments";
+    expect(() => viewSource({ f: { args: [FFIType.buffer_length], returns: FFIType.void } })).toThrow(notSupportedHere);
+    expect(() => new JSCallback(() => {}, { args: [FFIType.buffer_length], returns: FFIType.void })).toThrow(
+      notSupportedHere,
+    );
+  });
+
+  it("numbers outside the FFIType range are still 'invalid ABI type'", () => {
+    for (const bad of [FFIType.buffer_length + 1, -1, 2 ** 31, 2 ** 32 + FFIType.buffer]) {
+      expect(() => viewSource({ f: { args: [bad], returns: "void" } })).toThrow("invalid ABI type");
+      expect(() => viewSource({ f: { args: [], returns: bad } })).toThrow("invalid ABI type");
+    }
+  });
+});
+
 // Runs in a subprocess: `bun test`'s exit path does not finalize the CFunction's native handle,
 // which the ASan lane's leak checker then reports against this file.
 it("JSCallback exceptions propagate out of the native call", async () => {
@@ -1588,6 +1672,34 @@ describe.skipIf(!FFI_FIXTURE_PATH)("engine-native FFI (single implementation)", 
     expect(() => viewSource({ f: { args: [], returns: "buffer_length" } })).toThrow(/buffer_length/);
     expect(() => dlopen(lib, { f: { args: [], returns: "buffer_length" } })).toThrow(/buffer_length/);
     expect(() => new JSCallback(() => {}, { args: ["buffer_length"], returns: "void" })).toThrow(/buffer_length/);
+  });
+
+  it("buffer and buffer_length also work spelled as FFIType.buffer / FFIType.buffer_length", () => {
+    const {
+      symbols: { bl_echo_len, bl_last_byte },
+    } = dlopen(lib, {
+      bl_echo_len: { args: [FFIType.buffer, FFIType.buffer_length], returns: FFIType.u64 },
+      bl_last_byte: { args: [FFIType.buffer, FFIType.buffer_bytelength], returns: FFIType.u32 },
+    });
+    const u8 = new Uint8Array([10, 20, 30, 40, 50, 60, 70, 80]);
+    const sub = u8.subarray(2, 5);
+    const dv = new DataView(u8.buffer, 1, 4);
+    expect([bl_echo_len(u8, u8), bl_echo_len(sub, sub), bl_echo_len(dv, dv)]).toEqual([8n, 3n, 4n]);
+    expect([bl_last_byte(u8, u8), bl_last_byte(sub, sub), bl_last_byte(dv, dv)]).toEqual([80, 50, 50]);
+    expect(() => bl_echo_len(u8, 8)).toThrow(TypeError);
+
+    expect(() => dlopen(lib, { bl_echo_len: { args: [], returns: FFIType.buffer } })).toThrow(
+      "Cannot return a buffer to JavaScript",
+    );
+    expect(() => dlopen(lib, { bl_echo_len: { args: [], returns: FFIType.buffer_length } })).toThrow(
+      "buffer_length is an argument-only type",
+    );
+    expect(() =>
+      cc({
+        source: import.meta.dir + "/ffi-test.c",
+        symbols: { bl_echo_len: { args: [FFIType.ptr, FFIType.buffer_length], returns: FFIType.u64 } },
+      }),
+    ).toThrow("buffer_length is only supported for bun:ffi dlopen/linkSymbols/CFunction arguments");
   });
 
   it("u32 arguments >= 2^31 are not sign-flipped (#7007)", () => {

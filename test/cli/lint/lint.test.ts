@@ -2648,6 +2648,12 @@ describe.concurrent("bun lint", () => {
       expect(JSON.parse(result.raw)[0].output).toBe("let a = 1;\nif (a == 2) { debugger; }\n");
     });
 
+    test.each(["--fix", "--fix-dry-run"])("%s beside an .oxlintrc.json: ESLint's json formats have the fixed text", async flag => {
+      const files = { ".oxlintrc.json": `{ "rules": { "no-var": "error" } }`, "a.js": "var a = 1;\nexport default a;\n" };
+      const { raw } = await lint(files, [flag, "-f", "json-with-metadata", "a.js"]);
+      expect(JSON.parse(raw).results[0].output).toBe("const a = 1;\nexport default a;\n");
+    });
+
     describe("fixes after which the text cannot be parsed are not written", () => {
       const warning = (rules: string, file: string) =>
         `warn: Fixes of ${rules} would leave ${file} with a syntax error. They are not applied.`;

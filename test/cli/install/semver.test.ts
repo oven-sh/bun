@@ -549,6 +549,105 @@ describe("Bun.semver.satisfies()", () => {
     }
   });
 
+  describe("a wildcard major after < or >", () => {
+    // node-semver's replaceXRange turns `<x` and `>x` into `<0.0.0-0`, which no version satisfies.
+    // Every expectation but those of the last test is the answer of npm's semver 7.7.4 and 7.8.5.
+    type Row = [range: string, version: string, expected: boolean];
+    const check = (rows: Row[]) =>
+      expect(rows.map(([range, version]) => [range, version, satisfies(version, range)])).toEqual(rows);
+
+    test("is the empty set", () => {
+      const ranges = [
+        ...["<x", "<X", "<*", ">x", ">X", ">*"],
+        ...["< x", ">  *", "<\tx", "<vx", ">v*"],
+        ...["<x.x", ">x.x", "<x.x.x", ">x.x.x", "<*.*", ">*.*.*"],
+        // a number or build metadata after the wildcard changes nothing
+        ...["<x.1", ">x.1", "<x.1.2", ">x.1.2", "<x+build", ">x.x.x+build"],
+      ];
+      const versions = ["0.0.0", "1.0.0", "1.0.0-beta.1", "0.0.0-0"];
+      check(ranges.flatMap(range => versions.map((version): Row => [range, version, false])));
+    });
+
+    test("empties an intersection and drops out of a union", () => {
+      check([
+        [">x <2", "1.2.3", false],
+        ["<2 >x", "1.2.3", false],
+        [">=1 <x", "1.2.3", false],
+        ["<x >=1", "1.2.3", false],
+        ["<=x <x", "1.2.3", false],
+        ["^1.0.0 >*", "1.2.3", false],
+        // The version goes first: a bare version after another comparator is read as an alternative today (#32993).
+        ["1.0.0 <x", "1.0.0", false],
+        ["<x || 1.0.0", "1.0.0", true],
+        ["<x || 1.0.0", "2.0.0", false],
+        ["1.0.0 || >x", "1.0.0", true],
+        ["1.0.0 || >x", "2.0.0", false],
+        ["<x||1.0.0", "1.0.0", true],
+        ["<x||1.0.0", "2.0.0", false],
+        ["<* || ^2", "2.1.0", true],
+        ["<* || ^2", "1.1.0", false],
+        [">x || >=3", "3.0.0", true],
+        [">x || >=3", "2.0.0", false],
+        ["<x || >x", "1.0.0", false],
+      ]);
+    });
+
+    test("every other operator still allows any version", () => {
+      check([
+        ...[">=x", "<=x", ">=*", "<=*", ">=x.x", "<=x.x.x", "<= x", ">= *"].map((range): Row => [range, "1.0.0", true]),
+        ...["x", "*", "=x", "^x", "~x", "~>x"].map((range): Row => [range, "1.0.0", true]),
+        [">=x <2", "1.2.3", true],
+        [">=x <2", "2.0.0", false],
+        // a wildcard after a number is a bound, not the empty set
+        ["<1.x", "0.9.0", true],
+        ["<1.x", "1.0.0", false],
+        [">1.x", "2.0.0", true],
+        [">1.x", "1.9.0", false],
+        ["<1.2.x", "1.1.9", true],
+        ["<1.2.x", "1.2.0", false],
+        [">1.2.x", "1.3.0", true],
+        [">1.2.x", "1.2.9", false],
+      ]);
+    });
+
+    test("a wildcard major after ^ or ~ stays any version inside a union or an intersection", () => {
+      check([
+        ["^x || 1.0.0", "2.0.0", true],
+        ["~x || 1.0.0", "2.0.0", true],
+        ["^x.x || 1.0.0", "2.0.0", true],
+        ["~x.x.x || 1.0.0", "2.0.0", true],
+        ["^* || <1", "2.0.0", true],
+        ["1.0.0 || ^x", "2.0.0", true],
+        ["^x || <x", "1.0.0", true],
+        ["<x || ^x", "1.0.0", true],
+        ["~* || <*", "2.3.4", true],
+        [">x || ~X", "2.3.4", true],
+        ["^x >=3", "2.0.0", false],
+        ["^x >=3", "3.0.0", true],
+        [">=3 ~x", "2.0.0", false],
+        [">=3 ~x", "3.1.0", true],
+      ]);
+    });
+
+    test("an operator before text that is not a version keeps its reading", () => {
+      // npm calls these ranges invalid. Bun reads the text as `*` after `<` or `>`, and the rows above do not change that.
+      check([
+        [">latest", "1.0.0", true],
+        ["<foo", "1.0.0", true],
+        ["< v", "1.0.0", true],
+        [">^1.0.0", "2.0.0", true],
+        // text that starts with a wildcard character is still text
+        [">xenial", "1.0.0", true],
+        ["<xstate", "1.0.0", true],
+        [">*next", "1.0.0", true],
+        [">x.1.2.3", "1.0.0", true],
+        // after `^` the text adds no comparator
+        ["^latest || 1.0.0", "2.0.0", false],
+        ["^xenial || 1.0.0", "2.0.0", false],
+      ]);
+    });
+  });
+
   test("range includes", () => {
     // https://github.com/npm/node-semver/blob/14d263faa156e408a033b9b12a2f87735c2df42c/test/fixtures/range-include.js#L3
     var tests = [

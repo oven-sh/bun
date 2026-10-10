@@ -41,10 +41,20 @@ fn is_lifecycle(name: &[u8], is_class: bool) -> bool {
     }
 }
 
+/// `quasis[0].value.raw`, which is written `written`. In espree's every line break is a line feed.
+fn raw_of_template<'a>(file: &File<'a>, written: &'a [u8]) -> Cow<'a, [u8]> {
+    match file.uses_typescript_parser() {
+        true => Cow::Borrowed(written),
+        false => strings::crlf_as_lf(written),
+    }
+}
+
 /// `getName` of a `Literal` and of a `TemplateLiteral` without expressions. `None` for anything else.
 fn get_name(node: Expr<'_>) -> Option<Cow<'_, [u8]>> {
     match node.kind() {
-        ExprKind::Template(template) => template.exprs().is_empty().then(|| strings::crlf_as_lf(template.raw(0))),
+        ExprKind::Template(template) if template.exprs().is_empty() => {
+            Some(raw_of_template(node.file(), template.raw(0)))
+        }
         _ => ast_utils::get_static_string_value(node),
     }
 }
@@ -57,7 +67,7 @@ fn get_name_of_key<'a>(file: &'a File<'a>, key: Key<'a>) -> Option<Cow<'a, [u8]>
         }
         // Of a template it is the text as it is written.
         KeyKind::ComputedString(name) => Some(match file.slice(key.inner_span(file)) {
-            [b'`', raw @ .., b'`'] => strings::crlf_as_lf(raw),
+            [b'`', written @ .., b'`'] => raw_of_template(file, written),
             _ => Cow::Borrowed(name.bytes()),
         }),
         KeyKind::Private(_) => None,
@@ -231,18 +241,11 @@ impl Rule for NoUnusedClassComponentMethods {
             }
         }
         for this in file.exprs_of_kind(ExprTag::This) {
-            // `uncast`
-            let mut node = this;
-            while let Node::Expr(cast) = node.parent()
-                && cast.is_flow_type_cast()
-            {
-                node = cast;
-            }
-            match node.parent() {
-                Node::Expr(member) if member.object() == Some(node) && ast_utils::is_member_expression(member) => {
+            match this.parent() {
+                Node::Expr(member) if member.object() == Some(this) && ast_utils::is_member_expression(member) => {
                     calls.push((entering(member.span()), Listener::MemberExpression(member)));
                 }
-                Node::VarDecl(declarator) if declarator.init() == Some(node) => {
+                Node::VarDecl(declarator) if declarator.init() == Some(this) => {
                     calls.push((entering(declarator.span()), Listener::VariableDeclarator(declarator)));
                 }
                 _ => {}

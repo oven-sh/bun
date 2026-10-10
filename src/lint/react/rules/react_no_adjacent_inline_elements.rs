@@ -13,11 +13,15 @@ const INLINE_ELEMENT: Message = Message::new(
      elements.",
 );
 
-const INLINE_NAMES: [&str; 32] = [
-    "a", "b", "big", "i", "small", "tt", "abbr", "acronym", "cite", "code", "dfn", "em", "kbd", "strong", "samp",
-    "time", "var", "bdo", "br", "img", "map", "object", "q", "script", "span", "sub", "sup", "button", "input",
-    "label", "select", "textarea",
-];
+/// `inlineNames.indexOf(name) > -1`
+fn is_inline_name(name: Name<'_>) -> bool {
+    matches!(
+        name.bytes(),
+        b"a" | b"b" | b"big" | b"i" | b"small" | b"tt" | b"abbr" | b"acronym" | b"cite" | b"code" | b"dfn" | b"em"
+            | b"kbd" | b"strong" | b"samp" | b"time" | b"var" | b"bdo" | b"br" | b"img" | b"map" | b"object" | b"q"
+            | b"script" | b"span" | b"sub" | b"sup" | b"button" | b"input" | b"label" | b"select" | b"textarea"
+    )
+}
 
 /// Whether a call of `createElement` can be in the file: `a.#createElement()` is one.
 fn mentions_create_element(file: &File) -> bool {
@@ -27,7 +31,7 @@ fn mentions_create_element(file: &File) -> bool {
 /// `isInline` of a `JSXElement`.
 fn is_inline_element(node: Expr<'_>) -> bool {
     match (node.tag() == ExprTag::Jsx).then(|| node.kind()) {
-        Some(ExprKind::Jsx(jsx)) => jsx.tag().and_then(Expr::as_ident).is_some_and(|it| it.is_any(&INLINE_NAMES)),
+        Some(ExprKind::Jsx(jsx)) => jsx.tag().and_then(Expr::as_ident).is_some_and(is_inline_name),
         _ => false,
     }
 }
@@ -47,9 +51,7 @@ fn is_inline(node: Expr<'_>) -> Option<bool> {
         | ExprKind::False
         | ExprKind::Null => true,
         ExprKind::Jsx(_) => is_inline_element(node),
-        ExprKind::Call(call) if !node.is_chain_root() => {
-            call.args().first()?.as_string().is_some_and(|it| it.is_any(&INLINE_NAMES))
-        }
+        ExprKind::Call(call) if !node.is_chain_root() => call.args().first()?.as_string().is_some_and(is_inline_name),
         _ => false,
     })
 }
@@ -83,17 +85,20 @@ impl Rule for NoAdjacentInlineElements {
                 let children = jsx.children();
                 let mut pairs = children.iter().zip(children.iter().skip(1));
                 if pairs.any(|(previous, current)| {
-                    previous.span().end == current.span().start
-                        && is_inline_element(previous)
+                    is_inline_element(previous)
                         && is_inline_element(current)
+                        && previous.span().end == current.span().start
                 }) {
                     cx.report(e, INLINE_ELEMENT);
                 }
             }
-            ExprKind::Call(call) if is_create_element(e, cx.state) => {
+            ExprKind::Call(call) => {
                 let Some(ExprKind::Array(children)) = call.args().get(2).map(Expr::kind) else {
                     return;
                 };
+                if !is_create_element(e, cx.state) {
+                    return;
+                }
                 let mut previous_is_inline = false;
                 for child in children.iter() {
                     let Some(current_is_inline) = is_inline(child) else {

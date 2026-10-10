@@ -78,6 +78,11 @@ fn is_annotated_with_never(node: Node<'_>) -> bool {
     annotation.is_some_and(|it| matches!(it.kind(), TypeKind::Keyword(Keyword::Never)))
 }
 
+/// `prop`, if `name` is one of the `Object.keys`: `props.__proto__ = prop` makes no property.
+fn own_property<'p, 'a>((name, prop): (&[u8], &'p DeclaredPropType<'a>)) -> Option<&'p DeclaredPropType<'a>> {
+    (name != b"__proto__").then_some(prop)
+}
+
 /// Puts `props` on `pending`, which is taken from at its end: the first of them last.
 fn push_all<'p, 'a>(
     pending: &mut Vec<&'p DeclaredPropType<'a>>,
@@ -99,7 +104,7 @@ impl NoUnusedPropTypes {
         let used_prop_types = component.used_prop_types.as_deref().unwrap_or_default();
         let used_names: FxHashSet<&[u8]> = used_prop_types.iter().map(|it| it.name).collect();
         let mut pending = Vec::new();
-        push_all(&mut pending, &mut declared_prop_types.iter().map(|(_, prop)| prop));
+        push_all(&mut pending, &mut declared_prop_types.iter().filter_map(own_property));
         while let Some(prop) = pending.pop() {
             let is_shape = matches!(prop.kind, Some(PropTypeKind::Shape | PropTypeKind::Exact));
             if (is_shape && self.skip_shape_props) || prop.node.is_some_and(is_annotated_with_never) {
@@ -122,7 +127,7 @@ impl NoUnusedPropTypes {
             }
             match &prop.children {
                 Children::None => {}
-                Children::Named(children) => push_all(&mut pending, &mut children.iter().map(|(_, child)| child)),
+                Children::Named(children) => push_all(&mut pending, &mut children.iter().filter_map(own_property)),
                 Children::Union(children) => push_all(&mut pending, &mut children.iter()),
             }
         }

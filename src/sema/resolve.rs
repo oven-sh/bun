@@ -1285,6 +1285,8 @@ pub struct AsRequire<'a> {
     pub module_directories: &'a [&'a [u8]],
     /// Absolute. Where a package is looked for after these.
     pub paths: &'a [&'a [u8]],
+    /// `compilerOptions.paths` are asked before any of these.
+    pub through_paths: bool,
 }
 
 /// `ForEachAncestorDirectory`: `dir`, then each of its ancestor directories up to the root.
@@ -2721,6 +2723,11 @@ impl<'h> Resolver<'h> {
             // `node:fs`
             false if strings::contains_char(spec, b':') => None,
             false => {
+                if how.through_paths
+                    && let Some(found) = self.through_paths(spec, look)
+                {
+                    return Some((found, None));
+                }
                 // `nodeModulesPaths` of `resolve`
                 let names = how.module_directories.iter();
                 let upwards = ancestors(from_dir)

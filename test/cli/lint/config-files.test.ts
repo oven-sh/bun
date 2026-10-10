@@ -1093,6 +1093,78 @@ describe.concurrent("an .oxlintrc.json", () => {
     expect(problems).toEqual(lines.map(line => `a.js:${line}:1 no-undef`));
   });
 
+  // Each row is what oxlint 1.87 does. It looks at the options of a rule that is off, too, and not at those of a rule whose plugin is
+  // not on, by the name that is written.
+  describe("a property that a rule of oxlint does not know", () => {
+    const typo = { zz: 1 };
+    const ofCase =
+      "`unicorn/filename-case`:\n  unknown field `zz`, expected one of `cases`, `case`, `ignore`, `multipleFileExtensions`";
+    const ofGetter = "`getter-return`:\n  unknown field `zz`, expected `allowImplicit`";
+    const ofKey =
+      "`react/jsx-key`:\n  unknown field `zz`, expected one of `checkKeyMustBeforeSpread`, `warnOnDuplicates`, `checkFragmentShorthand`";
+    test.each<[name: string, config: object, refusal: string | undefined, flags?: string[]]>([
+      ["a core rule", { rules: { "getter-return": ["error", typo] } }, ofGetter],
+      ["one that is off", { rules: { "getter-return": ["off", typo] } }, ofGetter],
+      ["under its other name", { rules: { "eslint/getter-return": ["error", typo] } }, ofGetter],
+      ["without any plugin", { plugins: [], rules: { "getter-return": ["error", typo] } }, ofGetter],
+      ["in an override", { overrides: [{ files: ["*.ts"], rules: { "getter-return": ["error", typo] } }] }, ofGetter],
+      ["in a file that is extended", { extends: ["./extended.json"] }, ofGetter],
+      [
+        "two names",
+        { rules: { yoda: ["error", "never", typo] } },
+        "`yoda`:\n  unknown field `zz`, expected `exceptRange` or `onlyEquality`",
+      ],
+      ["the first of two", { rules: { "getter-return": ["error", { b: 1, a: 2 }] } }, ofGetter.replace("zz", "b")],
+      ["a plugin that is on by default", { rules: { "unicorn/filename-case": ["error", typo] } }, ofCase],
+      ["a plugin of the file", { plugins: ["react"], rules: { "react/jsx-key": ["error", typo] } }, ofKey],
+      ["a plugin of a flag", { rules: { "react/jsx-key": ["error", typo] } }, ofKey, ["--react-plugin"]],
+      [
+        "a plugin of the override",
+        { overrides: [{ files: ["*.ts"], plugins: ["react"], rules: { "react/jsx-key": ["error", typo] } }] },
+        ofKey,
+      ],
+      [
+        "a plugin of the file, in an override",
+        { plugins: ["react"], overrides: [{ files: ["*.ts"], rules: { "react/jsx-key": ["error", typo] } }] },
+        ofKey,
+      ],
+      ["a name that it knows", { rules: { "getter-return": ["error", { allowImplicit: true }] } }, undefined],
+      ["one option more than the rule has", { rules: { "getter-return": ["error", {}, typo] } }, undefined],
+      [
+        "a plugin that is not on",
+        { plugins: ["react"], rules: { "unicorn/filename-case": ["error", typo] } },
+        undefined,
+      ],
+      [
+        "a plugin that a flag turns off",
+        { rules: { "unicorn/filename-case": ["error", typo] } },
+        undefined,
+        ["--disable-unicorn-plugin"],
+      ],
+      [
+        "a plugin that is only in an override",
+        { rules: { "react/jsx-key": ["error", typo] }, overrides: [{ files: ["*.ts"], plugins: ["react"] }] },
+        undefined,
+      ],
+      [
+        "a core rule under the name of a plugin that is not on",
+        { plugins: [], rules: { "@typescript-eslint/no-unused-vars": ["error", typo] } },
+        undefined,
+      ],
+    ])("%s", async (_, config, refusal, flags = []) => {
+      const files = {
+        ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, ...config }),
+        "extended.json": JSON.stringify({ rules: { "getter-return": ["error", typo] } }),
+        "a.js": "export {};\n",
+      };
+      // As oxlint: on standard output.
+      const { stdout, exitCode } = await lint(files, [...flags, "a.js"]);
+      if (refusal) expect(stdout).toContain(`Invalid configuration for rule ${refusal}`);
+      else expect(stdout).not.toContain("unknown field");
+      expect(exitCode).toBe(refusal ? 1 : 0);
+    });
+  });
+
   // oxlint 1.87 takes each, and each is valid by its own configuration_schema.json. The schemas of ESLint's rules refuse them.
   test("options that oxlint takes and the schema of ESLint's rule does not", async () => {
     const sets: [rule: string, options: unknown[]][] = [

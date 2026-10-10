@@ -19,6 +19,8 @@ export type Entry = {
   id: string;
   file: string;
   code: string;
+  /** The other files of its directory: what it imports. */
+  files?: Record<string, string>;
   options: unknown[];
   /** The rule needs types. */
   typed?: true;
@@ -53,17 +55,20 @@ export function filesOf(all: Entry[]): Record<string, string> {
       rules: { [it.rule]: ["error", ...it.options] },
     });
     files[`${directoryOf(index)}/${it.file}`] = it.code;
+    for (const [file, code] of Object.entries(it.files ?? {})) files[`${directoryOf(index)}/${file}`] = code;
     if (it.tsconfig) files[`${directoryOf(index)}/tsconfig.json`] = JSON.stringify(it.tsconfig);
   });
   return files;
 }
 
-/** What is reported in the directory of each entry, in the order of the file, from the output of `-f json`. */
+/** What is reported in the file of each entry, in the order of the file, from the output of `-f json`. */
 function reportsOf(stdout: string, all: Entry[]) {
   const found: { offset: number; message: string; help?: string }[][] = all.map(() => []);
   for (const it of JSON.parse(stdout).diagnostics) {
     const offset = it.labels[0]?.span.offset ?? 0;
-    found[Number(it.filename.split("/")[0])].push({ offset, message: it.message, help: it.help });
+    const [directory, ...file] = it.filename.split("/");
+    if (file.join("/") !== all[Number(directory)].file) continue;
+    found[Number(directory)].push({ offset, message: it.message, help: it.help });
   }
   return found.map(it => it.sort((a, b) => a.offset - b.offset));
 }

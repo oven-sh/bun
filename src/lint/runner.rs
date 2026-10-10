@@ -1086,19 +1086,14 @@ pub fn run_in_order<'a, S: Starts>(
     sorted(file.sink.diagnostics.take(), when)
 }
 
-fn sorted(mut diagnostics: Vec<Diagnostic>, when: &[When]) -> Vec<Diagnostic> {
-    if !when.is_empty() {
-        for it in &mut diagnostics {
-            it.when = when.get(it.rule as usize).copied().unwrap_or(it.when);
-        }
-    }
+fn sorted(diagnostics: Vec<Diagnostic>, when: &[When]) -> Vec<Diagnostic> {
     // ESLint sorts by line and column alone, which leaves what starts at the same place in the order it was reported: for a
     // listener that is called on entering a node, the outer node first; then, for one that is called on leaving, the inner;
     // then what is reported when the program ends, rule by rule. 51 bits.
     let within_start = |it: &Diagnostic| {
         let (end, rule) = (u64::from(it.span.end), u64::from(it.rule));
         let longer_first = ((u64::from(u32::MAX) - end) << 16) | rule;
-        match it.when {
+        match when.get(it.rule as usize).copied().unwrap_or(it.when) {
             When::Once => rule << 32,
             When::Entering => (1 << 48) | longer_first,
             When::EnteringShorterFirst => (1 << 48) | (end << 16) | rule,

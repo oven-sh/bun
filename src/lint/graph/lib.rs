@@ -459,6 +459,7 @@ impl<'h> Graph<'h> {
             extensions,
             module_directories,
             paths: &paths,
+            through_paths: false,
         };
         // No configuration of TypeScript has a say.
         let plain = self.resolver_of(b"", cwd);
@@ -471,6 +472,24 @@ impl<'h> Graph<'h> {
             true => relative(cwd, &found),
             false => found,
         })
+    }
+
+    /// What eslint-import-resolver-typescript finds and TypeScript does not: a file by its whole name, whatever that ends
+    /// in, and with `.json` or `.node` behind it. Also through `paths` and `baseUrl`.
+    fn resolve_other_file(&self, specifier: &[u8], from: &[u8]) -> Option<Vec<u8>> {
+        let ProjectResolver {
+            resolver, base_url, ..
+        } = self.resolver_of(self.config_of(from), directory_of(from));
+        let how = AsRequire {
+            extensions: &[b".json", b".node"],
+            module_directories: &[b"node_modules"],
+            paths: &[],
+            through_paths: true,
+        };
+        let from_base_url =
+            || resolver.resolve_as_require(&join(base_url.as_ref()?, specifier), from, &how);
+        let found = resolver.resolve_as_require(specifier, from, &how);
+        Some(found.or_else(from_base_url)?.0)
     }
 
     /// The path by which the file that is linted as `path` is known. oxlint follows links. eslint-plugin-import knows a
@@ -1020,8 +1039,14 @@ impl Modules for Graph<'_> {
         let found = match lookup {
             _ if specifier.len() > 4096 => return None,
             Lookup::TypeScript => {
-                let from = self.store.disk().realpath(&from);
-                (self.resolve_any_path(&from, specifier, is_require)?.0).into_owned()
+                // `removeQuerystring`
+                let end = strings::last_index_of_char(specifier, b'?').unwrap_or(specifier.len());
+                let specifier = &specifier[..end];
+                let real = self.store.disk().realpath(&from);
+                match self.resolve_any_path(&real, specifier, is_require) {
+                    Some(found) => found.0.into_owned(),
+                    None => self.resolve_other_file(specifier, &from)?,
+                }
             }
             Lookup::Node(extensions) => {
                 self.resolve_as_require((specifier, &from), extensions, &[], &[b"node_modules"])?

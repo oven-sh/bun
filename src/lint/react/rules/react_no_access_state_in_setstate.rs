@@ -96,15 +96,14 @@ impl FirstArguments {
 #[derive(Copy, Clone)]
 enum Event<'a> {
     /// A `this.state`, and the `methodName` that it is kept under.
-    State(Span, Option<&'a [u8]>),
+    State(Expr<'a>, Option<&'a [u8]>),
     Call(Expr<'a>),
 }
 
 impl Event<'_> {
     fn span(self) -> Span {
         match self {
-            Event::State(node, _) => node,
-            Event::Call(node) => node.span(),
+            Event::State(node, _) | Event::Call(node) => node.span(),
         }
     }
 }
@@ -198,22 +197,22 @@ impl Rule for NoAccessStateInSetstate {
         let pragmas = Pragmas::new(file);
         let (mut events, mut vars) = (Vec::new(), Vec::new());
         let mut around = AncestorMemo::default();
+        // The scopes say what is in a component: they are asked last.
         for node in states {
-            if !is_class_component(node, &pragmas) {
-                continue;
-            }
             match around.find_with(Node::Expr(node), estree_parent, Around::of) {
-                Some(Around::SetState) => {
+                Some(Around::SetState) if is_class_component(node, &pragmas) => {
                     cx.report(node, USE_CALLBACK);
                 }
-                Some(Around::Method(method_name)) => events.push(Event::State(node.span(), method_name)),
-                Some(Around::Variable(Some(variable_name))) => vars.push(Variable {
-                    variable_name,
-                    scope: Node::Expr(node).scope().id().idx(),
-                    since: node.span().start,
-                    node: node.span(),
-                }),
-                Some(Around::Variable(None)) | None => {}
+                Some(Around::Method(method_name)) => events.push(Event::State(node, method_name)),
+                Some(Around::Variable(Some(variable_name))) if is_class_component(node, &pragmas) => {
+                    vars.push(Variable {
+                        variable_name,
+                        scope: Node::Expr(node).scope().id().idx(),
+                        since: node.span().start,
+                        node: node.span(),
+                    });
+                }
+                _ => {}
             }
         }
         for pattern in patterns {
@@ -238,16 +237,22 @@ impl Rule for NoAccessStateInSetstate {
     }
 }
 
-/// `CallExpression`, for all calls, in the order of the source. `events`: what the `this.state` add to `methods`.
+/// `CallExpression`, for all calls, in the order of the source. `events`: what the `this.state` add to `methods`, if
+/// they are in a component.
 fn follow_methods<'a>(
     mut events: Vec<Event<'a>>,
     first_arguments: &FirstArguments,
     pragmas: &Pragmas<'_>,
     cx: &Cx<'a, NoAccessStateInSetstate>,
 ) {
-    let is_asking = |it: &Expr<'a>| {
-        it.callee().is_some_and(|callee| callee.tag() == ExprTag::Ident) || first_arguments.around(it.span().start) > 0
-    };
+    let is_in_set_state = |it: &Expr<'a>| first_arguments.around(it.span().start) > 0;
+    // Only such a call reports.
+    if !cx.file().exprs_of_kind(ExprTag::Call).any(|it| is_in_set_state(&it)) {
+        return;
+    }
+    events.retain(|it| matches!(it, Event::State(node, _) if is_class_component(*node, pragmas)));
+    let is_asking =
+        |it: &Expr<'a>| it.callee().is_some_and(|callee| callee.tag() == ExprTag::Ident) || is_in_set_state(it);
     events.extend(cx.file().exprs_of_kind(ExprTag::Call).filter(is_asking).map(Event::Call));
     sort::sort_by_key(&mut events, |it| (it.span().start, Reverse(it.span().end)));
     let mut methods: FxHashMap<Option<&'a [u8]>, Vec<Span>> = FxHashMap::default();
@@ -257,13 +262,13 @@ fn follow_methods<'a>(
     for event in events {
         let node = match event {
             Event::State(node, method_name) => {
-                methods.entry(method_name).or_default().push(node);
+                methods.entry(method_name).or_default().push(node.span());
                 continue;
             }
             Event::Call(node) => node,
         };
         let name = node.callee().and_then(Expr::as_ident).map(Name::bytes);
-        let is_in_set_state = first_arguments.around(node.span().start) > 0;
+        let is_in_set_state = is_in_set_state(&node);
         if !methods.contains_key(&name)
             || (name.is_none() && !is_in_set_state)
             || !is_class_component(node, pragmas)

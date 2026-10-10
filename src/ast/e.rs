@@ -2370,15 +2370,9 @@ impl RegExp {
     }
 
     pub fn flags(&self) -> &[u8] {
-        // rewind until we reach the /foo/gim
-        //                               ^
-        // should only ever be a single character
-        // but we're being cautious
-        if let Some(i) = self.flags_offset {
-            return &self.value[i as usize..];
-        }
-
-        b""
+        // Behind the last slash. Not by `flags_offset`, which wraps at 65,536.
+        let slash = bun_core::strings::last_index_of_char(&self.value, b'/');
+        slash.and_then(|it| self.value.get(it + 1..)).unwrap_or_default()
     }
 }
 

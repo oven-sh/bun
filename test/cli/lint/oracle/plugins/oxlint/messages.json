@@ -6233,5 +6233,109 @@
   "options": [],
   "typed": true,
   "message": "Prefer the safe `: unknown` for a `catch` callback variable. The thrown error may be nullable, or may not have the expected shape."
+ },
+ {
+  "rule": "import/no-cycle",
+  "id": "",
+  "file": "a.js",
+  "code": "import \"./b.js\";\n",
+  "files": {
+   "b.js": "import \"./a.js\";\n"
+  },
+  "options": [],
+  "message": "Dependency cycle detected",
+  "help": "Refactor to remove the cycle. Consider extracting shared code into a separate module that both files can import."
+ },
+ {
+  "rule": "import/named",
+  "id": "",
+  "file": "a.js",
+  "code": "import { missing } from \"./b.js\";\n",
+  "files": {
+   "b.js": "export const there = 1;\n"
+  },
+  "options": [],
+  "message": "named import \"missing\" not found",
+  "help": "Does \"./b.js\" have the export \"missing\"?"
+ },
+ {
+  "rule": "import/default",
+  "id": "",
+  "file": "a.js",
+  "code": "import b from \"./b.js\";\n",
+  "files": {
+   "b.js": "export const there = 1;\n"
+  },
+  "options": [],
+  "message": "No default export found in imported module \"./b.js\"",
+  "help": "Does \"./b.js\" have the default export?"
+ },
+ {
+  "rule": "import/namespace",
+  "id": "",
+  "file": "a.js",
+  "code": "import * as b from \"./b.js\";\nb.missing;\n",
+  "files": {
+   "b.js": "export const there = 1;\n"
+  },
+  "options": [],
+  "message": "\"missing\" not found in imported namespace \"./b.js\"."
+ },
+ {
+  "rule": "import/export",
+  "id": "",
+  "file": "a.js",
+  "code": "export * from \"./b.js\";\n",
+  "files": {
+   "b.js": ""
+  },
+  "options": [],
+  "message": "No named exports found in module './b.js'",
+  "help": "Remove the `export *` re-export, or add named exports to the target module."
+ },
+ {
+  "rule": "import/no-named-as-default",
+  "id": "",
+  "file": "a.js",
+  "code": "import there from \"./b.js\";\n",
+  "files": {
+   "b.js": "export const there = 1;\nexport default there;\n"
+  },
+  "options": [],
+  "message": "Module \"./b.js\" has named export \"there\"",
+  "help": "Using default import as \"there\" can be confusing. Use another name for default import to avoid confusion."
+ },
+ {
+  "rule": "import/no-named-as-default-member",
+  "id": "",
+  "file": "a.js",
+  "code": "import b from \"./b.js\";\nb.there;\n",
+  "files": {
+   "b.js": "export const there = 1;\nexport default {};\n"
+  },
+  "options": [],
+  "message": "\"b\" also has a named export \"there\"",
+  "help": "Check if you meant to write `import { there } from \"./b.js\"`"
+ },
+ {
+  "rule": "import/no-self-import",
+  "id": "",
+  "file": "a.js",
+  "code": "import \"./a.js\";\n",
+  "options": [],
+  "message": "A module importing itself is not allowed",
+  "help": "Remove this import. A module should not import itself."
+ },
+ {
+  "rule": "import/no-duplicates",
+  "id": "",
+  "file": "a.js",
+  "code": "import { there } from \"./b.js\";\nimport { other } from \"./b.js\";\n",
+  "files": {
+   "b.js": "export const there = 1, other = 2;\n"
+  },
+  "options": [],
+  "message": "Module './b.js' is imported more than once in this file",
+  "help": "Merge these imports into a single import statement"
  }
 ]

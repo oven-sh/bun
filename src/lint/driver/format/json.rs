@@ -130,12 +130,14 @@ pub(super) fn write_with_metadata(out: &mut Vec<u8>, results: &[FileResult], met
             out.push(b',');
         }
         json_stringify(&id, out);
-        let kind = match rule.kind {
-            bun_lint::rule::Kind::Problem => "problem",
-            bun_lint::rule::Kind::Suggestion => "suggestion",
-            bun_lint::rule::Kind::Layout => "layout",
-        };
-        let _ = write!(out, ":{{\"type\":\"{kind}\"");
+        out.extend_from_slice(b":{");
+        let start = out.len();
+        out.extend_from_slice(match rule.kind {
+            bun_lint::rule::Kind::Problem => b",\"type\":\"problem\"",
+            bun_lint::rule::Kind::Suggestion => b",\"type\":\"suggestion\"",
+            bun_lint::rule::Kind::Layout => b",\"type\":\"layout\"",
+            bun_lint::rule::Kind::None => b"",
+        });
         match rule.fixable {
             bun_lint::rule::Fixable::No => {}
             bun_lint::rule::Fixable::Code => out.extend_from_slice(b",\"fixable\":\"code\""),
@@ -148,6 +150,10 @@ pub(super) fn write_with_metadata(out: &mut Vec<u8>, results: &[FileResult], met
         }
         if rule.is_deprecated {
             out.extend_from_slice(b",\"deprecated\":true");
+        }
+        // The comma before the first.
+        if out.len() > start {
+            out.remove(start);
         }
         out.push(b'}');
         seen.push(id);

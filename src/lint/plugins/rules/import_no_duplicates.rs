@@ -248,6 +248,7 @@ impl NoDuplicates {
         let message = if module_name.len() > 16 { MODULES } else { MODULE };
         let report = cx.report(first, message).data("module_name", module_name);
         let report = report.first_label("It is first imported here");
+        let report = report.help("Merge these imports into a single import statement");
         (imports.iter().skip(1).filter_map(|it| it.spec_span()))
             .fold(report, |report, other| report.label(other, ""))
             .fix(fix);

@@ -25,7 +25,8 @@ pub(crate) struct Inferred<'e> {
     /// The files of the run that can ask, each as [`bun_lint::ast::File::path`] has it.
     paths: OnceLock<Vec<Vec<u8>>>,
     tables: OnceLock<Tables>,
-    by_options: Option<ByOptions>,
+    /// Made when the first file asks.
+    by_options: Option<OnceLock<ByOptions>>,
 }
 
 /// `InferGlobals::ByOptions`
@@ -160,11 +161,7 @@ impl<'e> Inferred<'e> {
             threads,
             paths: OnceLock::new(),
             tables: OnceLock::new(),
-            by_options: by_options.then(|| ByOptions {
-                outlines: Outlines::new(&environment.cwd),
-                programs: AppendVec::new(),
-                known: Default::default(),
-            }),
+            by_options: by_options.then(OnceLock::new),
         }
     }
 
@@ -175,7 +172,11 @@ impl<'e> Inferred<'e> {
 
     /// `path`: as `File::path`.
     fn program(&self, path: &[u8]) -> Option<&Program> {
-        let by_options = self.by_options.as_ref()?;
+        let by_options = self.by_options.as_ref()?.get_or_init(|| ByOptions {
+            outlines: Outlines::new(&self.environment.cwd),
+            programs: AppendVec::new(),
+            known: Default::default(),
+        });
         let outline = (by_options.outlines).of(&crate::paths::to_native(path.to_vec()))?;
         let mut known = by_options.known.lock();
         let at = match known.get(&outline.config_path) {

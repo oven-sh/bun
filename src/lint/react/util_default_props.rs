@@ -16,6 +16,7 @@ use bun_lint::prelude::*;
 use bun_lint::utils::estree_parent;
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
+use std::cell::Cell;
 
 /// What `addDefaultPropsToComponent` is given: the `name` and the `node` of each. `None`:
 /// `"unresolved"`.
@@ -64,10 +65,19 @@ fn resolve_node_value(mut node: Expr<'_>) -> Option<Expr<'_>> {
     }
 }
 
-/// `getDefaultPropsFromObjectExpression`
+/// How many default props of a file are looked at: n components can have one object of n.
+const MAX_DEFAULT_PROPS_IN_A_FILE: u32 = 1 << 17;
+
+/// `getDefaultPropsFromObjectExpression`. `found`: how many the file has had so far: after
+/// [`MAX_DEFAULT_PROPS_IN_A_FILE`] all are `"unresolved"`.
 fn get_default_props_from_object_expression<'a>(
     properties: List<'a, Prop<'a>>,
+    found: &Cell<u32>,
 ) -> DefaultPropsList<'a> {
+    if found.get() > MAX_DEFAULT_PROPS_IN_A_FILE {
+        return None;
+    }
+    found.set(found.get().saturating_add(properties.len() as u32));
     let has_spread = properties.iter().any(|it| it.kind() == PropKind::Spread);
     if has_spread {
         return None;
@@ -106,6 +116,8 @@ fn get_es6_component_around<'a>(
 struct DefaultPropsInstructions<'a> {
     /// `component.defaultProps` of those that have one. `None`: `"unresolved"`.
     default_props: FxHashMap<ComponentId, Option<DeclaredPropTypes<'a>>>,
+    /// See [`get_default_props_from_object_expression`].
+    found: Cell<u32>,
 }
 
 impl<'a> DefaultPropsInstructions<'a> {
@@ -182,7 +194,7 @@ impl<'a> DefaultPropsInstructions<'a> {
             match expression.and_then(properties_of_object_expression) {
                 Some(properties) => self.add_default_props_to_component(
                     component,
-                    get_default_props_from_object_expression(properties),
+                    get_default_props_from_object_expression(properties, &self.found),
                     components,
                 ),
                 // If a value can't be found, we mark the defaultProps declaration as "unresolved".
@@ -222,7 +234,7 @@ impl<'a> DefaultPropsInstructions<'a> {
         };
         self.add_default_props_to_component(
             component,
-            get_default_props_from_object_expression(properties),
+            get_default_props_from_object_expression(properties, &self.found),
             components,
         );
     }
@@ -244,7 +256,7 @@ impl<'a> DefaultPropsInstructions<'a> {
         };
         self.add_default_props_to_component(
             component,
-            get_default_props_from_object_expression(properties),
+            get_default_props_from_object_expression(properties, &self.found),
             components,
         );
     }
@@ -275,7 +287,7 @@ impl<'a> DefaultPropsInstructions<'a> {
             if let Some(properties) = argument.and_then(properties_of_object_expression) {
                 self.add_default_props_to_component(
                     component,
-                    get_default_props_from_object_expression(properties),
+                    get_default_props_from_object_expression(properties, &self.found),
                     components,
                 );
             }

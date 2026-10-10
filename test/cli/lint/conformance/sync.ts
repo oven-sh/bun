@@ -9,7 +9,7 @@
 //
 // Each of the first three leaves the rest of the bundle as it is.
 //
-// The suites of eslint-plugin-import, -react, -regexp and -prettier are recorded with the published packages and come into the bundle
+// The suites of eslint-plugin-import, -react and -prettier are recorded with the published packages and come into the bundle
 // rule by rule, as a rule here does the same as the package's. None of these commands touches them: see `RECORDED`.
 import { $ } from "bun";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";

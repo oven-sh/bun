@@ -5,7 +5,7 @@ use bun_glob::{Options as GlobOptions, Pattern};
 use bun_lint::prelude::*;
 use bun_lint::regex::SyntaxError;
 use bun_lint::rule::Plugin;
-use std::cell::OnceCell;
+use std::cell::{Cell, OnceCell};
 
 /// Enforce event handler naming conventions in JSX
 pub struct JsxHandlerNames {
@@ -46,7 +46,13 @@ pub struct Known {
     colons: OnceCell<Vec<(u32, u32)>>,
     /// Whether `EVENT_HANDLER_REGEX` matches all of it.
     is_handler_name: OnceCell<bool>,
+    /// How much text `EVENT_HANDLER_REGEX` has been tested on.
+    tested: Cell<usize>,
 }
+
+/// How much text a regular expression is tested on, beside four times the file: of attributes in each other the text of
+/// each is a name.
+const MAX_TESTED: usize = 1 << 20;
 
 const BAD_HANDLER_NAME: Message = Message::new(
     "badHandlerName",
@@ -241,7 +247,16 @@ impl JsxHandlerNames {
                         let test = || regexes.event_handler.test(&normalize_handler_name(cx.slice(span), is_oxlint));
                         // That of the file is the name in each arrow function that is no call.
                         let is_file = span == cx.file().span();
-                        Some(if is_file { *cx.state.is_handler_name.get_or_init(test) } else { test() })
+                        if is_file {
+                            Some(*cx.state.is_handler_name.get_or_init(test))
+                        } else {
+                            let tested = cx.state.tested.get().saturating_add(span.len() as usize);
+                            if tested > MAX_TESTED.saturating_add(4 * cx.file().text().len()) {
+                                continue;
+                            }
+                            cx.state.tested.set(tested);
+                            Some(test())
+                        }
                     }
                     None => self.match_event_handler_name_in(span, cx),
                 },

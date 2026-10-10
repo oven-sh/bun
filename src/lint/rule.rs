@@ -273,6 +273,8 @@ pub enum Kind {
     Suggestion,
     /// Whitespace, semicolons, commas, parentheses.
     Layout,
+    /// The rule does not say.
+    None,
 }
 
 /// ESLint's `meta.fixable`.

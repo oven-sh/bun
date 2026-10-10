@@ -186,6 +186,8 @@ type ReferencesByText<'a> = FxHashMap<&'a [u8], Option<Expr<'a>>>;
 pub(crate) struct Related<'a> {
     paths: ComponentPaths<'a>,
     references: FxHashMap<Variable<'a>, ReferencesByText<'a>>,
+    /// Of an object literal that is looked into: the first property of each name.
+    properties: FxHashMap<Expr<'a>, FxHashMap<&'a [u8], Prop<'a>>>,
 }
 
 impl<'a> Related<'a> {
@@ -236,10 +238,16 @@ impl<'a> Related<'a> {
             let ExprKind::Object(properties) = component_node.kind() else {
                 break;
             };
-            let property = properties
-                .iter()
-                .find(|it| it.key().and_then(name_of_key) == Some(name.bytes()))?;
-            component_node = property.value()?;
+            let by_name = self.properties.entry(component_node).or_insert_with(|| {
+                let mut by_name = FxHashMap::default();
+                for property in properties {
+                    if let Some(name) = property.key().and_then(name_of_key) {
+                        by_name.entry(name).or_insert(property);
+                    }
+                }
+                by_name
+            });
+            component_node = by_name.get(name.bytes())?.value()?;
         }
         Some(Node::Expr(component_node))
     }

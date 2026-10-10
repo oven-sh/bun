@@ -280,6 +280,8 @@ pub(crate) enum DefaultProps<'a> {
 
 // ───────────────────────────── the list ─────────────────────────────
 
+const MAX_LISTED: usize = 1 << 21;
+
 /// Which component of a [`ComponentList`]: the how manyth that was added.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub(crate) struct ComponentId(u32);
@@ -340,6 +342,8 @@ pub(crate) struct ComponentList<'a> {
     by_id: FxHashMap<Span, ComponentId>,
     /// For `set`: the component around a node, until another node becomes one or ceases to be one.
     around: AncestorMemo<'a, ComponentId>,
+    /// How many components [`ComponentList::list_in_the_walk`] has gone through.
+    listed: usize,
 }
 
 impl<'a> ComponentList<'a> {
@@ -448,6 +452,15 @@ impl<'a> ComponentList<'a> {
             }
         }
         list
+    }
+
+    /// `list()`, for one who asks in the middle of the walk. n of them go through n components:
+    /// after [`MAX_LISTED`] what the uncertain ones use is given to the others at the end alone.
+    pub(crate) fn list_in_the_walk(&mut self) {
+        self.listed = self.listed.saturating_add(self.list.len());
+        if self.listed <= MAX_LISTED {
+            self.list();
+        }
     }
 
     /// How many components are certain.

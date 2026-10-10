@@ -223,12 +223,13 @@ impl Context<'_, '_> {
                 Kind::Problem => FixType::Problem,
                 Kind::Suggestion => FixType::Suggestion,
                 Kind::Layout => FixType::Layout,
+                Kind::None => return false,
             },
             Some(RuleId::Js(rule)) => match rule.kind {
                 Some(Kind::Problem) => FixType::Problem,
                 Some(Kind::Suggestion) => FixType::Suggestion,
                 Some(Kind::Layout) => FixType::Layout,
-                None => return false,
+                Some(Kind::None) | None => return false,
             },
             Some(RuleId::Unknown(_)) => return false,
         })

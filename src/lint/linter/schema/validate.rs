@@ -668,6 +668,23 @@ impl<'s> Validator<'s> {
                 return false;
             }
         }
+        if let Some(condition) = schema.get(b"if") {
+            let silent = Context {
+                makes_errors: false,
+                ..composite
+            };
+            let name: &[u8] = match self.check(condition, data, silent) {
+                true => b"then",
+                false => b"else",
+            };
+            if let Some(branch) = schema.get(name)
+                && !self.check(branch, data, cx)
+            {
+                // Where the first error ends it all, that of the branch has.
+                return cx.is_composite
+                    && self.error(cx, data, &[b"should match \"", name, b"\" schema"]);
+            }
+        }
         true
     }
 }

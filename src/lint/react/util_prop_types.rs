@@ -37,6 +37,7 @@ use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::estree_parent;
 use std::borrow::Cow;
+use std::cell::Cell;
 
 /// Through how many variables and calls of wrapper functions a declaration is followed. Upstream
 /// throws a `RangeError` where that has no end: `const a = a`.
@@ -222,6 +223,8 @@ struct PropTypesInstructions<'a> {
     class_bodies: AncestorMemo<'a, ()>,
     /// Whether a node is in a declaration of prop types.
     declarations: AncestorMemo<'a, ()>,
+    /// How many parts of declarations have been looked at.
+    steps: Cell<u32>,
 }
 
 impl<'a> PropTypesInstructions<'a> {
@@ -301,8 +304,13 @@ impl<'a> PropTypesInstructions<'a> {
             return Ok(true);
         }
         let parent_prop = without_prop_types(object.text());
-        let built =
-            build_react_declaration_types(right, parent_prop, root_node, &self.custom_validators)?;
+        let built = build_react_declaration_types(
+            right,
+            parent_prop,
+            root_node,
+            &self.custom_validators,
+            &self.steps,
+        )?;
         let name = get_property_name(Node::Expr(prop_types));
         let types = DeclaredPropType {
             full_name: Some(Cow::Owned(
@@ -339,6 +347,7 @@ impl<'a> PropTypesInstructions<'a> {
                         root_node,
                         &self.imports,
                         &self.custom_validators,
+                        &self.steps,
                     );
                     *declared_prop_types = ts_type_annotation.declared_prop_types;
                     return Ok(ts_type_annotation.should_ignore_prop_types);
@@ -360,6 +369,7 @@ impl<'a> PropTypesInstructions<'a> {
                             key_in_full_name(prop_node, key.as_deref()),
                             root_node,
                             &self.custom_validators,
+                            &self.steps,
                         )?;
                         let types = DeclaredPropType {
                             full_name: key.clone(),
@@ -465,6 +475,7 @@ impl<'a> PropTypesInstructions<'a> {
                 root_node,
                 &self.imports,
                 &self.custom_validators,
+                &self.steps,
             );
             if let Some(id) = components.set(node) {
                 let component = components.component_mut(id);

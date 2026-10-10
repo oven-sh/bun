@@ -391,7 +391,7 @@
                 "minimum": 1
               },
               {
-                "enum": ["∞"],
+                "enum": ["\u221e"],
                 "type": "string"
               }
             ]
@@ -3714,6 +3714,1051 @@
       }
     ]
   },
+  "react/boolean-prop-naming": {
+    "schema": [
+      {
+        "additionalProperties": false,
+        "properties": {
+          "propTypeNames": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "rule": {
+            "default": "^(is|has)[A-Z]([A-Za-z0-9]?)+",
+            "minLength": 1,
+            "type": "string"
+          },
+          "message": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "validateNested": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      }
+    ]
+  },
+  "react/button-has-type": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "button": {
+            "default": true,
+            "type": "boolean"
+          },
+          "submit": {
+            "default": true,
+            "type": "boolean"
+          },
+          "reset": {
+            "default": true,
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/checked-requires-onchange-or-readonly": {
+    "schema": [
+      {
+        "additionalProperties": false,
+        "properties": {
+          "ignoreMissingProperties": {
+            "type": "boolean"
+          },
+          "ignoreExclusiveCheckedAttribute": {
+            "type": "boolean"
+          }
+        }
+      }
+    ]
+  },
+  "react/default-props-match-prop-types": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "allowRequiredDefaults": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/destructuring-assignment": {
+    "schema": [
+      {
+        "type": "string",
+        "enum": ["always", "never"]
+      },
+      {
+        "type": "object",
+        "properties": {
+          "ignoreClassFields": {
+            "type": "boolean"
+          },
+          "destructureInSignature": {
+            "type": "string",
+            "enum": ["always", "ignore"]
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/display-name": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "ignoreTranspilerName": {
+            "type": "boolean"
+          },
+          "checkContextObjects": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/forbid-component-props": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "forbid": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "propName": {
+                      "type": "string"
+                    },
+                    "allowedFor": {
+                      "type": "array",
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "allowedForPatterns": {
+                      "type": "array",
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "propName": {
+                      "type": "string"
+                    },
+                    "disallowedFor": {
+                      "type": "array",
+                      "uniqueItems": true,
+                      "minItems": 1,
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "disallowedForPatterns": {
+                      "type": "array",
+                      "uniqueItems": true,
+                      "minItems": 1,
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "anyOf": [
+                    {
+                      "required": ["disallowedFor"]
+                    },
+                    {
+                      "required": ["disallowedForPatterns"]
+                    }
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "propNamePattern": {
+                      "type": "string"
+                    },
+                    "allowedFor": {
+                      "type": "array",
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "allowedForPatterns": {
+                      "type": "array",
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "propNamePattern": {
+                      "type": "string"
+                    },
+                    "disallowedFor": {
+                      "type": "array",
+                      "uniqueItems": true,
+                      "minItems": 1,
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "disallowedForPatterns": {
+                      "type": "array",
+                      "uniqueItems": true,
+                      "minItems": 1,
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "anyOf": [
+                    {
+                      "required": ["disallowedFor"]
+                    },
+                    {
+                      "required": ["disallowedForPatterns"]
+                    }
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          }
+        }
+      }
+    ]
+  },
+  "react/forbid-dom-props": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "forbid": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "propName": {
+                      "type": "string"
+                    },
+                    "disallowedFor": {
+                      "type": "array",
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              ],
+              "minLength": 1
+            },
+            "uniqueItems": true
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/forbid-elements": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "forbid": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "element": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["element"],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/forbid-foreign-prop-types": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "allowInPropTypes": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/forbid-prop-types": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "forbid": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "checkContextTypes": {
+            "type": "boolean"
+          },
+          "checkChildContextTypes": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": true
+      }
+    ]
+  },
+  "react/forward-ref-uses-ref": {},
+  "react/function-component-definition": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "namedComponents": {
+            "anyOf": [
+              {
+                "enum": ["function-declaration", "arrow-function", "function-expression"]
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": ["function-declaration", "arrow-function", "function-expression"]
+                }
+              }
+            ]
+          },
+          "unnamedComponents": {
+            "anyOf": [
+              {
+                "enum": ["arrow-function", "function-expression"]
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": ["arrow-function", "function-expression"]
+                }
+              }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "react/hook-use-state": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "allowDestructuredState": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/iframe-missing-sandbox": {},
+  "react/jsx-boolean-value": {
+    "schema": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": [
+            {
+              "enum": ["always", "never"]
+            }
+          ],
+          "additionalItems": false
+        },
+        {
+          "type": "array",
+          "items": [
+            {
+              "enum": ["always"]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "never": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "uniqueItems": true
+                },
+                "assumeUndefinedIsFalse": {
+                  "type": "boolean"
+                }
+              }
+            }
+          ],
+          "additionalItems": false
+        },
+        {
+          "type": "array",
+          "items": [
+            {
+              "enum": ["never"]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "always": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "uniqueItems": true
+                },
+                "assumeUndefinedIsFalse": {
+                  "type": "boolean"
+                }
+              }
+            }
+          ],
+          "additionalItems": false
+        }
+      ]
+    }
+  },
+  "react/jsx-child-element-spacing": {},
+  "react/jsx-closing-bracket-location": {
+    "schema": [
+      {
+        "anyOf": [
+          {
+            "enum": ["after-props", "props-aligned", "tag-aligned", "line-aligned"]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "location": {
+                "enum": ["after-props", "props-aligned", "tag-aligned", "line-aligned"]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "nonEmpty": {
+                "enum": ["after-props", "props-aligned", "tag-aligned", "line-aligned", false]
+              },
+              "selfClosing": {
+                "enum": ["after-props", "props-aligned", "tag-aligned", "line-aligned", false]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      }
+    ]
+  },
+  "react/jsx-closing-tag-location": {
+    "schema": [
+      {
+        "anyOf": [
+          {
+            "enum": ["tag-aligned", "line-aligned"]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "location": {
+                "enum": ["tag-aligned", "line-aligned"]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      }
+    ]
+  },
+  "react/jsx-curly-brace-presence": {
+    "schema": [
+      {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "props": {
+                "enum": ["always", "never", "ignore"]
+              },
+              "children": {
+                "enum": ["always", "never", "ignore"]
+              },
+              "propElementValues": {
+                "enum": ["always", "never", "ignore"]
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "enum": ["always", "never", "ignore"]
+          }
+        ]
+      }
+    ]
+  },
+  "react/jsx-curly-newline": {
+    "schema": [
+      {
+        "anyOf": [
+          {
+            "enum": ["consistent", "never"]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "singleline": {
+                "enum": ["consistent", "require", "forbid"]
+              },
+              "multiline": {
+                "enum": ["consistent", "require", "forbid"]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      }
+    ]
+  },
+  "react/jsx-curly-spacing": {
+    "schema": {
+      "definitions": {
+        "basicConfig": {
+          "type": "object",
+          "properties": {
+            "when": {
+              "enum": ["always", "never"]
+            },
+            "allowMultiline": {
+              "type": "boolean"
+            },
+            "spacing": {
+              "type": "object",
+              "properties": {
+                "objectLiterals": {
+                  "enum": ["always", "never"]
+                }
+              }
+            }
+          }
+        },
+        "basicConfigOrBoolean": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/basicConfig"
+            },
+            {
+              "type": "boolean"
+            }
+          ]
+        }
+      },
+      "type": "array",
+      "items": [
+        {
+          "anyOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/basicConfig"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "attributes": {
+                      "$ref": "#/definitions/basicConfigOrBoolean"
+                    },
+                    "children": {
+                      "$ref": "#/definitions/basicConfigOrBoolean"
+                    }
+                  }
+                }
+              ]
+            },
+            {
+              "enum": ["always", "never"]
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "allowMultiline": {
+              "type": "boolean"
+            },
+            "spacing": {
+              "type": "object",
+              "properties": {
+                "objectLiterals": {
+                  "enum": ["always", "never"]
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "react/jsx-equals-spacing": {
+    "schema": [
+      {
+        "enum": ["always", "never"]
+      }
+    ]
+  },
+  "react/jsx-filename-extension": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "allow": {
+            "enum": ["always", "as-needed"]
+          },
+          "extensions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ignoreFilesWithoutCode": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/jsx-first-prop-new-line": {
+    "schema": [
+      {
+        "enum": ["always", "never", "multiline", "multiline-multiprop", "multiprop"]
+      }
+    ]
+  },
+  "react/jsx-fragments": {
+    "schema": [
+      {
+        "enum": ["syntax", "element"]
+      }
+    ]
+  },
+  "react/jsx-handler-names": {
+    "schema": [
+      {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "eventHandlerPrefix": {
+                "type": "string"
+              },
+              "eventHandlerPropPrefix": {
+                "type": "string"
+              },
+              "checkLocalVariables": {
+                "type": "boolean"
+              },
+              "checkInlineFunction": {
+                "type": "boolean"
+              },
+              "ignoreComponentNames": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "eventHandlerPrefix": {
+                "type": "string"
+              },
+              "eventHandlerPropPrefix": {
+                "type": "boolean",
+                "enum": [false]
+              },
+              "checkLocalVariables": {
+                "type": "boolean"
+              },
+              "checkInlineFunction": {
+                "type": "boolean"
+              },
+              "ignoreComponentNames": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "eventHandlerPrefix": {
+                "type": "boolean",
+                "enum": [false]
+              },
+              "eventHandlerPropPrefix": {
+                "type": "string"
+              },
+              "checkLocalVariables": {
+                "type": "boolean"
+              },
+              "checkInlineFunction": {
+                "type": "boolean"
+              },
+              "ignoreComponentNames": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "checkLocalVariables": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "checkInlineFunction": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ignoreComponentNames": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "react/jsx-indent": {
+    "schema": [
+      {
+        "anyOf": [
+          {
+            "enum": ["tab"]
+          },
+          {
+            "type": "integer"
+          }
+        ]
+      },
+      {
+        "type": "object",
+        "properties": {
+          "checkAttributes": {
+            "type": "boolean"
+          },
+          "indentLogicalExpressions": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/jsx-indent-props": {
+    "schema": [
+      {
+        "anyOf": [
+          {
+            "enum": ["tab", "first"]
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "indentMode": {
+                "anyOf": [
+                  {
+                    "enum": ["tab", "first"]
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ]
+              },
+              "ignoreTernaryOperator": {
+                "type": "boolean"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "react/jsx-key": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "checkFragmentShorthand": {
+            "type": "boolean",
+            "default": false
+          },
+          "checkKeyMustBeforeSpread": {
+            "type": "boolean",
+            "default": false
+          },
+          "warnOnDuplicates": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/jsx-max-depth": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "max": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/jsx-max-props-per-line": {
+    "schema": [
+      {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "maximum": {
+                "type": "object",
+                "properties": {
+                  "single": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "multi": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "maximum": {
+                "type": "number",
+                "minimum": 1
+              },
+              "when": {
+                "type": "string",
+                "enum": ["always", "multiline"]
+              }
+            },
+            "additionalProperties": false
+          }
+        ]
+      }
+    ]
+  },
+  "react/jsx-newline": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "prevent": {
+            "default": false,
+            "type": "boolean"
+          },
+          "allowMultilines": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "if": {
+          "properties": {
+            "allowMultilines": {
+              "const": true
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "prevent": {
+              "const": true
+            }
+          },
+          "required": ["prevent"]
+        }
+      }
+    ]
+  },
+  "react/jsx-no-bind": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "allowArrowFunctions": {
+            "default": false,
+            "type": "boolean"
+          },
+          "allowBind": {
+            "default": false,
+            "type": "boolean"
+          },
+          "allowFunctions": {
+            "default": false,
+            "type": "boolean"
+          },
+          "ignoreRefs": {
+            "default": false,
+            "type": "boolean"
+          },
+          "ignoreDOMComponents": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/jsx-no-comment-textnodes": {},
+  "react/jsx-no-constructed-context-values": {
+    "schema": {}
+  },
+  "react/jsx-no-duplicate-props": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "ignoreCase": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
   "react/jsx-no-leaked-render": {
     "schema": [
       {
@@ -3731,5 +4776,836 @@
         "additionalProperties": false
       }
     ]
-  }
+  },
+  "react/jsx-no-literals": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "elementOverrides": {
+            "type": "object",
+            "patternProperties": {
+              "^[A-Z][\\w.]*$": {
+                "type": "object",
+                "properties": {
+                  "applyToNestedElements": {
+                    "type": "boolean"
+                  },
+                  "noStrings": {
+                    "type": "boolean"
+                  },
+                  "allowedStrings": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "ignoreProps": {
+                    "type": "boolean"
+                  },
+                  "noAttributeStrings": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          },
+          "noStrings": {
+            "type": "boolean"
+          },
+          "allowedStrings": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string"
+            }
+          },
+          "ignoreProps": {
+            "type": "boolean"
+          },
+          "noAttributeStrings": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/jsx-no-script-url": {
+    "schema": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": [
+            {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "props": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "uniqueItems": true
+                    }
+                  }
+                },
+                "required": ["name", "props"],
+                "additionalProperties": false
+              }
+            },
+            {
+              "type": "object",
+              "properties": {
+                "includeFromSettings": {
+                  "type": "boolean"
+                }
+              },
+              "additionalItems": false
+            }
+          ],
+          "additionalItems": false
+        },
+        {
+          "type": "array",
+          "items": [
+            {
+              "type": "object",
+              "properties": {
+                "includeFromSettings": {
+                  "type": "boolean"
+                }
+              },
+              "additionalItems": false
+            }
+          ],
+          "additionalItems": false
+        }
+      ]
+    }
+  },
+  "react/jsx-no-target-blank": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "allowReferrer": {
+            "type": "boolean"
+          },
+          "enforceDynamicLinks": {
+            "enum": ["always", "never"]
+          },
+          "warnOnSpreadAttributes": {
+            "type": "boolean"
+          },
+          "links": {
+            "type": "boolean",
+            "default": true
+          },
+          "forms": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/jsx-no-undef": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "allowGlobals": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/jsx-no-useless-fragment": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "allowExpressions": {
+            "type": "boolean"
+          }
+        }
+      }
+    ]
+  },
+  "react/jsx-one-expression-per-line": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "allow": {
+            "enum": ["none", "literal", "single-child", "non-jsx"]
+          }
+        },
+        "default": {
+          "allow": "none"
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/jsx-pascal-case": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "allowAllCaps": {
+            "type": "boolean"
+          },
+          "allowLeadingUnderscore": {
+            "type": "boolean"
+          },
+          "allowNamespace": {
+            "type": "boolean"
+          },
+          "ignore": {
+            "items": [
+              {
+                "type": "string"
+              }
+            ],
+            "minItems": 0,
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/jsx-props-no-multi-spaces": {},
+  "react/jsx-props-no-spread-multi": {},
+  "react/jsx-props-no-spreading": {
+    "schema": [
+      {
+        "allOf": [
+          {
+            "type": "object",
+            "properties": {
+              "html": {
+                "enum": ["enforce", "ignore"]
+              },
+              "custom": {
+                "enum": ["enforce", "ignore"]
+              },
+              "explicitSpread": {
+                "enum": ["enforce", "ignore"]
+              },
+              "exceptions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "uniqueItems": true
+                }
+              }
+            }
+          },
+          {
+            "not": {
+              "type": "object",
+              "required": ["html", "custom"],
+              "properties": {
+                "html": {
+                  "enum": ["ignore"]
+                },
+                "custom": {
+                  "enum": ["ignore"]
+                },
+                "exceptions": {
+                  "type": "array",
+                  "minItems": 0,
+                  "maxItems": 0
+                }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "react/jsx-sort-default-props": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "ignoreCase": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/jsx-sort-props": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "callbacksLast": {
+            "type": "boolean"
+          },
+          "shorthandFirst": {
+            "type": "boolean"
+          },
+          "shorthandLast": {
+            "type": "boolean"
+          },
+          "multiline": {
+            "enum": ["ignore", "first", "last"],
+            "default": "ignore"
+          },
+          "ignoreCase": {
+            "type": "boolean"
+          },
+          "noSortAlphabetically": {
+            "type": "boolean"
+          },
+          "reservedFirst": {
+            "type": ["array", "boolean"]
+          },
+          "locale": {
+            "type": "string",
+            "default": "auto"
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/jsx-space-before-closing": {
+    "schema": [
+      {
+        "enum": ["always", "never"]
+      }
+    ]
+  },
+  "react/jsx-tag-spacing": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "closingSlash": {
+            "enum": ["always", "never", "allow"]
+          },
+          "beforeSelfClosing": {
+            "enum": ["always", "proportional-always", "never", "allow"]
+          },
+          "afterOpening": {
+            "enum": ["always", "allow-multiline", "never", "allow"]
+          },
+          "beforeClosing": {
+            "enum": ["always", "proportional-always", "never", "allow"]
+          }
+        },
+        "default": {
+          "closingSlash": "never",
+          "beforeSelfClosing": "always",
+          "afterOpening": "never",
+          "beforeClosing": "allow"
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/jsx-uses-react": {},
+  "react/jsx-uses-vars": {},
+  "react/jsx-wrap-multilines": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "declaration": {
+            "enum": [true, false, "ignore", "parens", "parens-new-line", "never"]
+          },
+          "assignment": {
+            "enum": [true, false, "ignore", "parens", "parens-new-line", "never"]
+          },
+          "return": {
+            "enum": [true, false, "ignore", "parens", "parens-new-line", "never"]
+          },
+          "arrow": {
+            "enum": [true, false, "ignore", "parens", "parens-new-line", "never"]
+          },
+          "condition": {
+            "enum": [true, false, "ignore", "parens", "parens-new-line", "never"]
+          },
+          "logical": {
+            "enum": [true, false, "ignore", "parens", "parens-new-line", "never"]
+          },
+          "prop": {
+            "enum": [true, false, "ignore", "parens", "parens-new-line", "never"]
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/no-access-state-in-setstate": {},
+  "react/no-adjacent-inline-elements": {},
+  "react/no-array-index-key": {},
+  "react/no-arrow-function-lifecycle": {},
+  "react/no-children-prop": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "allowFunctions": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/no-danger": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "customComponentNames": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 0,
+            "type": "array",
+            "uniqueItems": true
+          }
+        }
+      }
+    ]
+  },
+  "react/no-danger-with-children": {},
+  "react/no-deprecated": {},
+  "react/no-did-mount-set-state": {
+    "schema": [
+      {
+        "enum": ["disallow-in-func"]
+      }
+    ]
+  },
+  "react/no-did-update-set-state": {
+    "schema": [
+      {
+        "enum": ["disallow-in-func"]
+      }
+    ]
+  },
+  "react/no-direct-mutation-state": {},
+  "react/no-find-dom-node": {},
+  "react/no-invalid-html-attribute": {
+    "schema": [
+      {
+        "type": "array",
+        "uniqueItems": true,
+        "items": {
+          "enum": ["rel"]
+        }
+      }
+    ]
+  },
+  "react/no-is-mounted": {},
+  "react/no-multi-comp": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "ignoreStateless": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/no-namespace": {},
+  "react/no-object-type-as-default-prop": {},
+  "react/no-redundant-should-component-update": {},
+  "react/no-render-return-value": {},
+  "react/no-set-state": {},
+  "react/no-string-refs": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "noTemplateLiterals": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/no-this-in-sfc": {},
+  "react/no-typos": {},
+  "react/no-unescaped-entities": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "forbid": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "char": {
+                      "type": "string"
+                    },
+                    "alternatives": {
+                      "type": "array",
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/no-unknown-property": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "ignore": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "requireDataLowercase": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/no-unsafe": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "checkAliases": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/no-unstable-nested-components": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "customValidators": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allowAsProps": {
+            "type": "boolean"
+          },
+          "propNamePattern": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/no-unused-class-component-methods": {},
+  "react/no-unused-prop-types": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "ignore": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true
+          },
+          "customValidators": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "skipShapeProps": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/no-unused-state": {},
+  "react/no-will-update-set-state": {
+    "schema": [
+      {
+        "enum": ["disallow-in-func"]
+      }
+    ]
+  },
+  "react/prefer-es6-class": {
+    "schema": [
+      {
+        "enum": ["always", "never"]
+      }
+    ]
+  },
+  "react/prefer-exact-props": {},
+  "react/prefer-read-only-props": {},
+  "react/prefer-stateless-function": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "ignorePureComponents": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/prop-types": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "ignore": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "customValidators": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "skipUndeclared": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/react-in-jsx-scope": {},
+  "react/require-default-props": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "forbidDefaultForRequired": {
+            "type": "boolean"
+          },
+          "classes": {
+            "enum": ["defaultProps", "ignore"]
+          },
+          "functions": {
+            "enum": ["defaultArguments", "defaultProps", "ignore"]
+          },
+          "ignoreFunctionalComponents": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/require-optimization": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "allowDecorators": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/require-render-return": {},
+  "react/self-closing-comp": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "component": {
+            "default": true,
+            "type": "boolean"
+          },
+          "html": {
+            "default": true,
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/sort-comp": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "order": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "groups": {
+            "type": "object",
+            "patternProperties": {
+              "^.*$": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/sort-default-props": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "ignoreCase": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/sort-prop-types": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "requiredFirst": {
+            "type": "boolean"
+          },
+          "callbacksLast": {
+            "type": "boolean"
+          },
+          "ignoreCase": {
+            "type": "boolean"
+          },
+          "noSortAlphabetically": {
+            "type": "boolean"
+          },
+          "sortShapeProp": {
+            "type": "boolean"
+          },
+          "checkTypes": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/state-in-constructor": {
+    "schema": [
+      {
+        "enum": ["always", "never"]
+      }
+    ]
+  },
+  "react/static-property-placement": {
+    "schema": [
+      {
+        "enum": ["static public field", "static getter", "property assignment"]
+      },
+      {
+        "type": "object",
+        "properties": {
+          "propTypes": {
+            "enum": ["static public field", "static getter", "property assignment"]
+          },
+          "defaultProps": {
+            "enum": ["static public field", "static getter", "property assignment"]
+          },
+          "childContextTypes": {
+            "enum": ["static public field", "static getter", "property assignment"]
+          },
+          "contextTypes": {
+            "enum": ["static public field", "static getter", "property assignment"]
+          },
+          "contextType": {
+            "enum": ["static public field", "static getter", "property assignment"]
+          },
+          "displayName": {
+            "enum": ["static public field", "static getter", "property assignment"]
+          }
+        },
+        "additionalProperties": false
+      }
+    ]
+  },
+  "react/style-prop-object": {
+    "schema": [
+      {
+        "type": "object",
+        "properties": {
+          "allow": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "additionalItems": false,
+            "uniqueItems": true
+          }
+        }
+      }
+    ]
+  },
+  "react/void-dom-elements-no-children": {}
 }

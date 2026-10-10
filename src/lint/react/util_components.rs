@@ -595,7 +595,7 @@ impl<'a> Components<'a> {
         let child_component = get_name_of_wrapped_component(node.args());
         // `getDetectedComponents` asks for the list, which moves the props that are used.
         if !self.stages.is_empty() {
-            self.list.list();
+            self.list.list_in_the_walk();
         }
         child_component
             .and_then(|it| self.detected.get(&it))

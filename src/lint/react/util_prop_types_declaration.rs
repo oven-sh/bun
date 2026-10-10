@@ -21,12 +21,17 @@ use bun_lint::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::borrow::Cow;
+use std::cell::Cell;
 
 /// How far a declaration is followed into what it is made of.
 const MAX_DEPTH: u32 = 100;
 
 /// How many parts of a declaration are looked at. One that is named twice counts twice.
 const MAX_STEPS: u32 = 100_000;
+
+/// How many parts of all the declarations of a file: n components can have one declaration of n
+/// parts.
+const MAX_STEPS_IN_A_FILE: u32 = 1 << 17;
 
 /// What upstream throws where that has no end: `const a = PropTypes.arrayOf(a)`.
 pub(crate) struct RangeError;
@@ -258,7 +263,11 @@ pub(crate) fn build_react_declaration_types<'a>(
     parent_name: &[u8],
     root_node: Option<Node<'a>>,
     custom_validators: &[Box<[u8]>],
+    steps_in_the_file: &Cell<u32>,
 ) -> Result<DeclaredPropType<'a>, RangeError> {
+    if steps_in_the_file.get() > MAX_STEPS_IN_A_FILE {
+        return Err(RangeError);
+    }
     let mut types = ReactDeclarationTypes {
         root_node,
         custom_validators,
@@ -266,6 +275,7 @@ pub(crate) fn build_react_declaration_types<'a>(
         has_given_up: false,
     };
     let built = types.build(value, parent_name, 0);
+    steps_in_the_file.set(steps_in_the_file.get().saturating_add(types.steps));
     match types.has_given_up {
         true => Err(RangeError),
         false => Ok(built),
@@ -360,6 +370,7 @@ struct DeclarePropTypesForTsTypeAnnotation<'a, 'b> {
     root_node: Option<Node<'a>>,
     imports: &'b ReactTypeImports<'a>,
     custom_validators: &'b [Box<[u8]>],
+    steps_in_the_file: &'b Cell<u32>,
     /// How many calls of `visit_ts_node` are under way.
     depth: u32,
     /// How often it is called.
@@ -507,6 +518,10 @@ impl<'a> DeclarePropTypesForTsTypeAnnotation<'a, '_> {
                 return;
             }
         };
+        // Without a name all the statements of the file are looked at.
+        if expr_name.is_none() {
+            self.steps = self.steps.saturating_add(file.body().len() as u32);
+        }
         let declarations = variable_declarations(file, expr_name);
         self.should_ignore_prop_types |= declarations.is_empty();
         for declaration in declarations {
@@ -566,6 +581,7 @@ impl<'a> DeclarePropTypesForTsTypeAnnotation<'a, '_> {
             key_in_full_name(prop_node, key.as_deref()),
             self.root_node,
             self.custom_validators,
+            self.steps_in_the_file,
         ) else {
             self.should_ignore_prop_types = true;
             return;
@@ -638,7 +654,14 @@ pub(crate) fn declare_prop_types_for_ts_type_annotation<'a>(
     root_node: Option<Node<'a>>,
     imports: &ReactTypeImports<'a>,
     custom_validators: &[Box<[u8]>],
+    steps_in_the_file: &Cell<u32>,
 ) -> TsAnnotation<'a> {
+    if steps_in_the_file.get() > MAX_STEPS_IN_A_FILE {
+        return TsAnnotation {
+            declared_prop_types,
+            should_ignore_prop_types: true,
+        };
+    }
     let mut annotation = DeclarePropTypesForTsTypeAnnotation {
         declared_prop_types,
         found_declared_properties_list: Vec::new(),
@@ -649,11 +672,14 @@ pub(crate) fn declare_prop_types_for_ts_type_annotation<'a>(
         root_node,
         imports,
         custom_validators,
+        steps_in_the_file,
         depth: 0,
         steps: 0,
         has_given_up: false,
     };
     annotation.visit_ts_node(prop_types);
+    let steps = (annotation.found_declared_properties_list.len() as u32).max(annotation.steps);
+    steps_in_the_file.set(steps_in_the_file.get().saturating_add(steps));
     annotation.end_and_struct_declared_prop_types();
     TsAnnotation {
         declared_prop_types: annotation.declared_prop_types,

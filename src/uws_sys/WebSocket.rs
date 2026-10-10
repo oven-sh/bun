@@ -81,6 +81,16 @@ impl AnyWebSocket {
         ws.memory_cost(ssl)
     }
 
+    pub fn set_read_paused(self, paused: bool) {
+        // Both uWS websocket types begin with the live us_socket_t header.
+        let socket = crate::us_socket_t::opaque_mut(self.raw().cast());
+        if paused {
+            socket.pause();
+        } else {
+            socket.resume();
+        }
+    }
+
     pub fn close(self) {
         let (ssl, ws) = self.split();
         c::uws_ws_close(ssl, ws)

@@ -5,7 +5,7 @@ use core::ptr::NonNull;
 
 use bun_core::Utf8Bytes;
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{ComptimeStringMapExt as _, JsCell};
+use bun_jsc::{ComptimeStringMapExt as _, JSFunction, JsCell};
 use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
 use bun_uws_sys::web_socket::{WebSocketHandler, WebSocketUpgradeServer, Wrap};
 use bun_uws_sys::{Opcode, SendStatus};
@@ -150,6 +150,27 @@ pub(crate) mod js {
     // Emits `{data,server}_{get,set}_cached`. Getter maps `JSValue::ZERO` → `None`;
     // setter forwards through the JSC `WriteBarrier<Unknown>` slot.
     ::bun_jsc::codegen_cached_accessors!("ServerWebSocket"; data, server);
+}
+
+pub(crate) fn create_read_state_controller(global: &JSGlobalObject) -> JSValue {
+    #[bun_jsc::host_fn(export = "Bun__ServerWebSocket__setReadPaused")]
+    fn set_read_paused(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let [value, paused] = frame.arguments_as_array::<2>();
+        let Some(socket) = value.as_class_ref::<ServerWebSocket>() else {
+            return Err(global.throw_invalid_arguments(format_args!("Expected a ServerWebSocket")));
+        };
+        if !socket.flags.get().closed() {
+            socket.websocket().set_read_paused(paused.to_boolean());
+        }
+        Ok(JSValue::UNDEFINED)
+    }
+    JSFunction::create(
+        global,
+        "setServerWebSocketReadPaused",
+        __jsc_host_set_read_paused,
+        2,
+        Default::default(),
+    )
 }
 
 /// RFC 6455 §5.5: control frame payloads are at most 125 bytes.

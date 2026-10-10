@@ -986,6 +986,8 @@ const RUNNING = 0;
 const CLOSING = 1;
 const CLOSED = 2;
 
+let serverReadStateController;
+
 class BunWebSocketMocked extends EventEmitter {
   #ws;
   #state;
@@ -996,6 +998,7 @@ class BunWebSocketMocked extends EventEmitter {
   #bufferedAmount = 0;
   // The default of the ServerWebSocket. The setter keeps both sides in sync.
   #binaryType = "nodebuffer";
+  #paused = false;
 
   #onclose;
   #onerror;
@@ -1217,6 +1220,27 @@ class BunWebSocketMocked extends EventEmitter {
   get readyState() {
     return this.#state;
   }
+
+  get isPaused() {
+    return this.#paused;
+  }
+
+  #setReadPaused(paused) {
+    const state = this.#state;
+    if (state === ReadyState_CONNECTING || state === ReadyState_CLOSED) return;
+    this.#paused = paused;
+    serverReadStateController ??= $rust("ServerWebSocket.rs", "createReadStateController");
+    serverReadStateController(this.#ws, paused);
+  }
+
+  pause() {
+    this.#setReadPaused(true);
+  }
+
+  resume() {
+    this.#setReadPaused(false);
+  }
+
   get url() {
     return this.#url;
   }

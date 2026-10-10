@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "bun";
-import { existsSync, renameSync, statSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, statSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -233,9 +233,30 @@ function envFor(test: string) {
     : bunEnv;
 }
 
+// Mirror of parseTestFlags() in test/common/index.js. When a vendored test names runtime
+// flags in a `// Flags:` comment and process.execArgv lacks them, the common module
+// re-spawns the whole test under a second bun process to apply them; passing them to
+// `bun run` up front puts them in execArgv so that extra process never starts. Of the
+// flags these tests name, bun only implements --expose-gc and silently skips the rest,
+// exactly as it did for the re-spawned child; only their presence in execArgv matters.
+function testFlagsFor(dir: string, test: string): string[] {
+  let source: string;
+  try {
+    source = readFileSync(join(dir, test), "utf8").slice(0, 1500);
+  } catch {
+    return [];
+  }
+  const flagStart = source.search(/\/\/ Flags:\s+--/) + 10;
+  if (flagStart === 9) return [];
+  let flagEnd = source.indexOf("\n", flagStart);
+  if (flagEnd === -1) flagEnd = source.length;
+  else if (source[flagEnd - 1] === "\r") flagEnd--;
+  return source.substring(flagStart, flagEnd).split(/\s+/).filter(Boolean);
+}
+
 export function run(dir: string, test: string) {
   const result = spawnSync({
-    cmd: [bunExe(), "run", test],
+    cmd: [bunExe(), "run", ...testFlagsFor(dir, test), test],
     cwd: dir,
     stderr: "inherit",
     stdout: "ignore",
@@ -247,16 +268,21 @@ export function run(dir: string, test: string) {
 }
 
 // Non-blocking variant of run() so callers can execute the addon's .js tests concurrently.
+// Stricter than run(): the vendored tests report failure only through assertions and exit
+// codes and are silent on success, so any output is asserted against (which also puts the
+// child's error text straight into the failure diff instead of discarding it).
 export async function runAsync(dir: string, test: string) {
   const child = spawn({
-    cmd: [bunExe(), "run", test],
+    cmd: [bunExe(), "run", ...testFlagsFor(dir, test), test],
     cwd: dir,
-    stderr: "inherit",
-    stdout: "ignore",
+    stderr: "pipe",
+    stdout: "pipe",
     stdin: "inherit",
     env: envFor(test),
   });
-  const exitCode = await child.exited;
+  const [stderr, stdout, exitCode] = await Promise.all([child.stderr.text(), child.stdout.text(), child.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("");
   expect(child.signalCode).toBeNull();
   expect(exitCode).toBe(0);
 }

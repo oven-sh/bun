@@ -1,6 +1,28 @@
 use bun_base64;
+use bun_core::Utf8Bytes;
 
 use bun_sha_hmac::hmac::EVP_MAX_MD_SIZE;
+
+unsafe extern "C" {
+    // src/jsc/bindings/SASLPrep.cpp. Dead when SASLprep rejects the input.
+    fn Bun__saslprep(ptr: *const u8, len: usize) -> bun_core::String;
+}
+
+/// SASLprep the password as PostgreSQL did when it stored the SCRAM verifier.
+/// `None` means "use the raw password", as libpq does when SASLprep rejects
+/// it. ASCII input skips the call: SASLprep leaves it unchanged or rejects it.
+pub(crate) fn saslprep(password: &[u8]) -> Option<Utf8Bytes<'static>> {
+    if password.is_ascii() {
+        return None;
+    }
+    // SAFETY: `ptr`/`len` describe `password` for the duration of the call.
+    // The returned `String` owns its ref.
+    let prepared = unsafe { Bun__saslprep(password.as_ptr(), password.len()) };
+    if prepared.is_dead() {
+        return None;
+    }
+    Some(prepared.into_utf8())
+}
 
 const NONCE_BYTE_LEN: usize = 18;
 const NONCE_BASE64_LEN: usize = bun_base64::encode_len_from_size(NONCE_BYTE_LEN);

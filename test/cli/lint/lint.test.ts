@@ -6548,6 +6548,18 @@ describe.concurrent("[lint] in bunfig.toml", () => {
     expect(wrong.exitCode).toBe(2);
   });
 
+  // 288 bytes for each: 19 GB, and more than there is to address.
+  test.each(["67108864", "9007199254740992", "9223372036854775808"])("%s threads are as many as there can be", async count => {
+    const [byKey, byFlag, few] = await Promise.all([
+      run({ ...eslint, "bunfig.toml": `[lint]\nthreads = ${count}\n` }, ["a.js"]),
+      run(eslint, [`--threads=${count}`, "a.js"]),
+      run(eslint, ["--threads=1", "a.js"]),
+    ]);
+    // TOML has no number as large as the last.
+    if (count.length < 19) expect(byKey).toEqual(few);
+    expect(byFlag).toEqual(few);
+  });
+
   // ESLint refuses the flag in a run that fixes nothing.
   test("fixType waits for a run that fixes", async () => {
     const files = { ...eslint, "bunfig.toml": `[lint]\nfixType = ["layout"]\n` };

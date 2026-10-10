@@ -213,12 +213,16 @@ impl Needs {
 }
 
 impl Pool {
+    /// The most that Bun's pool ever has (`get_thread_count`). What there is for each thread is made for as many as are asked
+    /// for, and a `bunfig.toml` can ask.
+    const MOST: usize = 1024;
+
     pub(crate) fn new(threads: usize) -> Pool {
         Pool {
             caches: Default::default(),
             threads: match threads {
                 0 => usize::from(bun_core::get_thread_count()),
-                threads => threads,
+                threads => threads.min(Pool::MOST),
             },
         }
     }

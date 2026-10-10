@@ -361,8 +361,7 @@ const exports = {
       }
       return fs.rm(path, options);
     }
-    // The native call makes one attempt. Like Node's rimraf, wait for the next
-    // one on a timer so that a retry delay holds no work-pool thread.
+    // Like Node's rimraf, wait for the next attempt on a timer: no thread is held.
     for (let retries = 0; ; ) {
       try {
         return await fs.rm(path, options);

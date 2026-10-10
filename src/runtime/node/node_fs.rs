@@ -7681,15 +7681,13 @@ impl NodeFS {
             #[cfg(not(windows))]
             let resolved = args.path.slice();
             let walk = || zig_delete_tree(&sys::Dir::cwd(), resolved, sys::FileKind::File);
-            // `fs.promises.rm` retries an async call on a timer, so a retry
-            // delay never holds a work-pool thread.
+            // An async call is retried by fs.promises.rm on a timer, not here.
             let result = match flavor {
                 Flavor::Sync => rm_with_retries(args, walk),
                 Flavor::Async => walk(),
             };
             if let Err(err) = result {
-                // The walker swallows ENOENT below the root, so this is the
-                // root itself.
+                // Below the root the walker skips ENOENT, so this is the root.
                 if err.get_errno() == E::ENOENT {
                     if args.force {
                         return Ok(());
@@ -9804,8 +9802,7 @@ pub(crate) fn zig_delete_tree(
             // Some OSes report EEXIST instead of ENOTEMPTY for a non-empty
             // directory; treat it the same.
             Err(e @ (E::ENOTEMPTY | E::EEXIST)) => {
-                // Another listing cannot empty a directory when this one
-                // removed nothing: what is left cannot be removed by name.
+                // What a listing could not remove, the next one cannot either.
                 if !top.removed {
                     return Err(dt_err(e, sys::Tag::rmdir, &top_path(stack)));
                 }

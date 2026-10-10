@@ -1608,30 +1608,40 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             let mut buf = bun_paths::path_buffer_pool::get();
             let mut buf2 = bun_paths::path_buffer_pool::get();
 
-            let final_path: &mut bun_core::ZStr = if !cwd_.is_empty() && cwd_[0] == b'.' {
+            // `None` when the path and its NUL terminator do not fit a path buffer.
+            let final_path: Option<&mut bun_core::ZStr> = if !cwd_.is_empty() && cwd_[0] == b'.' {
                 let cwd_len = bun_sys::getcwd(&mut buf[..])?;
                 let cwd = &buf[..cwd_len];
                 let parts: [&[u8]; 1] = [cwd_];
-                let len = Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
+                let buf2_len = buf2.len();
+                let len = Path::resolve_path::join_abs_string_buf_checked::<Path::platform::Auto>(
                     cwd,
-                    &mut buf2[..],
+                    &mut buf2[..buf2_len - 1],
                     &parts,
                 )
-                .len();
-                buf2[len] = 0;
-                bun_core::ZStr::from_buf_mut(&mut buf2[..], len)
-            } else {
+                .map(|joined| joined.len());
+                len.map(|len| {
+                    buf2[len] = 0;
+                    bun_core::ZStr::from_buf_mut(&mut buf2[..], len)
+                })
+            } else if cwd_.len() < buf.len() {
                 buf[..cwd_.len()].copy_from_slice(cwd_);
                 buf[cwd_.len()] = 0;
-                bun_core::ZStr::from_buf_mut(&mut buf[..], cwd_.len())
+                Some(bun_core::ZStr::from_buf_mut(&mut buf[..], cwd_.len()))
+            } else {
+                None
             };
-            if let Err(err) = bun_sys::chdir(final_path) {
+            let result = match final_path {
+                Some(path) => bun_sys::chdir(path).map_err(|err| (path.as_bytes(), err)),
+                None => Err((
+                    cwd_,
+                    bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::chdir),
+                )),
+            };
+            if let Err((path, err)) = result {
                 Output::err_generic(
                     "failed to change directory to \"{}\": {}\n",
-                    (
-                        bstr::BStr::new(final_path.as_bytes()),
-                        bstr::BStr::new(err.name()),
-                    ),
+                    (bstr::BStr::new(path), bstr::BStr::new(err.name())),
                 );
                 Global::crash();
             }

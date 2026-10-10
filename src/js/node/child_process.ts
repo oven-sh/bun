@@ -4,6 +4,9 @@ const { kHandle } = require("internal/shared");
 const {
   validateBoolean,
   validateFunction,
+  validateInteger,
+  validateInt32,
+  validateNumber,
   validateString,
   validateAbortSignal,
   validateArray,
@@ -37,7 +40,6 @@ const ArrayPrototypeSplice = Array.prototype.splice;
 
 var ArrayBufferIsView = ArrayBuffer.isView;
 
-var NumberIsInteger = Number.isInteger;
 var ObjectHasOwn = Object.hasOwn;
 var StringPrototypeIncludes = String.prototype.includes;
 var StringPrototypeStartsWith = String.prototype.startsWith;
@@ -986,14 +988,14 @@ function normalizeSpawnArguments(file, args, options?) {
 
   // Validate the uid, if present.
   const uid = options.uid;
-  if (uid != null && !isInt32(uid)) {
-    throw $ERR_INVALID_ARG_TYPE("options.uid", "int32", uid);
+  if (uid != null) {
+    validateInt32(uid, "options.uid");
   }
 
   // Validate the gid, if present.
   const gid = options.gid;
-  if (gid != null && !isInt32(gid)) {
-    throw $ERR_INVALID_ARG_TYPE("options.gid", "int32", gid);
+  if (gid != null) {
+    validateInt32(gid, "options.gid");
   }
 
   // Validate the shell, if present.
@@ -1922,8 +1924,8 @@ class Control extends EventEmitter {
 //------------------------------------------------------------------------------
 
 function validateMaxBuffer(maxBuffer) {
-  if (maxBuffer != null && !(typeof maxBuffer === "number" && maxBuffer >= 0)) {
-    throw $ERR_OUT_OF_RANGE("options.maxBuffer", "a positive number", maxBuffer);
+  if (maxBuffer != null) {
+    validateNumber(maxBuffer, "options.maxBuffer", 0);
   }
 }
 
@@ -1940,13 +1942,9 @@ function validateArgumentsNullCheck(args, propName) {
 }
 
 function validateTimeout(timeout) {
-  if (timeout != null && !(NumberIsInteger(timeout) && timeout >= 0)) {
-    throw $ERR_OUT_OF_RANGE("timeout", "an unsigned integer", timeout);
+  if (timeout != null) {
+    validateInteger(timeout, "timeout", 0);
   }
-}
-
-function isInt32(value) {
-  return value === (value | 0);
 }
 
 function nullCheck(path, propName, throwError = true) {

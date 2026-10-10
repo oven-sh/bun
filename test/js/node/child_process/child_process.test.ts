@@ -1320,6 +1320,62 @@ done
   expect(asyncOut.trim().split("\n")).toEqual(expected);
 });
 
+// uid, gid, timeout and maxBuffer go through node's shared validators (nodejs/node#59416).
+// These are the errors of node 26.3.0.
+type ValidationError = { name: string; code: string; message: string };
+function invalidArgType(name: string, received: string): ValidationError {
+  return {
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: `The "${name}" ${name.includes(".") ? "property" : "argument"} must be of type number. Received ${received}`,
+  };
+}
+function outOfRange(name: string, range: string, received: string): ValidationError {
+  return {
+    name: "RangeError",
+    code: "ERR_OUT_OF_RANGE",
+    message: `The value of "${name}" is out of range. It must be ${range}. Received ${received}`,
+  };
+}
+const notNumbers: [value: unknown, received: string][] = [
+  ["0", "type string ('0')"],
+  [true, "type boolean (true)"],
+  [{}, "an instance of Object"],
+  [[], "an instance of Array"],
+  [0n, "type bigint (0n)"],
+  [Symbol("s"), "type symbol (Symbol(s))"],
+  [function fn() {}, "function fn"],
+];
+
+// Every function export validates its options before it starts a process.
+const functionExports: Record<string, (options: any) => unknown> = {
+  spawn: options => spawn(bunExe(), ["-e", "0"], options),
+  spawnSync: options => spawnSync(bunExe(), ["-e", "0"], options),
+  execFile: options => execFile(bunExe(), ["-e", "0"], options, () => {}),
+  execFileSync: options => execFileSync(bunExe(), ["-e", "0"], options),
+  exec: options => exec("exit 0", options, () => {}),
+  execSync: options => execSync("exit 0", options),
+  fork: options => fork(path.join(import.meta.dir, "fixtures", "child-process-echo-argv.js"), options),
+};
+
+/** The error that `functionExports[fn](options)` throws. A child that got past the validation is killed. */
+function thrownBy(fn: string, options: object): ValidationError | undefined {
+  try {
+    const child = functionExports[fn](options);
+    if (child instanceof ChildProcess) {
+      child.on("error", () => {});
+      child.kill();
+    }
+  } catch (e: any) {
+    return { name: e.name, code: e.code, message: e.message };
+  }
+}
+
+/** Expects `fn` to throw `error` for each `[value, error]` row, with `value` as the option. */
+function expectErrors(fn: string, option: string, rows: [value: unknown, error: ValidationError][]) {
+  expect(rows.map(([value]) => thrownBy(fn, { [option]: value }))).toEqual(rows.map(([, error]) => error));
+}
+
 describe("uid/gid options", () => {
   const isRoot = process.getuid?.() === 0;
   // 65534 is "nobody" on every Linux distro and on macOS.
@@ -1417,6 +1473,88 @@ console.log(JSON.stringify({ uid: process.getuid(), threwCode: thrown?.code, thr
 
     const r = spawnSync("cmd.exe", ["/c", "exit 0"], { gid: 0 });
     expect((r.error as NodeJS.ErrnoException | undefined)?.code).toBe("ENOTSUP");
+  });
+
+  // The check runs before a process exists, so it needs no privilege and is the same on every platform.
+  describe.each(["uid", "gid"])("options.%s", key => {
+    const name = `options.${key}`;
+    const int32 = ">= -2147483648 && <= 2147483647";
+    const rejected: [value: unknown, error: ValidationError][] = [
+      [NaN, outOfRange(name, "an integer", "NaN")],
+      [1.5, outOfRange(name, "an integer", "1.5")],
+      [Infinity, outOfRange(name, "an integer", "Infinity")],
+      [-Infinity, outOfRange(name, "an integer", "-Infinity")],
+      [2 ** 31, outOfRange(name, int32, "2147483648")],
+      [2 ** 32, outOfRange(name, int32, "4294967296")],
+      [-(2 ** 31) - 1, outOfRange(name, int32, "-2147483649")],
+      [2 ** 63, outOfRange(name, int32, "9_223_372_036_854_776_000")],
+      ...notNumbers.map(([value, received]): [unknown, ValidationError] => [value, invalidArgType(name, received)]),
+    ];
+
+    it.each(Object.keys(functionExports))("%s() throws node's error for a value that is not an int32", fn => {
+      expectErrors(fn, key, rejected);
+    });
+
+    it("is not converted to a number, and null, undefined and -0 are still accepted", () => {
+      let conversions = 0;
+      const object = { valueOf: () => (conversions++, 0) };
+      expect(thrownBy("spawnSync", { [key]: object })).toEqual(invalidArgType(name, "an instance of Object"));
+      expect(conversions).toBe(0);
+
+      const command = isWindows ? "cmd.exe" : "id";
+      const args = isWindows ? ["/c", "exit 0"] : [key === "uid" ? "-u" : "-g"];
+      const run = (value: unknown) => {
+        const { status, stdout, error } = spawnSync(command, args, { [key]: value, encoding: "utf8" });
+        return { status, stdout, error: (error as NodeJS.ErrnoException | undefined)?.code };
+      };
+      const inherited = run(undefined);
+      expect(inherited).toEqual({ status: 0, stdout: expect.any(String), error: undefined });
+      expect(run(null)).toEqual(inherited);
+      // node's validateInt32 accepts -0 too. node then rejects it in C++ (spawnSync throws, spawn aborts).
+      // Bun uses id 0.
+      expect(run(-0)).toEqual(run(0));
+    });
+  });
+});
+
+describe("timeout and maxBuffer options", () => {
+  const safeInteger = ">= 0 && <= 9007199254740991";
+  const timeout: [value: unknown, error: ValidationError][] = [
+    [NaN, outOfRange("timeout", "an integer", "NaN")],
+    [1.5, outOfRange("timeout", "an integer", "1.5")],
+    [Infinity, outOfRange("timeout", "an integer", "Infinity")],
+    [-Infinity, outOfRange("timeout", "an integer", "-Infinity")],
+    [-1, outOfRange("timeout", safeInteger, "-1")],
+    [2 ** 53, outOfRange("timeout", safeInteger, "9_007_199_254_740_992")],
+    ...notNumbers.map(([value, received]): [unknown, ValidationError] => [value, invalidArgType("timeout", received)]),
+  ];
+  const maxBuffer: [value: unknown, error: ValidationError][] = [
+    [NaN, outOfRange("options.maxBuffer", ">= 0", "NaN")],
+    [-1, outOfRange("options.maxBuffer", ">= 0", "-1")],
+    [-Infinity, outOfRange("options.maxBuffer", ">= 0", "-Infinity")],
+    ...notNumbers.map(([value, received]): [unknown, ValidationError] => [
+      value,
+      invalidArgType("options.maxBuffer", received),
+    ]),
+  ];
+
+  it.each(Object.keys(functionExports))("%s() throws node's error for an invalid timeout", fn => {
+    expectErrors(fn, "timeout", timeout);
+  });
+
+  // spawn() and fork() have no maxBuffer.
+  it.each(["spawnSync", "execFile", "execFileSync", "exec", "execSync"])(
+    "%s() throws node's error for an invalid maxBuffer",
+    fn => {
+      expectErrors(fn, "maxBuffer", maxBuffer);
+    },
+  );
+
+  it("reports the same option as node when two options are invalid", () => {
+    const options = { uid: NaN, timeout: "x" };
+    // execFile() validates the timeout before spawn() validates the uid. spawnSync() validates the uid first.
+    expect(thrownBy("execFile", options)).toEqual(invalidArgType("timeout", "type string ('x')"));
+    expect(thrownBy("spawnSync", options)).toEqual(outOfRange("options.uid", "an integer", "NaN"));
   });
 });
 

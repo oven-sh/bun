@@ -4,6 +4,8 @@
  *   any other code     -> 'error', 'close'           (no 'end': the body was killed by RST_STREAM)
  * Once the peer's half has ended (END_STREAM on a HEADERS frame, or a server push, which has no
  * inbound half) the readable already has its EOF, so 'end' comes first for every code.
+ * A client stream that user code closed or destroyed emits nothing for the header blocks that
+ * arrive in the same socket read.
  *
  * Works with both:
  *   bun bd test test/js/node/http2/node-http2-client-close.test.ts
@@ -16,25 +18,30 @@ import { describe, test } from "node:test";
 
 const { NGHTTP2_NO_ERROR, NGHTTP2_CANCEL, NGHTTP2_INTERNAL_ERROR, NGHTTP2_ENHANCE_YOUR_CALM } = http2.constants;
 
+const F = { DATA: 0, HEADERS: 1, SETTINGS: 4, PUSH_PROMISE: 5, PING: 6 };
+const END_STREAM = 0x1;
+const END_HEADERS = 0x4;
+const frame = (t: number, fl: number, sid: number, p: Buffer) => {
+  const b = Buffer.alloc(9 + p.length);
+  b.writeUIntBE(p.length, 0, 3);
+  b[3] = t;
+  b[4] = fl;
+  b.writeUInt32BE(sid >>> 0, 5);
+  p.copy(b, 9);
+  return b;
+};
+const hp = (h: [string, string][]) =>
+  Buffer.concat(
+    h.map(([k, v]) =>
+      Buffer.concat([Buffer.from([0x10, k.length]), Buffer.from(k), Buffer.from([v.length]), Buffer.from(v)]),
+    ),
+  );
+
 // Raw h2c server: replies 200 + one DATA frame and never sends END_STREAM, so the only way the
-// stream ends is via the client's close(code).
-function rawH2Server(): net.Server {
-  const F = { DATA: 0, HEADERS: 1, SETTINGS: 4, PING: 6 };
-  const frame = (t: number, fl: number, sid: number, p: Buffer) => {
-    const b = Buffer.alloc(9 + p.length);
-    b.writeUIntBE(p.length, 0, 3);
-    b[3] = t;
-    b[4] = fl;
-    b.writeUInt32BE(sid >>> 0, 5);
-    p.copy(b, 9);
-    return b;
-  };
-  const hp = (h: [string, string][]) =>
-    Buffer.concat(
-      h.map(([k, v]) =>
-        Buffer.concat([Buffer.from([0x10, k.length]), Buffer.from(k), Buffer.from([v.length]), Buffer.from(v)]),
-      ),
-    );
+// stream ends is via the client's close(code). With `reply`, it answers the request with those
+// frames and a PING in one write instead, so that one read delivers all of them to the client.
+// `onPingAck` then fires once the client has dispatched every frame of that write.
+function rawH2Server(reply?: Buffer[], onPingAck?: () => void): net.Server {
   const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
   return net.createServer(s => {
     let buf = Buffer.alloc(0);
@@ -58,8 +65,11 @@ function rawH2Server(): net.Server {
         buf = buf.slice(9 + len);
         if (t === F.SETTINGS && !(fl & 1)) s.write(frame(F.SETTINGS, 1, 0, Buffer.alloc(0)));
         else if (t === F.PING && !(fl & 1)) s.write(frame(F.PING, 1, 0, pay));
-        else if (t === F.HEADERS) {
-          s.write(frame(F.HEADERS, 0x4, sid, hp([[":status", "200"]])));
+        else if (t === F.PING) onPingAck?.();
+        else if (t === F.HEADERS && reply) {
+          s.write(Buffer.concat([...reply, frame(F.PING, 0, 0, Buffer.alloc(8))]));
+        } else if (t === F.HEADERS) {
+          s.write(frame(F.HEADERS, END_HEADERS, sid, hp([[":status", "200"]])));
           s.write(frame(F.DATA, 0, sid, Buffer.alloc(600, 0x2e)));
         }
       }
@@ -321,6 +331,109 @@ for (const [site, table] of [
     });
   }
 }
+
+// close() and destroy() close the stream at once, but the frame parser learns of it on a later
+// turn at the earliest. The frames that share a socket read with the frame whose handler closed
+// the stream are still parsed for that stream. On a net or TLS socket node emits nothing for their
+// header blocks: nghttp2 ignores the frames of a stream that is closing.
+describe("header blocks in the same read as the frame whose handler closed the stream", () => {
+  const status = (code: string) => hp([[":status", code]]);
+
+  async function eventsWhen(
+    listener: "headers" | "response" | "stream",
+    act: "close" | "destroy",
+    reply: Buffer[],
+  ): Promise<string[]> {
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    const dispatched = Promise.withResolvers<void>();
+    const watch = (stream: http2.ClientHttp2Stream) => {
+      stream.on("continue", () => events.push("continue"));
+      stream.on("headers", headers => events.push("headers:" + headers[":status"]));
+      stream.on("response", headers => events.push("response:" + headers[":status"]));
+      stream.on("push", headers => events.push("push:" + headers[":status"]));
+      stream.on("trailers", () => events.push("trailers"));
+      stream.on("data", () => events.push("data"));
+      stream.on("error", e => events.push("error:" + (e as NodeJS.ErrnoException).code));
+      stream.on("close", () => {
+        events.push("close:" + stream.rstCode);
+        closed.resolve();
+      });
+    };
+    const srv = rawH2Server(reply, dispatched.resolve);
+    const port = await listen(srv);
+    const client = http2.connect(`http://127.0.0.1:${port}`);
+    // A session that fails before the PING ACK must fail the test, not leave it waiting.
+    const fail = (err: unknown) => {
+      closed.reject(err);
+      dispatched.reject(err);
+    };
+    client.on("error", fail);
+    client.on("close", () => fail(new Error("the session closed before the PING ACK")));
+    try {
+      const req = client.request({ ":path": "/" }, { endStream: true });
+      if (listener === "stream") {
+        req.on("error", () => {});
+        req.resume();
+        client.on("stream", pushed => {
+          watch(pushed);
+          pushed[act]();
+        });
+      } else {
+        watch(req);
+        req.once(listener, () => req[act]());
+      }
+      await Promise.all([closed.promise, dispatched.promise]);
+      return events;
+    } finally {
+      client.destroy();
+      srv.close();
+    }
+  }
+
+  for (const act of ["destroy", "close"] as const) {
+    test(`no 'response' after ${act}() in 'headers'`, async () => {
+      const reply = [
+        frame(F.HEADERS, END_HEADERS, 1, status("103")),
+        frame(F.HEADERS, END_HEADERS, 1, status("100")),
+        frame(F.HEADERS, END_HEADERS, 1, status("200")),
+        frame(F.DATA, END_STREAM, 1, Buffer.from("body")),
+      ];
+      assert.deepStrictEqual(await eventsWhen("headers", act, reply), ["headers:103", "close:0"]);
+    });
+
+    test(`no 'trailers' after ${act}() in 'response'`, async () => {
+      const reply = [
+        frame(F.HEADERS, END_HEADERS, 1, status("200")),
+        frame(F.DATA, 0, 1, Buffer.from("body")),
+        frame(F.HEADERS, END_HEADERS | END_STREAM, 1, hp([["x-trailer", "1"]])),
+      ];
+      assert.deepStrictEqual(await eventsWhen("response", act, reply), ["response:200", "close:0"]);
+    });
+  }
+
+  // No close() case for a pushed stream yet: pushed.close() emits 'error' ("Invalid stream id") and
+  // never 'close' on Bun, where node gives ["close:0"]. That is a separate defect.
+  test("no 'push' after destroy() in the session's 'stream'", async () => {
+    const pushPromise = Buffer.concat([
+      Buffer.from([0, 0, 0, 2]), // promised stream id
+      hp([
+        [":method", "GET"],
+        [":scheme", "http"],
+        [":path", "/pushed"],
+        [":authority", "localhost"],
+      ]),
+    ]);
+    const reply = [
+      frame(F.PUSH_PROMISE, END_HEADERS, 1, pushPromise),
+      frame(F.HEADERS, END_HEADERS, 2, status("200")),
+      frame(F.DATA, END_STREAM, 2, Buffer.from("pushed")),
+      frame(F.HEADERS, END_HEADERS, 1, status("200")),
+      frame(F.DATA, END_STREAM, 1, Buffer.from("body")),
+    ];
+    assert.deepStrictEqual(await eventsWhen("stream", "destroy", reply), ["close:0"]);
+  });
+});
 
 if (typeof Bun !== "undefined") {
   const node = Bun.which("node");

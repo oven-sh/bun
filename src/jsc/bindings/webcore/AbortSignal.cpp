@@ -44,6 +44,12 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(AbortSignal);
 
+#if !CHECK_REF_COUNTED_LIFECYCLE && !OS(WINDOWS)
+// One per AbortController, per request with a signal and per AbortSignal.timeout(): the next size
+// class is 320 bytes.
+static_assert(sizeof(AbortSignal) <= 256);
+#endif
+
 extern "C" AbortSignalTimeout AbortSignal__Timeout__create(void* vm, AbortSignal* signal, uint64_t milliseconds);
 extern "C" void AbortSignal__Timeout__deinit(AbortSignalTimeout timeout);
 extern "C" void Bun__AbortSignal__followerAborted(AbortSignalFollower*, JSC::EncodedJSValue reason);

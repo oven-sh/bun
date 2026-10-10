@@ -1530,6 +1530,38 @@
           "valueType": "val",
           "required": false,
           "multiple": false
+        },
+        {
+          "name": "production",
+          "shortName": "p",
+          "description": "Skip packages that are only needed by devDependencies (alias: --prod)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "omit",
+          "description": "Skip packages that are only needed by the given dependency types: dev, optional, or peer (repeatable)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cwd",
+          "description": "Set a specific cwd",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "help",
+          "shortName": "h",
+          "description": "Print this help menu",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
         }
       ],
       "positionalArgs": [

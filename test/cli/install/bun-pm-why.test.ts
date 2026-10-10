@@ -428,41 +428,84 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
     expect(output).toContain("dev");
   });
 
-  it("should support version constraints in the query", async () => {
-    await using tmpDir = tempDir(`why-version-test-${i++}`, {
-      "package.json": JSON.stringify({
-        name: "version-test",
-        version: "1.0.0",
-        dependencies: {
-          "react": "^18.0.0",
-          "lodash": "^4.17.21",
+  describe("should support version constraints in the query", () => {
+    // `bun why` reads only the lockfile, so a static bun.lock keeps these tests off the network.
+    const dependencies = {
+      "@types/no-deps": "1.0.0",
+      "no-deps": "2.0.0",
+      "one-fixed-dep": "1.0.0",
+    };
+    const files = {
+      "package.json": JSON.stringify({ name: "version-test", version: "1.0.0", dependencies }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: { "": { name: "version-test", dependencies } },
+        packages: {
+          "@types/no-deps": [
+            "@types/no-deps@1.0.0",
+            "",
+            {},
+            "sha512-quthzD2O04AlTaZLJGf4a6/6aD7lf4Qa4HS7ViRWnTFdSbRbof20GFoq9YRCD3YQxd/HKI83YBAAiZ4ewoy+0Q==",
+          ],
+          "no-deps": [
+            "no-deps@2.0.0",
+            "",
+            {},
+            "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==",
+          ],
+          "one-fixed-dep": [
+            "one-fixed-dep@1.0.0",
+            "",
+            { dependencies: { "no-deps": "1.0.0" } },
+            "sha512-eLc7J+EoM2ymMvC9QWxV6jWanghtKbM+BHzkwEdj+MwO2J58vNkDcmLN6FTIZqgA6dl9lt3XiMwV3/2b7wHz8w==",
+          ],
+          "one-fixed-dep/no-deps": [
+            "no-deps@1.0.0",
+            "",
+            {},
+            "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==",
+          ],
         },
       }),
-    });
+    };
 
-    const install = spawn({
-      cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: tmpDir,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    expect(await install.exited).toBe(0);
+    const noDeps1 =
+      "no-deps@1.0.0\n  └─ one-fixed-dep@1.0.0 (requires 1.0.0)\n     └─ version-test (requires 1.0.0)\n\n";
+    const noDeps2 = "no-deps@2.0.0\n  └─ version-test (requires 2.0.0)\n\n";
+    const typesNoDeps = "@types/no-deps@1.0.0\n  └─ version-test (requires 1.0.0)\n\n";
+    const notFound = (query: string) => `error: No packages matching '${query}' found in lockfile\n`;
 
-    const { stdout, exited } = spawn({
-      cmd: [bunExe(), ...cmd.split(" "), "react@^18.0.0"],
-      cwd: tmpDir,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "inherit",
-    });
+    it.each([
+      { query: "no-deps", expected: noDeps2 + noDeps1, exitCode: 0 },
+      { query: "no-deps@1.0.0", expected: noDeps1, exitCode: 0 },
+      { query: "no-deps@^1.0.0", expected: noDeps1, exitCode: 0 },
+      { query: "no-deps@2", expected: noDeps2, exitCode: 0 },
+      { query: "no-deps@>=1.0.0", expected: noDeps2 + noDeps1, exitCode: 0 },
+      { query: "no-deps@*", expected: noDeps2 + noDeps1, exitCode: 0 },
+      { query: "no-deps@latest", expected: noDeps2 + noDeps1, exitCode: 0 },
+      { query: "no-deps@", expected: noDeps2 + noDeps1, exitCode: 0 },
+      { query: "no-deps@^3.0.0", expected: notFound("no-deps@^3.0.0"), exitCode: 1 },
+      { query: "no-deps@beta", expected: notFound("no-deps@beta"), exitCode: 1 },
+      { query: "no-dep*@1.0.0", expected: noDeps1, exitCode: 0 },
+      { query: "no-dep*@beta", expected: notFound("no-dep*@beta"), exitCode: 1 },
+      { query: "@types/no-deps@1.0.0", expected: typesNoDeps, exitCode: 0 },
+      { query: "@types/no-deps@2.0.0", expected: notFound("@types/no-deps@2.0.0"), exitCode: 1 },
+      { query: "@types/*@1.0.0", expected: typesNoDeps, exitCode: 0 },
+    ])("$query", async ({ query, expected, exitCode }) => {
+      using tmpDir = tempDir(`why-version-test-${i++}`, files);
 
-    if ((await exited) === 0) {
-      const output = await stdout.text();
-      expect(output).toContain("react@");
-    } else {
-      expect(true).toBe(true);
-    }
+      await using proc = spawn({
+        cmd: [bunExe(), ...cmd.split(" "), query],
+        cwd: String(tmpDir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, stderr, exitCode: exited }).toEqual({ stdout: expected, stderr: "", exitCode });
+    });
   });
 
   it("should handle nested workspaces", async () => {

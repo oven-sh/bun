@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 // JS/TS/TOML parse diagnostics must count columns in UTF-16 code units, the
@@ -159,4 +159,112 @@ test.concurrent("CLI caret stays under the token for an error at the end of a lo
   const textLine = lines.find(l => l.includes("]"))!;
   const caretLine = lines.find(l => l.trimEnd().endsWith("^"))!;
   expect({ token: textLine.indexOf("]"), caret: caretLine.indexOf("^") }).toEqual({ token: 154, caret: 154 });
+});
+
+test("lineText is the line of the error, or 40 bytes before it and 80 after it when the line goes on", () => {
+  let seed = 0x9e3779b9;
+  const random = (below: number) => {
+    seed ^= seed << 13;
+    seed ^= seed >>> 17;
+    seed ^= seed << 5;
+    seed >>>= 0;
+    return seed % below;
+  };
+  const characters = ["a", "b", " ", "\u00E9", "\u4E2D", "\u{1F600}"];
+  const item = () => {
+    let text = "";
+    for (let length = random(60); length > 0; length--) text += characters[random(characters.length)];
+    return JSON.stringify(text) + (random(4) === 0 ? ",\n" : ",");
+  };
+  const transpiler = new Bun.Transpiler();
+  const decoder = new TextDecoder();
+
+  for (let i = 0; i < 150; i++) {
+    // An array of strings on lines of many lengths, with a stray `@` between two of them.
+    let text = "[";
+    for (let before = random(12); before > 0; before--) text += item();
+    text += "@";
+    for (let after = random(6); after > 0; after--) text += item();
+    const source = Buffer.from(text);
+
+    let position: BuildMessage["position"] = null;
+    try {
+      transpiler.transformSync(source, "json");
+    } catch (e) {
+      position = (e as BuildMessage).position;
+    }
+    // The error is on the byte after the `@`, or on the `@` when the source ends there.
+    expect(position!.offset).toBe(source.indexOf("@") + 1);
+    const offset = Math.min(position!.offset, source.length - 1);
+
+    let start = offset === 0 ? 0 : source.lastIndexOf("\n", offset - 1) + 1;
+    let end = source.indexOf("\n", offset);
+    if (end === -1) end = source.length;
+    if (end - offset > 80) {
+      start = Math.max(start, offset - 40);
+      end = offset + 80;
+      while ((source[start] & 0xc0) === 0x80) start--;
+      while ((source[end] & 0xc0) === 0x80) end++;
+    }
+    expect(position!.lineText).toBe(decoder.decode(source.subarray(start, end)));
+  }
+});
+
+// A line that no one has read: `{"a":1,]`, then NUL bytes that nothing wrote,
+// so each page of them costs its first reader a minor page fault. The line is
+// 8192 pages of 4 KiB, or 2048 of 16 KiB. Windows does not count these faults.
+const LONG_LINE = 32 * 1024 * 1024;
+const FEW_PAGES = 1024;
+
+test.concurrent("an error at the start of a long line does not read the rest of the line", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const transpiler = new Bun.Transpiler();
+        const results = {};
+        // The lines stay referenced, so that none is made of the pages of an earlier one.
+        const lines = [];
+        for (const loader of ["json", "jsonc", "json5", "yaml"]) {
+          const line = new Uint8Array(${LONG_LINE});
+          line.set(Buffer.from('{"a":1,]'));
+          lines.push(line);
+          // Page in the parser and the logger, so that the count is for the line.
+          try { transpiler.transformSync("{]", loader); } catch {}
+          const before = process.resourceUsage().minorPageFault;
+          try {
+            transpiler.transformSync(line, loader);
+            results[loader] = "no error";
+          } catch (e) {
+            const faults = process.resourceUsage().minorPageFault - before;
+            const { line, column, lineText } = e.position;
+            results[loader] = { line, column, lineText, ${isWindows ? "" : `readsLittle: faults < ${FEW_PAGES}`} };
+          }
+        }
+        console.log(JSON.stringify(results, null, 2));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // The error is on the 8th byte (JSON5: the 9th), and 80 bytes follow it.
+  const excerpt = '{"a":1,]' + Buffer.alloc(79).toString();
+  const readsLittle = isWindows ? {} : { readsLittle: true };
+  expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+    stdout: JSON.stringify(
+      {
+        json: { line: 1, column: 8, lineText: excerpt, ...readsLittle },
+        jsonc: { line: 1, column: 8, lineText: excerpt, ...readsLittle },
+        json5: { line: 1, column: 9, lineText: excerpt + "\0", ...readsLittle },
+        yaml: { line: 1, column: 8, lineText: excerpt, ...readsLittle },
+      },
+      null,
+      2,
+    ),
+    stderr: "",
+    exitCode: 0,
+  });
 });

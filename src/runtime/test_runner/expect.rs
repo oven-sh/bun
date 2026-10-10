@@ -848,6 +848,7 @@ impl Expect {
         }
 
         let mut return_value: JSValue = JSValue::ZERO;
+        let mut thrown: Option<JSValue> = None;
 
         // Drain existing unhandled rejections
         let _ = vm.global().handle_rejected_promises();
@@ -858,12 +859,17 @@ impl Expect {
         vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
         return_value_from_function = match value.call(global_this, JSValue::UNDEFINED, &[]) {
             Ok(v) => v,
-            Err(err) => global_this.take_exception(err),
+            Err(err) => {
+                thrown = global_this.take_exception(err).to_error();
+                // The thrown value stays out of this slot: a thrown promise must not be awaited below.
+                JSValue::UNDEFINED
+            }
         };
         vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
 
         let _ = vm.global().handle_rejected_promises();
 
+        let captured_rejection = (!return_value.is_empty()).then_some(return_value);
         if return_value.is_empty() {
             return_value = return_value_from_function;
         }
@@ -874,7 +880,7 @@ impl Expect {
             waited.map_err(|stopped| stopped.throw(global_this))?;
             match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
                 js_promise::Unwrapped::Fulfilled(_) => {
-                    return Ok((None, return_value_from_function));
+                    return Ok((thrown, return_value_from_function));
                 }
                 js_promise::Unwrapped::Rejected(rejected) => {
                     // since we know for sure it rejected, we should always return the error
@@ -893,7 +899,7 @@ impl Expect {
         scope.apply(vm);
 
         Ok((
-            return_value.to_error().or_else(|| return_value_from_function.to_error()),
+            captured_rejection.and_then(JSValue::to_error).or(thrown),
             return_value_from_function,
         ))
     }

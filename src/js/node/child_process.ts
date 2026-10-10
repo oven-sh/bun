@@ -1224,6 +1224,15 @@ class ChildProcess extends EventEmitter {
 
     this.emit("exit", this.exitCode, this.signalCode);
 
+    // 'close' waits for each extra pipe (index >= 3), and a socket that holds unread bytes never ends.
+    const stdio = this.#stdioObject;
+    if (stdio) {
+      for (let i = 3; i < stdio.length; i++) {
+        const pipe = stdio[i];
+        if (pipe) process.nextTick(flushStdioPipe, pipe);
+      }
+    }
+
     this.#maybeClose();
   }
 
@@ -1319,14 +1328,18 @@ class ChildProcess extends EventEmitter {
       default:
         switch (io) {
           case "pipe":
-          case "socket-fd":
+          case "socket-fd": {
             if (!NetModule) NetModule = require("node:net");
             // #spawn mapped "pipe" at i>=3 to "socket-fd", so the parent-end
             // fd in handle.stdio[i] is UnownedFd: we own it and
             // net.connect({fd}) -> usockets will close it on socket close.
             const fd = handle && handle.stdio[i];
             if (fd == null) return null;
-            return NetModule.connect({ fd });
+            const socket = NetModule.connect({ fd });
+            this.#closesNeeded++;
+            socket.once("close", () => this.#maybeClose());
+            return socket;
+          }
         }
         return null;
     }
@@ -1485,12 +1498,10 @@ class ChildProcess extends EventEmitter {
             });
           }
 
-          process.nextTick(
-            (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err),
-            exitCode,
-            signalCode,
-            err,
-          );
+          const onExit = (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err);
+          // After the other I/O of this poll, as libuv orders it: an extra pipe (index >= 3) then has what the child wrote.
+          if (this.#hasExtraPipe()) setImmediate(onExit, exitCode, signalCode, err);
+          else process.nextTick(onExit, exitCode, signalCode, err);
         },
         lazy: true,
         ipc: has_ipc ? this.#emitIpcMessage.bind(this) : undefined,
@@ -1662,6 +1673,16 @@ class ChildProcess extends EventEmitter {
     }
   }
 
+  #hasExtraPipe() {
+    const stdio = this.#stdioObject;
+    if (stdio) {
+      for (let i = 3; i < stdio.length; i++) {
+        if (stdio[i]) return true;
+      }
+    }
+    return false;
+  }
+
   ref() {
     if (this.#handle) this.#handle.ref();
   }
@@ -1741,6 +1762,14 @@ class ChildProcess extends EventEmitter {
 //------------------------------------------------------------------------------
 // Section 4. ChildProcess helpers
 //------------------------------------------------------------------------------
+// Set on a stream that is passed as stdio to a spawn: the child reads it now.
+const kIsUsedAsStdio = Symbol("kIsUsedAsStdio");
+
+// Node's flushStdio, for one stream. It runs on the tick after 'exit', so an 'exit' listener can still start to read: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L297-L332
+function flushStdioPipe(pipe) {
+  if (pipe.readable && !pipe[kIsUsedAsStdio]) pipe.resume();
+}
+
 const nodeToBunLookup = {
   ignore: null,
   pipe: "pipe",
@@ -1797,7 +1826,10 @@ function nodeToBun(item: string, index: number): Bun.Spawn.NodeStdio[number] {
   }
   if (isNodeStreamReadable(item) || isNodeStreamWritable(item)) {
     const fd = streamFdOf(item);
-    if (fd !== undefined) return fd;
+    if (fd !== undefined) {
+      (item as any)[kIsUsedAsStdio] = true;
+      return fd;
+    }
     const kind = isNodeStreamReadable(item) ? "Readable" : "Writable";
     throw new Error(
       `Passing a stream.${kind} without an underlying file descriptor as stdio[${index}] is not yet implemented in Bun`,

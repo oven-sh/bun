@@ -707,7 +707,7 @@ pub struct VisitArgsOpts<'a> {
 #[derive(Clone, Copy)]
 pub struct VisitDeclOpts {
     pub(crate) was_anonymous_named_expr: bool,
-    pub(crate) could_be_const_value: bool,
+    pub(crate) was_const: bool,
     pub(crate) could_be_macro: bool,
 }
 
@@ -1762,12 +1762,43 @@ pub type ImportItemForNamespaceMap = StringArrayHashMap<LocRef>;
 
 pub struct MacroState<'a> {
     pub(crate) refs: MacroRefs<'a>,
+    /// The const table of macro arguments. `visit_macro_arguments` swaps it with `const_values`.
+    pub(crate) consts: bun_ast::ast_result::ConstValuesMap,
+    /// Inside that swap, where `features.inlining` is forced on.
+    pub(crate) in_args: bool,
+    /// `features.inlining` before the swap.
+    pub(crate) inlining_outside_args: bool,
 }
 
 impl<'a> MacroState<'a> {
     pub(crate) fn init() -> MacroState<'a> {
         MacroState {
             refs: MacroRefs::default(),
+            consts: Default::default(),
+            in_args: false,
+            inlining_outside_args: false,
+        }
+    }
+
+    /// Inside the swap the two tables trade places. Out of line: one copy for every `P`.
+    #[inline(never)]
+    pub(crate) fn put_const(
+        &mut self,
+        const_values: &mut bun_ast::ast_result::ConstValuesMap,
+        r#ref: Ref,
+        for_inliner: Option<Expr>,
+        for_macro_args: Option<Expr>,
+    ) {
+        let (inliner, macro_args) = if self.in_args {
+            (&mut self.consts, const_values)
+        } else {
+            (const_values, &mut self.consts)
+        };
+        if let Some(value) = for_inliner {
+            inliner.put(r#ref, value).expect("oom");
+        }
+        if let Some(value) = for_macro_args {
+            macro_args.put(r#ref, value).expect("oom");
         }
     }
 }

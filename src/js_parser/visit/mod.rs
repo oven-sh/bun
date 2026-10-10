@@ -27,6 +27,7 @@ use bun_ast::{
     Stmt, StmtData, Symbol,
 };
 use bun_collections::VecExt;
+use bun_core::strings;
 // `parser::SideEffects` is a stub enum without the assoc fns; the real
 // `should_keep_stmt_in_dead_control_flow` lives on `ast::side_effects::SideEffects`.
 use crate::scan::scan_side_effects::SideEffects;
@@ -588,12 +589,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     }
                 }
 
-                let is_after = self.vis_scope().is_after_const_local_prefix;
                 self.visit_decl(
                     decl,
                     VisitDeclOpts {
                         was_anonymous_named_expr,
-                        could_be_const_value: was_const && !is_after,
+                        was_const,
                         could_be_macro: if Self::ALLOW_MACROS {
                             prev_macro_call_count != self.macro_call_count
                         } else {
@@ -616,12 +616,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         // which is not mutated during the visit pass.
                         let replacer = _ptr.get();
                         if !self.replace_decl_and_possibly_remove(decl, replacer) {
-                            let is_after = self.vis_scope().is_after_const_local_prefix;
                             self.visit_decl(
                                 decl,
                                 VisitDeclOpts {
                                     was_anonymous_named_expr: false,
-                                    could_be_const_value: was_const && !is_after,
+                                    was_const,
                                     could_be_macro: false,
                                 },
                             );
@@ -649,7 +648,119 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         j
     }
 
-    pub(crate) fn visit_binding_and_expr_for_macro(&mut self, binding: Binding, expr: Expr) {
+    #[inline]
+    fn imports_macro(&self) -> bool {
+        Self::ALLOW_MACROS && self.macro_.refs.count() > 0
+    }
+
+    fn inlining_outside_macro_args(&self) -> bool {
+        if self.macro_.in_args {
+            self.macro_.inlining_outside_args
+        } else {
+            self.options.features.inlining
+        }
+    }
+
+    /// What a macro argument gets for a `const`: a primitive, or a string as one piece.
+    fn macro_argument_value(&mut self, value: Expr) -> Option<Expr> {
+        match value.data {
+            ExprData::ENumber(_)
+            | ExprData::EBoolean(_)
+            | ExprData::EBranchBoolean(_)
+            | ExprData::ENull(_)
+            | ExprData::EUndefined(_)
+            | ExprData::EInlinedEnum(_) => Some(value),
+            ExprData::EString(string) => match string.flattened(self.arena) {
+                E::Flattened::Borrowed(_) => Some(value),
+                E::Flattened::Owned(flat) => Some(self.new_expr(flat, value.loc)),
+            },
+            _ => None,
+        }
+    }
+
+    /// A macro's string result is UTF-16, which no fold joins. An ASCII one gets an 8-bit copy.
+    pub(crate) fn macro_string_for_join(&mut self, expr: Expr) -> Expr {
+        if let ExprData::EString(string) = expr.data {
+            if string.is_utf16 && strings::first_non_ascii16(string.slice16()).is_none() {
+                let units = string.slice16();
+                let ascii = self.arena.alloc_slice_fill_default::<u8>(units.len());
+                strings::copy_u16_into_u8(ascii, units);
+                return self.new_expr(E::EString::init(ascii), expr.loc);
+            }
+        }
+        expr
+    }
+
+    /// `inlinable`: the value also goes to the inliner's table, by the rule of `const_values`.
+    fn put_const_value_for_macros(
+        &mut self,
+        r#ref: Ref,
+        value: Expr,
+        inlinable: bool,
+        is_const: bool,
+    ) {
+        let mirror = inlinable && self.inlining_outside_macro_args();
+        let for_macro_args = if mirror {
+            // The arguments of a macro call see what the inliner puts in ordinary code.
+            Some(value)
+        } else if is_const {
+            self.macro_argument_value(value)
+        } else {
+            None
+        };
+        self.macro_.put_const(
+            &mut self.const_values,
+            r#ref,
+            inlinable.then_some(value),
+            for_macro_args,
+        );
+    }
+
+    /// `visit_decl` for an identifier binding in a file that imports a macro.
+    #[cold]
+    fn record_const_value_for_macros(
+        &mut self,
+        r#ref: Ref,
+        value: Option<Expr>,
+        was_const: bool,
+        could_be_macro: bool,
+    ) {
+        let Some(value) = value else { return };
+        // The inliner takes a `const` of the leading declaration run, and any macro result.
+        let inlinable = (could_be_macro || !self.vis_scope().is_after_const_local_prefix)
+            && value.can_be_const_value();
+        self.put_const_value_for_macros(r#ref, value, inlinable, was_const);
+    }
+
+    /// A destructured binding of a macro result. The inliner takes it only under inlining.
+    fn record_macro_result(
+        &mut self,
+        r#ref: Ref,
+        mut value: Expr,
+        is_const: bool,
+        default: Option<Expr>,
+    ) {
+        // An `undefined` gives the binding its default. Only a `const` keeps that value.
+        if let (Some(default), ExprData::EUndefined(_)) = (default, value.data) {
+            if !is_const {
+                return;
+            }
+            let Some(default) = self.macro_argument_value(default) else {
+                return;
+            };
+            value = default;
+        }
+        let inlinable = self.inlining_outside_macro_args();
+        self.put_const_value_for_macros(r#ref, value, inlinable, is_const);
+    }
+
+    pub(crate) fn visit_binding_and_expr_for_macro(
+        &mut self,
+        binding: Binding,
+        expr: Expr,
+        is_const: bool,
+        default: Option<Expr>,
+    ) {
         match binding.data {
             BData::BObject(bound_object) => {
                 let bound_object = bound_object.get();
@@ -669,16 +780,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                             self.visit_binding_and_expr_for_macro(
                                                 property.value,
                                                 query.expr,
+                                                is_const,
+                                                property.default_value,
                                             );
                                         }
                                         _ => {
-                                            if self.options.features.inlining {
-                                                if let BData::BIdentifier(id) = property.value.data
-                                                {
-                                                    self.const_values
-                                                        .put(id.r#ref, query.expr)
-                                                        .expect("oom");
-                                                }
+                                            if let BData::BIdentifier(id) = property.value.data {
+                                                self.record_macro_result(
+                                                    id.r#ref,
+                                                    query.expr,
+                                                    is_const,
+                                                    property.default_value,
+                                                );
                                             }
                                         }
                                     }
@@ -710,16 +823,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                 *child_expr = self.new_expr(E::Missing {}, expr.loc);
                                 continue;
                             }
-                            self.visit_binding_and_expr_for_macro(item.binding, *child_expr);
+                            self.visit_binding_and_expr_for_macro(
+                                item.binding,
+                                *child_expr,
+                                is_const,
+                                item.default_value,
+                            );
                         }
                     }
                 }
             }
-            BData::BIdentifier(id) => {
-                if self.options.features.inlining {
-                    self.const_values.put(id.r#ref, expr).expect("oom");
-                }
-            }
+            BData::BIdentifier(id) => self.record_macro_result(id.r#ref, expr, is_const, default),
             BData::BMissing(_) => {}
         }
     }
@@ -727,17 +841,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     pub(crate) fn visit_decl(&mut self, decl: &mut G::Decl, opts: VisitDeclOpts) {
         let VisitDeclOpts {
             was_anonymous_named_expr,
-            could_be_const_value,
+            was_const,
             could_be_macro,
         } = opts;
         // Optionally preserve the name
         match decl.binding.data {
             BData::BIdentifier(id) => {
                 let id_ref = id.r#ref;
-                if could_be_const_value || (Self::ALLOW_MACROS && could_be_macro) {
-                    if let Some(val) = decl.value {
-                        if val.can_be_const_value() {
-                            self.const_values.put(id_ref, val).expect("oom");
+                if was_const || (Self::ALLOW_MACROS && could_be_macro) {
+                    if self.imports_macro() {
+                        self.record_const_value_for_macros(
+                            id_ref,
+                            decl.value,
+                            was_const,
+                            could_be_macro,
+                        );
+                    } else if !self.vis_scope().is_after_const_local_prefix {
+                        // Past the leading declaration run, a use can run before the initializer.
+                        if let Some(val) = decl.value {
+                            if val.can_be_const_value() {
+                                self.const_values.put(id_ref, val).expect("oom");
+                            }
                         }
                     }
                 } else {
@@ -756,7 +880,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             BData::BObject(_) | BData::BArray(_) => {
                 if Self::ALLOW_MACROS {
                     if could_be_macro && let Some(value) = decl.value {
-                        self.visit_binding_and_expr_for_macro(decl.binding, value);
+                        self.visit_binding_and_expr_for_macro(decl.binding, value, was_const, None);
                     }
                 }
             }

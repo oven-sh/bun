@@ -88,6 +88,28 @@ if (feature("DISABLED_FEATURE")) {
         },
       });
 
+      // minifySyntax folds "ENABLED_" + "FEATURE" before feature() sees it; the
+      // lookup must use the whole folded name, not its first segment.
+      itBundled(`feature_flag/${backend}/FoldedFlagName`, {
+        backend,
+        files: {
+          "/a.js": `
+import { feature } from "bun:bundle";
+if (feature("ENABLED_" + "FEATURE")) {
+  console.log("this should be kept");
+} else {
+  console.log("this should be removed");
+}
+`,
+        },
+        features: ["ENABLED_FEATURE"],
+        minifySyntax: true,
+        onAfterBundle(api) {
+          api.expectFile("out.js").toInclude("this should be kept");
+          api.expectFile("out.js").not.toInclude("this should be removed");
+        },
+      });
+
       itBundled(`feature_flag/${backend}/ImportRemoved`, {
         backend,
         files: {
@@ -475,6 +497,37 @@ if (feature("RUNTIME_FLAG")) {
 
     expect(stdout2.trim()).toBe("runtime flag enabled");
     expect(exitCode2).toBe(0);
+  });
+
+  // The runtime transpiler folds "ENABLED_" + "FEATURE" too, so it must read the whole name.
+  test("reads a folded flag name whole at runtime with bun run", async () => {
+    using dir = tempDir("bundler-feature-flag", {
+      "index.ts": `
+import { feature } from "bun:bundle";
+
+if (feature("ENABLED_" + "FEATURE")) {
+  console.log("folded flag enabled");
+} else {
+  console.log("folded flag disabled");
+}
+`,
+    });
+
+    async function run(flag: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", `--feature=${flag}`, "./index.ts"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    }
+
+    const [whole, firstSegment] = await Promise.all([run("ENABLED_FEATURE"), run("ENABLED_")]);
+    expect(whole).toMatchObject({ stdout: "folded flag enabled", exitCode: 0 });
+    expect(firstSegment).toMatchObject({ stdout: "folded flag disabled", exitCode: 0 });
   });
 
   test("works correctly in bun test", async () => {

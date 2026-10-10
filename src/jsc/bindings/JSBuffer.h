@@ -33,6 +33,8 @@
 extern "C" JSC::EncodedJSValue JSBuffer__bufferFromLength(JSC::JSGlobalObject* lexicalGlobalObject, int64_t length);
 extern "C" JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalObject* lexicalGlobalObject, char* ptr, size_t length, void* ctx, JSTypedArrayBytesDeallocator bytesDeallocator);
 extern "C" JSC::EncodedJSValue Bun__encoding__toString(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject, Encoding encoding);
+// `Bun__encoding__toString` that decodes a copy. See `InputStability`.
+extern "C" JSC::EncodedJSValue Bun__encoding__toStringUnstable(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject, Encoding encoding);
 extern "C" JSC::EncodedJSValue Bun__encoding__toStringUTF8(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject);
 extern "C" bool Bun__Buffer_fill(EncodedSlice*, void*, size_t, WebCore::BufferEncodingType);
 extern "C" bool JSBuffer__isBuffer(JSC::JSGlobalObject*, JSC::EncodedJSValue);
@@ -45,6 +47,18 @@ std::optional<size_t> byteLength(JSC::JSString* str, JSC::JSGlobalObject* lexica
 // it, this releases the adopted bytes through the deallocator, throws the
 // RangeError `new ArrayBuffer(length)` would throw, and returns true.
 bool rejectBytesNoCopyAboveArrayBufferLimit(JSC::JSGlobalObject*, JSC::ThrowScope&, const void* bytes, size_t length, JSTypedArrayBytesDeallocator, void* deallocatorContext);
+
+// Whether another thread can write the bytes handed to a decoder. Every byte
+// of a JS ArrayBuffer can: a SharedArrayBuffer from another thread's JS, and
+// an ordinary one from a pool thread that an async operation pinned it for.
+enum class InputStability : uint8_t {
+    Stable,
+    CanChange,
+};
+
+// A copy of `bytes` in `storage`, for a decoder that reads its input twice.
+// Throws OutOfMemoryError and returns an empty span if the copy fails.
+std::span<const uint8_t> stableBytes(JSC::JSGlobalObject*, JSC::ThrowScope&, std::span<const uint8_t> bytes, WTF::Vector<uint8_t>& storage);
 
 namespace Buffer {
 
@@ -93,7 +107,7 @@ JSC_DECLARE_HOST_FUNCTION(constructSlowBuffer);
 JSC::JSObject* createBufferPrototype(JSC::VM&, JSC::JSGlobalObject*);
 JSC::Structure* createBufferStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 JSC::JSObject* createBufferConstructor(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* bufferPrototype);
-JSC::EncodedJSValue jsBufferToStringFromBytes(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, std::span<const uint8_t> bytes, BufferEncodingType encoding);
+JSC::EncodedJSValue jsBufferToStringFromBytes(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, std::span<const uint8_t> bytes, BufferEncodingType encoding, Bun::InputStability stability = Bun::InputStability::Stable);
 JSC::EncodedJSValue jsBufferToString(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSC::JSArrayBufferView* castedThis, size_t offset, size_t length, WebCore::BufferEncodingType encoding);
 JSC::EncodedJSValue constructFromEncoding(JSC::JSGlobalObject* lexicalGlobalObject, WTF::StringView string, WebCore::BufferEncodingType encoding);
 

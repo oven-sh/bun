@@ -1059,7 +1059,7 @@ await subscription.unlisten();
 
 - All subscriptions on a client share one dedicated connection. The first `listen()` opens it, and removing the last subscription closes it. As a result, a client that never listens never pays for the connection, and unlistening everything lets the process exit without `sql.close()`.
 - While anything is subscribed, that connection keeps the process alive, like a listening server.
-- If the connection drops, Bun re-establishes it with exponential backoff (250ms doubling to 32s, with jitter) and re-subscribes every channel. PostgreSQL only delivers to connected listeners, so notifications sent in between are lost. The optional third argument to `listen()` runs on the initial subscribe and after every reconnect, which is the place to catch up:
+- If the connection drops, Bun re-establishes it with exponential backoff (250ms doubling to 32s, with jitter) and re-subscribes every channel. PostgreSQL only delivers to connected listeners, so notifications sent in between are lost. A server that sets `idle_session_timeout` ends this connection at every limit, because a connection that only listens is idle. To keep it, create the client with `connection: { idle_session_timeout: 0 }`. The optional third argument to `listen()` runs on the initial subscribe and after every reconnect, which is the place to catch up:
 
 ```ts
 await sql.listen("orders", handleOrder, async () => {

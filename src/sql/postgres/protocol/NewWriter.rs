@@ -102,10 +102,7 @@ impl<C: WriterContext> NewWriter<C> {
 
     pub fn string(self, value: &[u8]) -> Result<(), AnyPostgresError> {
         self.write(value)?;
-        if value.is_empty() || value[value.len() - 1] != 0 {
-            self.write(&[0u8])?;
-        }
-        Ok(())
+        self.write(&[0u8])
     }
 
     // Named `bun_string` (not `string`) to avoid colliding with `string(&[u8])` above.
@@ -115,13 +112,6 @@ impl<C: WriterContext> NewWriter<C> {
             return Ok(());
         }
 
-        let sliced = value.to_utf8();
-        let slice = sliced.slice();
-
-        self.write(slice)?;
-        if slice.is_empty() || slice[slice.len() - 1] != 0 {
-            self.write(&[0u8])?;
-        }
-        Ok(())
+        self.string(value.to_utf8().slice())
     }
 }

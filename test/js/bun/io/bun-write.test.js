@@ -7,10 +7,14 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isFreeBSD,
+  isLinux,
+  isMacOS,
   isWindows,
   tempDir,
   withoutAggressiveGC,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import { once } from "node:events";
 import http from "node:http";
 import { finished } from "node:stream/promises";
@@ -1677,5 +1681,560 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
     expect(stdout).toBe("caught EISDIR\n");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+  });
+});
+
+// `mode` is checked before a file is touched, on every platform.
+describe.concurrent("Bun.write mode validation", () => {
+  const doors = [
+    ["Bun.write(path)", (dest, data, options) => Bun.write(dest, data, options)],
+    ["Bun.write(Bun.file(path))", (dest, data, options) => Bun.write(Bun.file(dest), data, options)],
+    // On Windows `Bun.file(path).write()` does not read `mode`.
+    ...(isWindows ? [] : [["Bun.file(path).write()", (dest, data, options) => Bun.file(dest).write(data, options)]]),
+  ];
+  const notAnInteger = {
+    name: "RangeError",
+    code: "ERR_OUT_OF_RANGE",
+    message: expect.stringContaining("It must be an integer"),
+  };
+  const outOfRange = {
+    name: "RangeError",
+    code: "ERR_OUT_OF_RANGE",
+    message: expect.stringContaining("It must be >= 0 and <= 511"),
+  };
+  const notANumber = {
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message: expect.stringContaining("options.mode"),
+  };
+
+  // NaN and 0.5 used to convert to 0, and a `Bun.file()` copy then wrote the file with mode 000.
+  for (const [label, mode, error] of [
+    ["NaN", NaN, notAnInteger],
+    ["0.5", 0.5, notAnInteger],
+    ["384.5", 384.5, notAnInteger],
+    ["Infinity", Infinity, notAnInteger],
+    ["-Infinity", -Infinity, notAnInteger],
+    ["-1", -1, outOfRange],
+    ["0o1000", 0o1000, outOfRange],
+    ['"600"', "600", notANumber],
+    ["384n", 384n, notANumber],
+    ["true", true, notANumber],
+    ["new Number(384)", new Number(384), notANumber],
+  ]) {
+    test(`rejects mode ${label} and leaves the destination alone`, async () => {
+      using dir = tempDir("bun-write-mode", { "src.txt": "source", "existing.txt": "old" });
+      const existing = join(String(dir), "existing.txt");
+      const created = join(String(dir), "created.txt");
+      const before = fs.statSync(existing).mode;
+
+      for (const [, write] of doors) {
+        for (const make of [() => "hello", () => Bun.file(join(String(dir), "src.txt"))]) {
+          for (const dest of [existing, created]) {
+            // The async wrapper turns a synchronous throw into a rejection.
+            const attempt = async () => await write(dest, make(), { mode });
+            await expect(attempt()).rejects.toMatchObject(error);
+          }
+        }
+      }
+
+      expect(fs.existsSync(created)).toBe(false);
+      expect({ mode: fs.statSync(existing).mode, content: fs.readFileSync(existing, "utf8") }).toEqual({
+        mode: before,
+        content: "old",
+      });
+    });
+  }
+
+  // A mode means nothing for S3, so an S3 file does not validate one.
+  test("an S3 file does not read mode", async () => {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("") });
+    const file = Bun.S3Client.file("key", {
+      accessKeyId: "test",
+      secretAccessKey: "test",
+      region: "us-east-1",
+      bucket: "bucket",
+      endpoint: server.url.href,
+    });
+    expect([await file.write("x", { mode: NaN }), await file.write("x", { mode: "600" })]).toEqual([1, 1]);
+  });
+});
+
+// A Windows file has no permission bits. There a mode can only set the read-only attribute,
+// and the write paths that these cases cover do not apply it.
+describe.skipIf(isWindows).concurrent("Bun.write mode option", () => {
+  const modeOf = p => fs.statSync(p).mode & 0o777;
+  const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+  const stream = () =>
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("hello"));
+        controller.close();
+      },
+    });
+  // Above the 256 KiB limit of the synchronous path.
+  const large = Buffer.alloc(300 * 1024, "a").toString();
+
+  // [label, factory(dir), contents]. Factories, because a stream source can only be consumed once.
+  const sources = [
+    ["small string", () => "hello", "hello"],
+    ["empty string", () => "", ""],
+    ["small Uint8Array", () => new Uint8Array([104, 105]), "hi"],
+    ["empty Uint8Array", () => new Uint8Array(0), ""],
+    ["large string", () => large, large],
+    ["large Uint8Array", () => Buffer.from(large), large],
+    ["Blob", () => new Blob(["hello"]), "hello"],
+    ["empty Blob", () => new Blob([]), ""],
+    ["ReadableStream", stream, "hello"],
+    ["buffered Response", () => new Response("hello"), "hello"],
+    ["streaming Response", () => new Response(stream()), "hello"],
+  ];
+  // A `Bun.file()` source is copied by its own engine, which sets the mode after the copy.
+  const fileSource = [
+    "BunFile",
+    dir => {
+      const source = join(String(dir), "source.txt");
+      fs.writeFileSync(source, "hello");
+      return Bun.file(source);
+    },
+    "hello",
+  ];
+  const forEachSource = (list, value) => Object.fromEntries(list.map(([label]) => [label, value]));
+  const doors = [
+    ["Bun.write(path)", (dest, data, options) => Bun.write(dest, data, options)],
+    ["Bun.write(Bun.file(path))", (dest, data, options) => Bun.write(Bun.file(dest), data, options)],
+    ["Bun.file(path).write()", (dest, data, options) => Bun.file(dest).write(data, options)],
+  ];
+
+  for (const [door, write] of doors) {
+    for (const [label, make, contents] of [...sources, fileSource]) {
+      test(`${door} sets the mode and replaces the contents for ${label}`, async () => {
+        using dir = tempDir("bun-write-mode", {});
+        // Longer than the payload, so a truncation that did not happen shows in the contents.
+        const old = contents + "-the-old-tail";
+        const seed = (name, mode) => {
+          const dest = join(String(dir), name);
+          fs.writeFileSync(dest, old);
+          fs.chmodSync(dest, mode);
+          return dest;
+        };
+        const result = async (dest, mode) => {
+          await write(dest, make(dir), { mode });
+          return [modeOf(dest).toString(8), fs.readFileSync(dest, "utf8") === contents];
+        };
+        expect({
+          // 0o646 has bits that a umask of 022 or 077 removes at open(2).
+          created: await result(join(String(dir), "created"), 0o646),
+          narrowed: await result(seed("narrowed", 0o644), 0o600),
+          widened: await result(seed("widened", 0o600), 0o644),
+          // 0o604 to 0o640 removes a bit and adds another one.
+          mixed: await result(seed("mixed", 0o604), 0o640),
+          unchanged: await result(seed("unchanged", 0o640), 0o640),
+        }).toEqual({
+          created: ["646", true],
+          narrowed: ["600", true],
+          widened: ["644", true],
+          mixed: ["640", true],
+          unchanged: ["640", true],
+        });
+      });
+    }
+  }
+
+  test("sets the mode when the parent directory must be created", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    const results = {};
+    for (const [label, make] of sources) {
+      const dest = join(String(dir), label, "sub", "out.txt");
+      await Bun.write(dest, make(), { mode: 0o646 });
+      results[label] = modeOf(dest).toString(8);
+    }
+    expect(results).toEqual(forEachSource(sources, "646"));
+  });
+
+  test("createPath: false with a mode does not create the parent directory", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    const results = {};
+    for (const [label, make] of sources) {
+      const missing = join(String(dir), label, "out.txt");
+      let code = "resolved";
+      try {
+        await Bun.write(missing, make(), { mode: 0o600, createPath: false });
+      } catch (e) {
+        code = e.code;
+      }
+      const present = join(String(dir), `${label}.txt`);
+      await Bun.write(present, make(), { mode: 0o600, createPath: false });
+      results[label] = [code, fs.existsSync(join(String(dir), label)), modeOf(present).toString(8)];
+    }
+    expect(results).toEqual(forEachSource(sources, ["ENOENT", false, "600"]));
+  });
+
+  test("accepts mode 0", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    const dest = join(String(dir), "out.txt");
+    await Bun.write(dest, "hello", { mode: 0o000 });
+    expect(modeOf(dest)).toBe(0o000);
+  });
+
+  test("omitted mode leaves an existing file's permissions alone", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    const results = {};
+    for (const [label, make, contents] of sources) {
+      const dest = join(String(dir), `${label}.txt`);
+      fs.writeFileSync(dest, contents + "-the-old-tail");
+      fs.chmodSync(dest, 0o751);
+      await Bun.write(dest, make());
+      results[label] = [modeOf(dest).toString(8), fs.readFileSync(dest, "utf8") === contents];
+    }
+    expect(results).toEqual(forEachSource(sources, ["751", true]));
+  });
+
+  // An empty Blob or Response does not take the synchronous path. It creates the file like every other source.
+  test("an empty source creates the file for a bare filename and with createPath: false", async () => {
+    using dir = tempDir("bun-write-empty", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("node:fs");
+          process.umask(0);
+          const sources = { "empty-Blob": () => new Blob([]), "empty-Response": () => new Response("") };
+          const results = {};
+          for (const name in sources) {
+            const written = [
+              await Bun.write(name, sources[name]()),
+              await Bun.write("./" + name + "-2", sources[name](), { createPath: false }),
+            ];
+            const stat = fs.statSync(name);
+            results[name] = [written, (stat.mode & 0o777).toString(8), stat.size, fs.statSync(name + "-2").size];
+          }
+          console.log(JSON.stringify(results));
+        `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, results: stdout && JSON.parse(stdout) }).toEqual({
+      stderr: "",
+      results: { "empty-Blob": [[0, 0], "666", 0, 0], "empty-Response": [[0, 0], "666", 0, 0] },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // pull() runs after Bun.write() has opened the destination and before any byte of the
+  // stream reaches it, so it sees what another reader of the file sees during the write.
+  for (const [label, wrap] of [
+    ["ReadableStream", body => body],
+    ["streaming Response", body => new Response(body)],
+  ]) {
+    for (const [change, before, mode] of [
+      ["narrowed", 0o644, 0o600],
+      ["widened", 0o600, 0o644],
+    ]) {
+      test(`the mode is ${change} and the old contents are gone before the first chunk of a ${label}`, async () => {
+        using dir = tempDir("bun-write-mode", { "out.txt": "the old contents" });
+        const dest = join(String(dir), "out.txt");
+        fs.chmodSync(dest, before);
+        const seen = [];
+        await Bun.write(
+          dest,
+          wrap(
+            new ReadableStream({
+              pull(controller) {
+                const stat = fs.statSync(dest);
+                seen.push([(stat.mode & 0o777).toString(8), stat.size]);
+                controller.enqueue(new TextEncoder().encode("hello"));
+                controller.close();
+              },
+            }),
+          ),
+          { mode },
+        );
+        expect({ seen, content: fs.readFileSync(dest, "utf8") }).toEqual({
+          seen: [[mode.toString(8), 0]],
+          content: "hello",
+        });
+      });
+    }
+  }
+
+  // A FIFO has no permissions of its own to set and nothing to discard.
+  test("leaves a destination that is not a regular file as it is", async () => {
+    using dir = tempDir("bun-write-mode", {});
+    const fifo = join(String(dir), "fifo");
+    mkfifo(fifo, 0o644);
+    fs.chmodSync(fifo, 0o644);
+    const reader = fs.openSync(fifo, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    try {
+      const written = [
+        await Bun.write(fifo, "hello", { mode: 0o600 }),
+        await Bun.write(fifo, new Blob(["hello"]), { mode: 0o600 }),
+        await Bun.write(fifo, stream(), { mode: 0o600 }),
+      ];
+      const buffer = Buffer.alloc(64);
+      const read = buffer.subarray(0, fs.readSync(reader, buffer)).toString();
+      expect({ written, mode: modeOf(fifo).toString(8), read }).toEqual({
+        written: [5, 5, 5],
+        mode: "644",
+        read: "hellohellohello",
+      });
+    } finally {
+      fs.closeSync(reader);
+    }
+  });
+
+  // `mode` is for a file that Bun opens by path. A descriptor that the caller opened keeps its mode,
+  // and a write that is not empty keeps the length of its file.
+  for (const [door, write] of [
+    ["Bun.write(fd)", (fd, data, options) => Bun.write(fd, data, options)],
+    ["Bun.write(Bun.file(fd))", (fd, data, options) => Bun.write(Bun.file(fd), data, options)],
+    ["Bun.file(fd).write()", (fd, data, options) => Bun.file(fd).write(data, options)],
+  ]) {
+    test(`${door} leaves the mode of the caller's file alone`, async () => {
+      using dir = tempDir("bun-write-mode-fd", {});
+      const old = large + "-the-old-tail";
+      const all = [...sources, fileSource];
+      const results = {};
+      for (const [label, make, contents] of all) {
+        const dest = join(String(dir), label);
+        fs.writeFileSync(dest, old);
+        fs.chmodSync(dest, 0o644);
+        for (const mode of [0o600, 0o666]) {
+          const fd = fs.openSync(dest, "r+");
+          try {
+            await write(fd, make(dir), { mode });
+          } finally {
+            fs.closeSync(fd);
+          }
+        }
+        results[label] = [modeOf(dest).toString(8), contents === "" || fs.statSync(dest).size === old.length];
+      }
+      expect(results).toEqual(forEachSource(all, ["644", true]));
+    });
+  }
+
+  // Linux opens `/dev/fd/N` and `/dev/stdout` as the file again, so they are paths like any other.
+  // macOS and FreeBSD open a duplicate of the descriptor: there its file keeps its mode and its contents.
+  const opensAsDup = isMacOS || isFreeBSD;
+  const throughDescriptorPath = contents => (opensAsDup ? ["644", "old"] : ["600", contents]);
+  const seen = target => [
+    modeOf(target).toString(8),
+    fs.readFileSync(target, "utf8").slice(0, opensAsDup ? 3 : undefined),
+  ];
+
+  for (const [door, write] of doors) {
+    test(`${door} to /dev/fd/N`, async () => {
+      using dir = tempDir("bun-write-mode-dev-fd", {});
+      const cases = [sources[0], sources[6], sources[8]];
+      const results = {};
+      for (const [label, make, contents] of cases) {
+        const target = join(String(dir), label);
+        fs.writeFileSync(target, "old");
+        fs.chmodSync(target, 0o644);
+        const fd = fs.openSync(target, "a");
+        try {
+          await write(`/dev/fd/${fd}`, make(), { mode: 0o600 });
+        } finally {
+          fs.closeSync(fd);
+        }
+        results[label] = seen(target);
+      }
+      expect(results).toEqual(
+        Object.fromEntries(cases.map(([label, , contents]) => [label, throughDescriptorPath(contents)])),
+      );
+    });
+  }
+
+  test("Bun.write to /dev/stdin, /dev/stdout and /dev/stderr", async () => {
+    using dir = tempDir("bun-write-mode-dev-std", { "stdin.txt": "old", "stdout.txt": "old", "stderr.txt": "old" });
+    const targets = ["stdin", "stdout", "stderr"].map(name => join(String(dir), `${name}.txt`));
+    for (const target of targets) fs.chmodSync(target, 0o644);
+    const fds = targets.map(target => fs.openSync(target, "a"));
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            await Bun.write("/dev/stdin", "hello", { mode: 0o600 });
+            await Bun.write("/dev/stdout", new Blob(["hello"]), { mode: 0o600 });
+            await Bun.write("/dev/stderr", "hello", { mode: 0o600 });
+          `,
+        ],
+        env: bunEnv,
+        stdin: fds[0],
+        stdout: fds[1],
+        stderr: fds[2],
+      });
+      const exitCode = await proc.exited;
+      expect({
+        stdin: seen(targets[0]),
+        stdout: seen(targets[1]),
+        // The child can print to stderr itself, so only the mode counts here.
+        stderr: modeOf(targets[2]).toString(8),
+        exitCode,
+      }).toEqual({
+        stdin: throughDescriptorPath("hello"),
+        stdout: throughDescriptorPath("hello"),
+        stderr: throughDescriptorPath("hello")[0],
+        exitCode: 0,
+      });
+    } finally {
+      for (const fd of fds) fs.closeSync(fd);
+    }
+  });
+
+  // The shim replaces libc's chmod family in a child, so the tests below need no second user:
+  // a refused chmod is what a caller gets for a file it can write but does not own.
+  const shimSource = `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+int fchmod(int fd, mode_t mode) {
+  static int (*real)(int, mode_t);
+  struct stat st;
+  if (getenv("BUN_TEST_REFUSE_CHMOD")) { errno = EPERM; return -1; }
+  if (!real) real = dlsym(RTLD_NEXT, "fchmod");
+  if (fstat(fd, &st) == 0) dprintf(2, "[fchmod] %o %lld\\n", (unsigned)mode, (long long)st.st_size);
+  return real(fd, mode);
+}
+int chmod(const char *path, mode_t mode) { (void)path; (void)mode; errno = EPERM; return -1; }
+int fchmodat(int dirfd, const char *path, mode_t mode, int flags) {
+  (void)dirfd; (void)path; (void)mode; (void)flags; errno = EPERM; return -1;
+}
+`;
+  // One child writes every source to its own file. `seed` is [contents, mode], or null for a new file.
+  const runWithShim = async (dir, refuse, seed, mode) => {
+    const shim = join(String(dir), "shim.so");
+    fs.writeFileSync(join(String(dir), "shim.c"), shimSource);
+    await using compile = Bun.spawn({
+      cmd: [cc, "-shared", "-fPIC", "-o", shim, join(String(dir), "shim.c"), "-ldl"],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [compileError, compileExit] = await Promise.all([compile.stderr.text(), compile.exited]);
+    if (compileExit !== 0) throw new Error(`shim compile failed: ${compileError}`);
+
+    const names = sources.map(([label]) => label.replaceAll(" ", "-"));
+    if (seed) {
+      for (const name of names) {
+        fs.writeFileSync(join(String(dir), name), seed[0]);
+        fs.chmodSync(join(String(dir), name), seed[1]);
+      }
+    }
+    const preload = bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("node:fs");
+          const stream = () =>
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode("hello"));
+                controller.close();
+              },
+            });
+          const large = Buffer.alloc(300 * 1024, "a").toString();
+          const sources = {
+            "small-string": () => "hello",
+            "empty-string": () => "",
+            "small-Uint8Array": () => new Uint8Array([104, 105]),
+            "empty-Uint8Array": () => new Uint8Array(0),
+            "large-string": () => large,
+            "large-Uint8Array": () => Buffer.from(large),
+            "Blob": () => new Blob(["hello"]),
+            "empty-Blob": () => new Blob([]),
+            "ReadableStream": stream,
+            "buffered-Response": () => new Response("hello"),
+            "streaming-Response": () => new Response(stream()),
+          };
+          const results = {};
+          for (const name in sources) {
+            fs.writeSync(2, "@" + name + "\\n");
+            let outcome = "resolved";
+            try {
+              await Bun.write(name, sources[name](), { mode: ${mode} });
+            } catch (e) {
+              outcome = [e.code, e.syscall, e.path].join(" ");
+            }
+            const stat = fs.statSync(name);
+            results[name] = [outcome, (stat.mode & 0o777).toString(8), stat.size];
+          }
+          console.log(JSON.stringify(results));
+        `,
+      ],
+      env: { ...bunEnv, LD_PRELOAD: preload, ...(refuse ? { BUN_TEST_REFUSE_CHMOD: "1" } : {}) },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The chmod calls of each write, as "mode size-of-the-file-at-that-moment".
+    const calls = {};
+    const unexpected = [];
+    let current;
+    for (const line of stderr.split("\n")) {
+      if (line.startsWith("@")) calls[(current = line.slice(1))] = [];
+      else if (line.startsWith("[fchmod] ")) calls[current].push(line.slice("[fchmod] ".length));
+      else if (line) unexpected.push(line);
+    }
+    expect(unexpected).toEqual([]);
+    expect(exitCode).toBe(0);
+    return { results: JSON.parse(stdout), calls, names };
+  };
+  const forEachName = (names, value) =>
+    Object.fromEntries(names.map(name => [name, typeof value === "function" ? value(name) : value]));
+  // The synchronous path writes in place, trims to the written length, then adds bits.
+  // The other engines discard the old contents first.
+  const sizeWhenWidened = name => ({ "small-string": 5, "small-Uint8Array": 2 })[name] ?? 0;
+
+  describe.skipIf(!isLinux || !cc)("with libc's chmod replaced", () => {
+    test("a refused chmod rejects the write and leaves an existing file as it was", async () => {
+      using narrowing = tempDir("bun-write-mode-refused", {});
+      const narrowed = await runWithShim(narrowing, true, ["OLD", 0o666], 0o600);
+      expect(narrowed.results).toEqual(forEachName(narrowed.names, name => [`EPERM fchmod ${name}`, "666", 3]));
+
+      using widening = tempDir("bun-write-mode-refused", {});
+      const widened = await runWithShim(widening, true, ["OLD", 0o600], 0o644);
+      expect(widened.results).toEqual(forEachName(widened.names, name => [`EPERM fchmod ${name}`, "600", 3]));
+    });
+
+    test("no chmod is needed when the file already has the mode", async () => {
+      using dir = tempDir("bun-write-mode-refused", {});
+      const existing = await runWithShim(dir, true, ["OLD-OLD-OLD-OLD-OLD", 0o640], 0o640);
+      expect(Object.values(existing.results).map(([outcome, mode]) => [outcome, mode])).toEqual(
+        existing.names.map(() => ["resolved", "640"]),
+      );
+      // A new file gets 0o600 from open(2) under any umask that keeps the owner bits.
+      using created = tempDir("bun-write-mode-refused", {});
+      const fresh = await runWithShim(created, true, null, 0o600);
+      expect(Object.values(fresh.results).map(([outcome, mode]) => [outcome, mode])).toEqual(
+        fresh.names.map(() => ["resolved", "600"]),
+      );
+    });
+
+    test("bits that the mode removes go before the old contents, bits that it adds come after", async () => {
+      using narrowing = tempDir("bun-write-mode-order", {});
+      const narrowed = await runWithShim(narrowing, false, ["0123456789", 0o644], 0o600);
+      expect(narrowed.calls).toEqual(forEachName(narrowed.names, ["600 10"]));
+
+      using widening = tempDir("bun-write-mode-order", {});
+      const widened = await runWithShim(widening, false, ["0123456789", 0o600], 0o644);
+      expect(widened.calls).toEqual(forEachName(widened.names, name => ["600 10", `644 ${sizeWhenWidened(name)}`]));
+
+      using mixing = tempDir("bun-write-mode-order", {});
+      const mixed = await runWithShim(mixing, false, ["0123456789", 0o604], 0o640);
+      expect(mixed.calls).toEqual(forEachName(mixed.names, name => ["600 10", `640 ${sizeWhenWidened(name)}`]));
+    });
   });
 });

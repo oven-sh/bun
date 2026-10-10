@@ -390,6 +390,17 @@ junit = "test-results.xml"
 
 CI systems and other tools can consume the report.
 
+### `test.timeout`
+
+Default per-test timeout in milliseconds. Tests that take longer than this fail with a timeout error. Default `5000`.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+timeout = 10000
+```
+
+Equivalent CLI flag: `--timeout`. When both values are valid, the CLI value takes precedence. Invalid `test.timeout` values still fail validation.
+
 ## Package manager
 
 The `[install]` section configures the behavior of `bun install`.

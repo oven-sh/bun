@@ -342,8 +342,10 @@ JSC_DEFINE_HOST_FUNCTION(selectServerName, (JSC::JSGlobalObject * globalObject, 
         auto* string = name.isString() ? asString(name) : nullptr;
         if (!string) continue;
         auto view = string->view(globalObject);
+        if (scope.exception()) [[unlikely]]
+            break;
         // No ClientHello can carry a NUL.
-        if (scope.exception() || view->contains('\0')) continue;
+        if (view->contains('\0')) continue;
         values.append(value);
         sni_add(tree, view->utf8().legacyCStringPointer(), reinterpret_cast<void*>(static_cast<uintptr_t>(values.size())));
     }

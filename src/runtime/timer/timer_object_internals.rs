@@ -655,7 +655,13 @@ impl TimerObjectInternals {
                         }
                     }
                 } else {
-                    if kind == KindBig::SetTimeout && !repeat.is_null() {
+                    // https://github.com/nodejs/node/blob/a7cbb904745591c9a9d047a364c2c188e5470047/lib/internal/timers.js#L612
+                    // Node's `_idleTimeout !== -1` also means "not cleared": `unenroll()` writes
+                    // the -1. `cancel()` records a clear in `has_cleared_timer` instead.
+                    if kind == KindBig::SetTimeout
+                        && !repeat.is_null()
+                        && !s.flags.get().has_cleared_timer()
+                    {
                         if let Some(num) = idle_timeout.get_number() {
                             if num != -1.0 {
                                 // reschedule() inside convertToInterval will see state == .FIRED
@@ -804,7 +810,7 @@ impl TimerObjectInternals {
                 .timer
                 .update(self.event_loop_timer(), &scheduled_time)
         };
-        self.update_flags(|f| f.set_has_cleared_timer(false));
+        debug_assert!(!self.flags.get().has_cleared_timer());
 
         // Set _idleStart to the current monotonic timestamp in milliseconds
         // This mimics Node.js's behavior where _idleStart is the libuv timestamp when the timer was scheduled

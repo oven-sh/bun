@@ -10,12 +10,12 @@
 //!
 //! The model is `ExportMap.imports` of eslint-plugin-import, or the module records of oxlint: [`Flavor`].
 
-use crate::ast::{ExprKind, ExprTag, File, Name, StmtKind, StmtTag};
+use crate::ast::{ExprKind, ExprTag, File, Name, StmtKind};
 use crate::language::LanguageOptions;
 use crate::options::Json;
 use crate::span::Span;
 use bun_core::strings;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::any::Any;
 use std::borrow::Cow;
@@ -70,8 +70,9 @@ pub struct Request<'a> {
     pub kind: RequestKind,
     /// `import type`, `import { type A, type B }`, `export type * from`. What else counts depends on the [`Flavor`].
     pub is_only_importing_types: bool,
-    /// With [`Flavor::Oxlint`]: a statement with this specifier exports names, `export { a } from "m"` or `export * as a from "m"`.
-    /// A module may do that with itself: that is no import then.
+    /// With [`Flavor::Oxlint`]: a statement with this specifier exports names: `export { a } from "m"`,
+    /// `export * as a from "m"`, or `import { a } from "m"` beside `export { a }`. A module may do that with itself: that is
+    /// no import then.
     pub may_be_itself: bool,
 }
 
@@ -372,6 +373,17 @@ fn add_static_requests_of_oxlint<'a>(file: &'a File<'a>, requests: &mut Vec<Requ
     let first = requests.len();
     // For each request: the specifier, whether the statement has names, whether one of them is a value, and whether it exports them.
     let mut names: SmallVec<[(Name<'a>, bool, bool, bool); 32]> = SmallVec::new();
+    let mut exported: Option<FxHashSet<Name<'a>>> = None;
+    let mut is_exported = |local: Name<'a>| {
+        let exported = exported.get_or_insert_with(|| {
+            let exports = file.body().iter().filter_map(|stmt| match stmt.kind() {
+                StmtKind::ExportNamed(export) if export.spec().is_none() => Some(export.items()),
+                _ => None,
+            });
+            exports.flatten().map(|it| it.local().name()).collect()
+        });
+        exported.contains(&local)
+    };
     for stmt in file.body() {
         let (specifier, types, values) = match stmt.kind() {
             StmtKind::Import(import) => {
@@ -421,7 +433,13 @@ fn add_static_requests_of_oxlint<'a>(file: &'a File<'a>, requests: &mut Vec<Requ
                 specifier,
                 types + values > 0,
                 values > 0,
-                types + values > 0 && stmt.tag() != StmtTag::Import,
+                match stmt.kind() {
+                    StmtKind::Import(import) => {
+                        import.default().is_some_and(|it| is_exported(it.name()))
+                            || (import.named().iter()).any(|it| is_exported(it.local().name()))
+                    }
+                    _ => types + values > 0,
+                },
             ));
             requests.push(Request {
                 specifier: specifier.bytes(),

@@ -18,7 +18,8 @@ const WRONG_INDENT: Message = Message::new(
 );
 
 impl Rule for JsxIndent {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-indent", Kind::None).fixable(Fixable::Whitespace);
+    const META: Meta =
+        Meta::plugin(Plugin::React, "jsx-indent", Kind::None).fixable(Fixable::Whitespace);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]).stmts(&[StmtTag::Return]);
     type State<'a> = ();
 
@@ -48,7 +49,11 @@ impl Rule for JsxIndent {
         if let Some(closing) = jsx.closing_span().filter(|it| is_first_in_line(file, *it)) {
             self.check_nodes_indent(closing, self.get_node_indent(file, start), Some(e), cx);
         }
-        for attribute in jsx.attrs().iter().filter(|it| it.kind() != PropKind::Spread) {
+        for attribute in jsx
+            .attrs()
+            .iter()
+            .filter(|it| it.kind() != PropKind::Spread)
+        {
             if let Some(container) = attribute.value().and_then(Expr::jsx_container_span) {
                 self.handle_attribute(attribute.span().start, container, cx);
             }
@@ -56,9 +61,13 @@ impl Rule for JsxIndent {
         for child in jsx.children_with_whitespace() {
             match child {
                 // Not all of it is white space for a regular expression.
-                JsxChild::Whitespace(node) => self.check_literal_node_indent(node, file.slice(node), start, cx),
+                JsxChild::Whitespace(node) => {
+                    self.check_literal_node_indent(node, file.slice(node), start, cx)
+                }
                 JsxChild::Expr(child) => match child.jsx_container_span() {
-                    Some(container) if child.tag() != ExprTag::Spread && is_first_in_line(file, container) => {
+                    Some(container)
+                        if child.tag() != ExprTag::Spread && is_first_in_line(file, container) =>
+                    {
                         let indent = self.get_node_indent(file, start) + self.indent_size;
                         self.check_nodes_indent(container, indent, Some(e), cx);
                     }
@@ -75,49 +84,81 @@ impl Rule for JsxIndent {
 
     /// A `return` of JSX is `isReturningJSX`.
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        let StmtKind::Return(Some(argument)) = statement.kind() else { return };
+        let StmtKind::Return(Some(argument)) = statement.kind() else {
+            return;
+        };
         if argument.tag() != ExprTag::Jsx {
             return;
         }
         let (node, raw) = (statement.span(), statement.text());
-        let Some(last_line_start) = strings::last_index_of_char(raw, b'\n') else { return };
+        let Some(last_line_start) = strings::last_index_of_char(raw, b'\n') else {
+            return;
+        };
         let last_line = raw.get(last_line_start..).unwrap_or_default();
         let opening_indent = self.get_node_indent(cx.file(), node.start);
         let closing_indent = self.indent_of(last_line.get(1..).unwrap_or_default());
         if opening_indent == closing_indent {
             return;
         }
-        let mut functions = std::iter::successors(Node::Stmt(statement).enclosing_function(), |it| it.enclosing());
+        let mut functions =
+            std::iter::successors(Node::Stmt(statement).enclosing_function(), |it| {
+                it.enclosing()
+            });
         if !functions.any(|it| !matches!(it.kind(), FnKind::Arrow | FnKind::StaticBlock)) {
             return;
         }
-        self.report(node, opening_indent, closing_indent, cx).fix(|fixer| {
-            let at = Span::new(node.start + last_line_start as u32, node.end);
-            Some(fixer.replace(at, with_indent(last_line, &self.indent(opening_indent)?)))
-        });
+        self.report(node, opening_indent, closing_indent, cx)
+            .fix(|fixer| {
+                let at = Span::new(node.start + last_line_start as u32, node.end);
+                Some(fixer.replace(
+                    at,
+                    with_indent(last_line, &self.indent(opening_indent, fixer)?),
+                ))
+            });
     }
 }
 
 impl JsxIndent {
-    /// `repeat(indentChar, needed)`. `None` where that throws.
-    fn indent(&self, needed: i64) -> Option<Vec<u8>> {
-        (0..1 << 29).contains(&needed).then(|| vec![self.indent_char; needed as usize])
+    /// `repeat(indentChar, needed)`, which has not thrown: see `report`.
+    fn indent(&self, needed: i64, fixer: Fixer<'_>) -> Option<Vec<u8>> {
+        fixer.repeat(self.indent_char, u64::try_from(needed).ok()?)
     }
 
-    /// `report`, without the fix.
+    /// `report`, without the fix. `getFixerFunction` repeats before anything is reported.
     fn report<'a>(&self, node: Span, needed: i64, gotten: i64, cx: &Cx<'a, Self>) -> Report<'a> {
+        cx.repeat_count(needed as f64, node);
         cx.report(node, WRONG_INDENT)
             .data("needed", needed)
-            .data("type", if self.indent_char == b' ' { "space" } else { "tab" })
-            .data("characters", if needed == 1 { "character" } else { "characters" })
+            .data(
+                "type",
+                if self.indent_char == b' ' {
+                    "space"
+                } else {
+                    "tab"
+                },
+            )
+            .data(
+                "characters",
+                if needed == 1 {
+                    "character"
+                } else {
+                    "characters"
+                },
+            )
             .data("gotten", gotten)
     }
 
     /// `report`, of what is neither text nor a `return`.
-    fn report_first_in_line<'a>(&self, node: Span, needed: i64, gotten: i64, cx: &Cx<'a, Self>) -> Report<'a> {
+    fn report_first_in_line<'a>(
+        &self,
+        node: Span,
+        needed: i64,
+        gotten: i64,
+        cx: &Cx<'a, Self>,
+    ) -> Report<'a> {
         self.report(node, needed, gotten, cx).fix(|fixer| {
             let line = fixer.file().line_span(fixer.file().line_of(node.start));
-            Some(fixer.replace(Span::before(line.start, node), self.indent(needed)?))
+            Some(fixer.replace(Span::before(line.start, node), self.indent(needed, fixer)?))
         })
     }
 
@@ -141,10 +182,18 @@ impl JsxIndent {
     }
 
     /// `checkNodesIndent`, of what is first in its line. `element`: its parent, if that is an element or a fragment.
-    fn check_nodes_indent<'a>(&self, node: Span, indent: i64, element: Option<Expr<'a>>, cx: &Cx<'a, Self>) {
+    fn check_nodes_indent<'a>(
+        &self,
+        node: Span,
+        indent: i64,
+        element: Option<Expr<'a>>,
+        cx: &Cx<'a, Self>,
+    ) {
         let node_indent = self.get_node_indent(cx.file(), node.start);
-        let is_correct_right_in_logical_exp =
-            || node_indent - indent == self.indent_size && element.is_some_and(|it| self.is_right_in_logical_exp(it));
+        let is_correct_right_in_logical_exp = || {
+            node_indent - indent == self.indent_size
+                && element.is_some_and(|it| self.is_right_in_logical_exp(it))
+        };
         if node_indent != indent && !is_correct_right_in_logical_exp() {
             self.report_first_in_line(node, indent, node_indent, cx);
         }
@@ -152,7 +201,9 @@ impl JsxIndent {
 
     /// How long the first group of `/\n( *)[\t ]*\S/g`, or of the same for tabs, is in each match.
     fn node_indents_per_line(&self, value: &[u8]) -> impl Iterator<Item = i64> {
-        let lines = strings::split(value, b"\n").skip(1).filter(|it| after_indent(it).is_some());
+        let lines = strings::split(value, b"\n")
+            .skip(1)
+            .filter(|it| after_indent(it).is_some());
         lines.map(move |it| self.indent_of(it))
     }
 
@@ -169,8 +220,12 @@ impl JsxIndent {
             if cx.has_reported_too_much() {
                 break;
             }
-            self.report(node, indent, node_indent, cx)
-                .fix(|fixer| Some(fixer.replace(node, with_indent(fixer.file().slice(node), &self.indent(indent)?))));
+            self.report(node, indent, node_indent, cx).fix(|fixer| {
+                Some(fixer.replace(
+                    node,
+                    with_indent(fixer.file().slice(node), &self.indent(indent, fixer)?),
+                ))
+            });
         }
     }
 
@@ -188,12 +243,18 @@ impl JsxIndent {
         } else if let Some(parentheses) = parentheses {
             parentheses.start
         } else {
-            let Some(prev_token) = file.token_before(node) else { return };
+            let Some(prev_token) = file.token_before(node) else {
+                return;
+            };
             if prev_token.is_punctuator(",") {
                 estree_span(get_node_by_range_index(file, prev_token.start())).start
             } else if prev_token.is_punctuator(":") {
                 let mut tokens = file.tokens_before(prev_token);
-                let Some(token) = tokens.find(|it| it.kind() != TokenKind::Punctuator || it.is("/")) else { return };
+                let Some(token) =
+                    tokens.find(|it| it.kind() != TokenKind::Punctuator || it.is("/"))
+                else {
+                    return;
+                };
                 start_in_conditional_expression(file, token.start())
             } else {
                 prev_token.start()
@@ -201,9 +262,15 @@ impl JsxIndent {
         };
         let is_alternate_in_conditional_exp = parentheses.is_none()
             && matches!(parent, Node::Expr(it) if matches!(it.kind(), ExprKind::Cond { no, .. } if no == element));
-        let is_indented = !is_alternate_in_conditional_exp && !self.is_right_in_logical_exp(element);
+        let is_indented =
+            !is_alternate_in_conditional_exp && !self.is_right_in_logical_exp(element);
         let indent = if is_indented { self.indent_size } else { 0 };
-        self.check_nodes_indent(node, self.get_node_indent(file, prev) + indent, Some(element), cx);
+        self.check_nodes_indent(
+            node,
+            self.get_node_indent(file, prev) + indent,
+            Some(element),
+            cx,
+        );
     }
 
     /// `JSXExpressionContainer` for the value of an attribute, then `handleAttribute`. `name`: where the name starts.
@@ -211,15 +278,23 @@ impl JsxIndent {
         let file = cx.file();
         let is_container_first_in_line = is_first_in_line(file, container);
         if is_container_first_in_line {
-            self.check_nodes_indent(container, self.get_node_indent(file, name) + self.indent_size, None, cx);
+            self.check_nodes_indent(
+                container,
+                self.get_node_indent(file, name) + self.indent_size,
+                None,
+                cx,
+            );
         }
         if !self.check_attributes
-            || !is_container_first_in_line && !strings::contains_js_line_break(file.slice(container))
+            || !is_container_first_in_line
+                && !strings::contains_js_line_break(file.slice(container))
         {
             return;
         }
         let last_token = Span::empty(container.end.saturating_sub(1));
-        let Some(first_in_line) = get_first_node_in_line(file, last_token) else { return };
+        let Some(first_in_line) = get_first_node_in_line(file, last_token) else {
+            return;
+        };
         if !is_first_in_line(file, first_in_line.span()) {
             return;
         }
@@ -227,7 +302,8 @@ impl JsxIndent {
         let node_indent = self.get_node_indent(file, first_in_line.start());
         if node_indent != name_indent {
             // Of `a={}` it is the `{`, and upstream is at the attribute before it is at its value.
-            self.report_first_in_line(first_in_line.span(), name_indent, node_indent, cx).shorter_first();
+            self.report_first_in_line(first_in_line.span(), name_indent, node_indent, cx)
+                .shorter_first();
         }
     }
 }
@@ -277,5 +353,9 @@ fn start_in_conditional_expression<'a>(file: &'a File<'a>, offset: u32) -> u32 {
         node = parent;
     }
     // espree's is the whole text.
-    if file.uses_typescript_parser() { file.program_span().start } else { 0 }
+    if file.uses_typescript_parser() {
+        file.program_span().start
+    } else {
+        0
+    }
 }

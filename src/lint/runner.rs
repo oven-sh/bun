@@ -1082,6 +1082,7 @@ pub fn run_in_order<'a, S: Starts>(
 ) -> Vec<Diagnostic> {
     file.sink.wants_fixes.set(wants_fixes);
     file.sink.bytes.borrow_mut().clear();
+    file.sink.thrown.take();
     run_rules(file, rules);
     sorted(file.sink.diagnostics.take(), when)
 }

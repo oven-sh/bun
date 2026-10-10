@@ -1128,6 +1128,10 @@ impl<'a> Offsets<'a, '_> {
         };
         let end = self.token(token).start;
         let span = Span::new(end - actual.len() as u32, end);
+        // ESLint is at the end of the program.
+        if cx.repeat_count(expected as f64, Span::empty(0)).is_none() {
+            return;
+        }
         cx.report(span, WRONG_INDENTATION)
             .data(
                 "expected",
@@ -1135,9 +1139,8 @@ impl<'a> Offsets<'a, '_> {
             )
             .data("actual", found)
             .fix(|fixer| {
-                let mut indentation = base.to_vec();
-                indentation.resize(base.len() + desired.extra as usize, character);
-                fixer.replace(span, indentation)
+                let extra = fixer.repeat(character, u64::from(desired.extra))?;
+                Some(fixer.replace(span, [base, &extra[..]].concat()))
             });
     }
 }

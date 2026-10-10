@@ -126,32 +126,6 @@ impl Rule for NoCycle {
     }
 }
 
-/// A module may export its own names again, under a name: `export { a as b } from "./me"`, `export * as me from "./me"`, and
-/// `import { a } from "./me"; export { a }`.
-fn oxlint_allows_self_reference<'a>(file: &'a File<'a>, specifier: &[u8]) -> bool {
-    let is_it = |spec: Option<Name<'a>>| spec.is_some_and(|it| it.bytes() == specifier);
-    let mut exported: Option<FxHashSet<Name<'a>>> = None;
-    let mut is_exported = |local: Name<'a>| {
-        let exported = exported.get_or_insert_with(|| {
-            let exports = file.body().iter().filter_map(|stmt| match stmt.kind() {
-                StmtKind::ExportNamed(export) if export.spec().is_none() => Some(export.items()),
-                _ => None,
-            });
-            exports.flatten().map(|it| it.local().name()).collect()
-        });
-        exported.contains(&local)
-    };
-    file.body().iter().any(|stmt| match stmt.kind() {
-        StmtKind::ExportNamed(export) => is_it(export.spec()) && !export.items().is_empty(),
-        StmtKind::ExportStar { spec, alias, .. } => is_it(spec) && alias.is_some(),
-        StmtKind::Import(import) => {
-            is_it(Some(import.spec()))
-                && (import.default().is_some_and(|it| is_exported(it.name())) || import.named().iter().any(|it| is_exported(it.local().name())))
-        }
-        _ => false,
-    })
-}
-
 /// Whether `ExportMapBuilder.for` has something for the file at `path`, which has this text.
 fn has_export_map(settings: &Settings, path: &[u8], text: &[u8]) -> bool {
     !settings.is_ignored(path) && may_be_module(text)
@@ -311,7 +285,7 @@ impl NoCycle {
             let leads_back = if is_in_node_modules(modules.path(imported)) {
                 false
             } else if imported == me {
-                !oxlint_allows_self_reference(file, request.specifier)
+                !request.may_be_itself
             } else if self.max_depth == usize::MAX {
                 modules.component(imported) == modules.component(me)
             } else {

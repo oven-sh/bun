@@ -193,6 +193,9 @@ impl NewlineAfterImport {
                 _ => "Add empty line(s) after require",
             });
         }
-        report.fix(|fixer| fixer.insert_after(node, "\n".repeat((expected_line_diff - line_diff) as usize)));
+        let Some(missing) = cx.repeat_count((expected_line_diff - line_diff) as f64, node) else {
+            return;
+        };
+        report.fix(|fixer| Some(fixer.insert_after(node, fixer.repeat(b'\n', missing)?)));
     }
 }

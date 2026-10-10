@@ -93,6 +93,16 @@ pub(crate) struct Sink {
     pub(crate) wants_help: Cell<bool>,
     /// By `Diagnostic::rule`: how many bytes the messages, fixes and suggestions of the rule have.
     pub(crate) bytes: RefCell<Vec<u64>>,
+    /// The first that a rule has thrown.
+    pub(crate) thrown: RefCell<Option<Thrown>>,
+}
+
+/// [`Cx::repeat_count`]
+pub(crate) struct Thrown {
+    /// As `Diagnostic::rule`.
+    pub(crate) rule: u16,
+    pub(crate) at: u32,
+    pub(crate) error: Vec<u8>,
 }
 
 /// The context of the rule `R` in the file that is linted. It dereferences to the [`File`].
@@ -160,6 +170,12 @@ impl<'a, R: Rule> Cx<'a, R> {
     #[inline]
     pub fn report(&self, at: impl Spanned, message: Message) -> Report<'a> {
         self.base.report(at.span(), message)
+    }
+
+    /// How often `" ".repeat(count)` of JavaScript repeats. `None`: it throws, and so does the rule, as the one for ESLint does:
+    /// that ends the run. `at`: the node that ESLint is at. The rules of oxlint do not throw. The text itself: [`Fixer::repeat`].
+    pub fn repeat_count(&self, count: f64, at: impl Spanned) -> Option<u64> {
+        self.base.repeat_count(count, at.span().start)
     }
 
     /// Whether the rule has reported as much as it can in this file: whatever else it finds is not shown. For a rule that can
@@ -249,6 +265,25 @@ impl<'a> CxBase<'a> {
             data: SmallVec::new(),
             diagnostic: (!self.is_capped.get()).then(|| diagnostic(message, help)),
         }
+    }
+
+    fn repeat_count(&self, count: f64, at: u32) -> Option<u64> {
+        // `ToIntegerOrInfinity`
+        let whole = if count.is_nan() { 0.0 } else { count.trunc() };
+        let error = match whole {
+            _ if self.file.language().is_oxlint => return Some(whole.max(0.0) as u64),
+            _ if whole < 0.0 || whole.is_infinite() => {
+                let count = crate::utils::text::number_to_string(count);
+                [&b"RangeError: Invalid count value: "[..], &count].concat()
+            }
+            _ if whole > crate::fix::MAX_STRING_LENGTH as f64 => {
+                b"RangeError: Invalid string length".to_vec()
+            }
+            _ => return Some(whole as u64),
+        };
+        let (rule, mut thrown) = (self.rule, self.file.sink.thrown.borrow_mut());
+        thrown.get_or_insert(Thrown { rule, at, error });
+        None
     }
 
     #[cold]

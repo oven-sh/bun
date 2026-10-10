@@ -317,6 +317,9 @@ impl IndentLegacy {
         let start = line_start(cx.file(), line);
         let text_range = Span::new(start, start + gotten.space + gotten.tab);
         let indent_char = if self.is_tab { b'\t' } else { b' ' };
+        let Some(count) = cx.repeat_count(needed, text_range) else {
+            return;
+        };
         let report = match loc {
             Loc::Node(node) => cx.report(node, EXPECTED),
             Loc::Position(at) => cx.report_at(at, EXPECTED),
@@ -324,7 +327,7 @@ impl IndentLegacy {
         report
             .data("expected", expected)
             .data("actual", actual)
-            .fix(|fixer| fixer.replace(text_range, vec![indent_char; needed as usize]));
+            .fix(|fixer| Some(fixer.replace(text_range, fixer.repeat(indent_char, count)?)));
     }
 
     /// ESLint's `checkNodeIndent`, of a node or a token that has nothing more to check.

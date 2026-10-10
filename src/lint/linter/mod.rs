@@ -699,6 +699,25 @@ impl<S: RuleSet> Linter<S> {
             false => Vec::new(),
         };
         let diagnostics = crate::runner::run_in_order(file, &enabled, options.wants_fixes, &when);
+        if let Some(thrown) = file.sink.thrown.take() {
+            let id = running.get(thrown.rule as usize).map(|it| it.id().to_vec());
+            let id = id.unwrap_or_default();
+            let line = file.line_of(thrown.at).to_string();
+            let said = [
+                &thrown.error[..],
+                b"\nOccurred while linting ",
+                file.path(),
+                b":",
+                line.as_bytes(),
+                b"\nRule: \"",
+                &id[..],
+                b"\"",
+            ];
+            return LintResult {
+                thrown: Some(said.concat()),
+                ..LintResult::default()
+            };
+        }
         problems.reserve(diagnostics.len());
         // What becomes of what the last rule and `messageId` change that change something.
         let mut changes = (None, config::OxlintChanges::default());

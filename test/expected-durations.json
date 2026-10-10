@@ -5810,13 +5810,6 @@
     "windows": 53,
     "windows-aarch64": 36
   },
-  "js/bun/test/parallel/test-integration-rspack.ts": {
-    "default": 38,
-    "asan": 2,
-    "musl": 44,
-    "windows": 20,
-    "windows-aarch64": 14
-  },
   "js/bun/test/parallel/test-net-half-open-peer-reset-bun-listen-tls.mjs": {
     "default": 17,
     "asan": 6,

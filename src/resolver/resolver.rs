@@ -746,9 +746,12 @@ impl<'a> Resolver<'a> {
     /// guarded by the resolver `mutex` — identical invariant to the prior
     /// per-site `unsafe`.
     ///
-    /// Not usable where the result must outlive a later `&mut self` borrow
-    /// (the returned `&mut HashMap` is tied to `&mut self`); such sites
-    /// erase the borrow via a raw `*mut DirInfo` / `DirInfoRef` immediately.
+    /// Stacked Borrows: each call pushes a fresh Unique tag on the map
+    /// allocation, so any `*mut DirInfo` previously projected from an earlier
+    /// `dir_info_map_mut()` borrow is popped. Slot pointers that must survive a
+    /// subsequent map access are re-derived from the raw map pointer via
+    /// `DirInfo::put_slot` / `DirInfo::slot_ptr_at`; refs from `at_index`
+    /// are only durable until the next map access.
     #[inline(always)]
     pub(crate) fn dir_info_map_mut(&mut self) -> &mut DirInfo::HashMap {
         // SAFETY: ARENA — the map is a field of the live `DirCache` that
@@ -5689,8 +5692,7 @@ impl<'a> Resolver<'a> {
         }
 
         // Each probe of the listing goes through `EntriesOption::lookup`, a
-        // single `entries_mutex` critical section (see its doc for the
-        // in-place rewrite this guards against).
+        // single `entries_mutex` critical section.
         let (plain_query, plain_dirname_fd) = dir_entry.get().lookup(&self.dir_cache, base);
         if let Some(query) = plain_query {
             // SAFETY: the cache is the one this resolver holds; the lazy-stat
@@ -6022,7 +6024,9 @@ impl<'a> Resolver<'a> {
                                 }
                             }
 
-                            let Ok(stored) = self.dir_cache.dirname_store().append_slice(bin_path)
+                            // `BIN_FOLDERS` is for the process, whichever
+                            // cache this resolver has.
+                            let Ok(stored) = Fs::DirnameStore::instance().append_slice(bin_path)
                             else {
                                 break 'append_bin_dir;
                             };
@@ -6067,7 +6071,7 @@ impl<'a> Resolver<'a> {
                                 }
 
                                 let Ok(stored) =
-                                    self.dir_cache.dirname_store().append_slice(bin_path)
+                                    Fs::DirnameStore::instance().append_slice(bin_path)
                                 else {
                                     break 'append_bin_dir;
                                 };

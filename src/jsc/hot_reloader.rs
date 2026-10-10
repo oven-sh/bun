@@ -1134,11 +1134,9 @@ where
                                     let path_string: bun_ptr::Interned;
                                     let file_hash: bun_watcher::HashType;
                                     let abs_path: &[u8] = 'brk: {
-                                        // Probe `.data` under `entries_mutex`; a
-                                        // resolver at a newer generation rewrites
-                                        // the map in place under that lock. The
-                                        // entry pointer stays valid after unlock
-                                        // (EntryStore-owned).
+                                        // Probe `.data` under `entries_mutex`.
+                                        // The entry pointer stays valid after
+                                        // unlock (EntryStore-owned).
                                         let looked_up = {
                                             let _entries_lock = rfs.entries_mutex.lock_guard();
                                             dir_ent.entries().get(changed_name)

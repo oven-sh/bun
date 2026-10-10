@@ -550,9 +550,8 @@ impl<'a> RouteLoader<'a> {
     ) {
         let fs = self.fs;
 
-        // Snapshot the cached `DirEntry`'s entry pointers under `entries_mutex`:
-        // another thread (e.g. the bundler's resolver) rewrites this map in place
-        // under that lock, so iterating it live would walk freed buckets.
+        // Snapshot the cached `DirEntry`'s entry pointers under `entries_mutex`,
+        // which every walk of this map holds.
         let entry_ptrs: Vec<*mut Fs::Entry> = {
             let _entries_lock = fs.fs.entries_mutex.lock_guard();
             match root_dir_info.get_entries_const() {

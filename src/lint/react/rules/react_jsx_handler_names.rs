@@ -1,11 +1,13 @@
-use crate::jsx::{AttributeValue, get_prop_value};
+use crate::jsx::{AttributeValue, get_jsx_element_name, get_prop_value};
 use bun_lint_oxlint::text::glob_match;
 use bun_core::strings;
+use bun_glob::{Options as GlobOptions, Pattern};
 use bun_lint::prelude::*;
+use bun_lint::regex::SyntaxError;
 use bun_lint::rule::Plugin;
 use std::cell::OnceCell;
 
-/// Ensures that any component or prop methods used to handle events are correctly prefixed.
+/// Enforce event handler naming conventions in JSX
 pub struct JsxHandlerNames {
     check_inline_functions: bool,
     check_local_variables: bool,
@@ -14,11 +16,45 @@ pub struct JsxHandlerNames {
     /// Empty: the names of the handlers are not looked at.
     event_handler_prefixes: Vec<Box<[u8]>>,
     ignore_component_names: Vec<Box<[u8]>>,
+    original: Original,
 }
 
-const BAD_HANDLER_NAME: Message = Message::new("", "Bad handler name");
-const INVALID_HANDLER_NAME: Message = Message::new("", "Invalid handler name: {{handler_name}}");
-const INVALID_HANDLER_PROP_NAME: Message = Message::new("", "Invalid handler prop name: {{prop_key}}");
+/// What upstream reads otherwise than oxlint.
+#[derive(Default)]
+struct Original {
+    /// Whatever is truthy is `true`.
+    check_inline_function: bool,
+    check_local: bool,
+    event_handler_prefix: Vec<u8>,
+    event_handler_prop_prefix: Vec<u8>,
+    /// `None`: a prefix is `false`, or both are plain names, which the lists of oxlint have as they are.
+    regexes: Option<Regexes>,
+    ignore_component_names: Vec<Pattern>,
+}
+
+struct Regexes {
+    event_handler: Regex,
+    prop_event_handler: Regex,
+}
+
+/// Where in the file something follows a character: the character, and the end of what makes it that.
+#[derive(Default)]
+pub struct Followed {
+    /// The name of a handler follows a `.`.
+    dots: OnceCell<Vec<(u32, u32)>>,
+    /// A `:` follows a `:`.
+    colons: OnceCell<Vec<(u32, u32)>>,
+}
+
+const BAD_HANDLER_NAME: Message = Message::new(
+    "badHandlerName",
+    "Handler function for {{propKey}} prop key must be a camelCase name beginning with '{{handlerPrefix}}' only",
+);
+const BAD_PROP_KEY: Message =
+    Message::new("badPropKey", "Prop key for {{propValue}} must begin with '{{handlerPropPrefix}}'");
+const OXLINT_BAD_HANDLER_NAME: Message = Message::new("", "Bad handler name");
+const OXLINT_INVALID_HANDLER_NAME: Message = Message::new("", "Invalid handler name: {{handler_name}}");
+const OXLINT_INVALID_HANDLER_PROP_NAME: Message = Message::new("", "Invalid handler prop name: {{prop_key}}");
 
 #[derive(Copy, Clone)]
 enum HandlerName<'a> {
@@ -29,10 +65,9 @@ enum HandlerName<'a> {
 }
 
 impl Rule for JsxHandlerNames {
-    const META: Meta = Meta::oxlint(Plugin::React, "jsx-handler-names", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-handler-names", Kind::Suggestion);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
-    /// Where in the file the name of a handler follows a `.`: the `.`, and the end of what makes it such a name.
-    type State<'a> = OnceCell<Vec<(u32, u32)>>;
+    type State<'a> = Followed;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -63,16 +98,91 @@ impl Rule for JsxHandlerNames {
                 .into_iter()
                 .map(|it| it.as_bytes().into())
                 .collect(),
+            original: Original::new(options).unwrap_or_default(),
         }
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+    fn validate(options: &Options) -> Result<(), Vec<u8>> {
+        Original::new(options.object(0)).map(|_| ()).map_err(|error| error.message.into_bytes())
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Followed> {
         // Without the one there is neither.
-        (!self.event_handler_prop_prefixes.is_empty()).then(OnceCell::new)
+        let has_prefixes = !self.event_handler_prop_prefixes.is_empty();
+        (has_prefixes || (!file.language().is_oxlint && self.original.regexes.is_some())).then(Followed::default)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         self.check(e, cx);
+    }
+}
+
+impl Original {
+    /// The error is what `new RegExp(..)` throws.
+    fn new(options: Object) -> Result<Original, SyntaxError> {
+        // `isPrefixDisabled(prefix) ? null : prefix || default`, which then stands in a template.
+        let prefix = |key: &str, default: &str| match options.get(key) {
+            Some(Json::Bool(false)) => None,
+            Some(value) if value.is_truthy() => Some(string_of(value)),
+            _ => Some(default.as_bytes().to_vec()),
+        };
+        let is_plain = |key: &str| match options.get(key) {
+            Some(Json::String(it)) => {
+                !it.is_empty() && it.iter().all(|b| matches!(b, b'0'..=b'9' | b'A'..=b'Z' | b'_' | b'a'..=b'z'))
+            }
+            Some(value) => *value == Json::Bool(false),
+            None => true,
+        };
+        let event_handler_prefix = prefix("eventHandlerPrefix", "handle");
+        let event_handler_prop_prefix = prefix("eventHandlerPropPrefix", "on");
+        let mut regexes = None;
+        if !is_plain("eventHandlerPrefix") || !is_plain("eventHandlerPropPrefix") {
+            let regex = |parts: &[&[u8]]| Regex::from_bytes(&parts.concat(), b"");
+            let of_props = event_handler_prop_prefix.as_deref().unwrap_or_default();
+            let event_handler = (event_handler_prefix.as_deref())
+                .map(|it| regex(&[b"^((props\\.", of_props, b")|((.*\\.)?", it, b"))[0-9]*[A-Z].*$"]))
+                .transpose()?;
+            let prop_event_handler =
+                event_handler_prop_prefix.as_deref().map(|it| regex(&[b"^(", it, b"[A-Z].*|ref)$"])).transpose()?;
+            regexes = event_handler
+                .zip(prop_event_handler)
+                .map(|(event_handler, prop_event_handler)| Regexes { event_handler, prop_event_handler });
+        }
+        Ok(Original {
+            check_inline_function: options.get("checkInlineFunction").is_some_and(Json::is_truthy),
+            check_local: options.get("checkLocalVariables").is_some_and(Json::is_truthy),
+            event_handler_prefix: event_handler_prefix.unwrap_or_default(),
+            event_handler_prop_prefix: event_handler_prop_prefix.unwrap_or_default(),
+            regexes,
+            ignore_component_names: options
+                .strings("ignoreComponentNames")
+                .into_iter()
+                .map(|it| Pattern::new(it.as_bytes(), GlobOptions::MINIMATCH_3))
+                .collect(),
+        })
+    }
+
+    /// What the text is taken of that is the name of the handler. `None`: it is not looked at.
+    fn handler(&self, expression: Expr) -> Option<Span> {
+        // Whether it has an `object`.
+        let is_member = |it: Expr| ast_utils::is_member_expression(it) && !it.is_chain_root();
+        let Some(arrow_function) = expression.as_fn().filter(|it| it.is_arrow()) else {
+            let span = match expression.is_missing() {
+                true => expression.jsx_container_span()?.shrink(1, 1),
+                false => expression.span(),
+            };
+            return (self.check_local || is_member(expression)).then_some(span);
+        };
+        // `expression.body.callee`
+        let callee = match arrow_function.body() {
+            FnBody::Expr(body) if !body.is_chain_root() => body.callee(),
+            _ => None,
+        };
+        if !self.check_inline_function || !(self.check_local || callee.is_some_and(is_member)) {
+            return None;
+        }
+        // The text of no node is that of the file.
+        Some(callee.map_or_else(|| expression.file().span(), Expr::span))
     }
 }
 
@@ -81,46 +191,83 @@ impl JsxHandlerNames {
         let ExprKind::Jsx(jsx) = e.kind() else {
             return;
         };
+        let is_oxlint = cx.language().is_oxlint;
+        let regexes = self.original.regexes.as_ref().filter(|_| !is_oxlint);
         let mut is_ignored = None;
         for attribute in jsx.attrs() {
             let Some(AttributeValue::ExpressionContainer(value_expr)) = get_prop_value(attribute) else {
                 continue;
             };
-            let Some((handler_name, handler_span, is_props_handler)) = self.handler(value_expr) else {
+            let handler = match is_oxlint {
+                true => self.handler(value_expr),
+                // For upstream the name is the text of a node, whatever that is.
+                false => self.original.handler(value_expr).map(|span| (HandlerName::Text(span), span, false)),
+            };
+            let Some((handler_name, handler_span, is_props_handler)) = handler else {
                 continue;
             };
             let Some(key) = attribute.key() else {
                 continue;
             };
-            // Of `a:b` it is `b`.
             let name = key.name().map(Name::bytes).unwrap_or_default();
-            let prop_key = strings::split_once_char(name, b':').map_or(name, |it| it.1);
+            let prop_key = match strings::split_once_char(name, b':') {
+                // Of `a:b` it is `b`.
+                Some((_, local)) if is_oxlint => local,
+                // upstream has the node that the `b` is, of which it makes a string.
+                Some(_) => &b"[object Object]"[..],
+                None => name,
+            };
             // Any function can be a `ref`.
             if prop_key == b"ref" {
                 continue;
             }
-            let prop_is_event_handler = self.match_event_handler_props_name(prop_key);
+            let prop_is_event_handler = match regexes {
+                Some(regexes) => regexes.prop_event_handler.test(prop_key),
+                None => self.match_event_handler_props_name(prop_key),
+            };
             let is_handler_name_correct = match handler_name {
                 HandlerName::None => Some(false),
                 // What is passed on from the props can have the name of a prop.
                 HandlerName::Name(name) if is_props_handler && self.match_event_handler_props_name(name) => Some(true),
                 HandlerName::Name(name) => self.match_event_handler_name(name),
-                HandlerName::Text(span) => self.match_event_handler_name_in(span, cx),
+                HandlerName::Text(span) => match regexes {
+                    Some(regexes) => {
+                        Some(regexes.event_handler.test(&normalize_handler_name(cx.slice(span), is_oxlint)))
+                    }
+                    None => self.match_event_handler_name_in(span, cx),
+                },
             };
             if is_handler_name_correct != Some(!prop_is_event_handler)
-                || *is_ignored.get_or_insert_with(|| self.is_ignored_component(jsx))
+                || cx.has_reported_too_much()
+                || *is_ignored.get_or_insert_with(|| self.is_ignored_component(jsx, is_oxlint))
             {
+                continue;
+            }
+            // upstream reports the attribute, and says what is the help of oxlint.
+            if !is_oxlint {
+                match prop_is_event_handler {
+                    true => cx
+                        .report(attribute.span(), BAD_HANDLER_NAME)
+                        .data("propKey", prop_key)
+                        .data("handlerPrefix", self.original.event_handler_prefix.clone()),
+                    false => cx
+                        .report(attribute.span(), BAD_PROP_KEY)
+                        .data("propValue", normalize_handler_name(cx.slice(handler_span), is_oxlint))
+                        .data("handlerPropPrefix", self.original.event_handler_prop_prefix.clone()),
+                };
                 continue;
             }
             let report = match (prop_is_event_handler, handler_name) {
                 (true, HandlerName::Name(name)) => {
-                    cx.report(handler_span, INVALID_HANDLER_NAME).data("handler_name", name)
+                    cx.report(handler_span, OXLINT_INVALID_HANDLER_NAME).data("handler_name", name)
                 }
                 (true, HandlerName::Text(span)) => cx
-                    .report(handler_span, INVALID_HANDLER_NAME)
-                    .data("handler_name", normalize_handler_name(cx.slice(span))),
-                (true, HandlerName::None) => cx.report(handler_span, BAD_HANDLER_NAME),
-                (false, _) => cx.report(key.span(cx.file()), INVALID_HANDLER_PROP_NAME).data("prop_key", prop_key),
+                    .report(handler_span, OXLINT_INVALID_HANDLER_NAME)
+                    .data("handler_name", normalize_handler_name(cx.slice(span), is_oxlint)),
+                (true, HandlerName::None) => cx.report(handler_span, OXLINT_BAD_HANDLER_NAME),
+                (false, _) => {
+                    cx.report(key.span(cx.file()), OXLINT_INVALID_HANDLER_PROP_NAME).data("prop_key", prop_key)
+                }
             };
             report.help_with(|| {
                 let text = |it: &[u8]| bstr::BStr::new(it).to_string();
@@ -135,7 +282,9 @@ impl JsxHandlerNames {
                 let prop_value = match handler_name {
                     HandlerName::None => String::new(),
                     HandlerName::Name(name) => format!(" for {}", text(name)),
-                    HandlerName::Text(span) => format!(" for {}", text(&normalize_handler_name(cx.slice(span)))),
+                    HandlerName::Text(span) => {
+                        format!(" for {}", text(&normalize_handler_name(cx.slice(span), is_oxlint)))
+                    }
                 };
                 format!("Prop key{prop_value} must begin with '{}'", prefixes(&self.event_handler_prop_prefixes))
             });
@@ -237,60 +386,76 @@ impl JsxHandlerNames {
         if self.event_handler_prefixes.is_empty() {
             return None;
         }
-        let text = cx.file().text();
-        let start = span.start + if cx.slice(span).starts_with(b"this.") { 5 } else { 0 };
-        if self.end_of_handler_name_start(text, start as usize).is_some_and(|end| end <= span.end) {
-            return Some(true);
+        let (text, is_oxlint) = (cx.file().text(), cx.language().is_oxlint);
+        let start = match is_oxlint {
+            true => span.start + if cx.slice(span).starts_with(b"this.") { 5 } else { 0 },
+            // upstream takes the blanks out first, and where there is no `this.` all up to the last `::`.
+            false => end_of_literal(text, span.start, b"this.", is_oxlint)
+                .filter(|end| *end <= span.end)
+                .or_else(|| self.last_followed(b':', span, cx))
+                .unwrap_or(span.start),
+        };
+        let is_name_at = |prefixes: &[Box<[u8]>], at: u32| {
+            end_of_handler_name_start(prefixes, text, at, is_oxlint).is_some_and(|end| end <= span.end)
+        };
+        // For upstream `props.onChange` is such a name, whatever follows.
+        let is_of_props = || {
+            end_of_literal(text, start, b"props.", is_oxlint)
+                .is_some_and(|at| is_name_at(&self.event_handler_prop_prefixes, at))
+        };
+        Some(
+            is_name_at(&self.event_handler_prefixes, start)
+                || (!is_oxlint && is_of_props())
+                || self.last_followed(b'.', Span::new(start, span.end), cx).is_some(),
+        )
+    }
+
+    /// Of what [`JsxHandlerNames::for_each_followed`] finds for `byte`, where the last ends that is all in `within`.
+    fn last_followed(&self, byte: u8, within: Span, cx: &Cx<Self>) -> Option<u32> {
+        if within.len() <= 256 {
+            let mut last = None;
+            self.for_each_followed(byte, within, cx.file(), &mut |_, end| {
+                if end <= within.end {
+                    last = Some(end);
+                }
+            });
+            return last;
         }
-        if span.len() <= 256 {
-            let mut is_found = false;
-            let within = Span::new(start, span.end);
-            self.for_each_handler_name_after_a_dot(text, within, |_, end| is_found |= end <= span.end);
-            return Some(is_found);
-        }
-        let all = cx.state.get_or_init(|| {
+        let all = if byte == b'.' { &cx.state.dots } else { &cx.state.colons }.get_or_init(|| {
             let mut all = Vec::new();
-            self.for_each_handler_name_after_a_dot(text, cx.file().span(), |dot, end| all.push((dot, end)));
+            self.for_each_followed(byte, cx.file().span(), cx.file(), &mut |at, end| all.push((at, end)));
             all
         });
-        let from_start = all.get(all.partition_point(|it| it.0 < start)..).unwrap_or_default();
-        Some(from_start.iter().take_while(|it| it.0 < span.end).any(|it| it.1 <= span.end))
+        let first = all.partition_point(|it| it.0 < within.start);
+        let inside = all.get(first..all.partition_point(|it| it.0 < within.end))?;
+        inside.iter().rev().find(|it| it.1 <= within.end).map(|it| it.1)
     }
 
-    /// Calls `visit` with each `.` in `within` that the name of a handler follows, and with where that is known.
-    fn for_each_handler_name_after_a_dot(&self, text: &[u8], within: Span, mut visit: impl FnMut(u32, u32)) {
+    /// Calls `visit` with each `.` in `within` that the name of a handler follows, or each `:` that a `:` follows, and
+    /// with where that is known.
+    fn for_each_followed(&self, byte: u8, within: Span, file: &File, visit: &mut dyn FnMut(u32, u32)) {
+        let (text, is_oxlint) = (file.text(), file.language().is_oxlint);
         let (mut at, end) = (within.start as usize, within.end as usize);
-        while let Some(found) = text.get(at..end).and_then(|rest| strings::index_of_char_usize(rest, b'.')) {
+        while let Some(found) = text.get(at..end).and_then(|rest| strings::index_of_char_usize(rest, byte)) {
             at += found + 1;
-            if let Some(end) = self.end_of_handler_name_start(text, at) {
-                visit(at as u32 - 1, end);
+            let end_of_it = match byte {
+                b'.' => end_of_handler_name_start(&self.event_handler_prefixes, text, at as u32, is_oxlint),
+                _ => end_of_literal(text, at as u32, b":", is_oxlint),
+            };
+            if let Some(end_of_it) = end_of_it {
+                visit(at as u32 - 1, end_of_it);
             }
         }
-    }
-
-    /// Where the capital letter of `/^(handle)[0-9]*[A-Z]/` ends in the text from `from`, in which blanks do not count.
-    fn end_of_handler_name_start(&self, text: &[u8], from: usize) -> Option<u32> {
-        let end_with = |prefix: &[u8]| {
-            let (mut at, mut prefix) = (from, prefix);
-            loop {
-                let (c, size) = strings::wtf8_codepoint_at(text, at);
-                let character = text.get(at..at + size).filter(|it| !it.is_empty())?;
-                at += size;
-                if char::from_u32(c).is_some_and(char::is_whitespace) {
-                    continue;
-                }
-                if !prefix.is_empty() {
-                    prefix = prefix.strip_prefix(character)?;
-                } else if !character.iter().all(u8::is_ascii_digit) {
-                    return starts_with_upper(character).then_some(at as u32);
-                }
-            }
-        };
-        self.event_handler_prefixes.iter().filter_map(|it| end_with(it)).min()
     }
 
     /// The name that is compared is `a.c.d` for `<a.b.c.d>`, as in oxlint.
-    fn is_ignored_component(&self, jsx: Jsx) -> bool {
+    fn is_ignored_component(&self, jsx: Jsx, is_oxlint: bool) -> bool {
+        // upstream asks minimatch, which throws for what it has of `<a.b>` and `<a:b>`.
+        if !is_oxlint {
+            let name = get_jsx_element_name(jsx);
+            return strings::index_of_any(&name, b".:").is_none()
+                && self.original.ignore_component_names.iter().any(|it| it.matches(&name));
+        }
         if self.ignore_component_names.is_empty() {
             return false;
         }
@@ -314,6 +479,66 @@ fn starts_with_upper(text: &[u8]) -> bool {
     text.first().is_some_and(u8::is_ascii_uppercase)
 }
 
+/// The first character of `text` from `at` on that is no blank, and where it ends.
+fn next_character(text: &[u8], at: u32, is_oxlint: bool) -> Option<(&[u8], u32)> {
+    let mut at = at as usize;
+    loop {
+        let (c, size) = strings::wtf8_codepoint_at(text, at);
+        let character = text.get(at..at + size).filter(|it| !it.is_empty())?;
+        at += size;
+        // oxlint goes by `White_Space` of Unicode, upstream by `\s`.
+        let is_blank = match is_oxlint {
+            true => char::from_u32(c).is_some_and(char::is_whitespace),
+            false => strings::is_js_whitespace(c),
+        };
+        if !is_blank {
+            return Some((character, at as u32));
+        }
+    }
+}
+
+/// Where `literal` ends in the text from `from`, in which blanks do not count.
+fn end_of_literal(text: &[u8], from: u32, literal: &[u8], is_oxlint: bool) -> Option<u32> {
+    let (mut at, mut rest) = (from, literal);
+    while !rest.is_empty() {
+        let (character, end) = next_character(text, at, is_oxlint)?;
+        rest = rest.strip_prefix(character)?;
+        at = end;
+    }
+    Some(at)
+}
+
+/// Where the capital letter of `/^(handle)[0-9]*[A-Z]/` ends in the text from `from`, in which blanks do not count.
+fn end_of_handler_name_start(prefixes: &[Box<[u8]>], text: &[u8], from: u32, is_oxlint: bool) -> Option<u32> {
+    let end_with = |prefix: &[u8]| {
+        let mut at = end_of_literal(text, from, prefix, is_oxlint)?;
+        loop {
+            let (character, end) = next_character(text, at, is_oxlint)?;
+            if !character.iter().all(u8::is_ascii_digit) {
+                return starts_with_upper(character).then_some(end);
+            }
+            at = end;
+        }
+    };
+    prefixes.iter().filter_map(|it| end_with(it)).min()
+}
+
+/// `String(value)`
+fn string_of(value: &Json) -> Vec<u8> {
+    match value {
+        Json::Null => b"null".to_vec(),
+        Json::Bool(it) => it.to_string().into_bytes(),
+        Json::Number(it) => text::number_to_string(*it),
+        Json::String(it) => it.clone(),
+        // In an array `null` is nothing.
+        Json::Array(all) => {
+            let parts = all.iter().map(|it| if *it == Json::Null { Vec::new() } else { string_of(it) });
+            parts.collect::<Vec<_>>().join(&b","[..])
+        }
+        Json::Object(_) => b"[object Object]".to_vec(),
+    }
+}
+
 /// The name, and whether it is of `props` or `this.props`.
 fn get_event_handler_name_from_static_member_expression(member_expr: Expr<'_>) -> Option<(Ident<'_>, bool)> {
     let ExprKind::Dot { obj, name, .. } = member_expr.kind() else {
@@ -331,7 +556,16 @@ fn get_event_handler_name_from_static_member_expression(member_expr: Expr<'_>) -
 }
 
 /// Without `this.` at the start and without blanks.
-fn normalize_handler_name(s: &[u8]) -> Vec<u8> {
+fn normalize_handler_name(s: &[u8], is_oxlint: bool) -> Vec<u8> {
+    // upstream: `.replace(/\s*/g, "").replace(/^this\.|.*::/, "")`
+    if !is_oxlint {
+        let name = strings::without_js_whitespace(s);
+        let start = match name.starts_with(b"this.") {
+            true => 5,
+            false => strings::last_index_of(&name, b"::").map_or(0, |at| at + 2),
+        };
+        return name.get(start..).unwrap_or_default().to_vec();
+    }
     let s = s.strip_prefix(b"this.").unwrap_or(s);
     match std::str::from_utf8(s) {
         Ok(s) => s.chars().filter(|c| !c.is_whitespace()).collect::<String>().into_bytes(),

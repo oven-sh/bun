@@ -111,11 +111,17 @@ impl Rule for Namespace {
         }
         let top_level_scope = file.top_level_scope();
         for reference in file.references() {
-            let (Some(place), Some(ident)) = (namespaces.get(&reference.name()), reference.expr()) else {
+            let Some(place) = namespaces.get(&reference.name()) else {
                 continue;
             };
-            // oxlint follows the references to the import, but for those in parentheses, and only into a module that has an
-            // `import` or an `export`.
+            let Some(ident) = reference.expr() else {
+                if !is_oxlint && let Node::Type(heritage) = reference.node() {
+                    check_heritage(heritage, place.clone(), cx);
+                }
+                continue;
+            };
+            // oxlint follows the references to the import, but for those in parentheses, and only into a module that
+            // has an `import` or an `export`.
             if let Remote::Oxlint(module) = place.module
                 && (ident.is_parenthesized()
                     || !module.record.has_module_syntax
@@ -214,8 +220,8 @@ struct Place<'a> {
 }
 
 /// `declaredScope(context, name, node) === 'module'` of eslint-module-utils
-fn is_declared_in_module<'a>(name: Name<'a>, node: Expr<'a>, cx: &mut Cx<'a, Namespace>) -> bool {
-    let scope = Node::Expr(node).scope();
+fn is_declared_in_module<'a>(name: Name<'a>, node: Node<'a>, cx: &mut Cx<'a, Namespace>) -> bool {
+    let scope = node.scope();
     *cx.state.declared.entry((scope, name)).or_insert_with(|| {
         let reference = scope.references().find(|it| it.name() == name);
         reference.and_then(Reference::symbol).is_some_and(|it| it.scope().kind() == ScopeKind::Module)
@@ -233,7 +239,7 @@ impl Namespace {
             Node::Expr(member) if member.is_jsx_tag_name() => check_jsx_member_expression(member, place, cx),
             Node::Expr(member) if matches!(member.tag(), ExprTag::Dot | ExprTag::Index) => {
                 // oxlint does not ask which part of the member it is.
-                if !is_oxlint && (member.object() != Some(ident) || !is_declared_in_module(name, member, cx)) {
+                if !is_oxlint && (member.object() != Some(ident) || !is_declared_in_module(name, member.into(), cx)) {
                     return;
                 }
                 if let Node::Expr(parent) = member.parent()
@@ -255,7 +261,7 @@ impl Namespace {
                 self.check_deep_namespace_for_node(member, place.clone(), cx);
             }
             Node::VarDecl(declarator) if declarator.init() == Some(ident) => {
-                if is_oxlint || is_declared_in_module(name, ident, cx) {
+                if is_oxlint || is_declared_in_module(name, ident.into(), cx) {
                     check_deep_namespace_for_object_pattern(declarator.pat(), place.clone(), cx);
                 }
             }
@@ -298,6 +304,34 @@ impl Namespace {
             place.namespaces.push(name);
             node = parent;
         }
+    }
+}
+
+/// `a.b.c` after `implements`, or after the `extends` of an interface, is a `MemberExpression` in ESTree.
+fn check_heritage<'a>(heritage: TypeNode<'a>, mut place: Place<'a>, cx: &mut Cx<'a, Namespace>) {
+    let is_heritage = match heritage.parent() {
+        Node::Class(class) => class.implements().around(heritage.span().start) == Some(heritage),
+        Node::Stmt(parent) => match parent.kind() {
+            StmtKind::Interface(interface) => interface.extends().around(heritage.span().start) == Some(heritage),
+            _ => false,
+        },
+        _ => false,
+    };
+    let TypeKind::Ref { name, .. } = heritage.kind() else {
+        return;
+    };
+    let Some(object) = name.first().filter(|_| is_heritage) else {
+        return;
+    };
+    if !is_declared_in_module(object.name(), heritage.into(), cx) {
+        return;
+    }
+    for property in name.parts().skip(1) {
+        let Nested::Namespace(_, module) = place.module.nested(property.bytes(), cx) else {
+            return check_binding_exported(property.bytes(), property.span(), &place, cx);
+        };
+        place.module = module;
+        place.namespaces.push(property.bytes());
     }
 }
 

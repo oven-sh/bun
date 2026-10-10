@@ -407,6 +407,9 @@ pub struct Dialect {
     pub script: bool,
     /// JavaScript has the types and the declarations of Flow, as `flow-parser` reads them.
     pub flow: bool,
+    /// What oxc accepts and the parsers of ESLint do not, in JavaScript and in TypeScript: `import source x from "a"`,
+    /// `import.source("a")`, and in TypeScript too something between the `<` and the `/` of a closing tag.
+    pub oxc: bool,
 }
 
 impl Dialect {
@@ -418,6 +421,7 @@ impl Dialect {
             babel: false,
             script,
             flow: false,
+            oxc: false,
         }
     }
 

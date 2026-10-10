@@ -284,10 +284,16 @@ impl ResolvedConfig {
         options: &[Json],
     ) {
         // The schemas are those of the rules for ESLint. oxlint passes over a property that its rule does not know, and its
-        // rules have options that the schema does not know: the rule gets them.
+        // rules have options that the schema does not know: the rule gets them. Its ports of the rules of other plugins take
+        // other values and other shapes, too: `"import/max-dependencies": ["error", 2]`.
+        let is_like_in_oxlint = matches!(
+            entry.meta.plugin,
+            Plugin::Eslint | Plugin::TypeScript | Plugin::ReactHooks
+        );
         if severity != Severity::Off
             && self.error.is_none()
             && !entry.meta.follows_oxlint
+            && (is_like_in_oxlint || !self.prefers_typescript_rules)
             && let Err(lines) = super::schema::validate(entry.meta, options)
             && !(self.prefers_typescript_rules
                 && (super::schema::validate_known_properties(entry.meta, options).is_ok()

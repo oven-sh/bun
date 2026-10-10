@@ -232,8 +232,13 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     child
                 }
                 T::OpenBrace => self.jsx_expression_child(start),
-                // For acorn `<` and `/` are two tokens.
-                T::LessThan if self.is_ecmascript && self.peek() == T::Slash => break,
+                // For acorn and oxc `<` and `/` are two tokens.
+                T::LessThan
+                    if (self.is_ecmascript || self.options.dialect.oxc)
+                        && self.peek() == T::Slash =>
+                {
+                    break;
+                }
                 T::LessThan => {
                     let (child, closes_this) = self.jsx_element(false, jsx.tag);
                     if closes_this {

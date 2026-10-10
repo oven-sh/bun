@@ -1,7 +1,7 @@
 //! `bun lint` on bytes: every rule that needs neither types nor other files, with its default
 //! options, and with the comments of the text that configure rules. Or, with flag 6, with a configuration of
 //! its own: the first line of the text is a configuration object, whose rules are on with its options, alone or
-//! (flag 7) beside all the others.
+//! (flag 7) beside all the others. With flag 8 only the rules that are the React Compiler are on.
 
 #![no_main]
 
@@ -109,6 +109,18 @@ fn own_config(json: &[u8], variant: usize, is_oxlint: bool, with_the_rest: bool)
     Some(config)
 }
 
+/// `react-hooks/..` of ESLint's plugin, of which oxlint has most as `react/..`.
+const COMPILER: &str = "capitalized-calls config error-boundaries exhaustive-effect-dependencies fbt gating globals hooks \
+    immutability incompatible-library invariant memo-dependencies memoized-effect-dependencies no-deriving-state-in-effects \
+    preserve-manual-memoization purity refs rule-suppression set-state-in-effect set-state-in-render static-components syntax todo \
+    unsupported-syntax use-memo void-use-memo";
+
+fn compiler_config(variant: usize, is_oxlint: bool) -> Option<ResolvedConfig> {
+    let prefix = if is_oxlint { "react" } else { "react-hooks" };
+    let rules: Vec<String> = COMPILER.split(' ').map(|it| format!("\"{prefix}/{it}\":2")).collect();
+    own_config(format!("{{\"rules\":{{{}}}}}", rules.join(",")).as_bytes(), variant, is_oxlint, false)
+}
+
 fn setup() -> &'static Setup {
     static SETUP: OnceLock<Setup> = OnceLock::new();
     SETUP.get_or_init(|| {
@@ -180,7 +192,13 @@ fn run(data: &[u8]) {
     let mut run = Run::new(data);
     let mut text = input.text;
     let own;
-    let config = if input.has(6) {
+    let config = if input.has(8) {
+        let Some(made) = compiler_config(which, input.has(0)) else {
+            return;
+        };
+        own = made;
+        &own
+    } else if input.has(6) {
         let end = text.iter().position(|&it| it == b'\n').unwrap_or(text.len());
         run.how = format!("the configuration {}", String::from_utf8_lossy(&text[..end]));
         let made = run.guarded(|| own_config(&text[..end], which, input.has(0), input.has(7)));
@@ -201,11 +219,12 @@ fn run(data: &[u8]) {
         ..LintOptions::default()
     };
     run.how = format!(
-        "{path} {parser:?} {source_type:?} oxlint={} settings={} own={} rest={} fix={fixes} inline={} fixes={} suppressions={}",
+        "{path} {parser:?} {source_type:?} oxlint={} settings={} own={} rest={} compiler={} fix={fixes} inline={} fixes={} suppressions={}",
         input.has(0),
         input.has(5),
         input.has(6),
         input.has(7),
+        input.has(8),
         options.allow_inline_config,
         options.wants_fixes,
         options.wants_suppressions
@@ -213,7 +232,7 @@ fn run(data: &[u8]) {
     if shows() {
         show(&run.how, input.text);
     }
-    if shows() && input.has(6) {
+    if shows() && (input.has(6) || input.has(8)) {
         show("rules that are configured", config.configured().count().to_string().as_bytes());
     }
     let too_deep = || LintResult::default();

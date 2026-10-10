@@ -80,8 +80,10 @@ impl Rule for NoInternalModules {
             if !self.is_forbid && steps.iter().filter(|step| !step.starts_with(b"@")).count() <= 1 {
                 continue;
             }
-            let just_steps = steps.join(&b'/');
-            let is_listed = self.is_listed(&just_steps) || self.is_listed(&[b"/", &just_steps[..]].concat());
+            let is_listed = !self.regexps.is_empty() && {
+                let just_steps = steps.join(&b'/');
+                self.is_listed(&just_steps) || self.is_listed(&[b"/", &just_steps[..]].concat())
+            };
             let import_type = if is_listed {
                 if !self.is_forbid {
                     continue;

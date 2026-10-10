@@ -18,15 +18,16 @@ use crate::results::{Counts, FileResult};
 use crate::run::Environment;
 use bun_core::strings;
 use bun_lint::context::Severity;
-use bun_lint::linter::globals::InferredGlobals;
+use bun_lint::language::InferGlobals;
+use bun_lint::linter::globals::{InferredGlobal, InferredGlobals};
 use bun_lint::linter::{
     Details, LintMessage, LintResult, MAX_AUTOFIX_PASSES, ResolvedConfig, RuleId, apply_fixes,
     grows_too_much, is_parse_error, max_fixed_len,
 };
 use bun_sema::json::Json;
-use bun_sema::program::FileId;
+use bun_sema::program::{FileId, Files};
 use bun_sema::resolve::{inside, to_file_name_lower_case};
-use bun_sema::util::FxHashMap;
+use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_sema_driver::host::{AlreadyRead, Provided, from_native, is_bundled, to_native};
 use bun_sema_driver::{Category, Diagnostic, Libs, Refused};
 use bun_threading::Guarded;
@@ -269,6 +270,42 @@ fn files_matching(root: &[u8], pattern: &[u8], ignored: &[&[u8]]) -> Vec<Vec<u8>
     found
 }
 
+/// The globals of a program that is loaded anyway.
+struct OfProgram {
+    /// `None`: see `Files::global_names`.
+    names: Option<Vec<InferredGlobal>>,
+    /// The files that are in it only because they are linted, each by the name that the program has for it: the project does
+    /// not include them, so they are not written for its libraries.
+    added: FxHashSet<Vec<u8>>,
+}
+
+impl OfProgram {
+    fn new(program: &Files<'_>) -> OfProgram {
+        let inferred = |it: bun_sema::program::GlobalName| InferredGlobal {
+            name: it.name,
+            is_value: it.is_value,
+            is_type: it.is_type,
+            is_writable: it.is_writable,
+        };
+        let names = program.global_names();
+        let options = program.options;
+        let added = options.own_roots.and_then(|own| options.files.get(own..));
+        OfProgram {
+            names: names.map(|it| it.into_iter().map(inferred).collect()),
+            added: added.unwrap_or_default().iter().cloned().collect(),
+        }
+    }
+}
+
+/// What [`OfProgram`] has for one file.
+struct OfFile<'p>(Option<&'p [InferredGlobal]>);
+
+impl InferredGlobals for OfFile<'_> {
+    fn of(&self, _: &[u8]) -> Option<&[InferredGlobal]> {
+        self.0
+    }
+}
+
 fn check_and_lint_in(
     context: &Context,
     environment: &Environment,
@@ -301,6 +338,8 @@ fn check_and_lint_in(
             }
         }
     };
+    // By configuration file.
+    let of_programs: Guarded<Vec<(Vec<u8>, Arc<OfProgram>)>> = Guarded::new(Vec::new());
     let after_file = |checker: &mut bun_sema::check::Checker<'_, '_>, file: FileId| {
         let program = checker.p.files;
         let name = program.module(file).file_name();
@@ -308,6 +347,20 @@ fn check_and_lint_in(
             return;
         };
         let (path, config) = (files[indices[at]].path, files[indices[at]].config);
+        let project_of_file = &program.options.config_path;
+        let is_in_a_project = !matches!(project, Project::This(_)) && !project_of_file.is_empty();
+        let infers = config.language.infers_globals != InferGlobals::No;
+        let of_program = (infers && is_in_a_project).then(|| {
+            let mut known = of_programs.lock();
+            if let Some(found) = known.iter().find(|it| it.0 == *project_of_file) {
+                return Arc::clone(&found.1);
+            }
+            let made = Arc::new(OfProgram::new(program));
+            known.push((project_of_file.clone(), Arc::clone(&made)));
+            made
+        });
+        let of_program = of_program.as_ref().filter(|it| !it.added.contains(name));
+        let of_file = OfFile(of_program.and_then(|it| it.names.as_deref()));
         let started = context.timing.now();
         let linted = bun_lint::types::with_file_and_modules(
             checker,
@@ -317,7 +370,7 @@ fn check_and_lint_in(
             Some(&read_library),
             Some(context.modules),
             Some(context.formatter),
-            context.inferred.map(|it| it as &dyn InferredGlobals),
+            Some(&of_file),
             |file| {
                 let mut result = context.linter.lint(file, config, &options);
                 if file.is_too_large_for_flow_analysis() {

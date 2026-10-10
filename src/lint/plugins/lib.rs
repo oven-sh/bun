@@ -76,6 +76,7 @@ bun_lint::rules! {
     import_extensions::Extensions,
     import_first::First,
     import_group_exports::GroupExports,
+    import_imports_first::ImportsFirst,
     import_max_dependencies::MaxDependencies,
     import_named::Named,
     import_namespace::Namespace,

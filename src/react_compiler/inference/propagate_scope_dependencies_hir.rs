@@ -2225,6 +2225,25 @@ fn handle_instruction(
                 env,
             );
         }
+        // Not in upstream, where `a++` is not an output of its scope: a render that reuses the scope loses it.
+        InstructionValue::PrefixUpdate {
+            value: val, lvalue, ..
+        }
+        | InstructionValue::PostfixUpdate {
+            value: val, lvalue, ..
+        } => {
+            ctx.visit_operand(val, env);
+            ctx.visit_reassignment(lvalue, env);
+            let scope_stack_copy = ctx.scope_stack.clone();
+            ctx.declare(
+                lvalue.identifier,
+                Decl {
+                    id,
+                    scope_stack: scope_stack_copy,
+                },
+                env,
+            );
+        }
         InstructionValue::DeclareLocal { lvalue, .. }
         | InstructionValue::DeclareContext { lvalue, .. } => {
             if lvalue.kind.unhoisted().is_none() {

@@ -242,7 +242,8 @@ impl<'a> UsageCounter<'a, '_> {
     /// `Map<K, V>`, are not looked into.
     fn visit_object_type(&mut self, ty: Type<'a>) {
         let properties = ty.get_properties();
-        if self.visited_symbol_lists.insert(ty) {
+        // tsgolint looks at the properties each time: `{ a: T }` in a parameter and in what is returned is two uses.
+        if self.visited_symbol_lists.insert(ty) || ty.file().language().is_oxlint {
             for symbol in properties {
                 self.visit_type(symbol.get_type(), Uses::One, Place::Elsewhere);
             }

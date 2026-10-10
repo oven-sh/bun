@@ -1023,11 +1023,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     self.next();
                     return self.finish_expr(ExprKind::ImportMeta, start);
                 }
-                // For Babel `source` is a phase too. It is kept like `defer`: the text tells them
-                // apart.
+                // For Babel and oxc `source` is a phase too. It is kept like `defer`: the text tells
+                // them apart.
                 b"defer" if self.peek() == T::OpenParen => {}
                 b"defer" if self.recovers() && self.is_callee(true) => {}
-                b"source" if self.options.dialect.babel => {}
+                b"source" if self.options.dialect.babel || self.options.dialect.oxc => {}
                 _ => return self.other_meta_property_of_import(start),
             }
             // `parseIdentifierName`

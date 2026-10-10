@@ -309,11 +309,11 @@ impl<'a> NodeFinder<'a> {
     }
 }
 
-/// The object of a member access, what a call calls, what a `!` follows. `None` if `link` is none of these.
+/// The object of a member access, what a call or a `new` calls, what a `!` follows. `None` if `link` is none of these.
 pub(crate) fn inner_of_link(link: Expr<'_>) -> Option<Expr<'_>> {
     match link.kind() {
         ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => Some(obj),
-        ExprKind::Call(call) => Some(call.callee()),
+        ExprKind::Call(call) | ExprKind::New(call) => Some(call.callee()),
         ExprKind::NonNull(operand) => Some(operand),
         _ => None,
     }
@@ -398,7 +398,7 @@ enum AttachedTo {
     Link,
 }
 
-/// Where the comments belong that are in a member access, a call or an `a!`, before the property or the first
+/// Where the comments belong that are in a member access, a call, a `new` or an `a!`, before the property or the first
 /// argument, if `comments[index]` is one of them. Returns the index of the first comment after them.
 ///
 /// Prettier's `attachComments`, for which parentheses are nothing: `(a /* here */).b` is in `a.b`, after `a`. A comment
@@ -450,7 +450,7 @@ fn attach_in_link<'a>(
             Some((nodes.start_with_cast_parentheses(index), is_name(index))),
             None,
         ),
-        (true, ExprKind::Call(call)) => {
+        (true, ExprKind::Call(call) | ExprKind::New(call)) => {
             let next = (call.type_args().angle_brackets_span())
                 .map(|it| it.start)
                 .or_else(|| {

@@ -1,7 +1,7 @@
 //! The options that a rule accepts: ESLint's `meta.schema` and `meta.defaultOptions`.
 //!
 //! ESLint validates the options of every rule that is enabled, and refuses a configuration with
-//! options that the schema of the rule does not allow. The schemas are data here (110 KB for 313 rules,
+//! options that the schema of the rule does not allow. The schemas are data here (117 KB for 340 rules,
 //! of which that of a rule is parsed when options for it are validated), not part of the rules.
 //!
 //! The default options are merged into the options for validating and for comparing only. A rule
@@ -201,8 +201,8 @@ pub(crate) fn validate_known_properties(
 
 /// The same for the rule that ESLint calls `id`, whether it is implemented or not.
 pub fn validate_by_id(id: &[u8], options: &[Json]) -> Result<(), Vec<u8>> {
-    // No rule needs options: `generate-schemas.mjs` sees to that.
-    if options.is_empty() {
+    // Nearly no rule needs options: `generate-schemas.mjs` lists those that do.
+    if options.is_empty() && !data::NEED_OPTIONS.iter().any(|it| it.as_bytes() == id) {
         return Ok(());
     }
     let found = find(id);
@@ -221,7 +221,9 @@ pub fn validate_by_id(id: &[u8], options: &[Json]) -> Result<(), Vec<u8>> {
 /// Whether a rule that `data.rs` does not list may take options all the same: of these plugins not every rule's schema is there
 /// yet, and to refuse options that the rule reads ends the run.
 fn may_lack_its_schema(id: &[u8]) -> bool {
-    [&b"import/"[..], b"react/", b"regexp/"].iter().any(|it| id.starts_with(it))
+    [&b"react/"[..], b"regexp/"]
+        .iter()
+        .any(|it| id.starts_with(it))
 }
 
 /// `meta.schema` of the rule that ESLint calls `id`. `None`: it takes no options, or there is no such rule.

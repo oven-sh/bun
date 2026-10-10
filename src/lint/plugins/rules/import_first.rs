@@ -40,11 +40,18 @@ impl Rule for First {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let is_oxlint = cx.language().is_oxlint;
+        self.check(cx.file(), &|at, message| cx.report(at, message));
+    }
+}
+
+impl First {
+    /// Also for `imports-first`, the name that the rule had before.
+    pub(super) fn check<'a>(&self, file: &'a File<'a>, report: &dyn Fn(Span, Message) -> Report<'a>) {
+        let is_oxlint = file.language().is_oxlint;
         let (mut any_expressions, mut has_non_import, mut any_relative) = (false, false, false);
         let (mut last_legal_imp, mut previous) = (None, Span::default());
         let mut error_infos: SmallVec<[ErrorInfo; 4]> = SmallVec::new();
-        for stmt in cx.file().body() {
+        for stmt in file.body() {
             let range = Span::after(std::mem::replace(&mut previous, stmt.span()), stmt.span().end);
             let source = match stmt.kind() {
                 StmtKind::Import(import) => Some(import.spec()),
@@ -80,7 +87,7 @@ impl Rule for First {
                 if is_relative {
                     any_relative = true;
                 } else if any_relative && let Some(span) = place() {
-                    cx.report(span, if is_oxlint { ABSOLUTE_FIRST } else { ABSOLUTE_AFTER_RELATIVE });
+                    report(span, if is_oxlint { ABSOLUTE_FIRST } else { ABSOLUTE_AFTER_RELATIVE });
                 }
             }
             if has_non_import {
@@ -93,10 +100,10 @@ impl Rule for First {
         for (index, info) in error_infos.iter().enumerate() {
             // oxlint has no fix.
             if is_oxlint {
-                cx.report(info.node, FIRST);
+                report(info.node.span(), FIRST);
                 continue;
             }
-            cx.report(info.node, IN_BODY).fix(|fixer| {
+            report(info.node.span(), IN_BODY).fix(|fixer| {
                 let last = *last_sort_nodes_index.get_or_init(|| ErrorInfo::last_to_sort(&error_infos));
                 match index.cmp(&last) {
                     Ordering::Less => Some(fixer.insert_after(info.node, "")),

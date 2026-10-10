@@ -8,7 +8,7 @@ use crate::linter_cmd::{linter, with_file};
 use crate::types_cmd::{Project, lint_project};
 use bun_lint::linter::{Again, LintMessage, LintOptions, LintResult, Registry};
 use bun_lint::options::Json;
-use bun_lint::rule::Plugin;
+use bun_lint::rule::{Meta, Plugin};
 use bun_lint::runner::RuleEntry;
 use bun_lint_conformance::{Bundle, Case, Flags, Host, Outcome, Place};
 use bun_lint_graph::{Graph, Store};
@@ -25,8 +25,13 @@ impl Host for Harness {
 
     fn lint(&self, case: &Case<'_>) -> Option<Vec<LintMessage>> {
         let (code, config) = (case.code, case.config);
-        // The formatter comes with the driver: `bun-lint cli --run-eslint-tests`.
-        if config.has_enabled(|meta| meta.plugin == Plugin::Prettier) {
+        // The formatter and the search for files come with the driver: `bun-lint cli --run-eslint-tests`.
+        let asks_the_driver = |meta: &Meta| match meta.plugin {
+            Plugin::Prettier => true,
+            Plugin::Import => meta.name == "no-unused-modules",
+            _ => false,
+        };
+        if config.has_enabled(asks_the_driver) {
             return None;
         }
         let path = crate::text(case.path);

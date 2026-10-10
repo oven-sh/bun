@@ -4,13 +4,15 @@ use bun_core::strings;
 use bun_lint::modules::ModuleId;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint_oxlint::hash_order::HashOrder;
 use bun_lint_oxlint::import::export_declaration_span;
 use bun_lint_oxlint::module_record::{
     ExportEntry, ExportExportName, Loaded, ModuleRecord, get_loaded_module, is_waiting_for_modules,
 };
 use bun_lint_oxlint::text::find_next_token_within;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
 use smallvec::SmallVec;
+use std::hash::Hasher;
 
 /// Forbid any invalid exports, i.e. re-export of the same name.
 pub struct Export;
@@ -113,9 +115,12 @@ struct Exports<'a, 'c> {
     places: FxHashMap<(u32, bool, &'a [u8]), usize>,
     named: Vec<Named<'a>>,
     maps: Option<&'c ExportMaps<'a>>,
-    /// For oxlint: the modules that an `export *` has led to, and the first `export *` that brings each name.
+    /// For oxlint: the modules that an `export *` has led to.
     visited: FxHashSet<ModuleId>,
-    all_export_names: FxHashMap<&'a [u8], Span>,
+    /// Of oxlint: each `export *`, with the names that it brings.
+    all_export_names: Vec<(Span, FxHashSet<&'a [u8]>)>,
+    /// The order in which oxlint goes through them: they are in a table by their spans.
+    order: HashOrder<usize>,
 }
 
 impl<'a> Exports<'a, '_> {
@@ -210,8 +215,11 @@ impl<'a> Exports<'a, '_> {
             }
         }
         for (name, span) in &module_record.exported_bindings {
-            if let Some(first) = self.all_export_names.get(name.bytes()) {
-                self.cx.report(*first, MULTIPLE_EXPORTS).data("name", *name).label(*span, "");
+            let all = self.order.iter().filter_map(|at| self.all_export_names.get(at));
+            let mut spans = all.filter(|it| it.1.contains(name.bytes())).map(|it| it.0);
+            if let Some(first) = spans.next() {
+                let report = self.cx.report(first, MULTIPLE_EXPORTS).data("name", *name);
+                spans.fold(report, |report, it| report.label(it, "")).label(*span, "");
             }
         }
     }
@@ -224,9 +232,13 @@ impl<'a> Exports<'a, '_> {
                 return;
             };
             // oxlint compares them with what the file exports when it has them all.
-            for name in walk_exported_recursive(remote, &mut self.visited) {
-                any = true;
-                self.all_export_names.entry(name).or_insert(node);
+            let names = walk_exported_recursive(remote, &mut self.visited);
+            any = !names.is_empty();
+            if any {
+                let mut hasher = FxHasher::default();
+                hasher.write_u64((u64::from(node.end) << 32) | u64::from(node.start));
+                self.order.insert(hasher.finish(), self.all_export_names.len());
+                self.all_export_names.push((node, names));
             }
         } else {
             let Some((maps, remote_exports)) = self.maps.and_then(|maps| Some((maps, maps.get(source.0)?))) else {
@@ -311,7 +323,8 @@ impl Rule for Export {
             named: Vec::new(),
             maps: maps.as_ref(),
             visited: FxHashSet::default(),
-            all_export_names: FxHashMap::default(),
+            all_export_names: Vec::new(),
+            order: HashOrder::new(),
         };
         if is_oxlint {
             exports.add_module_record(&ModuleRecord::new(file));

@@ -5052,5 +5052,33 @@
   "v02/a/use.ts:1:8+4 import(no-named-as-default)",
   "v03/a/use.ts:1:8+4 import(no-named-as-default)",
   "v04/a/use.ts:1:8+4 import(no-named-as-default)"
+ ],
+ "types/an-alias-is-a-deferred-reference": [
+  "a.ts:14:37+6 typescript(no-unsafe-assignment)",
+  "a.ts:16:29+2 typescript(no-unsafe-assignment)",
+  "a.ts:18:32+2 typescript(no-unsafe-assignment)",
+  "a.ts:21:23+2 typescript(no-unsafe-type-assertion)",
+  "a.ts:21:23+9 typescript(no-unsafe-type-assertion)",
+  "a.ts:23:49+6 typescript(no-unsafe-return)",
+  "a.ts:24:35+2 typescript(no-unsafe-return)",
+  "a.ts:25:41+2 typescript(no-unsafe-return)",
+  "a.ts:27:44+2 typescript(no-unsafe-return)",
+  "a.ts:29:18+6 typescript(no-unsafe-argument)",
+  "a.ts:30:14+2 typescript(no-unsafe-argument)",
+  "a.ts:31:14+2 typescript(no-unsafe-argument)",
+  "a.ts:34:19+2 typescript(no-unsafe-type-assertion)",
+  "a.ts:36:19+2 typescript(no-unsafe-type-assertion)"
+ ],
+ "no-unsafe-type-assertion/literals-under-an-assertion": [
+  "a.ts:10:19+27 typescript(no-unsafe-type-assertion)",
+  "a.ts:17:19+8 typescript(no-unsafe-type-assertion)",
+  "a.ts:9:19+9 typescript(no-unsafe-type-assertion)",
+  "b.ts:12:19+14 typescript(no-unsafe-type-assertion)",
+  "b.ts:24:19+6 typescript(no-unsafe-type-assertion)",
+  "b.ts:25:19+9 typescript(no-unsafe-type-assertion)",
+  "b.ts:28:19+6 typescript(no-unsafe-type-assertion)",
+  "b.ts:32:19+8 typescript(no-unsafe-type-assertion)",
+  "b.ts:8:19+3 typescript(no-unsafe-type-assertion)",
+  "b.ts:9:19+6 typescript(no-unsafe-type-assertion)"
  ]
 }

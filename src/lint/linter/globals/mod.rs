@@ -403,9 +403,18 @@ impl<'a> File<'a> {
         // The libraries of the program are in the place of the tables.
         let only_written = self.language().infers_globals == InferGlobals::Instead
             && self.inferred_globals().is_some();
+        // TypeScript knows these in JavaScript without a declaration.
+        let is_of_commonjs = || {
+            matches!(name, b"require" | b"module" | b"exports")
+                && self.is_javascript()
+                && !crate::utils::oxlint::has_module_syntax(self)
+        };
         let implicit = (config.setting(name))
             .filter(|it| {
-                !only_written || *it == Global::Off || self.language().is_written_global(name)
+                !only_written
+                    || *it == Global::Off
+                    || self.language().is_written_global(name)
+                    || is_of_commonjs()
             })
             .or_else(|| self.global_of_environment_in_comments(name));
         let comment = self.global_in_comments(name);

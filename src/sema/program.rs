@@ -7419,8 +7419,12 @@ impl<'s> Files<'s> {
         List::One(sym)
     }
 
-    /// What a name that no scope of a file declares can resolve to, sorted by name.
-    pub fn global_names(&self) -> Vec<GlobalName> {
+    /// What a name that no scope of a file declares can resolve to, sorted by name. `None`: an entry of `types` is not
+    /// installed, so what it declares is not known.
+    pub fn global_names(&self) -> Option<Vec<GlobalName>> {
+        if self.program_errors.iter().any(|it| it.code == 2688) {
+            return None;
+        }
         let is_of_the_project = |file: FileId| {
             let module = self.module(file);
             !module.is_lib
@@ -7449,7 +7453,7 @@ impl<'s> Files<'s> {
             });
         }
         names.sort_unstable_by(|a, b| a.name.cmp(&b.name));
-        names
+        Some(names)
     }
 
     pub fn global(&self, name: Atom, meaning: SymFlags) -> Option<Sym> {

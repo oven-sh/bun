@@ -90,9 +90,12 @@ enum Grandparent<'a> {
     Other,
 }
 
-/// How many nodes oxc has around `e` that are not nodes here: a `ChainExpression`, and one for each pair of parentheses.
+/// How many nodes oxc has around `e` that are not nodes here: a `ChainExpression`, and one for each pair of parentheses
+/// that is not around what is assigned to.
 fn wrappers(e: Expr) -> usize {
-    usize::from(e.is_chain_root()) + if e.is_parenthesized() { e.parens().len() } else { 0 }
+    let parent = e.parent().as_expr().map(Expr::kind);
+    let is_target = matches!(parent, Some(ExprKind::Assign { target, .. }) if target == e);
+    usize::from(e.is_chain_root()) + if e.is_parenthesized() && !is_target { e.parens().len() } else { 0 }
 }
 
 fn right_of_assignment(node: Node<'_>) -> Option<Expr<'_>> {
@@ -239,7 +242,9 @@ impl NoCommonjs {
         };
         let is_conditional = |it: Node| match it {
             Node::Stmt(stmt) => matches!(stmt.tag(), StmtTag::If | StmtTag::Try),
-            Node::Expr(e) => e.tag() == ExprTag::Cond || matches!(e.binary_op(), Some(BinOp::And | BinOp::Or | BinOp::Nullish)),
+            Node::Expr(e) => {
+                e.tag() == ExprTag::Cond || matches!(e.binary_op(), Some(BinOp::And | BinOp::Or | BinOp::Nullish))
+            }
             _ => false,
         };
         if !is_at_the_top

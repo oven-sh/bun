@@ -97,7 +97,8 @@ function take(name: string, text: Uint8Array, isSmallSet = true) {
   // With `sortPackageJson` (format.rs: `FLAGS`).
   if (name.endsWith("package.json")) write("json", 4, 0, text, 1 << 26);
   if (target == "markdown" && variant == 0) write("md", 0, 0, text);
-  if (isSmallSet && text.length <= 2048) for (const place of PLACES[`${target} ${variant}`] ?? []) write("embedded", place, 0, text);
+  if (isSmallSet && text.length <= 2048)
+    for (const place of PLACES[`${target} ${variant}`] ?? []) write("embedded", place, 0, text);
   if (target == "js") {
     write("lint", LINT[variant], 0, text);
     // The second byte is the dialect: that of tsc, and that of Babel or of Flow.
@@ -130,11 +131,20 @@ function writeImports(name: string, extras: readonly number[], text: Uint8Array)
   // In a file in another language: with the first set of options.
   if (text.length <= 1024) for (const place of elsewhere) write("imports", place + 16 * extras[0], 0, text);
 }
-for (const [plugin, extras] of [["trivago", [0, 1, 2, 3]], ["ianvs", [4, 5, 6, 7]], ["organize", [8, 9, 10]], ["oxfmt", [11, 12, 13]]] as const) {
+for (const [plugin, extras] of [
+  ["trivago", [0, 1, 2, 3]],
+  ["ianvs", [4, 5, 6, 7]],
+  ["organize", [8, 9, 10]],
+  ["oxfmt", [11, 12, 13]],
+] as const) {
   const cases = JSON.parse(readFileSync(join(import.meta.dir, `../../../sort-imports/${plugin}.json`), "utf8"));
   for (const it of cases) writeImports(it.filename, extras, Buffer.from(it.input));
   // For `options`: with the options of the case.
-  const named = { trivago: "@trivago/prettier-plugin-sort-imports", ianvs: "@ianvs/prettier-plugin-sort-imports", organize: "prettier-plugin-organize-imports" };
+  const named = {
+    trivago: "@trivago/prettier-plugin-sort-imports",
+    ianvs: "@ianvs/prettier-plugin-sort-imports",
+    organize: "prettier-plugin-organize-imports",
+  };
   for (const it of cases) {
     const { overrides, ...options } = it.options;
     const all = plugin == "oxfmt" ? { flavor: "oxfmt", ...options } : { plugins: [named[plugin]], ...options };
@@ -168,7 +178,11 @@ for (const [name, text] of readBundle(join(import.meta.dir, "../../../../lint/co
       // A member that is `null` in the bundle is not there in the test case. The parser is the variant's.
       const { parser, ...language } = it.languageOptions ?? {};
       const given = (all: object) => Object.fromEntries(Object.entries(all).filter(([, value]) => value != null));
-      const config = given({ rules: { [id]: [2, ...it.options] }, settings: it.settings, languageOptions: given(language) });
+      const config = given({
+        rules: { [id]: [2, ...it.options] },
+        settings: it.settings,
+        languageOptions: given(language),
+      });
       const text = Buffer.from(`${JSON.stringify(config)}\n${code}`);
       // Flag 0: the names are oxlint's.
       const flags = (1 << 6) | (name.startsWith("oxlint/") ? 1 : 0);
@@ -177,18 +191,13 @@ for (const [name, text] of readBundle(join(import.meta.dir, "../../../../lint/co
     }
   }
 }
-// The React Compiler as lint rules, alone: its own fixtures, as ESLint's plugin and as oxlint have the rules.
-const COMPILER =
-  "capitalized-calls config error-boundaries exhaustive-effect-dependencies fbt gating globals hooks immutability incompatible-library invariant memo-dependencies memoized-effect-dependencies no-deriving-state-in-effects preserve-manual-memoization purity refs rule-suppression set-state-in-effect set-state-in-render static-components syntax todo unsupported-syntax use-memo void-use-memo";
+// The React Compiler as lint rules, alone (flag 8): its own fixtures, as ESLint's plugin and as oxlint (flag 0) have the rules.
 const fixtures = join(import.meta.dir, "../../../../../bundler/transpiler/react-compiler-fixtures");
 for (const name of readdirSync(fixtures, { recursive: true }) as string[]) {
   const ending = /\.(js|jsx|mjs|ts|tsx)$/.exec(name)?.[1];
   if (!ending) continue;
-  const code = readFileSync(join(fixtures, name));
-  for (const [prefix, flags] of [["react-hooks", 1 << 6], ["react", (1 << 6) | 1]] as const) {
-    const rules = Object.fromEntries(COMPILER.split(" ").map(it => [`${prefix}/${it}`, 2]));
-    // In a .js file of theirs there is JSX, and Flow.
-    write("lint", ending.startsWith("ts") ? 5 : 3, 0, Buffer.concat([Buffer.from(JSON.stringify({ rules }) + "\n"), code]), flags);
-  }
+  // In a .js file of theirs there is JSX, and Flow.
+  for (const flags of [1 << 8, (1 << 8) | 1])
+    write("lint", ending.startsWith("ts") ? 5 : 3, 0, readFileSync(join(fixtures, name)), flags);
 }
 console.log(Object.fromEntries(counts));

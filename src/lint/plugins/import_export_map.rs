@@ -144,6 +144,15 @@ pub(crate) struct Exported<'a> {
     entry: &'a Entry,
 }
 
+/// An entry of `reexports`.
+pub(crate) struct Reexported<'a> {
+    /// `None`, here and in `local`: `undefined`.
+    pub(crate) name: Option<&'a [u8]>,
+    pub(crate) local: Option<&'a [u8]>,
+    /// `getImport()`
+    pub(crate) import: Option<ExportMap<'a>>,
+}
+
 /// What `get` returns.
 #[derive(Copy, Clone)]
 pub(crate) enum Got<'a> {
@@ -625,6 +634,16 @@ impl<'a> ExportMaps<'a> {
         let reexports = map.reexport(Some(name))?;
         let local = reexports.local.as_deref().unwrap_or(UNDEFINED);
         Some((local, self.resolve_import(map, &reexports.source)))
+    }
+
+    /// `reexports`, in its order.
+    pub(crate) fn reexports(&self, map: ExportMap<'a>) -> Vec<Reexported<'a>> {
+        let entries = map.reexports().map(|it| Reexported {
+            name: it.key(),
+            local: it.local.as_deref(),
+            import: self.resolve_import(map, &it.source),
+        });
+        entries.collect()
     }
 
     /// `meta.doc.tags.find((t) => t.title === 'deprecated')`: its description.

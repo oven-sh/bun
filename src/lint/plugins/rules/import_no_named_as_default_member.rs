@@ -6,6 +6,7 @@ use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
+use std::cell::OnceCell;
 
 /// Forbid use of exported name as property of default export.
 pub struct NoNamedAsDefaultMember;
@@ -29,10 +30,11 @@ enum Remote<'a> {
 }
 
 /// A value of upstream's `fileImports`.
-#[derive(Copy, Clone)]
 struct FileImport<'a> {
     remote: Remote<'a>,
     source_path: Name<'a>,
+    /// `exportMap.namespace.has(undefined)`
+    has_undefined: OnceCell<bool>,
 }
 
 impl Rule for NoNamedAsDefaultMember {
@@ -74,7 +76,7 @@ impl Rule for NoNamedAsDefaultMember {
                 let Some(symbol) = file.top_level_scope().get_name(local.name()) else {
                     return;
                 };
-                let file_import = FileImport { remote: Remote::Oxlint(remote), source_path: entry.declaration.spec() };
+                let file_import = FileImport::new(Remote::Oxlint(remote), entry.declaration.spec());
                 // oxlint looks at what means the import, and is not in parentheses.
                 for ident in symbol.references().filter_map(Reference::expr).filter(|it| !it.is_parenthesized()) {
                     file_import.check(ident, cx);
@@ -102,7 +104,7 @@ impl Rule for NoNamedAsDefaultMember {
                 && let (Some(object), Some(property)) = (name.get(0), name.get(1))
                 && let Some(file_import) = file_imports.get(&object.name())
             {
-                file_import.report(object.span().to(property.span()), object.bytes(), property.bytes(), cx);
+                file_import.report(object.span().to(property.span()), object.bytes(), Some(property.bytes()), cx);
             }
         }
     }
@@ -123,7 +125,7 @@ fn file_imports<'a>(maps: &ExportMaps<'a>, cx: &Cx<'a, NoNamedAsDefaultMember>) 
             continue;
         };
         if !export_map.has_errors() {
-            file_imports.insert(local.name(), FileImport { remote: Remote::ExportMap(export_map), source_path });
+            file_imports.insert(local.name(), FileImport::new(Remote::ExportMap(export_map), source_path));
         } else if let Some(at) = declaration.spec_span() {
             cx.report(at, PARSE_ERRORS)
                 .data("source", source_path)
@@ -134,9 +136,20 @@ fn file_imports<'a>(maps: &ExportMaps<'a>, cx: &Cx<'a, NoNamedAsDefaultMember>) 
     file_imports
 }
 
+/// `namespace.has(undefined)`: upstream has read the `name` of a node that has none, as in `export namespace A.B {}`.
+/// Among the names that key is the text `undefined`.
+fn has_undefined_key<'a>(maps: &ExportMaps<'a>, export_map: ExportMap<'a>) -> bool {
+    let written = usize::from(maps.namespace_has(export_map, b"undefined"));
+    maps.namespace_names(export_map).iter().filter(|it| ***it == *b"undefined").count() > written
+}
+
 impl<'a> FileImport<'a> {
+    fn new(remote: Remote<'a>, source_path: Name<'a>) -> Self {
+        FileImport { remote, source_path, has_undefined: OnceCell::new() }
+    }
+
     /// `ident`: the import, where a property of it is looked up.
-    fn check(self, ident: Expr<'a>, cx: &Cx<'a, NoNamedAsDefaultMember>) {
+    fn check(&self, ident: Expr<'a>, cx: &Cx<'a, NoNamedAsDefaultMember>) {
         let is_oxlint = matches!(self.remote, Remote::Oxlint(_));
         // oxlint quotes the name as it is written.
         let object_name = match ident.as_ident() {
@@ -155,9 +168,7 @@ impl<'a> FileImport<'a> {
                 } else {
                     member.index().and_then(Expr::as_ident).map(Name::bytes)
                 };
-                if let Some(prop_name) = prop_name {
-                    self.report(member.span(), object_name, prop_name, cx);
-                }
+                self.report(member.span(), object_name, prop_name, cx);
             }
             Node::VarDecl(declarator) if declarator.init() == Some(ident) => {
                 let PatKind::Object(properties) = declarator.pat().kind() else {
@@ -175,33 +186,45 @@ impl<'a> FileImport<'a> {
                         };
                         (key.inner_span(cx.file()), name)
                     };
-                    if let Some(prop_name) = prop_name {
-                        self.report(at, object_name, prop_name.bytes(), cx);
-                    }
+                    self.report(at, object_name, prop_name.map(Name::bytes), cx);
                 }
             }
             _ => {}
         }
     }
 
-    fn report(self, at: Span, object_name: &'a [u8], prop_name: &'a [u8], cx: &Cx<'a, NoNamedAsDefaultMember>) {
+    /// `prop_name`: `None` where the property has no `name`: `a["b"]`, `a[0]`, `{ "b": c }`.
+    fn report(
+        &self,
+        at: Span,
+        object_name: &'a [u8],
+        prop_name: Option<&'a [u8]>,
+        cx: &Cx<'a, NoNamedAsDefaultMember>,
+    ) {
         match (self.remote, &cx.state.maps) {
-            (Remote::Oxlint(remote), _) if remote.exports(prop_name) => {
-                cx.report(at, OXLINT)
-                    .data("module_name", debug(object_name))
-                    .data("export_name", debug(prop_name))
-                    .data("export", prop_name)
-                    .data("suggested_module_name", debug(self.source_path.bytes()))
-                    .on_exit(false);
+            (Remote::Oxlint(remote), _) => {
+                if let Some(prop_name) = prop_name.filter(|it| remote.exports(it)) {
+                    cx.report(at, OXLINT)
+                        .data("module_name", debug(object_name))
+                        .data("export_name", debug(prop_name))
+                        .data("export", prop_name)
+                        .data("suggested_module_name", debug(self.source_path.bytes()))
+                        .on_exit(false);
+                }
             }
-            // "the default import can have a "default" property"
-            (Remote::ExportMap(export_map), Some(maps))
-                if prop_name != b"default" && maps.namespace_has(export_map, prop_name) =>
-            {
-                cx.report(at, CAUTION)
-                    .data("objectName", object_name)
-                    .data("propName", prop_name)
-                    .data("sourcePath", self.source_path);
+            (Remote::ExportMap(export_map), Some(maps)) => {
+                let is_exported = match prop_name {
+                    // "the default import can have a "default" property"
+                    Some(b"default") => false,
+                    Some(prop_name) => maps.namespace_has(export_map, prop_name),
+                    None => *self.has_undefined.get_or_init(|| has_undefined_key(maps, export_map)),
+                };
+                if is_exported {
+                    cx.report(at, CAUTION)
+                        .data("objectName", object_name)
+                        .data("propName", prop_name.unwrap_or(&b"undefined"[..]))
+                        .data("sourcePath", self.source_path);
+                }
             }
             _ => {}
         }

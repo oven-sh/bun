@@ -519,9 +519,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 }
             }
         } else if let Some((name, _, token)) = identifier
-            // For Babel `source` is a phase too. It is kept like `defer`: the text tells them apart.
+            // For Babel and oxc `source` is a phase too. It is kept like `defer`: the text tells them apart.
             && (token == T::Defer
-                || self.options.dialect.babel && self.lx.text_of(name) == b"source")
+                || (self.options.dialect.babel || self.options.dialect.oxc)
+                    && self.lx.text_of(name) == b"source")
         {
             is_deferred = match self.token() {
                 T::From => self.peek() != T::String,

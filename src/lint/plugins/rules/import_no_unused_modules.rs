@@ -234,9 +234,11 @@ impl NoUnusedModules {
                     let names = smallvec![EXPORT_ALL_DECLARATION];
                     import_list.push(Used { path: Cow::Borrowed(dependency.path()), names });
                 }
-                for key in current_exports.reexport_names() {
-                    exports.insert(key_of(key).into(), false);
-                    if let Some((local, Some(reexport))) = maps.reexport(current_exports, key) {
+                for reexported in maps.reexports(current_exports) {
+                    if let Some(key) = reexported.name {
+                        exports.insert(key_of(key).into(), false);
+                    }
+                    if let (Some(local), Some(reexport)) = (reexported.local, reexported.import) {
                         let names = smallvec![key_of(local)];
                         import_list.push(Used { path: Cow::Borrowed(reexport.path()), names });
                     }

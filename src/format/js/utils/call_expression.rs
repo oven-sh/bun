@@ -90,12 +90,8 @@ fn is_line_after_the_rest_of_the_line_empty(mut rest: &[u8]) -> bool {
     js_line_break_len(trim_left(&rest[js_line_break_len(rest)..], b" \t")) > 0
 }
 
-/// Of the comments between the callee of `call`, which ends at `callee_end`, and the `<` or the `(`,
+/// Of the comments between the callee of `call`, which ends at `callee_end` and is written, and the `<` or the `(`,
 /// those that trail the callee. `call` has a `(`.
-///
-/// Without type arguments and arguments there is nothing else that they could belong to. Otherwise
-/// they lead what is next, unless something is between them and it: the end of the line, if they
-/// are on the line of the callee, the `?.`, or the `)` of a callee in parentheses.
 pub(crate) fn callee_trailing_comments<'a>(
     call: Call<'a>,
     callee_end: u32,
@@ -112,10 +108,7 @@ pub(crate) fn callee_trailing_comments<'a>(
         };
         return f.comments().comments_before_character(callee_end, opener);
     }
-    match call.type_args().is_empty() {
-        true => comments_before_arguments(call, callee_end, f),
-        false => trailing_prefix(f.comments().comments_before_character(callee_end, b'<'), f),
-    }
+    f.comments().comments_trailing_link(callee_end)
 }
 
 /// `a["b"]( // comment⏎c)` is `a["b"](c); // comment` for oxfmt: to a callee like `a[b]` the `(` is nothing, and what is
@@ -156,18 +149,6 @@ pub(crate) fn write_callee_trailing_comments<'a>(
             write_comments_between_blocks(comments, f);
         }
         false => FormatTrailingComments::Comments(comments).fmt(f),
-    }
-}
-
-fn comments_before_arguments<'a>(
-    call: Call<'a>,
-    callee_end: u32,
-    f: &Formatter<'a>,
-) -> &'a [Comment] {
-    let comments = f.comments().comments_before_character(callee_end, b'(');
-    match call.args().is_empty() {
-        true => comments,
-        false => trailing_prefix(comments, f),
     }
 }
 

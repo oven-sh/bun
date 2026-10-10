@@ -419,9 +419,12 @@ impl LanguageOptions {
         };
         let is_script = self.scope_source_type() != SourceType::Module;
         ParseOptions {
-            dialect: match self.parser {
-                Parser::Espree => Dialect::espree(is_script),
-                Parser::TypeScript | Parser::Other => Dialect::typescript_estree(is_script),
+            dialect: Dialect {
+                oxc: !self.refuses_what_parser_refuses,
+                ..match self.parser {
+                    Parser::Espree => Dialect::espree(is_script),
+                    Parser::TypeScript | Parser::Other => Dialect::typescript_estree(is_script),
+                }
             },
             script_kind,
             experimental_decorators: self.experimental_decorators,

@@ -317,7 +317,7 @@ pub struct PlanOptions {
     /// Nothing is checked: `Report::globals` is what is asked for. Of the root files of a project only those are loaded that can
     /// declare a global, judged by name and text (`may_declare_a_global`), with the libraries and the `types` as always; of
     /// what they import only what declaration files import. A file of `Request::paths` without a configuration file above
-    /// it is in no program.
+    /// it is in no program, and nothing is said about a program for which `Files::global_names` says nothing.
     pub only_the_globals: bool,
     /// The memory of the machine, or of the container that the process is in: the programs of a request run at the same
     /// time as far as a quarter of it goes. 0: it is not known, and they run one after the other.
@@ -1816,9 +1816,20 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
     };
     // `--project`, or else the configuration file nearest to a directory, or else nearest to the
     // working directory.
+    // By directory: a run of the linter names every file of a repository.
+    let nearest_to: std::cell::RefCell<FxHashMap<Vec<u8>, Option<Vec<u8>>>> = Default::default();
     let config_in = |dir: &[u8]| {
-        let nearest = || config::find_config(disk, dir).or_else(|| config::find_config(disk, &cwd));
-        explicit.clone().or_else(nearest)
+        if explicit.is_some() {
+            return explicit.clone();
+        }
+        if let Some(known) = nearest_to.borrow().get(dir) {
+            return known.clone();
+        }
+        let nearest = config::find_config(disk, dir).or_else(|| config::find_config(disk, &cwd));
+        nearest_to
+            .borrow_mut()
+            .insert(dir.to_vec(), nearest.clone());
+        nearest
     };
     // The project that `tsc` compiles in a directory. Where it finds none, the nearest there is.
     let project_in = |dir: &[u8]| {
@@ -3461,10 +3472,11 @@ fn check_named_files(
     }
     host.stays_loaded();
     if request.plan_options.only_the_globals {
-        report.globals.push(GlobalsOf {
+        let files_of = |names| GlobalsOf {
             files: named.unwrap_or_default().to_vec(),
-            names: files.global_names(),
-        });
+            names,
+        };
+        report.globals.extend(files.global_names().map(files_of));
         return report;
     }
     if refuses {

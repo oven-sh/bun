@@ -239,6 +239,8 @@ pub fn config_of(registry: &Registry, entry: &'static RuleEntry, case: &Json) ->
     let mut config = ResolvedConfig::from_json(registry, &config, &mut Vec::new());
     // Not by its name: in a configuration that is the rule of the package, as long as the plugin is not whole here.
     let options = case.get(b"options").and_then(Json::as_array);
+    // The first error is kept, and `null` in the recorded language options is one: what is to be seen is the refusal of the options.
+    config.error = None;
     config.configure(entry, Severity::Error, options.unwrap_or_default());
     // The `RuleTester` of typescript-eslint sets it, that of ESLint does not.
     config.linter.report_unused_disable_directives = match entry.meta.plugin {
@@ -313,7 +315,7 @@ enum Kind {
     Typed,
 }
 
-fn kind_of(entry: &RuleEntry, case: &Json) -> Kind {
+fn kind_of(entry: &RuleEntry, case: &Json, is_of_oxlint: bool) -> Kind {
     let is_type_aware = case.get(b"typeAware").and_then(Json::as_bool) == Some(true);
     match string_of(case, b"skip") {
         Some(skip) if test_only_rules::is_known(skip) => Kind::WithTestOnlyRules,
@@ -322,7 +324,9 @@ fn kind_of(entry: &RuleEntry, case: &Json) -> Kind {
         None | Some(b"parser: custom")
             if entry.meta.needs_modules
                 || entry.meta.plugin == Plugin::Prettier
-                || (entry.meta.plugin == Plugin::Node && !entry.meta.follows_oxlint) =>
+                || (entry.meta.plugin == Plugin::Node && !entry.meta.follows_oxlint)
+                // Some read the `package.json` files above the file.
+                || (entry.meta.plugin == Plugin::Import && !is_of_oxlint) =>
         {
             Kind::InProject
         }
@@ -393,12 +397,11 @@ fn run_case(
                 Some(root) => root.to_vec(),
                 None => [flags.projects.ok_or(())?, b"/", directory].concat(),
             };
-            lint(
-                &in_directory(directory).ok_or(())?,
-                Place::Project(&project),
-                None,
-            )
-            .ok_or(())?
+            let path = match filename.first() {
+                Some(b'<' | b'/') => filename.to_vec(),
+                _ => [&project[..], b"/", filename].concat(),
+            };
+            lint(&path, Place::Project(&project), None).ok_or(())?
         }
         Kind::Typed => {
             let tsconfig = string_of(case, b"tsconfig").unwrap_or(b"tsconfig.json");
@@ -574,11 +577,12 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
     let (mut untyped, mut typed) = (0, 0);
     let mut chosen = Vec::new();
     for (fixture, it) in fixtures.iter_mut().enumerate() {
+        let is_of_oxlint = it.plugin_of_oxlint().is_some();
         let Fixture {
             entry, json, tally, ..
         } = it;
         for (index, case) in cases_of(json).iter().enumerate() {
-            let kind = kind_of(entry, case);
+            let kind = kind_of(entry, case, is_of_oxlint);
             if kind == Kind::Skipped || (kind == Kind::Typed && !flags.types) {
                 tally.skipped += 1;
                 continue;

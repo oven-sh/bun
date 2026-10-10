@@ -694,7 +694,7 @@ fn codegen_reactive_scope(
 
         let mut dep_value = codegen_dependency(cx, dep)?;
         let declaration = cx.env.identifiers[dep.identifier.0 as usize].declaration_id;
-        // Not in upstream: a scope that assigns the variable would remember what it made of it, not what was compared.
+        // Not in upstream: the scope assigns it, so it is kept as it was. Not stored at once: the scope may throw.
         if scope_reassignments
             .iter()
             .any(|id| cx.env.identifiers[id.0 as usize].declaration_id == declaration)

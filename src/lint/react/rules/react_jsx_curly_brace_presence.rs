@@ -1,6 +1,7 @@
 use bun_lint_oxlint::codegen::print_string;
 use crate::jsx::{AttributeValue, get_prop_value};
 use crate::react::is_jsx;
+use bun_core::printer::json_stringify;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -12,18 +13,30 @@ enum Mode {
     Ignore,
 }
 
-/// Disallow unnecessary JSX expressions when literals alone are sufficient.
+/// Disallow unnecessary JSX expressions when literals alone are sufficient or enforce JSX expressions on literals in
+/// JSX children or attributes.
 pub struct JsxCurlyBracePresence {
     props: Mode,
     children: Mode,
     prop_element_values: Mode,
+    /// The option is one word for `props` and `children`.
+    is_one_word: bool,
 }
 
+const UNNECESSARY_CURLY: Message = Message::new("unnecessaryCurly", "Curly braces are unnecessary here.");
+const MISSING_CURLY: Message = Message::new("missingCurly", "Need to wrap this literal in a JSX expression.");
 const UNNECESSARY: Message = Message::new("", "Curly braces are unnecessary here.");
 const NECESSARY: Message = Message::new("", "Curly braces are required here.");
 
+/// What is in braces, or could be.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum StringLike {
+    Literal,
+    Template,
+}
+
 impl Rule for JsxCurlyBracePresence {
-    const META: Meta = Meta::oxlint(Plugin::React, "jsx-curly-brace-presence", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-curly-brace-presence", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 
@@ -37,18 +50,19 @@ impl Rule for JsxCurlyBracePresence {
         };
         if let Some(all) = options.str(0) {
             let all = mode(Some(all), Mode::Ignore);
-            return JsxCurlyBracePresence { props: all, children: all, prop_element_values: all };
+            return JsxCurlyBracePresence { props: all, children: all, prop_element_values: all, is_one_word: true };
         }
         let options = options.object(0);
         JsxCurlyBracePresence {
             props: mode(options.str("props"), Mode::Never),
             children: mode(options.str("children"), Mode::Never),
             prop_element_values: mode(options.str("propElementValues"), Mode::Ignore),
+            is_one_word: false,
         }
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        is_jsx(file).then_some(())
+        (!file.language().is_oxlint || is_jsx(file)).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -57,39 +71,59 @@ impl Rule for JsxCurlyBracePresence {
 }
 
 impl JsxCurlyBracePresence {
+    /// For oxlint the one word is for the elements that are values of attributes too.
+    fn prop_element_values(&self, is_oxlint: bool) -> Mode {
+        if self.is_one_word && !is_oxlint { Mode::Ignore } else { self.prop_element_values }
+    }
+
     fn check<'a>(&self, e: Expr<'a>, cx: &Cx<'a, Self>) {
         let ExprKind::Jsx(jsx) = e.kind() else {
             return;
         };
+        let is_oxlint = cx.language().is_oxlint;
+        let necessary = if is_oxlint { NECESSARY } else { MISSING_CURLY };
         for value in jsx.attrs().iter().filter_map(get_prop_value) {
             match value {
                 AttributeValue::ExpressionContainer(inner) => {
-                    let has_adjacent = false;
-                    self.check_expression_container(inner, true, has_adjacent, cx);
+                    let (parent_is_attribute, has_adjacent) = (true, false);
+                    self.check_expression_container(inner, parent_is_attribute, has_adjacent, is_oxlint, cx);
                 }
+                // oxlint wants a fragment in braces too.
+                AttributeValue::Fragment(_) if !is_oxlint => {}
                 AttributeValue::Element(element) | AttributeValue::Fragment(element) => {
-                    if self.prop_element_values == Mode::Always {
-                        cx.report(element, NECESSARY)
+                    // oxlint leaves it alone with "never".
+                    let left_alone = if is_oxlint { Mode::Never } else { Mode::Ignore };
+                    let wanted = self.prop_element_values(is_oxlint);
+                    if wanted != Mode::Ignore && wanted != left_alone {
+                        cx.report(element, necessary)
                             .fix(|fixer| [fixer.insert_before(element, "{"), fixer.insert_after(element, "}")]);
                     }
                 }
                 AttributeValue::StringLiteral(string) => {
                     if self.props == Mode::Always {
-                        cx.report(string.span, NECESSARY)
-                            .fix(|fixer| fixer.replace(string.span, in_braces(string.value)));
+                        cx.report(string.span, necessary).fix(|fixer| {
+                            // oxlint prints the text as a string of JavaScript, line breaks too.
+                            let text = match is_oxlint {
+                                true => in_braces(string.value, is_oxlint),
+                                false if strings::contains_js_line_break(string.value) => return None,
+                                false => escaped_in_braces(string.value),
+                            };
+                            Some(fixer.replace(string.span, text))
+                        });
                     }
                 }
             }
         }
+        // oxlint leaves the braces in a `<script>`.
         if self.children == Mode::Ignore
-            || self.children == Mode::Never && jsx.tag().is_some_and(|it| it.is_ident("script"))
+            || is_oxlint && self.children == Mode::Never && jsx.tag().is_some_and(|it| it.is_ident("script"))
         {
             return;
         }
         // oxlint looks for what is next to `{a}` among the children of the parent of the element, where it is not. It
         // looks among those of the element itself only if that is a statement.
-        let sees_adjacent =
-            !e.is_parenthesized() && matches!(e.parent(), Node::Stmt(statement) if statement.tag() == StmtTag::Expr);
+        let sees_adjacent = !is_oxlint
+            || !e.is_parenthesized() && matches!(e.parent(), Node::Stmt(statement) if statement.tag() == StmtTag::Expr);
         let is_container = |child: &JsxChild| {
             matches!(child, JsxChild::Expr(e) if e.jsx_container_span().is_some() && e.tag() != ExprTag::Spread)
         };
@@ -100,10 +134,11 @@ impl JsxCurlyBracePresence {
             follows_container = is_container(&child);
             match child {
                 JsxChild::Expr(inner) if follows_container => {
-                    self.check_expression_container(inner, false, has_adjacent, cx)
+                    let parent_is_attribute = false;
+                    self.check_expression_container(inner, parent_is_attribute, has_adjacent, is_oxlint, cx)
                 }
                 JsxChild::Expr(text) if text.tag() == ExprTag::String && self.children == Mode::Always => {
-                    report_missing_curly_for_text_node(text, cx);
+                    report_missing_curly_for_text_node(text, is_oxlint, cx);
                 }
                 _ => {}
             }
@@ -116,16 +151,22 @@ impl JsxCurlyBracePresence {
         inner: Expr<'a>,
         parent_is_attribute: bool,
         has_adjacent: bool,
+        is_oxlint: bool,
         cx: &Cx<'a, Self>,
     ) {
-        let Some(container) = inner.jsx_container_span().filter(|_| !inner.is_parenthesized()) else {
+        // For oxlint parentheses are a node.
+        let Some(container) = inner.jsx_container_span().filter(|_| !is_oxlint || !inner.is_parenthesized()) else {
             return;
         };
         let allowed = if parent_is_attribute { self.props } else { self.children };
         // What the braces are replaced by, with what is in them.
         let replacement: Option<&'a [u8]> = match inner.kind() {
             ExprKind::Jsx(jsx) if parent_is_attribute => {
-                if self.prop_element_values != Mode::Never || jsx.is_fragment() || !jsx.is_self_closing() {
+                // oxlint leaves the braces around an element that has a closing tag.
+                if self.prop_element_values(is_oxlint) != Mode::Never
+                    || jsx.is_fragment()
+                    || is_oxlint && !jsx.is_self_closing()
+                {
                     return;
                 }
                 None
@@ -137,8 +178,9 @@ impl JsxCurlyBracePresence {
                 None
             }
             ExprKind::String(value) if allowed == Mode::Never => {
+                let written = cx.slice(inner.span().shrink(1, 1));
                 if has_adjacent
-                    || is_allowed_string_like_in_container(cx.slice(inner.span().shrink(1, 1)), parent_is_attribute)
+                    || is_allowed_string_like_in_container(written, StringLike::Literal, parent_is_attribute, cx.file())
                 {
                     return;
                 }
@@ -148,26 +190,33 @@ impl JsxCurlyBracePresence {
                 let Some(string) = template.as_static().map(Name::bytes) else {
                     return;
                 };
-                if !parent_is_attribute && strings::index_of_any(string, b"\"'").is_some()
-                    || has_adjacent
-                    || is_allowed_string_like_in_container(string, parent_is_attribute)
+                // oxlint looks at the value.
+                let seen = if is_oxlint { string } else { template.raw(0) };
+                if has_adjacent
+                    || is_allowed_string_like_in_container(seen, StringLike::Template, parent_is_attribute, cx.file())
                 {
                     return;
                 }
-                Some(string)
+                Some(if parent_is_attribute { seen } else { string })
             }
             _ => return,
         };
-        if cx.file().comments_in(container).len() > 0 {
+        // oxlint looks for comments beside an element that is the value of an attribute too.
+        let may_have_comments = !is_oxlint && parent_is_attribute && replacement.is_none();
+        if !may_have_comments && cx.file().comments_in(container).len() > 0 {
             return;
         }
-        let report = cx.report(inner, UNNECESSARY);
-        let report = match replacement.is_none() && !parent_is_attribute {
-            true => report.help("remove the curly braces"),
-            false => report,
+        // oxlint points at what is in the braces.
+        let report = match is_oxlint {
+            true if replacement.is_none() && !parent_is_attribute => {
+                cx.report(inner, UNNECESSARY).help("remove the curly braces")
+            }
+            true => cx.report(inner, UNNECESSARY),
+            false => cx.report(container, UNNECESSARY_CURLY),
         };
         report.fix(|fixer| match replacement {
-            None if parent_is_attribute => vec![fixer.replace(container, inner.text())],
+            // oxlint leaves the blanks between the braces and a child.
+            None if parent_is_attribute || !is_oxlint => vec![fixer.replace(container, inner.text())],
             None => vec![
                 fixer.remove(Span::new(container.start, container.start + 1)),
                 fixer.remove(Span::new(container.end - 1, container.end)),
@@ -175,7 +224,14 @@ impl JsxCurlyBracePresence {
             Some(string) if parent_is_attribute => {
                 let quote = if strings::contains_char(string, b'"') { b'\'' } else { b'"' };
                 let mut text = Vec::with_capacity(string.len() + 2);
-                print_string(&mut text, string, quote);
+                // oxlint prints a string of JavaScript.
+                if is_oxlint {
+                    print_string(&mut text, string, quote);
+                } else {
+                    text.push(quote);
+                    text.extend_from_slice(string);
+                    text.push(quote);
+                }
                 vec![fixer.replace(container, text)]
             }
             Some(string) => vec![fixer.replace(container, string)],
@@ -184,22 +240,53 @@ impl JsxCurlyBracePresence {
 }
 
 /// `{"text"}`
-fn in_braces(text: &[u8]) -> Vec<u8> {
+fn in_braces(text: &[u8], is_oxlint: bool) -> Vec<u8> {
     let mut out = vec![b'{'];
-    print_string(&mut out, text, b'"');
+    // ESLint's rule has `JSON.stringify`.
+    match is_oxlint {
+        true => print_string(&mut out, text, b'"'),
+        false => json_stringify(text, &mut out),
+    }
     out.push(b'}');
     out
 }
 
-/// But for `has_adjacent_jsx_expression_containers`.
-fn is_allowed_string_like_in_container(s: &[u8], is_prop: bool) -> bool {
-    let trimmed = strings::trim_unicode_whitespace(s);
+/// `{"text"}` with upstream's `escapeDoubleQuotes(escapeBackslashes(text))`: each `\` twice, and one before a `"` that
+/// follows none.
+fn escaped_in_braces(text: &[u8]) -> Vec<u8> {
+    let mut out = b"{\"".to_vec();
+    for &byte in text {
+        if byte == b'\\' || byte == b'"' && out.last() != Some(&b'\\') {
+            out.push(b'\\');
+        }
+        out.push(byte);
+    }
+    out.extend_from_slice(b"\"}");
+    out
+}
+
+/// But for `has_adjacent_jsx_expression_containers`. `s`: without the quotes.
+fn is_allowed_string_like_in_container(s: &[u8], kind: StringLike, is_prop: bool, file: &File) -> bool {
+    let is_oxlint = file.language().is_oxlint;
+    let is_template = kind == StringLike::Template;
+    // What is a blank is said by Rust for oxlint, by JavaScript for ESLint.
+    let trimmed = if is_oxlint { strings::trim_unicode_whitespace(s) } else { strings::trim_js_whitespace(s) };
+    // typescript-estree leaves a `\r` in the text of a template, where upstream looks for `\n`.
+    let line_breaks: &[u8] = if !is_oxlint && file.uses_typescript_parser() { b"\n" } else { b"\n\r" };
+    let has = |it: u8| strings::contains_char(s, it);
     !s.is_empty() && trimmed.is_empty()
-        || strings::index_of_any(s, b"\n\r").is_some()
+        || strings::index_of_any(s, line_breaks).is_some()
         || next_html_entity(s).is_some()
-        || is_prop && strings::contains_char(s, b'"') && strings::contains_char(s, b'\'')
         || !is_prop && (strings::index_of_any(s, b"<>{}\\").is_some() || trimmed.len() != s.len())
-        || [&b"/*"[..], b"*/", b"\\n", b"\\r", b"\\u"].into_iter().any(|it| strings::contains(s, it))
+        || match (is_oxlint, is_template) {
+            (true, _) => {
+                has(b'"') && has(b'\'') && is_prop
+                    || (has(b'"') || has(b'\'')) && is_template && !is_prop
+                    || [&b"/*"[..], b"*/", b"\\n", b"\\r", b"\\u"].into_iter().any(|it| strings::contains(s, it))
+            }
+            (false, true) => has(b'\\') || has(b'"') || has(b'\'') || trimmed.len() != s.len(),
+            (false, false) => has(b'\\') || strings::contains(s, b"/*"),
+        }
 }
 
 /// Where the first `&name;` or `&#1;` is: `/&[A-Za-z\d#]+;/`
@@ -227,32 +314,46 @@ fn for_each_part<'t>(line: &'t [u8], mut visit: impl FnMut(usize, &'t [u8])) {
     visit(from, line.get(from..).unwrap_or_default());
 }
 
-fn report_missing_curly_for_text_node<'a>(text: Expr<'a>, cx: &Cx<'a, JsxCurlyBracePresence>) {
+fn report_missing_curly_for_text_node<'a>(text: Expr<'a>, is_oxlint: bool, cx: &Cx<'a, JsxCurlyBracePresence>) {
     let (span, value) = (text.span(), text.text());
+    // What is a blank is said by Rust for oxlint, by JavaScript for ESLint.
+    let trim_start: fn(&[u8]) -> &[u8] =
+        if is_oxlint { strings::trim_unicode_whitespace_start } else { strings::trim_js_whitespace_start };
     // Nothing but entities and blanks.
     let mut has_text = false;
-    for_each_part(value, |_, part| has_text |= !strings::trim_unicode_whitespace(part).is_empty());
+    for_each_part(value, |_, part| has_text |= !trim_start(part).is_empty());
     if !has_text {
         return;
     }
-    cx.report(span, NECESSARY).fix(|fixer| {
+    cx.report(span, if is_oxlint { NECESSARY } else { MISSING_CURLY }).fix(|fixer| {
         let mut fixes = Vec::new();
-        // From the first character that is not a blank.
-        let mut wrap = |start: usize, part: &[u8]| {
-            let part_text = strings::trim_unicode_whitespace_start(part);
+        // `after_blanks`: from the first character that is not a blank.
+        let mut wrap = |start: usize, part: &[u8], after_blanks: bool| {
+            let part_text = if after_blanks { trim_start(part) } else { part };
             if !part_text.is_empty() {
                 let start = span.start + (start + part.len() - part_text.len()) as u32;
-                fixes.push(fixer.replace(Span::new(start, start + part_text.len() as u32), in_braces(part_text)));
+                let part_span = Span::new(start, start + part_text.len() as u32);
+                fixes.push(fixer.replace(part_span, in_braces(part_text, is_oxlint)));
             }
         };
-        if !strings::contains_char(value, b'\n') {
-            wrap(0, value);
+        // ESLint's rule takes a text in one line as it is.
+        let has_lines = match is_oxlint {
+            true => strings::contains_char(value, b'\n'),
+            false => strings::contains_js_line_break(value),
+        };
+        if !has_lines {
+            wrap(0, value, is_oxlint);
             return fixes;
         }
         let mut line_start = 0;
         for line in strings::split(value, b"\n") {
-            for_each_part(line, |start, part| wrap(line_start + start, part));
+            // ESLint's rule leaves out of the braces only the blanks that the line starts with.
+            for_each_part(line, |start, part| wrap(line_start + start, part, is_oxlint || start == 0));
             line_start += line.len() + 1;
+        }
+        // ESLint's rule replaces the whole text.
+        if !is_oxlint {
+            fixes.extend([fixer.remove(Span::empty(span.start)), fixer.remove(Span::empty(span.end))]);
         }
         fixes
     });

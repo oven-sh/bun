@@ -32,9 +32,10 @@ import whatOxlintReports from "./oracle/plugins/oxlint/expected.json";
 import { directoryOf, filesOf, cases as fixCases, flagSets } from "./oracle/plugins/oxlint/fixes";
 import fixDifferences from "./oracle/plugins/oxlint/fixes.differences.json";
 import whatOxlintFixes from "./oracle/plugins/oxlint/fixes.expected.json";
+import whatOxlintMarks from "./oracle/plugins/oxlint/labels.json";
 import { filesOf as filesOfMessages, helpsOf, entries as messages, messagesOf } from "./oracle/plugins/oxlint/messages";
 import optionsOfOxlint from "./oracle/plugins/oxlint/options.json";
-import { projects } from "./oracle/plugins/oxlint/projects";
+import { labelsOf, projects } from "./oracle/plugins/oxlint/projects";
 
 afterAll(endChildren);
 
@@ -322,6 +323,27 @@ describe.concurrent("bun lint", () => {
         .map(line => line.match(/a\d+\.js/)?.[0]),
     ).toEqual(Object.keys(files).sort());
     expect(exitCode).toBe(1);
+  });
+
+  // oxc reads these. espree, typescript-estree and tsc do not.
+  test("what only oxc parses is linted with .oxlintrc.json, and a parsing error with eslint.config.js", async () => {
+    const files = {
+      "a.js": 'import source x from "m";\ndebugger;\n',
+      "b.ts": 'import source x from "m";\ndebugger;\n',
+      "c.js": 'import.source("m");\ndebugger;\n',
+      "d.tsx": "<>\n<\n/>;\ndebugger;\n",
+    };
+    const names = Object.keys(files);
+    const lines = (stdout: string) => stdout.split("\n").filter(line => /^\S*[a-d]\.\w+:\d/.test(line));
+    const rules = { "no-debugger": "error" };
+    const ofOxlint = JSON.stringify({ categories: { correctness: "off" }, rules });
+    const ofEslint = `export default [{ files: ["**/*.{js,ts,tsx}"], rules: ${JSON.stringify(rules)} }];\n`;
+    const [oxlint, eslint] = await Promise.all([
+      lint({ ".oxlintrc.json": ofOxlint, ...files }, ["-f", "unix", ...names]),
+      lint({ "eslint.config.js": ofEslint, ...files }, ["-f", "unix", ...names]),
+    ]);
+    expect(lines(oxlint.stdout).map(line => /no-debugger/.test(line))).toEqual([true, true, true, true]);
+    expect(lines(eslint.stdout).map(line => /Parsing error: /.test(line))).toEqual([true, true, true, true]);
   });
 
   // Each is what ESLint says with espree. At the `<` of the first two the parser went round until its stack was used up.
@@ -1782,6 +1804,19 @@ describe.concurrent("bun lint", () => {
       };
       const expected = (names: string[]) =>
         Object.fromEntries(names.map(it => [it, whatOxlintReports[it as keyof typeof whatOxlintReports]]));
+      // All that is marked for a report, and what is said there, where that is more than one place without a text. labels.json has
+      // only the projects in which there is such a report.
+      const marked = (raw: string, names: string[]) => {
+        const byProject = Object.fromEntries(names.map((it): [string, string[]] => [it, []]));
+        for (const it of JSON.parse(raw).diagnostics) {
+          const name = names.find(name => it.filename.startsWith(name + "/"))!;
+          const labels = it.code && labelsOf(it);
+          if (labels) byProject[name].push(`${it.filename.slice(name.length + 1)} ${it.code} ${labels}`);
+        }
+        return Object.fromEntries(names.map(it => [it, byProject[it].sort()]));
+      };
+      const expectedMarks = (names: string[]) =>
+        Object.fromEntries(names.map(it => [it, (whatOxlintMarks as Record<string, string[]>)[it] ?? []]));
 
       // The tests that lint hundreds of directories are serial: beside them the others do not get the processor in time.
 
@@ -1797,6 +1832,7 @@ describe.concurrent("bun lint", () => {
           const names = some.map(it => it.name);
           const { raw } = await lint(files, ["-f", "json"]);
           expect(foundExactly(raw, names)).toEqual(expected(names));
+          expect(marked(raw, names)).toEqual(expectedMarks(names));
         },
         isDebug || isASAN ? 120_000 : 30_000,
       );
@@ -1816,6 +1852,7 @@ describe.concurrent("bun lint", () => {
           const names = some.map(it => it.name);
           const { raw } = await lint(files, ["-f", "json", "--type-aware"]);
           expect(foundExactly(raw, names)).toEqual(expected(names));
+          expect(marked(raw, names)).toEqual(expectedMarks(names));
         },
         isDebug || isASAN ? 120_000 : 30_000,
       );
@@ -3052,14 +3089,12 @@ describe.concurrent("bun lint", () => {
       ["import/no-dynamic-require", { esmodule: true }],
       ["import/no-nodejs-modules", { allow: ["fs"] }],
       ["import/no-unassigned-import", { allow: ["**/*.css"] }],
-    ] as const)("the options of %s are taken, beside an .oxlintrc.json too", async (rule, options) => {
-      const rules = { [rule]: ["error", options] };
-      const oxlint = JSON.stringify({ plugins: ["import"], categories: { correctness: "off" }, rules });
-      for (const config of [{ ".oxlintrc.json": oxlint }, { "eslint.config.js": flat("", rules) }]) {
-        const { stderr, exitCode } = await lint({ ...config, "a.js": "export const a = 1;\n" }, ["a.js"]);
-        expect(stderr).not.toContain("should NOT have");
-        expect(exitCode).toBe(0);
-      }
+    ] as const)("the options of %s are taken beside an .oxlintrc.json", async (rule, options) => {
+      const config = { plugins: ["import"], categories: { correctness: "off" }, rules: { [rule]: ["error", options] } };
+      const files = { ".oxlintrc.json": JSON.stringify(config), "a.js": "export const a = 1;\n" };
+      const { stderr, exitCode } = await lint(files, ["a.js"]);
+      expect(stderr).not.toContain("should NOT have");
+      expect(exitCode).toBe(0);
     });
 
     test("a plugin of the configuration that has the prefix answers for it", async () => {
@@ -3546,6 +3581,112 @@ describe.concurrent("bun lint", () => {
           .map(it => it.split(": ")[0]),
       ).toEqual(["<dir>/b/b.ts:1:18"]);
       expect(exitCode).toBe(1);
+    });
+
+    describe("the globals of a file are those that the types of its program declare", () => {
+      const tsconfig = (options: object, rest: object = {}) =>
+        JSON.stringify({
+          compilerOptions: { allowJs: true, checkJs: true, noEmit: true, strict: true, ...options },
+          ...rest,
+        });
+      const tree = {
+        "tsconfig.json": tsconfig({ lib: ["es2022"], types: ["a"] }),
+        "globals.d.ts": "declare global { var mine: string }\nexport {};\n",
+        "node_modules/@types/a/package.json": `{ "name": "@types/a", "version": "1.0.0", "types": "index.d.ts" }`,
+        "node_modules/@types/a/index.d.ts":
+          "declare var fromTypes: string;\ndeclare function alsoFromTypes(): void;\ninterface OnlyAType {}\n",
+        "a.js": "console.log(fromTypes, alsoFromTypes, mine, window, typo, OnlyAType, Bun);\n",
+      };
+      const config = `export default [{
+        rules: { "no-undef": "error" },
+        languageOptions: { globals: { window: "readonly", mine: "off" } },
+      }];`;
+      /** The names that `rule` reports, in the order of the report. */
+      const reported = (stdout: string, rule: string) =>
+        stdout
+          .split("\n")
+          .filter(it => it.endsWith(`[Error/${rule}]`))
+          .map(it => `${it.split(":")[0].replace("<dir>/", "")} ${/'([^']+)'/.exec(it)![1]}`);
+
+      test.concurrent.each([
+        // In the place of the environments: the project has neither the DOM's library nor the types of Node. `Bun` stays.
+        ["without a configuration file", {}, [], ["console", "window", "typo", "OnlyAType"]],
+        ["--no-infer-globals", {}, ["--no-infer-globals"], ["fromTypes", "alsoFromTypes", "mine", "typo", "OnlyAType"]],
+        // As ESLint.
+        [
+          "with a configuration file",
+          { "eslint.config.js": config },
+          [],
+          ["console", "fromTypes", "alsoFromTypes", "mine", "typo", "OnlyAType", "Bun"],
+        ],
+        // Besides what it says, and what it turns off stays off.
+        [
+          "with a configuration file and --infer-globals",
+          { "eslint.config.js": config },
+          ["--infer-globals"],
+          ["console", "mine", "typo", "OnlyAType", "Bun"],
+        ],
+      ])("%s", async (_, more, flags, names) => {
+        const { stdout, exitCode } = await lint({ ...tree, ...more }, [...flags, "-f", "unix"]);
+        expect(reported(stdout, "no-undef")).toEqual(names.map(it => `a.js ${it}`));
+        expect(exitCode).toBe(1);
+      });
+
+      test("what a library or a package declares is readonly, and so is all but a `var` or a `let` of the project", async () => {
+        const { stdout, exitCode } = await lint(
+          {
+            ...tree,
+            "globals.d.ts":
+              "declare var mine: string;\ndeclare let mineLet: 1;\ndeclare const mineConst: 1;\ndeclare function mineFn(): void;\ndeclare class MineClass {}\n",
+            "a.js": "fromTypes = mine = mineLet = mineConst = mineFn = MineClass = Array = 1;\n",
+          },
+          ["-f", "unix"],
+        );
+        expect(reported(stdout, "no-global-assign")).toEqual(
+          ["fromTypes", "mineConst", "mineFn", "MineClass", "Array"].map(it => `a.js ${it}`),
+        );
+        expect(reported(stdout, "no-undef")).toEqual([]);
+        expect(exitCode).toBe(1);
+      });
+
+      test("a project in which no file can declare a global has its libraries and its types", async () => {
+        const { "globals.d.ts": _, ...rest } = tree;
+        const text = "export {};\nvoid [Array, fromTypes, typo];\n";
+        const { stdout, exitCode } = await lint({ ...rest, "a.js": text }, ["-f", "unix"]);
+        expect(reported(stdout, "no-undef")).toEqual(["a.js typo"]);
+        expect(exitCode).toBe(1);
+      });
+
+      test("each project has its own, and a file that no project includes has the environments", async () => {
+        const text = "void [document, process, typo];\n";
+        const { stdout, exitCode } = await lint(
+          {
+            "web/tsconfig.json": tsconfig({ lib: ["es2022", "dom"], types: [] }, { include: ["src"] }),
+            "web/src/a.js": text,
+            // Beside the project, not of it.
+            "web/build.js": text,
+            "cli/tsconfig.json": tsconfig({ lib: ["es2022"], types: [] }),
+            "cli/a.js": text,
+            "cli/global.ts": "export {};\ndeclare global {\n  var process: object;\n}\n",
+            // A script: what it declares at the top is in every file of the project.
+            "old/jsconfig.json": tsconfig({ lib: ["es5"], types: [] }),
+            "old/first.js": "var process = {};\nfunction document() {}\n",
+            "old/second.js": text,
+            "none/a.js": text,
+          },
+          ["-f", "unix"],
+        );
+        expect(reported(stdout, "no-undef")).toEqual([
+          "cli/a.js document",
+          "cli/a.js typo",
+          "none/a.js typo",
+          "old/second.js typo",
+          "web/build.js typo",
+          "web/src/a.js process",
+          "web/src/a.js typo",
+        ]);
+        expect(exitCode).toBe(1);
+      });
     });
 
     // Which project a file is checked in is seen from `strictNullChecks`: without it the rule reports, and says at 0:1 that it

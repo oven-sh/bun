@@ -133,7 +133,8 @@ impl PmVersionCommand {
             Global::exit(1);
         }
 
-        let scripts = if pm.options.do_.run_scripts() {
+        let dry_run = pm.options.dry_run;
+        let scripts = if pm.options.do_.run_scripts() && !dry_run {
             json.as_property(b"scripts")
         } else {
             None
@@ -191,6 +192,12 @@ impl PmVersionCommand {
                 Output::err_generic("Version not changed", ());
                 Global::exit(1);
             }
+        }
+
+        if dry_run {
+            Output::print(format_args!("v{}\n", BStr::new(&new_version_str)));
+            Output::flush();
+            return Ok(());
         }
 
         {
@@ -469,6 +476,7 @@ impl PmVersionCommand {
              \x20 <cyan>--message<d>=\\<val\\><r>, <cyan>-m<r>  <d>Custom commit message, use %s for version substitution<r>\n\
              \x20 <cyan>--preid<d>=\\<val\\><r>        <d>Prerelease identifier (i.e beta → {})<r>\n\
              \x20 <cyan>--force<r>, <cyan>-f<r>          <d>Bypass dirty git history check<r>\n\
+             \x20 <cyan>--dry-run<r>            <d>Print the new version without writing, running scripts, or tagging<r>\n\
              \n\
              <b>Examples<r>:\n\
              \x20 <d>$<r> <b><green>bun pm version<r> <cyan>patch<r>\n\

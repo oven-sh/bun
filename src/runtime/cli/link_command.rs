@@ -2,7 +2,7 @@ use bstr::BStr;
 
 use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_paths::AbsPath;
+use bun_paths::{AbsPath, platform, resolve_path};
 use bun_resolver::fs::FileSystem;
 use bun_sys::{Dir, Fd, FdDirExt};
 
@@ -112,6 +112,22 @@ fn link(ctx: command::Context) -> crate::Result<()> {
         // from `package_json_source` (dropped above).
         let name = lockfile.str(&package.name);
 
+        if manager.options.dry_run {
+            if manager.options.log_level != LogLevel::Silent {
+                let link_path = resolve_path::join_abs_string_z::<platform::Auto>(
+                    pm::global_link_dir_path(manager),
+                    &[name],
+                );
+                bun_core::prettyln!(
+                    "<r><d>dry run:<r> would link \"{}\" <d>at<r> {}",
+                    BStr::new(name),
+                    BStr::new(link_path.as_bytes()),
+                );
+            }
+            Output::flush();
+            Global::exit(0);
+        }
+
         // Step 2. Setup the global directory
         let node_modules: Dir = 'brk: {
             bin::Linker::ensure_umask();
@@ -169,7 +185,6 @@ fn link(ctx: command::Context) -> crate::Result<()> {
             #[cfg(windows)]
             {
                 use bun_core::ZStr;
-                use bun_paths::{platform, resolve_path};
                 // create the junction
                 let top_level = FileSystem::instance().top_level_dir_without_trailing_slash();
                 let mut link_path_buf = bun_paths::path_buffer_pool::get();

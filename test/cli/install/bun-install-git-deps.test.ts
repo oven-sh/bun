@@ -5,7 +5,7 @@
 // a bare repo on disk (served over git's dumb HTTP protocol by Bun.serve
 // when an http URL is needed) or tarballs built in memory.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 import { pathToFileURL } from "url";
@@ -37,6 +37,9 @@ async function run(cwd: string, cmd: string[], what: string, stdin?: string) {
 function git(cwd: string, ...args: string[]) {
   return run(cwd, ["git", ...args], `git ${args.join(" ")}`);
 }
+
+// `path` as one word of a `sh` script.
+const quote = (path: string) => `'${path.replaceAll("'", "'\\''")}'`;
 
 // The fixture packages are `@scope/pkg-<letter>`. Each one's branch or tarball
 // is named `pkg-<letter>`, and so is the marker its index.js exports, which is
@@ -587,6 +590,163 @@ test.concurrent("installs a git+file:// dependency", async () => {
   expect(exitCode).toBe(0);
 });
 
+// Two installs of different projects that share a cold cache both clone the
+// repository of a git dependency. The one that finishes second finds the
+// other's clone in the cache already. It used to swap its own clone in and
+// delete the other one, which the first install still had open: its checkout
+// then failed with "fatal: repository '<cache>/.<id>.tmp (deleted)' does not
+// exist". The same applies to the checkout folder.
+test.concurrent.skipIf(isWindows)(
+  "an install keeps the git cache folders that another install published first",
+  async () => {
+    using dir = tempDir("git-dep-publish-race", {});
+    const root = String(dir);
+    const bin = join(root, "bin");
+    const steps = join(root, "steps");
+    mkdirSync(bin);
+    mkdirSync(steps);
+    // A git that puts the two installs in the order of the race. A folder is
+    // published when the git command that fills it has exited, and the next
+    // git command of that install starts after that.
+    writeFileSync(
+      join(bin, "git"),
+      `#!/bin/sh
+steps=${quote(steps)}
+reach() { : > "$steps/$1"; }
+wait_for() { i=0; while [ ! -e "$steps/$1" ] && [ $i -lt 200 ]; do sleep 0.05; i=$((i+1)); done; }
+case "$INSTALL $*" in
+  # Both look for the bare clone in the cache before "first" publishes its own.
+  "first clone "*" --bare "*) wait_for second-clones-bare ;;
+  # "second" publishes its bare clone after "first" did, and before "first" uses its own.
+  "second clone "*" --bare "*) reach second-clones-bare; wait_for first-runs-log ;;
+  "first -C "*" log "*) reach first-runs-log; wait_for second-runs-log ;;
+  "second -C "*" log "*) reach second-runs-log ;;
+  # Both look for the checkout in the cache before either publishes its own.
+  "first clone "*" --no-checkout "*) reach first-clones-checkout; wait_for second-clones-checkout ;;
+  "second clone "*" --no-checkout "*) reach second-clones-checkout; wait_for first-clones-checkout ;;
+esac
+exec ${quote(Bun.which("git", { PATH: gitEnv.PATH })!)} "$@"
+`,
+      { mode: 0o755 },
+    );
+
+    const repoUrl = `git+${pathToFileURL(sharedBare)}`;
+    const { resolutions, locked } = expectedGitPackages(repoUrl, sharedCommits, ["c"]);
+    const cache = join(root, "cache");
+    const installs = ["first", "second"].map(async which => {
+      const project = writeProject(join(root, which), { [nameOf("c")]: `${repoUrl}#pkg-c` });
+      const result = await runInstall(project, cache, { INSTALL: which, PATH: `${bin}:${gitEnv.PATH}` });
+      return { project, ...result };
+    });
+
+    for (const { project, stdout, stderr, exitCode } of await Promise.all(installs)) {
+      expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+        "Resolving dependencies
+        Resolved, downloaded and extracted [2]
+        Saved lockfile"
+      `);
+      expectInstalled(stdout, resolutions);
+      expect(await installedVersions(project, [nameOf("c")])).toEqual(markers(["c"]));
+      expect(await lockedPackages(project)).toEqual(locked);
+      expect(exitCode).toBe(0);
+    }
+    // The installs met at every step, and the cache holds one bare clone and
+    // one checkout: an install that lost removed the folder it had built.
+    expect(readdirSync(steps).sort()).toEqual([
+      "first-clones-checkout",
+      "first-runs-log",
+      "second-clones-bare",
+      "second-clones-checkout",
+      "second-runs-log",
+    ]);
+    expect(
+      readdirSync(cache)
+        .map(name => name.replace(/^[0-9a-f]{16}(?=\.git$)/, "<clone id>"))
+        .sort(),
+    ).toEqual(["<clone id>.git", `@G@${sharedCommits["pkg-c"]}`]);
+  },
+  30_000,
+);
+
+// The same race on Windows, where a script cannot stand in for git, so nothing
+// orders the installs. There the install that lost deleted the published
+// folder by its name, and three of four installs failed, with "fatal:
+// 'C:\$Extend\$Deleted\<id>' does not appear to be a git repository" or
+// "moving <name> to cache dir failed: ENOTEMPTY".
+test.concurrent.skipIf(!isWindows)(
+  "installs that share a cold cache and a git dependency all succeed",
+  async () => {
+    using dir = tempDir("git-dep-shared-cache", {});
+    const root = String(dir);
+    // An install that starts late finds the bare clone and runs `git fetch`
+    // in it, which needs a HEAD that names a branch.
+    const bare = await makeSharedRepo(root, [{ name: nameOf("e"), branch: "pkg-e" }], "race-repo.git");
+    await git(bare, "symbolic-ref", "HEAD", "refs/heads/pkg-e");
+    const repoUrl = `git+${pathToFileURL(bare)}`;
+    const { resolutions } = expectedGitPackages(repoUrl, branchCommits(bare), ["e"]);
+
+    for (let round = 0; round < 2; round++) {
+      const cache = join(root, `cache-${round}`);
+      const installs = [0, 1, 2, 3].map(async i => {
+        const project = writeProject(join(root, `round-${round}`, `${i}`), { [nameOf("e")]: `${repoUrl}#pkg-e` });
+        return { project, ...(await runInstall(project, cache, {})) };
+      });
+      for (const { project, stdout, stderr, exitCode } of await Promise.all(installs)) {
+        expect(stderr.split(/\r?\n/).filter(line => /error|fatal/.test(line))).toEqual([]);
+        expectInstalled(stdout, resolutions);
+        expect(await installedVersions(project, [nameOf("e")])).toEqual(markers(["e"]));
+        expect(exitCode).toBe(0);
+      }
+      expect(readdirSync(cache).filter(name => name.endsWith(".tmp"))).toEqual([]);
+    }
+  },
+  30_000,
+);
+
+// Only a folder with `.bun-tag` is a complete checkout. A folder without it
+// (what a killed install of an older version left) is replaced, and so is a
+// link to one. What the link points to is left alone.
+test.concurrent.each(["folder", "link"] as const)(
+  "replaces a %s that has the cache name of a git checkout and no .bun-tag",
+  async kind => {
+    using dir = tempDir(`git-dep-untagged-${kind}`, {});
+    const root = String(dir);
+    const repoUrl = `git+${pathToFileURL(sharedBare)}`;
+    const project = writeProject(root, { [nameOf("d")]: `${repoUrl}#pkg-d` });
+    const { resolutions, locked } = expectedGitPackages(repoUrl, sharedCommits, ["d"]);
+    const cache = join(root, "cache");
+    const checkout = join(cache, `@G@${sharedCommits["pkg-d"]}`);
+    const untagged = kind === "link" ? join(root, "elsewhere") : checkout;
+    mkdirSync(join(untagged, "lib"), { recursive: true });
+    writeFileSync(join(untagged, "package.json"), JSON.stringify({ name: nameOf("d"), version: "0.0.0-untagged" }));
+    writeFileSync(join(untagged, "lib", "untagged.js"), "");
+    if (kind === "link") {
+      mkdirSync(cache);
+      symlinkSync(untagged, checkout, "junction");
+    }
+
+    const { stdout, stderr, exitCode } = await runInstall(project, cache, {});
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+      "Resolving dependencies
+      Resolved, downloaded and extracted [2]
+      Saved lockfile"
+    `);
+    expectInstalled(stdout, resolutions);
+    expect(await installedVersions(project, [nameOf("d")])).toEqual(markers(["d"]));
+    expect(await lockedPackages(project)).toEqual(locked);
+    expect(lstatSync(checkout).isDirectory()).toBe(true);
+    expect(readdirSync(checkout).sort()).toEqual([".bun-tag", "index.js", "package.json"]);
+    if (kind === "link")
+      expect(readdirSync(untagged, { recursive: true }).sort()).toEqual([
+        "lib",
+        join("lib", "untagged.js"),
+        "package.json",
+      ]);
+    expect(readdirSync(cache).filter(name => name.endsWith(".tmp"))).toEqual([]);
+    expect(exitCode).toBe(0);
+  },
+);
+
 // issue #40803: `bun install <git url>` (no alias) sorted the workspace dep
 // under its version literal. The real name is only known once the repo is
 // fetched; it is rewritten in place after resolution, so the written key
@@ -636,7 +796,6 @@ test.concurrent.skipIf(isWindows)(
     const running = join(root, "git-running");
     const exited = join(root, "git-exited");
     const gotSigint = join(root, "git-got-sigint");
-    const quote = (path: string) => `'${path.replaceAll("'", "'\\''")}'`;
     const lineCount = (file: string) => (existsSync(file) ? readFileSync(file, "utf8").split("\n").length - 1 : 0);
     // A fake git. Each process appends a line to `running` when it starts, to
     // `exited` when it ends, and blocks until the test deletes `running`. A

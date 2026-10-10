@@ -1016,7 +1016,6 @@ impl PostgresSQLConnection {
                                 .expect("failed to write to read buffer");
                         });
                     } else {
-                        bun_core::handle_error_return_trace(err);
                         self.fail(b"Failed to read data", err);
                     }
                 }
@@ -1038,7 +1037,6 @@ impl PostgresSQLConnection {
                 }
                 Err(err) => {
                     if err != AnyPostgresError::ShortRead {
-                        bun_core::handle_error_return_trace(err);
                         self.fail(b"Failed to read data", err);
                     } else {
                         #[cfg(debug_assertions)]

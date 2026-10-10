@@ -21,12 +21,6 @@ docs/bundler/minifier.mdx
 # prettier's parser does not accept yet
 packages/bun-types/ts7.1
 
-# generated working notes for the Rust port — dense markdown with inline code
-# refs that prettier doesn't reformat to a fixed point (it keeps re-escaping
-# `_`/`*` differently every pass), so autofix.ci ping-pongs commits forever.
-# Not authored by hand; no value in normalizing it.
-docs/.rust-rewrite-verified-claims.md
-
 # Verbatim ports from Node.js v26.3.0 (lib/) — keep close to upstream
 # (mirrors the oxlint.json ignore block for the same files)
 src/js/node/repl.js

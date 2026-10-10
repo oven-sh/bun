@@ -1563,7 +1563,6 @@ pub fn become_watcher_manager() -> ! {
 
     loop {
         if let Err(err) = spawn_watcher_child(&mut procinfo, job) {
-            bun_core::handle_error_return_trace(err);
             if err == bun_errno::SystemErrno::EIO {
                 // This read is best-effort — Drop guards inside
                 // `spawn_watcher_child` (FreeEnvironmentStringsW, Vec drops

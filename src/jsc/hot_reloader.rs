@@ -724,7 +724,6 @@ where
         let watcher = match Watcher::init(reloader, unsafe { (*this).watcher_top_level_dir() }) {
             Ok(w) => w,
             Err(err) => {
-                bun_core::handle_error_return_trace(&err);
                 Output::panic(format_args!(
                     "Failed to enable File Watcher: {}",
                     err.name()
@@ -744,7 +743,6 @@ where
 
         // SAFETY: `watcher_ptr` was just installed into the ctx and is live.
         if let Err(err) = unsafe { (*watcher_ptr).start() } {
-            bun_core::handle_error_return_trace(&err);
             bun_core::pretty_errorln!(
                 "<red>error<r><d>:<r> Failed to start File Watcher: {}",
                 err.name()

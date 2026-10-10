@@ -662,6 +662,64 @@ describe("jest-extended", () => {
     }).toThrow("requires argument to be a string");
   });
 
+  test("string matchers compare UTF-16 code units", () => {
+    // "🙂" is the surrogate pair \ud83d \ude42. A string can start or end with one half of it.
+    expect("🙂x").toStartWith("\ud83d");
+    expect("🙂x").not.toStartWith("\ude42");
+    expect("x🙂").toEndWith("\ude42");
+    expect("x🙂").not.toEndWith("\ud83d");
+    expect("🙂x").toInclude("\ud83d");
+    expect("🙂x").toInclude("\ude42x");
+    expect("🙂x").not.toInclude("\ud83dx");
+    expect("🙂🙂x").toIncludeRepeated("\ud83d", 2);
+    expect("🙂🙂x").toIncludeRepeated("\ude42\ud83d", 1);
+    expect("🙂🙂x").not.toIncludeRepeated("\ud83d", 0);
+
+    // An unpaired surrogate equals itself. It does not equal U+FFFD or another unpaired surrogate.
+    expect("\ud83dx").toStartWith("\ud83d");
+    expect("\ud83dx").not.toStartWith("\ud83e");
+    expect("\ud83dx").not.toStartWith("\ufffd");
+    expect("\ufffdx").not.toStartWith("\ud83d");
+    expect("x\ude42").toEndWith("\ude42");
+    expect("x\ude42").not.toEndWith("\ude43");
+    expect("x\ude42").not.toEndWith("\ufffd");
+    expect("a\ud83db").toInclude("\ud83d");
+    expect("a\ud83db").not.toInclude("\ud83e");
+    expect("a\ud83db").not.toInclude("\ufffd");
+    expect("a\ufffdb").not.toInclude("\ud83d");
+    expect("\ud83d\ud83e\ud83d").toIncludeRepeated("\ud83d", 2);
+    expect("\ud83d\ud83e\ud83d").toIncludeRepeated("\ufffd", 0);
+    expect("\ud83d x").toEqualIgnoringWhitespace("\ud83dx");
+    expect("\ud83d x").not.toEqualIgnoringWhitespace("\ud83ex");
+    expect("\ud83d x").not.toEqualIgnoringWhitespace("\ufffdx");
+    expect(() => expect("🙂x").not.toStartWith("\ud83d")).toThrow("toStartWith");
+  });
+
+  test("string matchers compare an 8-bit string with a 16-bit string", () => {
+    // A slice of a 16-bit string keeps the 16-bit storage, even when every character fits in 8 bits.
+    const wide = "🙂café au lait".slice(2);
+    expect(wide).toBe("café au lait");
+
+    expect(wide).toStartWith("café");
+    expect("café au lait").toStartWith(wide.slice(0, 4));
+    expect(wide).not.toStartWith("cafe");
+    expect("café").not.toStartWith(wide);
+    expect(wide).toEndWith("lait");
+    expect("du café au lait").toEndWith(wide);
+    expect(wide).not.toEndWith("laît");
+    expect(wide).toInclude("é au");
+    expect("du café au lait !").toInclude(wide);
+    expect(wide).not.toInclude("è");
+    expect("café").not.toInclude("🙂");
+    expect("café").not.toInclude("\u0100");
+    expect(wide + wide).toIncludeRepeated("café", 2);
+    expect("café café").toIncludeRepeated(wide.slice(0, 4), 2);
+    expect("café café").toIncludeRepeated("🙂", 0);
+    expect(wide).toEqualIgnoringWhitespace("caféaulait");
+    expect("caféaulait").toEqualIgnoringWhitespace(wide);
+    expect("cafeaulait").not.toEqualIgnoringWhitespace(wide);
+  });
+
   // Symbol
 
   test("toBeSymbol()", () => {

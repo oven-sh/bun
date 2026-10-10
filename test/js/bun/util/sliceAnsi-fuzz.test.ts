@@ -81,18 +81,10 @@ describe("sliceAnsi invariants", () => {
       const a = Math.floor(rng() * 50) - 10;
       const b = Math.floor(rng() * 50) - 10;
       const out = Bun.sliceAnsi(s, a, b);
-      // Iterating codepoints should not throw; no lone surrogates at boundaries.
-      // Note: lone surrogates in INPUT may pass through (we don't sanitize input),
-      // but we should never CREATE new lone surrogates by splitting a pair.
-      for (const cp of out) {
-        const c = cp.codePointAt(0)!;
-        if (c >= 0xd800 && c <= 0xdfff) {
-          // If input didn't have this lone surrogate at an index the slice touched,
-          // we created it — that's a bug. But for fuzz purposes, just assert it
-          // existed in input (conservative check).
-          expect(s).toContain(cp);
-        }
-      }
+      // randomString() never makes a lone surrogate, so one in the output means
+      // that the slice split a pair.
+      expect(s.isWellFormed()).toBe(true);
+      expect(out.isWellFormed()).toBe(true);
     }
   });
 

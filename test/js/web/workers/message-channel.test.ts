@@ -1,3 +1,5 @@
+import { heapStats } from "bun:jsc";
+
 test("simple usage", done => {
   const channel = new MessageChannel();
   const port1 = channel.port1;
@@ -352,6 +354,38 @@ test("a pending close event survives GC after the port becomes unreachable", asy
   expect(fired).toBe(50);
 });
 
+// A transfer closes the sender's port object the same way (node fires 'close' on it), so
+// disentangle() queues the same task, and that object must stay attached to its context
+// until the task runs: the pending activity only pins the wrapper while it has a context.
+test("a transferred-away port's pending close event survives GC after the port becomes unreachable", async () => {
+  const count = () => heapStats().objectTypeCounts.MessagePort ?? 0;
+  Bun.gc(true);
+  const base = count();
+  let fired = 0;
+  const carrier = new MessageChannel();
+  for (let i = 0; i < 50; i++) {
+    (() => {
+      const { port1 } = new MessageChannel();
+      port1.addEventListener("close", () => fired++);
+      carrier.port1.postMessage(port1, [port1]);
+    })();
+    if (i % 10 === 0) Bun.gc(true);
+  }
+  Bun.gc(true);
+  // The events are queued as tasks, which run before the first setImmediate; the fixed
+  // window (rather than awaiting the 50th event) is what lets the exact count below also
+  // catch a port firing twice.
+  for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+  expect(fired).toBe(50);
+  // Once the event has fired nothing pins the transferred-away objects (or their
+  // unreferenced peers) any more; only the carrier pair is still reachable.
+  Bun.gc(true);
+  Bun.gc(true);
+  expect(count() - base).toBeLessThanOrEqual(2 + 10);
+  carrier.port1.close();
+  carrier.port2.close();
+});
+
 // The peer's notifyPeerClosed() task only holds a weak ref back to this port, so a
 // port whose only listener is 'close' must survive GC until the event is delivered.
 test("a close event from the peer survives GC of the unreachable port", async () => {
@@ -375,7 +409,6 @@ test("a close event from the peer survives GC of the unreachable port", async ()
 // which never collects an entangled port). Bound the retention: explicitly-closed pairs
 // must still be swept, so a regression that leaks closed ports too would show as growth.
 test("explicitly-closed close-listener ports are collected; open ones are pinned like Node", async () => {
-  const { heapStats } = require("bun:jsc");
   const count = () => heapStats().objectTypeCounts.MessagePort ?? 0;
   for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
   Bun.gc(true);

@@ -8,6 +8,7 @@ const SafeFinalizationRegistry = FinalizationRegistry;
 
 const ArrayPrototypeAt = Array.prototype.at;
 const ArrayPrototypeIndexOf = Array.prototype.indexOf;
+const ArrayPrototypeSlice = Array.prototype.slice;
 const ArrayPrototypeSplice = Array.prototype.splice;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
@@ -99,15 +100,23 @@ class ActiveChannel {
   subscribe(subscription) {
     validateFunction(subscription, "subscription");
 
+    // Copy on write: publish() iterates the array it captured, so mutating in
+    // place would let a subscriber's subscribe() append to the in-flight publish.
+    this._subscribers = ArrayPrototypeSlice.$call(this._subscribers);
     $arrayPush(this._subscribers, subscription);
     channels.incRef(this.name);
   }
 
   unsubscribe(subscription) {
-    const index = ArrayPrototypeIndexOf.$call(this._subscribers, subscription);
+    const subscribers = this._subscribers;
+    const index = ArrayPrototypeIndexOf.$call(subscribers, subscription);
     if (index === -1) return false;
 
-    ArrayPrototypeSplice.$call(this._subscribers, index, 1);
+    // Copy on write: publish() iterates the array it captured, so mutating in
+    // place would shift it under the loop and skip later subscribers.
+    const next = ArrayPrototypeSlice.$call(subscribers);
+    ArrayPrototypeSplice.$call(next, index, 1);
+    this._subscribers = next;
 
     channels.decRef(this.name);
     maybeMarkInactive(this);
@@ -139,9 +148,10 @@ class ActiveChannel {
   }
 
   publish(data) {
-    for (let i = 0; i < (this._subscribers?.length || 0); i++) {
+    const subscribers = this._subscribers;
+    for (let i = 0; i < (subscribers?.length || 0); i++) {
       try {
-        const onMessage = this._subscribers[i];
+        const onMessage = subscribers[i];
         onMessage(data, this.name);
       } catch (err) {
         process.nextTick(() => reportError(err));

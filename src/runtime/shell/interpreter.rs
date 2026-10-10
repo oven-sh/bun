@@ -2390,6 +2390,7 @@ fn shell_get_path<'a>(
 /// `bun_sys::fstatat(dir, path_)`.
 // consumed by states/CondExpr (`[[ -e/-f/-d ... ]]`) and the `ls` builtin
 pub(crate) fn shell_statat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<bun_sys::Stat> {
+    reject_empty_path(path_.as_bytes(), bun_sys::Tag::fstatat)?;
     #[cfg(windows)]
     {
         let mut buf = bun_paths::path_buffer_pool::get();
@@ -2404,6 +2405,7 @@ pub(crate) fn shell_statat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<b
 
 /// `shell_statat` without following a final symlink.
 pub(crate) fn shell_lstatat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<bun_sys::Stat> {
+    reject_empty_path(path_.as_bytes(), bun_sys::Tag::lstat)?;
     #[cfg(windows)]
     {
         let mut buf = bun_paths::path_buffer_pool::get();
@@ -2414,6 +2416,14 @@ pub(crate) fn shell_lstatat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<
     {
         bun_sys::lstatat(dir, path_)
     }
+}
+
+/// Resolved by the shell (cwd join, or the Windows `*at()` emulation), `""` would name the cwd.
+pub(crate) fn reject_empty_path(path: &[u8], syscall: bun_sys::Tag) -> bun_sys::Result<()> {
+    if path.is_empty() {
+        return Err(bun_sys::Error::from_code(bun_sys::E::ENOENT, syscall));
+    }
+    Ok(())
 }
 
 /// POSIX: `bun_sys::openat` with the error tagged `.with_path(path)`.
@@ -2427,6 +2437,7 @@ pub(crate) fn shell_openat(
     flags: i32,
     perm: bun_sys::Mode,
 ) -> bun_sys::Result<Fd> {
+    reject_empty_path(path.as_bytes(), bun_sys::Tag::open)?;
     #[cfg(windows)]
     {
         use bun_sys::FdExt;

@@ -574,6 +574,40 @@ describe("bunshell", () => {
     expect(exitCode).toBe(0);
   });
 
+  // On Windows the fd-relative open used to resolve "" to the shell's cwd, so
+  // `cat ""` tried to read a directory and exited 21 without a message.
+  test("builtin cat fails an empty operand with ENOENT", async () => {
+    using dir = tempDir("builtin-cat-empty", {});
+    const script = /* ts */ `
+      import { $ } from "bun";
+      $.nothrow();
+      const results = {};
+      for (const [name, run] of Object.entries({
+        "literal": () => $\`cat ""\`,
+        "interpolated": () => $\`cat \${""}\`,
+      })) {
+        const r = await run().quiet();
+        results[name] = { stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode };
+      }
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const enoent = "cat: No such file or directory\n";
+    expect(JSON.parse(stdout)).toEqual({
+      "literal": { stdout: "", stderr: enoent, exitCode: 1 },
+      "interpolated": { stdout: "", stderr: enoent, exitCode: 1 },
+    });
+    expect(exitCode).toBe(0);
+  });
+
   // `ulimit -n` caps the fd table of the child so the pipeline cannot create
   // its pipes (EMFILE). The pipeline must print the error on its stderr and
   // finish with exit code 1 so the `$` promise settles and the script goes on,

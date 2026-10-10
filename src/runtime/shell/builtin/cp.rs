@@ -4,7 +4,7 @@ use crate::node::PathLike;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
-    ParseFlagResult, ShellTask, parse_flags, unsupported_flag,
+    ParseFlagResult, ShellTask, parse_flags, reject_empty_path, unsupported_flag,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -606,6 +606,12 @@ impl ShellCpTask {
         poster: &bun_jsc::ConcurrentPoster,
     ) -> Option<ShellErr> {
         use resolve_path::{Platform, platform};
+
+        if let Err(e) = reject_empty_path(&self.src, bun_sys::Tag::copyfile)
+            .and_then(|()| reject_empty_path(&self.tgt, bun_sys::Tag::copyfile))
+        {
+            return Some(ShellErr::new_sys(&e));
+        }
 
         let mut buf2 = bun_paths::path_buffer_pool::get();
         let mut buf3 = bun_paths::path_buffer_pool::get();

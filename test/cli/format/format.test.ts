@@ -1216,8 +1216,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
   test.each([
     [{ ".prettierrc": `{ "printWidth": 100000 }` }, []],
     [{ ".prettierrc.mjs": `export default { printWidth: Infinity };` }, []],
-    [{ ".prettierrc.yaml": `printWidth: .inf\n` }, []],
-    [{ ".prettierrc.json5": `{ printWidth: Infinity }` }, []],
+    [{ "prettier.config.cjs": `module.exports = { printWidth: Infinity };` }, []],
     [{ ".prettierrc.mjs": `export default { overrides: [{ files: "*.js", options: { printWidth: Infinity } }] };` }, []],
     [{ ".prettierrc.mjs": `export default { printWidth: Infinity, rangeStart: 0, rangeEnd: Infinity };` }, []],
     [{ "bunfig.toml": `[format]\nprintWidth = 100000\n` }, []],

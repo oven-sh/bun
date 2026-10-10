@@ -11,7 +11,9 @@ use super::import_declaration::FormatStringLiteral;
 use super::object_like::ObjectLike;
 use super::parameters::FormatFormalParameters;
 use super::semicolon::OptionalSemicolon;
-use super::ts_types::{write_ts_interface_signatures, write_ts_signatures};
+use super::ts_types::{
+    comments_after_property_name, write_ts_interface_signatures, write_ts_signatures,
+};
 use super::type_parameters::{type_arguments, type_parameters};
 use crate::js::format::{
     ExprOptions, FormatTypeAnnotation, format_node, identifier, write_expression,
@@ -582,15 +584,15 @@ pub(crate) fn write_type_parameter_modifiers<'a>(param: TypeParam<'a>, f: &mut F
     write!(f, FormatModifiers(param.modifiers()));
 }
 
-/// `: Bound`, ` extends Bound`
+/// `: Bound`, ` extends Bound`. Babel's tree does not say which it is: `T extends A` is `T: A` for `babel-flow`.
 pub(crate) fn write_type_parameter_bound<'a>(
     param: TypeParam<'a>,
     bound: TypeNode<'a>,
     f: &mut Formatter<'a>,
 ) {
-    match param.flow_token_after_name() {
-        b":" => write!(f, FormatTypeAnnotation(bound)),
-        _ => write!(f, [" extends ", bound]),
+    match param.flow_token_after_name() == b":" || goes_to_babel(f.options(), f.file().path()) {
+        true => write!(f, FormatTypeAnnotation(bound)),
+        false => write!(f, [" extends ", bound]),
     }
 }
 
@@ -748,6 +750,14 @@ pub(crate) fn write_object_type_member<'a>(member: Member<'a>, f: &mut Formatter
                     _ => format_computed_or_property_key(key, node, f),
                 },
                 (None, None) => {}
+            }
+            if !f.is_quiet()
+                && let Some(ty) = member.ty()
+            {
+                write!(
+                    f,
+                    FormatTrailingComments::Comments(comments_after_property_name(ty, f))
+                );
             }
             write!(f, [optional, ": ", member.ty()]);
         }

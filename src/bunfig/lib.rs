@@ -11,5 +11,7 @@ pub mod arguments;
 pub mod bunfig;
 pub mod error;
 
-pub use arguments::{load_config, load_config_path, load_config_with_cmd_args};
+pub use arguments::{
+    SectionReader, load_config, load_config_path, load_config_with_cmd_args, load_config_with_section,
+};
 pub use error::{Error, Result};

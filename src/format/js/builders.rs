@@ -119,6 +119,19 @@ impl<'fmt, 'a, Separator: Format<'a>> JoinNodesBuilder<'fmt, 'a, Separator> {
         content.fmt(self.fmt);
     }
 
+    /// [`JoinNodesBuilder::entry`], before which an empty line is not kept.
+    pub(crate) fn entry_without_empty_line(&mut self, content: &(impl Format<'a> + ?Sized)) {
+        if self.has_elements {
+            self.separator.fmt(self.fmt);
+        }
+        self.has_elements = true;
+        content.fmt(self.fmt);
+    }
+
+    pub(crate) fn has_comment_before(&self, start: u32) -> bool {
+        self.fmt.comments().has_comment_before(start)
+    }
+
     pub(crate) fn separator_no_entry(&mut self, span: Span) {
         if self.has_elements {
             if self.has_lines_before(span) {

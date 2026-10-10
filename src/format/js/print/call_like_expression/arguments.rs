@@ -5,6 +5,7 @@ use crate::js::format::{ExprOptions, FormatExpr};
 use crate::js::print::array_element_list::can_concisely_print_array_list;
 use crate::js::print::arrow_function_expression::{
     FormatJsArrowFunctionExpressionOptions, FunctionCacheMode, GroupedCallArgumentLayout,
+    write_signature_without_lines,
 };
 use crate::js::print::function::FormatFunctionOptions;
 use crate::js::print::parameters::{FormatFormalParameters, has_only_simple_parameters};
@@ -805,7 +806,7 @@ fn remove_soft_lines_of_cached_element(key: Span, f: &mut Formatter<'_>) -> bool
         return true;
     };
     let interned = f.intern(&format_with(|f| {
-        f.write_without_soft_lines(&format_with(|f| f.write_element(cached_element)));
+        write_signature_without_lines(&format_with(|f| f.write_element(cached_element)), f);
     }));
     let Some(interned) = interned else {
         return true;

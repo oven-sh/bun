@@ -30,6 +30,9 @@ pub const PARAMS: &[Param] = &[
     clap::param!(
         "--ignore-path <path>...         Files with patterns to ignore <d>(default: .gitignore and .prettierignore)<r>"
     ),
+    clap::param!(
+        "--ignore-pattern <pattern>...   Ignore the files that match, as a line of <b>.prettierignore<r> does"
+    ),
     clap::param!("--with-node-modules             Format files in <b>node_modules<r> too"),
     clap::param!("--no-error-on-unmatched-pattern  Do not fail if an argument matches no file"),
     clap::param!(
@@ -172,6 +175,8 @@ pub struct Options {
     pub config_precedence: Precedence,
     /// `None`: `.gitignore` and `.prettierignore`.
     pub ignore_path: Option<Vec<Vec<u8>>>,
+    /// Lines of an ignore file that is in the working directory.
+    pub ignore_pattern: Vec<Vec<u8>>,
     pub with_node_modules: bool,
     pub error_on_unmatched_pattern: bool,
     /// Nothing is said about a file that there is no parser for.
@@ -215,6 +220,7 @@ impl Default for Options {
             editorconfig: true,
             config_precedence: Precedence::default(),
             ignore_path: None,
+            ignore_pattern: Vec::new(),
             with_node_modules: false,
             error_on_unmatched_pattern: true,
             ignore_unknown: false,
@@ -273,7 +279,9 @@ fn option_of(flag: &[u8]) -> Option<&'static [u8]> {
 }
 
 impl Options {
-    fn set(
+    /// Takes in the flag that is called `name`. `value`: `None` for a flag that takes none.
+    /// `is_on`: it is not written `--no-..`.
+    pub(crate) fn set(
         &mut self,
         name: &'static [u8],
         value: Option<&[u8]>,
@@ -329,6 +337,7 @@ impl Options {
                 };
             }
             b"ignore-path" => self.ignore_path.get_or_insert_default().push(text.to_vec()),
+            b"ignore-pattern" => self.ignore_pattern.push(text.to_vec()),
             b"with-node-modules" => self.with_node_modules = is_on,
             b"error-on-unmatched-pattern" => self.error_on_unmatched_pattern = is_on,
             b"ignore-unknown" => self.ignore_unknown = is_on,
@@ -384,7 +393,21 @@ impl Options {
 
     /// `args`: what follows `format` on the command line.
     pub fn parse(args: &[&[u8]]) -> Result<Options, UsageError> {
-        let mut options = Options::default();
+        Options::default().with(args)
+    }
+
+    /// The same, where a flag that is not there is as `defaults` says: [`crate::bunfig::format`].
+    pub fn parse_over(mut defaults: Options, args: &[&[u8]]) -> Result<Options, UsageError> {
+        let alone = Options::parse(args)?;
+        // `--config` and `--no-config` are refused together. Either takes the place of what is there.
+        if alone.config.is_some() || !alone.config_lookup {
+            (defaults.config, defaults.config_lookup) = (None, true);
+        }
+        defaults.with(args)
+    }
+
+    fn with(self, args: &[&[u8]]) -> Result<Options, UsageError> {
+        let mut options = self;
         // The one flag that takes a value and has an opposite.
         let args = args.iter().copied().filter(|arg| {
             let is_no_config = *arg == b"--no-config";

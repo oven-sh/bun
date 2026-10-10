@@ -413,6 +413,7 @@ impl<'a> FormatExpr<'a> {
         if is_chain_expression
             && !is_suppressed
             && !f.file().is_javascript()
+            && !comments_stay_outside_of_parentheses_of_chain(f)
             && parentheses::expression::chain_expression_needs_parentheses(expr, f)
         {
             write!(f, ["(", format_leading_comments(span)]);
@@ -455,6 +456,11 @@ impl<'a> FormatExpr<'a> {
         }
         write_trailing_comments_of(node, f);
     }
+}
+
+/// `(/* comment */ a?.b).c` is `/* comment */ (a?.b).c` for oxfmt, in TypeScript as in JavaScript.
+fn comments_stay_outside_of_parentheses_of_chain(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// `(a?.b /* comment */).c`, `(a?.b) /* comment */.c`: typescript-estree has a `ChainExpression` around `a?.b`, which

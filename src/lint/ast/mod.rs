@@ -157,7 +157,6 @@ slices! {
         var_stmt: hir::StmtId,
         case_stmt: hir::StmtId,
         type_query_operands: hir::ExprId,
-        redeclarations: bind::Redeclaration,
         expr_kinds: u8,
         expr_kind_counts: u32,
     }

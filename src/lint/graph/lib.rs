@@ -76,6 +76,8 @@ struct Recorded<'h> {
     is_always_checked: bool,
     /// The path that it is linted under, if it is one of the files that are linted.
     linted_as: Option<Vec<u8>>,
+    /// If that is the name of a link: what the requests resolve to from there.
+    found_from_link: Vec<Vec<u8>>,
 }
 
 #[derive(Default)]
@@ -566,15 +568,7 @@ impl<'h> Graph<'h> {
                 found
             }
         };
-        Some(
-            found.map(|path| match self.known().real_paths.get_ref(&path[..]) {
-                Some(real) => real.clone(),
-                None => {
-                    let real = disk.realpath(&path);
-                    self.known().real_paths.insert_ref(path, real).clone()
-                }
-            }),
-        )
+        Some(found.map(|path| self.real(path)))
     }
 
     fn resolve_with_project(
@@ -601,10 +595,23 @@ impl<'h> Graph<'h> {
             .resolve_module_name(specifier, from, mode)
             .or_else(from_base_url)?;
         let path = match self.flavor().resolves_as_node() {
-            true => self.as_node_finds(specifier, found.file_name)?,
+            true => {
+                Cow::Owned(self.real(self.as_node_finds(specifier, found.file_name)?.into_owned()))
+            }
             false => Cow::Borrowed(found.file_name),
         };
         Some((path, found.is_external_library_import))
+    }
+
+    /// `path` with symbolic links followed.
+    fn real(&self, path: Vec<u8>) -> Vec<u8> {
+        match self.known().real_paths.get_ref(&path[..]) {
+            Some(real) => real.clone(),
+            None => {
+                let real = self.store.disk().realpath(&path);
+                self.known().real_paths.insert_ref(path, real).clone()
+            }
+        }
     }
 
     /// `found`: what TypeScript finds for `specifier`. Which of the files with that name and another extension does oxlint find?
@@ -659,8 +666,18 @@ impl<'h> Graph<'h> {
                 .0;
             (!(it.may_be_itself && *resolved == *path)).then_some((resolved, declaration, it.kind))
         });
+        let link = linted_as.as_deref().map(from_native);
+        let found_from = |link: Vec<u8>| {
+            let found = requests.iter().filter_map(|it| {
+                self.resolve_path(&link, it.specifier, it.kind == RequestKind::Other)
+            });
+            found.map(|it| it.0.into_owned()).collect()
+        };
         Recorded {
             requests: resolved.collect(),
+            found_from_link: link
+                .filter(|it| *it != path)
+                .map_or_else(Vec::new, found_from),
             path,
             is_always_checked,
             linted_as,
@@ -769,6 +786,7 @@ impl<'h> Graph<'h> {
                     }
                     unknown.push(target);
                 }
+                unknown.extend(record.found_from_link.iter().map(|it| all.intern(it)));
                 for list in [&mut is_known, &mut is_always_checked] {
                     list.resize(all.paths.len(), false);
                 }

@@ -76,7 +76,6 @@ mod variables;
 use references::{RawReference, ReferenceSite, References};
 use scopes::{Block, ScopeTree};
 use variables::Variables;
-pub(crate) use variables::{name_of_declaration, root_of_pattern};
 
 /// Each part is computed the first time it is needed.
 #[derive(Default)]

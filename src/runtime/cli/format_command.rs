@@ -5,6 +5,9 @@ use bun_core::{Global, ZStr};
 use bun_format_conformance::{Bundle, Flags, Format};
 use bun_lint_driver::fmt::cli::{Options, UsageError};
 
+use super::command::{ContextData, Tag};
+use super::lint_command::{defaults_of_bunfig, run_and_exit, usage_error};
+
 pub(crate) struct FormatCommand;
 
 /// For the help.
@@ -24,7 +27,7 @@ fn test_runner(flag: &[u8]) -> Option<fn(&Bundle<'_>, &Flags<'_>, Format<'_>)> {
 
 impl FormatCommand {
     /// `args`: what follows `format`.
-    pub(crate) fn exec(args: &[&ZStr]) -> ! {
+    pub(crate) fn exec(ctx: &mut ContextData, args: &[&ZStr]) -> ! {
         if HAS_TEST_RUNNER
             && let [first, rest @ ..] = args
             && let Some(run) = test_runner(first.as_bytes())
@@ -49,13 +52,21 @@ impl FormatCommand {
         let args: Vec<&[u8]> = args.iter().map(|arg| arg.as_bytes()).collect();
         let options = match Options::parse(&args) {
             Ok(options) => options,
-            Err(UsageError(message)) => super::lint_command::usage_error("format", &message),
+            Err(UsageError(message)) => usage_error("format", &message),
         };
         if options.help {
-            crate::cli::command::tag_print_help(crate::cli::command::Tag::FormatCommand, true);
+            crate::cli::command::tag_print_help(Tag::FormatCommand, true);
             Global::exit(0);
         }
-        super::lint_command::run_and_exit(b"format", options.cwd.as_deref(), |environment| {
+        let cwd = options.cwd.clone();
+        run_and_exit(b"format", cwd.as_deref(), |environment| {
+            let read = bun_lint_driver::bunfig::format;
+            let defaults = defaults_of_bunfig(ctx, Tag::FormatCommand, b"format", read);
+            let options = match defaults.map(|defaults| Options::parse_over(defaults, &args)) {
+                None => options,
+                Some(Ok(options)) => options,
+                Some(Err(UsageError(message))) => usage_error("format", &message),
+            };
             bun_lint_driver::fmt::run(&options, environment)
         })
     }

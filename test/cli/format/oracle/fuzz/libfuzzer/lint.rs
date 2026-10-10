@@ -9,7 +9,7 @@ use bun_fuzz::{Input, Run, show, shows};
 use bun_lint::ast::File;
 use bun_lint::language::{Parser, SourceType};
 use bun_lint::context::Severity;
-use bun_lint::linter::{LintOptions, LintResult, Registry, ResolvedConfig};
+use bun_lint::linter::{LintOptions, LintResult, Registry, ResolvedConfig, severity_of};
 use bun_lint::options::Json;
 use bun_lint::runner::RuleEntry;
 use bun_sema::atom::{Intern, Interner};
@@ -87,6 +87,18 @@ fn own_config(json: &[u8], variant: usize, is_oxlint: bool, with_the_rest: bool)
     let linter = &setup().linter;
     let json = bun_lint::json::parse(json)?;
     let mut config = ResolvedConfig::from_json(linter.registry(), &json, &mut Vec::new());
+    // That has read the names as ESLint does, for which the rules that follow oxlint do not exist.
+    config.prefers_typescript_rules = is_oxlint;
+    for (id, value) in json.get(b"rules").and_then(Json::as_object).unwrap_or_default().iter().filter(|_| is_oxlint) {
+        let value: &[Json] = match value {
+            Json::Array(items) => items,
+            value => std::slice::from_ref(value),
+        };
+        let found = linter.registry().find_preferring(id, true).filter(|it| config.rule(it).is_none());
+        if let (Some(rule), Some(severity)) = (found, value.first().and_then(severity_of)) {
+            config.configure(rule, severity, &value[1..]);
+        }
+    }
     if config.error.is_some() || !config.configured().all(|it| needs_only_the_file(it.entry)) {
         return None;
     }

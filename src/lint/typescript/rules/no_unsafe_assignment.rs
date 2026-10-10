@@ -120,9 +120,11 @@ impl<'a> Destructured<'a> {
         sender: Sender<'a>,
         message: Message,
     ) -> Self {
+        // tsgolint looks at the name of a binding element, whatever its default is.
+        let is_name_alone = matches!(target, Target::Pat(pat) if pat.file().language().is_oxlint);
         Destructured {
-            span: span_of_value(element),
-            has_default: element.default.is_some(),
+            span: if is_name_alone { target.span() } else { span_of_value(element) },
+            has_default: element.default.is_some() && !is_name_alone,
             target,
             sender,
             message,
@@ -307,6 +309,14 @@ fn check_object_destructure<'a>(
     }
 }
 
+/// What tsgolint has for what is assigned: with its parentheses, but for the value of a property.
+fn sender_span(sender_node: Expr) -> Span {
+    match sender_node.parent() {
+        Node::Prop(property) if !property.is_jsx_attribute() => sender_node.span(),
+        _ => sender_node.outer_span(),
+    }
+}
+
 /// tsgolint's `diagnosticTypeText`
 fn diagnostic_type_text(ty: Type) -> bstr::BString {
     match is_intrinsic_error_type(ty) {
@@ -337,7 +347,7 @@ fn report_any_assignment<'a>(
     };
     // oxlint points at what is assigned, or at the `this`.
     let place = match cx.language().is_oxlint {
-        true => any_this.unwrap_or(sender_node).outer_span(),
+        true => any_this.map_or_else(|| sender_span(sender_node), |this| this.outer_span()),
         false => reporting_node,
     };
     cx.report(place, message)
@@ -399,7 +409,7 @@ fn report_unsafe_assignment<'a>(
         return false;
     };
     let place = if cx.language().is_oxlint {
-        sender_node.outer_span()
+        sender_span(sender_node)
     } else {
         reporting_node
     };

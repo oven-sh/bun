@@ -787,7 +787,7 @@ fn leading_comments_of_right_side<'a>(right: Expr<'a>, f: &Formatter<'a>) -> Lea
         return LeadingComments::Break;
     }
     for comment in f.comments().comments_before_iter(start) {
-        if comment.leads_left_edge_of(right) {
+        if comment.leads_left_edge_of(right.span()) {
             continue;
         }
         if comment.followed_by_newline() || comment.is_indentable_block() {

@@ -37,6 +37,8 @@ pub(crate) struct Comment {
     pub(crate) span: Span,
     /// See [`Comment::start`].
     moved_to: u32,
+    /// Where the member access ends that it leads, if it has been moved to the start of that. Otherwise 0.
+    leads_until: u32,
     pub(crate) kind: CommentKind,
     flags: u16,
 }
@@ -123,14 +125,11 @@ impl Comment {
         self.flags & FOLLOWED_BY_NEWLINE != 0
     }
 
-    /// `a⏎// comment⏎.b.c`: whether it has been moved to the start of `e` because it leads something that `e` starts
-    /// with, here `a.b`, and not `e`.
-    pub(crate) fn leads_left_edge_of(self, e: Expr<'_>) -> bool {
-        self.is_moved()
-            && e.span().contains_offset(self.span.start)
-            && inner_of_link(e).is_none_or(|inner| {
-                self.span.start < inner.span().end && inner.tag() != ExprTag::Ident
-            })
+    /// `a⏎// comment⏎.b.c`: whether it, which is before the node at `span`, leads a member access that the node starts
+    /// with, here `a.b`, and not the node.
+    #[inline]
+    pub(crate) fn leads_left_edge_of(self, span: Span) -> bool {
+        self.leads_until != 0 && self.leads_until < span.end
     }
 
     /// Prettier's `isIndentableBlockComment`: it has several lines, and every line but the first
@@ -220,6 +219,7 @@ pub(crate) fn collect<'a>(
         comments.push(Comment {
             span,
             moved_to: NOT_MOVED,
+            leads_until: 0,
             kind,
             flags,
         });
@@ -559,7 +559,10 @@ fn attach_in_link<'a>(
         let (moved_to, flag) = match attached_to {
             AttachedTo::Preceding => (inner.span().end, TRAILS_LINK),
             AttachedTo::Link if is_link_of_chain => (inner.span().end, LEADS_LINK),
-            AttachedTo::Link => (link.span().start, 0),
+            AttachedTo::Link => {
+                gap[at].leads_until = link.span().end;
+                (link.span().start, 0)
+            }
             AttachedTo::Following => match inner_link_start {
                 Some(start) => (start, LEADS_LINK),
                 None => continue,
@@ -1213,6 +1216,16 @@ impl<'a> Comments<'a> {
     /// The comments that end at or before `pos`.
     pub(crate) fn comments_before(&self, pos: u32) -> &'a [Comment] {
         let count = self.comments_before_iter(pos).count();
+        &self.unprinted_comments()[..count]
+    }
+
+    /// The comments that lead the node at `span`: those before it, but for what leads something that it starts with.
+    /// For Prettier that is part of what is written for the node, and breaks the groups in it.
+    pub(crate) fn comments_leading_node(&self, span: Span) -> &'a [Comment] {
+        let count = self
+            .comments_before_iter(span.start)
+            .take_while(|comment| !comment.leads_left_edge_of(span))
+            .count();
         &self.unprinted_comments()[..count]
     }
 

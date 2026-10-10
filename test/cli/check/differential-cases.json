@@ -15042,6 +15042,54 @@
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"], \"module\": \"esnext\", \"target\": \"es2022\" } }\n"
     }
   },
+  "93-P06a": {
+    "files": {
+      "a.ts": "namespace N { export class {} }\nconst sentinel: number = \"\";\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "93-P06b": {
+    "files": {
+      "a.ts": "{ export class {} }\nfunction f() { export class {} }\nconst sentinel: number = \"\";\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "93-P06c": {
+    "files": {
+      "a.ts": "namespace N { export abstract class { m() {} } export class {} }\nN.x;\nconst sentinel: number = \"\";\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "93-P07a": {
+    "files": {
+      "a.ts": "class B { async a! }\nclass C { async a!: number }\nconst sentinel: number = \"\";\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "93-P07b": {
+    "files": {
+      "a.ts": "class B { async static !x = 0 }\nconst sentinel: number = \"\";\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "93-P07c": {
+    "files": {
+      "a.ts": "class B { async a!() {} }\nconst sentinel: number = \"\";\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "93-P08a": {
+    "files": {
+      "a.ts": "var x = function() {} = 1;\n(function() {} = 1);\nconst sentinel: number = \"\";\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "93-P08b": {
+    "files": {
+      "a.ts": "var x = function() {} += 1, y = ;\nconst sentinel: number = \"\";\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
   "93-R01a": {
     "files": {
       "a.ts": "type M = { [K in \"a\" | \"b\" as A]: N[\"a\"] };\ntype A = M[\"a\"] & string;\ntype N = { [P in \"a\" | \"b\"]: M[\"b\"] };\nconst sentinel: number = \"\";\n",

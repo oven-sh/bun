@@ -5,7 +5,7 @@
 
 use crate::host::{self, error_line, os_text, output_line};
 use bun_lint_driver::cli::{Options, PARAMS, UsageError};
-use bun_lint_driver::{Environment, Script, Stream};
+use bun_lint_driver::{Environment, Script, Stream, bunfig};
 use std::io::{IsTerminal, Write};
 use std::process::Stdio;
 
@@ -66,6 +66,13 @@ fn or_exit<T>(parsed: Result<T, UsageError>) -> T {
     })
 }
 
+/// What the section `name` of the bunfig.toml in the working directory says. In `bun lint` Bun's own reader of that file
+/// finds it, also where `--config=` says, and shows the line that is wrong.
+fn defaults_of_bunfig<T>(name: &[u8], read: bunfig::Read<T>) -> Option<T> {
+    let text = host::read("bunfig.toml").ok()?;
+    or_exit(bunfig::of_text(&text, name, read).map_err(UsageError))
+}
+
 enum Command {
     Lint(Box<Options>),
     /// The command line of `bun lint` cannot be read.
@@ -115,6 +122,25 @@ pub(crate) fn run(args: &[String]) {
         );
         std::process::exit(1);
     }
+    let command = match (command, &args[..]) {
+        (Command::Format(options), [_, rest @ ..]) => {
+            let defaults = defaults_of_bunfig(b"format", bunfig::format);
+            Command::Format(defaults.map_or(options, |defaults| {
+                Box::new(or_exit(bun_lint_driver::fmt::cli::Options::parse_over(
+                    defaults, rest,
+                )))
+            }))
+        }
+        (Command::Lint(options), args) if !matches!(args, [b"--run-eslint-tests", ..]) => {
+            let defaults = defaults_of_bunfig(b"lint", bunfig::lint);
+            match defaults.map(|defaults| Options::parse_over(defaults, args)) {
+                None => Command::Lint(options),
+                Some(Ok(options)) => Command::Lint(Box::new(options)),
+                Some(Err(UsageError(message))) => Command::Refused(message),
+            }
+        }
+        (command, _) => command,
+    };
     let libs = host::variable("BUN_SEMA_TS_LIB")
         .unwrap_or_default()
         .into_bytes();

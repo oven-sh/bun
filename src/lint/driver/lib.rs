@@ -3,12 +3,14 @@
 //! cores, and prints what they report.
 //!
 //! - [`cli`]: the flags.
+//! - [`bunfig`]: their defaults in bunfig.toml.
 //! - [`run`]: `bun lint`, given the flags and an [`Environment`].
 //! - [`fmt`]: the same for `bun format`.
 
 #![forbid(unsafe_code)]
 
 mod args;
+pub mod bunfig;
 pub mod cli;
 mod configs;
 mod deprecated;

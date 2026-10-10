@@ -303,6 +303,8 @@ pub struct Options {
     pub plugins: Vec<(&'static [u8], bool)>,
     /// `--type-aware`, `--no-type-aware`. `None`: as the configuration says.
     pub type_aware: Option<bool>,
+    /// The command line has `--type-aware`.
+    pub has_type_aware_flag: bool,
     pub project: Option<Vec<u8>>,
     /// `0`: the number of cores.
     pub threads: usize,
@@ -386,6 +388,7 @@ impl Default for Options {
             rules: false,
             plugins: Vec::new(),
             type_aware: None,
+            has_type_aware_flag: false,
             project: None,
             threads: 0,
             timing: false,
@@ -418,7 +421,7 @@ fn list(value: &[u8]) -> Vec<Vec<u8>> {
         .collect()
 }
 
-fn severity(name: &[u8], value: &[u8]) -> Result<Severity, UsageError> {
+pub(crate) fn severity(name: &[u8], value: &[u8]) -> Result<Severity, UsageError> {
     match value {
         b"off" | b"0" => Ok(Severity::Off),
         b"warn" | b"1" => Ok(Severity::Warn),
@@ -443,20 +446,24 @@ fn object(name: &[u8], value: &[u8], into: &mut Vec<(Vec<u8>, Json)>) -> Result<
             b".",
         ]);
     };
-    // `mergeRepeatedObjects`
+    merge(into, entries);
+    Ok(())
+}
+
+/// optionator's `mergeRepeatedObjects`
+fn merge(into: &mut Vec<(Vec<u8>, Json)>, entries: Vec<(Vec<u8>, Json)>) {
     for (key, value) in entries {
         match into.iter_mut().find(|it| it.0 == key) {
             Some(entry) => entry.1 = value,
             None => into.push((key, value)),
         }
     }
-    Ok(())
 }
 
 impl Options {
     /// Takes in the flag that is called `name`. `value`: `None` for a flag that takes none.
     /// `is_on`: it is not written `--no-..`.
-    fn set(
+    pub(crate) fn set(
         &mut self,
         name: &'static [u8],
         value: Option<&[u8]>,
@@ -537,7 +544,7 @@ impl Options {
             b"pass-on-no-patterns" => self.pass_on_no_patterns = is_on,
             b"exit-on-fatal-error" => self.exit_on_fatal_error = is_on,
             b"print-config" => self.print_config = owned(),
-            b"type-aware" => self.type_aware = Some(is_on),
+            b"type-aware" => (self.type_aware, self.has_type_aware_flag) = (Some(is_on), is_on),
             b"project" => self.project = owned(),
             b"threads" | b"concurrency" => match (name, text) {
                 (b"concurrency", b"auto" | b"off") => {}
@@ -616,9 +623,51 @@ impl Options {
         Ok(())
     }
 
+    /// As `--rule` with what `rules` is.
+    pub(crate) fn add_rules(&mut self, rules: Vec<(Vec<u8>, Json)>) {
+        merge(&mut self.rule, rules);
+    }
+
+    /// As `--parser-options` with what `options` is.
+    pub(crate) fn add_parser_options(&mut self, options: Vec<(Vec<u8>, Json)>) {
+        merge(&mut self.parser_options, options);
+    }
+
+    /// What is set so far was not written for ESLint or for oxlint.
+    pub(crate) fn forget_whose_flags_it_has(&mut self) {
+        self.has_flag_of_eslint = false;
+        self.has_flag_of_oxlint = false;
+        self.has_type_aware_flag = false;
+    }
+
     /// `args`: what follows `lint` on the command line.
     pub fn parse(args: &[&[u8]]) -> Result<Options, UsageError> {
-        let mut options = Options::default();
+        Options::default().with(args)
+    }
+
+    /// The same, where a flag that is not there is as `defaults` says: [`crate::bunfig::lint`].
+    pub fn parse_over(mut defaults: Options, args: &[&[u8]]) -> Result<Options, UsageError> {
+        let alone = Options::parse(args)?;
+        let names = |flag: &[u8]| {
+            args.iter().any(|arg| {
+                let name = arg.strip_prefix(b"--").unwrap_or_default();
+                name.strip_prefix(b"no-").unwrap_or(name).starts_with(flag)
+            })
+        };
+        // ESLint refuses the flag and `..-severity` together. Either takes the place of what is there.
+        if names(b"report-unused-disable-directives") {
+            defaults.report_unused_disable_directives = false;
+            defaults.report_unused_disable_directives_severity = None;
+        }
+        // ESLint refuses `--fix-type` in a run that fixes nothing. As a default it waits for one that does.
+        if !alone.fix && !alone.fix_dry_run {
+            defaults.fix_type = None;
+        }
+        defaults.with(args)
+    }
+
+    fn with(self, args: &[&[u8]]) -> Result<Options, UsageError> {
+        let mut options = self;
         // What oxlint writes differently.
         let (mut rewritten, count): (Vec<&[u8]>, usize) = (Vec::new(), args.len());
         for (at, arg) in args.iter().copied().enumerate() {

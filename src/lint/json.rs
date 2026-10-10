@@ -76,6 +76,20 @@ pub enum Notation {
 /// is `null`, a date of TOML is a string, as it is written. No document of YAML is `null`, several are
 /// an array. A repeated key is there as often as it is written. `Err`: what is wrong with `text`.
 pub fn parse_as(notation: Notation, text: &[u8]) -> Result<Json, Vec<u8>> {
+    // An alias of YAML is a value once more: a short text can stand for any number of them.
+    let length = bun_core::strings::without_utf8_bom(text).len();
+    let mut left = length.saturating_mul(64).clamp(1 << 10, 1 << 23);
+    with_parsed(notation, text, |root| from_expr(root, 0, &mut left))?
+        .ok_or_else(|| b"It has too many values".to_vec())
+}
+
+/// Calls `read` with the value that `text` is in `notation` as Bun's parser makes it, where each part knows its place in
+/// `text`. The value does not outlive the call. `Err`: what is wrong with `text`.
+pub fn with_parsed<T>(
+    notation: Notation,
+    text: &[u8],
+    read: impl FnOnce(&Expr) -> T,
+) -> Result<T, Vec<u8>> {
     let arena = bun_alloc::Arena::new();
     let mut allocator = ASTMemoryAllocator::borrowing(&arena);
     let _scope = allocator.enter();
@@ -91,9 +105,13 @@ pub fn parse_as(notation: Notation, text: &[u8]) -> Result<Json, Vec<u8>> {
         let message = log.msgs.first().map(|it| it.data.text.to_vec());
         return Err(message.unwrap_or_else(|| b"Syntax error".to_vec()));
     };
-    // An alias of YAML is a value once more: a short text can stand for any number of them.
-    let mut left = text.len().saturating_mul(64).clamp(1 << 10, 1 << 23);
-    from_expr(&root, 0, &mut left).ok_or_else(|| b"It has too many values".to_vec())
+    Ok(read(&root))
+}
+
+/// A value of one of Bun's parsers, or a part of one, as [`parse_as`] returns it. `None`: it is nested too deep.
+pub fn from_parsed(expr: &Expr) -> Option<Json> {
+    let mut left = usize::MAX;
+    from_expr(expr, 0, &mut left)
 }
 
 /// `left`: how many more values there can be.

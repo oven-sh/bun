@@ -165,10 +165,15 @@ for (const [name, text] of readBundle(join(import.meta.dir, "../../../../lint/co
     write("lint", variant, 0, Buffer.from(it.code));
     // The same as a configuration of its own (flag 6), alone and beside all other rules (flag 7).
     if (hasOptions) {
-      const config = { rules: { [id]: [2, ...it.options] }, settings: it.settings, languageOptions: it.languageOptions };
+      // A member that is `null` in the bundle is not there in the test case. The parser is the variant's.
+      const { parser, ...language } = it.languageOptions ?? {};
+      const given = (all: object) => Object.fromEntries(Object.entries(all).filter(([, value]) => value != null));
+      const config = given({ rules: { [id]: [2, ...it.options] }, settings: it.settings, languageOptions: given(language) });
       const text = Buffer.from(`${JSON.stringify(config)}\n${code}`);
-      write("lint", variant, 0, text, 1 << 6);
-      if (at % 4 == 0) write("lint", variant, 0, text, (1 << 6) | (1 << 7));
+      // Flag 0: the names are oxlint's.
+      const flags = (1 << 6) | (name.startsWith("oxlint/") ? 1 : 0);
+      if (at % 2 == 0) write("lint", variant, 0, text, flags);
+      if (at % 8 == 0) write("lint", variant, 0, text, flags | (1 << 7));
     }
   }
 }

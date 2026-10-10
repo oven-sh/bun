@@ -271,14 +271,18 @@ fn write_signatures<'a>(members: List<'a, Member<'a>>, is_interface: bool, f: &m
     let mut joiner = f.join_nodes_with_soft_line();
     let mut iter = members.iter().peekable();
     while let Some(signature) = iter.next() {
-        joiner.entry(
-            signature.span(),
-            &FormatTSSignature {
-                signature,
-                next_signature: iter.peek().copied(),
-                is_interface,
-            },
-        );
+        let content = FormatTSSignature {
+            signature,
+            next_signature: iter.peek().copied(),
+            is_interface,
+        };
+        // Prettier has no node for the `...`.
+        match super::flow::is_inexact_mark(signature)
+            && !joiner.has_comment_before(signature.span().start)
+        {
+            true => joiner.entry_without_empty_line(&content),
+            false => joiner.entry(signature.span(), &content),
+        }
     }
 
     if is_consistent {
@@ -460,7 +464,10 @@ fn comments_behind_colon_of_property_signature_stay(f: &Formatter<'_>) -> bool {
 /// Of the comments between the name of a property signature and its type `ty`, those that trail
 /// the name: those on its line that are before the `:`, or at the end of the line, unless a union
 /// or an intersection follows (Prettier's `handlePropertySignatureComments`).
-fn comments_after_property_name<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> &'a [Comment] {
+pub(super) fn comments_after_property_name<'a>(
+    ty: TypeNode<'a>,
+    f: &Formatter<'a>,
+) -> &'a [Comment] {
     let comments = f.comments().comments_before(ty.span().start);
     let colon = ty.annotation_span().start;
     let before_colon = comments

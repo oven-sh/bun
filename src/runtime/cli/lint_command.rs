@@ -7,10 +7,11 @@ use bstr::BStr;
 
 use bun_core::{Global, Output, ZStr};
 use bun_lint_driver::cli::{Options, UsageError};
-use bun_lint_driver::{Environment, Outcome, Script, Stream};
+use bun_lint_driver::{Environment, Outcome, Script, Stream, bunfig};
 use bun_sys::File;
 
 use super::check_command::working_directory;
+use super::command::{ContextData, Tag};
 
 pub(crate) struct LintCommand;
 
@@ -50,6 +51,41 @@ fn cwd_before(command: &[u8]) -> Option<&'static [u8]> {
         found = given.or(found);
     }
     found
+}
+
+/// `--config=<path>` among the flags of `bun`, which precede `command`. Without the `=` the path is taken for the command.
+fn bunfig_before(command: &[u8]) -> Option<&'static [u8]> {
+    let flags = (bun_core::argv().into_iter()).take_while(|arg| *arg != command);
+    flags
+        .filter_map(|arg| {
+            arg.strip_prefix(b"--config=")
+                .or_else(|| arg.strip_prefix(b"-c="))
+        })
+        .last()
+}
+
+/// What the section of bunfig.toml for `command` says, which `read` reads. `None`: there is no such file or section.
+/// A file that cannot be used ends the process. It is looked for in the working directory: call this after `--cwd`.
+pub(crate) fn defaults_of_bunfig<T>(
+    ctx: &mut ContextData,
+    tag: Tag,
+    command: &[u8],
+    read: bunfig::Read<T>,
+) -> Option<T> {
+    let mut defaults = None;
+    let mut section = |section: &bun_ast::Expr| match read(section) {
+        Ok(read) => {
+            defaults = Some(read);
+            Ok(())
+        }
+        Err(refusal) => Err((refusal.at, refusal.message)),
+    };
+    let path = bunfig_before(command);
+    if let Err(err) = bun_bunfig::load_config_with_section(tag, path, ctx, Some(&mut section)) {
+        Output::err(err, "failed to load bunfig", ());
+        Global::exit(2);
+    }
+    defaults
 }
 
 /// `--disallow-code-generation-from-strings` among the flags of `bun`, which precede `command`: it holds for the plugins and
@@ -204,7 +240,7 @@ pub(crate) fn run_and_exit(
 
 impl LintCommand {
     /// `args`: what follows `lint`.
-    pub(crate) fn exec(args: &[&ZStr]) -> ! {
+    pub(crate) fn exec(ctx: &mut ContextData, args: &[&ZStr]) -> ! {
         let args: Vec<&[u8]> = args.iter().map(|arg| arg.as_bytes()).collect();
         if HAS_TEST_RUNNER && let [b"--run-eslint-tests", rest @ ..] = &args[..] {
             run_and_exit(b"lint", None, |environment| Outcome {
@@ -232,11 +268,18 @@ impl LintCommand {
             }),
         };
         if options.help {
-            crate::cli::command::tag_print_help(crate::cli::command::Tag::LintCommand, true);
+            crate::cli::command::tag_print_help(Tag::LintCommand, true);
             Global::exit(0);
         }
         run_and_exit(b"lint", options.cwd.as_deref(), |environment| {
-            bun_lint_driver::run(&options, environment)
+            let defaults = defaults_of_bunfig(ctx, Tag::LintCommand, b"lint", bunfig::lint);
+            match defaults.map(|defaults| Options::parse_over(defaults, &args)) {
+                None => bun_lint_driver::run(&options, environment),
+                Some(Ok(options)) => bun_lint_driver::run(&options, environment),
+                Some(Err(UsageError(message))) => {
+                    bun_lint_driver::refuse_command_line(&message, environment)
+                }
+            }
         })
     }
 }

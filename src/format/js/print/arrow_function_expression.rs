@@ -445,6 +445,19 @@ fn may_break_after_short_prefix<'a>(body: Expr<'a>, f: &Formatter<'a>) -> bool {
     }
 }
 
+/// The parameters and the return type of a function that is hugged as an argument: Prettier's `removeLines`, after which
+/// the printer still chooses how a member chain or the arguments of a call in them are written, and breaks them if the
+/// line is too long. oxfmt writes them on one line.
+pub(crate) fn write_signature_without_lines<'a>(
+    content: &(impl Format<'a> + ?Sized),
+    f: &mut Formatter<'a>,
+) {
+    match f.options().flavor.is_oxfmt() {
+        true => f.write_without_soft_lines(content),
+        false => f.write_with_lines_removed(content),
+    }
+}
+
 /// Whether `expression` is a template that has a line break in its text and starts on the line of
 /// the token before it.
 #[inline]
@@ -570,7 +583,7 @@ impl<'a> Format<'a> for FormatSignature<'a> {
         });
         let flattened = FormatContentWithCacheMode::new(|| params.span(), flattened, cache_mode);
         let flattened = format_with(|f| match should_remove_soft_lines {
-            true => f.write_without_soft_lines(&flattened),
+            true => write_signature_without_lines(&flattened, f),
             false => flattened.fmt(f),
         });
         write!(

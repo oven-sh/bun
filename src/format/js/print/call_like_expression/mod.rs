@@ -46,6 +46,13 @@ fn write_call<'a>(
     );
 
     if keeps_arguments_on_one_line(e, call, f) {
+        // This is no member chain, so what leads `a.b` is written before the `a`, if it is the next comment.
+        if !f.is_quiet()
+            && let Some(object) = callee.object()
+        {
+            let comments = f.comments().comments_leading_link(object.span().end);
+            FormatLeadingComments::Comments(comments).fmt(f);
+        }
         let arguments = InTailwindContext(context, FormatArgumentsOnOneLine(call.args()));
         return write!(f, [head, arguments]);
     }

@@ -14,6 +14,7 @@
 // | M6 | a `#` at the start, as it is and escaped | minimatch, with and without `nocomment` |
 // | M7 | `MINIMATCH_3_MAKE_RE`, and with `dot` | `makeRe(pattern).test(path)` of minimatch 3.1.5 |
 // | M8 | `MINIMATCH_3`, `MINIMATCH_3_DOT`; `matches_base` of these and of `MINIMATCH` | `minimatch()` of 3.1.5, with and without `matchBase`; of 10.2.6 with it |
+// | N1 | text that is not UTF-8, in all modes that follow a package of JavaScript | the packages, on `Buffer.toString()` of the bytes |
 // | P1, P1m | `MICROMATCH_DOT`, and without `dot` | micromatch |
 // | P2, P3 | `FAST_GLOB_DOT`, and `partial` of it | fast-glob |
 // | I1, I2, I3, Im | `Npm5`, `Npm705`, `Npm7012` | `ignore` 5.3.2, 7.0.5, 7.0.12 |

@@ -1611,22 +1611,23 @@ pub(crate) mod command {
     #[inline(never)]
     fn exec_lint(log: &mut bun_ast::Log) -> CmdResult {
         // LintCommand parses its own argv.
-        init(Tag::LintCommand, log)?;
+        let ctx = init(Tag::LintCommand, log)?;
         let argv = argv_zslice();
         // After the flags of `bun`, and those of `BUN_OPTIONS`.
         let lint = argv.iter().position(|arg| arg.as_bytes() == b"lint");
-        super::lint_command::LintCommand::exec(&argv[lint.map_or(argv.len(), |at| at + 1)..])
+        super::lint_command::LintCommand::exec(ctx, &argv[lint.map_or(argv.len(), |at| at + 1)..])
     }
 
     #[cold]
     #[inline(never)]
     fn exec_format(log: &mut bun_ast::Log) -> CmdResult {
         // FormatCommand parses its own argv.
-        init(Tag::FormatCommand, log)?;
+        let ctx = init(Tag::FormatCommand, log)?;
         let argv = argv_zslice();
         // After the flags of `bun`, and those of `BUN_OPTIONS`.
         let format = argv.iter().position(|arg| arg.as_bytes() == b"format");
-        super::format_command::FormatCommand::exec(&argv[format.map_or(argv.len(), |at| at + 1)..])
+        let args = &argv[format.map_or(argv.len(), |at| at + 1)..];
+        super::format_command::FormatCommand::exec(ctx, args)
     }
 
     #[cold]

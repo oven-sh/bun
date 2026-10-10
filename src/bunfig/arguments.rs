@@ -15,6 +15,20 @@ use bun_standalone_graph::StandaloneModuleGraph::StandaloneModuleGraph;
 
 use crate::bunfig::Bunfig;
 
+/// Reads `[lint]` or `[format]` for the command that it is for, which knows its flags. `Err`: what is wrong with the
+/// section, and where.
+pub type SectionReader<'a> =
+    dyn FnMut(&bun_ast::Expr) -> Result<(), (bun_ast::Loc, Vec<u8>)> + 'a;
+
+/// What the process ends with if its bunfig cannot be used. For `bun lint` and `bun format` that is what ESLint and
+/// Prettier end with if their configuration cannot.
+fn exit_code_of_failure(cmd: CommandTag) -> u32 {
+    match cmd {
+        CommandTag::LintCommand | CommandTag::FormatCommand => 2,
+        _ => 1,
+    }
+}
+
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 
 /// `None` when `dir/path` does not fit: nothing could be opened at such a path anyway.
@@ -42,6 +56,7 @@ fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
 }
 
 fn unreadable_config(
+    cmd: CommandTag,
     auto_loaded: bool,
     err: &bun_sys::Error,
     config_path: &[u8],
@@ -54,7 +69,7 @@ fn unreadable_config(
         err,
         BStr::new(config_path),
     );
-    Global::exit(1);
+    Global::exit(exit_code_of_failure(cmd));
 }
 
 fn load_bunfig(
@@ -62,11 +77,12 @@ fn load_bunfig(
     auto_loaded: bool,
     config_path: &ZStr,
     ctx: Context<'_>,
+    section: Option<&mut SectionReader<'_>>,
 ) -> Result<(), crate::Error> {
     let source =
         match bun_ast::to_source(config_path, bun_ast::ToSourceOptions { convert_bom: true }) {
             Ok(s) => s,
-            Err(err) => return unreadable_config(auto_loaded, &err, config_path.as_bytes()),
+            Err(err) => return unreadable_config(cmd, auto_loaded, &err, config_path.as_bytes()),
         };
 
     bun_ast::stmt::data::Store::create();
@@ -89,7 +105,7 @@ fn load_bunfig(
         unsafe { (*log_ptr).level = lvl };
     });
     ctx.debug.loaded_bunfig = true;
-    Bunfig::parse(cmd, &source, ctx)
+    Bunfig::parse(cmd, &source, ctx, section)
 }
 
 fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Error> {
@@ -100,7 +116,7 @@ fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Er
 
     let mut config_buf = bun_paths::path_buffer_pool::get();
     if let Some(path) = get_home_config_path(&mut config_buf) {
-        load_bunfig(cmd, true, path, ctx)?;
+        load_bunfig(cmd, true, path, ctx, None)?;
     }
     Ok(())
 }
@@ -110,6 +126,16 @@ pub fn load_config_path(
     auto_loaded: bool,
     config_path: &ZStr,
     ctx: Context<'_>,
+) -> Result<(), crate::Error> {
+    load_config_path_with_section(cmd, auto_loaded, config_path, ctx, None)
+}
+
+fn load_config_path_with_section(
+    cmd: CommandTag,
+    auto_loaded: bool,
+    config_path: &ZStr,
+    ctx: Context<'_>,
+    section: Option<&mut SectionReader<'_>>,
 ) -> Result<(), crate::Error> {
     // `cmd.read_global_config()` is evaluated at runtime (see
     // the note on `Parser::parse` in src/bunfig/bunfig.rs);
@@ -130,11 +156,11 @@ pub fn load_config_path(
         }
     }
 
-    load_bunfig(cmd, auto_loaded, config_path, ctx)
+    load_bunfig(cmd, auto_loaded, config_path, ctx, section)
 }
 
 #[cold]
-fn report_bunfig_load_failure(log: *mut bun_ast::Log, err: crate::Error) -> ! {
+fn report_bunfig_load_failure(cmd: CommandTag, log: *mut bun_ast::Log, err: crate::Error) -> ! {
     // SAFETY: process-global Log; see `load_bunfig` note.
     let log = unsafe { &mut *log };
     if log.has_any() {
@@ -142,13 +168,24 @@ fn report_bunfig_load_failure(log: *mut bun_ast::Log, err: crate::Error) -> ! {
         Output::print_error("\n");
     }
     Output::err(err, "failed to load bunfig", ());
-    Global::crash();
+    Global::exit(exit_code_of_failure(cmd));
 }
 
 pub fn load_config(
     cmd: CommandTag,
     user_config_path_: Option<&[u8]>,
     ctx: Context<'_>,
+) -> Result<(), crate::Error> {
+    load_config_with_section(cmd, user_config_path_, ctx, None)
+}
+
+/// As [`load_config`]. `section` is called with `[lint]` for `bun lint` and with `[format]` for `bun format`, if the
+/// file has it.
+pub fn load_config_with_section(
+    cmd: CommandTag,
+    user_config_path_: Option<&[u8]>,
+    ctx: Context<'_>,
+    section: Option<&mut SectionReader<'_>>,
 ) -> Result<(), crate::Error> {
     // If running as a standalone executable with autoloadBunfig disabled, skip config loading
     // unless an explicit config path was provided via --config
@@ -169,7 +206,7 @@ pub fn load_config(
 
             if let Some(path) = get_home_config_path(&mut config_buf) {
                 if let Err(err) = load_config_path(cmd, true, path, ctx) {
-                    report_bunfig_load_failure(ctx.log, err);
+                    report_bunfig_load_failure(cmd, ctx.log, err);
                 }
             }
         }
@@ -229,6 +266,7 @@ pub fn load_config(
     };
     let Some(config_path) = config_path else {
         return unreadable_config(
+            cmd,
             auto_loaded,
             &bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
                 .with_path(config_path_),
@@ -236,8 +274,8 @@ pub fn load_config(
         );
     };
 
-    if let Err(err) = load_config_path(cmd, auto_loaded, config_path, ctx) {
-        report_bunfig_load_failure(ctx.log, err);
+    if let Err(err) = load_config_path_with_section(cmd, auto_loaded, config_path, ctx, section) {
+        report_bunfig_load_failure(cmd, ctx.log, err);
     }
     Ok(())
 }

@@ -9,10 +9,9 @@
 
 use super::{SyntaxError, espree};
 use crate::ast::{Class, Expr, File, Func, Handle, Node, Param, StmtTag};
-use crate::semantic::{name_of_declaration, root_of_pattern};
 use crate::tokens::token_len;
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{ClassOwner, Decl, Parent, PatParent};
+use bun_sema::bind::{ClassOwner, Parent};
 use bun_sema::hir::{
     DiagnosticKind, ExprKind, Flags, FnKind, Modifier, ModifierKind, ParamId, PatKind, StmtId,
     StmtKind, VarKind,
@@ -257,61 +256,12 @@ fn duplicate_parameter<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     })
 }
 
-/// A name that is declared again. The binder has noted each declaration that a symbol refuses. OXC takes some of them: two type
-/// parameters, two members of an interface, two defaults, a function and a `var`. The error is at the first declaration.
-fn redeclaration<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
-    let is_var = |decl: Decl| match decl {
-        Decl::Var(pat) => match root_of_pattern(file, pat) {
-            PatParent::Var(it) => {
-                (file.hir.var_decls.get(it.idx())).is_some_and(|it| it.kind == VarKind::Var)
-            }
-            _ => false,
-        },
-        _ => false,
-    };
-    let is_function = |decl: Decl| matches!(decl, Decl::Fn(_));
-    let counts = |decl: Decl| {
-        matches!(
-            decl,
-            Decl::Var(_)
-                | Decl::Param(_)
-                | Decl::Fn(_)
-                | Decl::Class(_)
-                | Decl::Interface(_)
-                | Decl::Alias(_)
-                | Decl::Enum(_)
-                | Decl::EnumMember(_)
-                | Decl::ImportDefault(_)
-                | Decl::ImportNamespace(_)
-                | Decl::ImportSpec(_)
-        )
-    };
-    let refused = file.bound.redeclarations.iter().filter_map(|it| {
-        let earlier = it.first;
-        let is_taken = it.code == 2528
-            || it.count == 0
-            || !counts(earlier)
-            || !counts(it.decl)
-            || is_function(earlier) && is_var(it.decl)
-            || is_var(earlier) && is_function(it.decl);
-        name_of_declaration(file, earlier).filter(|_| !is_taken)
-    });
-    let at = refused.map(|it| it.1).min()?;
-    let name = file.text().get(at as usize..)?;
-    let name = name.get(..token_len(name))?;
-    Some(SyntaxError {
-        at,
-        message: [b"Identifier `", name, b"` has already been declared"].concat(),
-    })
-}
-
 /// The error for which oxlint refuses a file in which TypeScript's parser has found none.
 pub(super) fn first_error<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     // acorn's checks have these for JavaScript.
     let of_typescript = match file.is_javascript() {
-        true => [None, None, None, None, None],
+        true => [None, None, None, None],
         false => [
-            redeclaration(file),
             declaration_without_initializer(file),
             declaration_list(file),
             class_without_name(file),

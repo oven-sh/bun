@@ -322,7 +322,7 @@ fn without_global_ignores(json: Json, depth: usize) -> Json {
 }
 
 /// The categories of oxlint's rules, but `nursery`.
-const CATEGORIES: [&[u8]; 6] = [
+pub(crate) const CATEGORIES: [&[u8]; 6] = [
     b"correctness",
     b"suspicious",
     b"pedantic",
@@ -1076,7 +1076,7 @@ impl<'l> Loader<'l> {
                     (Some(_), None, Some(Flavor::Oxlint)) => return Some(Flavor::Oxlint),
                     // `bun lint` has the flag for both, ESLint has it not: a command that was written for one of the two was oxlint's.
                     (Some(_), Some(_), None)
-                        if options.type_aware == Some(true) && !options.has_flag_of_eslint =>
+                        if options.has_type_aware_flag && !options.has_flag_of_eslint =>
                     {
                         return Some(Flavor::Oxlint);
                     }

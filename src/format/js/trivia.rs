@@ -42,7 +42,7 @@ impl<'a> Format<'a> for FormatLeadingComments<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let (comments, node_start) = match *self {
             Self::Node(span) if f.comments().next_start() > span.start => return,
-            Self::Node(span) => (f.comments().comments_before(span.start), span.start),
+            Self::Node(span) => (f.comments().comments_leading_node(span), span.start),
             Self::Comments(comments) => (comments, u32::MAX),
         };
         write_leading_comments(comments, node_start, f);

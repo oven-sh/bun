@@ -237,26 +237,9 @@ impl<'a, 'b> MemberChain<'a, 'b> {
             self.members.last(),
             Some(ChainMember::CallExpression { .. })
         );
-        (!tail.is_empty() && (will_break(head) || self.starts_with_comment_that_breaks(f)))
+        (!tail.is_empty() && will_break(head))
             || (has_function_like_argument && ends_with_call && will_break(last))
             || tail.iter().rev().skip(1).any(will_break)
-    }
-
-    /// `a⏎// comment⏎.b!().c().d()`: whether a comment that leads something in what the chain starts with, here `a.b`,
-    /// has been written before the chain, with a line break behind it. For Prettier it is part of what the chain
-    /// starts with.
-    fn starts_with_comment_that_breaks(&self, f: &Formatter<'a>) -> bool {
-        let Some(ChainMember::Node(first)) = self.members.first() else {
-            return false;
-        };
-        let span = first.span();
-        (f.comments().printed_comments().iter().rev())
-            .take_while(|comment| comment.is_moved() && comment.start() == span.start)
-            .any(|comment| {
-                span.contains_offset(comment.span.start)
-                    && (comment.is_line()
-                        || (comment.preceded_by_newline() && comment.followed_by_newline()))
-            })
     }
 
     /// Prettier's `nodeHasComment`.

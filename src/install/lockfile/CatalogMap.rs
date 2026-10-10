@@ -216,6 +216,12 @@ impl CatalogMap {
         Ok(entry.value_ptr)
     }
 
+    /// A root package.json takes catalogs only when it has a "workspaces" field, even an empty one.
+    #[inline]
+    pub(crate) fn workspaces_field(root: &Expr) -> Option<Expr> {
+        root.get(b"workspaces")
+    }
+
     // Deliberately takes no `Lockfile` param so `lockfile.catalogs.parse_count`
     // call sites avoid the `&mut self` vs `&mut Lockfile` self-alias.
     pub(crate) fn parse_count(&mut self, expr: Expr, builder: &mut StringBuilder) {

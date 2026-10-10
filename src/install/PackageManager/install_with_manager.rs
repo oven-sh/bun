@@ -707,7 +707,7 @@ pub fn install_with_manager(
             }
         }
 
-        manager.verify_resolutions(log_level);
+        manager.verify_resolutions(log_level, root_package_json_path);
 
         super::package_json_write_back::edit_after_resolve(manager)?;
 

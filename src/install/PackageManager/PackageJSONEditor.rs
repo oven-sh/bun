@@ -645,7 +645,7 @@ pub(crate) fn for_each_catalog_object(
     root_package_json: &Expr,
     mut f: impl FnMut(&[u8], Expr) -> Result<(), bun_alloc::AllocError>,
 ) -> Result<(), bun_alloc::AllocError> {
-    let Some(workspaces) = root_package_json.get(b"workspaces") else {
+    let Some(workspaces) = CatalogMap::workspaces_field(root_package_json) else {
         return Ok(());
     };
 

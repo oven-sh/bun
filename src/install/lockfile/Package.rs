@@ -2549,7 +2549,7 @@ impl Package<u64> {
                 &mut string_builder,
             );
 
-            if let Some(workspaces_expr) = json.get(b"workspaces") {
+            if let Some(workspaces_expr) = lockfile::CatalogMap::workspaces_field(&json) {
                 lockfile
                     .catalogs
                     .parse_count(workspaces_expr, &mut string_builder);
@@ -3110,7 +3110,7 @@ impl Package<u64> {
 
             let mut found_any_catalog_or_catalog_object = false;
             let mut has_workspaces = false;
-            if let Some(workspaces_expr) = json.get(b"workspaces") {
+            if let Some(workspaces_expr) = lockfile::CatalogMap::workspaces_field(&json) {
                 found_any_catalog_or_catalog_object = lockfile.catalogs.parse_append(
                     pm,
                     log,

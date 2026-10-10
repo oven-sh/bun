@@ -444,9 +444,10 @@ impl<'s> Checker<'_, 's> {
 
     /// `checkBlock` of an `IsFunctionOrModuleBlock`
     fn check_function_or_module_block(&mut self, file: FileId, statements: IdList<StmtId>) {
-        let save_flow_analysis_disabled = self.flow_analysis_disabled;
+        let save_flow_analysis_disabled = self.flow_analysis_disabled.len();
         self.check_source_elements(file, statements);
-        self.flow_analysis_disabled = save_flow_analysis_disabled;
+        self.flow_analysis_disabled
+            .truncate(save_flow_analysis_disabled);
     }
 
     /// `checkSourceElement(node.Body())`, `checkExpressionCached(node.Body())`
@@ -2042,7 +2043,7 @@ impl<'s> Checker<'_, 's> {
         if self.bound(file).flow_places > super::flow::MAX_FLOW_DEPTH
             && (self.p.flows_too_deep.get(&self.task, &(file, e))).is_some()
         {
-            self.flow_analysis_disabled = true;
+            self.disable_flow_analysis(file);
         }
     }
 

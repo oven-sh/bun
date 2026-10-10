@@ -766,7 +766,7 @@ impl<'s> Program<'s> {
             has_compared_without_total_order: std::cell::Cell::new(false),
             symbol_ids: None,
             parsed_again_for_await: None,
-            flow_analysis_disabled: false,
+            flow_analysis_disabled: Vec::new(),
             inline_level: 0,
             walk_declared: TypeId::NEVER,
             constants_in_evaluation: Vec::new(),
@@ -1459,9 +1459,13 @@ pub struct Checker<'p, 's> {
     /// `reparseTopLevelAwait`: the statements of that file that end up in an await context. Sorted.
     /// Computed on first use.
     parsed_again_for_await: Option<Vec<StmtId>>,
-    /// `flowAnalysisDisabled`. Only `checkBlock` restores it, so after a reference outside any
-    /// function or module block it stays set for the files that this checker checks afterwards.
-    flow_analysis_disabled: bool,
+    /// `flowAnalysisDisabled`: the files in which it holds, in the order in which it was set. More
+    /// than one where a query from a file that is too long gets to another one that is. Only
+    /// `checkBlock` restores it, so after a reference outside any function or module block it stays
+    /// set for the rest of the file. In tsgo it holds for every reference, also for one in another
+    /// file that a query gets to in the meantime, whose `errorType` then stays in what the query
+    /// stores.
+    flow_analysis_disabled: Vec<FileId>,
     /// Nesting depth of the `const ok = test` conditions being inlined.
     inline_level: u32,
     /// The declared type of the reference that the flow walk in progress narrows.

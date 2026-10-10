@@ -4126,7 +4126,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// its result, and the check of a function or a class is deferred.
     fn has_reference_without_flow_type(&mut self, file: FileId, node: Node) -> bool {
         // A walk nests at most once per flow node.
-        if self.flow_analysis_disabled
+        if self.flow_analysis_disabled.contains(&file)
             || self.bound(file).flow_places <= super::flow::MAX_FLOW_DEPTH
         {
             return false;

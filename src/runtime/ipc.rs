@@ -982,6 +982,29 @@ impl SendQueueOwner {
             SendQueueOwner::Instance(_) => JSValue::ZERO,
         }
     }
+
+    /// Names the process at the other end of the channel in error messages.
+    fn peer(self) -> PeerName {
+        match self {
+            // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
+            SendQueueOwner::Subprocess(p) => PeerName::Subprocess(unsafe { p.as_ref() }.pid()),
+            SendQueueOwner::Instance(_) => PeerName::Parent,
+        }
+    }
+}
+
+enum PeerName {
+    Subprocess(i32),
+    Parent,
+}
+
+impl core::fmt::Display for PeerName {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            PeerName::Subprocess(pid) => write!(f, "The subprocess (pid {pid})"),
+            PeerName::Parent => f.write_str("The parent process"),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -2267,10 +2290,32 @@ fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
             crate::dispatch::fold(Err(*err));
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
-        DecodeStep::Fail(_) => {
+        // Closed first, so an `uncaughtException` handler sees the channel disconnected.
+        DecodeStep::Fail(IPCDecodeError::InvalidFormat) => {
+            send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
+            report_undecodable_message(send_queue);
+        }
+        DecodeStep::Fail(IPCDecodeError::Stopped | IPCDecodeError::NotEnoughBytes) => {
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
     }
+}
+
+fn report_undecodable_message(send_queue: &SendQueue) {
+    let Some(owner) = send_queue.owner_ref() else {
+        return;
+    };
+    let global = send_queue.get_global_this();
+    let peer = owner.peer();
+    let err = match send_queue.mode {
+        Mode::Advanced => global.create_error_instance(format_args!(
+            "{peer} sent an IPC message that is not in Bun's \"advanced\" serialization format, so Bun closed the IPC channel. \"advanced\" serialization only works between two Bun processes. For IPC between Bun and Node.js, use serialization: \"json\"."
+        )),
+        Mode::Json => global.create_error_instance(format_args!(
+            "{peer} sent an IPC message that is not valid JSON, so Bun closed the IPC channel."
+        )),
+    };
+    crate::dispatch::fold(Err(global.throw_value(err)));
 }
 
 fn decode_next_json(incoming: &JsCell<IncomingBuffer>, global: &JSGlobalObject) -> DecodeStep {

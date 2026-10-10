@@ -4204,6 +4204,17 @@ impl<'a> Resolver<'a> {
 
         let _entries_unlock = cache!().entries_mutex.lock_guard();
 
+        // A cache that one build owns holds one state of each directory, so a
+        // directory it has listed is not opened again: what the fill reads
+        // from it, it opens by path.
+        let skip_open_if_listed =
+            !cache!().is_process() && !self.store_fd && !self.care_about_bin_folder;
+        let requested_is_listed = skip_open_if_listed
+            && matches!(
+                cache!().entries().get(&path[..input_path_len]),
+                Some(Fs::file_system::real_fs::EntriesOption::Entries(_))
+            );
+
         while top.len() > root_path.len() {
             debug_assert!(top.as_ptr() == root_path.as_ptr());
             let result = self.dir_info_map_mut().get_or_put(top)?;
@@ -4337,8 +4348,17 @@ impl<'a> Resolver<'a> {
             let queue_top_safe_path: &[u8] = qt_safe_path.slice();
             queue_slice_len -= 1;
 
+            // A non-empty `safe_path` is the `dir` of a listing in the cache.
+            let is_listed = if queue_slice_len == 0 {
+                requested_is_listed
+            } else {
+                !queue_top_safe_path.is_empty()
+            };
+
             let open_dir: FD = if queue_top.fd.is_valid() {
                 queue_top.fd
+            } else if skip_open_if_listed && is_listed {
+                FD::INVALID
             } else {
                 'open_dir: {
                     // This saves us N copies of .toPosixPath
@@ -4449,7 +4469,8 @@ impl<'a> Resolver<'a> {
             };
 
             // `open_dir` is INVALID for a permission-denied ancestor treated as
-            // an opaque directory; there is nothing to track or close then.
+            // an opaque directory, and for a directory that was not opened
+            // again; there is nothing to track or close then.
             if !queue_top.fd.is_valid() && open_dir.is_valid() {
                 Fs::FileSystem::set_max_fd(open_dir.native());
                 // these objects mostly just wrap the file descriptor, so it's fine to keep it.

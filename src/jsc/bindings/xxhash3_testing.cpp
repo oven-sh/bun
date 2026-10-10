@@ -10,6 +10,7 @@
 #include "xxhash3.h"
 #include "xxhash3_testing.h"
 
+#include "headers.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSBigInt.h>
@@ -40,15 +41,10 @@ BUN_DEFINE_HOST_FUNCTION(Bun__xxhash3_64_forTesting, (JSC::JSGlobalObject * glob
     uint64_t seed = 0;
     if (callFrame->argumentCount() > 1) {
         JSC::JSValue seedValue = callFrame->argument(1);
-        if (seedValue.isNumber()) {
-            // toBigUInt64 performs ToBigInt, which throws on a Number. ToUint32
-            // is a defined conversion (no float-cast UB for NaN/Inf/negatives)
-            // and matches the u32 truncation Bun.hash.xxHash3 applies anyway.
-            seed = seedValue.toUInt32(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-        } else if (seedValue.isBigInt()) {
-            seed = seedValue.toBigUInt64(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
+        if (seedValue.isNumber() || seedValue.isBigInt()) {
+            // Use the exact conversion `Bun.hash.xxHash3` (hash_wrap) applies,
+            // so the two surfaces agree for every seed representation.
+            seed = JSC__JSValue__toUInt64NoTruncate(JSC::JSValue::encode(seedValue));
         } else if (!seedValue.isUndefined()) {
             // Per the (seed?: number | bigint) contract: undefined means "no
             // seed" (0); anything else is a mistaken call, so surface it.

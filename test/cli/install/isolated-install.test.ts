@@ -554,6 +554,54 @@ test("can install folder dependencies on root package", async () => {
   ]);
 });
 
+// bundled-unpublished@1.0.0 bundles "unpublished-dep", which the registry does not have.
+// The copy that its tarball ships is the one in the store entry.
+test("keeps a bundled dependency that the registry does not have", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+  await write(
+    packageJson,
+    JSON.stringify({ name: "isolated-bundled-unpublished", dependencies: { "bundled-unpublished": "1.0.0" } }),
+  );
+
+  async function check() {
+    const shipped = join(
+      packageDir,
+      "node_modules",
+      ".bun",
+      "bundled-unpublished@1.0.0",
+      "node_modules",
+      "bundled-unpublished",
+      "node_modules",
+      "unpublished-dep",
+      "package.json",
+    );
+    expect(await file(shipped).json()).toEqual({ name: "unpublished-dep", version: "1.0.0", main: "index.js" });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", `console.log(JSON.stringify(require("bundled-unpublished")))`],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: { "unpublished-dep": "unpublished-dep@1.0.0 shipped in bundled-unpublished" },
+      stderr: "",
+      exitCode: 0,
+    });
+  }
+
+  const { err } = await runBunInstall(bunEnv, packageDir, { allowWarnings: true });
+  expect(err).toContain(`warn: GET ${registry.registryUrl()}unpublished-dep - 404`);
+  await check();
+
+  // No warning: bun.lock loads, and the registry is not asked again.
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await runBunInstall(bunEnv, packageDir, { frozenLockfile: true });
+  await check();
+});
+
 describe("isolated workspaces", () => {
   test("basic", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });

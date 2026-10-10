@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { access, mkdir, writeFile } from "fs/promises";
+import { access, mkdir, rm, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
@@ -470,4 +470,112 @@ it("should link dependency without crashing", async () => {
 
   // This should fail with a non-zero exit code.
   expect(await exited4).toBe(1);
+});
+
+// https://github.com/oven-sh/bun/issues/13676
+it("should warn when linked package has peerDependencies", async () => {
+  const link_name = basename(link_dir).slice("bun-link.".length);
+  await writeFile(
+    join(link_dir, "package.json"),
+    JSON.stringify({
+      name: link_name,
+      version: "0.0.1",
+      peerDependencies: {
+        "peer-one": "^1.0.0",
+        "peer-two": "*",
+        "peer-three": "^2.0.0",
+      },
+      peerDependenciesMeta: {
+        "peer-two": { optional: true },
+      },
+    }),
+  );
+  // peer-three is already installed in the linked package's own node_modules,
+  // so it resolves from there and should not be listed in the warning.
+  await mkdir(join(link_dir, "node_modules", "peer-three"), { recursive: true });
+  await writeFile(
+    join(link_dir, "node_modules", "peer-three", "package.json"),
+    JSON.stringify({ name: "peer-three", version: "2.0.0" }),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "consumer",
+      version: "0.0.2",
+    }),
+  );
+
+  async function run(cmd: string[], cwd: string) {
+    const proc = spawn({ cmd, cwd, stdout: "pipe", stdin: "pipe", stderr: "pipe", env });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err: stderrForInstall(err), exitCode };
+  }
+
+  const header = `Linked package "${link_name}" declares peerDependencies that may not resolve from this project:`;
+
+  try {
+    // Registering the link (no args) should not warn: nothing is being resolved.
+    {
+      const { out, err, exitCode } = await run([bunExe(), "link"], link_dir);
+      expect(err).not.toContain("peerDependencies");
+      expect(out).toContain(`Success! Registered "${link_name}"`);
+      expect(exitCode).toBe(0);
+    }
+
+    // `bun link <name>` should warn once, listing peers not installed in the
+    // linked package and the remedy.
+    {
+      const { out, err, exitCode } = await run([bunExe(), "link", link_name], package_dir);
+      expect(err.split(header).length - 1).toBe(1);
+      expect(err).toContain("peer-one@^1.0.0");
+      expect(err).not.toContain("peer-one@^1.0.0 (optional)");
+      expect(err).toContain("peer-two@* (optional)");
+      expect(err).not.toContain("peer-three");
+      expect(err).toContain("resolve modules from their real location on disk");
+      expect(err).toContain("Install these peers in the linked package's own node_modules");
+      expect(out).toContain(`installed ${link_name}@link:${link_name}`);
+      expect(exitCode).toBe(0);
+    }
+
+    // `bun install` with a `link:` dependency in package.json should warn too.
+    {
+      await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+      await rm(join(package_dir, "bun.lock"), { force: true });
+      await rm(join(package_dir, "bun.lockb"), { force: true });
+      await writeFile(
+        join(package_dir, "package.json"),
+        JSON.stringify({
+          name: "consumer",
+          version: "0.0.2",
+          dependencies: {
+            [link_name]: `link:${link_name}`,
+          },
+        }),
+      );
+      const { err } = await runBunInstall(env, package_dir, { allowWarnings: true });
+      expect(err.split(header).length - 1).toBe(1);
+      expect(err).toContain("peer-one@^1.0.0");
+      expect(err).not.toContain("peer-three");
+    }
+
+    // With every peer installed under the linked package, nothing is left to
+    // warn about.
+    {
+      for (const name of ["peer-one", "peer-two"]) {
+        await mkdir(join(link_dir, "node_modules", name), { recursive: true });
+        await writeFile(
+          join(link_dir, "node_modules", name, "package.json"),
+          JSON.stringify({ name, version: "1.0.0" }),
+        );
+      }
+      await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+      await rm(join(package_dir, "bun.lock"), { force: true });
+      await rm(join(package_dir, "bun.lockb"), { force: true });
+      const { err, exitCode } = await run([bunExe(), "link", link_name], package_dir);
+      expect(err).not.toContain("peerDependencies");
+      expect(exitCode).toBe(0);
+    }
+  } finally {
+    await run([bunExe(), "unlink"], link_dir);
+  }
 });

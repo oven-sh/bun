@@ -240,12 +240,9 @@ impl Ls {
     }
 
     fn parse_flag(opts: &mut Opts, flag: &[u8]) -> ParseFlag {
-        if flag.is_empty() || flag[0] != b'-' {
+        // A lone `-` is an operand (a file named `-`), as in getopt(3).
+        if flag.len() < 2 || flag[0] != b'-' {
             return ParseFlag::Done;
-        }
-        // FIXME windows
-        if flag.len() == 1 {
-            return ParseFlag::IllegalOption(Box::from(&b"-"[..]));
         }
         for &ch in &flag[1..] {
             match ch {

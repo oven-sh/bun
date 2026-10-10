@@ -15,6 +15,10 @@ const cppCreateHistogram = $newCppFunction("JSNodePerformanceHooksHistogram.cpp"
   figures: number,
 ) => import("node:perf_hooks").RecordableHistogram;
 
+const eventLoopIdleTime = $newRustFunction("node_util_binding.rs", "eventLoopIdleTime", 0) as () => number;
+
+const eventLoopElapsedTime = $newRustFunction("node_util_binding.rs", "eventLoopElapsedTime", 0) as () => number;
+
 var {
   Performance,
   PerformanceEntry,
@@ -116,12 +120,23 @@ function createPerformanceNodeTiming() {
   return object;
 }
 
-function eventLoopUtilization(_utilization1, _utilization2) {
-  return {
-    idle: 0,
-    active: 0,
-    utilization: 0,
-  };
+function eventLoopUtilization(utilization1, utilization2) {
+  const elapsed = eventLoopElapsedTime();
+  if (elapsed <= 0) return { idle: 0, active: 0, utilization: 0 };
+
+  if (utilization2) {
+    const idle = utilization1.idle - utilization2.idle;
+    const active = utilization1.active - utilization2.active;
+    return { idle, active, utilization: active / (active + idle) };
+  }
+
+  const idle = eventLoopIdleTime();
+  const active = elapsed - idle;
+  if (!utilization1) return { idle: idle, active, utilization: active / (active + idle) };
+
+  const idleDelta = idle - utilization1.idle;
+  const activeDelta = active - utilization1.active;
+  return { idle: idleDelta, active: activeDelta, utilization: activeDelta / (activeDelta + idleDelta) };
 }
 
 const { PerformanceResourceTiming } = globalThis;

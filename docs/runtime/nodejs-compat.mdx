@@ -129,7 +129,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:perf_hooks`](https://nodejs.org/api/perf_hooks.html)
 
-🟡 `monitorEventLoopDelay()`, `createHistogram()`, `timerify()` and `PerformanceObserver` (`mark`, `measure`, `function`, `net`, `http` and `http2` entries) are implemented. Bun never emits `gc`, `dns` or `resource` entries. `eventLoopUtilization()` always returns zeros, and `performance.nodeTiming` holds placeholder values. The Node-specific additions to the global `performance` object only appear once `node:perf_hooks` has been imported.
+🟡 `monitorEventLoopDelay()`, `createHistogram()`, `timerify()` and `PerformanceObserver` (`mark`, `measure`, `function`, `net`, `http` and `http2` entries) are implemented. Bun never emits `gc`, `dns` or `resource` entries. `eventLoopUtilization()` returns zeros on Windows, and `performance.nodeTiming` holds placeholder values. The Node-specific additions to the global `performance` object only appear once `node:perf_hooks` has been imported.
 
 ### [`node:process`](https://nodejs.org/api/process.html)
 
@@ -373,7 +373,7 @@ The following list covers the globals implemented by Node.js and Bun's compatibi
 
 ### [`performance`](https://developer.mozilla.org/en-US/docs/Web/API/performance)
 
-🟡 `now()`, `timeOrigin`, `mark()`, `measure()` and `getEntries()` are implemented. The Node.js additions (`eventLoopUtilization()`, `nodeTiming`, `timerify()`) only exist once `node:perf_hooks` has been loaded. `eventLoopUtilization()` always returns zeros and `nodeTiming` holds placeholder values.
+🟡 `now()`, `timeOrigin`, `mark()`, `measure()` and `getEntries()` are implemented. The Node.js additions (`eventLoopUtilization()`, `nodeTiming`, `timerify()`) only exist once `node:perf_hooks` has been loaded. `eventLoopUtilization()` returns zeros on Windows and `nodeTiming` holds placeholder values.
 
 ### [`process`](https://nodejs.org/api/process.html)
 

@@ -34,6 +34,13 @@ const prelude = /* js */ `
   };
   const newView = () => new Bun.WebView({ backend, width: 100, height: 100 });
   const outcome = promise => promise.then(resolved => ({ resolved }), e => ({ rejected: e.message }));
+  // Resolves with { hang: ms } if the promise has not settled by then. Pass
+  // an outcome(), so a rejection is handled the moment it happens.
+  const within = (promise, ms) => {
+    let timer;
+    const hang = new Promise(resolve => { timer = setTimeout(() => resolve({ hang: ms }), ms); });
+    return Promise.race([promise, hang]).finally(() => clearTimeout(timer));
+  };
   const print = value => console.log(JSON.stringify(value));
   const big = ${BIG};
 `;
@@ -109,6 +116,128 @@ test.concurrent("screenshot bytes survive the trip back", async () => {
     type: "image/png",
     size: SCREENSHOT_BYTES.length,
     hash: String(Bun.hash(SCREENSHOT_BYTES)),
+  });
+});
+
+// Chrome answers a Page.captureScreenshot whose document is replaced while
+// the capture runs about half the time, and drops the rest: that id is never
+// answered, not after later navigations either. The backend repeats the
+// capture once the new document loads, with the options the call asked for.
+test.concurrent("a screenshot the browser drops at a navigation is captured again", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/1");
+    await view.evaluate("__fake_drop_screenshots(1)");
+    const shot = outcome(view.screenshot({ format: "jpeg", quality: 37 }).then(blob => blob.type));
+    await view.navigate("http://fake/2");
+    const captured = await within(shot, 2000);
+    let again;
+    try {
+      again = await outcome(view.screenshot().then(blob => blob.size));
+    } catch (e) {
+      again = { threw: e.message };
+    }
+    print({ captured, again, sent: await view.evaluate("__fake_screenshots()") });
+    view.close();
+  `);
+  expect(result).toEqual({
+    captured: { resolved: "image/jpeg" },
+    again: { resolved: SCREENSHOT_BYTES.length },
+    sent: [
+      { format: "jpeg", quality: 37 },
+      { format: "jpeg", quality: 37 },
+      { format: "png", quality: 80 },
+    ],
+  });
+});
+
+// One repeat per screenshot() call. A second commit over the repeat rejects it
+// at that commit, whether or not the new document ever fires a load event, so
+// the promise settles and the slot frees either way.
+test.concurrent("a screenshot two navigations drop rejects instead of hanging", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/1");
+    await view.evaluate("__fake_drop_screenshots(2)");
+    const shot = outcome(view.screenshot().then(blob => blob.size));
+    await view.navigate("http://fake/2");
+    const afterOneNavigation = Bun.peek.status(shot);
+    await view.evaluate(\`__fake_emit("Page.frameNavigated", {
+      frame: { id: "F", loaderId: "L9", url: "http://fake/3-never-loads", mimeType: "text/html" },
+      type: "Navigation",
+    })\`);
+    const settled = await within(shot, 2000);
+    let again;
+    try {
+      again = await outcome(view.screenshot().then(blob => blob.size));
+    } catch (e) {
+      again = { threw: e.message };
+    }
+    print({ afterOneNavigation, settled, again });
+    view.close();
+  `);
+  expect(result).toEqual({
+    afterOneNavigation: "pending",
+    settled: { rejected: "screenshot: the page navigated before the capture completed" },
+    again: { resolved: SCREENSHOT_BYTES.length },
+  });
+});
+
+// A page restored from the back/forward cache commits with
+// type:"BackForwardCacheRestore" and fires no load event, so the repeat goes
+// out at the commit itself.
+test.concurrent("a screenshot dropped at a back/forward cache restore is captured again", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/1");
+    await view.evaluate("__fake_drop_screenshots(1)");
+    const shot = outcome(view.screenshot().then(blob => blob.size));
+    await view.evaluate(\`__fake_emit("Page.frameNavigated", {
+      frame: { id: "F", loaderId: "LR", url: "http://fake/restored", mimeType: "text/html" },
+      type: "BackForwardCacheRestore",
+    })\`);
+    const settled = await within(shot, 2000);
+    print({ settled, url: view.url, sent: (await view.evaluate("__fake_screenshots()")).length });
+    view.close();
+  `);
+  expect(result).toEqual({ settled: { resolved: SCREENSHOT_BYTES.length }, url: "http://fake/restored", sent: 2 });
+});
+
+// A subframe commit keeps the main document and Chrome completes the capture,
+// so it must not be dropped or sent twice: an <iframe> that commits while the
+// page is still loading, then the page's own load event. The commit is the
+// iframe's, so view.url and onNavigated stay with the page.
+test.concurrent("a subframe commit leaves a pending screenshot, url and onNavigated alone", async () => {
+  const result = await runScenario(`
+    const view = newView();
+    await view.navigate("http://fake/1");
+    const navigated = [];
+    view.onNavigated = url => navigated.push(url);
+    await view.evaluate("__fake_hold_screenshots(true)");
+    const shot = outcome(view.screenshot().then(blob => blob.size));
+    await view.evaluate(\`__fake_emit("Page.frameNavigated", {
+      frame: { id: "C", parentId: "F", loaderId: "LC", url: "http://fake/child", mimeType: "text/html" },
+      type: "Navigation",
+    })\`);
+    await view.evaluate(\`__fake_emit("Page.loadEventFired", { timestamp: 9 })\`);
+    const beforeRelease = Bun.peek.status(shot);
+    await view.evaluate("__fake_hold_screenshots(false)");
+    const settled = await within(shot, 2000);
+    print({
+      beforeRelease,
+      settled,
+      sent: (await view.evaluate("__fake_screenshots()")).length,
+      url: view.url,
+      navigated,
+    });
+    view.close();
+  `);
+  expect(result).toEqual({
+    beforeRelease: "pending",
+    settled: { resolved: SCREENSHOT_BYTES.length },
+    sent: 1,
+    url: "http://fake/1",
+    navigated: [],
   });
 });
 

@@ -1190,12 +1190,24 @@ impl<'f> Collector<'f, '_> {
                 .map(|(_, e)| e.pos)
                 .collect();
             elements.sort_unstable();
+            // The name of a class is declared before its decorators are visited, which are before it.
+            let classes = file.hir.classes.iter().filter(|it| it.name == name);
+            let mut decorators: Vec<(u32, u32)> =
+                classes.map(|it| (it.start, it.name_pos)).collect();
+            decorators.sort_unstable();
+            let is_in_decorators = |pos: u32| {
+                let after = decorators.partition_point(|it| it.0 <= pos);
+                let class = after.checked_sub(1).and_then(|at| decorators.get(at));
+                class.is_some_and(|it| pos < it.1)
+            };
             // `Some(None)`: the variable that a class declaration has for its name in its own scope.
             let found = elements.iter().find_map(|&pos| {
                 let mut scope = tree.scope_at(pos);
                 while let Some(data) = tree.scopes.get(scope as usize) {
                     // It is in the `set` of its scope from where the Referencer has visited its declaration.
-                    let declared = |index: &u32| variables.list[*index as usize].first_pos < pos;
+                    let declared = |index: &u32| {
+                        variables.list[*index as usize].first_pos < pos || is_in_decorators(pos)
+                    };
                     let variable = variables.get(scope, name);
                     if let Some(index) = variable.filter(declared) {
                         return Some(Some(index));
@@ -1205,9 +1217,7 @@ impl<'f> Collector<'f, '_> {
                         && let Some(class) = file.hir.classes.get(class.idx())
                         && class.name == name
                     {
-                        // The decorators are visited after the name is declared, outside the class.
-                        let outer = variables.get(data.parent, name);
-                        return Some(outer.filter(|_| pos < class.name_pos));
+                        return Some(None);
                     }
                     scope = data.parent;
                 }

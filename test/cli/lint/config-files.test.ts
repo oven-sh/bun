@@ -415,6 +415,71 @@ describe.concurrent("an eslint.config.js", () => {
     expect(exitCode).toBe(refusal === null ? 0 : 2);
   });
 
+  // What ESLint 10.12 says. The first schema is that of react/jsx-newline. Where the first error ends it all, that is the error of the
+  // branch. Among alternatives there is a line about the branch, too.
+  describe("`if`, `then` and `else` in the schema of a rule", () => {
+    const flag = { default: false, type: "boolean" };
+    const newline = {
+      type: "object",
+      properties: { prevent: flag, allowMultilines: flag },
+      additionalProperties: false,
+      if: { properties: { allowMultilines: { const: true } } },
+      then: { properties: { prevent: { const: true } }, required: ["prevent"] },
+    };
+    const either = { type: "object", if: { required: ["a"] }, then: { required: ["b"] }, else: { required: ["c"] } };
+    const branches = { if: { type: "string" }, then: { enum: ["x"] }, else: { type: "boolean" } };
+    const among = { anyOf: [{ type: "number" }, branches] };
+    const afterAll = { allOf: [{ type: "string" }], if: { const: "a" }, then: { minLength: 5 } };
+    test.each<[schema: object, option: unknown, refusal: string[] | null]>([
+      [newline, { allowMultilines: true }, ["Value false should be equal to constant."]],
+      [newline, { prevent: false, allowMultilines: true }, ["Value false should be equal to constant."]],
+      [newline, { prevent: true, allowMultilines: true }, null],
+      [newline, { allowMultilines: false }, null],
+      [newline, { allowMultilines: 1 }, ["Value 1 should be boolean."]],
+      [newline, {}, null],
+      [either, { a: 1 }, [`Value {"a":1} should have required property '.b'.`]],
+      [either, { a: 1, b: 1 }, null],
+      [either, {}, ["Value {} should have required property '.c'."]],
+      [either, { c: 1 }, null],
+      [
+        among,
+        "y",
+        [
+          'Value "y" should be number.',
+          'Value "y" should be equal to one of the allowed values.',
+          'Value "y" should match "then" schema.',
+          'Value "y" should match some schema in anyOf.',
+        ],
+      ],
+      [among, "x", null],
+      [among, 1, null],
+      [
+        among,
+        null,
+        [
+          "Value null should be number.",
+          "Value null should be boolean.",
+          'Value null should match "else" schema.',
+          "Value null should match some schema in anyOf.",
+        ],
+      ],
+      [among, true, null],
+      [{ if: { type: "string" } }, "y", null],
+      [{ then: { type: "string" }, else: { type: "string" } }, 1, null],
+      [afterAll, "a", ['Value "a" should NOT be shorter than 5 characters.']],
+      [afterAll, 1, ["Value 1 should be string."]],
+    ])("%j with %j", async (schema, option, refusal) => {
+      const { stderr, exitCode } = await lint({
+        "eslint.config.mjs": `const rule = { meta: { schema: [${JSON.stringify(schema)}] }, create: () => ({}) };
+          export default [{ plugins: { x: { rules: { r: rule } } }, rules: { "x/r": ["error", ${JSON.stringify(option)}] } }];`,
+        "a.js": "export {};\n",
+      });
+      if (refusal === null) expect(stderr).not.toContain(`Key "rules"`);
+      else expect(stderr).toEndWith(`Key "rules": Key "x/r":\n\t${refusal.join("\n\t")}`);
+      expect(exitCode).toBe(refusal === null ? 0 : 2);
+    });
+  });
+
   test("import/order: the kinds of modules by their names and by `settings`, path groups, names in braces, the fix", async () => {
     const files = {
       "eslint.config.mjs": `const order = {

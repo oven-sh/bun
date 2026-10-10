@@ -6337,5 +6337,68 @@
   "options": [],
   "message": "Module './b.js' is imported more than once in this file",
   "help": "Merge these imports into a single import statement"
+ },
+ {
+  "rule": "typescript/no-redundant-type-constituents",
+  "id": "literalOverridden",
+  "file": "a.ts",
+  "code": "type S = \"a\" | \"b\";\nexport type U = S | string;\n",
+  "options": [],
+  "typed": true,
+  "message": "\"\\\"a\\\"\" | \"\\\"b\\\"\" is overridden by string in this union type."
+ },
+ {
+  "rule": "typescript/no-redundant-type-constituents",
+  "id": "literalOverridden",
+  "file": "a.ts",
+  "code": "type S = 'it\"s' | \"back\\\\slash\";\nexport type U = S | string;\n",
+  "options": [],
+  "typed": true,
+  "message": "\"\\\"back\\\\\\\\slash\\\"\" | \"\\\"it\\\\\\\"s\\\"\" is overridden by string in this union type."
+ },
+ {
+  "rule": "typescript/no-redundant-type-constituents",
+  "id": "literalOverridden",
+  "file": "a.ts",
+  "code": "type S = `x-${string}`;\nexport type U = S | string;\n",
+  "options": [],
+  "typed": true,
+  "message": "`x-${string}` is overridden by string in this union type."
+ },
+ {
+  "rule": "typescript/no-redundant-type-constituents",
+  "id": "primitiveOverridden",
+  "file": "a.ts",
+  "code": "type S = \"a\" | \"b\";\nexport type U = S & string;\n",
+  "options": [],
+  "typed": true,
+  "message": "\"\\\"a\\\"\" | \"\\\"b\\\"\" is overridden by the string in this intersection type."
+ },
+ {
+  "rule": "typescript/no-redundant-type-constituents",
+  "id": "primitiveOverridden",
+  "file": "a.ts",
+  "code": "type N = 1 | 2;\nexport type U = N & number;\n",
+  "options": [],
+  "typed": true,
+  "message": "1 | 2 is overridden by the number in this intersection type."
+ },
+ {
+  "rule": "typescript/no-deprecated",
+  "id": "deprecatedWithReason",
+  "file": "a.ts",
+  "code": "class K {\n  /** @deprecated See {@link K.other} */\n  a = 1;\n  other = 2;\n}\ndeclare const k: K;\nexport const r = k.a;\n",
+  "options": [],
+  "typed": true,
+  "message": "`a` is deprecated. See"
+ },
+ {
+  "rule": "typescript/no-deprecated",
+  "id": "deprecatedWithReason",
+  "file": "a.ts",
+  "code": "class K {\n  /**\n   * @deprecated two\n   * lines {@link K.other}\n   */\n  a = 1;\n  other = 2;\n}\ndeclare const k: K;\nexport const r = k.a;\n",
+  "options": [],
+  "typed": true,
+  "message": "`a` is deprecated. two\nlines"
  }
 ]

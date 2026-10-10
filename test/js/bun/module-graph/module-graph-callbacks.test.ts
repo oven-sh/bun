@@ -374,3 +374,42 @@ test("every callback of several graphs and the host, all running at once, finds 
   ).toEqual([]);
   // (One test on purpose, and slow on a debug build: it is everything running at once.)
 }, 30_000);
+
+test("host timer hooks observe graph disposal once without running the timer", async () => {
+  const { createHook } = await import("node:async_hooks");
+  const graph = new Bun.ModuleGraph();
+  const ids = new Set<number>();
+  const destroyed: number[] = [];
+  let creating = false;
+  let fired = false;
+  const hook = createHook({
+    init(id, type) {
+      if (creating && (type === "Timeout" || type === "Immediate")) ids.add(id);
+    },
+    destroy(id) {
+      if (ids.has(id)) destroyed.push(id);
+    },
+  }).enable();
+  try {
+    creating = true;
+    graph.run(() => {
+      setTimeout(() => {
+        fired = true;
+      }, 60_000);
+      setImmediate(() => {
+        fired = true;
+      });
+    });
+    creating = false;
+    graph.dispose();
+    graph.dispose();
+    await new Promise(resolve => setImmediate(resolve));
+    expect(ids.size).toBe(2);
+    expect(destroyed.sort()).toEqual([...ids].sort());
+    expect(fired).toBe(false);
+  } finally {
+    creating = false;
+    hook.disable();
+    graph.dispose();
+  }
+});

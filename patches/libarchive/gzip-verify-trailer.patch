@@ -1,0 +1,62 @@
+--- a/libarchive/archive_read_support_filter_gzip.c
++++ b/libarchive/archive_read_support_filter_gzip.c
+@@ -67,6 +67,11 @@ struct gzip {
+ 	 * a gzip header).
+ 	 */
+ 	char		 trailer_pending;
++	/*
++	 * BUN PATCH: uncompressed byte count of the current member,
++	 * modulo 2^32, checked against the ISIZE trailer field.
++	 */
++	uint32_t	 member_isize;
+ };
+ 
+ /* Gzip Filter. */
+@@ -374,6 +379,7 @@ consume_header(struct archive_read_filter *f)
+ 
+ 	/* Initialize CRC accumulator. */
+ 	gzip->crc = crc32(0L, NULL, 0);
++	gzip->member_isize = 0;
+ 
+ 	/*
+ 	 * BUN PATCH: Initialize compression library. next_in / avail_in
+@@ -459,6 +465,18 @@ consume_trailer(struct archive_read_filter *f)
+ 
+ 	/* We've verified the trailer, so consume it now. */
+ 	__archive_read_filter_consume(f->upstream, 8);
++	/*
++	 * BUN PATCH: compare the trailer with what was inflated. Upstream
++	 * skips this, so a corrupted member decompressed without any
++	 * error. `p` is still readable: consume only moves the cursor.
++	 */
++	if (archive_le32dec(p) != (uint32_t)gzip->crc ||
++	    archive_le32dec(p + 4) != gzip->member_isize) {
++		archive_set_error(&f->archive->archive,
++		    ARCHIVE_ERRNO_MISC,
++		    "gzip trailer mismatch: bad CRC32 or uncompressed size");
++		return (ARCHIVE_FATAL);
++	}
+ 	gzip->trailer_pending = 0;
+ 
+ 	return (ARCHIVE_OK);
+@@ -470,6 +488,8 @@ gzip_filter_read(struct archive_read_filter *f, const void **p)
+ 	struct gzip *gzip = f->data;
+ 	size_t decompressed;
+ 	ssize_t avail_in, max_in;
++	unsigned char *out_before;
++	size_t produced;
+ 	int ret;
+ 
+ 	/* Empty our output buffer. */
+@@ -532,7 +552,11 @@ gzip_filter_read(struct archive_read_filter *f, const void **p)
+ 		gzip->stream.avail_in = (uInt)avail_in;
+ 
+ 		/* Decompress and consume some of that data. */
++		out_before = gzip->stream.next_out;
+ 		ret = inflate(&(gzip->stream), 0);
++		produced = gzip->stream.next_out - out_before;
++		gzip->crc = crc32(gzip->crc, out_before, (uInt)produced);
++		gzip->member_isize += (uint32_t)produced;
+ 		switch (ret) {
+ 		case Z_OK: /* Decompressor made some progress. */
+ 			__archive_read_filter_consume(f->upstream,

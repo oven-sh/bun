@@ -187,6 +187,50 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     );
   });
 
+  // The write fails with the close of the engine, which reads first. A reader that stopped may be waiting for the write.
+  test("send → EPIPE fails the write of a reader that stopped for backpressure at once", async () => {
+    using p = await connectedTLSPair();
+    const client = observe(p.client);
+    p.client.pause();
+    // More than the client buffers, so it stops reading with input left in the kernel.
+    await new Promise<void>(resolve => p.serverSock.write(Buffer.alloc(1024 * 1024, "a"), () => resolve()));
+    fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: -1, fd: fdOf(p.client) });
+    const written = Promise.withResolvers<Error | null | undefined>();
+    p.client.write("hello", written.resolve);
+    expect(await written.promise).toMatchObject({ code: "EPIPE", syscall: "write" });
+    await client.closed;
+    expect(client.events).toEqual(["error", "close(hadError=true)"]);
+  });
+
+  test("send → EPIPE past the FIN of the peer holds the loop until the write has failed", async () => {
+    await using ending = tls.createServer({ key: certs.key, cert: certs.cert, allowHalfOpen: true }, socket => {
+      socket.on("error", () => {}).end();
+    });
+    ending.listen(0, "127.0.0.1");
+    await once(ending, "listening");
+    // Half-open and past the FIN, the handle holds the loop only for a pending write, and nothing else does here.
+    await using child = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+        const options = { port: ${(ending.address() as AddressInfo).port}, host: "127.0.0.1", rejectUnauthorized: false, allowHalfOpen: true };
+        const socket = require("node:tls").connect(options);
+        socket.on("error", error => console.log("error", error.code)).on("close", () => console.log("close")).resume();
+        socket.on("end", () => {
+          fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: -1, fd: socket._handle.fd });
+          socket.write("x", error => console.log("write", error?.code));
+        });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+    expect(stdout.trim().split("\n")).toEqual(["write EPIPE", "error EPIPE", "close"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("send → EPIPE for the ClientHello fails connect with an error (no hang)", async () => {
     fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: -1 });
     const c = connect();

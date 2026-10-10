@@ -357,14 +357,19 @@ const kSocketClass = Symbol("kSocketClass");
 // callback as errnoException(status, 'write') and destroys the stream when no
 // callback is pending. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L81-L92
 function failWrite(self, negErrno, callback) {
-  if (self.encrypted && !self[kclosed]) {
-    // The TLS engine ended the write side only. It reads what the peer sent, then closes, and the write fails with that close.
-    self._pendingData = null;
-    self[kwriteCallback] = callback;
-    self[kRejectedWrite] = writeErrnoException(negErrno);
-    return;
-  }
   failWriteWith(self, writeErrnoException(negErrno), callback);
+}
+// The TLS engine ended the write side only. It reads what the peer sent, then closes, and the write fails with that close.
+// Not for a reader that stopped, which may be waiting for this very write: readStop() fails it too.
+function holdRejectedWrite(self, handle, negErrno, callback) {
+  if (!self.encrypted || self[kclosed] || self[kPausedUnref]) return false;
+  if (self[kupgraded] && !(self[kupgraded] instanceof Socket)) return false;
+  self._pendingData = null;
+  self[kwriteCallback] = callback;
+  self[kRejectedWrite] = writeErrnoException(negErrno);
+  // It holds the loop as any pending write does (_write).
+  if (self[kended] && !self[kUserUnrefed]) handle.ref?.();
+  return true;
 }
 function failRejectedWrite(self) {
   const er = self[kRejectedWrite];
@@ -822,7 +827,7 @@ const SocketHandlers = {
       const res = socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
       if (typeof res === "number" && res < 0) {
         // The retried send failed for good (peer gone): $write returned -errno.
-        failWrite(self, res, callback);
+        if (!holdRejectedWrite(self, socket, res, callback)) failWrite(self, res, callback);
       } else if (res) {
         self._pendingData = self[kwriteCallback] = null;
         unrefAfterDrain(self, socket);
@@ -940,6 +945,7 @@ function readStop(self, handle) {
   // A socket over a generic duplex has no fd and never held the loop.
   if (self[kupgraded] && !(self[kupgraded] instanceof Socket)) return;
   self[kPausedUnref] = true;
+  if (failRejectedWrite(self)) return;
   if (!self[kwriteCallback]) handle?.unref?.();
 }
 
@@ -1679,7 +1685,7 @@ const SocketHandlers2 = {
       if (typeof res === "number" && res < 0) {
         // The retried send failed for good (peer gone): $write returned -errno.
         self[kBytesWritten] = socket.bytesWritten;
-        failWrite(self, res, callback);
+        if (!holdRejectedWrite(self, socket, res, callback)) failWrite(self, res, callback);
       } else if (res) {
         self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = self[kwriteCallback] = null;
@@ -3062,8 +3068,7 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   if (res < 0) {
     // The kernel rejected the send outright (peer reset): $write returned the
     // negative errno; deliver it like the EBADF/EPIPE branch above.
-    if (this.encrypted) failWrite(this, res, callback);
-    else callback(writeErrnoException(res));
+    if (!holdRejectedWrite(this, socket, res, callback)) callback(writeErrnoException(res));
     return false;
   }
   if (res) {

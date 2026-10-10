@@ -141,10 +141,22 @@ bun add <package> <@version>
   Ignore manifest cache entirely
 </ParamField>
 
+<ParamField path="--offline" type="boolean">
+  Never touch the network: resolve and install only from the local cache
+</ParamField>
+
+<ParamField path="--prefer-offline" type="boolean">
+  Use cached package metadata regardless of age and only fetch what is missing
+</ParamField>
+
 ### Output &amp; Logging
 
 <ParamField path="--silent" type="boolean">
   Don't log anything
+</ParamField>
+
+<ParamField path="--quiet" type="boolean">
+  Disable the progress bar
 </ParamField>
 
 <ParamField path="--verbose" type="boolean">

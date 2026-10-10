@@ -104,6 +104,11 @@ bun build <entry points>
   `import()` depends on
 </ParamField>
 
+<ParamField path="--no-split-require" type="boolean">
+  With `--splitting` and `--target bun`, keep a `require()`'d ES module in the calling chunk instead of emitting a chunk
+  that Bun loads at the call
+</ParamField>
+
 <ParamField path="--public-path" type="string">
   Prefix the bundler adds to import paths in bundled code
 </ParamField>

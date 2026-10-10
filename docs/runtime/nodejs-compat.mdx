@@ -257,7 +257,7 @@ The following list covers the globals implemented by Node.js and Bun's compatibi
 
 ### [`CompressionStream`](https://developer.mozilla.org/en-US/docs/Web/API/CompressionStream)
 
-🟢 Fully implemented.
+🟢 Fully implemented. As a Bun extension, `new CompressionStream(format, { level })` sets the compression level: `0` to `9` for `gzip`, `deflate` and `deflate-raw`, `0` to `11` for `brotli`, and `1` to `22` for `zstd`. A level outside that range, or a number that is not an integer, throws a `RangeError`.
 
 ### [`console`](https://developer.mozilla.org/en-US/docs/Web/API/console)
 

@@ -2085,9 +2085,11 @@ enum StreamState {
 // highWaterMark and 'drain' fire afterwards. streamWriteDone completes a chunk that was queued.
 const kWriteFlushedWithoutCallback = 0x10;
 // Last argument of native.writeStream(): the writer that streamWriteDone names for a queued write.
-const kWriterStream = 1; // the stream's own Writable (_write, _writev)
-const kWriterFileSink = 2; // a chunk of respondWithFile() / respondWithFD()
-const kWriterFinal = 4; // the empty END_STREAM frame of _final
+enum StreamWriter {
+  Stream = 1, // the stream's own Writable (_write, _writev)
+  FileSink = 2, // a chunk of respondWithFile() / respondWithFD()
+  Final = 4, // the empty END_STREAM frame of _final
+}
 // Over a native socket the deferred callback can fire on nextTick (after write() returns) — the
 // frame was already handed to the OS. Over a JS-side socket (duplexPair / generic Duplex) the
 // frame is dispatched into the JS socket via onWrite, and the callback must wait a full
@@ -2343,12 +2345,12 @@ function completeQueuedFinal(stream: Http2Stream) {
 // Native names the writers of a queued write once its last frame has left the queue.
 function streamWriteDone(_session: Http2Session, stream: Http2Stream, writers: number) {
   if (typeof stream !== "object") return;
-  if (writers & kWriterStream) {
+  if (writers & StreamWriter.Stream) {
     stream[bunHTTP2StreamStatus] &= ~StreamState.UnsentWrite;
     stream._writableState.onwrite();
   }
-  if (writers & kWriterFileSink) stream[kFileResponseSink]._writableState.onwrite();
-  if (writers & kWriterFinal) completeQueuedFinal(stream);
+  if (writers & StreamWriter.FileSink) stream[kFileResponseSink]._writableState.onwrite();
+  if (writers & StreamWriter.Final) completeQueuedFinal(stream);
 }
 function uncorkNT(stream: Http2Stream) {
   stream.uncork();
@@ -2899,7 +2901,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         }
         // A streamEnd(7) dispatch inside the call completes the callback through markWritableDone.
         this[bunHTTP2StreamFinal] = callback;
-        const settled = native.writeStream(this.#id, "", "ascii", true, kWriterFinal);
+        const settled = native.writeStream(this.#id, "", "ascii", true, StreamWriter.Final);
         if (this[bunHTTP2StreamFinal] === callback) {
           if (settled === false || (settled & kWriteFlushedWithoutCallback) !== 0) {
             // Nothing is queued: the stream cannot send, or the socket took the frame.
@@ -3033,7 +3035,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         const chunk = Buffer.concat(chunks || []);
         if (session[kTimeout]) session[kTimeout].refresh();
         const endStream = isFinalWrite(this, batchLength);
-        const status = native.writeStream(this.#id, chunk, undefined, endStream, kWriterStream);
+        const status = native.writeStream(this.#id, chunk, undefined, endStream, StreamWriter.Stream);
         if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
         else writeNotFlushed(this, status, callback);
         if (endStream) {
@@ -3074,7 +3076,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         }
         if (session[kTimeout]) session[kTimeout].refresh();
         const endStream = isFinalWrite(this, chunk.length);
-        const status = native.writeStream(this.#id, wireChunk, wireEncoding, endStream, kWriterStream);
+        const status = native.writeStream(this.#id, wireChunk, wireEncoding, endStream, StreamWriter.Stream);
         if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
         else writeNotFlushed(this, status, callback);
         if (endStream) {
@@ -3251,7 +3253,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
         cb();
         return;
       }
-      const status = native.writeStream(stream.id, chunk, undefined, false, kWriterFileSink);
+      const status = native.writeStream(stream.id, chunk, undefined, false, StreamWriter.FileSink);
       // A queued chunk that native drops is never completed: 'close' unpipes this sink.
       if (status & kWriteFlushedWithoutCallback) process.nextTick(cb);
       else if (status === false) cb();

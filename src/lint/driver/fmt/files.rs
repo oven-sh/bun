@@ -12,6 +12,7 @@ use bun_lint::linter::config::glob_refusal;
 use bun_sema::util::FxHashSet;
 use bun_threading::Guarded;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// A file to format.
 pub(crate) struct Target {
@@ -413,6 +414,8 @@ pub(crate) struct Ignored {
     /// `.gitignore`, `.prettierignore`: a file is ignored if one of them says so.
     files: Vec<Chain>,
     cwd: Vec<u8>,
+    /// A search came to a file that it looks for, or a directory that it enters, which one of `files` has.
+    has_left_out: AtomicBool,
 }
 
 impl Ignored {
@@ -466,6 +469,7 @@ impl Ignored {
             negative: Vec::new(),
             files,
             cwd: cwd.to_vec(),
+            has_left_out: AtomicBool::new(false),
         })
     }
 
@@ -489,14 +493,16 @@ impl Ignored {
         }
     }
 
-    /// For what is come to by way of its directories, none of which is ignored.
-    fn ignores_entry(&self, path: &[u8], name: &[u8], is_directory: bool) -> bool {
-        (is_directory && self.directories.contains(&name))
-            || self.is_negated(path)
-            || self
-                .files
-                .iter()
-                .any(|chain| gitignore::is_ignored_in_search(chain, path, is_directory))
+    /// What `fast-glob` does not come to.
+    fn is_not_searched(&self, path: &[u8], name: &[u8], is_directory: bool) -> bool {
+        (is_directory && self.directories.contains(&name)) || self.is_negated(path)
+    }
+
+    /// Whether an ignore file has what is come to by way of its directories, none of which is ignored.
+    fn ignores_entry(&self, path: &[u8], is_directory: bool) -> bool {
+        self.files
+            .iter()
+            .any(|chain| gitignore::is_ignored_in_search(chain, path, is_directory))
     }
 
     /// Whether an ignore file has the directory at `path`, or one that it is in: then it has all that is in it.
@@ -600,14 +606,24 @@ fn search(
             // Links are not followed, and not formatted.
             for entry in entries.iter().filter(|it| !it.is_link) {
                 let path = paths::join(&directory.path, &entry.name);
-                if ignored.ignores_entry(&path, &entry.name, entry.is_directory)
-                    || gitignore::is_ignored(&git, &path, entry.is_directory)
-                {
+                if ignored.is_not_searched(&path, &entry.name, entry.is_directory) {
+                    continue;
+                }
+                let relative = paths::relative(&ignored.cwd, &path);
+                if ignored.ignores_entry(&path, entry.is_directory) {
+                    if match entry.is_directory {
+                        true => enters(&relative),
+                        false => matches(&relative),
+                    } {
+                        ignored.has_left_out.store(true, Ordering::Relaxed);
+                    }
+                    continue;
+                }
+                if gitignore::is_ignored(&git, &path, entry.is_directory) {
                     continue;
                 }
                 let is_ignored_by_configuration = is_ignored_by_configuration
                     || gitignore::is_ignored(of_config, &path, entry.is_directory);
-                let relative = paths::relative(&ignored.cwd, &path);
                 if entry.is_directory {
                     if enters(&relative) {
                         directories.push(Directory {
@@ -774,8 +790,12 @@ pub(crate) fn expand(
                 (found, b"No files matching the pattern were found")
             }
         };
+        let has_left_out = ignored.has_left_out.swap(false, Ordering::Relaxed);
         if found.is_empty() {
-            if error_on_unmatched_pattern {
+            // Prettier finds the files and then leaves each of them out, so this is no error.
+            if has_left_out {
+                is_anything_ignored = true;
+            } else if error_on_unmatched_pattern {
                 expanded.push(Expanded::Error(
                     [nothing, b": \"", written, b"\"."].concat(),
                 ));

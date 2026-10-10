@@ -57,7 +57,15 @@ pub(crate) fn is_of_the_project(command: &[u8]) -> bool {
     if package_of_inherited_script(command).is_some_and(|it| it == dir) {
         return false;
     }
-    has_script(command, &path, &contents) || is_file_or_executable(command, &cwd)
+    has_script(command, &path, &contents)
+        || is_file_or_executable(command, &cwd)
+        || is_executable_beside_package_json(command, dir, &cwd)
+}
+
+/// `bun run` puts the directory of the `package.json` in `PATH`, in front of every `node_modules/.bin`.
+fn is_executable_beside_package_json(name: &[u8], dir: &[u8], cwd: &[u8]) -> bool {
+    let mut buffer = bun_paths::path_buffer_pool::get();
+    name != b"check" && bun_which::which(&mut buffer, dir, cwd, name).is_some()
 }
 
 /// Whether the `package.json` at `path`, which has `contents`, has the script `name`.

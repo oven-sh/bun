@@ -1602,9 +1602,24 @@ pub(crate) mod command {
         // CheckCommand parses its own argv.
         init(Tag::CheckCommand, log)?;
         let argv = argv_zslice();
-        // After the flags of `bun`, and those of `BUN_OPTIONS`.
-        let check = argv.iter().position(|arg| arg.as_bytes() == b"check");
-        super::check_command::CheckCommand::exec(&argv[check.map_or(argv.len(), |at| at + 1)..])
+        super::check_command::CheckCommand::exec(after_command(&argv, b"check"))
+    }
+
+    /// What follows `command`, which stands after the flags of `bun` and those of `BUN_OPTIONS`.
+    fn after_command<'a>(
+        argv: &'a [&'static bun_core::ZStr],
+        command: &[u8],
+    ) -> &'a [&'static bun_core::ZStr] {
+        let mut args = argv.iter().enumerate();
+        while let Some((at, arg)) = args.next() {
+            match arg.as_bytes() {
+                arg if arg == command => return &argv[at + 1..],
+                // `bun --cwd lint lint`
+                b"--cwd" => _ = args.next(),
+                _ => {}
+            }
+        }
+        &[]
     }
 
     #[cold]
@@ -1613,9 +1628,7 @@ pub(crate) mod command {
         // LintCommand parses its own argv.
         let ctx = init(Tag::LintCommand, log)?;
         let argv = argv_zslice();
-        // After the flags of `bun`, and those of `BUN_OPTIONS`.
-        let lint = argv.iter().position(|arg| arg.as_bytes() == b"lint");
-        super::lint_command::LintCommand::exec(ctx, &argv[lint.map_or(argv.len(), |at| at + 1)..])
+        super::lint_command::LintCommand::exec(ctx, after_command(&argv, b"lint"))
     }
 
     #[cold]
@@ -1624,10 +1637,7 @@ pub(crate) mod command {
         // FormatCommand parses its own argv.
         let ctx = init(Tag::FormatCommand, log)?;
         let argv = argv_zslice();
-        // After the flags of `bun`, and those of `BUN_OPTIONS`.
-        let format = argv.iter().position(|arg| arg.as_bytes() == b"format");
-        let args = &argv[format.map_or(argv.len(), |at| at + 1)..];
-        super::format_command::FormatCommand::exec(ctx, args)
+        super::format_command::FormatCommand::exec(ctx, after_command(&argv, b"format"))
     }
 
     #[cold]

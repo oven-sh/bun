@@ -5196,6 +5196,32 @@ describe.concurrent("a lint script in package.json", () => {
     expect(exitCode).toBe(0);
   });
 
+  // `bun run` has that directory in PATH.
+  test.skipIf(isWindows)("an executable of that name beside package.json wins over the linter, further down too", async () => {
+    using dir = tempDir("bun-lint-name", {
+      ...files,
+      "package.json": "{}",
+      "lint": `#!/bin/sh\necho the executable\n`,
+      "sub/b.js": "debugger;\n",
+    });
+    chmodSync(join(String(dir), "lint"), 0o755);
+    const cwd = join(String(dir), "sub");
+    await using proc = spawn({ cmd: [bunExe(), "lint"], env, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("the executable");
+    expect(exitCode).toBe(0);
+  });
+
+  test("--cwd lint lint: the first is a directory", async () => {
+    const { "package.json": __, ...rest } = files;
+    using dir = tempDir("bun-lint-name", { "lint/eslint.config.js": rest["eslint.config.js"], "lint/a.js": rest["a.js"] });
+    const cmd = [bunExe(), "--cwd", "lint", "lint", "-f", "unix"];
+    await using proc = spawn({ cmd, env, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toContain("[Error/no-debugger]");
+    expect(exitCode).toBe(1);
+  });
+
   test("a directory of that name without an index does not", async () => {
     const { "package.json": __, ...rest } = files;
     const { stdout, exitCode } = await lint({ ...rest, "lint/notes.txt": "x" }, ["-f", "unix", "a.js"]);

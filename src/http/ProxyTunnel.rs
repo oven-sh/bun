@@ -231,14 +231,14 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
     let Some(proxy_nn) = this.proxy_tunnel_ptr() else {
         return;
     };
-    let _guard = ProxyTunnel::ref_guard(proxy_nn);
+    let guard = ProxyTunnel::ref_guard(proxy_nn);
     // While parked waiting for the JS `checkServerIdentity` verdict no request
     // has been written through the tunnel, so any decrypted application data
     // arriving here is unexpected.
     if this.state.flags.is_waiting_for_cert_check {
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onData while parked");
         // `this` dead (NLL); reborrow via `client_from_ctx` inside.
-        fail_request(ctx, proxy_nn, crate::Error::UnexpectedData);
+        fail_request(ctx, guard, crate::Error::UnexpectedData);
         return;
     }
     match this.state.response_stage {
@@ -251,7 +251,7 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
                 Ok(v) => v,
                 Err(err) => {
                     // `this` dead (NLL); reborrow via `client_from_ctx` inside.
-                    fail_request(ctx, proxy_nn, err);
+                    fail_request(ctx, guard, err);
                     return;
                 }
             };
@@ -271,7 +271,7 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
                 Ok(v) => v,
                 Err(err) => {
                     // `this` dead (NLL); see Body arm.
-                    fail_request(ctx, proxy_nn, err);
+                    fail_request(ctx, guard, err);
                     return;
                 }
             };
@@ -303,7 +303,7 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
         _ => {
             scoped_log!(http_proxy_tunnel, "ProxyTunnel onData unexpected data");
             // `this` dead (NLL); reborrow via `client_from_ctx` inside.
-            fail_request(ctx, proxy_nn, crate::Error::UnexpectedData);
+            fail_request(ctx, guard, crate::Error::UnexpectedData);
         }
     }
 }
@@ -320,7 +320,7 @@ fn on_handshake(
     };
     scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake");
     // Do NOT form `&mut ProxyTunnel` (see ALIASING NOTE).
-    let _guard = ProxyTunnel::ref_guard(proxy_nn);
+    let guard = ProxyTunnel::ref_guard(proxy_nn);
     this.state.response_stage = HTTPStage::ProxyHeaders;
     this.state.request_stage = HTTPStage::ProxyHeaders;
     this.state.request_sent_len = 0;
@@ -333,7 +333,7 @@ fn on_handshake(
         if this.flags.reject_unauthorized && this.flags.did_have_handshaking_error {
             let err = crate::get_cert_error_from_no(handshake_error.error_no);
             // `this` dead (NLL); reborrow via `client_from_ctx` inside.
-            fail_request(ctx, proxy_nn, err);
+            fail_request(ctx, guard, err);
             return;
         }
         if this.wants_server_identity_check() {
@@ -403,11 +403,11 @@ fn on_handshake(
         if this.flags.reject_unauthorized && peer_sent_certificate && handshake_error.error_no > 0 {
             let err = crate::get_cert_error_from_no(handshake_error.error_no);
             // `this` dead (NLL); reborrow via `client_from_ctx` inside.
-            fail_request(ctx, proxy_nn, err);
+            fail_request(ctx, guard, err);
             return;
         }
         // `this` dead (NLL); reborrow via `client_from_ctx` inside.
-        fail_request(ctx, proxy_nn, crate::Error::TLSHandshakeFailed);
+        fail_request(ctx, guard, crate::Error::TLSHandshakeFailed);
         return;
     }
 }
@@ -452,10 +452,6 @@ pub(crate) fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
 }
 
 fn on_close(ctx: *mut HTTPClient) {
-    // The SSLWrapper reports that the inner TLS connection ended. It is never
-    // how the client fails a request: `fail_request` and `HTTPClient::fail`
-    // detach the tunnel before the wrapper shuts down, so the close they
-    // cause returns at `proxy_tunnel_ptr` below.
     let this = client_from_ctx(ctx);
     scoped_log!(
         http_proxy_tunnel,
@@ -466,6 +462,7 @@ fn on_close(ctx: *mut HTTPClient) {
             "tunnel exists"
         }
     );
+    // The client detaches the tunnel before it closes it, so its own closes return here.
     let Some(proxy_nn) = this.proxy_tunnel_ptr() else {
         return;
     };
@@ -491,31 +488,19 @@ fn on_close(ctx: *mut HTTPClient) {
         }
     }
 
-    // Otherwise the connection ended before the response did.
     // `this` dead (NLL); reborrow via `client_from_ctx` inside.
     fail_request(
         ctx,
-        proxy_nn,
+        keepalive,
         fail_err.unwrap_or(crate::Error::ConnectionClosed),
     );
 }
 
-/// Fails the request with `err` and closes the outer socket. Every error a
-/// callback finds ends here, so the request fails with that error whatever
-/// state the response body is in.
-///
-/// `ctx` and `proxy` must be live. Caller must not hold `&mut HTTPClient` or
-/// `&mut ProxyTunnel` across this call, and must not touch the client after
-/// it: `fail()` runs the result callback, which frees the AsyncHTTP that
-/// embeds the client.
-fn fail_request(ctx: *mut HTTPClient, proxy: NonNull<ProxyTunnel>, err: Error) {
-    // Released on the next loop tick. The SSLWrapper method that called the
-    // callback is still on the stack and lives in the tunnel, and
-    // `ProxyTunnel::start` holds no ref of its own across it.
-    let keepalive = ProxyTunnel::ref_guard(proxy);
+/// Fails the request. The client may be freed when this returns.
+fn fail_request(ctx: *mut HTTPClient, keepalive: RefPtr<ProxyTunnel>, err: Error) {
+    let proxy = keepalive.as_non_null();
     let this = client_from_ctx(ctx);
-    // `close_and_fail` de-tags the outer socket before `fail()` frees the
-    // client (the uSockets ext still points at it until then).
+    // `close_and_fail` de-tags the outer socket before `fail()` frees the client.
     match ProxyTunnel::socket_of(proxy) {
         &Socket::Ssl(socket) => this.close_and_fail::<true>(err, socket),
         &Socket::Tcp(socket) => this.close_and_fail::<false>(err, socket),

@@ -618,8 +618,10 @@ JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
 
 static JSValue getModuleCacheObject(VM& vm, JSObject* moduleObject)
 {
-    return uncheckedDowncast<Zig::GlobalObject>(moduleObject->globalObject())
-        ->lazyRequireCacheObject();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSObject* cache = uncheckedDowncast<Zig::GlobalObject>(moduleObject->globalObject())->lazyRequireCacheObject();
+    RETURN_IF_EXCEPTION(scope, {});
+    return cache;
 }
 
 static JSValue getModuleExtensionsObject(VM& vm, JSObject* moduleObject)
@@ -1189,17 +1191,6 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
         [](const Zig::GlobalObject::Initializer<JSFunction>& init) {
             JSC::JSFunction* requireESM = JSC::JSFunction::create(init.vm, init.owner, commonJSRequireESMFromHijackedExtensionCodeGenerator(init.vm), init.owner);
             init.set(requireESM);
-        });
-
-    globalObject->m_lazyRequireCacheObject.initLater(
-        [](const Zig::GlobalObject::Initializer<JSObject>& init) {
-            JSC::VM& vm = init.vm;
-            JSC::JSGlobalObject* globalObject = init.owner;
-
-            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            JSValue result = Bun::createRequireCacheObject(globalObject, uncheckedDowncast<Zig::GlobalObject>(globalObject)->requireMap());
-            ASSERT_UNUSED(scope, !scope.exception());
-            init.set(result.toObject(globalObject));
         });
 
     globalObject->m_lazyRequireExtensionsObject.initLater(

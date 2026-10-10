@@ -430,8 +430,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsRequireCacheGetter, (JSC::JSGlobalObject * globalObje
     Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     auto* requirer = requirerOf(JSValue::decode(thisValue));
     JSModuleGraph* graph = requirer ? requirer->moduleGraph() : nullptr;
-    if (!graph)
-        return JSValue::encode(thisObject->lazyRequireCacheObject());
+    if (!graph) {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        JSObject* cache = thisObject->lazyRequireCacheObject();
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSValue::encode(cache);
+    }
     // A require() that belongs to a Bun.ModuleGraph: a view of that graph's cache.
     if (JSValue existing = graph->requireCache())
         return JSValue::encode(existing);

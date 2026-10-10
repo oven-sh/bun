@@ -3103,10 +3103,11 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     Some(flags)
                 }
                 c if c == u32::from(b'<') => {
-                    let is_double = self.eat_simple_redirect_operator(RedirectDirection::In);
-                    if is_double {
-                        flags |= ast::RedirectFlags::APPEND;
+                    // Only fd 0 can be read from a file: in `1<f` the `1` is a word.
+                    if !flags.stdin() {
+                        return None;
                     }
+                    let _ = self.eat();
                     Some(flags)
                 }
                 _ => None,

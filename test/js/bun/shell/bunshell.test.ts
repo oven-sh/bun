@@ -968,6 +968,19 @@ booga"
         .runAsTest("echo ** && echo c");
 
       TestBuilder.command`echo ** c`.ensureTempDir().file("only.txt", "").stdout("only.txt c\n").runAsTest("echo ** c");
+
+      // https://github.com/oven-sh/bun/issues/18656
+      TestBuilder.command`echo views/** public/**/*.js .env`
+        .ensureTempDir()
+        .directory("views")
+        .file("views/a.html", "")
+        .directory("public/js")
+        .file("public/js/b.js", "")
+        .file(".env", "")
+        .stdout(out =>
+          expect(out.trim().replaceAll("\\", "/").split(/\s+/)).toEqual(["views/a.html", "public/js/b.js", ".env"]),
+        )
+        .runAsTest("echo views/** public/**/*.js .env");
     });
 
     describe("interpolated values cannot inject glob syntax", () => {
@@ -1787,6 +1800,17 @@ describe("deno_task", () => {
         .stdout("z\n")
         .fileEquals("test.txt", "")
         .runAsTest("a digit that is a word of its own is still an fd number");
+    });
+
+    describe("only 0 is an fd number before <", () => {
+      TestBuilder.command`cat 0<test.txt`.file("test.txt", "IN\n").stdout("IN\n").runAsTest("cat 0<file");
+
+      // bash opens the file for reading on fd 1, and echo fails. Bun Shell has no such redirect.
+      TestBuilder.command`echo z 1<test.txt`
+        .file("test.txt", "KEEP\n")
+        .stdout("z 1\n")
+        .fileEquals("test.txt", "KEEP\n")
+        .runAsTest("echo z 1<file");
     });
 
     // invalid fd

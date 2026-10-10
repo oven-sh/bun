@@ -202,13 +202,16 @@ void AbortSignal::runAbortSteps()
         algorithm.run();
     }
 
-    Vector<std::pair<uint32_t, Ref<AbortAlgorithm>>> abortAlgorithms;
+    Vector<AbortAlgorithmEntry> abortAlgorithms;
     {
         Locker locker { m_abortAlgorithmsLock };
         abortAlgorithms = std::exchange(m_abortAlgorithms, {});
+        m_removedAbortAlgorithmCount = 0;
     }
-    for (auto& pair : abortAlgorithms)
-        pair.second->handleEvent(reason);
+    for (auto& entry : abortAlgorithms) {
+        if (entry.second)
+            entry.second->handleEvent(reason);
+    }
 
     // 3. Fire an event named abort at signal.
     if (hasEventListeners(eventNames().abortEvent))
@@ -312,10 +315,36 @@ uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAl
 void AbortSignal::removeAbortAlgorithmFromSignal(AbortSignal& signal, uint32_t algorithmIdentifier)
 {
     Locker locker { signal.m_abortAlgorithmsLock };
-    if (signal.m_abortAlgorithms.removeFirstMatching([algorithmIdentifier](auto& pair) {
-            return pair.first == algorithmIdentifier;
-        }))
-        signal.m_timeoutObserverCount.fetch_sub(1, std::memory_order_relaxed);
+    auto& algorithms = signal.m_abortAlgorithms;
+    auto* entry = tryBinarySearch<AbortAlgorithmEntry, uint32_t>(algorithms, algorithms.size(), algorithmIdentifier, [](const AbortAlgorithmEntry* entry) {
+        return entry->first;
+    });
+    if (!entry) {
+        // The identifier counter wrapped, so the identifiers no longer ascend.
+        auto index = algorithms.findIf([algorithmIdentifier](auto& entry) {
+            return entry.first == algorithmIdentifier;
+        });
+        if (index == notFound)
+            return;
+        entry = &algorithms[index];
+    }
+    if (!entry->second)
+        return;
+
+    entry->second = nullptr;
+    signal.m_timeoutObserverCount.fetch_sub(1, std::memory_order_relaxed);
+    auto& removed = signal.m_removedAbortAlgorithmCount;
+    ++removed;
+    while (!algorithms.isEmpty() && !algorithms.last().second) {
+        algorithms.removeLast();
+        --removed;
+    }
+    if (removed > algorithms.size() - removed) {
+        algorithms.removeAllMatching([](auto& entry) {
+            return !entry.second;
+        });
+        removed = 0;
+    }
 }
 
 void AbortSignal::addAlgorithm(EventListenerAbortAlgorithm& algorithm)
@@ -359,8 +388,10 @@ template<typename Visitor>
 void AbortSignal::visitAbortAlgorithms(Visitor& visitor)
 {
     Locker locker { m_abortAlgorithmsLock };
-    for (auto& pair : m_abortAlgorithms)
-        pair.second->visitJSFunction(visitor);
+    for (auto& entry : m_abortAlgorithms) {
+        if (entry.second)
+            entry.second->visitJSFunction(visitor);
+    }
 }
 
 template void AbortSignal::visitAbortAlgorithms(JSC::AbstractSlotVisitor&);

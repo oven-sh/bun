@@ -272,7 +272,7 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
 
             if (short_ticks == s->timeout) {
                 s->timeout = 255;
-                us_dispatch_timeout(s);
+                s->ssl ? us_internal_ssl_on_timeout(s) : us_dispatch_timeout(s);
             }
             /* An owner must not deinit the embedding group from a timeout handler
              * (see us_socket_group_deinit). Survive one that closed every socket
@@ -317,7 +317,7 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
         unsigned char long_stamp = s->group->long_timestamp;
         if (stamp == s->timeout) {
             s->timeout = 255;
-            us_dispatch_timeout(s);
+            s->ssl ? us_internal_ssl_on_timeout(s) : us_dispatch_timeout(s);
             if (loop_data->low_prio_iterator != s) continue;
         }
         if (long_stamp == s->long_timeout) {
@@ -903,6 +903,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                  * here, so let the next poll re-report it together with READABLE and
                  * the read loop drain it, instead of closing over the unread tail. */
                 eof = 0;
+            } else if (eof_deferrable && !hangup && s->flags.low_prio_state == 1) {
+                /* Parked in the low-priority queue, where kqueue's sentinel knote still reports the
+                 * peer's FIN. What the peer sent ahead of it is unread: a TLS 1.3 client that ends
+                 * right after its handshake has its Finished there, and an end here would fail the
+                 * server's handshake and reset that client. Leaving the queue re-arms the reads. */
+                eof = 0;
             }
             if (eof && error && !read_fin) {
                 /* The eof hint next to an error flag is the reset taking both directions
@@ -920,7 +926,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
                 if (us_socket_is_shut_down(s)) {
                     /* We got FIN back after sending it */
-                    s = us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
+                    s = s->ssl && s->ssl_send_rejected ? us_internal_ssl_on_end_after_rejected_send(s)
+                                                       : us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                     return;
                 }
                 if (s->flags.allow_half_open && !hangup && s->read_eof) {

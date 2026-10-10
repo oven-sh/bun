@@ -220,7 +220,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
-      test: ["CMD-SHELL", "pgrep squid > /dev/null"]
+      # The process is there well before it listens, and a test file that its PR changes runs first, right behind "ready".
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/3128"]
       interval: 5s
       timeout: 5s
       retries: 30

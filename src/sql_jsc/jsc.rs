@@ -522,7 +522,7 @@ pub mod api {
                 let name = unsafe { bun_core::ffi::cstr(server_name) };
                 let bare = bun_core::ip_address::strip_ipv6_brackets(name.to_bytes());
                 let bracketed = bare.len() != name.to_bytes().len();
-                (!bracketed && !bun_core::ip_address::is_ip_address(bare)).then_some(name)
+                (!bracketed && !bun_core::ip_address::is_ip_host(bare)).then_some(name)
             }
 
             /// `SSLConfig.fromJS(vm, global, value)` — VM is accepted but

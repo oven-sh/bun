@@ -121,7 +121,7 @@ const enum SSLMode {
 }
 export type { SSLMode };
 
-function normalizeSSLMode(value: string): SSLMode {
+function normalizeSSLMode(value: string | undefined): SSLMode {
   if (!value) {
     return SSLMode.disable;
   }
@@ -1861,10 +1861,11 @@ function parseOptions(
   // The rest of this function is logic specific to postgres/mysql/mariadb (they have the same options object)
 
   let sslMode: SSLMode = sslModeFromConnectionDetails || SSLMode.disable;
-  if (sslMode === SSLMode.disable) {
+  if (adapter === "postgres") {
     // libpq honours PGSSLMODE as the default; a URL ?sslmode= below overrides it.
-    const envSslMode = adapter === "postgres" ? env.PG_SSLMODE || env.PGSSLMODE : undefined;
-    if (envSslMode) sslMode = normalizeSSLMode(envSslMode);
+    const envSslMode = normalizeSSLMode(env.PG_SSLMODE || env.PGSSLMODE);
+    // The name of a TLS_* URL variable asks for at least `require`.
+    if (envSslMode > sslMode) sslMode = envSslMode;
   }
 
   let url = _url;
@@ -2059,11 +2060,12 @@ function parseOptions(
     }
   }
 
-  const tlsOption = options.tls || options.ssl;
+  const { tls: optionsTls, ssl: optionsSsl } = options;
+  const tlsOption = optionsTls || optionsSsl;
   if (typeof tlsOption === "string" && tlsOption) {
     sslMode = normalizeSSLMode(tlsOption);
     tls = undefined;
-  } else if (!tlsOption && (options.tls === false || options.ssl === false)) {
+  } else if (!tlsOption && (optionsTls === false || optionsSsl === false)) {
     sslMode = SSLMode.disable;
     tls = undefined;
   } else if ($inheritsBlob(tlsOption)) {
@@ -2072,7 +2074,6 @@ function parseOptions(
   } else {
     tls = tlsOption || tls;
   }
-  const explicitTls = tls;
   max = options.max;
 
   idleTimeout ??= options.idleTimeout;
@@ -2151,26 +2152,32 @@ function parseOptions(
     }
   }
 
-  if ($isObject(tls) && sslMode < SSLMode.verify_ca) {
-    if (tls.rejectUnauthorized === true || (tls.rejectUnauthorized !== false && (tls.ca || tls.caFile))) {
-      sslMode = SSLMode.verify_full;
-    }
-  }
-
-  if (sslMode !== SSLMode.disable && !(tls as Exclude<typeof tls, boolean>)?.serverName) {
-    if (hostname) {
-      tls = { ...(tls as Exclude<typeof tls, boolean>), serverName: hostname };
-    } else if (tls) {
-      tls = true;
-    }
-  }
-
   // Explicit tls/ssl options request an encrypted connection: if the server
   // declines TLS, the connection is aborted instead of continuing in plaintext.
   // Certificate verification is only enabled when explicitly requested
   // (ca, caFile, rejectUnauthorized, or a verify-* sslmode).
-  if (explicitTls && sslMode <= SSLMode.prefer) {
+  if (tls && sslMode <= SSLMode.prefer) {
     sslMode = SSLMode.require;
+  }
+
+  const tlsObject = { __proto__: null, ...(tls as Exclude<typeof tls, boolean>) };
+  if (sslMode < SSLMode.verify_ca) {
+    const { rejectUnauthorized } = tlsObject;
+    if (rejectUnauthorized === true || (rejectUnauthorized !== false && (tlsObject.ca || tlsObject.caFile))) {
+      sslMode = SSLMode.verify_full;
+    }
+  }
+
+  // `tls` is read before its alias; a mode the alias names still counts.
+  if (optionsTls && typeof optionsSsl === "string") {
+    const aliasMode = normalizeSSLMode(optionsSsl);
+    if (aliasMode > sslMode) sslMode = aliasMode;
+  }
+
+  // The native constructor rejects any other `tls`.
+  if (sslMode !== SSLMode.disable && (tls === undefined || tls === true || $isObject(tls))) {
+    tlsObject.serverName ||= tlsObject.servername || hostname;
+    tls = tlsObject;
   }
 
   port = Number(port);

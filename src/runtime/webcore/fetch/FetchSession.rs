@@ -67,7 +67,7 @@ pub(crate) fn parse_tls(
             ));
         }
     }
-    if let Some(config) = SSLConfig::from_js(vm, global, tls)? {
+    if let Some(config) = SSLConfig::from_js(vm, global, tls, false)? {
         parsed.ssl_config = Some(http::ssl_config::global_registry::intern(config));
     }
     Ok(parsed)

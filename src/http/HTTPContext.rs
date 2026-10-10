@@ -1369,6 +1369,14 @@ impl<const SSL: bool> Handler<SSL> {
                     );
                     return;
                 }
+                // A renegotiation that finished: the request is already on its way.
+                use crate::internal_state::HTTPStage;
+                if !matches!(
+                    client.state.request_stage,
+                    HTTPStage::Pending | HTTPStage::Opened
+                ) {
+                    return;
+                }
                 if client.wants_server_identity_check() {
                     // if checkServerIdentity returns false, we dont call firstCall — the connection was rejected
                     // SAFETY: the native handle on a TLS socket is `*mut SSL`,

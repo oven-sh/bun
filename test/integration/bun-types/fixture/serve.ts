@@ -84,3 +84,11 @@ const s4 = Bun.serve({
     },
   },
 });
+
+Bun.serve({
+  tls: [
+    { key: "key", cert: "cert", ca: "ca", requestCert: true, crl: Bun.file("crl.pem") },
+    { serverName: "a.example.com", key: "key", cert: "cert", crl: "crl" },
+  ],
+  fetch: () => new Response(),
+});

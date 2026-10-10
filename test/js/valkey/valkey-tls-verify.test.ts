@@ -56,25 +56,50 @@ function fakeServer(serverOpts: tls.TlsOptions): tls.Server {
   return server;
 }
 
-async function withServer<T>(serverOpts: tls.TlsOptions, fn: (port: number) => Promise<T>, host?: string): Promise<T> {
+async function withServer<T>(
+  serverOpts: tls.TlsOptions,
+  fn: (port: number, server: tls.Server) => Promise<T>,
+  host?: string,
+): Promise<T> {
   const server = fakeServer(serverOpts);
   server.listen(0, host);
   await once(server, "listening");
   try {
-    return await fn((server.address() as AddressInfo).port);
+    return await fn((server.address() as AddressInfo).port, server);
   } finally {
     server.close();
   }
 }
 
-async function withUnixServer<T>(serverOpts: tls.TlsOptions, fn: (socketPath: string) => Promise<T>): Promise<T> {
+/** The SNI of every handshake the server completes; `false` when the client sent none. */
+function recordServernames(server: tls.Server): (string | false)[] {
+  const names: (string | false)[] = [];
+  server.on("secureConnection", socket => names.push(socket.servername || false));
+  return names;
+}
+
+async function ping(url: string, tlsOptions: Bun.RedisOptions["tls"]): Promise<unknown> {
+  const client = new RedisClient(url, { autoReconnect: false, connectionTimeout: 5000, tls: tlsOptions });
+  try {
+    return await client.send("PING", []);
+  } catch (e: any) {
+    return e.code;
+  } finally {
+    client.close();
+  }
+}
+
+async function withUnixServer<T>(
+  serverOpts: tls.TlsOptions,
+  fn: (socketPath: string, server: tls.Server) => Promise<T>,
+): Promise<T> {
   using dir = tempDir("valkey-tls-unix", {});
   const socketPath = path.join(String(dir), "r.sock");
   const server = fakeServer(serverOpts);
   server.listen(socketPath);
   await once(server, "listening");
   try {
-    return await fn(socketPath);
+    return await fn(socketPath, server);
   } finally {
     server.close();
   }
@@ -237,6 +262,87 @@ describe("RedisClient TLS hostname verification", () => {
       } finally {
         client.close();
       }
+    });
+  });
+});
+
+describe("RedisClient tls.serverName", () => {
+  const localhost = { key: localhostTls.key, cert: localhostTls.cert };
+
+  test("the URL host is the SNI, unless it is an IP literal", async () => {
+    await withServer(localhost, async (port, server) => {
+      const servernames = recordServernames(server);
+      expect(await ping(`rediss://localhost:${port}`, { ca: localhostTls.cert })).toBe("PONG");
+      expect(await ping(`rediss://127.0.0.1:${port}`, { ca: localhostTls.cert })).toBe("PONG");
+      expect(await ping(`rediss://localhost:${port}`, { ca: localhostTls.cert, serverName: "127.0.0.1" })).toBe("PONG");
+      expect(servernames).toEqual(["localhost", false, false]);
+    });
+  });
+
+  // The zone id names an interface of the client, so the certificate has the address alone.
+  test("an IPv6 address with a zone id is verified against the IP SAN of the address and is not sent as SNI", async () => {
+    await withServer(localhost, async (port, server) => {
+      const servernames = recordServernames(server);
+      expect(await ping(`rediss://localhost:${port}`, { ca: localhostTls.cert, serverName: "::1%lo" })).toBe("PONG");
+      expect(servernames).toEqual([false]);
+    });
+  });
+
+  test("tls: true sends the URL host as SNI", async () => {
+    const servernames: string[] = [];
+    const SNICallback: tls.TlsOptions["SNICallback"] = (servername, callback) => {
+      servernames.push(servername);
+      callback(null);
+    };
+    await withServer({ ...localhost, SNICallback }, async port => {
+      expect(await ping(`rediss://localhost:${port}`, true)).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+      expect(servernames).toEqual(["localhost"]);
+    });
+  });
+
+  test("every dial sends the SNI", async () => {
+    await withServer(localhost, async (port, server) => {
+      const servernames = recordServernames(server);
+      const client = new RedisClient(`rediss://localhost:${port}`, { tls: { ca: localhostTls.cert } });
+      try {
+        await client.connect();
+        client.close();
+        await client.connect();
+      } finally {
+        client.close();
+      }
+      expect(servernames).toEqual(["localhost", "localhost"]);
+    });
+  });
+
+  // `servername` is the node:tls spelling. The server's certificate is for agent1 only.
+  test.each(["serverName", "servername"] as const)(
+    "%s is the SNI and the name the certificate is verified against",
+    async key => {
+      await withServer({ key: serverKey, cert: serverCert }, async (port, server) => {
+        const servernames = recordServernames(server);
+        expect(await ping(`rediss://127.0.0.1:${port}`, { ca, [key]: "agent1" })).toBe("PONG");
+        expect(servernames).toEqual(["agent1"]);
+      });
+    },
+  );
+
+  test("a serverName the certificate is not for is refused, whatever the URL host", async () => {
+    await withServer(localhost, async port => {
+      expect(await ping(`rediss://localhost:${port}`, { ca: localhostTls.cert, serverName: "agent1" })).toBe(
+        "ERR_TLS_CERT_ALTNAME_INVALID",
+      );
+    });
+  });
+
+  test.skipIf(isWindows)("a unix socket has the name serverName gives it", async () => {
+    await withUnixServer({ key: serverKey, cert: serverCert }, async (socketPath, server) => {
+      const servernames = recordServernames(server);
+      expect(await ping(`redis+tls+unix://${socketPath}`, { ca, serverName: "agent1" })).toBe("PONG");
+      expect(await ping(`redis+tls+unix://${socketPath}`, { ca, serverName: "agent2" })).toBe(
+        "ERR_TLS_CERT_ALTNAME_INVALID",
+      );
+      expect(servernames).toEqual(["agent1"]);
     });
   });
 });

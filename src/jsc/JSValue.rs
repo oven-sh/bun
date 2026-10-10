@@ -1721,12 +1721,7 @@ impl JSValue {
         this_value: JSValue,
         args: &[JSValue],
     ) -> JsResult<JSValue> {
-        // A `Bun.ModuleGraph` that was disposed hears nothing more from native code, nor does a
-        // test file that finished (only `--isolate` retires a realm).
-        let vm = global.bun_vm();
-        if vm.calls_nobody()
-            || (vm.test_isolation_enabled && self.is_from_retired_test_isolation_realm())
-        {
+        if self.has_nobody_to_call(global) {
             return Ok(JSValue::UNDEFINED);
         }
         host_fn::from_js_host_call(global, || {
@@ -1734,6 +1729,22 @@ impl JSValue {
             // JSValues for the duration of the call.
             unsafe { Bun__JSValue__call(global, self, this_value, args.len(), args.as_ptr()) }
         })
+    }
+
+    /// A `Bun.ModuleGraph` that was disposed hears nothing more from native code, nor does a
+    /// test file that finished (only `--isolate` retires a realm).
+    #[inline]
+    fn has_nobody_to_call(self, global: &JSGlobalObject) -> bool {
+        let vm = global.bun_vm();
+        vm.calls_nobody()
+            || (vm.test_isolation_enabled && self.is_from_retired_test_isolation_realm())
+    }
+
+    /// Whether the `undefined` that [`call`](Self::call) just returned may be its silent no-op, for a caller that reads it as consent.
+    pub fn call_may_have_been_dropped(self, global: &JSGlobalObject) -> bool {
+        self.has_nobody_to_call(global)
+            || !global.bun_vm().script_allowed()
+            || global.vm().execution_forbidden()
     }
 }
 

@@ -752,10 +752,10 @@ impl Cmd {
                             *slot = Some(buf);
                             Ok(())
                         };
-                    if flags.duplicate_out() || flags.stdout() {
+                    if flags.stdout() {
                         redirect_out(STDOUT_NO, redirect_stdout)?;
                     }
-                    if flags.duplicate_out() || flags.stderr() {
+                    if flags.stderr() {
                         redirect_out(STDERR_NO, redirect_stderr)?;
                     }
                 } else if let Some(blob_ref) = jsval.as_class_ref::<crate::webcore::Blob>() {
@@ -1133,15 +1133,10 @@ fn set_stdio_from_redirect(stdio: &mut [Stdio; 3], flags: ast::RedirectFlags, fd
     if flags.stdin() {
         stdio[0] = Stdio::Fd(fd);
     }
-    if flags.duplicate_out() {
+    if flags.stdout() {
         stdio[1] = Stdio::Fd(fd);
+    }
+    if flags.stderr() {
         stdio[2] = Stdio::Fd(fd);
-    } else {
-        if flags.stdout() {
-            stdio[1] = Stdio::Fd(fd);
-        }
-        if flags.stderr() {
-            stdio[2] = Stdio::Fd(fd);
-        }
     }
 }

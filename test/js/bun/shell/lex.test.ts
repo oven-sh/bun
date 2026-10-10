@@ -821,6 +821,71 @@ describe("lex shell", () => {
     expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
   });
 
+  // A comment runs to the end of the line. The newline that ends it still
+  // delimits the statement, like an unquoted newline outside a comment.
+  test.each([
+    [
+      "trailing comment ends the statement",
+      "echo one # note\necho two",
+      [
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "one" },
+        { Delimit: {} },
+        { Newline: {} },
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "two" },
+        { Delimit: {} },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "trailing comment with CRLF",
+      "echo one # note\r\necho two",
+      [
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "one" },
+        { Delimit: {} },
+        { Newline: {} },
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "two" },
+        { Delimit: {} },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "backslash inside a comment does not continue the line",
+      "echo one # note \\\necho two",
+      [
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "one" },
+        { Delimit: {} },
+        { Newline: {} },
+        { Text: "echo" },
+        { Delimit: {} },
+        { Text: "two" },
+        { Delimit: {} },
+        { Eof: {} },
+      ],
+    ],
+    [
+      "comment on its own line",
+      "# note\necho two",
+      [{ Newline: {} }, { Text: "echo" }, { Delimit: {} }, { Text: "two" }, { Delimit: {} }, { Eof: {} }],
+    ],
+    [
+      "comment on the last line",
+      "echo one # note",
+      [{ Text: "echo" }, { Delimit: {} }, { Text: "one" }, { Delimit: {} }, { Eof: {} }],
+    ],
+  ])("comment: %s", (_name, source, expected) => {
+    expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
+  });
+
   describe("errors", async () => {
     // This is disallowed because the js object references get turned into special vars: $__bun_0, $__bun_1, etc.
     // this will break things inside of a quote.

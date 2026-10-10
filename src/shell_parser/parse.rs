@@ -439,8 +439,7 @@ pub mod ast {
             const STDOUT        = 1 << 1;
             const STDERR        = 1 << 2;
             const APPEND        = 1 << 3;
-            /// 1>&2 === stdout=true and duplicate_out=true
-            /// 2>&1 === stderr=true and duplicate_out=true
+            /// `2>&1` is `STDOUT | DUPLICATE_OUT`, `1>&2` is `STDERR | DUPLICATE_OUT`. Never set with a file target.
             const DUPLICATE_OUT = 1 << 4;
         }
     }
@@ -835,33 +834,41 @@ impl<'bump> Parser<'bump> {
     }
 
     pub(crate) fn parse_stmt(&mut self) -> ParseResult<ast::Stmt<'bump>> {
-        let mut exprs = bun_alloc::ArenaVec::new_in(self.alloc);
+        if self.match_stmt_end() {
+            return Ok(ast::Stmt { exprs: &[] });
+        }
 
-        while if self.inside_subshell.is_none() {
-            !self.match_any(&[TokenTag::Semicolon, TokenTag::Newline, TokenTag::Eof])
-        } else {
-            !self.match_any(&[
-                TokenTag::Semicolon,
-                TokenTag::Newline,
-                TokenTag::Eof,
-                self.inside_subshell
-                    .expect("infallible: checked is_some")
-                    .closing_tok(),
-            ])
-        } {
-            let expr = self.parse_expr()?;
-            if self.r#match(TokenTag::Ampersand) {
-                self.add_error(format_args!(
-                    "Background commands \"&\" are not supported yet."
-                ))?;
-                return Err(ParseError::Unsupported.into());
-            }
-            exprs.push(expr);
+        let expr = self.parse_expr()?;
+        if self.r#match(TokenTag::Ampersand) {
+            self.add_error(format_args!(
+                "Background commands \"&\" are not supported yet."
+            ))?;
+            return Err(ParseError::Unsupported.into());
+        }
+        if !self.match_stmt_end() {
+            self.add_error(format_args!(
+                "Expected \";\", \"&&\", \"||\", \"|\" or a newline but got: {}",
+                bstr::BStr::new(self.peek().as_human_readable(self.strpool))
+            ))?;
+            return Err(ParseError::Expected.into());
         }
 
         Ok(ast::Stmt {
-            exprs: exprs.into_bump_slice(),
+            exprs: core::slice::from_ref(self.allocate(expr)),
         })
+    }
+
+    /// Consumes a `;` or a newline. EOF and the token that closes a subshell also end a statement, and stay for the caller.
+    fn match_stmt_end(&mut self) -> bool {
+        match self.inside_subshell {
+            None => self.match_any(&[TokenTag::Semicolon, TokenTag::Newline, TokenTag::Eof]),
+            Some(kind) => self.match_any(&[
+                TokenTag::Semicolon,
+                TokenTag::Newline,
+                TokenTag::Eof,
+                kind.closing_tok(),
+            ]),
+        }
     }
 
     fn parse_expr(&mut self) -> ParseResult<ast::Expr<'bump>> {
@@ -880,6 +887,7 @@ impl<'bump> Parser<'bump> {
                 }
             };
 
+            self.skip_newlines();
             let right = self.parse_pipeline()?;
 
             let binary = self.allocate(ast::Binary { op, left, right });
@@ -904,6 +912,7 @@ impl<'bump> Parser<'bump> {
             pipeline_items.push(item);
 
             while self.r#match(TokenTag::Pipe) {
+                self.skip_newlines();
                 expr = self.parse_compound_cmd()?;
                 let item = match expr.as_pipeline_item() {
                     Some(i) => i,
@@ -1349,10 +1358,38 @@ impl<'bump> Parser<'bump> {
 
         let mut name_and_args = bun_alloc::ArenaVec::new_in(self.alloc);
         name_and_args.push(name);
-        while let Some(arg) = self.parse_atom()? {
-            name_and_args.push(arg);
+        let mut parsed_redirect: Option<ParsedRedirect<'bump>> = None;
+        loop {
+            if let Some(arg) = self.parse_atom()? {
+                name_and_args.push(arg);
+                continue;
+            }
+            // `[[` and `]]` are reserved words only where a command starts.
+            let bracket: Option<&'static [u8]> = match self.peek() {
+                Token::DoubleBracketOpen => Some(b"[["),
+                Token::DoubleBracketClose => Some(b"]]"),
+                _ => None,
+            };
+            if let Some(text) = bracket {
+                let _ = self.advance();
+                let _ = self.r#match(TokenTag::Delimit);
+                name_and_args.push(ast::Atom::new_simple(ast::SimpleAtom::Text(text)));
+                continue;
+            }
+            if !self.check(TokenTag::Redirect) {
+                break;
+            }
+            if parsed_redirect.is_some() {
+                self.add_error(format_args!("Multiple redirects are not supported yet."))?;
+                return Err(ParseError::Unsupported.into());
+            }
+            parsed_redirect = Some(self.parse_redirect()?);
+            // A redirection is usually last: skip the parse_atom() call that would allocate and find no word.
+            if self.at_command_end() {
+                break;
+            }
         }
-        let parsed_redirect = self.parse_redirect()?;
+        let parsed_redirect = parsed_redirect.unwrap_or_default();
 
         Ok(ast::CmdOrAssigns::Cmd(ast::Cmd {
             assigns: assigns.into_bump_slice(),
@@ -1360,6 +1397,22 @@ impl<'bump> Parser<'bump> {
             redirect_file: parsed_redirect.redirect,
             redirect: parsed_redirect.flags,
         }))
+    }
+
+    fn at_command_end(&self) -> bool {
+        let tag = self.peek().tag();
+        matches!(
+            tag,
+            TokenTag::Eof
+                | TokenTag::Semicolon
+                | TokenTag::Newline
+                | TokenTag::Pipe
+                | TokenTag::DoublePipe
+                | TokenTag::DoubleAmpersand
+                | TokenTag::Ampersand
+        ) || self
+            .inside_subshell
+            .is_some_and(|kind| kind.closing_tok() == tag)
     }
 
     fn parse_redirect(&mut self) -> ParseResult<ParsedRedirect<'bump>> {
@@ -1374,6 +1427,9 @@ impl<'bump> Parser<'bump> {
         };
         let redirect_file: Option<ast::Redirect<'bump>> = 'redirect_file: {
             if has_redirect {
+                if redirect.duplicate_out() {
+                    break 'redirect_file None;
+                }
                 if self.r#match(TokenTag::JSObjRef) {
                     let Token::JSObjRef(obj_ref) = self.prev() else {
                         unreachable!()
@@ -1384,9 +1440,6 @@ impl<'bump> Parser<'bump> {
                 let file = match self.parse_atom()? {
                     Some(f) => f,
                     None => {
-                        if redirect.duplicate_out() {
-                            break 'redirect_file None;
-                        }
                         self.add_error(format_args!("Redirection with no file"))?;
                         return Err(ParseError::Expected.into());
                     }
@@ -1395,7 +1448,6 @@ impl<'bump> Parser<'bump> {
             }
             None
         };
-        // TODO check for multiple redirects and error
         Ok(ParsedRedirect {
             flags: redirect,
             redirect: redirect_file,
@@ -1654,7 +1706,7 @@ impl<'bump> Parser<'bump> {
                     | Token::Delimit
                     | Token::Eof
                     | Token::DoubleBracketOpen
-                    | Token::DoubleBracketClose => return Ok(None),
+                    | Token::DoubleBracketClose => break,
                 }
             }
         }
@@ -2327,6 +2379,19 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         Some(self.tokens[self.tokens.len() - 1].tag())
     }
 
+    /// A command substitution can sit inside a word, so its last word gets a delimiter unless a statement already ended there.
+    fn delimit_before_cmd_subst_end(&mut self) {
+        let Some(last) = self.last_tok_tag() else {
+            return;
+        };
+        if !matches!(
+            last,
+            TokenTag::Delimit | TokenTag::Semicolon | TokenTag::Eof | TokenTag::Newline
+        ) {
+            self.tokens.push(Token::Delimit);
+        }
+    }
+
     pub fn lex(&mut self) -> Result<(), LexerError> {
         loop {
             // Fast path: bulk-consume runs of non-special bytes in Normal state.
@@ -2619,11 +2684,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             }
                             if self.in_subshell == Some(SubShellKind::Backtick) {
                                 self.break_word(AddDelimiter::AfterWord)?;
-                                if let Some(toktag) = self.last_tok_tag() {
-                                    if toktag != TokenTag::Delimit {
-                                        self.tokens.push(Token::Delimit);
-                                    }
-                                }
+                                self.delimit_before_cmd_subst_end();
                                 self.tokens.push(Token::CmdSubstEnd);
                                 return Ok(());
                             } else {
@@ -2700,22 +2761,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             }
 
                             self.break_word(AddDelimiter::AfterText)?;
-                            // Command substitution can be put in a word so need to add delimiter
                             if self.in_subshell == Some(SubShellKind::Dollar) {
-                                if let Some(toktag) = self.last_tok_tag() {
-                                    match toktag {
-                                        TokenTag::Delimit
-                                        | TokenTag::Semicolon
-                                        | TokenTag::Eof
-                                        | TokenTag::Newline => {}
-                                        _ => {
-                                            self.tokens.push(Token::Delimit);
-                                        }
-                                    }
-                                }
-                            }
-
-                            if self.in_subshell == Some(SubShellKind::Dollar) {
+                                self.delimit_before_cmd_subst_end();
                                 self.tokens.push(Token::CmdSubstEnd);
                             } else if self.in_subshell == Some(SubShellKind::Normal) {
                                 self.tokens.push(Token::CloseParen);
@@ -3467,12 +3514,13 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         self.chars.peek()
     }
 
+    /// A comment runs to the end of the line. A backslash inside it is
+    /// literal, so an escaped newline ends the comment too. The newline
+    /// still delimits the statement, so it is pushed as a token.
     fn eat_comment(&mut self) {
-        while let Some(peeked) = self.eat() {
-            if peeked.escaped {
-                continue;
-            }
-            if peeked.char == u32::from(b'\n') {
+        while let Some(c) = self.eat() {
+            if c.char == u32::from(b'\n') {
+                self.tokens.push(Token::Newline);
                 break;
             }
         }

@@ -923,6 +923,77 @@ booga"
       .runAsTest("quotes");
   });
 
+  describe("comments", () => {
+    TestBuilder.command /* sh */ `echo one # note
+echo two`
+      .stdout("one\ntwo\n")
+      .runAsTest("trailing comment ends the statement");
+
+    TestBuilder.command /* sh */ `echo one # note \\
+echo two`
+      .stdout("one\ntwo\n")
+      .runAsTest("backslash inside a comment does not continue the line");
+
+    TestBuilder.command /* sh */ `rm -rf build   # clean the previous output
+cp -R src build
+ls`
+      .ensureTempDir()
+      .directory("src")
+      .file("src/index.js", "keep me\n")
+      .directory("build")
+      .file("build/old.js", "stale\n")
+      .stdout(out => expect(out.split("\n").filter(Boolean).sort()).toEqual(["build", "src"]))
+      .fileEquals("src/index.js", "keep me\n")
+      .fileEquals("build/index.js", "keep me\n")
+      .runAsTest("rm with a trailing comment does not take the next line as arguments");
+  });
+
+  describe("statement separators", () => {
+    TestBuilder.command /* sh */ `(echo a) # note
+echo b`
+      .stdout("a\nb\n")
+      .runAsTest("comment after a subshell ends the statement");
+
+    TestBuilder.command /* sh */ `if true; then echo a; fi # note
+echo b`
+      .stdout("a\nb\n")
+      .runAsTest("comment after fi ends the statement");
+
+    TestBuilder.command /* sh */ `echo a && # note
+echo b`
+      .stdout("a\nb\n")
+      .runAsTest("comment and newline after &&");
+
+    TestBuilder.command /* sh */ `false ||
+echo b`
+      .stdout("b\n")
+      .runAsTest("newline after ||");
+
+    TestBuilder.command /* sh */ `echo a | # note
+cat`
+      .stdout("a\n")
+      .runAsTest("comment and newline after |");
+
+    TestBuilder.command`echo a [[ -n b ]] c ]]`
+      .stdout("a [[ -n b ]] c ]]\n")
+      .runAsTest("[[ and ]] after the command name are arguments");
+
+    test.each([
+      ["echo `echo a;`", "a\n"],
+      ["echo `echo a\n`", "a\n"],
+      ["echo `echo a # note\n`", "a\n"],
+    ])("backtick substitution that ends with a separator: %j", async (source, expected) => {
+      expect(await $`${{ raw: source }}`.text()).toBe(expected);
+    });
+
+    test("a word after a subshell is a syntax error and nothing runs", async () => {
+      using dir = tempDir("shell-separator", {});
+      const run = async () => await $`(echo a) touch INJECTED`.cwd(String(dir)).quiet();
+      await expect(run()).rejects.toThrow('Expected ";", "&&", "||", "|" or a newline but got: touch');
+      expect(await Bun.file(join(String(dir), "INJECTED")).exists()).toBe(false);
+    });
+  });
+
   describe("glob expansion", () => {
     // Issue #8403: https://github.com/oven-sh/bun/issues/8403
     TestBuilder.command`ls *.sdfljsfsdf`
@@ -2571,7 +2642,7 @@ describe("condexprs", () => {
   TestBuilder.command`[[ -z "skldjfldsf" ]] && echo yes!`.exitCode(1).runAsTest("-z fail");
 
   TestBuilder.command`FOO="lkjdflskdjf"; [[ -n $FOO ]] && echo yes!`.stdout("yes!\n").runAsTest("-n");
-  TestBuilder.command`FOO="" [[ -n $FOO ]] && echo yes!`.exitCode(1).runAsTest("-n fail");
+  TestBuilder.command`FOO=""; [[ -n $FOO ]] && echo yes!`.exitCode(1).runAsTest("-n fail");
 
   TestBuilder.command`[[ -n hey ]] | echo hi | cat`.stdout("hi\n").runAsTest("precedence: pipeline");
 

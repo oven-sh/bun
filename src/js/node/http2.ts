@@ -5403,9 +5403,12 @@ class ClientHttp2Session extends Http2Session {
   get alpnProtocol() {
     return this.#alpnProtocol;
   }
-  #onConnect() {
-    const socket = this[bunHTTP2Socket];
-    if (!socket) return;
+  #onConnect(socket, connectDue) {
+    if (!this[bunHTTP2Socket]) {
+      // node's setupHandle: a session destroyed before its socket connected still emits 'connect'.
+      connectDue();
+      return;
+    }
     this.#connected = true;
     // check if h2 is supported only for TLSSocket
     if (socket instanceof TLSSocket) {
@@ -5424,7 +5427,7 @@ class ClientHttp2Session extends Http2Session {
       this.#parser.setNativeSocket(nativeSocket);
       this[kDeferWriteCallback] = deferWriteCallbackForSocket(nativeSocket);
     }
-    process.nextTick(emitConnectNT, this, socket);
+    connectDue();
     this.#parser.flush();
     if (this.#closed) {
       // close() was called while the socket was still connecting: requests made in the meantime
@@ -5636,7 +5639,7 @@ class ClientHttp2Session extends Http2Session {
     this.#pendingSettingsCallbacks.push(typeof callback === "function" ? [callback, Date.now()] : null);
   }
 
-  constructor(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {
+  constructor(url: string | URL, options?: Http2ConnectOptions, listener?: (...args: any[]) => void) {
     super();
 
     if (typeof options === "function") {
@@ -5711,12 +5714,18 @@ class ClientHttp2Session extends Http2Session {
         process.nextTick(onConnect.bind(this));
         return;
       }
+      // 'connect' is emitted outside the try, so a throw from a listener never reaches destroy().
+      let emitInThisTick = false;
       try {
-        this.#onConnect(arguments);
-        listener?.$call(this, this);
+        this.#onConnect(socket, () => {
+          // A transport that was connected already runs this on the tick node emits on.
+          if (connectOnNextTick) emitInThisTick = true;
+          else process.nextTick(emitConnectNT, this, socket);
+        });
       } catch (e) {
         this.destroy(e);
       }
+      if (emitInThisTick) emitConnectNT(this, socket);
     }
 
     // h2 with ALPNProtocols
@@ -5783,6 +5792,8 @@ class ClientHttp2Session extends Http2Session {
       // would then run against a session whose #parser is not assigned yet.
       process.nextTick(onConnect.bind(this));
     }
+    // Like node's connect(): the listener is an ordinary 'connect' listener, never called directly.
+    if (typeof listener === "function") this.once("connect", listener);
   }
 
   // Gracefully closes the Http2Session, allowing any existing streams to complete on their own and preventing new Http2Stream instances from being created. Once closed, http2session.destroy() might be called if there are no open Http2Stream instances.
@@ -6386,7 +6397,7 @@ class ClientHttp2Session extends Http2Session {
       process.nextTick(emitEventNT, req, "ready");
     }
   }
-  static connect(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {
+  static connect(url: string | URL, options?: Http2ConnectOptions, listener?: (...args: any[]) => void) {
     return new ClientHttp2Session(url, options, listener);
   }
 
@@ -6395,7 +6406,7 @@ class ClientHttp2Session extends Http2Session {
   }
 }
 
-function connect(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {
+function connect(url: string | URL, options?: Http2ConnectOptions, listener?: (...args: any[]) => void) {
   return ClientHttp2Session.connect(url, options, listener);
 }
 

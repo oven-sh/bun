@@ -1,6 +1,7 @@
 use crate::dependency::{Behavior, Dependency};
 use crate::lockfile::DependencySlice;
 use crate::lockfile::package::{Meta, PackageColumns as _};
+use crate::lockfile::tree::optional_peer_group_enabled;
 use crate::lockfile_real::Lockfile;
 use crate::npm::{Architecture, OperatingSystem};
 use crate::{PackageID, PackageManager};
@@ -162,12 +163,19 @@ impl<'a> Walk<'a> {
     }
 
     fn follows(&self, behavior: Behavior) -> bool {
-        let options = &self.options;
         if (!self.follow_workspace_edges && behavior.is_workspace())
-            || (behavior.is_bundled() && !options.bundled)
+            || (behavior.is_bundled() && !self.options.bundled)
         {
             false
-        } else if behavior.is_optional_peer() {
+        } else {
+            self.group_enabled(behavior)
+        }
+    }
+
+    // The `--omit` half of `follows`: does the install take this row's dependency group?
+    fn group_enabled(&self, behavior: Behavior) -> bool {
+        let options = &self.options;
+        if behavior.is_optional_peer() {
             options.optional_peer
         } else if behavior.is_peer() {
             options.peer
@@ -196,9 +204,17 @@ impl<'a> Walk<'a> {
     fn drain(&self, seen: &mut DynamicBitSet, worklist: &mut Vec<PackageID>) {
         while let Some(parent) = worklist.pop() {
             let slice = self.dep_slices[parent as usize];
+            let siblings = slice.get(self.deps);
             for dep_id in slice.begin() as usize..slice.end() as usize {
-                if !(self.follow_all || self.follows(self.deps[dep_id].behavior)) {
-                    continue;
+                if !self.follow_all {
+                    let dep = &self.deps[dep_id];
+                    if !self.follows(dep.behavior)
+                        || optional_peer_group_enabled(dep, siblings, |behavior| {
+                            self.group_enabled(behavior)
+                        }) == Some(false)
+                    {
+                        continue;
+                    }
                 }
                 self.admit(self.resolutions[dep_id], seen, worklist);
             }

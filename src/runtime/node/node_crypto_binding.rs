@@ -1413,11 +1413,10 @@ mod _impl {
                 }
             };
 
-            // The validators admit sizes rust-argon2 would abort on
-            // (`vec![Block::zero(); mem_cost]` and the output Vec allocate
-            // infallibly). Pre-fail the job instead, so both paths deliver
-            // the same catchable error node produces when OpenSSL's argon2
-            // allocation fails.
+            // The synthetic allocation limit is a test hook the allocator
+            // does not see, so apply it here. A real allocation failure
+            // inside rust-argon2 surfaces as `Err(MemoryAllocationFailed)`
+            // from `hash_raw` and takes the same `failed` path.
             let limit = jsc::virtual_machine::synthetic_allocation_limit();
             let failed =
                 (memory as usize).saturating_mul(1024) > limit || tag_length as usize > limit;
@@ -1458,8 +1457,8 @@ mod _impl {
             };
             match rust_argon2::hash_raw(&self.message, &self.nonce, &config) {
                 Ok(hash) => self.output = hash,
-                // Unreachable via `node:crypto`: `checkArgon2()` bounds are a
-                // superset of rust-argon2's constraints.
+                // `checkArgon2()` bounds are a superset of rust-argon2's
+                // parameter constraints, so this is an allocation failure.
                 Err(_) => self.failed = true,
             }
         }

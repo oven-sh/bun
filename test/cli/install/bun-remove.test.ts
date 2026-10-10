@@ -349,11 +349,11 @@ const localBin = (name: string) => ({
   [`${name}/cli.js`]: "#!/usr/bin/env node\n",
 });
 
-async function run(dir: string, ...args: string[]) {
+async function runWithEnv(extraEnv: Record<string, string>, dir: string, ...args: string[]) {
   await using proc = spawn({
     cmd: [bunExe(), ...args],
     cwd: dir,
-    env: { ...env, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") },
+    env: { ...env, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache"), ...extraEnv },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -361,9 +361,15 @@ async function run(dir: string, ...args: string[]) {
   return { stdout, stderr, exitCode };
 }
 
+const run = (dir: string, ...args: string[]) => runWithEnv({}, dir, ...args);
+
 const remove = (dir: string, ...names: string[]) => run(dir, "remove", ...names);
 
 const binEntries = (dir: string) => readdirSync(join(dir, "node_modules", ".bin")).sort();
+
+// On Windows a bin is a `.bunx` and `.exe` shim pair, not a symlink.
+const binFiles = (...names: string[]) =>
+  (isWindows ? names.flatMap(name => [`${name}.bunx`, `${name}.exe`]) : names).sort();
 
 it.concurrent("bun remove drops every duplicate key of the removed package", async () => {
   using dir = tempDir("bun-remove-dup", {
@@ -458,6 +464,45 @@ for (const linker of ["hoisted", "isolated"] as const) {
       name: "root",
       dependencies: { "other-bin": "file:./other-bin" },
     });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent(`bun remove -g leaves no dangling link in the global node_modules/.bin (${linker})`, async () => {
+    using dir = tempDir(`bun-remove-global-bin-${linker}`, {
+      ...localBin("what-bin"),
+      ...localBin("other-bin"),
+      ...local("linked"),
+    });
+    const bunInstall = join(String(dir), "global");
+    const globalDir = join(bunInstall, "install", "global");
+    // Every global-dir variable is set so an inherited one can never point the test at the developer's real global folder.
+    const globalEnv = {
+      BUN_INSTALL: bunInstall,
+      BUN_INSTALL_GLOBAL_DIR: globalDir,
+      BUN_INSTALL_BIN: join(bunInstall, "bin"),
+    };
+    const runGlobal = (...args: string[]) => runWithEnv(globalEnv, String(dir), ...args, "-g", "--linker", linker);
+
+    // The second add does not name what-bin, so it links what-bin into the node_modules/.bin of the global dir.
+    for (const name of ["what-bin", "other-bin"]) {
+      const { stderr, exitCode } = await runGlobal("add", join(String(dir), name));
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+    expect(binEntries(globalDir)).toEqual(expect.arrayContaining(binFiles("what-bin")));
+
+    // The global node_modules is also the `bun link` registry.
+    {
+      const { stderr, exitCode } = await runWithEnv(globalEnv, join(String(dir), "linked"), "link");
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+
+    const { stderr, exitCode } = await runGlobal("remove", "what-bin");
+    expect(stderr).not.toContain("error:");
+    expect(binEntries(globalDir)).toStrictEqual(binFiles("other-bin"));
+    expect(existsSync(join(globalDir, "node_modules", "what-bin"))).toBe(false);
+    expect(existsSync(join(globalDir, "node_modules", "linked", "package.json"))).toBe(true);
     expect(exitCode).toBe(0);
   });
 }

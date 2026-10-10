@@ -8,13 +8,13 @@
 //! which no cheap sign says that there is something to find, or asks for them by kind.
 
 use super::{SyntaxError, espree};
-use crate::ast::{Class, Expr, File, Func, Handle, Node, Param, StmtTag};
+use crate::ast::{Class, Expr, File, Func, Handle, Module, Node, Param, StmtTag};
 use crate::tokens::token_len;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{ClassOwner, Parent};
 use bun_sema::hir::{
-    DiagnosticKind, ExprKind, Flags, FnKind, Modifier, ModifierKind, ParamId, PatKind, StmtId,
-    StmtKind, VarKind,
+    DiagnosticKind, ExprKind, Flags, FnKind, Modifier, ModifierKind, ModuleId, ParamId, PatKind,
+    StmtId, StmtKind, VarKind,
 };
 use smallvec::SmallVec;
 
@@ -256,6 +256,23 @@ fn duplicate_parameter<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     })
 }
 
+/// `declare` at the head of a statement in what is ambient already: in a `declare namespace`, a `declare module`, `declare global`,
+/// a namespace of a declaration file. After `export` OXC takes it.
+fn declare_in_ambient_context<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+    let modules = file.hir.modules.iter().enumerate();
+    let ambient = modules.filter(|it| it.1.flags.contains(Flags::AMBIENT));
+    let statements = ambient.flat_map(|it| Module::new(file, ModuleId(it.0 as u32)).body());
+    let declared = statements.filter_map(|it| {
+        let modifiers = file.hir.modifiers.get(it.try_raw()?.modifiers.range())?;
+        let first = modifiers.first()?;
+        is_keyword(first, Flags::AMBIENT).then_some(first.pos)
+    });
+    Some(SyntaxError {
+        at: declared.min()?,
+        message: b"A 'declare' modifier cannot be used in an already ambient context.".to_vec(),
+    })
+}
+
 /// `import defer a from "b"`, `import defer { a } from "b"`: only a namespace can be deferred.
 fn deferred_import<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     let refused = file.hir.imports.iter().filter_map(|it| {
@@ -281,8 +298,9 @@ fn deferred_import<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
 pub(super) fn first_error<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     // acorn's checks have these for JavaScript.
     let of_typescript = match file.is_javascript() {
-        true => [None, None, None, None, None],
+        true => [None, None, None, None, None, None],
         false => [
+            declare_in_ambient_context(file),
             espree::export_assignment_beside_exports(file),
             declaration_without_initializer(file),
             declaration_list(file),
@@ -295,6 +313,7 @@ pub(super) fn first_error<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
         espree::using_in_script(file),
         espree::with_in_strict_code(file),
         deferred_import(file),
+        espree::for_await_where_nothing_waits(file),
         reserved_word(file),
         duplicate_parameter(file),
     ];

@@ -560,7 +560,10 @@ impl Drop for Borrowed<'_> {
             state.idle.push(self.at);
         }
         drop(state);
-        self.engines.demand.note(size);
+        // What is heavy is not counted.
+        if size < HEAVY {
+            self.engines.demand.note(size);
+        }
         // Each of those that wait may wait for another one.
         self.engines.is_idle.notify_all();
     }
@@ -763,8 +766,12 @@ impl Engine for Engines {
         self.demand.may_come(size);
     }
 
-    fn has_shown(&self, size: u64, comes: bool) {
-        self.demand.has_shown(size, comes);
+    fn comes(&self, size: u64) {
+        self.demand.comes(size);
+    }
+
+    fn has_shown(&self, size: u64, has_come: bool) {
+        self.demand.has_shown(size, has_come);
     }
 
     fn expect(&self, _files: usize, size: u64, most: usize) {

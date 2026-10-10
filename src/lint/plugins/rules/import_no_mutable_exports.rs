@@ -33,8 +33,12 @@ impl Rule for NoMutableExports {
                 if let StmtKind::ExportNamed(export) = stmt.kind()
                     && !export.has_from()
                 {
+                    // For oxlint the name in `export { type a }` and in `export type { a }` refers to a type.
+                    let is_oxlint = cx.file().language().is_oxlint;
                     for specifier in export.items() {
-                        check_declarations_in_scope(stmt, specifier.local().name(), cx);
+                        if !(is_oxlint && (export.is_type_only() || specifier.is_type_only())) {
+                            check_declarations_in_scope(stmt, specifier.local().name(), cx);
+                        }
                     }
                 }
             }

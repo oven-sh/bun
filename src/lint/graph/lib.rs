@@ -570,7 +570,15 @@ impl<'h> Graph<'h> {
                     as_file()
                 };
                 if found.is_none() && disk.is_dir(&base) {
-                    if disk.is_file(&join(&base, b"package.json")) {
+                    // With a `package.json` that names an entry it is not decided here.
+                    let names_entry = |text: Cow<[u8]>| {
+                        let manifest = bun_lint::json::parse(&text);
+                        manifest.is_none_or(|it| {
+                            it.get(b"module").or_else(|| it.get(b"main")).is_some()
+                        })
+                    };
+                    let manifest = join(&base, b"package.json");
+                    if disk.is_file(&manifest) && disk.read(&manifest).is_none_or(names_entry) {
                         return None;
                     }
                     found = EXTENSIONS
@@ -814,7 +822,20 @@ impl<'h> Graph<'h> {
                 linted_as[at].extend(record.linted_as);
                 is_always_checked[at] |= record.is_always_checked;
                 all.imports.resize_with(all.paths.len(), Vec::new);
-                all.imports[at] = imports;
+                // Several rules can have taken note of a file. One of them may count the imports of types.
+                let of_types = |imports: &[Import]| {
+                    let declarations = imports.iter().flat_map(|it| &it.declarations);
+                    declarations.filter(|it| it.is_only_importing_types).count()
+                };
+                let known = &all.imports[at];
+                let is_the_same = known.len() == imports.len()
+                    && known
+                        .iter()
+                        .zip(&imports)
+                        .all(|(a, b)| a.module == b.module);
+                if !is_the_same || of_types(&imports) < of_types(known) {
+                    all.imports[at] = imports;
+                }
             }
             unknown.sort_unstable();
             unknown.dedup();

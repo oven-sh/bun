@@ -557,14 +557,15 @@ impl Context<'_, '_> {
     ) -> FileResult {
         let counts = Counts::of(&result.messages);
         let is_reported = !result.messages.is_empty() || !result.suppressed.is_empty();
+        if config.may_hand_back() && text.len() < bun_lint::js_plugin::HEAVY {
+            (self.js_plugins).has_shown(text.len() as u64, result.handed_back.is_some());
+        }
         if let Some(reason) = result.handed_back {
             let mut all = self.handed_back.lock();
             match all.iter_mut().find(|it| it.0 == reason) {
                 Some(entry) => entry.1 += 1,
                 None => all.push((reason, 1)),
             }
-        } else if config.may_hand_back() {
-            self.js_plugins.has_shown(text.len() as u64, false);
         }
         if !result.skipped_rules.is_empty() {
             let mut all = self.skipped_in_comments.lock();

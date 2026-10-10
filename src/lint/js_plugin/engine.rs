@@ -33,8 +33,11 @@ pub trait Engine: Sync {
     /// [`Engine::expect`].
     fn may_come(&self, _size: u64) {}
 
-    /// One of these, of `size` bytes, needs a realm: it is going to ask for one. Or it is done without.
-    fn has_shown(&self, _size: u64, _comes: bool) {}
+    /// One of these, of `size` bytes, is going to ask for a realm. With `--fix` it can do so several times.
+    fn comes(&self, _size: u64) {}
+
+    /// One of these, of `size` bytes, is done: it `has_come`, or not. Once for each.
+    fn has_shown(&self, _size: u64, _has_come: bool) {}
 
     /// For `--timing`: the most that all realms together have taken, in bytes, and how many were freed because that was too much.
     fn sizes(&self) -> (usize, usize) {
@@ -94,15 +97,18 @@ impl Demand {
         self.0.lock().possible = size;
     }
 
+    /// [`Engine::comes`]
+    pub fn comes(&self, size: u64) {
+        self.0.lock().bytes += size;
+    }
+
     /// [`Engine::has_shown`]
-    pub fn has_shown(&self, size: u64, comes: bool) {
+    pub fn has_shown(&self, size: u64, has_come: bool) {
         let mut left = self.0.lock();
         left.possible = left.possible.saturating_sub(size);
-        if comes {
-            left.bytes += size;
-            left.shown.0 += size;
-        } else {
-            left.shown.1 += size;
+        match has_come {
+            true => left.shown.0 += size,
+            false => left.shown.1 += size,
         }
     }
 
@@ -131,10 +137,10 @@ impl Demand {
 }
 
 impl Left {
-    /// Of those that may come, as large a part as has come of those of which it has shown.
+    /// Of those that may come, as large a part as has come of those of which it has shown. The first that comes says little: as
+    /// if what a realm costs had shown before, and not come.
     fn expected(&self) -> f64 {
         let (come, not) = (self.shown.0 as f64, self.shown.1 as f64);
-        let part = if come > 0.0 { come / (come + not) } else { 0.0 };
-        self.bytes as f64 + self.possible as f64 * part
+        self.bytes as f64 + self.possible as f64 * come / (come + not + BYTES_IN_THE_COST)
     }
 }

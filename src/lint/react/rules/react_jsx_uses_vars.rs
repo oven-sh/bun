@@ -30,11 +30,13 @@ impl Rule for JsxUsesVars {
         while let Some(object) = tag.object() {
             tag = object;
         }
-        // `<a:b>` and `<a-b>` are no identifiers here, and `this` is no variable.
-        if let Some(name) = tag.as_ident()
-            && (is_member || !is_tag_name(name))
-        {
-            mark_variable_as_used(name, Node::Expr(e));
-        }
+        let name = match tag.kind() {
+            ExprKind::Ident(name) if is_member || !is_tag_name(name) => name,
+            // A parameter of TypeScript.
+            ExprKind::This if is_member => e.file().name_of("this"),
+            // `<a:b>` and `<a-b>` are no names of variables.
+            _ => return,
+        };
+        mark_variable_as_used(name, Node::Expr(e));
     }
 }

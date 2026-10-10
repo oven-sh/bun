@@ -111,17 +111,27 @@ impl Event<'_> {
 
 /// An element of `vars` that has a `variableName`.
 struct Variable<'a> {
-    node: Span,
+    variable_name: &'a [u8],
+    /// The number of the scope.
+    scope: usize,
     /// Where the node starts at which it is added.
     since: u32,
-    scope: Scope<'a>,
-    variable_name: &'a [u8],
+    node: Span,
 }
 
-/// Those of `vars`, which is in the order of the names, with the name `name`.
-fn called<'v, 'a>(vars: &'v [Variable<'a>], name: &[u8]) -> &'v [Variable<'a>] {
-    let rest = vars.get(vars.partition_point(|it| it.variable_name < name)..).unwrap_or_default();
-    rest.get(..rest.partition_point(|it| it.variable_name == name)).unwrap_or_default()
+impl<'a> Variable<'a> {
+    /// Those of `vars`, which is in the order of the fields, with the name of `identifier`.
+    fn named<'v>(vars: &'v [Variable<'a>], identifier: Option<Name<'_>>) -> &'v [Variable<'a>] {
+        let name = identifier.map_or(&[][..], Name::bytes);
+        let rest = vars.get(vars.partition_point(|it| it.variable_name < name)..).unwrap_or_default();
+        rest.get(..rest.partition_point(|it| it.variable_name == name)).unwrap_or_default()
+    }
+
+    /// Those of `named` of the scope `scope` that are added before `offset`.
+    fn added_before<'v>(named: &'v [Variable<'a>], scope: usize, offset: u32) -> &'v [Variable<'a>] {
+        let rest = named.get(named.partition_point(|it| it.scope < scope)..).unwrap_or_default();
+        rest.get(..rest.partition_point(|it| it.scope == scope && it.since < offset)).unwrap_or_default()
+    }
 }
 
 /// Above the `BinaryExpression`s around an identifier: whether that is the `value` or the `object` of its parent.
@@ -136,7 +146,7 @@ fn is_value_or_object<'a>(current: Node<'a>, parent: Node<'a>) -> Option<bool> {
         },
         Node::Prop(property) => property.value() == current && estree_type_name(parent) == "Property",
         Node::Member(member) => member.init() == current,
-        Node::Stmt(statement) => matches!(statement.kind(), StmtKind::With { object, .. } if Some(object) == current),
+        // The `object` of a `with` is in a scope of its own.
         _ => false,
     })
 }
@@ -198,10 +208,10 @@ impl Rule for NoAccessStateInSetstate {
                 }
                 Some(Around::Method(method_name)) => events.push(Event::State(node.span(), method_name)),
                 Some(Around::Variable(Some(variable_name))) => vars.push(Variable {
-                    node: node.span(),
-                    since: node.span().start,
-                    scope: Node::Expr(node).scope(),
                     variable_name,
+                    scope: Node::Expr(node).scope().id().idx(),
+                    since: node.span().start,
+                    node: node.span(),
                 }),
                 Some(Around::Variable(None)) | None => {}
             }
@@ -214,8 +224,8 @@ impl Rule for NoAccessStateInSetstate {
                 if get_property_name(property).is_some_and(|it| it == b"state")
                     && let Some(node) = get_property_name_node(property)
                 {
-                    let scope = Node::Pat(pattern).scope();
-                    vars.push(Variable { node, since: pattern.span().start, scope, variable_name: b"state" });
+                    let scope = Node::Pat(pattern).scope().id().idx();
+                    vars.push(Variable { variable_name: b"state", scope, since: pattern.span().start, node });
                 }
             }
         }
@@ -288,13 +298,14 @@ fn follow_vars<'a>(
     first_arguments: &FirstArguments,
     cx: &Cx<'a, NoAccessStateInSetstate>,
 ) {
-    sort::sort_by_key(vars, |it| it.variable_name);
-    let report = |variable: &Variable<'a>, identifier: Span| {
-        for _ in 0..first_arguments.around(identifier.start) {
-            if variable.since >= identifier.start || cx.has_reported_too_much() {
-                return;
+    sort::sort_by_key(vars, |it| (it.variable_name, it.scope, it.since));
+    let vars = &*vars;
+    let report = |named: &[Variable<'a>], identifier: Node<'a>| {
+        let start = identifier.span().start;
+        for variable in Variable::added_before(named, identifier.scope().id().idx(), start) {
+            for _ in 0..first_arguments.around(start) {
+                cx.report(variable.node, USE_CALLBACK);
             }
-            cx.report(variable.node, USE_CALLBACK);
         }
     };
     let mut known = AncestorMemo::default();
@@ -302,24 +313,28 @@ fn follow_vars<'a>(
         if first_arguments.around(node.span().start) == 0 {
             continue;
         }
-        let called = called(vars, node.as_ident().map_or(&[][..], Name::bytes));
-        if called.is_empty() || known.find(Node::Expr(node), is_value_or_object) != Some(true) {
+        let named = Variable::named(vars, node.as_ident());
+        if !named.is_empty() && known.find(Node::Expr(node), is_value_or_object) == Some(true) {
+            if cx.has_reported_too_much() {
+                return;
+            }
+            report(named, Node::Expr(node));
+        }
+    }
+    // What a pattern binds is no expression. A parameter comes before all that is added in its scope.
+    for statement in cx.file().stmts_of_kind(StmtTag::Var) {
+        if first_arguments.around(statement.span().start) == 0 || cx.has_reported_too_much() {
             continue;
         }
-        let scope = Node::Expr(node).scope();
-        called.iter().filter(|it| it.scope == scope).for_each(|it| report(it, node.span()));
-    }
-    // What a pattern binds is no expression. In the scope of a variable it is in the arguments that the variable is in.
-    for variable in vars.iter().filter(|it| first_arguments.around(it.since) > 0) {
-        let scopes = [Some(variable.scope), Some(variable.scope.variable_scope()).filter(|it| *it != variable.scope)];
-        let symbols = scopes.into_iter().flatten().filter_map(|it| it.get_bytes(variable.variable_name));
-        for declaration in symbols.flat_map(Symbol::declarations) {
-            if let Declaration::Var(name) | Declaration::Param(name) = declaration
-                && matches!(name.parent(), Node::PatProp(it) if it.default().is_none() && !it.is_rest())
-                && Node::Pat(name).scope() == variable.scope
-            {
-                report(variable, name.span());
-            }
+        let StmtKind::Var(declarators) = statement.kind() else {
+            continue;
+        };
+        for declarator in declarators.iter() {
+            declarator.pat().for_each_binding(&mut |name| {
+                if matches!(name.parent(), Node::PatProp(it) if it.default().is_none() && !it.is_rest()) {
+                    report(Variable::named(vars, name.as_ident()), Node::Pat(name));
+                }
+            });
         }
     }
 }

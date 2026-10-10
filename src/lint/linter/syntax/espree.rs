@@ -447,6 +447,25 @@ pub(super) fn export_assignment_beside_exports<'a>(file: &'a File<'a>) -> Option
     })
 }
 
+/// `for await` in a function that is not `async`, or in no function in a script, in the words of OXC. For a file that is CommonJS by
+/// its name see [`module_syntax_in_commonjs`].
+pub(super) fn for_await_where_nothing_waits<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+    let is_refused = |it: &Stmt<'a>| {
+        matches!(it.kind(), StmtKind::ForOf { is_await: true, .. })
+            && match Node::Stmt(*it).enclosing_function() {
+                Some(func) => !func.is_async() && func.kind() != FnKind::StaticBlock,
+                None => is_script(file),
+            }
+    };
+    let refused = file.stmts_of_kind(StmtTag::ForOf).filter(is_refused);
+    let first = refused.map(|it| it.span().start).min()?;
+    Some(SyntaxError {
+        at: skip_trivia(file.text(), first + 3),
+        message: b"`for await` loops are only allowed within async functions and at the top levels of modules"
+            .to_vec(),
+    })
+}
+
 /// `with` where the code is strict for OXC, and anywhere in TypeScript, in its words.
 pub(super) fn with_in_strict_code<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     if file.hir.with_bodies.is_empty() {

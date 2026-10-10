@@ -1,51 +1,116 @@
 use bun_lint_oxlint::ast_util::{as_function, as_method_definition, as_property_definition, is_react_component_name};
 use crate::react::{AncestorWalk, get_parent_component as get_parent_class_component, is_jsx};
+use crate::util_components::Components;
+use crate::util_components_list::{At, Queue};
+use crate::util_jsx::Branches;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
+use bun_lint::utils::estree_parent;
 use std::ops::ControlFlow;
 
-/// Prevents using `this` in stateless functional components.
+/// Disallow `this` from being used in stateless functional components
 pub struct NoThisInSfc;
 
-const NO_THIS_IN_SFC: Message = Message::new("", "Stateless functional components should not use `this`");
+const NO_THIS_IN_SFC: Message = Message::new("noThisInSFC", "Stateless functional components should not use `this`");
+const OXLINT: Message = Message::new("", "Stateless functional components should not use `this`");
 
-#[derive(Default)]
 pub struct State<'a> {
     /// The function whose `this` it is, if it can be a component, and whether a member of a class is in between.
     parent_component: AncestorWalk<'a, bool, Option<(Node<'a>, bool)>>,
     parent_class_component: AncestorMemo<'a, Node<'a>>,
+    components: Components<'a>,
+    /// Whether something is in a function that returns JSX or `null`. For upstream no other is a component.
+    in_function_with_jsx_or_null: AncestorMemo<'a, ()>,
+    /// The `this.a` in such functions.
+    members: Queue<'a>,
 }
 
 impl Rule for NoThisInSfc {
-    const META: Meta = Meta::oxlint(Plugin::React, "no-this-in-sfc", Kind::Problem);
-    const ON: On = On::new().exprs(&[ExprTag::This]);
+    const META: Meta = Meta::plugin(Plugin::React, "no-this-in-sfc", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::This]).finish();
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoThisInSfc
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new().exprs(&[ExprTag::This]);
+        // Which function is a component depends for upstream on what comes before it.
+        if file.language().is_oxlint { on } else { on.finish() }
+    }
+
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        is_jsx(file).then(State::default)
+        let is_candidate = match file.language().is_oxlint {
+            true => is_jsx(file),
+            false => {
+                file.has_exprs([ExprTag::This])
+                    && (file.has_exprs([ExprTag::Jsx, ExprTag::Null]) || file.mentions("createElement"))
+            }
+        };
+        is_candidate.then(|| State {
+            parent_component: AncestorWalk::default(),
+            parent_class_component: AncestorMemo::default(),
+            components: Components::new(file),
+            in_function_with_jsx_or_null: AncestorMemo::default(),
+            members: Queue::default(),
+        })
     }
 
     fn expr<'a>(&self, this: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Node::Expr(member) = this.parent() else {
             return;
         };
-        if !matches!(member.tag(), ExprTag::Dot | ExprTag::Index)
-            || this.is_parenthesized()
-            || member.is_jsx_tag_name()
-            || member.is_in_type_query()
-        {
+        let is_oxlint = cx.language().is_oxlint;
+        // oxlint has a node for the parentheses, and takes the `this` of `a[this]` too.
+        let is_object = if is_oxlint { !this.is_parenthesized() } else { member.object() == Some(this) };
+        if !is_object || !ast_utils::is_member_expression(member) {
             return;
         }
-        if let Some((component, false)) = cx.state.parent_component.run(Node::Expr(this), false, get_parent_component)
-            && get_parent_class_component(component, &mut cx.state.parent_class_component).is_none()
-        {
-            cx.report(this, NO_THIS_IN_SFC);
+        if is_oxlint {
+            if let Some((component, false)) =
+                cx.state.parent_component.run(Node::Expr(this), false, get_parent_component)
+                && get_parent_class_component(component, &mut cx.state.parent_class_component).is_none()
+            {
+                cx.report(this, OXLINT);
+            }
+            return;
         }
+        let State { components, in_function_with_jsx_or_null, members, .. } = &mut cx.state;
+        let node = Node::Expr(member);
+        let is_in_candidate = in_function_with_jsx_or_null.find(node, |_, ancestor| {
+            (ancestor.as_func().is_some_and(ast_utils::is_function_with_body)
+                && components.is_returning_jsx_or_null(ancestor, Branches::Any))
+            .then_some(())
+        });
+        if is_in_candidate.is_some() {
+            members.push(At::enter(node), 0, node);
+        }
+    }
+
+    /// upstream's listener, in the order of ESLint's walk.
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        while let Some(event) = cx.state.members.pop_until(At::END) {
+            let components = &mut cx.state.components;
+            components.advance(event.at);
+            let component = components.get_parent_stateless_component(event.node).and_then(|it| components.get(it));
+            if component.is_some_and(|id| !is_in_property(components.component(id).node)) {
+                cx.report(event.node, NO_THIS_IN_SFC);
+            }
+        }
+    }
+}
+
+/// `node.parent.type === "Property"`
+fn is_in_property(node: Node<'_>) -> bool {
+    match estree_parent(node) {
+        // A `ChainExpression` is around the whole of an optional chain.
+        _ if node.as_expr().is_some_and(Expr::is_chain_root) => false,
+        Node::Prop(it) => it.kind() != PropKind::Spread && !it.is_jsx_attribute(),
+        // The default is in an `AssignmentPattern`.
+        Node::PatProp(it) => it.default().map(Node::Expr) != Some(node.as_written()),
+        _ => false,
     }
 }
 

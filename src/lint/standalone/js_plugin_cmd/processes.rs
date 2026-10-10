@@ -209,7 +209,10 @@ impl Processes<'_> {
         let is_for_heavy = process.is_for_heavy;
         self.state.lock().lent.push((to, Some(process)));
         then(&mut Lent { by: self, to });
-        self.demand.note(size);
+        // What is heavy is not counted.
+        if size < HEAVY {
+            self.demand.note(size);
+        }
         let mut state = self.state.lock();
         let at = state.lent.iter().position(|it| it.0 == to);
         match at.and_then(|at| state.lent.swap_remove(at).1) {
@@ -245,8 +248,12 @@ impl Engine for Processes<'_> {
         self.demand.may_come(size);
     }
 
-    fn has_shown(&self, size: u64, comes: bool) {
-        self.demand.has_shown(size, comes);
+    fn comes(&self, size: u64) {
+        self.demand.comes(size);
+    }
+
+    fn has_shown(&self, size: u64, has_come: bool) {
+        self.demand.has_shown(size, has_come);
     }
 
     fn expect(&self, _files: usize, size: u64, most: usize) {

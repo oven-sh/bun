@@ -12,6 +12,7 @@ use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use rustc_hash::FxHashSet;
 use std::collections::VecDeque;
+use std::fmt::Write;
 use std::sync::Arc;
 
 /// Forbid a module from importing a module with a dependency path back to itself.
@@ -32,6 +33,8 @@ const DETECTED: Message = Message::new("", "Dependency cycle detected.");
 const VIA: Message = Message::new("", "Dependency cycle via {{route}}");
 /// The message of oxlint.
 const DETECTED_BY_OXLINT: Message = Message::new("", "Dependency cycle detected");
+
+const OXLINT_HELP: &str = "Refactor to remove the cycle. Consider extracting shared code into a separate module that both files can import.";
 
 /// What `moduleVisitor` calls its visitor with.
 struct Check<'a> {
@@ -225,7 +228,13 @@ fn is_in_node_modules(path: &[u8]) -> bool {
 
 /// oxlint's `ModuleGraphVisitor` with a `max_depth`: whether it gets from `start` to `needle`. It goes depth first, by the order of
 /// the specifiers, to no module twice, and gives up altogether the first time that it is too deep.
-fn oxlint_finds_within(modules: &dyn Modules, start: ModuleId, needle: ModuleId, max_depth: usize) -> bool {
+/// The way: each specifier, and the module that it leads to.
+fn oxlint_finds_within(
+    modules: &dyn Modules,
+    start: ModuleId,
+    needle: ModuleId,
+    max_depth: usize,
+) -> Option<Vec<(&[u8], ModuleId)>> {
     // The specifier, the module, and whether it is followed.
     let entries_of = |module: ModuleId| {
         let mut entries: Vec<(&[u8], ModuleId, bool)> = Vec::new();
@@ -238,24 +247,42 @@ fn oxlint_finds_within(modules: &dyn Modules, start: ModuleId, needle: ModuleId,
         entries.into_iter()
     };
     let mut traversed = FxHashSet::default();
-    let mut stack = vec![entries_of(start)];
+    let (mut stack, mut way) = (vec![entries_of(start)], Vec::new());
     while let Some(entries) = stack.last_mut() {
-        let Some((_, module, is_followed)) = entries.next() else {
+        let Some((specifier, module, is_followed)) = entries.next() else {
             stack.pop();
+            way.pop();
             continue;
         };
         if stack.len() - 1 > max_depth {
-            return false;
+            return None;
         }
         if !is_followed || !traversed.insert(module) {
             continue;
         }
+        way.push((specifier, module));
         if module == needle {
-            return true;
+            return Some(way);
         }
         stack.push(entries_of(module));
     }
-    false
+    None
+}
+
+/// oxlint's note.
+fn oxlint_format_cycle(modules: &dyn Modules, way: &[(&[u8], ModuleId)]) -> String {
+    let mut text = String::from("These paths form a cycle:\n");
+    for (i, (specifier, module)) in way.iter().enumerate() {
+        let path = modules.path(*module);
+        let in_cwd = path.strip_prefix(modules.cwd()).and_then(|it| it.strip_prefix(b"/"));
+        let (start, specifier, path) = (
+            if i == 0 { "╭──▶ " } else { "│         ⬇ imports\n│    " },
+            bstr::BStr::new(specifier),
+            bstr::BStr::new(in_cwd.unwrap_or(path)),
+        );
+        let _ = writeln!(text, "{start}{specifier} ({path})");
+    }
+    text + "╰─────────╯ imports the current file"
 }
 
 impl NoCycle {
@@ -288,7 +315,7 @@ impl NoCycle {
             } else if self.max_depth == usize::MAX {
                 modules.component(imported) == modules.component(me)
             } else {
-                oxlint_finds_within(modules, imported, me, self.max_depth.saturating_sub(1))
+                oxlint_finds_within(modules, imported, me, self.max_depth.saturating_sub(1)).is_some()
             };
             if leads_back {
                 let report = cx.report(request.span, DETECTED_BY_OXLINT);
@@ -300,7 +327,16 @@ impl NoCycle {
                             false => "Remove the self-referencing export and consider using a named export instead.",
                         },
                     );
+                    continue;
                 }
+                let mut note = String::new();
+                let report = report.help_with(|| {
+                    let rest = oxlint_finds_within(modules, imported, me, self.max_depth.saturating_sub(1));
+                    let way = [vec![(request.specifier, imported)], rest.unwrap_or_default()].concat();
+                    note = oxlint_format_cycle(modules, &way);
+                    OXLINT_HELP.to_owned()
+                });
+                report.note(note);
             }
         }
     }

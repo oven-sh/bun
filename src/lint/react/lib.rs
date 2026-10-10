@@ -214,6 +214,7 @@ bun_lint::rules! {
     react_no_set_state::NoSetState,
     react_no_string_refs::NoStringRefs,
     react_no_this_in_sfc::NoThisInSfc,
+    react_no_typos::NoTypos,
     react_no_unescaped_entities::NoUnescapedEntities,
     react_no_unknown_property::NoUnknownProperty,
     react_no_unsafe::NoUnsafe,

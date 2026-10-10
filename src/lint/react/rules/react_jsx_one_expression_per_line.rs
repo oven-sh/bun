@@ -21,7 +21,8 @@ const MOVE_TO_NEW_LINE: Message = Message::new("moveToNewLine", "`{{descriptor}}
 /// A child that is not white space.
 #[derive(Copy, Clone)]
 struct Child<'a> {
-    node: Expr<'a>,
+    /// `None`: it is text.
+    node: Option<Expr<'a>>,
     span: Span,
     /// What is before it in its line: the opening tag or a child.
     prev_child: Option<Span>,
@@ -68,21 +69,19 @@ impl Rule for JsxOneExpressionPerLine {
         }
         let (mut prev_child, mut last_child) = (Some(opening_element), None::<Child<'a>>);
         for child in jsx.children_with_whitespace() {
+            // What is white space for the parser is not all `\s`.
             let (node, span) = match child {
+                JsxChild::Expr(it) if it.is_jsx_text() => (None, it.span()),
                 JsxChild::Expr(it) => (Some(it), it.jsx_container_span().unwrap_or_else(|| it.span())),
                 JsxChild::Whitespace(span) => (None, span),
             };
-            // Empty for what is not text.
-            let raw = match node {
-                Some(it) if !it.is_jsx_text() => &b""[..],
-                _ => file.slice(span),
-            };
-            let Some(node) = node.filter(|_| raw.is_empty() || !strings::is_all_js_whitespace(raw)) else {
+            let raw = if node.is_none() { file.slice(span) } else { &b""[..] };
+            if node.is_none() && strings::is_all_js_whitespace(raw) {
                 if strings::contains_js_line_break(raw) {
                     prev_child = None;
                 }
                 continue;
-            };
+            }
             // The one before it is not the last in its line.
             if let Some(it) = last_child {
                 it.report(None, cx);
@@ -132,8 +131,9 @@ impl<'a> Child<'a> {
 }
 
 /// upstream's `nodeDescriptor`
-fn node_descriptor<'a>(n: Expr<'a>, source: &'a [u8]) -> Cow<'a, [u8]> {
-    if n.jsx_container_span().is_none()
+fn node_descriptor<'a>(n: Option<Expr<'a>>, source: &'a [u8]) -> Cow<'a, [u8]> {
+    if let Some(n) = n
+        && n.jsx_container_span().is_none()
         && let ExprKind::Jsx(jsx) = n.kind()
         && let Some(name) = jsx.tag()
     {

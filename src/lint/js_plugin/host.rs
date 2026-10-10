@@ -265,9 +265,14 @@ impl<'e> Host<'e> {
         self.engine.may_come(size);
     }
 
+    /// [`Engine::comes`]
+    pub fn comes(&self, size: u64) {
+        self.engine.comes(size);
+    }
+
     /// [`Engine::has_shown`]
-    pub fn has_shown(&self, size: u64, comes: bool) {
-        self.engine.has_shown(size, comes);
+    pub fn has_shown(&self, size: u64, has_come: bool) {
+        self.engine.has_shown(size, has_come);
     }
 
     /// [`Engine::keep_vm`]

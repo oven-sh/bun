@@ -135,7 +135,7 @@ Plugins run inside `bun lint`, on threads of their own, as they run inside `esli
 - Its `process.on("exit")` handlers run after the report.
 - A rule that throws ends the run with exit code `2`. With an `.oxlintrc.json` the error is reported for the file, and the run goes on.
 - Each thread that runs rules in JavaScript loads the plugins for itself, so state at the top level of a module is per thread, and so are the handlers.
-- The rules in JavaScript run on as many threads as still find work when they have loaded the plugins, which each has to do again: one for a small project, one per CPU core for a large one. Files of 256 KB and more are not counted: they all go to one of these threads, one at a time. Together they plan to stay within half of the memory that is free, in the machine and in the container: there are fewer of them if the plugins are large.
+- The rules in JavaScript run on one thread, on two if the files that they are for have 2 MB, on 4 from 9 MB, on 8 from 35 MB, on 16 from 135 MB, and never on more than `--threads`: each has to load the plugins again, and takes memory. Files of 256 KB and more are not counted: they all go to one of these threads, one at a time. Together they plan to stay within half of the memory that is free, in the machine and in the container: there are fewer of them if the plugins are large.
 
 Types are not there for a rule in JavaScript. `parserServices.program` is `null`, also with `--type-aware`. A rule that asks for types with `getParserServices()` of typescript-eslint does not run. See [what cannot be linted](#what-cannot-be-linted).
 

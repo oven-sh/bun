@@ -30,16 +30,11 @@ const PASS_FUNCTION_AS_ARGS: Message = Message::new(
 );
 const NO_CHILDREN_PROP: Message = Message::new("", "Avoid passing children using a prop.");
 
-/// Upstream takes `React.#createElement` for `React.createElement`.
-fn mentions_create_element(file: &File<'_>) -> bool {
-    file.mentions("createElement") || (!file.language().is_oxlint && file.mentions("#createElement"))
-}
-
 impl Rule for NoChildrenProp {
     const META: Meta = Meta::plugin(Plugin::React, "no-children-prop", Kind::Problem).recommended();
     const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Call]);
-    /// The pragma. oxlint knows none.
-    type State<'a> = &'a [u8];
+    /// The pragma. `None`: nobody has asked yet. oxlint knows none.
+    type State<'a> = Option<&'a [u8]>;
 
     fn new(options: &Options) -> Self {
         NoChildrenProp { allow_functions: options.object(0).bool_or("allowFunctions", false) }
@@ -47,18 +42,13 @@ impl Rule for NoChildrenProp {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let on = On::new().exprs(&[ExprTag::Jsx]);
-        if !mentions_create_element(file) {
-            return on;
-        }
-        on.exprs(&[ExprTag::Call])
+        // Upstream takes `React.#createElement` for `React.createElement`.
+        let is_private = || !file.language().is_oxlint && file.mentions("#createElement");
+        if file.mentions("createElement") || is_private() { on.exprs(&[ExprTag::Call]) } else { on }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<&'a [u8]> {
-        let is_oxlint = file.language().is_oxlint;
-        if !file.mentions("children") && (is_oxlint || !self.allow_functions) {
-            return None;
-        }
-        Some(if !is_oxlint && mentions_create_element(file) { get_from_context(file) } else { &b""[..] })
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        (file.mentions("children") || (self.allow_functions && !file.language().is_oxlint)).then_some(None)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -104,7 +94,7 @@ impl NoChildrenProp {
         }
     }
 
-    fn call<'a>(&self, e: Expr<'a>, cx: &Cx<'a, Self>) {
+    fn call<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(call) = e.as_call() else {
             return;
         };
@@ -119,7 +109,10 @@ impl NoChildrenProp {
         // oxlint takes the `createElement` of everything but `document`.
         let is_creation = match is_oxlint {
             true => is_create_element_call(call),
-            false => is_create_element(e, cx.state),
+            false => {
+                let file = cx.file();
+                is_create_element(e, *cx.state.get_or_insert_with(|| get_from_context(file)))
+            }
         };
         if !is_creation {
             return;

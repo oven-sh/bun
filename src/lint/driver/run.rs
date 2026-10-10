@@ -734,7 +734,8 @@ impl Run<'_> {
         let shared = with_engine.clone().filter(|it| needs(it) != Needs::Heavy);
         let size: u64 = shared.map(|it| it.size).sum();
         // Those that a rule may hand back to the rule of its package.
-        let may_come = supported.iter().filter(|it| may_be_handed_back(it));
+        let may_come =
+            (supported.iter()).filter(|it| may_be_handed_back(it) && it.size < HEAVY as u64);
         let count = with_engine.count() + may_come.clone().count();
         (context.js_plugins).expect(count, size, most_engines);
         (context.js_plugins).may_come(may_come.map(|it| it.size).sum());

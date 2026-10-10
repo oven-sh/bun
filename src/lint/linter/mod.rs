@@ -749,7 +749,9 @@ impl<S: RuleSet> Linter<S> {
                 back.iter().map(|it| &**it.0.configured).collect();
             let reports = match (options.js_plugins, &config.js_settings) {
                 (Some(host), Some(settings)) if !enabled.is_empty() => {
-                    host.has_shown(file.text().len() as u64, true);
+                    if file.text().len() < js_plugin::HEAVY {
+                        host.comes(file.text().len() as u64);
+                    }
                     host.run_on_block(
                         file,
                         settings,

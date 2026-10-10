@@ -7,7 +7,7 @@ use bun_lint::rule::Plugin;
 use bun_lint_oxlint::hash_order::HashOrder;
 use bun_lint_oxlint::import::export_declaration_span;
 use bun_lint_oxlint::module_record::{
-    ExportEntry, ExportExportName, Loaded, ModuleRecord, get_loaded_module, is_waiting_for_modules,
+    ExportEntry, ExportExportName, Loaded, ModuleRecord, get_loaded_module, in_hash_order, is_waiting_for_modules,
 };
 use bun_lint_oxlint::text::find_next_token_within;
 use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
@@ -217,12 +217,16 @@ impl<'a> Exports<'a, '_> {
                 self.export_all(star_export_entry.span, source, ROOT_PROGRAM);
             }
         }
-        for (name, span) in &module_record.exported_bindings {
+        // The parser comes to them in the order of the source.
+        let mut exported_bindings: Vec<(Name<'a>, Span)> =
+            module_record.exported_bindings.iter().map(|(name, span)| (*name, *span)).collect();
+        utils::sort::sort_unstable_by_key(&mut exported_bindings, |it| it.1.start);
+        for (name, span) in in_hash_order(exported_bindings) {
             let all = self.order.iter().filter_map(|at| self.all_export_names.get(at));
             let mut spans = all.filter(|it| it.1.contains(name.bytes())).map(|it| it.0);
             if let Some(first) = spans.next() {
-                let report = self.cx.report(first, MULTIPLE_EXPORTS).data("name", *name);
-                spans.fold(report, |report, it| report.label(it, "")).label(*span, "");
+                let report = self.cx.report(first, MULTIPLE_EXPORTS).data("name", name);
+                spans.fold(report, |report, it| report.label(it, "")).label(span, "");
             }
         }
     }

@@ -104,15 +104,16 @@ impl Rule for JsxTagSpacing {
         let (Some(node), Some(name)) = (jsx.closing_span(), jsx.close_tag().map(|it| it.span())) else {
             return;
         };
-        if self.after_opening != Spacing::Allow || self.closing_slash != Spacing::Allow {
-            let slash = slash_of_closing_element(file, node);
-            if self.after_opening != Spacing::Allow {
-                self.validate_after_opening(slash, name, cx);
-            }
-            if self.closing_slash != Spacing::Allow {
-                let bracket = punctuator(node.start);
-                self.validate_closing_slash(bracket, slash, CLOSE_SLASH_NO_SPACE, CLOSE_SLASH_NEED_SPACE, cx);
-            }
+        let (bracket, slash) = (punctuator(node.start), slash_of_closing_element(file, node));
+        if self.after_opening != Spacing::Allow
+            && let Some(opening_token) = slash.or_else(|| file.token_before(name).map(Token::span))
+        {
+            self.validate_after_opening(opening_token, name, cx);
+        }
+        if self.closing_slash != Spacing::Allow
+            && let Some(second) = slash.or_else(|| file.tokens_in(node).nth(1).map(Token::span))
+        {
+            self.validate_closing_slash(bracket, second, CLOSE_SLASH_NO_SPACE, CLOSE_SLASH_NEED_SPACE, cx);
         }
         if self.before_closing != Spacing::Allow {
             let left_token = if is_proportional { name } else { Span::empty(name.end) };
@@ -230,13 +231,12 @@ fn last_token(jsx: Jsx<'_>, name: Span) -> Span {
     }
 }
 
-/// The `/` of the closing element `node`.
-fn slash_of_closing_element<'a>(file: &'a File<'a>, node: Span) -> Span {
-    let after_bracket = node.start + 1;
-    match file.text().get(after_bracket as usize..) {
-        // Not the start of a comment, which espree reads after the `<`.
-        Some([b'/', next, ..]) if !matches!(next, b'/' | b'*') => punctuator(after_bracket),
-        _ => file.tokens_in(node).nth(1).map_or_else(|| punctuator(after_bracket), Token::span),
+/// The `/` of the closing element `node`, if it follows the `<` at once. Not before a comment: espree reads `<//` and
+/// `</*` as a `<` and a comment, and typescript-estree has no token for the `/` of `<//`.
+fn slash_of_closing_element(file: &File<'_>, node: Span) -> Option<Span> {
+    match file.text().get(node.start as usize + 1..) {
+        Some([b'/', next, ..]) if !matches!(next, b'/' | b'*') => Some(punctuator(node.start + 1)),
+        _ => None,
     }
 }
 

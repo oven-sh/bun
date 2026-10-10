@@ -157,6 +157,23 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     });
   });
 
+  // As for prettier-plugin-tailwindcss 0.8.1 with Prettier 3.9.9.
+  test("`process.cwd()` in a tailwind.config.js is where the command runs", async () => {
+    using dir = tempDir("bun-format-tailwind", {
+      ...version3,
+      ".oxfmtrc.json": '{ "sortTailwindcss": true }',
+      "tailwind.config.js": `module.exports = { reversed: require("node:path").basename(process.cwd()) === "sub" };\n`,
+      "sub/a.jsx": sorted,
+      "sub/b.jsx": sorted,
+    });
+    const below = await formatIn(join(String(dir), "sub"), ["a.jsx"], ["a.jsx"]);
+    const beside = await formatIn(String(dir), ["sub/b.jsx"], ["sub/b.jsx"]);
+    expect([below, beside]).toMatchObject([
+      { stderr: "", files: [reversed] },
+      { stderr: "", files: [sorted] },
+    ]);
+  });
+
   test("each package of a workspace has its own Tailwind CSS", async () => {
     const inPackage = (files: Record<string, string>, directory: string) =>
       Object.fromEntries(Object.entries(files).map(([name, text]) => [`${directory}/${name}`, text]));

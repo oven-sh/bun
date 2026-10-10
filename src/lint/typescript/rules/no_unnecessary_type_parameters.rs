@@ -485,10 +485,16 @@ impl Rule for NoUnnecessaryTypeParameters {
         if type_parameters.is_empty() {
             return;
         }
+        let is_oxlint = cx.language().is_oxlint;
         check_node(cx, type_parameters, node.body_span().start, "class", |known| {
             let (mut counts, known) = (Counts::default(), &mut known.without_type_parameters);
             for type_parameter in type_parameters {
                 collect_type_parameter_usage_counts(type_parameter.ts_node(), &mut counts, true, known);
+            }
+            // tsgolint also looks at what the class extends and implements. Upstream leaves out a type argument.
+            let clauses = node.ts_node().children().filter(|it| is_oxlint && it.kind() == SyntaxKind::HeritageClause);
+            for heritage_type in clauses.flat_map(|clause| clause.children()) {
+                collect_type_parameter_usage_counts(heritage_type, &mut counts, true, known);
             }
             // A static block has no type.
             for member in node.members().iter().filter(|member| member.kind() != MemberKind::StaticBlock) {

@@ -772,6 +772,40 @@ static bool nonIndexOwnPropertiesEqual(JSC::JSGlobalObject* globalObject, Marked
     return true;
 }
 
+// A plain object and an array keep all of their state in own properties, and specialObjectsDequal has no case for them.
+static ALWAYS_INLINE bool isPlainObjectOrArray(JSC::JSType type)
+{
+    return type == FinalObjectType || type == ArrayType || type == DerivedArrayType;
+}
+
+// A module namespace has no state outside of its exports, and a Proxy is the kind of object that its target is.
+static ALWAYS_INLINE bool ownPropertiesAreWholeState(JSCell* cell)
+{
+    while (cell->type() == ProxyObjectType)
+        cell = uncheckedDowncast<ProxyObject>(cell)->target();
+    return isPlainObjectOrArray(cell->type()) || cell->type() == ModuleNamespaceObjectType;
+}
+
+// One copy of JSC's always-inline objectPrototypeToString for both operands of haveSameToStringTag.
+static NEVER_INLINE JSString* objectToString(JSC::JSGlobalObject* globalObject, JSCell* cell)
+{
+    return objectPrototypeToString(globalObject, cell);
+}
+
+// The property walk cannot tell a Promise or a Response from {}, so such objects must first have equal tags, like in jest's equals().
+static NEVER_INLINE bool haveSameToStringTag(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSCell* c1, JSCell* c2)
+{
+    JSString* tag1 = objectToString(globalObject, c1);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSString* tag2 = objectToString(globalObject, c2);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (tag1 == tag2)
+        return true;
+    bool sameTag = tag1->equal(globalObject, tag2);
+    RETURN_IF_EXCEPTION(scope, false);
+    return sameTag;
+}
+
 // node's wellKnownConstructors set (lib/internal/util/comparisons.js), matched for any realm.
 static bool isWellKnownConstructor(JSValue value)
 {
@@ -964,9 +998,23 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     std::optional<bool> isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, c1, c2);
     RETURN_IF_EXCEPTION(scope, false);
     if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
-    isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, c2, c1);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
+    const bool isPlain2 = isPlainObjectOrArray(c2->type());
+    if (!isPlain2) {
+        isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, c2, c1);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
+    }
+    if constexpr (!checkPrototypes) {
+        if (!isPlain2 || !isPlainObjectOrArray(c1->type())) {
+            // Objects of one Structure have one class and one prototype chain.
+            const bool sameStructure = c1->structureID() == c2->structureID() && c1->type() != ProxyObjectType;
+            if (!sameStructure && !(ownPropertiesAreWholeState(c1) && ownPropertiesAreWholeState(c2))) {
+                bool sameTag = haveSameToStringTag(globalObject, scope, c1, c2);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (!sameTag) return false;
+            }
+        }
+    }
     JSObject* o1 = v1.getObject();
     JSObject* o2 = v2.getObject();
 
@@ -1907,6 +1955,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
 
         goto compareAsNormalValue;
 
+    // A pair of different classes that gets here is decided by the toString tag comparison in Bun__deepEquals.
     compareAsNormalValue:
         break;
     }

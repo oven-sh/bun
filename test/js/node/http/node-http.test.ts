@@ -7160,6 +7160,294 @@ it("connectionListener applies the server's joinDuplicateHeaders option like the
   }
 });
 
+describe("req.headers and req.rawHeaders", () => {
+  type Entries = [string, string | string[]][];
+
+  // Sends each request on a connection of its own, one after the other, and gives what `read` made of each.
+  async function seenByServer<T>(
+    requests: string[][],
+    read: (req: IncomingMessage) => T,
+    options: http.ServerOptions = {},
+  ): Promise<T[]> {
+    const seen: T[] = [];
+    const server = createServer(options, (req, res) => {
+      try {
+        seen.push(read(req));
+      } finally {
+        res.end();
+      }
+    });
+    try {
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const { port } = server.address() as AddressInfo;
+      for (const lines of requests) {
+        const socket = connect(port, "127.0.0.1");
+        try {
+          socket.write(Buffer.from(`GET / HTTP/1.1\r\n${lines.join("\r\n")}\r\n\r\n`, "latin1"));
+          await once(socket, "data");
+        } finally {
+          socket.destroy();
+        }
+      }
+      return seen;
+    } finally {
+      server.close();
+    }
+  }
+
+  function bothOf(req: IncomingMessage, rawHeadersFirst: boolean) {
+    const rawHeaders = rawHeadersFirst ? req.rawHeaders : undefined;
+    const headers = req.headers;
+    return {
+      headers: Object.entries(headers) as Entries,
+      rawHeaders: rawHeaders ?? req.rawHeaders,
+      plainObject: Object.getPrototypeOf(headers) === Object.prototype,
+      cached: req.headers === headers,
+    };
+  }
+
+  function expectedOf({ lines, headers }: { lines: string[]; headers: Entries }) {
+    const rawHeaders = lines.flatMap(line => {
+      const colon = line.indexOf(":");
+      return [line.slice(0, colon), line.slice(colon + 1).trim()];
+    });
+    return { headers, rawHeaders, plainObject: true, cached: true };
+  }
+
+  for (const rawHeadersFirst of [false, true]) {
+    const first = rawHeadersFirst ? "rawHeaders" : "headers";
+
+    it(`hold what the request sent when ${first} is read first`, async () => {
+      const cases: { lines: string[]; headers: Entries }[] = [
+        {
+          lines: ["Host: a", "Accept: */*", "user-agent: x", "X-Custom-Thing: 1", "X-Empty:"],
+          headers: [
+            ["host", "a"],
+            ["accept", "*/*"],
+            ["user-agent", "x"],
+            ["x-custom-thing", "1"],
+            ["x-empty", ""],
+          ],
+        },
+        {
+          lines: ["Host: a", "X-Latin1: caf\xe9", "Referer: /caf\xe9"],
+          headers: [
+            ["host", "a"],
+            ["x-latin1", "caf\xe9"],
+            ["referer", "/caf\xe9"],
+          ],
+        },
+        {
+          lines: ["Host: a", "Host: b", "X-A: 1", "x-a: 2", "Cookie: a=1", "Cookie: b=2", "Accept: x", "Accept: y"],
+          headers: [
+            ["host", "a"],
+            ["x-a", "1, 2"],
+            ["cookie", "a=1; b=2"],
+            ["accept", "x, y"],
+          ],
+        },
+        {
+          lines: ["Host: a", "Set-Cookie: a=1"],
+          headers: [
+            ["host", "a"],
+            ["set-cookie", ["a=1"]],
+          ],
+        },
+        {
+          lines: ["Host: a", "Set-Cookie: a=1", "set-cookie: b=2"],
+          headers: [
+            ["host", "a"],
+            ["set-cookie", ["a=1", "b=2"]],
+          ],
+        },
+        // Names that Object.prototype has, and one that is an index.
+        {
+          lines: ["Host: a", "__proto__: x", "Constructor: y", "123: z", "toString: t"],
+          headers: [
+            ["123", "z"],
+            ["host", "a"],
+            ["constructor", "y"],
+            ["tostring", "t"],
+          ],
+        },
+        // A custom name twice, after many other custom names.
+        {
+          lines: ["Host: a", ...Array.from({ length: 12 }, (_, i) => `X-Custom-${i}: ${i}`), "x-custom-11: again"],
+          headers: [
+            ["host", "a"],
+            ...Array.from({ length: 12 }, (_, i): [string, string] => [
+              `x-custom-${i}`,
+              i === 11 ? "11, again" : `${i}`,
+            ]),
+          ],
+        },
+        // More headers than an object holds inline.
+        {
+          lines: ["Host: a", ...Array.from({ length: 70 }, (_, i) => `X-Many-${i}: ${i}`)],
+          headers: [["host", "a"], ...Array.from({ length: 70 }, (_, i): [string, string] => [`x-many-${i}`, `${i}`])],
+        },
+      ];
+      expect(
+        await seenByServer(
+          cases.map(({ lines }) => lines),
+          req => bothOf(req, rawHeadersFirst),
+        ),
+      ).toEqual(cases.map(expectedOf));
+    });
+
+    it(`hold each request's own values when ${first} is read first`, async () => {
+      // The same headers from one request to the next, with values that stay, change, and come back.
+      // A value of up to 256 bytes is the longest that one request leaves for the next to reuse.
+      const atLimit = Buffer.alloc(256, "u").toString();
+      const pastLimit = Buffer.alloc(257, "u").toString();
+      const longValues: { lines: string[]; headers: Entries } = {
+        lines: ["Host: a", `User-Agent: ${atLimit}`, `Accept: ${pastLimit}`],
+        headers: [
+          ["host", "a"],
+          ["user-agent", atLimit],
+          ["accept", pastLimit],
+        ],
+      };
+      const cases: { lines: string[]; headers: Entries }[] = [
+        {
+          lines: ["Host: a", "User-Agent: one", "Accept: */*", "Content-Type: text/plain"],
+          headers: [
+            ["host", "a"],
+            ["user-agent", "one"],
+            ["accept", "*/*"],
+            ["content-type", "text/plain"],
+          ],
+        },
+        {
+          lines: ["Host: b", "User-Agent: two", "Accept: */*", "Content-Type: text/plain"],
+          headers: [
+            ["host", "b"],
+            ["user-agent", "two"],
+            ["accept", "*/*"],
+            ["content-type", "text/plain"],
+          ],
+        },
+        {
+          lines: ["Host: a", "User-Agent: one", "Accept: text/html", "Content-Type: text/plaim"],
+          headers: [
+            ["host", "a"],
+            ["user-agent", "one"],
+            ["accept", "text/html"],
+            ["content-type", "text/plaim"],
+          ],
+        },
+        longValues,
+        longValues,
+        {
+          lines: ["Host: a", "User-Agent:", "Accept:"],
+          headers: [
+            ["host", "a"],
+            ["user-agent", ""],
+            ["accept", ""],
+          ],
+        },
+        {
+          lines: ["Host: a", "User-Agent:", "Accept: */*"],
+          headers: [
+            ["host", "a"],
+            ["user-agent", ""],
+            ["accept", "*/*"],
+          ],
+        },
+      ];
+      expect(
+        await seenByServer(
+          cases.map(({ lines }) => lines),
+          req => bothOf(req, rawHeadersFirst),
+        ),
+      ).toEqual(cases.map(expectedOf));
+    });
+  }
+
+  it("headers goes through the _addHeaderLine of the server's IncomingMessage class", async () => {
+    class UppercasingMessage extends IncomingMessage {
+      _addHeaderLine(field: string, value: string, dest: Record<string, string>) {
+        dest[field.toLowerCase()] = value.toUpperCase();
+      }
+    }
+    const seen = await seenByServer([["Host: a", "X-One: b"]], req => Object.entries(req.headers), {
+      IncomingMessage: UppercasingMessage,
+    });
+    expect(seen).toEqual([
+      [
+        ["host", "A"],
+        ["x-one", "B"],
+      ],
+    ]);
+  });
+
+  it("headers joins a value to the one its name inherits from Object.prototype", async () => {
+    Object.defineProperty(Object.prototype, "x-inherited", { value: "inherited", writable: true, configurable: true });
+    try {
+      const seen = await seenByServer([["Host: a", "X-Inherited: sent"]], req => Object.entries(req.headers));
+      expect(seen).toEqual([
+        [
+          ["host", "a"],
+          ["x-inherited", "inherited, sent"],
+        ],
+      ]);
+    } finally {
+      delete (Object.prototype as any)["x-inherited"];
+    }
+  });
+});
+
+it("setHeader and appendHeader check a name however often names were set before", () => {
+  const message = new OutgoingMessage();
+  const invalid = (name: unknown) => {
+    const thrown: unknown[] = [];
+    for (const method of ["setHeader", "appendHeader"] as const) {
+      try {
+        message[method](name as string, "value");
+        thrown.push(undefined);
+      } catch (e) {
+        thrown.push((e as NodeJS.ErrnoException).code);
+      }
+    }
+    return thrown;
+  };
+  const rejected = ["ERR_INVALID_HTTP_TOKEN", "ERR_INVALID_HTTP_TOKEN"];
+
+  expect(invalid("bad name")).toEqual(rejected);
+  // The same names again and again, in more than one spelling, and one longer than most.
+  const long = Buffer.alloc(100, "x").toString();
+  for (let i = 0; i < 3; i++) {
+    message.setHeader("X-Custom-Name", `${i}`);
+    message.setHeader("x-custom-NAME", `${i}`);
+    message.setHeader("Content-Type", "text/plain");
+    message.setHeader(long, `${i}`);
+    message.appendHeader("X-Appended", `${i}`);
+  }
+  // More distinct names than an application sets.
+  for (let i = 0; i < 300; i++) message.setHeader(`X-Distinct-${i}`, "value");
+  for (let i = 0; i < 300; i++) message.removeHeader(`X-Distinct-${i}`);
+  message.setHeader("X-After", "value");
+  message.setHeader("X-After", "again");
+
+  expect(message.getHeaders()).toEqual({
+    "x-custom-name": "2",
+    "content-type": "text/plain",
+    [long]: "2",
+    "x-appended": ["0", "1", "2"],
+    "x-after": "again",
+  } as any);
+  expect(message.getRawHeaderNames()).toEqual(["x-custom-NAME", "Content-Type", long, "X-Appended", "X-After"]);
+  // A name that is not a string is not one, whatever it converts to; neither is one with a character added.
+  expect([
+    invalid("bad name"),
+    invalid(["Content-Type"]),
+    invalid(["X-Custom-Name"]),
+    invalid("X-Custom-Name "),
+    invalid("X-After\r\n"),
+    invalid(""),
+  ]).toEqual([rejected, rejected, rejected, rejected, rejected, rejected]);
+});
+
 it("req.socket.setKeepAlive() and resetAndDestroy() return the socket", async () => {
   const { promise, resolve, reject } = Promise.withResolvers<{ setKeepAlive: boolean; resetAndDestroy: boolean }>();
   const server = createServer((req, res) => {

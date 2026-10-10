@@ -29,7 +29,8 @@ const MathFloor = Math.floor;
 // "ETag", ...) toLowerCase() allocates a new string on every call, which the
 // property access then has to intern. Map those spellings to a literal that is
 // already interned; anything else still takes toLowerCase(). Same result, no
-// allocation on the common path.
+// allocation on the common path. validatedLowercaseHeaderName takes a key of
+// this table for a valid header name: add none that has not been validated.
 const commonLowercasedHeaders = { __proto__: null };
 for (const name of [
   "accept",
@@ -77,6 +78,24 @@ commonLowercasedHeaders["etag"] = "etag";
 function lowercaseHeaderName(name) {
   const known = commonLowercasedHeaders[name];
   return known !== undefined ? known : name.toLowerCase();
+}
+
+// validateHeaderName(name), then the lowercased name. A key of commonLowercasedHeaders is not matched against the
+// token grammar again, and an application sets the same few names on every message, so a name that passed is
+// added to the table, within these bounds.
+const kMaxLearnedHeaderNames = 256;
+const kMaxLearnedHeaderNameLength = 64;
+let learnedHeaderNames = 0;
+function validatedLowercaseHeaderName(name) {
+  const known = typeof name === "string" ? commonLowercasedHeaders[name] : undefined;
+  if (known !== undefined) return known;
+  validateHeaderName(name);
+  const lowercased = name.toLowerCase();
+  if (learnedHeaderNames < kMaxLearnedHeaderNames && name.length <= kMaxLearnedHeaderNameLength) {
+    learnedHeaderNames++;
+    commonLowercasedHeaders[name] = lowercased;
+  }
+  return lowercased;
 }
 
 const kCorked = Symbol("corked");
@@ -672,13 +691,13 @@ OutgoingMessage.prototype.setHeader = function setHeader(name, value) {
   if (this._header) {
     throw $ERR_HTTP_HEADERS_SENT("set");
   }
-  validateHeaderName(name);
+  const field = validatedLowercaseHeaderName(name);
   validateHeaderValueLenient(name, value, this._isLenientHeaderValidation());
 
   let headers = this[kOutHeaders];
   if (headers === null) this[kOutHeaders] = headers = { __proto__: null };
 
-  headers[lowercaseHeaderName(name)] = [name, value];
+  headers[field] = [name, value];
   return this;
 };
 
@@ -723,10 +742,9 @@ OutgoingMessage.prototype.appendHeader = function appendHeader(name, value) {
   if (this._header) {
     throw $ERR_HTTP_HEADERS_SENT("append");
   }
-  validateHeaderName(name);
+  const field = validatedLowercaseHeaderName(name);
   validateHeaderValueLenient(name, value, this._isLenientHeaderValidation());
 
-  const field = lowercaseHeaderName(name);
   const headers = this[kOutHeaders];
   if (headers === null || !headers[field]) {
     return this.setHeader(name, value);

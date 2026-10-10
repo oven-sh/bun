@@ -181,6 +181,10 @@ export default [
         fn: "takeRawHeaders",
         length: 0,
       },
+      headersObject: {
+        fn: "headersObject",
+        length: 0,
+      },
       writeHeadAndEnd: {
         fn: "writeHeadAndEnd",
         length: 8,

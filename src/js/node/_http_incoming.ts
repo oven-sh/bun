@@ -79,7 +79,7 @@ function IncomingMessage(socket) {
     // arguments[3] carries no headers object and arguments[4] no rawHeaders
     // on the native fast path anymore: the raw header bytes stay captured on
     // the native handle and req.rawHeaders / req.headers are materialized by
-    // the rawHeaders accessor only when user code reads them.
+    // their accessors only when user code reads them.
     this[kHeaderSource] = arguments[5];
     this[kHandle] = arguments[5];
     this[noBodySymbol] = !arguments[6];
@@ -191,11 +191,17 @@ ObjectDefineProperty(IncomingMessage.prototype, "headers", {
   get: function () {
     let dst = this[kHeaders];
     if (!dst) {
+      const addHeaderLine = this._addHeaderLine;
+      // The native handle builds what the fold below makes of its captured bytes, when that is the fold in use
+      // and rawHeaders has not been read (which takes the bytes) or assigned.
+      if (this[kRawHeaders] === null && addHeaderLine === _addHeaderLine) {
+        const built = this[kHeaderSource]?.headersObject();
+        if (built !== undefined) return (this[kHeaders] = built);
+      }
       dst = this[kHeaders] = {};
 
       const src = this.rawHeaders;
       const count = this[kHeadersCount];
-      const addHeaderLine = this._addHeaderLine;
 
       for (let n = 0; n < count; n += 2) {
         addHeaderLine.$call(this, src[n + 0], src[n + 1], dst);

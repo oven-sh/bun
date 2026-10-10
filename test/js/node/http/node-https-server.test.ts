@@ -423,3 +423,45 @@ describe("server.blockList", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// A close waits, up to 10 s, for ciphertext that write() reported and the kernel has not taken. closeAllConnections() does not.
+test("closeAllConnections() does not wait for a client that stopped reading", async () => {
+  const stalled = Promise.withResolvers<void>();
+  const server = https.createServer(validCert, (_req, res) => {
+    const chunk = Buffer.alloc(1024 * 1024, "a");
+    let left = 16;
+    (function more() {
+      while (left-- > 0) {
+        if (!res.write(chunk)) {
+          stalled.resolve();
+          return void res.once("drain", more);
+        }
+      }
+      res.end();
+    })();
+  });
+  const port = await listen(server);
+  // In a process of its own: nothing on this loop reads for it.
+  await using client = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const socket = require("node:tls").connect({ port: ${port}, host: "127.0.0.1", rejectUnauthorized: false }, () => {
+        socket.pause();
+        socket.end("GET / HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n");
+      });
+      socket.on("error", () => {});
+      process.stdin.resume();`,
+    ],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  await stalled.promise;
+  const closed = new Promise(resolve => server.close(resolve));
+  server.closeAllConnections();
+  // Within the timeout of the test, which is under the deadline of the close.
+  expect(await closed).toBeUndefined();
+  client.kill();
+});

@@ -518,7 +518,7 @@ Server.prototype.closeAllConnections = function () {
   const tracked = this[kTrackedConnections];
   if (tracked && tracked.size > 0) {
     for (const socket of $Array.from(tracked) as NodeHTTPServerSocket[]) {
-      if (!socket[kHandedOff]) socket.destroy();
+      if (!socket[kHandedOff]) socket.destroyNow();
     }
   }
 };
@@ -1684,6 +1684,7 @@ function getNodeHTTPServerSocket() {
     #pendingCallback = null;
     #pendingAbortMessage;
     #closeHandled = false;
+    #closingHandle;
     #resetSupported;
     #closeError: Error | undefined = undefined;
     declare encrypted: boolean;
@@ -1804,6 +1805,7 @@ function getNodeHTTPServerSocket() {
       // is deferred to #onClose so the dispatch promise resolves only after the
       // native on_abort has released the pending-request ref.
       this.#pendingAbortMessage = this._httpMessage;
+      this.#closingHandle = handle;
       handle.onclose = this.#onCloseForDestroy.bind(this, callback, err, handle);
       if (this.resetAndClosing) {
         this.resetAndClosing = false;
@@ -1921,7 +1923,14 @@ function getNodeHTTPServerSocket() {
         (pendingCallback as Function)(writeFailure);
       }
     }
+    // The close of a TLS handle waits for ciphertext that write() reported and a stalled peer does not take, but only once.
+    destroyNow() {
+      this.destroy();
+      const handle = this.#closingHandle;
+      if (handle && !handle.closed) handle.close();
+    }
     #onCloseForDestroy(closeCallback, err: Error | undefined, handle) {
+      this.#closingHandle = undefined;
       this.#onClose(handle);
       // Thread the destroy error through to the streams machinery (like
       // Node.js's net.Socket._destroy passing the exception to its callback),

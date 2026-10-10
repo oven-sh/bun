@@ -264,7 +264,14 @@ pub(crate) struct Components<'a> {
     may_have_explicit: OnceCell<bool>,
     /// For [`is_explicit_component_function`].
     documented_at: AncestorMemo<'a, Option<u32>>,
+    /// [`Components::leave_out`]
+    left_out: Option<Node<'a>>,
 }
+
+const TOO_MANY_PROP_TYPES: Message = Message::new(
+    "tooManyPropTypes",
+    "The declarations of prop types in this file have more than 524,288 parts. From here on they are not looked at.",
+);
 
 impl<'a> Components<'a> {
     /// `false` is certain: nothing but what is banned gets into the list of this file.
@@ -310,6 +317,19 @@ impl<'a> Components<'a> {
             wrapped: FxHashMap::default(),
             may_have_explicit: OnceCell::new(),
             documented_at: AncestorMemo::default(),
+            left_out: None,
+        }
+    }
+
+    /// The declaration of prop types of `node` is not looked at, nor are those after it.
+    pub(crate) fn leave_out(&mut self, node: Node<'a>) {
+        self.left_out.get_or_insert(node);
+    }
+
+    /// Reports where the first one is that is left out.
+    pub(crate) fn say_what_is_left_out<R: Rule>(&self, cx: &Cx<'a, R>) {
+        if let Some(node) = self.left_out {
+            cx.report_at(node.span().start, TOO_MANY_PROP_TYPES);
         }
     }
 

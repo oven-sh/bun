@@ -59,6 +59,7 @@ impl Rule for NoUnusedPropTypes {
         }
         let mut components = Components::new(file).with(prop_types).with(used(file));
         components.finish();
+        components.say_what_is_left_out(cx);
         for id in components.list() {
             let component = components.component(id);
             if !component.ignore_unused_prop_types_validation {

@@ -45,6 +45,7 @@ impl Rule for PreferReadOnlyProps {
         }
         let mut components = Components::new(file).with(prop_types);
         components.finish();
+        components.say_what_is_left_out(cx);
         for id in components.list() {
             let Some(declared_prop_types) = &components.component(id).declared_prop_types else { continue };
             for (prop_name, prop) in declared_prop_types.iter() {

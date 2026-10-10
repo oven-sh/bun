@@ -25,7 +25,7 @@ use crate::util_is_first_letter_capitalized::is_first_letter_capitalized;
 use crate::util_jsx::Branches;
 use crate::util_prop_types_declaration::{
     RangeError, ReactTypeImports, UNDEFINED, build_react_declaration_types,
-    declare_prop_types_for_ts_type_annotation, is_valid_react_generic_type_annotation,
+    declare_prop_types_for_ts_type_annotation, is_used_up, is_valid_react_generic_type_annotation,
     key_in_full_name,
 };
 use crate::util_prop_wrapper::is_prop_wrapper_function;
@@ -428,6 +428,9 @@ impl<'a> PropTypesInstructions<'a> {
         let Some(id) = components.set(node) else {
             return;
         };
+        if is_used_up(&self.steps) {
+            components.leave_out(node);
+        }
         let component = components.component_mut(id);
         let known = component.declared_prop_types.take();
         let ignore_props_validation = component.ignore_props_validation;

@@ -33,6 +33,11 @@ const MAX_STEPS: u32 = 100_000;
 /// parts.
 const MAX_STEPS_IN_A_FILE: u32 = 1 << 19;
 
+/// No more declarations are looked at: [`Components::leave_out`](crate::util_components::Components::leave_out).
+pub(crate) fn is_used_up(steps_in_the_file: &Cell<u32>) -> bool {
+    steps_in_the_file.get() > MAX_STEPS_IN_A_FILE
+}
+
 /// What upstream throws where that has no end: `const a = PropTypes.arrayOf(a)`.
 pub(crate) struct RangeError;
 
@@ -265,7 +270,7 @@ pub(crate) fn build_react_declaration_types<'a>(
     custom_validators: &[Box<[u8]>],
     steps_in_the_file: &Cell<u32>,
 ) -> Result<DeclaredPropType<'a>, RangeError> {
-    if steps_in_the_file.get() > MAX_STEPS_IN_A_FILE {
+    if is_used_up(steps_in_the_file) {
         return Err(RangeError);
     }
     let mut types = ReactDeclarationTypes {
@@ -656,7 +661,7 @@ pub(crate) fn declare_prop_types_for_ts_type_annotation<'a>(
     custom_validators: &[Box<[u8]>],
     steps_in_the_file: &Cell<u32>,
 ) -> TsAnnotation<'a> {
-    if steps_in_the_file.get() > MAX_STEPS_IN_A_FILE {
+    if is_used_up(steps_in_the_file) {
         return TsAnnotation {
             declared_prop_types,
             should_ignore_prop_types: true,

@@ -50,6 +50,7 @@ impl Rule for PropTypes {
         }
         let mut components = Components::new(file).with(declared(&self.custom_validators)).with(used(file));
         components.finish();
+        components.say_what_is_left_out(cx);
         let nothing = DeclaredPropTypes::default();
         let mut around = AncestorMemo::default();
         let list = components.list();

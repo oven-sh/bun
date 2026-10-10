@@ -1704,15 +1704,6 @@ trait ArchivePtrExt {
     fn write_close(self) -> ArchiveResult;
     fn write_free(self) -> ArchiveResult;
     fn error_string(self) -> &'static [u8];
-    fn read_support_format_tar(self) -> ArchiveResult;
-    fn read_support_format_gnutar(self) -> ArchiveResult;
-    fn read_support_filter_gzip(self) -> ArchiveResult;
-    fn read_set_options(self, opts: &core::ffi::CStr) -> ArchiveResult;
-    fn read_open_memory(self, buf: &[u8]) -> ArchiveResult;
-    fn read_next_header(self, entry: &mut *mut ArchiveEntry) -> ArchiveResult;
-    fn read_data(self, buf: &mut [u8]) -> isize;
-    fn read_close(self) -> ArchiveResult;
-    fn read_free(self) -> ArchiveResult;
 }
 impl ArchivePtrExt for *mut Archive {
     #[inline]
@@ -1754,42 +1745,6 @@ impl ArchivePtrExt for *mut Archive {
         // `archive_{read,write}_new()` (the trait exists precisely so those
         // sites avoid per-call `unsafe { &* }`).
         Archive::opaque_ref(self).error_string()
-    }
-    #[inline]
-    fn read_support_format_tar(self) -> ArchiveResult {
-        Archive::opaque_ref(self).read_support_format_tar()
-    }
-    #[inline]
-    fn read_support_format_gnutar(self) -> ArchiveResult {
-        Archive::opaque_ref(self).read_support_format_gnutar()
-    }
-    #[inline]
-    fn read_support_filter_gzip(self) -> ArchiveResult {
-        Archive::opaque_ref(self).read_support_filter_gzip()
-    }
-    #[inline]
-    fn read_set_options(self, opts: &core::ffi::CStr) -> ArchiveResult {
-        Archive::opaque_ref(self).read_set_options(opts)
-    }
-    #[inline]
-    fn read_open_memory(self, buf: &[u8]) -> ArchiveResult {
-        Archive::opaque_ref(self).read_open_memory(buf)
-    }
-    #[inline]
-    fn read_next_header(self, entry: &mut *mut ArchiveEntry) -> ArchiveResult {
-        Archive::opaque_ref(self).read_next_header(entry)
-    }
-    #[inline]
-    fn read_data(self, buf: &mut [u8]) -> isize {
-        Archive::opaque_ref(self).read_data(buf)
-    }
-    #[inline]
-    fn read_close(self) -> ArchiveResult {
-        Archive::opaque_ref(self).read_close()
-    }
-    #[inline]
-    fn read_free(self) -> ArchiveResult {
-        Archive::opaque_ref(self).read_free()
     }
 }
 
@@ -3985,6 +3940,7 @@ pub(crate) mod bindings {
     use bun_jsc::{
         CallFrame, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc,
     };
+    use bun_libarchive::lib::{DamagedBlock, MemoryReader, ReadArchive};
 
     #[bun_jsc::host_fn]
     pub(crate) fn js_read_tarball(
@@ -4049,7 +4005,7 @@ pub(crate) mod bindings {
         }
         let mut entries_info: Vec<EntryInfo> = Vec::new();
 
-        let archive = Archive::read_new();
+        let archive = ReadArchive::new();
 
         match archive.read_support_format_tar() {
             ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
@@ -4089,7 +4045,9 @@ pub(crate) mod bindings {
             _ => {}
         }
 
-        match archive.read_open_memory(&tarball) {
+        let (archive, open_status) =
+            MemoryReader::open_configured(archive, &tarball, DamagedBlock::Skip);
+        match open_status {
             ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
                 return Err(global.throw(format_args!(
                     "failed to open archive in memory: {}",
@@ -4099,26 +4057,18 @@ pub(crate) mod bindings {
             _ => {}
         }
 
-        let mut archive_entry: *mut ArchiveEntry = core::ptr::null_mut();
-        let mut header_status = archive.read_next_header(&mut archive_entry);
-
         let mut read_buf: Vec<u8> = Vec::new();
 
-        while header_status != ArchiveResult::Eof {
-            match header_status {
-                ArchiveResult::Eof => unreachable!(),
-                ArchiveResult::Retry => {
-                    header_status = archive.read_next_header(&mut archive_entry);
-                    continue;
-                }
-                ArchiveResult::Failed | ArchiveResult::Fatal => {
+        loop {
+            match archive.next_entry() {
+                Ok(None) => break,
+                Err(_) => {
                     return Err(global.throw(format_args!(
                         "failed to read archive header: {}",
                         bstr::BStr::new(archive.error_string()),
                     )));
                 }
-                _ => {
-                    let archive_entry_ref = ArchiveEntry::opaque_mut(archive_entry);
+                Ok(Some(archive_entry_ref)) => {
                     #[cfg(windows)]
                     let pathname_string = {
                         let pathname_w = archive_entry_ref.pathname_w();
@@ -4164,19 +4114,9 @@ pub(crate) mod bindings {
                     entries_info.push(entry_info);
                 }
             }
-            header_status = archive.read_next_header(&mut archive_entry);
         }
 
-        match archive.read_close() {
-            ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
-                return Err(global.throw(format_args!(
-                    "failed to close read archive: {}",
-                    bstr::BStr::new(archive.error_string())
-                )));
-            }
-            _ => {}
-        }
-        match archive.read_free() {
+        match archive.close() {
             ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
                 return Err(global.throw(format_args!(
                     "failed to close read archive: {}",

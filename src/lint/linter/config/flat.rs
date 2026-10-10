@@ -765,7 +765,8 @@ impl Config {
 }
 
 impl Reader<'_> {
-    /// Loads the plugins of which a rule is enabled that does not exist here.
+    /// Loads the plugins of which a rule is enabled that does not exist here, and takes note of those that the configuration has
+    /// described, for which nothing is loaded: a comment can name a rule of them, and whether there is such a rule is to be known.
     pub(super) fn load_js_plugins(
         &mut self,
         load: &mut LoadLocatedPlugin<'_>,
@@ -776,6 +777,7 @@ impl Reader<'_> {
             if prefix.is_empty()
                 || unknown.any(|id| parse_rule_id(id).0 == &prefix[..])
                 || self.handing_back.contains(prefix)
+                || location.get(b"described").is_some()
             {
                 self.js_plugins.push(load(location, prefix).map_err(|why| {
                     ConfigError::new(&[b"Failed to load the plugin \"", prefix, b"\": ", &why])

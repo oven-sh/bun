@@ -924,6 +924,53 @@ test.concurrent("import/resolver: typescript finds what is no script, as the pac
   expect(problems).toEqual(missing.map((_, at) => `src/a.mjs:${found.length + at + 1}:8 import/no-unresolved`).sort());
 });
 
+const linted = { main: "src/main.ts", e2e: "e2e/t.ts", a: "packages/a/src/i.ts", b: "packages/b/src/i.ts" };
+const all = Object.keys(linted);
+
+// Recorded from eslint-import-resolver-typescript 4.4.5 with eslint-plugin-import 2.32.0 under ESLint 10.12. It does not read the
+// tsconfig.json that is nearest to a file.
+test.concurrent.each([
+  // That of the working directory, and of what it refers to the first in whose directory the file is: as Vite's templates have it.
+  ["nothing", true, { "@/x": [], "~base/x": all, "#a/x": all, "#b/x": all }],
+  ["one file, of any name", { project: "tsconfig.base.json" }, { "@/x": all, "~base/x": [], "#a/x": all, "#b/x": all }],
+  ["one directory", { project: "packages/a" }, { "@/x": all, "~base/x": all, "#a/x": [], "#b/x": all }],
+  // The closest that is for the file. For a file that none is for, each of them is asked.
+  ["a pattern", { project: "packages/*/tsconfig.json" }, { "@/x": all, "~base/x": all, "#a/x": ["b"], "#b/x": ["a"] }],
+  ["a list", { project: ["packages/a", "packages/b"] }, { "@/x": all, "~base/x": all, "#a/x": ["b"], "#b/x": ["a"] }],
+] as [string, unknown, Record<string, string[]>][])(
+  "import/resolver: typescript: which tsconfig.json it reads: %s",
+  async (_, options, unresolvedIn) => {
+    const names = Object.keys(unresolvedIn);
+    const code = names.map(it => `import ${JSON.stringify(it)};\n`).join("");
+    const paths = (name: string) => JSON.stringify({ compilerOptions: { paths: { [`${name}/*`]: ["./src/*"] } } });
+    const files = {
+      // As eslint-config-next names it: `[require.resolve("eslint-import-resolver-typescript")]`.
+      "eslint.config.mjs": `export default [{
+        files: ["**/*.ts"],
+        settings: { "import/resolver": { "/p/node_modules/eslint-import-resolver-typescript/lib/index.cjs": ${JSON.stringify(options)} } },
+        plugins: { import: { meta: { name: "eslint-plugin-import" }, rules: {} } },
+        rules: { "import/no-unresolved": "error" },
+      }];`,
+      "package.json": "{}",
+      "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "./tsconfig.app.json" }] }),
+      "tsconfig.app.json": JSON.stringify({ compilerOptions: { paths: { "@/*": ["./src/*"] } }, include: ["src"] }),
+      "tsconfig.base.json": paths("~base"),
+      "packages/a/tsconfig.json": paths("#a"),
+      "packages/b/tsconfig.json": paths("#b"),
+      "e2e/tsconfig.json": "{}",
+      "src/x.ts": "export {};\n",
+      "packages/a/src/x.ts": "export {};\n",
+      "packages/b/src/x.ts": "export {};\n",
+      ...Object.fromEntries(Object.values(linted).map(it => [it, code])),
+    };
+    const { problems } = await lint(files, Object.values(linted));
+    const expected = names.flatMap((name, at) =>
+      unresolvedIn[name].map(it => `${linted[it as keyof typeof linted]}:${at + 1}:8 import/no-unresolved`),
+    );
+    expect(problems).toEqual(expected.sort());
+  },
+);
+
 test.concurrent(
   "import/ignore with a regular expression that is not written as a string: the package answers",
   async () => {

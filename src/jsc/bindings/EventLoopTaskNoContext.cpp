@@ -7,4 +7,9 @@ extern "C" void Bun__EventLoopTaskNoContext__performTask(EventLoopTaskNoContext*
     task->performTask();
 }
 
+extern "C" WebCore::EventLoopTask* Bun__EventLoopTaskNoContext__intoUnrunTask(EventLoopTaskNoContext* task)
+{
+    return task->intoUnrunTask();
+}
+
 } // namespace Bun

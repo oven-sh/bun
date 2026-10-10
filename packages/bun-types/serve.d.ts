@@ -872,6 +872,9 @@ declare module "bun" {
        * Sets the number of seconds to wait before timing out a connection
        * due to inactivity.
        *
+       * This is also how long an idle keep-alive connection stays open
+       * between requests. `0` disables the timeout. The maximum is `255`.
+       *
        * @default 10
        */
       idleTimeout?: number;
@@ -1138,6 +1141,9 @@ declare module "bun" {
 
     /**
      * Reset the idle timeout of the given Request to the given number of seconds. `0` means no timeout.
+     *
+     * The value lasts until the response to that request is complete. After
+     * that, the connection is under `idleTimeout` again.
      *
      * @example
      * ```js

@@ -1,6 +1,6 @@
 import { file, gc, Serve, serve, Server } from "bun";
 import { afterAll, afterEach, describe, expect, it, mock } from "bun:test";
-import { readFileSync, writeFileSync } from "fs";
+import { closeSync, openSync, readFileSync, writeFileSync, writeSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -27,8 +27,10 @@ import { connect } from "net";
 import { join, resolve } from "path";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
+import { runSocketTimeoutSweepSoon } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { spawn } from "child_process";
+import { mkfifo } from "mkfifo";
 import { on, once } from "node:events";
 import { createServer as createHttpServer } from "node:http";
 import net, { type AddressInfo } from "node:net";
@@ -3482,6 +3484,588 @@ it.concurrent(
   },
   20_000,
 );
+
+// Not concurrent: a forced sweep moves every connection of the process one tick closer to its timeout.
+describe("server.timeout(req, seconds) ends with its response", () => {
+  const GET = (path: string, headers = "") => `GET ${path} HTTP/1.1\r\nHost: localhost\r\n${headers}\r\n`;
+  const upgrade =
+    "Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n";
+  const rawSocket = (port: number, secure = false): net.Socket =>
+    secure ? nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false }) : net.connect(port, "127.0.0.1");
+
+  // A raw client that keeps its connection and holds what it receives.
+  function keepAliveClient(port: number, secure = false) {
+    const socket = rawSocket(port, secure);
+    let wire = "";
+    let isClosed = false;
+    let wake = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    socket.on("error", () => {});
+    socket.on("data", chunk => {
+      wire += chunk.toString("latin1");
+      wake.resolve();
+    });
+    socket.on("close", () => {
+      isClosed = true;
+      closed.resolve();
+      wake.resolve();
+    });
+
+    // Resolves with the first value `take` finds on the wire, or with undefined
+    // when the server closes the connection first.
+    async function next<T>(take: () => T | undefined) {
+      while (true) {
+        const value = take();
+        if (value !== undefined) return value;
+        if (isClosed) return undefined;
+        wake = Promise.withResolvers<void>();
+        await wake.promise;
+      }
+    }
+
+    // Takes one complete response off the wire and returns its status.
+    function takeResponse(toHead: boolean) {
+      const headEnd = wire.indexOf("\r\n\r\n");
+      if (headEnd === -1) return undefined;
+      const status = Number(wire.slice(9, 12));
+      const length = /\r\ncontent-length: (\d+)/i.exec(wire.slice(0, headEnd));
+      let end: number;
+      if (toHead || status === 304) {
+        end = headEnd + 4;
+      } else if (length) {
+        end = headEnd + 4 + Number(length[1]);
+        if (wire.length < end) return undefined;
+      } else {
+        // Chunked: the body ends at the zero-length chunk.
+        const lastChunk = wire.indexOf("0\r\n\r\n", headEnd + 4);
+        if (lastChunk === -1) return undefined;
+        end = lastChunk + 5;
+      }
+      wire = wire.slice(end);
+      return status;
+    }
+
+    return {
+      closed: closed.promise,
+      get isClosed() {
+        return isClosed;
+      },
+      send(bytes: string) {
+        socket.write(bytes);
+      },
+      response() {
+        return next(() => takeResponse(false));
+      },
+      request(head: string) {
+        socket.write(head);
+        return next(() => takeResponse(head.startsWith("HEAD ")));
+      },
+      sees(text: string) {
+        return next(() => (wire.includes(text) ? true : undefined));
+      },
+      [Symbol.dispose]() {
+        socket.destroy();
+      },
+    };
+  }
+
+  // A raw client for a large body: it counts what it receives and can stop reading.
+  function countingClient(port: number, path: string, secure = false) {
+    const socket = rawSocket(port, secure);
+    const state = { received: 0, tail: "", closedByServer: false };
+    let wake = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    socket.on("error", () => {});
+    socket.on("close", () => {
+      state.closedByServer = true;
+      closed.resolve();
+      wake.resolve();
+    });
+    socket.on("data", chunk => {
+      state.received += chunk.length;
+      state.tail = (state.tail + chunk.subarray(-16).toString("latin1")).slice(-16);
+      wake.resolve();
+    });
+    socket.write(GET(path));
+    return {
+      state,
+      socket,
+      closed: closed.promise,
+      // Resolves true when `done` holds, false when the server closes first.
+      async until(done: () => boolean) {
+        while (!done() && !state.closedByServer) {
+          wake = Promise.withResolvers<void>();
+          await wake.promise;
+        }
+        return done();
+      },
+      [Symbol.dispose]() {
+        socket.destroy();
+      },
+    };
+  }
+
+  // uWS runs the idle timers of every server of the process in one sweep,
+  // every 4 s. runSocketTimeoutSweepSoon() makes that sweep run now, so no
+  // test waits for wall time. The kept connection of an `idleTimeout: 1`
+  // server is closed by the first sweep after its response: its 'close' shows
+  // that a sweep ran. That sweep has also closed, on the server side, every
+  // connection that was one tick from its timeout before the clock's request
+  // went out. Only the 'close' event of such a connection can reach its
+  // client later. The next sweep is the bound for that.
+  function idleClock() {
+    const server = Bun.serve({ port: 0, idleTimeout: 1, fetch: () => new Response("tick") });
+    let stopped = false;
+    const sweeps = async (count: number) => {
+      // Only an answered round trip counts: a sweep closed that connection.
+      for (let i = 0; i < count && !stopped; ) {
+        using idle = keepAliveClient(server.port);
+        if ((await idle.request(GET("/"))) === 200 && !stopped) {
+          i++;
+          runSocketTimeoutSweepSoon();
+        }
+        await idle.closed;
+      }
+    };
+    return {
+      sweeps,
+      // Resolves when the server has closed every client, and after two sweeps at the latest.
+      closedOrTwoSweeps(clients: { closed: Promise<void> }[]) {
+        return Promise.race([Promise.all(clients.map(client => client.closed)), sweeps(2)]);
+      },
+      [Symbol.dispose]() {
+        stopped = true;
+        server.stop(true);
+      },
+    };
+  }
+
+  // Answers in every way a response can end. `seconds` in the query goes to server.timeout().
+  function serverOfEveryEnding(options: { tls?: typeof tls } = {}) {
+    const dir = tempDir("serve-timeout-bodies", {
+      "small.txt": "ok",
+      // Large enough for sendfile on Linux.
+      "large.bin": Buffer.alloc(2 * 1024 * 1024, "f"),
+    });
+    // Larger than a socket buffer, so that the response can complete from a writable event.
+    const blob = new Blob([Buffer.alloc(4 * 1024 * 1024, "b")]);
+    const seconds = (req: Request) => Number(new URL(req.url).searchParams.get("seconds"));
+    const server = Bun.serve({
+      ...options,
+      port: 0,
+      idleTimeout: 1,
+      websocket: { message() {} },
+      routes: {
+        "/route": (req: Request, server: Server) => {
+          server.timeout(req, seconds(req));
+          return new Response("ok");
+        },
+      },
+      fetch(req: Request, server: Server) {
+        server.timeout(req, seconds(req));
+        switch (new URL(req.url).pathname) {
+          case "/stream":
+            return new Response(
+              new ReadableStream({
+                async pull(controller) {
+                  controller.enqueue("o");
+                  await new Promise(resolve => setImmediate(resolve));
+                  controller.enqueue("k");
+                  controller.close();
+                },
+              }),
+            );
+          case "/async":
+            return new Promise<Response>(resolve => setImmediate(() => resolve(new Response("ok"))));
+          case "/not-modified":
+            return new Response(null, { status: 304 });
+          case "/blob":
+            return new Response(blob);
+          case "/file":
+            return new Response(Bun.file(join(String(dir), "small.txt")));
+          case "/large-file":
+            return new Response(Bun.file(join(String(dir), "large.bin")));
+        }
+        return new Response("ok");
+      },
+    });
+    return {
+      port: server.port,
+      [Symbol.dispose]() {
+        server.stop(true);
+        dir[Symbol.dispose]();
+      },
+    };
+  }
+
+  // One connection for each request: its status, then the close of the kept connection.
+  async function expectClosedAfterResponse(
+    port: number,
+    secure: boolean,
+    legs: { leg: string; status: number; head: string }[],
+  ) {
+    using clock = idleClock();
+    const clients = legs.map(() => keepAliveClient(port, secure));
+    try {
+      const statuses = await Promise.all(legs.map(({ head }, i) => clients[i].request(head)));
+      await clock.closedOrTwoSweeps(clients);
+      expect(legs.map(({ leg }, i) => ({ leg, status: statuses[i], closedByServer: clients[i].isClosed }))).toEqual(
+        legs.map(({ leg, status }) => ({ leg, status, closedByServer: true })),
+      );
+    } finally {
+      for (const client of clients) client[Symbol.dispose]();
+    }
+  }
+
+  it("the kept connection is under idleTimeout again, however the response ended", async () => {
+    using server = serverOfEveryEnding();
+    // 0 never ends the connection and 60 ends it after a minute: idleTimeout
+    // is 1, so neither value may still be in force after the response.
+    await expectClosedAfterResponse(server.port, false, [
+      { leg: "string body", status: 200, head: GET("/?seconds=0") },
+      { leg: "string body, 60 s", status: 200, head: GET("/?seconds=60") },
+      { leg: "HEAD", status: 200, head: "HEAD /?seconds=0 HTTP/1.1\r\nHost: localhost\r\n\r\n" },
+      { leg: "304", status: 304, head: GET("/not-modified?seconds=0") },
+      { leg: "stream body", status: 200, head: GET("/stream?seconds=0") },
+      { leg: "stream body, 60 s", status: 200, head: GET("/stream?seconds=60") },
+      { leg: "async handler", status: 200, head: GET("/async?seconds=0") },
+      { leg: "route handler", status: 200, head: GET("/route?seconds=0") },
+      { leg: "WebSocket request that fetch answers", status: 200, head: GET("/?seconds=0", upgrade) },
+    ]);
+  });
+
+  it("the kept connection is under idleTimeout again after a large body, a file and an early answer", async () => {
+    using server = serverOfEveryEnding();
+    // The handler answers before the rest of the request body arrives.
+    const upload = (framing: string) => `POST /?seconds=0 HTTP/1.1\r\nHost: localhost\r\n${framing}`;
+    await expectClosedAfterResponse(server.port, false, [
+      { leg: "4 MiB Blob", status: 200, head: GET("/blob?seconds=0") },
+      { leg: "Bun.file", status: 200, head: GET("/file?seconds=0") },
+      { leg: "Bun.file of 2 MiB", status: 200, head: GET("/large-file?seconds=0") },
+      { leg: "unfinished upload", status: 200, head: upload("Content-Length: 10\r\n\r\nhello") },
+      {
+        leg: "unfinished chunked upload",
+        status: 200,
+        head: upload("Transfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n"),
+      },
+    ]);
+  });
+
+  it("the kept connection is under idleTimeout again over TLS", async () => {
+    using server = serverOfEveryEnding({ tls });
+    await expectClosedAfterResponse(server.port, true, [
+      { leg: "string body", status: 200, head: GET("/?seconds=0") },
+      { leg: "Bun.file of 2 MiB", status: 200, head: GET("/large-file?seconds=0") },
+    ]);
+  });
+
+  it("a value below idleTimeout does not end the kept connection early", async () => {
+    using clock = idleClock();
+    // 30 s is eight sweeps away. 0 never ends an idle connection.
+    const legs = [30, 0].map(idleTimeout => {
+      const server = Bun.serve({
+        port: 0,
+        idleTimeout,
+        fetch(req, server) {
+          if (req.url.endsWith("/short")) server.timeout(req, 1);
+          return new Response("ok");
+        },
+      });
+      return { idleTimeout, server, client: keepAliveClient(server.port) };
+    });
+    try {
+      const first = await Promise.all(legs.map(({ client }) => client.request(GET("/short"))));
+      await clock.sweeps(1);
+      // A second request on the kept connection shows that the server did not close it.
+      const second = await Promise.all(legs.map(({ client }) => client.request(GET("/"))));
+      expect(legs.map(({ idleTimeout }, i) => ({ idleTimeout, first: first[i], second: second[i] }))).toEqual(
+        legs.map(({ idleTimeout }) => ({ idleTimeout, first: 200, second: 200 })),
+      );
+    } finally {
+      for (const { client, server } of legs) {
+        client[Symbol.dispose]();
+        server.stop(true);
+      }
+    }
+  });
+
+  it("a request that no route arms starts under idleTimeout as well", async () => {
+    using clock = idleClock();
+    // No fetch handler: the 404 for an unknown path runs no handler.
+    using routesOnly = Bun.serve({
+      port: 0,
+      idleTimeout: 1,
+      routes: {
+        "/forever": (req, server) => {
+          server.timeout(req, 0);
+          return new Response("ok");
+        },
+      },
+    });
+    // A WebSocket request that fetch answers does not pass the route start either.
+    using withWebSocket = Bun.serve({
+      port: 0,
+      idleTimeout: 1,
+      websocket: { message() {} },
+      fetch(req) {
+        if (!req.url.endsWith("/quiet")) return new Response("ok");
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue("hi");
+            },
+          }),
+        );
+      },
+    });
+    using afterOverride = keepAliveClient(routesOnly.port);
+    using unknown = keepAliveClient(routesOnly.port);
+    using answered = keepAliveClient(withWebSocket.port);
+    using quietBody = keepAliveClient(withWebSocket.port);
+    // One write for both requests: between two writes a sweep can end the
+    // kept connection, which is under idleTimeout again after the first.
+    afterOverride.send(GET("/forever") + GET("/unknown"));
+    unknown.send(GET("/unknown"));
+    answered.send(GET("/", upgrade));
+    quietBody.send(GET("/quiet", upgrade));
+    const seen = {
+      afterOverride: [await afterOverride.response(), await afterOverride.response()],
+      unknown: await unknown.response(),
+      answered: await answered.response(),
+      quietBody: await quietBody.sees("hi"),
+    };
+    const clients = [afterOverride, unknown, answered, quietBody];
+    await clock.closedOrTwoSweeps(clients);
+    expect({ ...seen, closedByServer: clients.map(client => client.isClosed) }).toEqual({
+      afterOverride: [200, 404],
+      unknown: 404,
+      answered: 200,
+      quietBody: true,
+      closedByServer: [true, true, true, true],
+    });
+  });
+
+  it("a pending request keeps its idle timer, and the value holds while its response is pending", async () => {
+    using clock = idleClock();
+    const release = Promise.withResolvers<void>();
+    const handler = async (req: Request, server: Server) => {
+      // Never answers.
+      if (!req.url.endsWith("/held")) return new Promise<Response>(() => {});
+      server.timeout(req, 0);
+      await release.promise;
+      return new Response("ok");
+    };
+    using server = Bun.serve({ port: 0, idleTimeout: 1, routes: { "/route/:kind": handler }, fetch: handler });
+    using never = keepAliveClient(server.port);
+    using routeNever = keepAliveClient(server.port);
+    using held = keepAliveClient(server.port);
+    using routeHeld = keepAliveClient(server.port);
+    never.send(GET("/never"));
+    routeNever.send(GET("/route/never"));
+    const answers = [held.request(GET("/held")), routeHeld.request(GET("/route/held"))];
+    await clock.sweeps(1);
+    release.resolve();
+    const heldStatuses = await Promise.all(answers);
+    await clock.closedOrTwoSweeps([never, routeNever]);
+    expect({ held: heldStatuses, neverClosedByServer: [never.isClosed, routeNever.isClosed] }).toEqual({
+      held: [200, 200],
+      neverClosedByServer: [true, true],
+    });
+  });
+
+  // A FIFO with an open writer is the one file body that can stay quiet. Windows has no FIFO.
+  it.skipIf(isWindows)("it holds while a Bun.file body is quiet", async () => {
+    using clock = idleClock();
+    using dir = tempDir("serve-timeout-quiet-file", {});
+    const fifo = join(String(dir), "body.fifo");
+    mkfifo(fifo);
+    // A writer that stays open: the body is quiet, not at its end.
+    const writer = openSync(fifo, "r+");
+    try {
+      writeSync(writer, "first");
+      using server = Bun.serve({
+        port: 0,
+        idleTimeout: 1,
+        fetch(req, server) {
+          server.timeout(req, 0);
+          return new Response(Bun.file(fifo));
+        },
+      });
+      using client = keepAliveClient(server.port);
+      client.send(GET("/"));
+      const first = await client.sees("first");
+      await clock.sweeps(1);
+      writeSync(writer, "late");
+      const late = await client.sees("late");
+      expect({ first, late, closedByServer: client.isClosed }).toEqual({
+        first: true,
+        late: true,
+        closedByServer: false,
+      });
+    } finally {
+      closeSync(writer);
+    }
+  });
+
+  it("it holds while its response is pending, under backpressure and after a drain", async () => {
+    using clock = idleClock();
+    // More than the kernel buffers between the two ends.
+    const size = 16 * 1024 * 1024;
+    using dir = tempDir("serve-timeout-pending-body", { "body.bin": Buffer.alloc(size, "f") });
+    // More than the socket takes in one write.
+    const burst = Buffer.alloc(size / 2, "s");
+    const quiet = Promise.withResolvers<void>();
+    const options = {
+      port: 0,
+      idleTimeout: 1,
+      fetch(req: Request, server: Server) {
+        server.timeout(req, 0);
+        if (req.url.endsWith("/file")) return new Response(Bun.file(join(String(dir), "body.bin")));
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write(burst);
+              await controller.flush();
+              await quiet.promise;
+              controller.write("late");
+              controller.close();
+            },
+          }),
+        );
+      },
+    };
+    using plain = Bun.serve(options);
+    using secure = Bun.serve({ ...options, tls });
+    using file = countingClient(plain.port, "/file");
+    using tlsFile = countingClient(secure.port, "/file", true);
+    using stream = countingClient(plain.port, "/stream");
+    // The files: stop reading part-way, with most of the body still to come.
+    const stalledMidBody = await Promise.all(
+      [file, tlsFile].map(async client => {
+        const stalled = await client.until(() => client.state.received > size / 8);
+        client.socket.pause();
+        return stalled;
+      }),
+    );
+    // The stream: the client holds the whole burst, so the server has drained it.
+    const drained = await stream.until(() => stream.state.received > burst.length);
+    await clock.sweeps(1);
+    file.socket.resume();
+    tlsFile.socket.resume();
+    quiet.resolve();
+    const [deliveredWhole, tlsDeliveredWhole, late] = await Promise.all([
+      file.until(() => file.state.received > size),
+      tlsFile.until(() => tlsFile.state.received > size),
+      stream.until(() => stream.state.tail.includes("late")),
+    ]);
+    expect({ stalledMidBody, deliveredWhole, tlsDeliveredWhole, drained, late }).toEqual({
+      stalledMidBody: [true, true],
+      deliveredWhole: true,
+      tlsDeliveredWhole: true,
+      drained: true,
+      late: true,
+    });
+  });
+
+  it("a value below idleTimeout ends a stalled Bun.file body", async () => {
+    using clock = idleClock();
+    // More than the kernel buffers between the two ends.
+    const size = 16 * 1024 * 1024;
+    using dir = tempDir("serve-timeout-short-file", { "body.bin": Buffer.alloc(size, "f") });
+    const cut = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 30,
+      fetch(req, server) {
+        server.timeout(req, 1);
+        req.signal.addEventListener("abort", () => cut.resolve());
+        return new Response(Bun.file(join(String(dir), "body.bin")));
+      },
+    });
+    using client = countingClient(server.port, "/");
+    const stalled = await client.until(() => client.state.received > 0);
+    client.socket.pause();
+    // The server ends the request in its next sweep. 30 s is eight sweeps away.
+    const cutInTwoSweeps = await Promise.race([cut.promise.then(() => true), clock.sweeps(2).then(() => false)]);
+    // A client that does not read does not see the close. Read what is left.
+    client.socket.resume();
+    const deliveredWhole = await client.until(() => client.state.received > size);
+    expect({ stalled, cutInTwoSweeps, deliveredWhole, closedByServer: client.state.closedByServer }).toEqual({
+      stalled: true,
+      cutInTwoSweeps: true,
+      deliveredWhole: false,
+      closedByServer: true,
+    });
+  });
+
+  it("it holds until a response that ended under backpressure has drained", async () => {
+    using clock = idleClock();
+    // More than the kernel buffers between the two ends.
+    const chunk = Buffer.alloc(16 * 1024 * 1024, "a");
+    const written: Record<string, { bytes: number; backedUp: boolean }> = {};
+    const options = {
+      port: 0,
+      idleTimeout: 1,
+      fetch(req: Request, server: Server) {
+        server.timeout(req, 60);
+        const response = (written[new URL(req.url).pathname.slice(1)] = { bytes: 0, backedUp: false });
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            pull(controller) {
+              // Write until the socket pushes back, then close without a wait:
+              // the stream ends while the server still holds the rest.
+              while (!response.backedUp && response.bytes < 4 * chunk.length) {
+                response.backedUp = controller.write(chunk) instanceof Promise;
+                response.bytes += chunk.length;
+              }
+              controller.close();
+            },
+          }),
+        );
+      },
+    };
+    using plain = Bun.serve(options);
+    using secure = Bun.serve({ ...options, tls });
+    const legs = [
+      { leg: "TCP", client: countingClient(plain.port, "/TCP") },
+      { leg: "TLS", client: countingClient(secure.port, "/TLS", true) },
+    ];
+    try {
+      // Stop reading for one sweep, with most of the body still to come.
+      const stalled = await Promise.all(
+        legs.map(async ({ client }) => {
+          const gotFirstBytes = await client.until(() => client.state.received > 0);
+          client.socket.pause();
+          return gotFirstBytes;
+        }),
+      );
+      await clock.sweeps(1);
+      for (const { client } of legs) client.socket.resume();
+      const deliveredWhole = await Promise.all(
+        legs.map(({ leg, client }) =>
+          client.until(() => client.state.received > written[leg].bytes && client.state.tail.endsWith("0\r\n\r\n")),
+        ),
+      );
+      // Drained: the kept connection is under idleTimeout again.
+      await clock.closedOrTwoSweeps(legs.map(({ client }) => client));
+      expect(
+        legs.map(({ leg, client }, i) => ({
+          leg,
+          stalled: stalled[i],
+          backedUp: written[leg].backedUp,
+          deliveredWhole: deliveredWhole[i],
+          closedByServer: client.state.closedByServer,
+        })),
+      ).toEqual(
+        legs.map(({ leg }) => ({ leg, stalled: true, backedUp: true, deliveredWhole: true, closedByServer: true })),
+      );
+    } finally {
+      for (const { client } of legs) client[Symbol.dispose]();
+    }
+  });
+});
 
 it.concurrent(
   "TLS: reaps every zero-byte pre-handshake connection in a burst",

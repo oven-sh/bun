@@ -2032,7 +2032,6 @@ where
             } else {
                 None
             },
-            idle_timeout: server.config().idle_timeout,
             owner: file_response_stream::StreamOwner::Ctx {
                 ctx: self.as_ctx_ptr().cast::<c_void>(),
                 on_complete: Self::on_file_stream_complete,

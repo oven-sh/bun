@@ -785,7 +785,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         server.on_pending_request();
 
         req.set_yield(false);
-        resp_ref.timeout(server.config.idle_timeout);
+        resp_ref.reset_timeout();
 
         // Since we do timeouts by default, we should tell the user when
         // this happens - but limit it to only warn once.
@@ -1302,7 +1302,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // The listener and what it starts continue the script that made the server.
         let _context = this_ref.vm().enter_context(this_ref.context.get());
         req.set_yield(false);
-        resp.timeout(this_ref.config.idle_timeout);
+        resp.reset_timeout();
 
         let global = this_ref.global_this();
         let this_object = this_ref.js_value.try_get().unwrap_or(JSValue::UNDEFINED);
@@ -3104,6 +3104,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         bun_opaque::opaque_deref_mut(app).filter(Self::on_connection_filter, this.cast::<c_void>());
+        bun_opaque::opaque_deref_mut(app).set_idle_timeout(this_ref.config.idle_timeout);
 
         if this_ref.config.is_node_http_server {
             // SAFETY: `this` is the live boxed server from `init()`; no other

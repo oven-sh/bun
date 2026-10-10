@@ -354,7 +354,8 @@ declare module "node:tls" {
     /**
      * Override the trusted CA certificates. The default is the list of
      * well-known CAs curated by Mozilla; setting this option replaces
-     * that list entirely.
+     * that list entirely. An empty array replaces it too: no CA is
+     * trusted, and every peer certificate fails verification.
      */
     ca?: string | Buffer | NodeJS.TypedArray | Bun.BunFile | Array<string | Buffer | Bun.BunFile> | undefined;
     /**

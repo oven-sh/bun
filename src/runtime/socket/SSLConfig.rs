@@ -214,10 +214,10 @@ impl SSLConfigFromJs for SSLConfig {
             || result.session_timeout != 0
             || result.allow_partial_trust_chain;
 
-        result.ca = handle_file_for_field(global, "ca", &generated.ca)?;
-        result.cert = handle_file_for_field(global, "cert", &generated.cert)?;
-        result.key = handle_file_for_field(global, "key", &generated.key)?;
-        result.crl = handle_file_for_field(global, "crl", &generated.crl)?;
+        result.ca = handle_file_for_field(global, "ca", &generated.ca, EmptyArray::EmptySet)?;
+        result.cert = handle_file_for_field(global, "cert", &generated.cert, EmptyArray::Absent)?;
+        result.key = handle_file_for_field(global, "key", &generated.key, EmptyArray::Absent)?;
+        result.crl = handle_file_for_field(global, "crl", &generated.crl, EmptyArray::Absent)?;
         result.requires_custom_request_ctx = result.requires_custom_request_ctx
             || result.ca.is_some()
             || result.cert.is_some()
@@ -367,12 +367,24 @@ fn handle_path(
     Ok(dupe_z(path.slice()))
 }
 
+/// What an array with no element means for one TLS option.
+#[derive(Clone, Copy)]
+enum EmptyArray {
+    /// The same as an option that was not given.
+    Absent,
+    /// A given list that holds nothing. `ca: []` trusts no CA: Node adds its
+    /// default roots only for a falsy `ca`, and an empty array is not falsy.
+    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/secure-context.js#L177-L184
+    EmptySet,
+}
+
 fn handle_file_for_field(
     global: &JSGlobalObject,
     field: &'static str,
     file: &jsc::generated::SSLConfigFile,
+    empty_array: EmptyArray,
 ) -> JsResult<CStrSlice> {
-    match handle_file(global, file) {
+    match handle_file(global, file, empty_array) {
         Ok(v) => Ok(v),
         Err(ReadFromBlobError::Js(e)) => Err(e),
         Err(ReadFromBlobError::EmptyFile) => {
@@ -390,6 +402,7 @@ fn handle_file_for_field(
 fn handle_file(
     global: &JSGlobalObject,
     file: &jsc::generated::SSLConfigFile,
+    empty_array: EmptyArray,
 ) -> Result<CStrSlice, ReadFromBlobError> {
     let single = handle_single_file(
         global,
@@ -407,7 +420,7 @@ fn handle_file(
                 SingleFile::File(unsafe { &mut *val.get().cast::<crate::webcore::Blob>() })
             }
             jsc::generated::SSLConfigFile::Array(list) => {
-                return handle_file_array(global, list.items());
+                return handle_file_array(global, list.items(), empty_array);
             }
         },
     )?;
@@ -419,9 +432,13 @@ fn handle_file(
 fn handle_file_array(
     global: &JSGlobalObject,
     elements: &[jsc::generated::SSLConfigSingleFile],
+    empty_array: EmptyArray,
 ) -> Result<CStrSlice, ReadFromBlobError> {
     if elements.is_empty() {
-        return Ok(None);
+        return Ok(match empty_array {
+            EmptyArray::Absent => None,
+            EmptyArray::EmptySet => Some(Box::default()),
+        });
     }
     let mut result: Vec<*const c_char> = Vec::with_capacity(elements.len());
     // Error path: free_sensitive each, then drop result — need zeroing on error:

@@ -31,6 +31,8 @@ pub struct SSLConfig {
 
     pub key: CStrSlice,
     pub cert: CStrSlice,
+    /// `None`: not given, the default roots are trusted. `Some`: the only
+    /// trusted certificates, also when the list is empty (`ca: []`).
     pub ca: CStrSlice,
     pub crl: CStrSlice,
 
@@ -351,9 +353,12 @@ impl SSLConfig {
             return cached;
         }
         let mut hasher = Wyhash::init(0);
+        // A present option starts with a 1: one that is given but empty (`ca: []`, `sigalgs: ""`) is not an
+        // absent one, and the keep-alive pool compares this hash alone.
         macro_rules! hash_cstr {
             ($f:ident) => {
                 if !self.$f.is_null() {
+                    hasher.update(&[1]);
                     hasher.update(cstr_bytes(self.$f));
                 }
                 hasher.update(&[0]);
@@ -362,6 +367,7 @@ impl SSLConfig {
         macro_rules! hash_slice {
             ($f:ident) => {
                 if let Some(slice) = &self.$f {
+                    hasher.update(&[1]);
                     for s in slice.iter() {
                         hasher.update(cstr_bytes(*s));
                         hasher.update(&[0]);

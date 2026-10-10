@@ -43,7 +43,7 @@ Bun.serve({
 
 ### CA Certificates
 
-Pass `ca` to override the trusted CA certificates. By default, the server trusts the list of well-known CAs curated by Mozilla; setting `ca` replaces that list.
+Pass `ca` to override the trusted CA certificates. By default, the server trusts the list of well-known CAs curated by Mozilla; setting `ca` replaces that list. An empty array replaces it too: `ca: []` trusts no CA.
 
 ```ts
 Bun.serve({

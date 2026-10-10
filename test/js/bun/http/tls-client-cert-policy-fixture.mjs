@@ -23,6 +23,10 @@ const policies = {
   "caFile": { caFile: join(keys, "ca5-cert.pem") },
   "ca, requestCert": { ca, requestCert: true },
   "ca, requestCert, rejectUnauthorized: false": { ca, requestCert: true, rejectUnauthorized: false },
+  // These are for a process in which ca5 is a default root (NODE_EXTRA_CA_CERTS).
+  "requestCert": { requestCert: true },
+  "ca: []": { ca: [] },
+  "ca: [], requestCert": { ca: [], requestCert: true },
 };
 const servername = "policy.example";
 const reply = who => `HTTP/1.1 200 OK\r\nContent-Length: ${who.length}\r\nConnection: close\r\n\r\n${who}`;

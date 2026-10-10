@@ -539,8 +539,10 @@ var InternalSecureContext = class SecureContext {
     // explicit `ca` was given, use the override as the default CA set so the
     // process-wide default applies on every construction path (the public
     // createSecureContext(), the connect/TLSSocket path, addContext and
-    // setSecureContext), matching Node's secure-context default.
-    if (_defaultCACertificatesOverride !== undefined && (options == null || options.ca == null)) {
+    // setSecureContext), matching Node's secure-context default. As in a Node
+    // secure context, a falsy `ca` ("" / false / 0) is not given and an empty
+    // array is.
+    if (_defaultCACertificatesOverride !== undefined && !options?.ca) {
       options = { ...options, ca: _defaultCACertificatesOverride };
     }
     if (options) {

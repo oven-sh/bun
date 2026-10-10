@@ -472,7 +472,9 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   } = options;
 
   name += ":";
+  const caStart = name.length;
   if (ca) name += poolKeyPart(ca);
+  const emptyCA = ca && name.length === caStart;
 
   name += ":";
   if (cert) name += poolKeyPart(cert);
@@ -537,6 +539,10 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   if (caFile) name += `:caFile=${JSONStringify(caFile)}`;
   if (allowPartialTrustChain) name += ":allowPartialTrustChain";
   if (secureContext) name += `:secureContext=${poolKeyPart(secureContext)}`;
+  // `ca: []` trusts no CA, and its part above is as empty as that of no `ca`. In Node the two share a name, so
+  // there that request takes a pooled socket that the default roots verified.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L487-L489
+  if (emptyCA) name += ":ca=[]";
 
   const perRequestCheckServerIdentity = options[kPerRequestCheckServerIdentity];
   if (perRequestCheckServerIdentity) name += `:${perRequestCheckServerIdentity}`;

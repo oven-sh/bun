@@ -494,6 +494,7 @@ impl Rule for NoBaseToString {
     const META: Meta = Meta::typescript("no-base-to-string", Kind::Suggestion)
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types();
+    const ON: On = On::new().exprs(&[ExprTag::Binary, ExprTag::Assign, ExprTag::Call, ExprTag::Template]);
     type State<'a> = Certainties<'a>;
 
     fn new(options: &Options) -> Self {
@@ -510,10 +511,16 @@ impl Rule for NoBaseToString {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Certainties<'a> {
-        on.exprs([ExprTag::Binary, ExprTag::Assign], Self::check_addition);
-        on.exprs([ExprTag::Call], Self::check_call);
-        on.exprs([ExprTag::Template], Self::check_template_literal);
-        Certainties::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Certainties<'a>> {
+        Some(Certainties::default())
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match node.tag() {
+            ExprTag::Binary | ExprTag::Assign => self.check_addition(node, cx),
+            ExprTag::Call => self.check_call(node, cx),
+            ExprTag::Template => self.check_template_literal(node, cx),
+            _ => {}
+        }
     }
 }

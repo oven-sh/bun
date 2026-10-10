@@ -1208,7 +1208,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             _ => false,
         };
         match (word, is_callee) {
-            (b"defer", _) => {
+            (b"defer", false) => {
                 let after = (at.1, Diagnostic::NO_LENGTH);
                 self.flag(DiagnosticKind::Grammar, 1005, after, &[b"("]);
             }

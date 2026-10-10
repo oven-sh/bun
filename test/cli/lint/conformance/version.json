@@ -13,7 +13,7 @@
   },
   "eslint-plugin-import": {
     "version": "2.32.0",
-    "commit": "a60d71548b0d12b750f7a7040285774fed25975a"
+    "commit": "01c9eb04331d2efa8d63f2d7f4bfec3bc44c94f3"
   },
   "eslint-plugin-import-x": {
     "version": "4.17.1",
@@ -55,5 +55,21 @@
   },
   "@typescript-eslint/types": {
     "version": "8.71.1"
+  },
+  "eslint-plugin-prettier": {
+    "version": "5.5.6",
+    "commit": "4f33ea5a503c6cdbda93424ebd13188a46a1a890"
+  },
+  "prettier": {
+    "version": "3.9.9"
+  },
+  "lodash": {
+    "version": "4.18.1"
+  },
+  "type-fest": {
+    "version": "3.13.1"
+  },
+  "yargs": {
+    "version": "17.7.3"
   }
 }

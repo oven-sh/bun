@@ -32,6 +32,7 @@ mod disable;
 mod disable_oxlint;
 mod fixer;
 pub mod globals;
+mod instances;
 mod json_v8;
 mod levn;
 mod message;
@@ -63,8 +64,8 @@ pub use registry::{
 };
 pub use resolved::{ConfiguredJsRule, ConfiguredRule, LinterOptions, ResolvedConfig, severity_of};
 pub use syntax::{
-    Refusal, TypesInJavaScript, goes_to_flow, not_in_a_project, parse_error, refusal_of_oxfmt,
-    refusal_of_prettier, refused_by_prettier, refused_by_prettier_with,
+    Refusal, TypesInJavaScript, goes_to_flow, may_be_misread, not_in_a_project, parse_error,
+    refusal_of_oxfmt, refusal_of_prettier, refused_by_prettier, refused_by_prettier_with,
 };
 
 use crate::ast::File;
@@ -75,6 +76,7 @@ use crate::rule::Meta;
 use crate::runner::{AnyRule, Enabled, RuleEntry};
 use crate::span::Span;
 use directives::{ConfigComment, Label};
+use instances::Instances;
 use message::Locator;
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -156,6 +158,8 @@ pub struct LintResult {
     pub skipped_rules: Vec<Box<[u8]>>,
     /// Why a rule has [handed the file back](File::hand_back) to that of its package, which has run in its place.
     pub handed_back: Option<crate::formats::Reason>,
+    /// It [may be misread](may_be_misread), and whoever lints has somebody else to read it. There is nothing else in the result.
+    pub is_unread: bool,
     /// ESLint throws this while it lints the file, and that ends the run with the exit code 2: a rule refuses options that its
     /// schema accepts ([`Rule::validate`](crate::rule::Rule::validate)), or a rule of a JavaScript plugin throws. There is
     /// nothing else in the result then.
@@ -164,6 +168,8 @@ pub struct LintResult {
 
 pub struct Linter {
     registry: Registry,
+    /// What the configurations name by numbers.
+    instances: Instances<Box<dyn AnyRule>>,
 }
 
 /// A rule as it runs on the file: as it is configured, or as a comment changes that.
@@ -308,7 +314,23 @@ fn is_same_json(a: &Json, b: &Json) -> bool {
 
 impl Linter {
     pub fn new(registry: Registry) -> Linter {
-        Linter { registry }
+        Linter {
+            registry,
+            instances: Instances::new(),
+        }
+    }
+
+    /// `rule` made from its options. `None` if it is off.
+    fn instance(&self, rule: &ConfiguredRule) -> Option<&dyn AnyRule> {
+        if rule.severity == Severity::Off {
+            return None;
+        }
+        let at = *rule.instance.get_or_init(|| {
+            let index = self.registry.index_of(rule.entry);
+            let make = || (rule.entry.build)(&Options::new(&rule.options));
+            self.instances.of(index, &rule.options, make)
+        });
+        self.instances.get(at).map(|it| &**it)
     }
 
     pub fn registry(&self) -> &Registry {
@@ -344,7 +366,7 @@ impl Linter {
         let mut result = LintResult::default();
         let mut running: Vec<Running> = Vec::with_capacity(config.rules.len());
         for rule in (config.rules.iter()).filter(|it| !is_refused || it.entry.meta.requires_types) {
-            if let Some(instance) = rule.instance() {
+            if let Some(instance) = self.instance(rule) {
                 running.push(Running {
                     entry: rule.entry,
                     reported_as: rule.reported_as(),
@@ -965,7 +987,7 @@ fn js_failure(
 
 /// Applies the comments of a file to its configuration.
 struct Inline<'i, 'c, 'a> {
-    linter: &'i Linter,
+    linter: &'c Linter,
     file: &'a File<'a>,
     config: &'c ResolvedConfig,
     locator: &'i Locator<'a>,
@@ -1204,9 +1226,10 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
             };
             let name = existing.and_then(ConfiguredRule::name);
             let is_it = |it: &Running| is_same_rule(it.entry, entry) && it.name == name;
+            let linter = self.linter;
             let shared = existing
                 .filter(|_| keeps_options)
-                .and_then(ConfiguredRule::instance);
+                .and_then(|it| linter.instance(it));
             let refusal = match shared {
                 Some(_) => existing
                     .and_then(ConfiguredRule::refusal)

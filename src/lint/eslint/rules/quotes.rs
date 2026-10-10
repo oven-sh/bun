@@ -219,38 +219,70 @@ impl Quotes {
             self.check_template(e.span(), Some(e), cx);
         }
     }
+}
 
-    fn check_member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
-        if !member.flags().contains(Flags::STRING_NAME) {
-            return;
-        }
-        let is_property =
-            !member.is_signature() && !member.flags().intersects(Flags::ABSTRACT | Flags::ACCESSOR);
-        match member.constructor_keyword() {
-            Some(keyword) => self.check_literal(keyword.span(), is_property, cx),
-            None => self.check_key(member.key(), is_property, cx),
+impl Rule for Quotes {
+    const META: Meta = Meta::eslint("quotes", Kind::Layout).fixable(Fixable::Code).deprecated();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::String, ExprTag::Template])
+        // TODO(api): replace by utils::string_literals
+        // The strings and the templates that are nodes for ESLint and not expressions here.
+        .stmts(&[
+            StmtTag::Import,
+            StmtTag::ExportNamed,
+            StmtTag::ExportStar,
+            StmtTag::ImportEquals,
+            StmtTag::Module,
+        ])
+        .types(&[TypeTag::StringLit, TypeTag::Import])
+        .pats(&[PatTag::Object])
+        .members()
+        .props()
+        .enum_members()
+        .import_specs()
+        .export_specs();
+    type State<'a> = State<'a>;
+
+    fn new(options: &Options) -> Self {
+        let (quote, alternate_quote, description) = match options.str(0) {
+            Some("single") => (b'\'', b'"', "singlequote"),
+            Some("backtick") => (b'`', b'"', "backtick"),
+            _ => (b'"', b'\'', "doublequote"),
+        };
+        let object = options.object(1);
+        Quotes {
+            quote,
+            alternate_quote,
+            description,
+            avoids_escape: options.str(1) == Some("avoid-escape") || object.bool_or("avoidEscape", false),
+            allows_template_literals: object.bool_or("allowTemplateLiterals", false),
         }
     }
 
-    fn check_type<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
-        match ty.kind() {
-            TypeKind::StringLit(_) if ty.text().starts_with(b"`") => self.check_template(ty.span(), None, cx),
-            TypeKind::StringLit(_) => self.check_literal(ty.span(), false, cx),
-            TypeKind::Import { .. } => {
-                if let Some(source) = ty.import_source_span() {
-                    self.check_literal(source, false, cx);
-                }
-                // These are in an `ObjectExpression`.
-                for entry in ty.import_attributes().into_iter().flat_map(ImportAttributes::entries) {
-                    self.check_key(entry.key(), true, cx);
-                }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+        let other_quotes: &[u8] = match self.quote {
+            b'"' => b"'`",
+            b'\'' => b"\"`",
+            _ => b"\"'",
+        };
+        if strings::index_of_any(file.text(), other_quotes).is_none() {
+            return None;
+        }
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::String => self.check_string(e, cx),
+            ExprTag::Template if !self.allows_template_literals && !self.wants_backticks() => {
+                self.check_template_literal(e, cx);
             }
             _ => {}
         }
     }
 
     /// The names and the module specifiers that are written as strings.
-    fn check_statement<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let is_require = match statement.kind() {
             StmtKind::ExportStar { alias, .. } => {
                 if let Some(alias) = alias {
@@ -272,68 +304,57 @@ impl Quotes {
             self.check_key(entry.key(), false, cx);
         }
     }
-}
 
-impl Rule for Quotes {
-    const META: Meta = Meta::eslint("quotes", Kind::Layout).fixable(Fixable::Code).deprecated();
-    type State<'a> = State<'a>;
-
-    fn new(options: &Options) -> Self {
-        let (quote, alternate_quote, description) = match options.str(0) {
-            Some("single") => (b'\'', b'"', "singlequote"),
-            Some("backtick") => (b'`', b'"', "backtick"),
-            _ => (b'"', b'\'', "doublequote"),
-        };
-        let object = options.object(1);
-        Quotes {
-            quote,
-            alternate_quote,
-            description,
-            avoids_escape: options.str(1) == Some("avoid-escape") || object.bool_or("avoidEscape", false),
-            allows_template_literals: object.bool_or("allowTemplateLiterals", false),
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        match ty.kind() {
+            TypeKind::StringLit(_) if ty.text().starts_with(b"`") => self.check_template(ty.span(), None, cx),
+            TypeKind::StringLit(_) => self.check_literal(ty.span(), false, cx),
+            TypeKind::Import { .. } => {
+                if let Some(source) = ty.import_source_span() {
+                    self.check_literal(source, false, cx);
+                }
+                // These are in an `ObjectExpression`.
+                for entry in ty.import_attributes().into_iter().flat_map(ImportAttributes::entries) {
+                    self.check_key(entry.key(), true, cx);
+                }
+            }
+            _ => {}
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        let other_quotes: &[u8] = match self.quote {
-            b'"' => b"'`",
-            b'\'' => b"\"`",
-            _ => b"\"'",
-        };
-        if strings::index_of_any(file.text(), other_quotes).is_none() {
-            return State::default();
+    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        if let PatKind::Object(props) = pat.kind() {
+            props.iter().for_each(|prop| self.check_key(prop.key(), true, cx));
         }
-        on.exprs([ExprTag::String], Self::check_string);
-        if !self.allows_template_literals && !self.wants_backticks() {
-            on.exprs([ExprTag::Template], Self::check_template_literal);
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        if !member.flags().contains(Flags::STRING_NAME) {
+            return;
         }
-        // TODO(api): replace by utils::string_literals
-        // The strings and the templates that are nodes for ESLint and not expressions here.
-        on.props(|rule, prop, cx| rule.check_key(prop.key(), true, cx));
-        on.members(Self::check_member);
-        on.enum_members(|rule, member, cx| rule.check_key(member.key(), false, cx));
-        on.pats([PatTag::Object], |rule, pat, cx| {
-            if let PatKind::Object(props) = pat.kind() {
-                props.iter().for_each(|prop| rule.check_key(prop.key(), true, cx));
-            }
-        });
-        on.types([TypeTag::StringLit, TypeTag::Import], Self::check_type);
-        on.import_specs(|rule, spec, cx| rule.check_literal(spec.imported().span(), true, cx));
-        // Without an `as`, ESLint comes by the one name twice: as `local` and as `exported`.
-        on.export_specs(|rule, spec, cx| {
-            rule.check_literal(spec.local().span(), true, cx);
-            rule.check_literal(spec.exported().span(), true, cx);
-        });
-        on.stmts(
-            [
-                StmtTag::Import,
-                StmtTag::ExportNamed,
-                StmtTag::ExportStar,
-                StmtTag::ImportEquals,
-                StmtTag::Module,
-            ],
-            Self::check_statement,
-        );
-        State::default()
+        let is_property =
+            !member.is_signature() && !member.flags().intersects(Flags::ABSTRACT | Flags::ACCESSOR);
+        match member.constructor_keyword() {
+            Some(keyword) => self.check_literal(keyword.span(), is_property, cx),
+            None => self.check_key(member.key(), is_property, cx),
+        }
+    }
+
+    fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_key(prop.key(), true, cx);
+    }
+
+    fn enum_member<'a>(&self, member: EnumMember<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_key(member.key(), false, cx);
+    }
+
+    fn import_spec<'a>(&self, spec: ImportSpec<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_literal(spec.imported().span(), true, cx);
+    }
+
+    // Without an `as`, ESLint comes by the one name twice: as `local` and as `exported`.
+    fn export_spec<'a>(&self, spec: ExportSpec<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_literal(spec.local().span(), true, cx);
+        self.check_literal(spec.exported().span(), true, cx);
     }
 }

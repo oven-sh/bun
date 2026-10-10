@@ -66,6 +66,14 @@ fn error_of_parser<'a>(file: &'a File<'a>) -> Option<Option<&'a Diagnostic>> {
     }
 }
 
+/// Whether the parser of the configuration, which is neither espree nor that of typescript-eslint, may read what is a syntax error
+/// here. The tree has holes then, which no rule expects.
+pub fn may_be_misread<'a>(file: &'a File<'a>) -> bool {
+    file.language().parser == Parser::Other
+        && (error_of_parser(file).is_some()
+            || typescript_estree::first_error(file, false).is_some())
+}
+
 /// The message for a file that ESLint's parser throws on. No rule runs on such a file.
 pub fn parse_error<'a>(file: &'a File<'a>) -> Option<LintMessage> {
     let parser = file.language().parser;

@@ -21,6 +21,8 @@ pub(crate) struct Grouped<const KINDS: usize> {
     ids: Vec<u32>,
     /// Where each kind starts in `ids`, and where the last ends.
     starts: [u32; MOST_KINDS + 2],
+    /// A bit for each kind of which there is a node.
+    present: u128,
 }
 
 const MOST_KINDS: usize = 2 * ExprTag::COUNT;
@@ -82,7 +84,23 @@ impl<const KINDS: usize> Grouped<KINDS> {
                 *at += 1;
             }
         }
-        Grouped { ids, starts }
+        let mut grouped = Grouped {
+            ids,
+            starts,
+            present: 0,
+        };
+        grouped.note_present();
+        grouped
+    }
+
+    fn note_present(&mut self) {
+        const { assert!(KINDS <= 128) };
+        self.present = 0;
+        for kind in 0..KINDS {
+            if self.starts[kind + 1] > self.starts[kind] {
+                self.present |= 1 << kind;
+            }
+        }
     }
 
     #[inline]
@@ -95,11 +113,20 @@ impl<const KINDS: usize> Grouped<KINDS> {
 struct Exprs {
     /// Each kind in two parts: first what is not part of an optional chain, then what is.
     grouped: Grouped<{ 2 * ExprTag::COUNT }>,
+    /// A bit for each `ExprTag` of which there is an expression, and for each of which one is part of an optional chain.
+    present: u64,
+    chained: u64,
 }
 
 impl Exprs {
     fn new(file: &File) -> Exprs {
-        Exprs::from_binder(file).unwrap_or_else(|| Exprs::from_hir(file))
+        let mut exprs = Exprs::from_binder(file).unwrap_or_else(|| Exprs::from_hir(file));
+        for kind in 0..ExprTag::COUNT {
+            let parts = (exprs.grouped.present >> (2 * kind)) & 3;
+            exprs.present |= u64::from(parts != 0) << kind;
+            exprs.chained |= u64::from(parts & 2 != 0) << kind;
+        }
+        exprs
     }
 
     /// From the kinds that the binder has noted on its way, if it has. They are those of the HIR, in which a template without
@@ -150,9 +177,14 @@ impl Exprs {
                 for first in &mut grouped.starts[strings + 1..=templates] {
                     *first -= moved.len() as u32;
                 }
+                grouped.note_present();
             }
         }
-        Some(Exprs { grouped })
+        Some(Exprs {
+            grouped,
+            present: 0,
+            chained: 0,
+        })
     }
 
     fn from_hir(file: &File) -> Exprs {
@@ -173,6 +205,8 @@ impl Exprs {
         });
         Exprs {
             grouped: Grouped::of_counted_kinds(0..kinds.len() as u32, &kinds, &counts),
+            present: 0,
+            chained: 0,
         }
     }
 }
@@ -228,18 +262,24 @@ impl File<'_> {
         self.exprs().grouped.of(2 * tag as usize + 1)
     }
 
+    #[inline]
+    fn stmts(&self) -> &Grouped<{ StmtTag::COUNT }> {
+        (self.by_kind().stmts).get_or_init(|| Grouped::new(|kinds| self.stmt_tags_in_tree(kinds)))
+    }
+
     #[inline(never)]
     fn stmts_of(&self, tag: StmtTag) -> &[u32] {
-        let grouped = (self.by_kind().stmts)
-            .get_or_init(|| Grouped::new(|kinds| self.stmt_tags_in_tree(kinds)));
-        grouped.of(tag as usize)
+        self.stmts().of(tag as usize)
+    }
+
+    #[inline]
+    fn type_nodes(&self) -> &Grouped<{ TypeTag::COUNT }> {
+        (self.by_kind().types).get_or_init(|| Grouped::new(|kinds| self.type_tags_in_tree(kinds)))
     }
 
     #[inline(never)]
     pub(crate) fn types_of(&self, tag: TypeTag) -> &[u32] {
-        let grouped = (self.by_kind().types)
-            .get_or_init(|| Grouped::new(|kinds| self.type_tags_in_tree(kinds)));
-        grouped.of(tag as usize)
+        self.type_nodes().of(tag as usize)
     }
 
     #[inline]
@@ -247,10 +287,9 @@ impl File<'_> {
         self.binaries_at(op as usize)
     }
 
-    /// `op`: a `BinOp` as a number.
-    #[inline(never)]
-    fn binaries_at(&self, op: usize) -> &[u32] {
-        let grouped = self.by_kind().binaries.get_or_init(|| {
+    #[inline]
+    fn binaries(&self) -> &Grouped<{ BinOp::Comma as usize + 1 }> {
+        self.by_kind().binaries.get_or_init(|| {
             Grouped::of_ids(
                 self.exprs_of(ExprTag::Binary).iter().copied(),
                 |id| match self.hir.exprs.get(id as usize)?.kind {
@@ -258,8 +297,13 @@ impl File<'_> {
                     _ => None,
                 },
             )
-        });
-        grouped.of(op)
+        })
+    }
+
+    /// `op`: a `BinOp` as a number.
+    #[inline(never)]
+    fn binaries_at(&self, op: usize) -> &[u32] {
+        self.binaries().of(op)
     }
 
     #[inline]
@@ -267,10 +311,9 @@ impl File<'_> {
         self.unaries_at(op as usize)
     }
 
-    /// `op`: an `UnOp` as a number.
-    #[inline(never)]
-    fn unaries_at(&self, op: usize) -> &[u32] {
-        let grouped = self.by_kind().unaries.get_or_init(|| {
+    #[inline]
+    fn unaries(&self) -> &Grouped<{ UnOp::PostDec as usize + 1 }> {
+        self.by_kind().unaries.get_or_init(|| {
             Grouped::of_ids(
                 self.exprs_of(ExprTag::Unary).iter().copied(),
                 |id| match self.hir.exprs.get(id as usize)?.kind {
@@ -278,8 +321,13 @@ impl File<'_> {
                     _ => None,
                 },
             )
-        });
-        grouped.of(op)
+        })
+    }
+
+    /// `op`: an `UnOp` as a number.
+    #[inline(never)]
+    fn unaries_at(&self, op: usize) -> &[u32] {
+        self.unaries().of(op)
     }
 
     /// Whether the file has an expression of one of these kinds. For a rule that has nothing to do otherwise, and whose listeners
@@ -298,11 +346,50 @@ impl File<'_> {
         !self.hir.classes.is_empty()
     }
 
+    #[inline]
+    fn pats(&self) -> &Grouped<{ PatTag::COUNT }> {
+        (self.by_kind().pats).get_or_init(|| Grouped::new(|kinds| self.pat_tags_in_tree(kinds)))
+    }
+
     #[inline(never)]
     pub(crate) fn pats_of(&self, tag: PatTag) -> &[u32] {
-        let grouped = (self.by_kind().pats)
-            .get_or_init(|| Grouped::new(|kinds| self.pat_tags_in_tree(kinds)));
-        grouped.of(tag as usize)
+        self.pats().of(tag as usize)
+    }
+
+    /// Which of these kinds the file has: a bit for each, as in [`On`]. Not inlined: they group the nodes the first time.
+    #[inline(never)]
+    fn present_exprs(&self) -> u64 {
+        self.exprs().present
+    }
+
+    #[inline(never)]
+    fn present_chained(&self) -> u64 {
+        self.exprs().chained
+    }
+
+    #[inline(never)]
+    fn present_binaries(&self) -> u64 {
+        self.binaries().present as u64
+    }
+
+    #[inline(never)]
+    fn present_unaries(&self) -> u64 {
+        self.unaries().present as u64
+    }
+
+    #[inline(never)]
+    fn present_stmts(&self) -> u64 {
+        self.stmts().present as u64
+    }
+
+    #[inline(never)]
+    fn present_types(&self) -> u64 {
+        self.type_nodes().present as u64
+    }
+
+    #[inline(never)]
+    fn present_pats(&self) -> u64 {
+        self.pats().present as u64
     }
 }
 
@@ -597,30 +684,20 @@ fn each_bit(mut bits: u64, mut visit: impl FnMut(usize)) {
 fn has_any_of<'a>(file: &'a File<'a>, on: On) -> bool {
     let always = On::SYMBOLS | On::STRING_LITERALS | On::NUMBER_LITERALS;
     let mut has_any = on.has_later() || on.has(always) || !on.nodes.is_empty();
-    each_bit(on.exprs, |kind| {
-        has_any = has_any || !file.exprs_of(EXPR_TAGS[kind]).is_empty();
-    });
-    if on.has(On::OPTIONAL_CHAINS) {
-        has_any = has_any
-            || CHAINED
-                .iter()
-                .any(|&kind| !file.chained_exprs_of(kind).is_empty());
+    macro_rules! kinds {
+        ($($field:ident $present:ident;)*) => {
+            $(has_any = has_any || on.$field != 0 && file.$present() & on.$field != 0;)*
+        };
     }
-    each_bit(on.binaries, |op| {
-        has_any = has_any || !file.binaries_at(op).is_empty()
-    });
-    each_bit(on.unaries, |op| {
-        has_any = has_any || !file.unaries_at(op).is_empty()
-    });
-    each_bit(on.stmts, |kind| {
-        has_any = has_any || !file.stmts_of(StmtTag::ALL[kind]).is_empty();
-    });
-    each_bit(on.types, |kind| {
-        has_any = has_any || !file.types_of(TypeTag::ALL[kind]).is_empty();
-    });
-    each_bit(on.pats, |kind| {
-        has_any = has_any || !file.pats_of(PatTag::ALL[kind]).is_empty();
-    });
+    kinds! {
+        exprs present_exprs;
+        binaries present_binaries;
+        unaries present_unaries;
+        stmts present_stmts;
+        types present_types;
+        pats present_pats;
+    }
+    has_any = has_any || on.has(On::OPTIONAL_CHAINS) && file.present_chained() != 0;
     macro_rules! sorts {
         ($($sort:ident $field:ident;)*) => {
             $(has_any = has_any || on.has(On::$sort) && !file.hir.$field.is_empty();)*

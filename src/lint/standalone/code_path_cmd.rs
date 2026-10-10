@@ -15,28 +15,18 @@
 
 use crate::host::{self, output, output_line};
 use bun_lint::code_path::{Event, Method, Step, reachability, steps};
-use bun_lint::context::Severity;
 use bun_lint::prelude::*;
-use bun_lint::runner::Enabled;
-use std::cell::RefCell;
 use std::fmt::Write as _;
 
-thread_local! {
-    /// What the rules below have to say about the file that was linted last.
-    static OUTPUT: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-}
-
-fn run_rule<R: Rule>(path: &str, code: &[u8]) -> Vec<String> {
-    OUTPUT.take();
+/// What `say` has to say about each event of the analysis of a file.
+fn of_events(path: &str, code: &[u8], say: impl Fn(Event) -> Option<String>) -> Vec<String> {
     crate::with_file(path, code, &LanguageOptions::default(), |file| {
-        let rule = R::new(&Options::new(&[]));
-        let rules = [Enabled {
-            rule: &rule,
-            severity: Severity::Error,
-        }];
-        bun_lint::runner::run(file, &rules, false);
-    });
-    OUTPUT.take()
+        let events = steps(file, NodeTags::EMPTY, NodeTags::EMPTY).filter_map(|it| match it {
+            Step::Event(event) => say(event),
+            Step::Enter(_) | Step::Exit(_) => None,
+        });
+        events.collect()
+    })
 }
 
 /// `makeDotArrows`
@@ -78,21 +68,11 @@ fn make_dot_arrows(path: CodePath) -> String {
     text
 }
 
-struct Dot;
-
-impl Rule for Dot {
-    const META: Meta = Meta::eslint("code-path-dot", Kind::Problem);
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        Dot
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.code_path_end(|_, path, _, _| {
-            OUTPUT.with_borrow_mut(|it| it.push(make_dot_arrows(path)))
-        });
-    }
+fn dot(path: &str, code: &[u8]) -> Vec<String> {
+    of_events(path, code, |event| match event {
+        Event::CodePathEnd(path, _) => Some(make_dot_arrows(path)),
+        _ => None,
+    })
 }
 
 fn expected_dot_arrows(source: &str) -> Vec<String> {
@@ -120,10 +100,7 @@ fn fixtures(directory: &str) {
             .unwrap_or_default()
             .to_string_lossy()
             .into_owned();
-        let (expected, actual) = (
-            expected_dot_arrows(&source),
-            run_rule::<Dot>(&name, source.as_bytes()),
-        );
+        let (expected, actual) = (expected_dot_arrows(&source), dot(&name, source.as_bytes()));
         if expected == actual {
             passed += 1;
             continue;
@@ -632,43 +609,13 @@ fn traverse<'a>(
     order
 }
 
-struct Trace;
-
-impl Rule for Trace {
-    const META: Meta = Meta::eslint("code-path-trace", Kind::Problem);
-    type State<'a> = Log<'a>;
-
-    fn new(_: &Options) -> Self {
-        Trace
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Log<'a> {
-        on.enter(NodeTags::ALL, |_, node, cx| cx.state.node(">", node));
-        on.exit(NodeTags::ALL, |_, node, cx| cx.state.node("<", node));
-        use Event::*;
-        on.code_path_start(|_, path, node, cx| cx.state.tell(CodePathStart(path, node)));
-        on.code_path_end(|_, path, node, cx| cx.state.tell(CodePathEnd(path, node)));
-        on.segment_start(|_, segment, node, cx| cx.state.tell(SegmentStart(segment, node)));
-        on.segment_end(|_, segment, node, cx| cx.state.tell(SegmentEnd(segment, node)));
-        on.unreachable_segment_start(|_, segment, node, cx| {
-            cx.state.tell(UnreachableSegmentStart(segment, node))
-        });
-        on.unreachable_segment_end(|_, segment, node, cx| {
-            cx.state.tell(UnreachableSegmentEnd(segment, node))
-        });
-        on.segment_loop(|_, from, to, node, cx| cx.state.tell(SegmentLoop(from, to, node)));
-        on.finish(|_, cx| OUTPUT.set(std::mem::take(&mut cx.state.lines)));
-        Log::default()
-    }
-}
-
 /// The trace of a file. `listen`: which nodes are in it.
-/// - `all`: all that both trees have. It is the trace of a rule.
+/// - `all`: all that both trees have.
 /// - `statements`, `nothing`: only those, or only the file. The analysis leaves out what nobody
 ///   listens for and does not matter to it, which must not change anything else.
 fn trace(path: &str, code: &[u8], listen: &str) -> Vec<String> {
     let listened = match listen {
-        "all" => return run_rule::<Trace>(path, code),
+        "all" => NodeTags::ALL,
         "statements" => StmtTag::ALL
             .iter()
             .fold(NodeTags::FILE, |all, &tag| all | tag.into()),
@@ -855,44 +802,35 @@ thread_local! {
     static ASK: std::cell::Cell<Ask> = const { std::cell::Cell::new(Ask::Plain) };
 }
 
-/// Says the origin of each code path, and the order of the traversal `ASK` of the first.
-struct Upstream;
-
-impl Rule for Upstream {
-    const META: Meta = Meta::eslint("code-path-upstream", Kind::Problem);
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        Upstream
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.code_path_start(|_, path, _, _| {
-            let mut order = Vec::new();
-            let (mut first, mut last) = (None, None);
-            if let Ask::FirstAndLast = ASK.get() {
-                first = path.initial_segment().next_segments().first().copied();
-                last = first.and_then(|it| it.next_segments().get(1).copied());
+/// The origin of each code path, and the order of the traversal `ASK` of the first.
+fn origins_and_orders(code: &[u8]) -> Vec<String> {
+    of_events("file.js", code, |event| {
+        let Event::CodePathStart(path, _) = event else {
+            return None;
+        };
+        let mut order = Vec::new();
+        let (mut first, mut last) = (None, None);
+        if let Ask::FirstAndLast = ASK.get() {
+            first = path.initial_segment().next_segments().first().copied();
+            last = first.and_then(|it| it.next_segments().get(1).copied());
+        }
+        path.traverse_segments_between(first, last, |segment, traversal| {
+            order.push(segment.to_string());
+            match ASK.get() {
+                Ask::Break(at) if order.last().is_some_and(|it| it == at) => traversal.stop(),
+                Ask::Skip(at) if order.last().is_some_and(|it| it == at) => traversal.skip(),
+                _ => {}
             }
-            path.traverse_segments_between(first, last, |segment, traversal| {
-                order.push(segment.to_string());
-                match ASK.get() {
-                    Ask::Break(at) if order.last().is_some_and(|it| it == at) => traversal.stop(),
-                    Ask::Skip(at) if order.last().is_some_and(|it| it == at) => traversal.skip(),
-                    _ => {}
-                }
-            });
-            OUTPUT
-                .with_borrow_mut(|it| it.push(format!("{:?} {}", path.origin(), order.join(","))));
         });
-    }
+        Some(format!("{:?} {}", path.origin(), order.join(",")))
+    })
 }
 
 fn upstream() {
     let mut failed = 0;
     for &(code, ask, expected) in TRAVERSALS {
         ASK.set(ask);
-        let said = run_rule::<Upstream>("file.js", code.as_bytes());
+        let said = origins_and_orders(code.as_bytes());
         let actual = said
             .first()
             .and_then(|it| host::split_once(it, " "))
@@ -904,7 +842,7 @@ fn upstream() {
     }
     ASK.set(Ask::Plain);
     for &(code, path, expected) in ORIGINS {
-        let said = run_rule::<Upstream>("file.js", code.as_bytes());
+        let said = origins_and_orders(code.as_bytes());
         let actual = said
             .get(path)
             .and_then(|it| host::split_once(it, " "))
@@ -918,22 +856,6 @@ fn upstream() {
         "{} passed, {failed} failed",
         TRAVERSALS.len() + ORIGINS.len() - failed
     );
-}
-
-/// Listens for code paths and does nothing.
-struct Idle;
-
-impl Rule for Idle {
-    const META: Meta = Meta::eslint("code-path-idle", Kind::Problem);
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        Idle
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.code_path_start(|_, _, _, _| {});
-    }
 }
 
 /// The shortest of some runs.
@@ -954,10 +876,6 @@ fn bench(path: &str) {
         crate::with_file(path, &code, &language, |file| file.has_parse_errors());
     });
     crate::with_file(path, &code, &language, |file| {
-        let rules = [Enabled {
-            rule: &Idle,
-            severity: Severity::Error,
-        }];
         struct Nothing;
         impl<'a> bun_lint::ast::walk::Visitor<'a> for Nothing {
             fn enter(&mut self, _: Node<'a>) {}
@@ -979,11 +897,8 @@ fn bench(path: &str) {
         let with_everything = time(|| {
             steps(file, NodeTags::ALL, NodeTags::ALL).count();
         });
-        let rule = time(|| {
-            bun_lint::runner::run(file, &rules, false);
-        });
         output_line!(
-            "{} bytes, {} events: parse and bind {parsing:?}, reachability of all statements {reach:?}, a walk {walk:?}, analysis {analysis:?}, and all statements {with_statements:?}, and all nodes {with_everything:?}, a rule that listens {rule:?}",
+            "{} bytes, {} events: parse and bind {parsing:?}, reachability of all statements {reach:?}, a walk {walk:?}, analysis {analysis:?}, and all statements {with_statements:?}, and all nodes {with_everything:?}",
             code.len(),
             steps(file, NodeTags::EMPTY, NodeTags::EMPTY).count(),
         );
@@ -994,7 +909,7 @@ pub(crate) fn run(args: &[String]) {
     match args {
         [command, path] if command == "dot" => {
             let code = host::read(path).expect("the file");
-            output_line!("{}", run_rule::<Dot>(path, &code).join("\n\n"));
+            output_line!("{}", dot(path, &code).join("\n\n"));
         }
         [command, directory] if command == "fixtures" => fixtures(directory),
         [command, path, listen @ ..] if command == "trace" => {

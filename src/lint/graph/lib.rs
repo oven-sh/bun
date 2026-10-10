@@ -330,6 +330,16 @@ impl<'h> Graph<'h> {
         })
     }
 
+    /// The path by which the file that is linted as `path` is known. oxlint follows links. eslint-plugin-import knows a
+    /// file that is linted by its name: one that is a link to another is a module of its own.
+    fn known_as(&self, path: &[u8]) -> Vec<u8> {
+        let path = from_native(path);
+        match self.flavor() {
+            Flavor::Oxlint => self.store.disk().realpath(&path),
+            Flavor::EslintPluginImport => path,
+        }
+    }
+
     fn flavor(&self) -> Flavor {
         if self.follows_oxlint.load(Ordering::Relaxed) {
             Flavor::Oxlint
@@ -634,9 +644,11 @@ impl<'h> Graph<'h> {
                 for list in [&mut is_known, &mut is_always_checked] {
                     list.resize(all.paths.len(), false);
                 }
-                linted_as.resize(all.paths.len(), None);
+                linted_as.resize(all.paths.len(), Vec::new());
                 let at = module.0 as usize;
-                (is_known[at], linted_as[at]) = (true, record.linted_as);
+                is_known[at] = true;
+                // A file to which links give several names is linted under each of them.
+                linted_as[at].extend(record.linted_as);
                 is_always_checked[at] |= record.is_always_checked;
                 all.imports.resize_with(all.paths.len(), Vec::new);
                 all.imports[at] = imports;
@@ -675,7 +687,8 @@ impl<'h> Graph<'h> {
         let again = linted_as
             .into_iter()
             .enumerate()
-            .filter_map(|(at, path)| path.filter(|_| is_checked(at)))
+            .filter(|it| is_checked(it.0))
+            .flat_map(|it| it.1)
             .collect();
         let _ = self.complete.set(all);
         again
@@ -760,8 +773,8 @@ impl Modules for Graph<'_> {
     fn record(&self, path: &[u8], requests: &[Request], is_always_checked: bool, flavor: Flavor) {
         self.follows_oxlint
             .store(flavor == Flavor::Oxlint, Ordering::Relaxed);
-        let real = self.store.disk().realpath(&from_native(path));
-        let record = self.make_record(real, requests, is_always_checked, Some(path.to_vec()));
+        let known_as = self.known_as(path);
+        let record = self.make_record(known_as, requests, is_always_checked, Some(path.to_vec()));
         self.recorded.lock().push(record);
     }
 
@@ -780,15 +793,11 @@ impl Modules for Graph<'_> {
     }
 
     fn find(&self, path: &[u8]) -> Option<ModuleId> {
-        self.complete
-            .get()?
-            .ids
-            .get(&self.store.disk().realpath(&from_native(path)))
-            .copied()
+        self.complete.get()?.ids.get(&self.known_as(path)).copied()
     }
 
     fn resolve(&self, from: &[u8], specifier: &[u8], is_require: bool) -> Option<Resolved> {
-        let from = self.store.disk().realpath(&from_native(from));
+        let from = self.known_as(from);
         let (path, is_external) = self.resolve_path(&from, specifier, is_require)?;
         Some(Resolved {
             module: *self.complete.get()?.ids.get(&path[..])?,

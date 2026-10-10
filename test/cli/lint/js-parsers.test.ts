@@ -443,6 +443,49 @@ describe.concurrent("bun lint with languages", () => {
     timeout,
   );
 
+  // As `@babel/eslint-parser` with a plugin for syntax that is no standard yet. What is called like JavaScript is read here, as
+  // long as it can be.
+  test(
+    "so is a file called like JavaScript that only its own parser can read, and no rule sees what is made of it here",
+    async () => {
+      const result = await lint(
+        {
+          ...eslintPackage,
+          ...lines,
+          "parser.cjs": `
+            const parseForESLint = (text, languageOptions) => ({ ast: { lines: text.split("\\n"), languageOptions } });
+            module.exports = { meta: { name: "@babel/eslint-parser", version: "8.0.0" }, parseForESLint };`,
+          "members.mjs": `
+            const objects = { create: context => ({ MemberExpression: node => context.report({ node, message: node.object.type }) }) };
+            export default { rules: { objects } };`,
+          "eslint.config.mjs": `
+            import lines from "./lines.mjs";
+            import members from "./members.mjs";
+            import parser from "./parser.cjs";
+            export default [
+              {
+                files: ["*.js"],
+                plugins: { lines, members },
+                languageOptions: { parser, parserOptions: { width: 2 } },
+                settings: { name: "b" },
+                rules: { "lines/no-tabs": ["error", "q"], "members/objects": "error" },
+              },
+            ];`,
+          "plain.js": "a.b;\n",
+          "phase.js": "const it = await import.source('./it.wasm');\n\tit.b;\n",
+        },
+        ["-f", "json", "--timing", "plain.js", "phase.js"],
+      );
+      expect(summary(result.raw)).toMatchInlineSnapshot(`
+        "phase.js: 2:1 lines/no-tabs tab q 2 b phase.js [fix 45,46 " "]
+        plain.js: 1:1 members/objects Identifier"
+      `);
+      expect(result.stderr).toContain("the package eslint has linted 1 texts");
+      expect(result.exitCode).toBe(1);
+    },
+    timeout,
+  );
+
   test(
     "so is a file for which eslint-plugin-html is configured, which changes the Linter when it is loaded",
     async () => {

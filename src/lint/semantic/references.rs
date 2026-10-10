@@ -585,19 +585,23 @@ impl<'f> Collector<'f, '_> {
             )
     }
 
-    /// The closing tags, which `eslint-scope` does not visit. Sorted.
+    /// The closing tags, which `eslint-scope` does not visit. Before ESLint 10 it visits no tags.
+    /// Sorted.
     fn unvisited_tags(&self) -> Vec<ExprId> {
         let hir = &self.file.hir;
         let mut skipped: Vec<ExprId> = Vec::new();
         if self.is_javascript {
+            let skips_opening_tags = self.file.language().eslint_major < 10;
             for jsx in hir.jsx {
-                let mut at = jsx.close_tag;
-                while let Some(ExprKind::Dot { obj, .. }) =
-                    hir.exprs.get(at.idx()).map(|it| it.kind)
-                {
-                    at = obj;
+                let tags = [Some(jsx.close_tag), skips_opening_tags.then_some(jsx.tag)];
+                for mut at in tags.into_iter().flatten() {
+                    while let Some(ExprKind::Dot { obj, .. }) =
+                        hir.exprs.get(at.idx()).map(|it| it.kind)
+                    {
+                        at = obj;
+                    }
+                    skipped.push(at);
                 }
-                skipped.push(at);
             }
             skipped.sort_unstable();
         }
@@ -1076,6 +1080,10 @@ impl<'f> Collector<'f, '_> {
     /// `visitJSXElement`, for the tags that are not expressions outside JSX.
     fn jsx_names(&mut self) {
         let file = self.file;
+        // `eslint-scope` knows them since ESLint 10.
+        if self.is_javascript && file.language().eslint_major < 10 {
+            return;
+        }
         let start = self.found.len();
         for jsx in file.hir.jsx {
             // `eslint-scope` does not visit closing elements.

@@ -1673,7 +1673,7 @@ describe.concurrent("bun lint", () => {
         const helps = helpsOf(raw, messages).map((it, index) => ({ ...messages[index], said: it }));
         const wrong = helps.filter(it => it.said !== undefined && it.said !== it.help);
         expect(wrong.map(it => [it.rule, it.id])).toEqual([]);
-        expect(helps.filter(it => it.said === undefined && it.help !== undefined).length).toBeLessThanOrEqual(5);
+        expect(helps.filter(it => it.said === undefined && it.help !== undefined).length).toBeLessThanOrEqual(1);
       });
 
       // The table has no texts of messages, only numbers that are made of them: a message that is reworded would lose its help.
@@ -2063,6 +2063,129 @@ describe.concurrent("bun lint", () => {
       ]);
       expect({ off: off.exitCode, error: error.exitCode }).toEqual({ off: 0, error: 1 });
       expect(off.raw).toBe("");
+    });
+  });
+
+  // A file to which links give several names, and rules that look at several files. It must be the same in every run.
+  describe("a file that has several names by links", () => {
+    const project = (configuration: Record<string, string>) => {
+      const dir = tempDir("bun-lint-links", {
+        ...configuration,
+        "real/skills/a.js": `import { a } from "./b.js";\nimport { c } from "./b.js";\nexport { a, c };\n`,
+        "real/skills/b.js": `import { a } from "./a.js";\nexport const b = a, c = 2;\nexport { b as a };\n`,
+        "other/keep.txt": "",
+      });
+      symlinkSync(join(String(dir), "real/skills"), join(String(dir), "other/skills"), "junction");
+      // Not everybody may make one on Windows.
+      if (!isWindows) symlinkSync("a.js", join(String(dir), "real/skills/c.js"));
+      return dir;
+    };
+    /** The files that have a report, for each outcome that there is among twenty runs. */
+    const outcomes = async (cwd: string) => {
+      const runs = Array.from({ length: 20 }, async () => {
+        await using proc = spawn({
+          cmd: [...command, "--threads", "4", "-f", "unix", "."],
+          env,
+          cwd,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const lines = (await proc.stdout.text()).replaceAll("\\", "/").split("\n");
+        return lines.flatMap(it => /((?:real|other)\/skills\/\w+\.js):\d+:\d+: /.exec(it)?.[1] ?? []).sort();
+      });
+      return [...new Set((await Promise.all(runs)).map(it => it.join(" ")))];
+    };
+
+    // oxlint 1.87 follows links, and lints a file under each of its names.
+    test("with an .oxlintrc.json it is reported under each", async () => {
+      using dir = project({
+        ".oxlintrc.json": JSON.stringify({
+          plugins: ["import"],
+          categories: { correctness: "off" },
+          rules: { "import/no-duplicates": "error" },
+        }),
+      });
+      const names = isWindows ? ["a.js"] : ["a.js", "c.js"];
+      const expected = ["other", "real"].flatMap(it => names.map(name => `${it}/skills/${name}`));
+      expect(await outcomes(String(dir))).toEqual([expected.join(" ")]);
+    });
+
+    // ESLint 10.12 enters no directory that is a link. eslint-plugin-import 2.32.0 knows the file that is linted by its name, and
+    // what it imports without links: nothing imports c.js, so it is in no cycle.
+    test("with an eslint.config.js the link to a file is a module of its own", async () => {
+      using dir = project({
+        "eslint.config.mjs": `export default [{
+          plugins: { import: { meta: { name: "eslint-plugin-import" }, rules: {} } },
+          rules: { "import/no-cycle": "error" },
+        }];`,
+      });
+      expect(await outcomes(String(dir))).toEqual(["real/skills/a.js real/skills/b.js"]);
+    });
+  });
+
+  // The defaults, the places and the texts of ESLint's rules are those of the major version of `eslint` that is installed for the
+  // configuration file. What ESLint 9.39.5 and ESLint 10.12.0 report.
+  describe("the rules of ESLint are those of the eslint that is installed", () => {
+    const files = {
+      "eslint.config.mjs":
+        'export default [{ linterOptions: { reportUnusedDisableDirectives: "error" }, rules: {\n  "max-depth": ["error", 1], "max-statements": ["error", 2], "max-lines-per-function": ["error", 3], "max-nested-callbacks": ["error", 1],\n  "require-yield": "error", "no-useless-constructor": "error", "no-shadow-restricted-names": "error", "new-cap": ["error", { properties: false }],\n  radix: ["error", "as-needed"], "use-isnan": "error", "no-extra-boolean-cast": "error", "prefer-promise-reject-errors": "error",\n  "no-async-promise-executor": "error",\n} }];\n',
+      "a.js":
+        "function f1(a) { if (a) { if (a) { a; } } }\nfunction f2(a) { if (a) {} else if (a) {} if (a) { if (a) {} } }\nfunction f3(a) { a; a; a; }\nconst f4 = (a) => { a; a; a; };\nfunction f5(a) {\n  a;\n  f4;\n}\nf1(function () { f1(function () { f1(() => {}); }); });\nf1(function () { const g = function () {}; f1(function () { g; }); });\n(function () { f1(() => {}); })();\nfunction* f6() { return 1; }\nclass A { constructor() {} *m() { return 1; } }\nfunction f7(globalThis) { globalThis; }\nfunction f8(constructor) { return [new constructor(), new this.constructor(), f8.UTC(), f8.String()]; }\nparseInt(f1); parseInt(f1, 10); parseInt(f1, 16);\nfunction f9(NaN) { return f1 === NaN; }\nfunction f10(Boolean) { if (Boolean(f1)) {} }\nfunction f11(Promise) { Promise.reject(1); new Promise(async () => {}); }\n// eslint-disable-next-line max-statements\nconst f12 = (a) =>\n  { a; a; a; };\n",
+    };
+    const nine = [
+      "max-statements 1:1-1:44 Function 'f1' has too many statements (3). Maximum allowed is 2.",
+      "max-depth 1:27-1:40 Blocks are nested too deeply (2). Maximum allowed is 1.",
+      "max-statements 2:1-2:65 Function 'f2' has too many statements (3). Maximum allowed is 2.",
+      "max-statements 3:1-3:28 Function 'f3' has too many statements (3). Maximum allowed is 2.",
+      "max-statements 4:12-4:31 Arrow function has too many statements (3). Maximum allowed is 2.",
+      "max-lines-per-function 5:1-8:2 Function 'f5' has too many lines (4). Maximum allowed is 3.",
+      "max-nested-callbacks 9:21-9:50 Too many nested callbacks (2). Maximum allowed is 1.",
+      "max-nested-callbacks 9:38-9:46 Too many nested callbacks (3). Maximum allowed is 1.",
+      "max-nested-callbacks 11:19-11:27 Too many nested callbacks (2). Maximum allowed is 1.",
+      "require-yield 12:1-12:29 This generator function does not have 'yield'.",
+      "no-useless-constructor 13:11-13:27 Useless constructor.",
+      "require-yield 13:30-13:46 This generator function does not have 'yield'.",
+      "new-cap 15:82-15:85 A function with a name starting with an uppercase letter should only be used as a constructor.",
+      "radix 16:15-16:31 Redundant radix parameter.",
+      "no-shadow-restricted-names 17:13-17:16 Shadowing of global property 'NaN'.",
+      "use-isnan 17:27-17:37 Use the isNaN function to compare with NaN.",
+      "no-extra-boolean-cast 18:29-18:40 Redundant Boolean call.",
+      "prefer-promise-reject-errors 19:25-19:42 Expected the Promise rejection reason to be an Error.",
+      "no-async-promise-executor 19:56-19:61 Promise executor functions should not be async.",
+    ];
+    const ten = [
+      "max-statements 1:1-1:12 Function 'f1' has too many statements (3). Maximum allowed is 2.",
+      "max-depth 1:27-1:29 Blocks are nested too deeply (2). Maximum allowed is 1.",
+      "max-statements 2:1-2:12 Function 'f2' has too many statements (3). Maximum allowed is 2.",
+      "max-depth 2:52-2:54 Blocks are nested too deeply (2). Maximum allowed is 1.",
+      "max-statements 3:1-3:12 Function 'f3' has too many statements (3). Maximum allowed is 2.",
+      "max-statements 4:16-4:18 Arrow function has too many statements (3). Maximum allowed is 2.",
+      "max-lines-per-function 5:1-5:12 Function 'f5' has too many lines (4). Maximum allowed is 3.",
+      "max-nested-callbacks 9:21-9:30 Too many nested callbacks (2). Maximum allowed is 1.",
+      "max-nested-callbacks 9:41-9:43 Too many nested callbacks (3). Maximum allowed is 1.",
+      "max-nested-callbacks 10:47-10:56 Too many nested callbacks (2). Maximum allowed is 1.",
+      "require-yield 12:1-12:13 This generator function does not have 'yield'.",
+      "no-useless-constructor 13:11-13:22 Useless constructor.",
+      "require-yield 13:28-13:30 This generator function does not have 'yield'.",
+      "no-shadow-restricted-names 14:13-14:23 Shadowing of global property 'globalThis'.",
+      "new-cap 15:40-15:51 A constructor name should not start with a lowercase letter.",
+      "radix 16:1-16:13 Missing radix parameter.",
+      "no-shadow-restricted-names 17:13-17:16 Shadowing of global property 'NaN'.",
+      "new-cap 18:29-18:36 A function with a name starting with an uppercase letter should only be used as a constructor.",
+    ];
+    test.each([
+      ["9.39.5", nine],
+      // With such a configuration file it is nearer to 9 than to 10.
+      ["8.57.1", nine],
+      ["10.12.0", ten],
+      [undefined, ten],
+    ])("%s", async (version, expected) => {
+      const installed = { "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version }) };
+      const { raw } = await lint({ ...files, ...(version && installed) }, ["-f", "json", "a.js"]);
+      const said = (JSON.parse(raw)[0].messages as any[]).map(
+        it => `${it.ruleId} ${it.line}:${it.column}-${it.endLine}:${it.endColumn} ${it.message}`,
+      );
+      expect(said).toEqual(expected);
     });
   });
 

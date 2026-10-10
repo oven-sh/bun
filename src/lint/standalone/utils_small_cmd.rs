@@ -69,28 +69,27 @@ const SURROUNDING: Message = Message::new("retainSurroundingTokens", "");
 
 impl Rule for Probe {
     const META: Meta = Meta::eslint("probe", Kind::Problem).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().enter(NodeTags::ALL);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         Probe
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.enter(NodeTags::ALL, |_, node, cx| {
-            if !matches!(node, Node::Stmt(_) | Node::Expr(_) | Node::Func(_)) {
-                return;
-            }
-            let span = estree_span(node);
-            cx.report(span, ENCLOSING).fix(|fixer| {
-                FixTracker::new(fixer)
-                    .retain_enclosing_function(node)
-                    .remove(span)
-            });
-            cx.report(span, SURROUNDING).fix(|fixer| {
-                FixTracker::new(fixer)
-                    .retain_surrounding_tokens(span)
-                    .replace_text_range(span, "X")
-            });
+    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        if !matches!(node, Node::Stmt(_) | Node::Expr(_) | Node::Func(_)) {
+            return;
+        }
+        let span = estree_span(node);
+        cx.report(span, ENCLOSING).fix(|fixer| {
+            FixTracker::new(fixer)
+                .retain_enclosing_function(node)
+                .remove(span)
+        });
+        cx.report(span, SURROUNDING).fix(|fixer| {
+            FixTracker::new(fixer)
+                .retain_surrounding_tokens(span)
+                .replace_text_range(span, "X")
         });
     }
 }

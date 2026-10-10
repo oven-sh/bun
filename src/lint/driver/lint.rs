@@ -14,9 +14,10 @@ use bun_lint::context::Severity;
 use bun_lint::fix::SuggestionKind;
 use bun_lint::formats::{Formats, Reason};
 use bun_lint::js_plugin::{Host, Route};
+use bun_lint::language::Parser;
 use bun_lint::linter::{
     Again, LintMessage, LintOptions, LintResult, Linter, ResolvedConfig, RuleId, Suggestion,
-    apply_fixes, grows_too_much, is_parse_error, max_fixed_len,
+    apply_fixes, grows_too_much, is_parse_error, max_fixed_len, may_be_misread,
 };
 use bun_lint::rule::{Kind, Plugin};
 use bun_lint_graph::Graph;
@@ -93,6 +94,8 @@ struct How<'h> {
     without_rules: bool,
     /// [`Context::with_help`]
     with_help: bool,
+    /// There is somebody else to read what [may be misread](may_be_misread) here: no rule runs on it, and the result says so.
+    falls_back: bool,
 }
 
 fn only_errors(_: &RuleId, severity: Severity) -> bool {
@@ -322,6 +325,24 @@ impl Context<'_, '_> {
         self.verify_as(path, text, config, &how)
     }
 
+    /// The same. `None`: it [may be misread](may_be_misread), and no rule has run.
+    pub(crate) fn verify_block_if_read(
+        &self,
+        path: &[u8],
+        physical_path_len: usize,
+        text: &[u8],
+        config: &ResolvedConfig,
+        without_fixes: bool,
+    ) -> Option<LintResult> {
+        let how = How {
+            without_fixes,
+            physical_path_len: Some(physical_path_len),
+            falls_back: true,
+            ..How::default()
+        };
+        Some(self.verify_as(path, text, config, &how)).filter(|it| !it.is_unread)
+    }
+
     /// The same for a script in the file at `path`, in the language `kind`. Only the rules run of which `filter` says so.
     pub(crate) fn verify_script(
         &self,
@@ -430,6 +451,12 @@ impl Context<'_, '_> {
                     };
                 }
                 let file = File::new(path, &hir, bound, atoms, &config.language, None);
+                if as_what.falls_back && may_be_misread(&file) {
+                    return LintResult {
+                        is_unread: true,
+                        ..LintResult::default()
+                    };
+                }
                 file.set_modules(self.modules);
                 file.set_formatter(self.formatter, as_what.physical_path_len);
                 file.set_vue_script(as_what.vue_script);
@@ -619,7 +646,8 @@ impl Context<'_, '_> {
                 &mut |text| self.verify_scripts(framework, &target.path, text, config),
             )));
         }
-        if target.route() != Route::Native {
+        // With another parser it shows only when the file is read whether it can be read here.
+        if target.route() != Route::Native || config.language.parser == Parser::Other {
             return Ok(Some(self.verify_processed_text(
                 &target.loaded,
                 shown,

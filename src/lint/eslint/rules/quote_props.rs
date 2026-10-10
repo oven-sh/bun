@@ -155,12 +155,6 @@ impl QuoteProps {
         }
     }
 
-    fn check_consistency<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::Object(properties) = e.kind() {
-            self.check_consistency_of(properties, Some(e), cx);
-        }
-    }
-
     /// `object`: the expression that has the `properties`.
     fn check_consistency_of<'a>(&self, properties: List<'a, Prop<'a>>, object: Option<Expr<'a>>, cx: &Cx<'a, Self>) {
         let check_quotes_redundancy = self.mode == Mode::ConsistentAsNeeded;
@@ -214,10 +208,44 @@ impl QuoteProps {
             report(cx, property.span(), key, message, "property", None);
         }
     }
+}
+
+impl Rule for QuoteProps {
+    const META: Meta = Meta::eslint("quote-props", Kind::Suggestion).fixable(Fixable::Code).deprecated();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Object])
+        .types(&[TypeTag::Import])
+        .pats(&[PatTag::Object])
+        .props();
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let object = options.object(1);
+        QuoteProps {
+            mode: match options.str(0) {
+                Some("as-needed") => Mode::AsNeeded,
+                Some("consistent") => Mode::Consistent,
+                Some("consistent-as-needed") => Mode::ConsistentAsNeeded,
+                _ => Mode::Always,
+            },
+            keywords: object.bool_or("keywords", false),
+            check_unnecessary: object.bool_or("unnecessary", true),
+            numbers: object.bool_or("numbers", false),
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if !matches!(self.mode, Mode::Consistent | Mode::ConsistentAsNeeded) {
+            return;
+        }
+        if let ExprKind::Object(properties) = e.kind() {
+            self.check_consistency_of(properties, Some(e), cx);
+        }
+    }
 
     /// ESLint has `{ with: { type: "json" } }` in `import("m", { with: { type: "json" } })` as two
     /// object literals.
-    fn check_import_type<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         let Some(attributes) = ty.import_attributes() else {
             return;
         };
@@ -240,45 +268,27 @@ impl QuoteProps {
             Mode::Consistent | Mode::ConsistentAsNeeded => self.check_consistency_of(attributes.entries(), None, cx),
         }
     }
-}
 
-impl Rule for QuoteProps {
-    const META: Meta = Meta::eslint("quote-props", Kind::Suggestion).fixable(Fixable::Code).deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let object = options.object(1);
-        QuoteProps {
-            mode: match options.str(0) {
-                Some("as-needed") => Mode::AsNeeded,
-                Some("consistent") => Mode::Consistent,
-                Some("consistent-as-needed") => Mode::ConsistentAsNeeded,
-                _ => Mode::Always,
-            },
-            keywords: object.bool_or("keywords", false),
-            check_unnecessary: object.bool_or("unnecessary", true),
-            numbers: object.bool_or("numbers", false),
+    fn pat<'a>(&self, pattern: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        if matches!(self.mode, Mode::Consistent | Mode::ConsistentAsNeeded) {
+            return;
+        }
+        let PatKind::Object(properties) = pattern.kind() else {
+            return;
+        };
+        for property in properties {
+            if let Some(key) = key_of_pat_prop(property)
+                && let Some(message) = self.check_property(key)
+            {
+                report(cx, property.span(), key, message, "property", None);
+            }
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.types([TypeTag::Import], Self::check_import_type);
+    fn prop<'a>(&self, property: Prop<'a>, cx: &mut Cx<'a, Self>) {
         if matches!(self.mode, Mode::Consistent | Mode::ConsistentAsNeeded) {
-            on.exprs([ExprTag::Object], Self::check_consistency);
             return;
         }
-        on.props(|rule, property, cx| rule.check_prop(property, false, cx));
-        on.pats([PatTag::Object], |rule, pattern, cx| {
-            let PatKind::Object(properties) = pattern.kind() else {
-                return;
-            };
-            for property in properties {
-                if let Some(key) = key_of_pat_prop(property)
-                    && let Some(message) = rule.check_property(key)
-                {
-                    report(cx, property.span(), key, message, "property", None);
-                }
-            }
-        });
+        self.check_prop(property, false, cx);
     }
 }

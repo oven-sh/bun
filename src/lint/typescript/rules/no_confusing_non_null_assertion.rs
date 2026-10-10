@@ -32,8 +32,22 @@ const WRAP_UP_LEFT: Message = Message::new(
     "Wrap the left-hand side in parentheses to avoid confusion with \"{{operator}}\" operator.",
 );
 
-impl NoConfusingNonNullAssertion {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoConfusingNonNullAssertion {
+    const META: Meta = Meta::typescript("no-confusing-non-null-assertion", Kind::Problem)
+        .has_suggestions()
+        .presets(Presets::STYLISTIC);
+    const ON: On = On::new().exprs(&[ExprTag::Binary, ExprTag::Assign]);
+    type State<'a> = ();
+
+    fn new(_: &Options) -> Self {
+        NoConfusingNonNullAssertion
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        (!file.is_javascript()).then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let (left, operator) = match e.kind() {
             ExprKind::Binary {
                 op: op @ (BinOp::EqEq | BinOp::EqEqEq | BinOp::In | BinOp::Instanceof),
@@ -79,22 +93,5 @@ impl NoConfusingNonNullAssertion {
                 .suggest_with(NOT_NEED_IN_OPERATOR, &data, |fixer| fixer.remove(bang))
                 .suggest_with(WRAP_UP_LEFT, &data, wrap_up_left),
         };
-    }
-}
-
-impl Rule for NoConfusingNonNullAssertion {
-    const META: Meta = Meta::typescript("no-confusing-non-null-assertion", Kind::Problem)
-        .has_suggestions()
-        .presets(Presets::STYLISTIC);
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        NoConfusingNonNullAssertion
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.is_javascript() {
-            on.exprs([ExprTag::Binary, ExprTag::Assign], Self::check);
-        }
     }
 }

@@ -85,6 +85,15 @@ printed on stderr, the counts, and for each kind of difference (a rule and who r
   - Prettier's judge loads their plugins in their versions, and a plugin that imports `prettier` gets the project's.
   - oxfmt brings its own Prettier for the languages it hands on. For `sortTailwindcss` it takes `tailwindcss` from the project
     and falls back on the one it bundles.
+- **Their plugin can be older than the one that is built in.** ESLint's judge runs with their plugins, so it cannot tell that
+  from a mistake of ours. Where rules of typescript-eslint or of eslint-plugin-react-hooks differ, THEIR ESLint runs once more
+  with the versions that `bun lint` follows in the place of theirs (`lint[].plugin`). No file of their installation is touched:
+  `latest-plugin.cjs` is a hook on module resolution, which answers every request for these packages from `.tools` and resolves
+  what they need of the project (`typescript`, `eslint`) from where their copy is. Under an `.eslintrc` their typescript-eslint
+  is of another major version, whose presets differ: there it is no judge.
+- Each ESLint run keeps the ids of the rules that are on (`rulesOn`: their `--print-config` for one file of each extension) and
+  what the plugins say they are (`pluginPackages`).
+- The binary is read by its path for every run, and its revision once: a pass over many repositories needs a copy of its own.
 - **What cannot be done yet**: a configuration that names rules which are not built in, or wants files linted that cannot be
   read, ends `bun lint` with exit code 2 after the report. The comparison is made with `--allow-unsupported`; the lines are
   kept with each run (`unsupported`), and say what stops that project from switching.

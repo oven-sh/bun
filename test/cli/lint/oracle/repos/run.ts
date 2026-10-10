@@ -83,6 +83,8 @@ const manifest: Entry[] = JSON.parse(readFileSync(flags.get("manifest") || join(
 const JUDGES = { eslint: "10.12.0", prettier: "3.9.9", oxlint: "1.87.0", oxfmt: "0.72.0" };
 /** What the judges need beside themselves: oxlint's rules that need types are in a package of its own. */
 const WITH_JUDGES = { "oxlint-tsgolint": "7.0.2003" };
+/** The version of a plugin that `bun lint` has built in: their ESLint is asked once more with it in the place of theirs. */
+const PLUGIN_JUDGE = { "typescript-eslint": "8.71.1", "eslint-plugin-react-hooks": "7.1.1" };
 
 const nameOf = (repo: string) => repo.replace("/", "__");
 const cloneOf = (repo: string) => join(work, nameOf(repo));
@@ -305,6 +307,7 @@ async function installTools(directory: string, dependencies: Record<string, stri
 }
 
 const pinnedTool = (tool: string, version: string) => join(tools, `${tool}-${version}`);
+const latestPlugins = Object.entries(PLUGIN_JUDGE).map(([name, version]) => pinnedTool(name, version));
 
 /**
  * Their executable: the one that is installed for the directory the command runs in, or the version that their lock file has, or
@@ -405,24 +408,29 @@ async function pluginsOf(entry: Entry, run: Run, eslint: string, results: { file
   const at = run.args.findIndex(it => it === "-c" || it === "--config");
   const config = at >= 0 ? run.args.slice(at, at + 2) : run.args.filter(it => it.startsWith("--config="));
   const plugins: Record<string, number> = {};
+  const [on, packages] = [new Set<string>(), new Set<string>()];
   for (const file of samples.values()) {
     const it = await inCopy(entry, "config", {
       cmd: [eslint, ...config, "--print-config", file],
       cwd: run.cwd,
       env: run.env,
     });
-    const rules = parse<{ rules?: Record<string, unknown> }>(it.stdout)?.rules ?? {};
+    const printed = parse<{ rules?: Record<string, unknown>; plugins?: unknown }>(it.stdout);
+    const rules = printed?.rules ?? {};
+    // A flat configuration prints "prefix:package@version" for the plugins that say who they are.
+    if (Array.isArray(printed?.plugins)) for (const name of printed.plugins) packages.add(String(name));
     const counts: Record<string, number> = {};
     for (const [name, value] of Object.entries(rules)) {
       const severity = Array.isArray(value) ? value[0] : value;
       if (severity === 0 || severity === "off") continue;
       const plugin = name.includes("/") ? name.slice(0, name.lastIndexOf("/")) : "(core)";
       counts[plugin] = (counts[plugin] ?? 0) + 1;
+      on.add(name);
     }
     for (const [plugin, count] of Object.entries(counts)) plugins[plugin] = Math.max(plugins[plugin] ?? 0, count);
     removeRuns(it.out);
   }
-  return plugins;
+  return { plugins, on: [...on].sort(), packages: [...packages].sort() };
 }
 
 async function lint(entry: Entry, run: Run) {
@@ -508,6 +516,34 @@ async function lint(entry: Entry, run: Run) {
     };
     if (!flags.has("keep")) removeRuns(it.out);
   }
+  // Their plugin can be older than the one that is built in, and ESLint's judge runs with their plugins. So where rules of
+  // typescript-eslint differ, THEIR ESLint runs once more, with the version that `bun lint` follows in the place of theirs.
+  let plugin = null;
+  if (
+    run.tool === "eslint" &&
+    comparison &&
+    b &&
+    comparison.buckets.some(it => /^(@typescript-eslint|ts|typescript|react-hooks)\//.test(it.rule))
+  ) {
+    const it = await inCopy(entry, "judge-plugin", {
+      cmd: commandOf(run, [their.path], [...json, ...(run.theirArgs ?? [])]),
+      cwd: run.cwd,
+      env: {
+        ...run.env,
+        NODE_OPTIONS: `--require ${join(latestPlugins[0], "hook.cjs")}`,
+        LATEST_PLUGIN_DIRS: latestPlugins.join(":"),
+      },
+    });
+    const pluginReport = report(it.stdout);
+    const judged = pluginReport ? compare(pluginReport, b) : null;
+    plugin = {
+      versions: PLUGIN_JUDGE,
+      ...summary(it),
+      comparison: judged && cut(judged),
+      verdict: !pluginReport ? "cannot run: theirs" : verdictOf(judged!, it.code),
+    };
+    if (!flags.has("keep")) removeRuns(it.out);
+  }
   const result = {
     ...run,
     version,
@@ -521,7 +557,9 @@ async function lint(entry: Entry, run: Run) {
     needsFlavor,
     /** Does a second run in the same copy report the same as the first? If not: the lines of `diff`. */
     warm: { same: warm[0] === "SAME", stderrSame: warm.includes("STDERR-SAME"), code: ourWarm.code, lines: warm.slice(1, 51) },
-    plugins: run.tool === "eslint" && a ? await pluginsOf(entry, run, their.path, a) : undefined,
+    ...(run.tool === "eslint" && a
+      ? await pluginsOf(entry, run, their.path, a).then(it => ({ plugins: it.plugins, rulesOn: it.on, pluginPackages: it.packages }))
+      : {}),
     // What `--timing` prints, above all how much JavaScript the plugins are.
     timing: read(ours.stderr)
       .split("\n")
@@ -530,6 +568,7 @@ async function lint(entry: Entry, run: Run) {
     comparison: comparison && cut(comparison),
     verdict: !a ? "cannot run: theirs" : !b ? "cannot run: ours" : verdictOf(comparison!, theirs.code),
     judge,
+    plugin,
   };
   if (!flags.has("keep")) for (const it of [theirs, ours, ourWarm]) removeRuns(it.out);
   return result;
@@ -1111,6 +1150,10 @@ const only = flags.get("only")?.split(",");
 const stages = (flags.get("stages") ?? "clone,install,lint,fix,format").split(",");
 const entries = manifest.filter(it => !only || only.includes(it.repo));
 await installTools(tools, { ...JUDGES, ...WITH_JUDGES });
+for (const [name, version] of Object.entries(PLUGIN_JUDGE)) await installTools(pinnedTool(name, version), { [name]: version });
+if (read(join(latestPlugins[0], "hook.cjs")) !== read(join(import.meta.dir, "latest-plugin.cjs"))) {
+  writeFileSync(join(latestPlugins[0], "hook.cjs"), read(join(import.meta.dir, "latest-plugin.cjs")));
+}
 
 async function one(entry: Entry) {
   const path = resultsOf(entry.repo);

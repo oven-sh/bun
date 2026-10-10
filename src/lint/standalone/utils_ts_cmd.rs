@@ -383,67 +383,66 @@ fn pair(code: &[&[u8]]) -> Vec<u8> {
 
 impl Rule for Probe {
     const META: Meta = Meta::typescript("probe", Kind::Problem).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().enter(NodeTags::ALL);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         Probe
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.enter(NodeTags::ALL, |_, node, cx| {
-            let Node::Expr(node) = node else {
-                return;
-            };
-            let inner_nodes = &[];
-            cx.report(node, ADD).fix(|fixer| {
-                ts_utils::get_wrapping_fixer(
-                    fixer,
-                    WrappingFixerParams {
-                        node,
-                        inner_nodes,
-                        wrap: add,
-                    },
-                )
-            });
-            cx.report(node, ARRAY).fix(|fixer| {
-                ts_utils::get_wrapping_fixer(
-                    fixer,
-                    WrappingFixerParams {
-                        node,
-                        inner_nodes,
-                        wrap: array,
-                    },
-                )
-            });
-            cx.report(node, NONE)
-                .fix(|fixer| ts_utils::get_wrapping_fixer_without_wrap(fixer, node, inner_nodes));
-            cx.report(node, ELEMENT_ADD).fix(|fixer| {
-                let params = WrappingFixerParams {
+    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        let Node::Expr(node) = node else {
+            return;
+        };
+        let inner_nodes = &[];
+        cx.report(node, ADD).fix(|fixer| {
+            ts_utils::get_wrapping_fixer(
+                fixer,
+                WrappingFixerParams {
                     node,
                     inner_nodes,
                     wrap: add,
-                };
-                ts_utils::get_wrapping_fixer_for_chain_element(fixer, params)
-            });
-            cx.report(node, ELEMENT_ARRAY).fix(|fixer| {
-                let params = WrappingFixerParams {
+                },
+            )
+        });
+        cx.report(node, ARRAY).fix(|fixer| {
+            ts_utils::get_wrapping_fixer(
+                fixer,
+                WrappingFixerParams {
                     node,
                     inner_nodes,
-                    wrap: |code: &[&[u8]]| array(code),
+                    wrap: array,
+                },
+            )
+        });
+        cx.report(node, NONE)
+            .fix(|fixer| ts_utils::get_wrapping_fixer_without_wrap(fixer, node, inner_nodes));
+        cx.report(node, ELEMENT_ADD).fix(|fixer| {
+            let params = WrappingFixerParams {
+                node,
+                inner_nodes,
+                wrap: add,
+            };
+            ts_utils::get_wrapping_fixer_for_chain_element(fixer, params)
+        });
+        cx.report(node, ELEMENT_ARRAY).fix(|fixer| {
+            let params = WrappingFixerParams {
+                node,
+                inner_nodes,
+                wrap: |code: &[&[u8]]| array(code),
+            };
+            ts_utils::get_wrapping_fixer_for_chain_element(fixer, params)
+        });
+        if let Node::Expr(parent) = estree_parent(Node::Expr(node)) {
+            cx.report(node, PARENT).fix(|fixer| {
+                let params = WrappingFixerParams {
+                    node: parent,
+                    inner_nodes: &[node, node],
+                    wrap: pair,
                 };
                 ts_utils::get_wrapping_fixer_for_chain_element(fixer, params)
             });
-            if let Node::Expr(parent) = estree_parent(Node::Expr(node)) {
-                cx.report(node, PARENT).fix(|fixer| {
-                    let params = WrappingFixerParams {
-                        node: parent,
-                        inner_nodes: &[node, node],
-                        wrap: pair,
-                    };
-                    ts_utils::get_wrapping_fixer_for_chain_element(fixer, params)
-                });
-            }
-        });
+        }
     }
 }
 

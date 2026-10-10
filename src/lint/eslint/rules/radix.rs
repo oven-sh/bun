@@ -47,8 +47,23 @@ fn is_valid_radix_for_oxlint(radix: Expr) -> bool {
     }
 }
 
-impl Radix {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for Radix {
+    const META: Meta = Meta::eslint("radix", Kind::Suggestion).has_suggestions();
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    type State<'a> = ();
+
+    fn new(options: &Options) -> Self {
+        Radix { is_as_needed: options.str(0) == Some("as-needed") }
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        if !file.mentions("parseInt") {
+            return None;
+        }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Call(call) = e.kind() else {
             return;
         };
@@ -100,21 +115,5 @@ impl Radix {
                 }
             }
         }
-    }
-}
-
-impl Rule for Radix {
-    const META: Meta = Meta::eslint("radix", Kind::Suggestion).has_suggestions();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        Radix { is_as_needed: options.str(0) == Some("as-needed") }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("parseInt") {
-            return;
-        }
-        on.exprs([ExprTag::Call], Self::check);
     }
 }

@@ -10,9 +10,10 @@ commits, and `licenses/` has the license of each (all MIT).
 | eslint                    | 10.12.0 | 292   | 33977 |
 | typescript-eslint         | 8.71.1  | 136   | 29823 |
 | eslint-plugin-react-hooks | 7.0.0   | 2     | 1325  |
-| eslint-plugin-import      | 2.32.0  | 3     | 314   |
+| eslint-plugin-import      | 2.32.0  | 4     | 597   |
 | eslint-plugin-n           | 18.4.1  | 4     | 1530  |
 | eslint-plugin-react       | 7.37.5  | 1     | 118   |
+| eslint-plugin-prettier    | 5.5.6   | 1     | 448   |
 | oxc (oxlint)              | 1.70.0  | 1     | 83    |
 
 The rules of `react-hooks` follow eslint-plugin-react-hooks 7.1.1, which reports the same for all of these cases of 7.0.0.

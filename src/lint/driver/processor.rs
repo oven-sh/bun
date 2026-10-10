@@ -85,6 +85,7 @@ impl Context<'_, '_> {
     /// Lints `text` as the file at `path`, which is in `file`.
     fn verify_natively(
         &self,
+        loaded: &Loaded,
         file: Text,
         path: &[u8],
         text: &[u8],
@@ -102,13 +103,16 @@ impl Context<'_, '_> {
                 .concat(),
             );
         }
-        self.verify_block_natively(
-            path,
-            file.physical_path_len,
-            text,
-            config,
-            file.without_fixes,
-        )
+        let (len, without_fixes) = (file.physical_path_len, file.without_fixes);
+        if loaded.for_eslint.is_none() {
+            return self.verify_block_natively(path, len, text, config, without_fixes);
+        }
+        // What only the parser of the configuration can read is for ESLint's own `Linter`, which has that parser.
+        self.verify_block_if_read(path, len, text, config, without_fixes)
+            .unwrap_or_else(|| {
+                let it = Text { path, text, ..file };
+                self.verify_with_eslint(loaded, it, config).0
+            })
     }
 
     /// A block that a processor has found in `file`, which has `config`.
@@ -153,7 +157,7 @@ impl Context<'_, '_> {
             Route::Eslint if loaded.for_eslint.is_some() => {
                 self.verify_with_eslint(loaded, it, config).0
             }
-            _ => self.verify_natively(it, it.path, it.text, config),
+            _ => self.verify_natively(loaded, it, it.path, it.text, config),
         }
     }
 
@@ -246,7 +250,7 @@ impl Context<'_, '_> {
             return thrown(error.clone());
         }
         match (route, &config.processor_location) {
-            (Route::Native, _) => self.verify_natively(it, it.path, it.text, config),
+            (Route::Native, _) => self.verify_natively(loaded, it, it.path, it.text, config),
             (Route::Processor, _) if it.depth >= MAX_DEPTH => LintResult::default(),
             (Route::Processor, Some(processor)) => {
                 self.verify_with_processor(loaded, it, config, processor)

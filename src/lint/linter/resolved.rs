@@ -1,13 +1,14 @@
 //! What is configured for one file.
 
+use super::instances::Instance;
 use super::registry::{Registry, parse_rule_id};
 use crate::context::Severity;
 use crate::js_plugin::{self, Route};
 use crate::language::{LanguageOptions, Parser};
 use crate::options::{Json, Options};
 use crate::rule::{Meta, Plugin};
-use crate::runner::{AnyRule, RuleEntry};
-use std::sync::Arc;
+use crate::runner::RuleEntry;
+use std::sync::{Arc, OnceLock};
 
 /// ESLint's `linterOptions`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -58,8 +59,9 @@ pub struct ConfiguredRule {
     pub severity: Severity,
     /// What follows the severity.
     pub options: Arc<[Json]>,
-    /// `None` if it is off.
-    instance: Option<Arc<dyn AnyRule>>,
+    /// The rule made from `options`, as soon as a linter has linted with it. It is in the table of that linter: a configuration is for
+    /// one.
+    pub(super) instance: OnceLock<Instance>,
     /// What ESLint's rule throws for these options, which its schema accepts: [`Rule::validate`](crate::rule::Rule::validate).
     /// ESLint stops at the first file on which the rule runs: [`LintResult::thrown`](super::LintResult::thrown).
     refusal: Option<Arc<[u8]>>,
@@ -72,13 +74,7 @@ pub struct ConfiguredRule {
 }
 
 impl ConfiguredRule {
-    /// `instance`: the rule made from `options`. It is not needed for a rule that is off.
-    pub fn new(
-        entry: &'static RuleEntry,
-        severity: Severity,
-        options: Arc<[Json]>,
-        instance: Option<Arc<dyn AnyRule>>,
-    ) -> Self {
+    pub fn new(entry: &'static RuleEntry, severity: Severity, options: Arc<[Json]>) -> Self {
         let refusal = match severity {
             Severity::Off => None,
             _ => (entry.validate)(&Options::new(&options))
@@ -89,7 +85,7 @@ impl ConfiguredRule {
             entry,
             severity,
             options,
-            instance,
+            instance: OnceLock::new(),
             refusal,
             reported_as: entry.meta,
             name: None,
@@ -132,10 +128,6 @@ impl ConfiguredRule {
 
     pub fn refusal(&self) -> Option<&[u8]> {
         self.refusal.as_deref()
-    }
-
-    pub fn instance(&self) -> Option<&dyn AnyRule> {
-        self.instance.as_deref()
     }
 }
 
@@ -437,9 +429,7 @@ impl ResolvedConfig {
     pub fn configure(&mut self, entry: &'static RuleEntry, severity: Severity, options: &[Json]) {
         let options: Arc<[Json]> = options.into();
         self.validate(entry, None, severity, &options);
-        let instance =
-            (severity != Severity::Off).then(|| Arc::from((entry.build)(&Options::new(&options))));
         self.rules
-            .push(ConfiguredRule::new(entry, severity, options, instance));
+            .push(ConfiguredRule::new(entry, severity, options));
     }
 }

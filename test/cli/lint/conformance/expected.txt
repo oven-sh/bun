@@ -1,3 +1,3 @@
 
-439 rules, 439 without failures, 0 not implemented
-67107 cases passed, 0 failed, 63 skipped
+441 rules, 441 without failures, 0 not implemented
+67831 cases passed, 0 failed, 70 skipped

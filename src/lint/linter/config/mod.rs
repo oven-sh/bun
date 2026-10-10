@@ -70,7 +70,7 @@ use super::schema;
 use crate::context::Severity;
 use crate::js_plugin;
 use crate::language::LanguageOptions;
-use crate::options::{Json, Options};
+use crate::options::Json;
 use crate::paths;
 use crate::rule::{Meta, Plugin};
 use crate::runner::RuleEntry;
@@ -962,11 +962,6 @@ impl Config {
                     self.cache.set_valid(index, &options);
                 }
             }
-            let instance = (setting.severity != Severity::Off).then(|| {
-                self.cache.rule(registry, entry, &options, || {
-                    Arc::from((entry.build)(&Options::new(&options)))
-                })
-            });
             let or_else = match js.flatten().filter(|_| entry.meta.hands_back) {
                 Some(rule) => {
                     Some(self.js_rule(&mut config, rule, setting.severity, Arc::clone(&options)))
@@ -976,7 +971,7 @@ impl Config {
             let reported_as = self.reported_as(registry, entry, setting.written_for);
             config.has_named_rules |= name.is_some();
             config.rules.push(
-                ConfiguredRule::new(entry, setting.severity, options, instance)
+                ConfiguredRule::new(entry, setting.severity, options)
                     .report_as(reported_as)
                     .named(name)
                     .or(or_else),

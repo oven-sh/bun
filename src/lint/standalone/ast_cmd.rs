@@ -19,15 +19,17 @@ mod estree_json;
 use crate::host::{self, output_line};
 use bun_lint::ast::walk::{Visitor, walk};
 use bun_lint::ast::{
-    ExprKind, ExprTag, File, FnKind, Key, List, Modifier, NOT_IN_TREE, Node, PatTag, StmtKind,
-    StmtTag, TypeKind, TypeTag, assign_op_text, bin_op_text, un_op_text,
+    Case, Class, EnumMember, ExportSpec, Expr, ExprKind, ExprTag, File, FnKind, Func, ImportSpec,
+    Key, List, Member, Modifier, NOT_IN_TREE, Node, Param, Pat, PatTag, Prop, Stmt, StmtKind,
+    StmtTag, TypeKind, TypeNode, TypeParam, TypeTag, VarDecl, assign_op_text, bin_op_text,
+    un_op_text,
 };
-use bun_lint::context::Severity;
+use bun_lint::context::{Cx, Severity};
 use bun_lint::estree_for_tests::{NodeType, VNode, Value};
 use bun_lint::language::LanguageOptions;
 use bun_lint::language::{Parser, SourceType};
 use bun_lint::options::{Json, Options};
-use bun_lint::rule::{Kind, Listeners, Meta, Rule};
+use bun_lint::rule::{Kind, Meta, On, Rule};
 use bun_lint::runner::Enabled;
 use bun_lint::span::Span;
 use bun_threading::Guarded;
@@ -877,70 +879,125 @@ const EXPR_TAGS: [ExprTag; ExprTag::COUNT] = {
 
 impl Rule for Everything {
     const META: Meta = Meta::eslint("everything", Kind::Problem);
+    const ON: On = On::new()
+        .exprs(&EXPR_TAGS)
+        .stmts(&StmtTag::ALL)
+        .types(&TypeTag::ALL)
+        .pats(&PatTag::ALL)
+        .funcs()
+        .classes()
+        .members()
+        .props()
+        .params()
+        .type_params()
+        .var_decls()
+        .cases()
+        .enum_members()
+        .import_specs()
+        .export_specs()
+        .finish();
     type State<'a> = FxHashMap<Node<'a>, u32>;
 
     fn new(_: &Options) -> Self {
         Everything
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        on.exprs(EXPR_TAGS, |_, it, cx| {
-            *cx.state.entry(it.into()).or_insert(0) += 1
-        });
-        on.stmts(StmtTag::ALL, |_, it, cx| {
-            *cx.state.entry(it.into()).or_insert(0) += 1
-        });
-        on.types(TypeTag::ALL, |_, it, cx| {
-            *cx.state.entry(it.into()).or_insert(0) += 1
-        });
-        on.pats(PatTag::ALL, |_, it, cx| {
-            *cx.state.entry(it.into()).or_insert(0) += 1
-        });
-        on.funcs(|_, it, cx| *cx.state.entry(it.into()).or_insert(0) += 1);
-        on.classes(|_, it, cx| *cx.state.entry(it.into()).or_insert(0) += 1);
-        on.members(|_, it, cx| *cx.state.entry(it.into()).or_insert(0) += 1);
-        on.props(|_, it, cx| *cx.state.entry(it.into()).or_insert(0) += 1);
-        on.params(|_, it, cx| *cx.state.entry(it.into()).or_insert(0) += 1);
-        on.type_params(|_, it, cx| *cx.state.entry(it.into()).or_insert(0) += 1);
-        on.var_decls(|_, it, cx| *cx.state.entry(it.into()).or_insert(0) += 1);
-        on.cases(|_, it, cx| *cx.state.entry(it.into()).or_insert(0) += 1);
-        on.enum_members(|_, it, cx| *cx.state.entry(it.into()).or_insert(0) += 1);
-        on.import_specs(|_, it, cx| *cx.state.entry(it.into()).or_insert(0) += 1);
-        on.export_specs(|_, it, cx| *cx.state.entry(it.into()).or_insert(0) += 1);
-        on.finish(|_, cx| {
-            let mut problems = Vec::new();
-            let reached = check_tree(cx.file(), &mut problems);
-            check_estree(cx.file(), &reached, &mut problems);
-            check_tags(cx.file(), &reached, &mut problems);
-            for (&node, &times) in &cx.state {
-                if times > 1 {
-                    problems.push((
-                        format!("listener called twice: {}", describe(node)),
-                        place(node),
-                    ));
-                }
-                if !reached.contains_key(&node) {
-                    problems.push((
-                        format!("listener called, not in the tree: {}", describe(node)),
-                        place(node),
-                    ));
-                }
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(FxHashMap::default())
+    }
+
+    fn expr<'a>(&self, it: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        *cx.state.entry(it.into()).or_insert(0) += 1;
+    }
+
+    fn stmt<'a>(&self, it: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        *cx.state.entry(it.into()).or_insert(0) += 1;
+    }
+
+    fn ty<'a>(&self, it: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        *cx.state.entry(it.into()).or_insert(0) += 1;
+    }
+
+    fn pat<'a>(&self, it: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        *cx.state.entry(it.into()).or_insert(0) += 1;
+    }
+
+    fn func<'a>(&self, it: Func<'a>, cx: &mut Cx<'a, Self>) {
+        *cx.state.entry(it.into()).or_insert(0) += 1;
+    }
+
+    fn class<'a>(&self, it: Class<'a>, cx: &mut Cx<'a, Self>) {
+        *cx.state.entry(it.into()).or_insert(0) += 1;
+    }
+
+    fn member<'a>(&self, it: Member<'a>, cx: &mut Cx<'a, Self>) {
+        *cx.state.entry(it.into()).or_insert(0) += 1;
+    }
+
+    fn prop<'a>(&self, it: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        *cx.state.entry(it.into()).or_insert(0) += 1;
+    }
+
+    fn param<'a>(&self, it: Param<'a>, cx: &mut Cx<'a, Self>) {
+        *cx.state.entry(it.into()).or_insert(0) += 1;
+    }
+
+    fn type_param<'a>(&self, it: TypeParam<'a>, cx: &mut Cx<'a, Self>) {
+        *cx.state.entry(it.into()).or_insert(0) += 1;
+    }
+
+    fn var_decl<'a>(&self, it: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        *cx.state.entry(it.into()).or_insert(0) += 1;
+    }
+
+    fn case<'a>(&self, it: Case<'a>, cx: &mut Cx<'a, Self>) {
+        *cx.state.entry(it.into()).or_insert(0) += 1;
+    }
+
+    fn enum_member<'a>(&self, it: EnumMember<'a>, cx: &mut Cx<'a, Self>) {
+        *cx.state.entry(it.into()).or_insert(0) += 1;
+    }
+
+    fn import_spec<'a>(&self, it: ImportSpec<'a>, cx: &mut Cx<'a, Self>) {
+        *cx.state.entry(it.into()).or_insert(0) += 1;
+    }
+
+    fn export_spec<'a>(&self, it: ExportSpec<'a>, cx: &mut Cx<'a, Self>) {
+        *cx.state.entry(it.into()).or_insert(0) += 1;
+    }
+
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+        let mut problems = Vec::new();
+        let reached = check_tree(cx.file(), &mut problems);
+        check_estree(cx.file(), &reached, &mut problems);
+        check_tags(cx.file(), &reached, &mut problems);
+        for (&node, &times) in &cx.state {
+            if times > 1 {
+                problems.push((
+                    format!("listener called twice: {}", describe(node)),
+                    place(node),
+                ));
             }
-            for &node in reached.keys() {
-                let has_listener = !matches!(
-                    node,
-                    Node::File(_) | Node::PatProp(_) | Node::PatElem(_) | Node::TupleElem(_)
-                );
-                if has_listener && !cx.state.contains_key(&node) {
-                    problems.push((
-                        format!("in the tree, no listener called: {}", describe(node)),
-                        place(node),
-                    ));
-                }
+            if !reached.contains_key(&node) {
+                problems.push((
+                    format!("listener called, not in the tree: {}", describe(node)),
+                    place(node),
+                ));
             }
-            FOUND.lock().append(&mut problems);
-        });
-        FxHashMap::default()
+        }
+        for &node in reached.keys() {
+            let has_listener = !matches!(
+                node,
+                Node::File(_) | Node::PatProp(_) | Node::PatElem(_) | Node::TupleElem(_)
+            );
+            if has_listener && !cx.state.contains_key(&node) {
+                problems.push((
+                    format!("in the tree, no listener called: {}", describe(node)),
+                    place(node),
+                ));
+            }
+        }
+        FOUND.lock().append(&mut problems);
     }
 }
 

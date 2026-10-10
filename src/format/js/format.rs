@@ -419,6 +419,7 @@ impl<'a> FormatExpr<'a> {
             f.in_scope(span, |f| {
                 print::expressions::write_chain_expression(expr, f)
             });
+            write_comments_trailing_chain_element(expr, f);
             write_trailing_comments_of(node, f);
             return write!(f, ")");
         }
@@ -456,9 +457,6 @@ impl<'a> FormatExpr<'a> {
     }
 }
 
-/// A type cast comment is about the parentheses right behind it. Where these are at the start of
-/// something that gets parentheses of its own, oxfmt writes the comment in them, so that it is still
-/// about the same. Prettier writes it before them.
 /// `(a?.b /* comment */).c`, `(a?.b) /* comment */.c`: typescript-estree has a `ChainExpression` around `a?.b`, which
 /// Prettier attaches no comment to. So the comment trails `a?.b` in it, and is written in the parentheses. Babel has no
 /// such node.
@@ -474,6 +472,9 @@ fn write_comments_trailing_chain_element<'a>(e: Expr<'a>, f: &mut Formatter<'a>)
     f.comments_mut().restore_view_limit(previous_limit);
 }
 
+/// A type cast comment is about the parentheses right behind it. Where these are at the start of
+/// something that gets parentheses of its own, oxfmt writes the comment in them, so that it is still
+/// about the same. Prettier writes it before them.
 fn cast_comment_goes_into_added_parentheses(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }

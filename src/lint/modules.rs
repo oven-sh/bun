@@ -190,7 +190,7 @@ pub trait Modules: Sync {
     /// no such file.
     fn resolve(&self, from: &[u8], specifier: &[u8], is_require: bool) -> Option<Resolved>;
 
-    /// Absolute, with symbolic links followed.
+    /// Absolute. With [`Flavor::Oxlint`] symbolic links are followed.
     fn path(&self, module: ModuleId) -> &[u8];
 
     /// What it imports, in the order of eslint-plugin-import: what is imported dynamically first. Nothing if it is not JavaScript or

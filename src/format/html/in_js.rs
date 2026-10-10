@@ -303,7 +303,8 @@ fn keeps_content(
     )
     .is_ok()
         && super::verify::has_same_content(text, &printed, parser)
-        && (!options.flavor.is_oxfmt()
+        // Those of the HTML are Prettier's for either tool.
+        && (!f.options().flavor.is_oxfmt()
             || strings::split(text, PLACEHOLDER_START).count()
                 == strings::split(&printed, PLACEHOLDER_START).count())
 }

@@ -113,21 +113,20 @@ macro_rules! declare_rule {
                 $rule,
                 ::bun_lint::rule::Kind::$kind,
             );
+            const ON: ::bun_lint::rule::On = ::bun_lint::rule::On::new().finish();
             type State<'a> = ();
 
             fn new(_: &::bun_lint::options::Options) -> Self {
                 $name
             }
 
-            fn register<'a>(
-                &self,
-                on: &mut ::bun_lint::rule::Listeners<'a, Self>,
-                file: &'a ::bun_lint::ast::File<'a>,
-            ) {
+            fn start<'a>(&self, file: &'a ::bun_lint::ast::File<'a>) -> Option<()> {
                 let category = $crate::ErrorCategory::$category;
-                if $crate::rule::starts(file, $crate::Flavor::Oxlint, category) {
-                    on.finish(|_, cx| $crate::rule::report(cx, $crate::ErrorCategory::$category));
-                }
+                $crate::rule::starts(file, $crate::Flavor::Oxlint, category).then_some(())
+            }
+
+            fn finish<'a>(&self, cx: &mut ::bun_lint::context::Cx<'a, Self>) {
+                $crate::rule::report(cx, $crate::ErrorCategory::$category)
             }
         }
     };
@@ -152,23 +151,20 @@ macro_rules! declare_eslint_rule {
             .fixable(::bun_lint::rule::Fixable::Code)
             .has_suggestions()
             $(.$preset())?;
+            const ON: ::bun_lint::rule::On = ::bun_lint::rule::On::new().finish();
             type State<'a> = ();
 
             fn new(_: &::bun_lint::options::Options) -> Self {
                 $name
             }
 
-            fn register<'a>(
-                &self,
-                on: &mut ::bun_lint::rule::Listeners<'a, Self>,
-                file: &'a ::bun_lint::ast::File<'a>,
-            ) {
+            fn start<'a>(&self, file: &'a ::bun_lint::ast::File<'a>) -> Option<()> {
                 let category = $crate::ErrorCategory::$category;
-                if $crate::rule::starts(file, $crate::Flavor::Eslint, category) {
-                    on.finish(|_, cx| {
-                        $crate::rule::report_as_eslint(cx, $crate::ErrorCategory::$category)
-                    });
-                }
+                $crate::rule::starts(file, $crate::Flavor::Eslint, category).then_some(())
+            }
+
+            fn finish<'a>(&self, cx: &mut ::bun_lint::context::Cx<'a, Self>) {
+                $crate::rule::report_as_eslint(cx, $crate::ErrorCategory::$category)
             }
         }
     };

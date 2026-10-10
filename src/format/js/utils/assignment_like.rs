@@ -764,8 +764,14 @@ fn block_comment_in_parentheses_of_cast_breaks(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
+/// `a =⏎// comment⏎b?.c` is `a = // comment⏎b?.c` in TypeScript: typescript-estree has a `ChainExpression` around
+/// `b?.c`, which Prettier attaches no comment to. The comment leads what is in it, and the right side has none.
+fn comments_lead_what_is_in_chain_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    is_chain_root(e) && !f.context().has_tree_of_babel() && !f.options().flavor.is_oxfmt()
+}
+
 fn leading_comments_of_right_side<'a>(right: Expr<'a>, f: &Formatter<'a>) -> LeadingComments {
-    if f.is_quiet() {
+    if f.is_quiet() || comments_lead_what_is_in_chain_expression(right, f) {
         return LeadingComments::None;
     }
     let start = right.span().start;

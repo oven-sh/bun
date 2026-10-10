@@ -5991,6 +5991,12 @@ impl<'p, 's> Checker<'p, 's> {
         if (a.0.mapper, a.1) == (b.0.mapper, b.1) {
             return true;
         }
+        // `instantiateSymbol` returns it itself, in every type that inherits it.
+        if let PropSource::Symbol(sym) = a.0.source
+            && self.is_thisless_for_this_mapper(sym)
+        {
+            return true;
+        }
         let (a, b) = (self.compose(a.0.mapper, a.1), self.compose(b.0.mapper, b.1));
         // A mapper stores `H.this -> H.this`, which maps nothing.
         let types = &self.types();

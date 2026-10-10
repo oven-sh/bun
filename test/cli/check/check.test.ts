@@ -738,6 +738,27 @@ describe.concurrent("bun check", () => {
     expect(exitCode).toBe(1);
   });
 
+  // The time was cubic: 16 s for 2,000 interfaces in a release build, where it now takes 0.7 s.
+  test("a long chain of interfaces, each of which extends the last", async () => {
+    const n = isDebug || isASAN ? 300 : 2000;
+    const chain = (member: (i: number) => string) =>
+      `interface I0 { ${member(0)} }\n` +
+      Array.from({ length: n - 1 }, (_, i) => `interface I${i + 1} extends I${i} { ${member(i + 1)} }\n`).join("") +
+      `declare const last: I${n - 1};\n`;
+    using dir = project({
+      "fields.ts": chain(i => `k${i}: number`) + `export const probe: never = [last.k0, last.k${n - 1}];\n`,
+      "methods.ts": chain(i => `m${i}(x: number): string`) + `export const probe: never = last.m0;\n`,
+    });
+    const { stdout, exitCode } = await check(dir);
+    expect(stdout).toBe(
+      [
+        `fields.ts(${n + 2},14): error TS2322: Type 'number[]' is not assignable to type 'never'.`,
+        `methods.ts(${n + 2},14): error TS2322: Type '(x: number) => string' is not assignable to type 'never'.`,
+      ].join("\n"),
+    );
+    expect(exitCode).toBe(1);
+  });
+
   // One thread checks the files in program order, like `tsc --singleThreaded`: see differential.test.ts.
   test("modules that enter the same cycles produce the same output on any number of threads above one", async () => {
     const n = isDebug || isASAN ? 24 : 60;

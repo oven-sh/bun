@@ -2362,6 +2362,8 @@ impl<'p, 's> Checker<'p, 's> {
             let mut prop = prop.clone_in(self.arena);
             match &mut prop.source {
                 PropSource::Type(t) | PropSource::Copy(t, ..) => *t = self.instantiate(*t, mapper),
+                // `instantiateSymbol` returns it itself.
+                &mut PropSource::Symbol(sym) if self.is_thisless_for_this_mapper(sym) => {}
                 _ => {
                     if prop.mapper != composed.0 {
                         composed = (prop.mapper, self.compose(prop.mapper, mapper));

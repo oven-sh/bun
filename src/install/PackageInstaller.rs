@@ -1903,6 +1903,7 @@ impl<'a> PackageInstaller<'a> {
                 package_install::InstallResult::Success => {
                     let is_duplicate = self.successfully_installed.is_set(package_id as usize);
                     self.summary.success += (!is_duplicate) as u32;
+                    self.summary.changed += (!resolution.tag.is_reinstalled_every_run()) as u32;
                     self.successfully_installed.set(package_id as usize);
 
                     if log_level.show_progress() {

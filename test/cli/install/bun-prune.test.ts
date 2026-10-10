@@ -5,6 +5,7 @@ import {
   chmodSync,
   closeSync,
   copyFileSync,
+  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -90,6 +91,18 @@ function out(stdout: string) {
 
 function lines(stdout: string) {
   return out(stdout).split("\n");
+}
+
+// A hoisted install removes, from nested and workspace folders, the copies that bun.lock no longer places
+// and that hide an installed copy above. `bun prune` still has to handle a tree where they were left, so
+// this puts one back after the install.
+function keepCopy(path: string) {
+  const saved = `${path}.saved`;
+  cpSync(path, saved, { recursive: true });
+  return () => {
+    expect(existsSync(path)).toBeFalse();
+    renameSync(saved, path);
+  };
 }
 
 function plant(dir: string, rel: string) {
@@ -2358,9 +2371,10 @@ test.concurrent(
     expect(existsSync(join(nested, "package.json"))).toBeTrue();
     expect(await file(rootPkgJson).json()).toMatchObject({ version: "2.0.0" });
 
+    const leftBehind = keepCopy(nested);
     await install(dir);
     expect(await file(rootPkgJson).json()).toMatchObject({ version: "1.0.1" });
-    expect(existsSync(nested)).toBeTrue();
+    leftBehind();
 
     const { stdout, stderr, exitCode } = await prune(dir);
     expect(out(stdout)).toMatchInlineSnapshot(`
@@ -3218,6 +3232,61 @@ test.concurrent("hoisted: a nested copy of a link: dependency is removed when th
   expect(await file(join(dir, "linked", "package.json")).json()).toStrictEqual({ name: "linked", version: "1.0.0" });
 });
 
+// Behind a workspace's `node_modules` that is a link to the root's are the root's packages, not the workspace's.
+test.concurrent("hoisted: a workspace node_modules that is a link to the root's is not pruned", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: { dependencies: { "no-deps": "2.0.0" } },
+    packages: { a: { dependencies: { "a-dep": "1.0.1" } } },
+  });
+  const nm = join(dir, "node_modules");
+  const installed = readdirSync(nm).toSorted();
+  expect(installed).toContain("a-dep");
+  symlinkSync(nm, join(dir, "packages", "a", "node_modules"), "junction");
+
+  const { stdout, stderr, exitCode } = await prune(dir, "--linker", "hoisted");
+  expect(stderr).toBe("");
+  expect(lines(stdout).at(-1)).toContain("(nothing to prune)");
+  expect(readdirSync(nm).toSorted()).toEqual(installed);
+  expect(exitCode).toBe(0);
+});
+
+// `c` is self-contained and depends on its sibling `b`. `b` has a tree below `c` for the version that cannot
+// hoist into `c`, and one below the root for the version the root does not provide. Both open packages/b.
+test.concurrent("hoisted: a workspace that owns two trees keeps the rows of both", async () => {
+  const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+  await writeWorkspaces(dir, packageJson, {
+    root: {
+      workspaces: { packages: ["packages/*"], selfContained: ["packages/c"] },
+      dependencies: { "no-deps": "1.0.0" },
+    },
+    packages: {
+      b: { dependencies: { "no-deps": "2.0.0", "what-bin": "1.0.0" } },
+      c: { dependencies: { b: "workspace:*", "no-deps": "2.0.0", "what-bin": "1.5.0" } },
+    },
+  });
+  await install(dir, "--linker", "hoisted");
+  const version = async (...path: string[]) => (await file(join(dir, ...path, "package.json")).json()).version;
+  const layout = async () => ({
+    root: [await version("node_modules", "no-deps"), await version("node_modules", "what-bin")],
+    b: [
+      await version("packages", "b", "node_modules", "no-deps"),
+      await version("packages", "b", "node_modules", "what-bin"),
+    ],
+    c: [
+      await version("packages", "c", "node_modules", "no-deps"),
+      await version("packages", "c", "node_modules", "what-bin"),
+    ],
+  });
+  const installed = { root: ["1.0.0", "1.0.0"], b: ["2.0.0", "1.0.0"], c: ["2.0.0", "1.5.0"] };
+  expect(await layout()).toStrictEqual(installed);
+
+  const { stdout, stderr, exitCode } = await prune(dir);
+  expect(stderr).toBe("");
+  expect(lines(stdout).at(-1)).toContain("(nothing to prune)");
+  expect(await layout()).toStrictEqual(installed);
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("hoisted: a nested copy left behind by an override to a tarball is removed", async () => {
   const dir = await setup({ name: "foo", dependencies: { "no-deps": "2.0.0", "one-dep": "1.0.0" } });
   const nm = join(dir, "node_modules");
@@ -3233,10 +3302,11 @@ test.concurrent("hoisted: a nested copy left behind by an override to a tarball 
       overrides: { "no-deps": copyTarball(dir, "no-deps", "2.0.0") },
     }),
   );
+  const leftBehind = keepCopy(nested);
   await install(dir);
   expect(await lock(dir)).not.toContain('"one-dep/no-deps"');
   expect(await lock(dir)).toContain("no-deps-2.0.0.tgz");
-  expect(existsSync(join(nested, "package.json"))).toBeTrue();
+  leftBehind();
 
   const { stdout, stderr, exitCode } = await prune(dir);
   expect(stderr).not.toContain("warn:");

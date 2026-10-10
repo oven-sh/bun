@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
-import { existsSync, readdirSync } from "fs";
+import { existsSync, lstatSync, readdirSync } from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import { join, relative } from "path";
@@ -533,6 +533,39 @@ it.concurrent("bun remove -F edits only the selected workspace", async () => {
   expect(await file(join(String(dir), "packages", "api", "package.json")).json()).toStrictEqual({ name: "api" });
   expect(await file(join(String(dir), "packages", "web", "package.json")).text()).toBe(WORKSPACE("web"));
   expect(await file(join(String(dir), "package.json")).text()).toBe(MONOREPO_ROOT);
+  expect(exitCode).toBe(0);
+});
+
+// The workspace's own copy is a row of bun.lock until the remove. After it the workspace resolves the root's.
+it.concurrent("bun remove in a workspace removes the copy in the workspace's node_modules", async () => {
+  using dir = tempDir("bun-remove-nested", {
+    "dep-1/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+    "dep-2/package.json": JSON.stringify({ name: "dep", version: "2.0.0" }),
+    "package.json": JSON.stringify({
+      name: "root",
+      workspaces: ["packages/*"],
+      dependencies: { dep: "file:./dep-1" },
+    }),
+    "packages/api/package.json": JSON.stringify({ name: "api", dependencies: { dep: "file:../../dep-2" } }),
+  });
+  const versionIn = async (...folder: string[]) =>
+    (await file(join(String(dir), ...folder, "node_modules", "dep", "package.json")).json()).version;
+
+  {
+    const { stderr, exitCode } = await run(String(dir), "install", "--linker", "hoisted");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+  expect({ root: await versionIn(), api: await versionIn("packages", "api") }).toStrictEqual({
+    root: "1.0.0",
+    api: "2.0.0",
+  });
+
+  const { stderr, exitCode } = await remove(join(String(dir), "packages", "api"), "dep", "--linker", "hoisted");
+  expect(stderr).not.toContain("error:");
+  expect(() => lstatSync(join(String(dir), "packages", "api", "node_modules", "dep"))).toThrow();
+  expect(await versionIn()).toBe("1.0.0");
+  expect(await file(join(String(dir), "packages", "api", "package.json")).json()).toStrictEqual({ name: "api" });
   expect(exitCode).toBe(0);
 });
 

@@ -856,6 +856,7 @@ pub fn install_with_manager(
         get_workspace_filters(manager, original_cwd)?;
     // `workspace_filters` drops at end of scope
 
+    let mut linked_hoisted = false;
     let install_summary: PackageInstallSummary = 'install_summary: {
         if !manager.options.do_.install_packages() {
             break 'install_summary PackageInstallSummary::default();
@@ -882,7 +883,8 @@ pub fn install_with_manager(
                 },
 
                 NodeLinker::Hoisted => {
-                    let summary = install_hoisted_packages(
+                    linked_hoisted = true;
+                    break 'install_summary install_hoisted_packages(
                         manager,
                         ctx,
                         &workspace_filters,
@@ -890,15 +892,6 @@ pub fn install_with_manager(
                         log_level,
                         None,
                     )?;
-                    if summary.fail == 0
-                        && matches!(
-                            manager.subcommand,
-                            Subcommand::Dedupe | Subcommand::Audit | Subcommand::Update
-                        )
-                    {
-                        crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean);
-                    }
-                    break 'install_summary summary;
                 }
 
                 NodeLinker::Isolated => {
@@ -937,6 +930,30 @@ pub fn install_with_manager(
                     packages_len_before_install.min(manager.lockfile.packages.len()),
                 )?
             };
+
+    // A run that verified every row and moved nothing in the lockfile has no copy to remove.
+    let removed_copies = if linked_hoisted
+        && install_summary.fail == 0
+        && (install_summary.changed > 0
+            || did_meta_hash_change
+            || had_any_diffs
+            || matches!(
+                manager.subcommand,
+                Subcommand::Dedupe | Subcommand::Audit | Subcommand::Update
+            )) {
+        let (removed, failed) = crate::prune::remove_collapsed_copies(
+            manager,
+            &lockfile_before_clean,
+            &install_summary,
+            &workspace_filters,
+        );
+        if failed > 0 {
+            manager.any_failed_to_install = true;
+        }
+        removed
+    } else {
+        0
+    };
 
     // It's unnecessary work to re-save the lockfile if there are no changes.
     // A loaded text lockfile is never re-saved just to bump its version: an
@@ -988,6 +1005,7 @@ pub fn install_with_manager(
             &install_summary,
             did_meta_hash_change,
             requests_removed_from_lockfile,
+            removed_copies,
             log_level,
         )?;
     }
@@ -1137,6 +1155,7 @@ fn print_install_summary(
     install_summary: &PackageInstallSummary,
     did_meta_hash_change: bool,
     requests_removed_from_lockfile: u32,
+    removed_copies: u32,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
     let _flush_guard = Output::flush_guard();
@@ -1167,6 +1186,7 @@ fn print_install_summary(
             this.summary.add = 0;
             this.summary.update = 0;
         }
+        this.summary.remove = this.summary.remove.max(removed_copies);
 
         if print_removed {
             print_removed_rows(this);

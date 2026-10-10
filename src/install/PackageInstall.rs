@@ -55,6 +55,8 @@ pub struct Summary {
     pub(crate) success: u32,
     pub(crate) skipped: u32,
     pub(crate) successfully_installed: Option<DynamicBitSet>,
+    /// Rows the hoisted linker installed, without the kinds it installs again on every run (`resolution::Tag::is_reinstalled_every_run`).
+    pub(crate) changed: u32,
 
     /// Package name hash -> number of scripts skipped.
     /// Multiple versions of the same package might add to the count, and each version

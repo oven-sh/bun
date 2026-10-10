@@ -81,7 +81,7 @@ describe.concurrent("WebKit dbdca7545d upgrade", () => {
   });
 
   test("Intl.DurationFormat keeps the minus sign of a fraction between -1 and 0 (501d1f661f9)", () => {
-    const format = (options: Intl.DurationFormatOptions, duration: Intl.DurationInput) =>
+    const format = (options: Intl.DurationFormatOptions, duration: Parameters<Intl.DurationFormat["format"]>[0]) =>
       new Intl.DurationFormat("en", options).format(duration);
     expect(format({ seconds: "numeric" }, { milliseconds: -500 })).toBe("-0.5");
     expect(format({ seconds: "2-digit" }, { milliseconds: -500 })).toBe("-00.5");

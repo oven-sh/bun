@@ -291,12 +291,14 @@ describe.concurrent("bun check", () => {
     expect(note(whole.stderr)).toEqual([]);
     const [, left] = /, checked (\d+ files)/.exec(whole.stderr)!;
     const stopped = await Promise.all(
-      [
-        { "b.ts": `const = 1;\n` },
-        { "b.ts": `import a from "./a" assert { type: "json" };\nexport { a };\n` },
-        { "tsconfig.json": config({ baseUrl: "." }) },
-        { "tsconfig.json": config({ noLib: true }) },
-      ].map(more => checkedWith(more)),
+      (
+        [
+          { "b.ts": `const = 1;\n` },
+          { "b.ts": `import a from "./a" assert { type: "json" };\nexport { a };\n` },
+          { "tsconfig.json": config({ baseUrl: "." }) },
+          { "tsconfig.json": config({ noLib: true }) },
+        ] as Record<string, string>[]
+      ).map(more => checkedWith(more)),
     );
     expect(
       stopped.map(it => ({
@@ -456,7 +458,7 @@ describe.concurrent("bun check", () => {
     // scripts/update-typescript-libs.ts writes the file.
     test.skipIf(!typescript7)("are those of TypeScript 7, byte for byte", () => {
       const bundle = readFileSync(join(import.meta.dir, "../../../src/runtime/cli/typescript_libs.bin"));
-      const dictionaries = [undefined, "lib.es5.d.ts", "lib.dom.d.ts"].map(
+      const dictionaries = ([undefined, "lib.es5.d.ts", "lib.dom.d.ts"] as const).map(
         name => name && readFileSync(join(typescript7!, name)),
       );
       const bundled = Array.from({ length: bundle.readUInt32LE(0) }, (_, i) => {

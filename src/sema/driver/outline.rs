@@ -10,20 +10,20 @@ use crate::{installed_major, lacks_its_packages};
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::config::{self, Roots};
-use bun_sema::program::types_of;
+use bun_sema::program::{libs_referenced_by, types_of};
 use bun_sema::resolve::{Host, ancestors, inside, is_same_path};
 use bun_sema::session::Session;
 use bun_sema::util::FxHashMap;
 use bun_threading::Guarded;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 pub struct Outline {
     /// In the checker's format.
     pub config_path: Vec<u8>,
     /// `lib`, or else what `target` stands for: the `N` of each `lib.N.d.ts`. What these refer to is not among them.
     pub libs: Vec<Vec<u8>>,
-    /// The entries of `types`, with the packages that a `*` stands for. All are installed.
-    pub types: Vec<Vec<u8>>,
+    /// The entries of `types`, with the packages that a `*` stands for, each with the file that it is resolved to.
+    pub types: Vec<(Vec<u8>, Vec<u8>)>,
     /// `checkJs`
     pub checks_javascript: bool,
 }
@@ -43,7 +43,7 @@ pub struct Outlines {
     /// By directory.
     nearest: Guarded<FxHashMap<Vec<u8>, Option<Vec<u8>>>>,
     /// By configuration file. `None`: it cannot be read.
-    projects: Guarded<FxHashMap<Vec<u8>, Option<Arc<Project>>>>,
+    projects: Guarded<FxHashMap<Vec<u8>, Arc<OnceLock<Option<Arc<Project>>>>>>,
 }
 
 impl Outlines {
@@ -71,6 +71,11 @@ impl Outlines {
             let above = self.nearest_to(ancestors(dirname::<Posix>(&config)).nth(1)?)?;
             config = above;
         }
+    }
+
+    /// The `N` of each `/// <reference lib="N" />` in the file at `path`, which is of `Outline::types`.
+    pub fn libs_referenced_by(&self, path: &[u8]) -> Vec<Vec<u8>> {
+        libs_referenced_by(&self.asking(false), path)
     }
 
     fn asking(&self, lists: bool) -> Asking<'_> {
@@ -128,14 +133,14 @@ impl Outlines {
     }
 
     fn load(&self, config: &[u8]) -> Option<Arc<Project>> {
-        if let Some(known) = self.projects.lock().get(config) {
-            return known.clone();
-        }
-        // Two threads can read it at the same time: both find the same.
-        let project = self.read(config).map(Arc::new);
-        let mut projects = self.projects.lock();
-        projects.insert(config.to_vec(), project.clone());
-        project
+        let known = self.projects.lock().get(config).cloned();
+        let project = known.unwrap_or_else(|| {
+            let mut projects = self.projects.lock();
+            projects.entry(config.to_vec()).or_default().clone()
+        });
+        // One thread reads it. The others wait: they have nothing to lint before they know.
+        let read = || self.read(config).map(Arc::new);
+        project.get_or_init(read).clone()
     }
 
     fn read(&self, config: &[u8]) -> Option<Project> {

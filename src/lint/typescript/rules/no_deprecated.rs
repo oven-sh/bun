@@ -296,6 +296,9 @@ impl NoDeprecated {
         let name = name.bytes();
         let mut node = e.ts_node();
         let reason = match e.parent() {
+            // tsgolint takes for a declaration whatever name has an arrow function or a parameter for its parent:
+            // what the function returns, and a default value.
+            Node::Func(_) | Node::Param(_) if cx.language().is_oxlint && !e.is_parenthesized() => return,
             Node::Expr(parent) => {
                 match parent.kind() {
                     // `checkMemberExpression` handles it.

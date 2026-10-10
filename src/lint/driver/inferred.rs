@@ -8,7 +8,7 @@
 //! Until then the options of the project stand for its types: `environments`.
 
 use crate::run::Environment;
-use bun_lint::language::Global;
+use bun_lint::language::{Global, LanguageOptions};
 use bun_lint::linter::globals::{
     InferredGlobal, InferredGlobals, ProgramGlobals, Tables as Whose, environment,
 };
@@ -44,9 +44,20 @@ struct Program {
     declared: OnceLock<Option<Vec<InferredGlobal>>>,
 }
 
-/// The environments whose tables stand for the libraries and the packages of types of a project. What has none is left
-/// to the types: `scripthost`, a part of an edition (`es2015.promise`), any other package.
-fn environments(outline: &Outline) -> Vec<Vec<u8>> {
+/// The environment that stands for a package of types.
+fn environment_of(package: &[u8]) -> Option<&[u8]> {
+    match package {
+        // `bun` takes `node` in.
+        b"node" | b"bun" | b"bun-types" => Some(b"node"),
+        b"jest" | b"mocha" | b"jasmine" | b"jquery" => Some(package),
+        b"vitest/globals" => Some(b"vitest"),
+        _ => None,
+    }
+}
+
+/// The environments whose tables stand for libraries and for the packages of types of a project. They have what is only
+/// a value, which the table of the libraries has not: `window`, `parseInt`. What has none is left to the types.
+fn environments(libs: &[Vec<u8>], outline: &Outline) -> Vec<Vec<u8>> {
     let mut all: Vec<Vec<u8>> = Vec::new();
     let mut add = |name: &[u8]| {
         // The table of an edition has the earlier ones.
@@ -54,7 +65,7 @@ fn environments(outline: &Outline) -> Vec<Vec<u8>> {
             all.push(name.to_vec());
         }
     };
-    for lib in &outline.libs {
+    for lib in libs {
         // What `target` stands for without `lib`: the edition, and a browser.
         let (edition, is_full): (&[u8], bool) = match &lib[..] {
             b"" => (b"es5", true),
@@ -76,21 +87,38 @@ fn environments(outline: &Outline) -> Vec<Vec<u8>> {
         }
     }
     for package in &outline.types {
-        match &package[..] {
-            // `bun` takes `node` in.
-            b"node" | b"bun" | b"bun-types" => add(b"node"),
-            b"jest" | b"mocha" | b"jasmine" | b"jquery" => add(package),
-            b"vitest/globals" => add(b"vitest"),
-            _ => {}
+        if let Some(name) = environment_of(&package.0) {
+            add(name);
         }
     }
     all
 }
 
 impl Program {
-    fn new(outline: Arc<Outline>) -> Program {
-        let mut chosen: Vec<InferredGlobal> = Vec::new();
-        for name in environments(&outline) {
+    fn new(outline: Arc<Outline>, outlines: &Outlines) -> Program {
+        // `node` refers to an edition of its own.
+        let known = (outline.types.iter()).filter(|it| environment_of(&it.0).is_some());
+        let referenced = known.flat_map(|it| outlines.libs_referenced_by(&it.1));
+        let libs: Vec<Vec<u8>> = outline.libs.iter().cloned().chain(referenced).collect();
+        // typescript-eslint's table: each library, parts of editions too, with those that it refers to.
+        let mut language = LanguageOptions::default();
+        let name_in_table = |lib: &Vec<u8>| -> Box<[u8]> {
+            match lib.is_empty() {
+                true => b"lib"[..].into(),
+                false => lib[..].into(),
+            }
+        };
+        language.lib = Some(libs.iter().map(name_in_table).collect());
+        let values = language.lib_variables().filter(|it| it.2);
+        let mut chosen: Vec<InferredGlobal> = values
+            .map(|it| InferredGlobal {
+                name: it.0.into(),
+                is_value: true,
+                is_type: it.1,
+                is_writable: false,
+            })
+            .collect();
+        for name in environments(&libs, &outline) {
             let variables = environment(&name, Whose::Today).into_iter().flatten();
             chosen.extend(
                 variables
@@ -154,7 +182,7 @@ impl<'e> Inferred<'e> {
             Some(&at) => at,
             None => {
                 let config = outline.config_path.clone();
-                let at = by_options.programs.push(Program::new(outline));
+                let at = (by_options.programs).push(Program::new(outline, &by_options.outlines));
                 known.insert(config, at);
                 at
             }

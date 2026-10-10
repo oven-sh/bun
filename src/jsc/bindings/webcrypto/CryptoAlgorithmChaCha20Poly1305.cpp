@@ -158,14 +158,8 @@ void CryptoAlgorithmChaCha20Poly1305::importKey(CryptoKeyFormat format, KeyData&
             exceptionCallback(DataError, "Invalid JWK \"use\" Parameter"_s);
             return;
         }
-        if (hasDuplicateJwkKeyOps(jwk.key_ops)) {
-            exceptionCallback(DataError, "Duplicate key operation"_s);
+        if (!validateJwkKeyOps(jwk, usages, exceptionCallback))
             return;
-        }
-        if (jwk.key_ops && ((jwk.usages & usages) != usages)) {
-            exceptionCallback(DataError, "Key operations and usage mismatch"_s);
-            return;
-        }
         if (jwk.ext && !jwk.ext.value() && extractable) {
             exceptionCallback(DataError, "JWK \"ext\" Parameter and extractable mismatch"_s);
             return;
@@ -215,7 +209,7 @@ void CryptoAlgorithmChaCha20Poly1305::exportKey(CryptoKeyFormat format, Ref<Cryp
         jwk.kty = "oct"_s;
         jwk.k = Bun::base64URLEncodeToString(rawKey.key());
         jwk.alg = String(ALG);
-        jwk.key_ops = rawKey.usages();
+        jwk.key_ops = toJwkKeyOps(rawKey.usages());
         jwk.ext = rawKey.extractable();
         result = WTF::move(jwk);
         break;

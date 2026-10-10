@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, withoutAggressiveGC } from "harness";
+import { Readable } from "node:stream";
 import vm from "node:vm";
 
 const RealStringDecoder = require("string_decoder").StringDecoder;
@@ -264,6 +265,36 @@ it("normalizes the encoding name like Node", () => {
     "binary": "latin1",
     "default": "utf8",
   });
+});
+
+// Node's normalizeEncoding() maps the primitive empty string to utf8, like undefined and null.
+// Buffer.isEncoding("") is still false, so the shared encoding parser cannot decide this.
+it("treats an empty-string encoding as utf8, like Node", () => {
+  const decoder = new RealStringDecoder("");
+  expect(decoder.write(Buffer.from([0xe2, 0x82]))).toBe("");
+  expect({
+    encoding: decoder.encoding,
+    decoded: decoder.end(Buffer.from([0xac])),
+    calledWithoutNew: new FakeStringDecoderCall("").encoding,
+    subclass: new SubStringDecoder("").encoding,
+    nullEncoding: new RealStringDecoder(null).encoding,
+  }).toEqual({
+    encoding: "utf8",
+    decoded: "€",
+    calledWithoutNew: "utf8",
+    subclass: "utf8",
+    nullEncoding: "utf8",
+  });
+
+  // Readable#setEncoding constructs a StringDecoder from its argument.
+  const readable = new Readable({ read() {} });
+  readable.setEncoding("");
+  expect(readable.readableEncoding).toBe("utf8");
+
+  // Only the primitive counts: Node rejects a String object and every other unknown name.
+  for (const encoding of [new String(""), " ", "x", 0, false]) {
+    expect(() => new RealStringDecoder(encoding)).toThrow(expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }));
+  }
 });
 
 // A call resolved through a binding that a closure captures (or through a module binding) is

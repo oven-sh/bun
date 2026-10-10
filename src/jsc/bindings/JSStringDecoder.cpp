@@ -576,7 +576,9 @@ static JSStringDecoder* createDecoder(JSC::JSGlobalObject* lexicalGlobalObject, 
     }
 
     auto encoding = BufferEncodingType::utf8;
-    if (!jsEncoding.isUndefinedOrNull()) {
+    // Node's normalizeEncoding maps undefined, null, and the primitive empty string to utf8.
+    const bool isEmptyString = jsEncoding.isString() && !asString(jsEncoding)->length();
+    if (!jsEncoding.isUndefinedOrNull() && !isEmptyString) {
         std::optional<BufferEncodingType> opt = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, jsEncoding);
         RETURN_IF_EXCEPTION(throwScope, nullptr);
         if (opt.has_value()) {

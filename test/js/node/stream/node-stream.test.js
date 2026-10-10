@@ -1,7 +1,7 @@
 import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdirSync } from "harness";
-import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
+import { createReadStream, createWriteStream, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
 import { finished as finishedP } from "node:stream/promises";
@@ -197,6 +197,22 @@ describe("createReadStream", () => {
       expect(data).toBe(btoa(testData));
       done();
     });
+  });
+
+  // Node's assertEncoding only checks a truthy encoding, so an empty string means no encoding.
+  // createWriteStream parses its options argument with the same function.
+  it("should treat an empty string options argument as no encoding", async () => {
+    using dir = tempDir("stream-empty-encoding", { "in.txt": "h\u00e9" });
+
+    const readStream = createReadStream(join(String(dir), "in.txt"), "");
+    const chunks = await Array.fromAsync(readStream);
+    expect(readStream.readableEncoding).toBeNull();
+    expect(Buffer.concat(chunks).toString("hex")).toBe("68c3a9");
+
+    const writeStream = createWriteStream(join(String(dir), "out.txt"), "");
+    writeStream.end("h\u00e9");
+    await finishedP(writeStream);
+    expect(readFileSync(join(String(dir), "out.txt"), "hex")).toBe("68c3a9");
   });
 
   it("should emit readable on end", async () => {

@@ -140,7 +140,10 @@ pub(crate) fn read_jpeg(bytes: &[u8]) -> Orientation {
     Orientation::Normal
 }
 
-fn parse_tiff(tiff: &[u8]) -> Option<Orientation> {
+/// IFD0's Orientation from a bare TIFF header — the JPEG path reaches this
+/// through the APP1 payload, `codec_raw` hands it a whole file, since a
+/// camera raw is a TIFF and carries the tag in the same place.
+pub(crate) fn parse_tiff(tiff: &[u8]) -> Option<Orientation> {
     if tiff.len() < 8 {
         return None;
     }

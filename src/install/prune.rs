@@ -1879,13 +1879,29 @@ fn store_link_target(dir: &Dir, name: &[u8]) -> Option<Box<[u8]>> {
     let z = zname(name);
     let mut buf = bun_paths::path_buffer_pool::get();
     let len = sys::readlinkat(dir.fd(), ZStr::from_slice_with_nul(&z), buf.as_mut_slice()).ok()?;
-    let mut components = strings::tokenize_any(&buf.as_slice()[..len], b"/\\");
+    store_entry_of_link_target(&buf.as_slice()[..len]).map(Into::into)
+}
+
+// Through `.bun/<entry>` from an importer or in a Windows junction; `../../<entry>/node_modules/<name>` between two entries.
+fn store_entry_of_link_target(target: &[u8]) -> Option<&[u8]> {
+    let mut components = strings::tokenize_any(target, b"/\\").peekable();
+    let mut leads_with_parents = components.peek().is_some_and(|first| *first == b"..");
     while let Some(component) = components.next() {
         if component == b".bun" {
             return components
                 .next()
-                .filter(|entry| strings::contains_char(entry, b'@'))
-                .map(Into::into);
+                .filter(|entry| strings::contains_char(entry, b'@'));
+        }
+        if component == b".." {
+            continue;
+        }
+        if core::mem::take(&mut leads_with_parents)
+            && strings::contains_char(component, b'@')
+            && components
+                .peek()
+                .is_some_and(|next| *next == b"node_modules")
+        {
+            return Some(component);
         }
     }
     None
@@ -1958,20 +1974,22 @@ fn is_dangling(dir: &Dir, name: &[u8]) -> bool {
     }
 }
 
-fn unlink_links(dir: &Dir, should_unlink: &dyn Fn(&Dir, &[u8], &[u8]) -> bool) {
+/// Returns whether a link was removed.
+fn unlink_links(dir: &Dir, should_unlink: &dyn Fn(&Dir, &[u8], &[u8]) -> bool) -> bool {
     let mut alias = Vec::new();
+    let mut unlinked = false;
     for (name, kind) in read_entries(dir) {
         match kind {
             EntryKind::SymLink => {
                 if should_unlink(dir, &name, &name) {
-                    let _ = remove_link(dir, &name);
+                    unlinked |= remove_link(dir, &name).is_ok();
                 }
             }
             EntryKind::Directory if name.first() == Some(&b'@') => {
                 let Ok(scope_dir) = dir.open_at(&name) else {
                     continue;
                 };
-                let mut unlinked = false;
+                let mut unlinked_from_scope = false;
                 for (inner, inner_kind) in read_entries(&scope_dir) {
                     if inner_kind != EntryKind::SymLink {
                         continue;
@@ -1981,15 +1999,52 @@ fn unlink_links(dir: &Dir, should_unlink: &dyn Fn(&Dir, &[u8], &[u8]) -> bool) {
                     alias.push(b'/');
                     alias.extend_from_slice(&inner);
                     if should_unlink(&scope_dir, &alias, &inner) {
-                        unlinked |= remove_link(&scope_dir, &inner).is_ok();
+                        unlinked_from_scope |= remove_link(&scope_dir, &inner).is_ok();
                     }
                 }
                 drop(scope_dir);
-                if unlinked {
+                if unlinked_from_scope {
                     rmdir(dir, &name);
                 }
+                unlinked |= unlinked_from_scope;
             }
             _ => {}
+        }
+    }
+    unlinked
+}
+
+// An install that skips a dependency (`--omit`, `--os`, `--cpu`) still installs its dependent, without the link to it.
+fn unlink_removed_dependencies(store: &Dir) {
+    let points_at_removed_entry =
+        |dir: &Dir, name: &[u8]| is_dangling(dir, name) && store_link_target(dir, name).is_some();
+    for (entry, kind) in read_entries(store) {
+        if kind != EntryKind::Directory || &*entry == b"node_modules" {
+            continue;
+        }
+        let Some(node_modules) = open_real_subdir(store, &entry)
+            .and_then(|entry_dir| open_real_subdir(&entry_dir, b"node_modules"))
+        else {
+            continue;
+        };
+        unlink_links(&node_modules, &|dir, _, name| {
+            points_at_removed_entry(dir, name)
+        });
+
+        // `Installer::symlink_dependencies` links a dependency with the package's own name inside the package.
+        let (package, _) = split_store_key(&entry);
+        let Some(package_dir) = descend(&node_modules, &package) else {
+            continue;
+        };
+        let Some(nested) = open_real_subdir(&package_dir, b"node_modules") else {
+            continue;
+        };
+        let unlinked = unlink_links(&nested, &|dir, alias, name| {
+            alias == &*package && points_at_removed_entry(dir, name)
+        });
+        drop(nested);
+        if unlinked {
+            rmdir(&package_dir, b"node_modules");
         }
     }
 }
@@ -2061,10 +2116,13 @@ fn housekeeping(plan: &Plan, layout: Layout, manager: &PackageManager) {
                 if layout != Layout::Isolated {
                     continue;
                 }
-                let Some(hidden) = open_real_subdir(plan.dir(idx), b"node_modules") else {
-                    continue;
-                };
-                unlink_links(&hidden, &|dir, _, name| is_dangling(dir, name));
+                if let Some(hidden) = open_real_subdir(plan.dir(idx), b"node_modules") {
+                    unlink_links(&hidden, &|dir, _, name| is_dangling(dir, name));
+                }
+                // The planner already read `plan.dir(idx)` to its end.
+                if let Ok(store) = Dir::open(&folder.path) {
+                    unlink_removed_dependencies(&store);
+                }
             }
             FolderKind::NodeModules => {
                 if let (Layout::Isolated, Some(direct)) = (layout, &folder.direct) {

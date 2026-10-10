@@ -1,0 +1,285 @@
+//! `bun lint`: lints a project with the rules of ESLint and typescript-eslint. All of it is in
+//! `bun_lint_driver`. What is here is what that takes from the process: the arguments, the
+//! terminal, TypeScript's libraries, a way to run a configuration file that is a program, and
+//! (`lint_js.rs`) rules that are written in JavaScript.
+
+use bstr::BStr;
+
+use bun_core::{Global, Output, ZStr};
+use bun_lint_driver::cli::{Options, UsageError};
+use bun_lint_driver::{Environment, Outcome, Script, Stream, bunfig};
+use bun_sys::File;
+
+use super::check_command::working_directory;
+use super::command::{ContextData, Tag};
+
+pub(crate) struct LintCommand;
+
+/// For the help.
+pub(crate) use bun_lint_driver::cli::PARAMS;
+
+/// Whether `bun lint --run-eslint-tests` exists, for `test/cli/lint/conformance.test.ts`. A release
+/// build has none of it.
+const HAS_TEST_RUNNER: bool = bun_core::Environment::IS_CANARY || bun_core::Environment::IS_DEBUG;
+
+fn change_directory(cwd: &[u8]) {
+    // The copy is freed here: `exit` does not return, so nothing would free it afterwards.
+    let changed = bun_sys::chdir(&bun_core::ZBox::from_bytes(cwd));
+    if let bun_sys::Result::Err(err) = changed {
+        Output::err(
+            err,
+            "Could not change directory to \"{}\"",
+            (BStr::new(cwd),),
+        );
+        Global::exit(1);
+    }
+}
+
+/// `--cwd` among the flags of `bun`, which precede `command`.
+fn cwd_before(command: &[u8]) -> Option<&'static [u8]> {
+    let mut found = None;
+    let mut args = bun_core::argv().into_iter();
+    while let Some(arg) = args.next() {
+        if arg == command {
+            break;
+        }
+        let given = match arg.strip_prefix(b"--cwd") {
+            Some(b"") => args.next(),
+            Some(rest) => rest.strip_prefix(b"="),
+            None => None,
+        };
+        found = given.or(found);
+    }
+    found
+}
+
+/// `--config=<path>` among the flags of `bun`, which precede `command`. Without the `=` the path is taken for the command.
+fn bunfig_before(command: &[u8]) -> Option<&'static [u8]> {
+    let flags = (bun_core::argv().into_iter()).take_while(|arg| *arg != command);
+    flags
+        .filter_map(|arg| {
+            arg.strip_prefix(b"--config=")
+                .or_else(|| arg.strip_prefix(b"-c="))
+        })
+        .last()
+}
+
+/// What bunfig.toml says to `command`, which `read` reads. `None`: nothing, or there is no such file.
+/// A file that cannot be used ends the process. It is looked for in the working directory: call this after `--cwd`.
+pub(crate) fn defaults_of_bunfig<T>(
+    ctx: &mut ContextData,
+    tag: Tag,
+    command: &[u8],
+    read: bunfig::Read<T>,
+) -> Option<T> {
+    let mut defaults = None;
+    let mut tool = |file: &bun_ast::Expr| match read(file) {
+        Ok(read) => {
+            defaults = read;
+            Ok(())
+        }
+        Err(refusal) => Err((refusal.at, refusal.message)),
+    };
+    let path = bunfig_before(command);
+    if let Err(err) = bun_bunfig::load_config_for_tool(tag, path, ctx, Some(&mut tool)) {
+        Output::err(err, "failed to load bunfig", ());
+        Global::exit(2);
+    }
+    defaults
+}
+
+/// `--disallow-code-generation-from-strings` among the flags of `bun`, which precede `command`: it holds for the plugins and
+/// the configuration files.
+fn disallow_code_generation_before(command: &[u8]) {
+    let argv = bun_core::argv().to_vec();
+    let flags = argv.iter().take_while(|it| it.as_bytes() != command);
+    super::arguments::disallow_code_generation_from_strings_as_compiled(
+        &flags.copied().collect::<Vec<_>>(),
+    );
+}
+
+/// Runs `script` with this executable, to its end.
+fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
+    use crate::api::bun::process::sync::{Options as SpawnOptions, SyncStdio, spawn};
+    let Ok(exe) = bun_core::self_exe_path() else {
+        return Err(b"Could not find the path of the running executable.".to_vec());
+    };
+    let mut variables = bun_dotenv::Loader::init();
+    let read = variables.load_process();
+    for name in Script::NOT_INHERITED {
+        variables.map.remove(name);
+    }
+    let Ok(envp) = read.and_then(|()| variables.map.create_null_delimited_env_map()) else {
+        return Err(b"Could not start a process: out of memory".to_vec());
+    };
+    let mut argv: Vec<Box<[u8]>> = vec![
+        Box::from(exe.as_bytes()),
+        // What is not installed is missing: nothing is fetched to read a configuration.
+        Box::from(&b"--no-install"[..]),
+        // It ends with this process, however that ends: a configuration can wait, or spin, for ever.
+        Box::from(&b"--no-orphans"[..]),
+    ];
+    use bun_core::CodeGenerationFromStrings as Level;
+    match bun_core::code_generation_from_strings() {
+        Level::Allowed => {}
+        Level::DisallowedLikeNode => {
+            argv.push(Box::from(&b"--disallow-code-generation-from-strings"[..]));
+        }
+        Level::Disallowed => {
+            argv.push(Box::from(
+                &b"--disallow-code-generation-from-strings=strict"[..],
+            ));
+        }
+    }
+    argv.push(Box::from(&b"-e"[..]));
+    argv.push(Box::from(script.source.concat().as_bytes()));
+    argv.extend(script.arguments.iter().map(|it| Box::<[u8]>::from(*it)));
+    let mut options = SpawnOptions {
+        argv,
+        stdout: SyncStdio::Buffer,
+        stderr: SyncStdio::Buffer,
+        stdin: SyncStdio::Ignore,
+        cwd: Box::<[u8]>::from(script.cwd),
+        envp: Some(envp.as_ptr()),
+        #[cfg(windows)]
+        windows: crate::api::bun::process::WindowsOptions {
+            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
+                None, None,
+            )),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let spawned = match script.stdin {
+        b"" => spawn(&options),
+        input => match bun_sys::pipe() {
+            Ok([read, written]) => {
+                let (read, written) = (File::from_fd(read), File::from_fd(written));
+                // The process is not to have the end that is written to: it would wait for itself to close it.
+                #[cfg(unix)]
+                for end in [&read, &written] {
+                    let _ = bun_sys::set_close_on_exec(end.handle());
+                }
+                options.stdin = SyncStdio::Pipe(read.handle());
+                std::thread::scope(|scope| {
+                    scope.spawn(move || written.write_all(input));
+                    let spawned = spawn(&options);
+                    // Who still writes is told that nobody reads any more.
+                    drop(read);
+                    spawned
+                })
+            }
+            Err(error) => Ok(Err(error)),
+        },
+    };
+    match spawned {
+        Ok(Ok(result)) if result.is_ok() => Ok(result.stdout),
+        Ok(Ok(result)) => Err(result.stderr),
+        Ok(Err(err)) => Err([&b"Could not start a process: "[..], err.name()].concat()),
+        Err(err) => Err([&b"Could not start a process: "[..], err.name().as_bytes()].concat()),
+    }
+}
+
+/// Reports that the command line of `bun <command>` cannot be used.
+pub(crate) fn usage_error(command: &str, message: &[u8]) -> ! {
+    Output::err_generic("{}", (BStr::new(message),));
+    bun_core::note!("run 'bun {} --help' for more information", command);
+    // As ESLint.
+    Global::exit(2);
+}
+
+/// Calls `run` with what it takes from this process, prints what it returns, and exits.
+/// `command`: `lint` or `format`. `cwd`: its `--cwd`.
+pub(crate) fn run_and_exit(
+    command: &[u8],
+    cwd: Option<&[u8]>,
+    run: impl FnOnce(&Environment) -> Outcome,
+) -> ! {
+    disallow_code_generation_before(command);
+    if let Some(cwd) = cwd_before(command) {
+        change_directory(cwd);
+    }
+    if let Some(cwd) = cwd {
+        change_directory(cwd);
+    }
+    // One at a time: a process is started with state that threads share.
+    let turn = bun_threading::Guarded::new(());
+    let run_script = |script: &Script| {
+        let _turn = turn.lock();
+        run_script(script)
+    };
+    let js_engine = super::lint_js::Engines::default();
+    // `path.win32.resolve` asks for it where a path names another drive than its base.
+    bun_paths::fs::FileSystem::init(&working_directory());
+    let environment = Environment {
+        cwd: bun_lint_driver::from_native_path(&working_directory()),
+        stdout: Stream {
+            is_tty: Output::is_stdout_tty(),
+            colors: Output::enable_ansi_colors_stdout(),
+        },
+        stderr: Stream {
+            is_tty: Output::is_stderr_tty(),
+            colors: Output::enable_ansi_colors_stderr(),
+        },
+        is_ai_agent: Output::is_ai_agent(),
+        is_github_action: Output::is_github_action(),
+        libs: bun_sema_driver::Libs::Bundled(super::typescript_libs::BUNDLED),
+        run_script: &run_script,
+        js_engine: &js_engine,
+        version: Global::package_json_version.as_bytes(),
+        memory: super::lint_js::memory(),
+    };
+    let outcome = run(&environment);
+    // The report is the output. Everything else is printed separately.
+    let _ = Output::writer().write_all(&outcome.stdout);
+    let _ = Output::error_writer().write_all(&outcome.stderr);
+    Output::flush();
+    js_engine.end_all();
+    Global::exit(u32::from(outcome.exit_code));
+}
+
+impl LintCommand {
+    /// `args`: what follows `lint`.
+    pub(crate) fn exec(ctx: &mut ContextData, args: &[&ZStr]) -> ! {
+        let args: Vec<&[u8]> = args.iter().map(|arg| arg.as_bytes()).collect();
+        if HAS_TEST_RUNNER && let [b"--run-eslint-tests", rest @ ..] = &args[..] {
+            run_and_exit(b"lint", None, |environment| Outcome {
+                exit_code: u8::from(!bun_lint_driver::for_tests::run_eslint_tests(
+                    rest,
+                    environment,
+                )),
+                ..Outcome::default()
+            })
+        }
+        if HAS_TEST_RUNNER && let [b"--run-path-tests", rest @ ..] = &args[..] {
+            run_and_exit(b"lint", None, |_| {
+                let answers = bun_lint_driver::for_tests::run_path_tests(rest);
+                Outcome {
+                    exit_code: u8::from(answers.is_none()),
+                    stdout: answers.unwrap_or_default(),
+                    ..Outcome::default()
+                }
+            })
+        }
+        let options = match Options::parse(&args) {
+            Ok(options) => options,
+            Err(UsageError(message)) => run_and_exit(b"lint", None, |environment| {
+                bun_lint_driver::refuse_command_line(&message, environment)
+            }),
+        };
+        if options.help {
+            crate::cli::command::tag_print_help(Tag::LintCommand, true);
+            Global::exit(0);
+        }
+        run_and_exit(b"lint", options.cwd.as_deref(), |environment| {
+            let defaults = defaults_of_bunfig(ctx, Tag::LintCommand, b"lint", bunfig::lint);
+            match defaults.map(|defaults| Options::parse_over(defaults, &args)) {
+                None => bun_lint_driver::run(&options, environment),
+                Some(Ok(options)) => bun_lint_driver::run(&options, environment),
+                Some(Err(UsageError(message))) => {
+                    bun_lint_driver::refuse_command_line(&message, environment)
+                }
+            }
+        })
+    }
+}

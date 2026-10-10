@@ -302,10 +302,16 @@ pub(crate) fn inline_immediately_invoked_function_expressions(
 
         // If terminals have changed then blocks may have become newly unreachable.
         // Re-run minification of the graph (incl reordering instruction ids).
-        func.body.blocks = get_reverse_postordered_blocks(&func.body, &func.instructions);
+        match get_reverse_postordered_blocks(&func.body, &func.instructions) {
+            Ok(blocks) => func.body.blocks = blocks,
+            Err(invariant) => return env.record_diagnostic(invariant),
+        }
         mark_instruction_ids(&mut func.body, &mut func.instructions);
         mark_predecessors(&mut func.body);
-        merge_consecutive_blocks(func, &mut env.functions);
+        // There are no phis yet.
+        if let Err(invariant) = merge_consecutive_blocks(func, &mut env.functions) {
+            env.record_diagnostic(invariant);
+        }
     }
 }
 

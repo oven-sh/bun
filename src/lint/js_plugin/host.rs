@@ -1,0 +1,746 @@
+//! What the linter talks to: loads plugins, and runs their rules on a file.
+
+use super::engine::{Engine, Vm};
+use super::rules::{Configured, FileSettings, Plugin, Rule, Schema};
+use super::wire::{self, ask, call, result};
+use super::{ast, schema, scopes, tokens};
+use crate::ast::File;
+use crate::estree::Dialect;
+use crate::fix::Fix;
+use crate::linter::write_json;
+use crate::options::Json;
+use crate::rule::Kind;
+use crate::selector::Selector;
+use crate::span::Span;
+use bun_core::printer::json_stringify;
+use bun_core::strings::Utf16OffsetTable;
+use bun_threading::Guarded;
+use rustc_hash::FxHashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// ESLint's `context.report()`.
+#[derive(Clone, Debug)]
+pub struct Report {
+    /// The index of the rule among those that were run.
+    pub rule: u32,
+    pub message: Vec<u8>,
+    pub message_id: Option<Box<str>>,
+    /// From 1.
+    pub line: u32,
+    /// From 1, in UTF-16 code units.
+    pub column: u32,
+    /// `endLine` and `endColumn`.
+    pub end: Option<(u32, u32)>,
+    pub fix: Option<Fix>,
+    pub suggestions: Vec<Suggested>,
+}
+
+/// An element of ESLint's `suggestions`.
+#[derive(Clone, Debug)]
+pub struct Suggested {
+    pub message_id: Option<Box<str>>,
+    /// `desc`
+    pub message: Vec<u8>,
+    pub data: Vec<(Box<str>, Vec<u8>)>,
+    /// The rule gave `data`, which can be empty: ESLint has it in the message then.
+    pub has_data: bool,
+    pub fix: Fix,
+}
+
+/// Why there are no reports for a file.
+#[derive(Clone, Debug)]
+pub struct Failure {
+    /// The index of the rule that threw, among those that were run.
+    pub rule: Option<u32>,
+    /// The line of the node that was being visited.
+    pub line: Option<u32>,
+    pub message: Vec<u8>,
+}
+
+impl From<Vec<u8>> for Failure {
+    fn from(message: Vec<u8>) -> Failure {
+        Failure {
+            rule: None,
+            line: None,
+            message,
+        }
+    }
+}
+
+/// The JavaScript that a run has loaded, in all realms together.
+#[derive(Clone, Default, Debug)]
+pub struct Loading {
+    pub realms: u32,
+    /// Files. One that two realms load counts twice.
+    pub modules: u64,
+    /// Their size.
+    pub bytes: u64,
+    /// The time it took to load plugins and processors.
+    pub milliseconds: f64,
+    /// What only the configuration file has, so that a realm has to run all of that to get at it.
+    pub need_the_configuration: Vec<Box<[u8]>>,
+    /// How many texts ESLint's own `Linter` was given.
+    pub linted_by_eslint: u64,
+    /// [`Engine::sizes`]
+    pub sizes: (usize, usize),
+}
+
+impl Loading {
+    fn needs_the_configuration_for(&mut self, what: &[u8]) {
+        if !self.need_the_configuration.iter().any(|it| **it == *what) {
+            self.need_the_configuration.push(what.into());
+        }
+    }
+}
+
+/// A plugin that is loaded.
+struct Loaded {
+    /// JSON: where it is.
+    location: Vec<u8>,
+    /// Only the configuration file has it.
+    needs_the_configuration: bool,
+    /// The number of its first rule.
+    first_rule: u32,
+    plugin: Arc<Plugin>,
+}
+
+#[derive(Default)]
+struct State {
+    plugins: Vec<Loaded>,
+    rules: u32,
+    /// The selectors that rules have listened for, by their numbers. `None`: it cannot be parsed.
+    selectors: Vec<Option<Arc<Selector>>>,
+    /// By their text.
+    selector_numbers: FxHashMap<Box<[u8]>, u32>,
+    loading: Loading,
+    /// [`Host::rules_that_asked_for_types`]
+    asked_for_types: Vec<Arc<Rule>>,
+}
+
+/// What `getParserServices` of `@typescript-eslint/utils` throws starts so, in all its versions.
+const ASKS_FOR_TYPES: &[u8] = b"You have used a rule which requires ";
+
+/// The plugins of a run. All threads share it.
+pub struct Host<'e> {
+    pub(super) engine: &'e dyn Engine,
+    cwd: Vec<u8>,
+    /// Whether [`Host::loading`] is read.
+    measures: bool,
+    /// Whether a rule [has asked for types](Host::has_asked_for_types).
+    has_been_asked_for_types: AtomicBool,
+    state: Guarded<State>,
+}
+
+pub(super) fn number(json: Option<&Json>) -> Option<u32> {
+    match json {
+        // A column of -1, which ESLint has, is `u32::MAX`.
+        Some(Json::Number(n)) if *n < 0.0 => Some((*n as i64) as u32),
+        Some(Json::Number(n)) => Some(*n as u32),
+        _ => None,
+    }
+}
+
+fn text_of(json: Option<&Json>) -> Option<Box<str>> {
+    Some(std::str::from_utf8(json?.as_str()?).ok()?.into())
+}
+
+/// `[start, end, text]`
+fn fix_of(json: Option<&Json>, offsets: &Utf16OffsetTable) -> Option<Fix> {
+    let [start, end, text] = json?.as_array()? else {
+        return None;
+    };
+    // The byte order mark is at -1.
+    let at = |it: &Json| match it {
+        Json::Number(n) if *n < 0.0 => Some(0),
+        it => Some(offsets.to_bytes(number(Some(it))?)),
+    };
+    Some(Fix {
+        span: Span::new(at(start)?, at(end)?),
+        text: text.as_str()?.to_vec(),
+    })
+}
+
+/// `[rule, message, messageId, line, column, endLine, endColumn, fix, suggestions]`
+fn report_of(json: &Json, offsets: &Utf16OffsetTable) -> Option<Report> {
+    let parts = json.as_array()?;
+    let suggestions = parts.get(8).and_then(Json::as_array).unwrap_or_default();
+    // `[messageId, desc, data, fix]`
+    let suggested = |it: &Json| {
+        let parts = it.as_array()?;
+        let data = parts.get(2).and_then(Json::as_object);
+        let has_data = data.is_some();
+        let data = data.unwrap_or_default().iter().filter_map(|(key, value)| {
+            Some((
+                std::str::from_utf8(key).ok()?.into(),
+                value.as_str()?.to_vec(),
+            ))
+        });
+        Some(Suggested {
+            message_id: text_of(parts.first()),
+            message: parts.get(1)?.as_str()?.to_vec(),
+            data: data.collect(),
+            has_data,
+            fix: fix_of(parts.get(3), offsets)?,
+        })
+    };
+    Some(Report {
+        rule: number(parts.first())?,
+        message: parts.get(1)?.as_str()?.to_vec(),
+        message_id: text_of(parts.get(2)),
+        line: number(parts.get(3))?,
+        column: number(parts.get(4))?,
+        end: number(parts.get(5)).zip(number(parts.get(6))),
+        fix: fix_of(parts.get(7), offsets),
+        suggestions: suggestions.iter().filter_map(suggested).collect(),
+    })
+}
+
+const OUT_OF_STEP: &[u8] = b"The program for JavaScript plugins is out of step.";
+
+impl<'e> Host<'e> {
+    /// `cwd`: ESLint's `context.cwd`.
+    pub fn with_engine(engine: &'e dyn Engine, cwd: &[u8]) -> Host<'e> {
+        Host {
+            engine,
+            cwd: cwd.to_vec(),
+            measures: false,
+            has_been_asked_for_types: AtomicBool::new(false),
+            state: Guarded::new(State::default()),
+        }
+    }
+
+    /// The same host, which keeps track of what is loaded.
+    pub fn measuring(self, measures: bool) -> Host<'e> {
+        Host { measures, ..self }
+    }
+
+    pub(super) fn count_one_for_eslint(&self) {
+        self.state.lock().loading.linted_by_eslint += 1;
+    }
+
+    /// What has been loaded so far. Only the number of realms is known unless the host is [measuring](Host::measuring).
+    pub fn loading(&self) -> Loading {
+        Loading {
+            sizes: self.engine.sizes(),
+            ..self.state.lock().loading.clone()
+        }
+    }
+
+    /// Answers what a realm asks for whatever it is called with. Returns whether that is what was asked for.
+    pub(super) fn serve_any(&self, asked: u32, details: &[u8], out: &mut Vec<u8>) -> bool {
+        match asked {
+            ask::START => {
+                self.state.lock().loading.realms += 1;
+                schema::write_start(&self.cwd, self.measures, out);
+            }
+            ask::LOADED => {
+                let parts = crate::json::parse(details);
+                if let Some(
+                    [
+                        Json::Number(modules),
+                        Json::Number(bytes),
+                        Json::Number(time),
+                    ],
+                ) = parts.as_ref().and_then(Json::as_array)
+                {
+                    let loading = &mut self.state.lock().loading;
+                    loading.modules += *modules as u64;
+                    loading.bytes += *bytes as u64;
+                    loading.milliseconds += *time;
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// [`Engine::expect`]
+    pub fn expect(&self, files: usize, size: u64, most: usize) {
+        self.engine.expect(files, size, most);
+    }
+
+    /// [`Engine::may_come`]
+    pub fn may_come(&self, size: u64) {
+        self.engine.may_come(size);
+    }
+
+    /// [`Engine::comes`]
+    pub fn comes(&self, size: u64) {
+        self.engine.comes(size);
+    }
+
+    /// [`Engine::has_shown`]
+    pub fn has_shown(&self, size: u64, has_come: bool) {
+        self.engine.has_shown(size, has_come);
+    }
+
+    /// [`Engine::keep_vm`]
+    pub fn keep_a_realm(&self, then: &mut dyn FnMut()) -> Result<(), Vec<u8>> {
+        self.engine.keep_vm(then)
+    }
+
+    /// [`Engine::most_realms`]
+    pub fn most_realms(&self) -> usize {
+        self.engine.most_realms()
+    }
+
+    /// Whether `rule` has asked for types, which are not there for a rule in JavaScript. It runs on no more file.
+    pub fn has_asked_for_types(&self, rule: &Arc<Rule>) -> bool {
+        self.has_been_asked_for_types.load(Ordering::Relaxed)
+            && (self.state.lock().asked_for_types.iter()).any(|it| Arc::ptr_eq(it, rule))
+    }
+
+    /// Whether `thrown`, the message of what `rule` has thrown, says that it needs types. From then on it
+    /// [has asked](Host::has_asked_for_types).
+    pub fn asks_for_types(&self, rule: &Arc<Rule>, thrown: &[u8]) -> bool {
+        if !thrown.starts_with(ASKS_FOR_TYPES) {
+            return false;
+        }
+        if !self.has_asked_for_types(rule) {
+            self.state.lock().asked_for_types.push(Arc::clone(rule));
+            self.has_been_asked_for_types.store(true, Ordering::Relaxed);
+        }
+        true
+    }
+
+    /// The rules that [have asked for types](Host::has_asked_for_types), by their names.
+    pub fn rules_that_asked_for_types(&self) -> Vec<Arc<Rule>> {
+        let mut rules = self.state.lock().asked_for_types.clone();
+        crate::utils::sort::sort_by(&mut rules, |a, b| a.id.cmp(&b.id));
+        rules.dedup_by(|a, b| Arc::ptr_eq(a, b));
+        rules
+    }
+
+    /// Loads a plugin. `specifier`: a path, relative to `directory`, or the name of a package, which
+    /// is looked for from there. `alias`: the prefix of its rules, if it is not the name that the
+    /// plugin has for itself.
+    pub fn load(
+        &self,
+        directory: &[u8],
+        specifier: &[u8],
+        alias: Option<&[u8]>,
+    ) -> Result<Arc<Plugin>, Vec<u8>> {
+        let mut location = b"[".to_vec();
+        for part in [Some(directory), Some(specifier), alias] {
+            match part {
+                Some(part) => json_stringify(part, &mut location),
+                None => location.extend_from_slice(b"null"),
+            }
+            location.push(b',');
+        }
+        location.pop();
+        location.push(b']');
+        self.load_from(location)
+    }
+
+    /// Loads a plugin that an `eslint.config.js` has under `prefix`. `location`: what the script that
+    /// evaluates such a file says about where the plugin is, in `$jsPlugins`.
+    /// With `described`, which is what the plugin consists of as JSON in a string, nothing is loaded yet.
+    pub fn load_located(&self, location: &Json, prefix: &[u8]) -> Result<Arc<Plugin>, Vec<u8>> {
+        let entries = location.as_object().unwrap_or_default().iter();
+        let place = entries.filter(|it| it.0 != b"described").cloned().collect();
+        let mut written = b"[".to_vec();
+        write_json(&mut written, &Json::Object(place));
+        written.extend_from_slice(b",null,");
+        json_stringify(prefix, &mut written);
+        written.push(b']');
+        let described = location.get(b"described").and_then(Json::as_str);
+        match described.and_then(crate::json::parse) {
+            Some(described) => {
+                Ok(self.register(written, &described, location.get(b"config").is_some()))
+            }
+            None => self.load_from(written),
+        }
+    }
+
+    /// Takes note of the plugin at `location`, which is `described`.
+    fn register(
+        &self,
+        location: Vec<u8>,
+        described: &Json,
+        needs_the_configuration: bool,
+    ) -> Arc<Plugin> {
+        let mut state = self.state.lock();
+        if let Some(known) = state.plugins.iter().find(|it| it.location == location) {
+            return Arc::clone(&known.plugin);
+        }
+        let place = (state.plugins.len() as u32, state.rules);
+        let plugin = Arc::new(plugin_of(described, place, needs_the_configuration));
+        let first_rule = state.rules;
+        state.rules += plugin.rules.len() as u32;
+        state.plugins.push(Loaded {
+            location,
+            needs_the_configuration,
+            first_rule,
+            plugin: Arc::clone(&plugin),
+        });
+        plugin
+    }
+
+    fn load_from(&self, location: Vec<u8>) -> Result<Arc<Plugin>, Vec<u8>> {
+        let known = |state: &State| {
+            state
+                .plugins
+                .iter()
+                .find(|it| it.location == location)
+                .map(|it| Arc::clone(&it.plugin))
+        };
+        if let Some(plugin) = known(&self.state.lock()) {
+            return Ok(plugin);
+        }
+        let mut loaded = Err(OUT_OF_STEP.to_vec());
+        self.engine
+            .with_vm(0, &mut |vm| loaded = self.load_in(vm, &location, None))?;
+        let described = crate::json::parse(&loaded?).ok_or(OUT_OF_STEP)?;
+        Ok(self.register(location, &described, false))
+    }
+
+    /// Has `vm` load the plugin at `location`. `place`: its position among the plugins and the number of its first rule, once
+    /// it has them. Returns the description of the plugin.
+    fn load_in(
+        &self,
+        vm: &mut dyn Vm,
+        location: &[u8],
+        place: Option<(usize, u32)>,
+    ) -> Result<Vec<u8>, Vec<u8>> {
+        let place = place.map_or_else(
+            || "null,null".to_owned(),
+            |(position, first_rule)| format!("{position},{first_rule}"),
+        );
+        let message = [b"[", location, b",", place.as_bytes(), b"]"].concat();
+        let returned = vm.call(call::LOAD, &message, &mut |asked, details, out| {
+            self.serve_any(asked, details, out);
+        })?;
+        match returned.split_first() {
+            Some((&result::DONE, described)) => Ok(described.to_vec()),
+            Some((&result::FAILED, why)) => Err(why.to_vec()),
+            _ => Err(OUT_OF_STEP.to_vec()),
+        }
+    }
+
+    /// Given JSON, selectors as text, appends what [`ask::SELECTORS`] says.
+    fn describe_selectors(&self, texts: &[u8], out: &mut Vec<u8>) {
+        let texts = crate::json::parse(texts);
+        let mut state = self.state.lock();
+        out.push(b'[');
+        for (i, text) in texts
+            .as_ref()
+            .and_then(Json::as_array)
+            .unwrap_or_default()
+            .iter()
+            .enumerate()
+        {
+            if i > 0 {
+                out.push(b',');
+            }
+            let text = text.as_str().unwrap_or_default();
+            let known = state
+                .selector_numbers
+                .get(text)
+                .and_then(|&it| Some((it, state.selectors.get(it as usize)?.clone()?)));
+            let parsed = match known {
+                Some(known) => Ok(known),
+                None => Selector::parse(text).map(|selector| {
+                    let (number, selector) = (state.selectors.len() as u32, Arc::new(selector));
+                    state.selectors.push(Some(Arc::clone(&selector)));
+                    state.selector_numbers.insert(text.into(), number);
+                    (number, selector)
+                }),
+            };
+            match parsed {
+                Ok((number, selector)) => {
+                    let counts = format!(
+                        "[{number},{},{}]",
+                        selector.attribute_count(),
+                        selector.identifier_count()
+                    );
+                    out.extend_from_slice(counts.as_bytes());
+                }
+                Err(error) => json_stringify(error.message(), out),
+            }
+        }
+        out.push(b']');
+    }
+
+    /// Given JSON, the numbers of selectors, these.
+    fn selectors(&self, numbers: Option<&Json>) -> Vec<Option<Arc<Selector>>> {
+        let numbers = numbers.and_then(Json::as_array).unwrap_or_default();
+        if numbers.is_empty() {
+            return Vec::new();
+        }
+        let state = self.state.lock();
+        numbers
+            .iter()
+            .map(|it| state.selectors.get(number(Some(it))? as usize)?.clone())
+            .collect()
+    }
+
+    /// The positions of the plugins that a realm has to load for the rules `enabled`, in ascending order.
+    fn plugins_of(enabled: &[&Configured]) -> Vec<u32> {
+        let without_module = enabled.iter().filter(|it| it.rule.location.is_none());
+        let mut positions: Vec<u32> = without_module.map(|it| it.rule.plugin).collect();
+        positions.sort_unstable();
+        positions.dedup();
+        positions
+    }
+
+    /// Runs the rules `enabled` on `file`. `wants_fixes`: whether anything reads [`Report::fix`] and
+    /// [`Report::suggestions`].
+    pub fn run<'a>(
+        &self,
+        file: &'a File<'a>,
+        settings: &FileSettings,
+        enabled: &[&Configured],
+        wants_fixes: bool,
+    ) -> Result<Vec<Report>, Failure> {
+        self.run_on_block(file, settings, enabled, wants_fixes, None)
+    }
+
+    /// The same. `physical_path_len`: how much of the path of the file is ESLint's `physicalFilename`, if not all of it.
+    pub fn run_on_block<'a>(
+        &self,
+        file: &'a File<'a>,
+        settings: &FileSettings,
+        enabled: &[&Configured],
+        wants_fixes: bool,
+        physical_path_len: Option<usize>,
+    ) -> Result<Vec<Report>, Failure> {
+        let mut outcome = Err(Failure::from(OUT_OF_STEP.to_vec()));
+        self.engine.with_vm(file.text().len(), &mut |vm| {
+            outcome = self.run_in(vm, file, settings, enabled, wants_fixes, physical_path_len);
+        })?;
+        outcome
+    }
+
+    fn run_in<'a>(
+        &self,
+        vm: &mut dyn Vm,
+        file: &'a File<'a>,
+        settings: &FileSettings,
+        enabled: &[&Configured],
+        wants_fixes: bool,
+        physical_path_len: Option<usize>,
+    ) -> Result<Vec<Report>, Failure> {
+        let text = file.text();
+        let offsets = Utf16OffsetTable::without_bom(text);
+        let has_mark = text.starts_with(b"\xEF\xBB\xBF");
+        let path = file.path();
+        let plugins = Self::plugins_of(enabled);
+        let mut message =
+            Vec::with_capacity(24 + (plugins.len() + enabled.len()) * 4 + path.len() + text.len());
+        let is_espree = Dialect::of(file) == Dialect::Espree;
+        let flags = u32::from(wants_fixes)
+            | (u32::from(has_mark) << 1)
+            | (u32::from(is_espree) << 2)
+            | (u32::from(settings.sources.is_some()) << 3);
+        wire::words(
+            &mut message,
+            &[
+                flags,
+                plugins.len() as u32,
+                settings.id,
+                enabled.len() as u32,
+                path.len() as u32,
+                physical_path_len.unwrap_or(path.len()).min(path.len()) as u32,
+            ],
+        );
+        wire::words(&mut message, &plugins);
+        for configured in enabled {
+            wire::words(&mut message, &[configured.id]);
+        }
+        message.extend_from_slice(path);
+        message.extend_from_slice(if has_mark { &text[3..] } else { text });
+
+        let mut nodes = None;
+        let mut serve = |asked: u32, details: &[u8], out: &mut Vec<u8>| match asked {
+            _ if self.serve_any(asked, details, out) => {}
+            ask::SETTINGS => out.extend_from_slice(&settings.json),
+            ask::CONFIGURED => {
+                let position = std::str::from_utf8(details)
+                    .ok()
+                    .and_then(|it| it.parse::<usize>().ok());
+                if let Some(configured) = position.and_then(|it| enabled.get(it)) {
+                    out.extend_from_slice(&configured.json);
+                }
+            }
+            ask::SELECTORS => self.describe_selectors(details, out),
+            // The numbers of selectors. With `AST`: these, and those of the types that are listened to, if only they matter.
+            ask::AST | ask::MATCHES => {
+                let details = crate::json::parse(details);
+                let parts = details.as_ref().and_then(Json::as_array);
+                let (numbers, types) = match asked {
+                    ask::AST => (
+                        parts.and_then(|it| it.first()),
+                        parts.and_then(|it| it.get(1)),
+                    ),
+                    _ => (details.as_ref(), None),
+                };
+                let selectors = self.selectors(numbers);
+                let selectors: Vec<Option<&Selector>> =
+                    selectors.iter().map(Option::as_deref).collect();
+                let types = types.and_then(Json::as_array).map(|types| {
+                    let mut listened = [false; 256];
+                    for it in types.iter().filter_map(|it| number(Some(it))) {
+                        if let Some(it) = listened.get_mut(it as usize) {
+                            *it = true;
+                        }
+                    }
+                    listened
+                });
+                match asked {
+                    ask::AST => {
+                        nodes = Some(ast::write(file, &offsets, &selectors, types.as_ref(), out));
+                    }
+                    _ => ast::write_only_matches(file, &offsets, &selectors, out),
+                }
+            }
+            ask::TOKENS => tokens::write(file, &offsets, out),
+            ask::COMMENTS => tokens::write_comments(file, &offsets, out),
+            ask::SCOPES => {
+                if let Some(nodes) = &nodes {
+                    scopes::write(file, &offsets, nodes, out);
+                }
+            }
+            _ => {}
+        };
+        loop {
+            let returned = vm.call(call::LINT, &message, &mut serve)?;
+            let Some((&kind, content)) = returned.split_first() else {
+                return Err(OUT_OF_STEP.to_vec().into());
+            };
+            if kind == result::DONE && content.is_empty() {
+                return Ok(Vec::new());
+            }
+            let Some(Json::Array(parts)) = crate::json::parse(content) else {
+                return Err(OUT_OF_STEP.to_vec().into());
+            };
+            match kind {
+                result::DONE => {
+                    let part = |i: usize| parts.get(i).and_then(Json::as_array).unwrap_or_default();
+                    scopes::mark_used(file, part(1).iter().filter_map(|it| number(Some(it))));
+                    return Ok(part(0)
+                        .iter()
+                        .filter_map(|it| report_of(it, &offsets))
+                        .collect());
+                }
+                result::FAILED => {
+                    return Err(Failure {
+                        rule: number(parts.first()),
+                        line: number(parts.get(2)),
+                        message: parts
+                            .get(1)
+                            .and_then(Json::as_str)
+                            .unwrap_or_default()
+                            .to_vec(),
+                    });
+                }
+                result::NEEDS_PLUGINS if !parts.is_empty() => {
+                    for position in parts.iter().filter_map(|it| number(Some(it))) {
+                        let mut state = self.state.lock();
+                        let Some(plugin) = state.plugins.get(position as usize) else {
+                            return Err(OUT_OF_STEP.to_vec().into());
+                        };
+                        let (location, first_rule) = (plugin.location.clone(), plugin.first_rule);
+                        if plugin.needs_the_configuration {
+                            let what = [b"the plugin \"", &plugin.plugin.name[..], b"\""].concat();
+                            state.loading.needs_the_configuration_for(&what);
+                        }
+                        drop(state);
+                        self.load_in(vm, &location, Some((position as usize, first_rule)))?;
+                    }
+                }
+                result::NEEDS_SETTINGS => {
+                    let Some(sources) = &settings.sources else {
+                        return Err(OUT_OF_STEP.to_vec().into());
+                    };
+                    let id = settings.id.to_string();
+                    let parts: [&[u8]; 7] = [
+                        b"[",
+                        id.as_bytes(),
+                        b",",
+                        &settings.json,
+                        b",",
+                        sources,
+                        b"]",
+                    ];
+                    let loaded = vm.call(call::LOAD_SETTINGS, &parts.concat(), &mut serve)?;
+                    match loaded.split_first() {
+                        Some((&result::DONE, _)) => {}
+                        Some((&result::FAILED, why)) => return Err(why.to_vec().into()),
+                        _ => return Err(OUT_OF_STEP.to_vec().into()),
+                    }
+                    let loading = &mut self.state.lock().loading;
+                    loading.needs_the_configuration_for(b"what is in \"settings\"");
+                }
+                _ => return Err(OUT_OF_STEP.to_vec().into()),
+            }
+        }
+    }
+}
+
+/// `{ name, rules: [{ name, at, type, fixable, hasSuggestions, schema, defaultOptions, deprecated, replacedBy }] }`. The rules are
+/// numbered from `first`, in that order. `position`: that of the plugin. `needs_the_configuration`: no module exports it.
+fn plugin_of(
+    described: &Json,
+    (position, first): (u32, u32),
+    needs_the_configuration: bool,
+) -> Plugin {
+    let name = described
+        .get(b"name")
+        .and_then(Json::as_str)
+        .unwrap_or_default();
+    let rules = described
+        .get(b"rules")
+        .and_then(Json::as_array)
+        .unwrap_or_default();
+    // The rules of `--rulesdir` are those of a plugin without a name, and have no prefix.
+    let separator: &[u8] = if name.is_empty() { b"" } else { b"/" };
+    let rule = |(i, it): (usize, &Json)| {
+        Arc::new(Rule {
+            id: [
+                name,
+                separator,
+                it.get(b"name").and_then(Json::as_str).unwrap_or_default(),
+            ]
+            .concat()
+            .into(),
+            kind: match it.get(b"type").and_then(Json::as_str) {
+                Some(b"problem") => Some(Kind::Problem),
+                Some(b"suggestion") => Some(Kind::Suggestion),
+                Some(b"layout") => Some(Kind::Layout),
+                _ => None,
+            },
+            is_fixable: it.get(b"fixable").and_then(Json::as_bool) == Some(true),
+            has_suggestions: it.get(b"hasSuggestions").and_then(Json::as_bool) == Some(true),
+            schema: match it.get(b"schema") {
+                None | Some(Json::Null) => Schema::None,
+                Some(Json::Bool(false)) => Schema::Any,
+                Some(schema) => Schema::Json(schema.clone()),
+            },
+            default_options: it
+                .get(b"defaultOptions")
+                .and_then(Json::as_array)
+                .unwrap_or_default()
+                .to_vec(),
+            deprecated: it.get(b"deprecated").map(|deprecated| {
+                let replaced_by = it.get(b"replacedBy").cloned().unwrap_or(Json::Null);
+                Box::new((deprecated.clone(), replaced_by))
+            }),
+            needs_the_configuration: needs_the_configuration && it.get(b"at").is_none(),
+            location: it.get(b"at").map(|at| {
+                let mut written = Vec::new();
+                write_json(&mut written, at);
+                written.into()
+            }),
+            plugin: position,
+            index: first + i as u32,
+        })
+    };
+    let mut rules: Vec<Arc<Rule>> = rules.iter().enumerate().map(rule).collect();
+    crate::utils::sort::sort_by(&mut rules, |a, b| a.id.cmp(&b.id));
+    Plugin {
+        name: name.into(),
+        rules,
+    }
+}

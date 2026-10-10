@@ -1,0 +1,47 @@
+------------------
+{ printWidth: 80 }
+------------------
+func(
+  () =>
+    // comment
+    (a, b, c),
+);
+func(
+  () => () =>
+    // comment
+    (a, b, c),
+);
+const a = () => () =>
+  // prettier-ignore
+  (a,b);
+ret = () =>
+  /* c */ (a, b);
+const d = () =>
+  /* e */ (a, b);
+/* c */ (a, b);
+const v = /* c */ (a, b);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+func(
+  () =>
+    // comment
+    (a, b, c),
+);
+func(
+  () => () =>
+    // comment
+    (a, b, c),
+);
+const a = () => () =>
+  // prettier-ignore
+  (a,b);
+ret = () =>
+  /* c */ (a, b);
+const d = () =>
+  /* e */ (a, b);
+/* c */ (a, b);
+const v = /* c */ (a, b);
+
+===================== End =====================

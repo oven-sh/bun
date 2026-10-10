@@ -4,6 +4,7 @@ use super::relate::Ternary;
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, SymbolId};
 use crate::table::Handle;
+use crate::util::SharedSort;
 use smallvec::{SmallVec, smallvec};
 
 /// `thisAssignmentDeclarationKind`, with its location.
@@ -2544,7 +2545,7 @@ impl<'p, 's> Checker<'p, 's> {
             let (nowhere, place) = self.order_of_property(&prop);
             keyed.push(((is_outside, nowhere, place, atoms.bytes(prop.name)), prop));
         }
-        keyed.sort_by(|x, y| x.0.cmp(&y.0));
+        keyed.shared_sort_by(|x, y| x.0.cmp(&y.0));
         props.extend(keyed.into_iter().map(|entry| entry.1));
     }
 
@@ -2786,6 +2787,8 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn has_base(&mut self, ty: TypeId, sym: Sym) -> bool {
         // FOR SPEED: a target that several paths lead to is visited once.
         let mut seen: SmallVec<[Sym; 16]> = SmallVec::new();
+        // Those after the first 16.
+        let mut seen_later = crate::util::FxHashSet::<Sym>::default();
         // Depth first: the last one is the next.
         let mut todo: SmallVec<[TypeId; 16]> = smallvec![ty];
         while let Some(next) = todo.pop() {
@@ -2794,8 +2797,14 @@ impl<'p, 's> Checker<'p, 's> {
                     if target == sym {
                         return true;
                     }
-                    if !seen.contains(&target) {
-                        seen.push(target);
+                    let is_new = !seen.contains(&target)
+                        && if seen.len() < seen.inline_size() {
+                            seen.push(target);
+                            true
+                        } else {
+                            seen_later.insert(target)
+                        };
+                    if is_new {
                         todo.extend(self.base_types(target).iter().rev().copied());
                     }
                 }
@@ -3870,7 +3879,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     pub(super) fn exports_in_order(&self, sym: Sym) -> Vec<(Atom, Sym)> {
         let mut all = self.files().exports(sym);
-        all.sort_by_key(|e| e.1);
+        all.shared_sort_by_key(|e| e.1);
         all
     }
 
@@ -6605,8 +6614,11 @@ impl<'p, 's> Checker<'p, 's> {
         self.never_in_progress_from.push(self.stack.len());
         // `isNeverReducedProperty`
         let is_never = self.has_property_in_several_members(ty)
-            && self.may_have_never_reduced_property(ty, false)
-            && self.why_never_intersection(ty).is_some();
+            && match self.may_have_never_reduced_property(ty, false) {
+                NeverReduced::No => false,
+                NeverReduced::Yes => true,
+                NeverReduced::Ask => self.why_never_intersection(ty).is_some(),
+            };
         self.never_in_progress.pop();
         self.never_in_progress_from.pop();
         match self.end_scope_by_counters(scope) {
@@ -6751,10 +6763,11 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// FOR SPEED: whether `isNeverReducedProperty` may hold for a property of the intersection
+    /// FOR SPEED: whether `isNeverReducedProperty` holds for a property of the intersection
     /// `ty`. Decided from the properties that two members share, taken as
     /// `build_intersection_shape` takes them, without building the shape: most intersections are
-    /// asked nothing else, and a shape has a copy of every property of every member.
+    /// asked nothing else, and a shape has a copy of every property of every member. The product of
+    /// two unions of 170 object types with a discriminant is 28,900 intersections, nearly all empty.
     ///
     /// `isDiscriminantWithNeverType` needs a property that some member X has without `?`, with
     /// `CheckFlagsNonUniformAndLiteral`. If for every other member with that property its type and
@@ -6774,9 +6787,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// `is_apparent`: for `getApparentType(ty)`, in whose classes `this` is `ty`. In those of `ty`
     /// itself it is the class (`resolveTypeReferenceMembers`), so `p?: this["z"]` of `C` asks for
     /// `C["z"]` first and for `ty["z"]` in the reduction of the apparent type.
-    fn may_have_never_reduced_property(&mut self, ty: TypeId, is_apparent: bool) -> bool {
+    fn may_have_never_reduced_property(&mut self, ty: TypeId, is_apparent: bool) -> NeverReduced {
         let TypeData::Intersection(parts) = self.data(ty) else {
-            return false;
+            return NeverReduced::No;
         };
         let mut all: SmallVec<[Members<'p>; 4]> = SmallVec::new();
         for &written in parts.iter() {
@@ -6806,7 +6819,11 @@ impl<'p, 's> Checker<'p, 's> {
         // in order. `createUnionOrIntersectionProperty` compares every symbol with the first
         // (`singleProp`, `firstType`), so the cost is linear in the number of members:
         // `JSX.IntrinsicElements[keyof JSX.IntrinsicElements]` in a parameter has hundreds.
-        let mut may = false;
+        let mut asks = false;
+        // The types of the symbols of each property that may be a discriminant of type `never`, in the order of the properties.
+        let mut discriminants: SmallVec<[SmallVec<[TypeId; 4]>; 2]> = SmallVec::new();
+        // What `build_intersection_shape` leaves out where it asks whether the property is optional.
+        let is_of_no_member = |c: &Self, prop: &Prop| matches!(prop.source, PropSource::Symbol(sym) if !c.is_member_symbol(sym));
         let mut seen = crate::util::FxHashSet::<Atom>::default();
         for (at, &member) in all.iter().enumerate() {
             let rest = &all[at + 1..];
@@ -6821,39 +6838,73 @@ impl<'p, 's> Checker<'p, 's> {
                 let mut first: Option<(Prop<'s>, TypeId)> = None;
                 let (mut some, mut every) = (prop.flags, prop.flags);
                 let (mut is_non_uniform, mut has_literal) = (false, false);
+                let mut types: SmallVec<[TypeId; 4]> = SmallVec::new();
+                let mut has_one_of_no_member = is_of_no_member(self, prop);
                 for &later in rest {
                     let Some(other) = later.resolved.prop(prop.name) else {
                         continue;
                     };
-                    let mut second = other.clone_in(self.arena);
-                    self.instantiate_prop(&mut second, later.mapper);
+                    // FOR SPEED: a property of a union has a property of each constituent in it, and
+                    // the identity changes nothing.
+                    let second_copy;
+                    let second = match later.mapper {
+                        MapperId::IDENTITY => other,
+                        mapper => {
+                            let mut copy = other.clone_in(self.arena);
+                            self.instantiate_prop(&mut copy, mapper);
+                            second_copy = copy;
+                            &second_copy
+                        }
+                    };
                     let first_type = match &first {
                         // The same property reached through two paths.
-                        Some((single, _)) if *single == second => continue,
+                        Some((single, _)) if single == second => continue,
                         Some((_, first_type)) => *first_type,
                         None => {
                             let mut single = prop.clone_in(self.arena);
                             self.instantiate_prop(&mut single, member.mapper);
-                            if single == second {
+                            if single == *second {
                                 continue;
                             }
                             let first_type = self.type_of_prop(&single, MapperId::IDENTITY);
                             has_literal = is_literal(self, first_type);
                             first = Some((single, first_type));
+                            types.push(first_type);
                             first_type
                         }
                     };
-                    let second = self.type_of_prop(&second, MapperId::IDENTITY);
+                    let second = self.type_of_prop(second, MapperId::IDENTITY);
+                    types.push(second);
+                    has_one_of_no_member |= is_of_no_member(self, other);
                     (some, every) = (some | other.flags, every & other.flags);
                     is_non_uniform |= second != first_type;
                     has_literal = has_literal || is_literal(self, second);
                 }
-                may |= first.is_some()
-                    && (some.contains(PropFlags::PRIVATE)
-                        || !every.contains(PropFlags::OPTIONAL) && is_non_uniform && has_literal);
+                if first.is_none() {
+                    continue;
+                }
+                let may_be_discriminant =
+                    !every.contains(PropFlags::OPTIONAL) && is_non_uniform && has_literal;
+                if some.contains(PropFlags::PRIVATE) || may_be_discriminant && has_one_of_no_member
+                {
+                    asks = true;
+                } else if may_be_discriminant {
+                    discriminants.push(types);
+                }
             }
         }
-        may
+        if asks {
+            return NeverReduced::Ask;
+        }
+        // `isDiscriminantWithNeverType`, as in `why_never_intersection`.
+        for types in &discriminants {
+            if !(types.iter()).any(|&t| t.is_never() && t != TypeId::UNIQUE_LITERAL)
+                && self.intersection(types).is_never()
+            {
+                return NeverReduced::Yes;
+            }
+        }
+        NeverReduced::No
     }
 
     /// An intersection, or `ObjectFlagsContainsIntersections`.
@@ -8139,4 +8190,12 @@ pub(super) fn members_among(declarations: &[(FileId, Decl)]) -> SmallVec<[(FileI
         _ => None,
     };
     declarations.iter().filter_map(member).collect()
+}
+
+/// What `Checker::may_have_never_reduced_property` has found.
+enum NeverReduced {
+    No,
+    Yes,
+    /// The shape of the intersection says: a property is private in a member, or is none of a member.
+    Ask,
 }

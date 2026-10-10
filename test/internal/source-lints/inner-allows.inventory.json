@@ -1,0 +1,628 @@
+{
+  "src/ast/runtime.rs": [
+    "unexpected_cfgs"
+  ],
+  "src/boringssl_sys/lib.rs": [
+    "non_camel_case_types",
+    "non_snake_case",
+    "non_upper_case_globals"
+  ],
+  "src/brotli_sys/brotli_c.rs": [
+    "non_camel_case_types"
+  ],
+  "src/bun_alloc/lib.rs": [
+    "clippy::disallowed_types"
+  ],
+  "src/bun_core/Global.rs": [
+    "non_snake_case",
+    "non_upper_case_globals"
+  ],
+  "src/bun_core/build.rs": [
+    "clippy::disallowed_macros",
+    "clippy::disallowed_methods",
+    "clippy::disallowed_types"
+  ],
+  "src/bun_core/lib.rs": [
+    "clippy::disallowed_macros",
+    "clippy::disallowed_methods",
+    "clippy::disallowed_types",
+    "non_snake_case"
+  ],
+  "src/bun_core/windows_sys.rs": [
+    "non_snake_case"
+  ],
+  "src/bundler/lib.rs": [
+    "incomplete_features",
+    "non_snake_case",
+    "non_upper_case_globals"
+  ],
+  "src/bunfig/bunfig.rs": [
+    "clippy::collapsible_if"
+  ],
+  "src/cares_sys/c_ares.rs": [
+    "clippy::missing_safety_doc",
+    "non_camel_case_types",
+    "non_snake_case",
+    "non_upper_case_globals"
+  ],
+  "src/cares_sys/lib.rs": [
+    "non_camel_case_types"
+  ],
+  "src/collections/lib.rs": [
+    "incomplete_features"
+  ],
+  "src/crash_handler/lib.rs": [
+    "internal_features"
+  ],
+  "src/css/prefixes.rs": [
+    "clippy::manual_range_contains"
+  ],
+  "src/css/properties/properties_generated.rs": [
+    "non_camel_case_types"
+  ],
+  "src/errno/windows_errno.rs": [
+    "clippy::upper_case_acronyms",
+    "non_camel_case_types",
+    "non_upper_case_globals"
+  ],
+  "src/event_loop/lib.rs": [
+    "non_snake_case"
+  ],
+  "src/exe_format/macho_types.rs": [
+    "non_snake_case"
+  ],
+  "src/hash/lib.rs": [
+    "clippy::many_single_char_names"
+  ],
+  "src/http_jsc/lib.rs": [
+    "non_snake_case"
+  ],
+  "src/http_types/h2.rs": [
+    "non_camel_case_types"
+  ],
+  "src/http_types/lib.rs": [
+    "non_snake_case"
+  ],
+  "src/install/build.rs": [
+    "clippy::disallowed_macros",
+    "clippy::disallowed_methods",
+    "clippy::disallowed_types"
+  ],
+  "src/install/lib.rs": [
+    "nonstandard_style"
+  ],
+  "src/install/windows-shim/main.rs": [
+    "ambiguous_glob_reexports",
+    "dead_code",
+    "incomplete_features",
+    "nonstandard_style"
+  ],
+  "src/install_types/lib.rs": [
+    "non_snake_case"
+  ],
+  "src/io/lib.rs": [
+    "unsafe_op_in_unsafe_fn"
+  ],
+  "src/js_parser/parse/parse_stmt.rs": [
+    "clippy::single_match"
+  ],
+  "src/js_parser_jsc/lib.rs": [
+    "non_snake_case"
+  ],
+  "src/jsc/ErrorCode.rs": [
+    "non_upper_case_globals"
+  ],
+  "src/jsc/build.rs": [
+    "clippy::disallowed_macros",
+    "clippy::disallowed_methods",
+    "clippy::disallowed_types"
+  ],
+  "src/jsc/cpp.rs": [
+    "clashing_extern_declarations",
+    "clippy::missing_safety_doc",
+    "clippy::not_unsafe_ptr_arg_deref",
+    "clippy::too_many_arguments",
+    "dead_code",
+    "improper_ctypes",
+    "improper_ctypes_definitions",
+    "non_camel_case_types",
+    "non_snake_case",
+    "non_upper_case_globals",
+    "unused_imports",
+    "unused_unsafe",
+    "unused_variables"
+  ],
+  "src/jsc/lib.rs": [
+    "deprecated",
+    "non_snake_case"
+  ],
+  "src/libuv_sys/libuv.rs": [
+    "clippy::missing_safety_doc",
+    "non_camel_case_types",
+    "non_snake_case",
+    "non_upper_case_globals"
+  ],
+  "src/lint/plugins/import_export_map.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/plugins/import_export_record.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/plugins/import_minimatch.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/plugins/import_package_path.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/plugins/import_resolve.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/plugins/import_settings.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/plugins/import_type.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/plugins/module_visitor.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_annotations.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_ast.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_component_util.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_components.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_components_list.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_components_related.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_default_props.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_eslint.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_get_token_before_closing_bracket.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_is_create_context.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_is_create_element.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_is_destructured_from_pragma_import.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_is_first_letter_capitalized.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_jsx.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_lifecycle_methods.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_link_components.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_make_no_method_set_state_rule.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_pragma.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_prop_types.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_prop_types_declaration.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_prop_wrapper.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_props.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_used_prop_types.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_variable.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_version.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lsquic_sys/lib.rs": [
+    "non_camel_case_types"
+  ],
+  "src/mimalloc_sys/mimalloc.rs": [
+    "non_camel_case_types"
+  ],
+  "src/options_types/lib.rs": [
+    "non_camel_case_types",
+    "non_upper_case_globals"
+  ],
+  "src/parsers/build.rs": [
+    "clippy::disallowed_macros",
+    "clippy::disallowed_methods",
+    "clippy::disallowed_types"
+  ],
+  "src/patch/lib.rs": [
+    "non_camel_case_types",
+    "non_upper_case_globals"
+  ],
+  "src/ptr/lib.rs": [
+    "clippy::disallowed_types",
+    "deprecated",
+    "non_camel_case_types",
+    "non_snake_case",
+    "non_upper_case_globals"
+  ],
+  "src/react_compiler/codegen.rs": [
+    "clippy::disallowed_types"
+  ],
+  "src/react_compiler/compile_result.rs": [
+    "unreachable_pub"
+  ],
+  "src/react_compiler/diagnostics/mod.rs": [
+    "clippy::disallowed_methods",
+    "clippy::disallowed_types",
+    "clippy::implicit_saturating_sub",
+    "clippy::needless_borrow",
+    "clippy::needless_borrows_for_generic_args",
+    "clippy::trivially_copy_pass_by_ref",
+    "dead_code",
+    "unreachable_pub"
+  ],
+  "src/react_compiler/hir/mod.rs": [
+    "clippy::borrow_as_ptr",
+    "clippy::clone_on_copy",
+    "clippy::derivable_impls",
+    "clippy::disallowed_methods",
+    "clippy::disallowed_types",
+    "clippy::format_collect",
+    "clippy::if_same_then_else",
+    "clippy::large_enum_variant",
+    "clippy::let_and_return",
+    "clippy::manual_map",
+    "clippy::map_entry",
+    "clippy::match_like_matches_macro",
+    "clippy::needless_borrow",
+    "clippy::needless_borrows_for_generic_args",
+    "clippy::needless_pass_by_value",
+    "clippy::neg_multiply",
+    "clippy::or_fun_call",
+    "clippy::ptr_arg",
+    "clippy::redundant_clone",
+    "clippy::redundant_closure",
+    "clippy::trivially_copy_pass_by_ref",
+    "clippy::unnecessary_map_or",
+    "clippy::unnecessary_unwrap",
+    "clippy::unwrap_or_default",
+    "clippy::useless_conversion",
+    "clippy::useless_format",
+    "dead_code",
+    "unreachable_pub"
+  ],
+  "src/react_compiler/inference/mod.rs": [
+    "clippy::assigning_clones",
+    "clippy::borrow_as_ptr",
+    "clippy::clone_on_copy",
+    "clippy::disallowed_methods",
+    "clippy::disallowed_types",
+    "clippy::for_kv_map",
+    "clippy::if_same_then_else",
+    "clippy::iter_cloned_collect",
+    "clippy::large_enum_variant",
+    "clippy::let_and_return",
+    "clippy::manual_map",
+    "clippy::manual_pop_if",
+    "clippy::map_entry",
+    "clippy::match_like_matches_macro",
+    "clippy::needless_borrow",
+    "clippy::needless_borrows_for_generic_args",
+    "clippy::needless_collect",
+    "clippy::needless_pass_by_value",
+    "clippy::or_fun_call",
+    "clippy::ptr_arg",
+    "clippy::question_mark",
+    "clippy::redundant_clone",
+    "clippy::redundant_closure",
+    "clippy::redundant_field_names",
+    "clippy::unnecessary_map_or",
+    "clippy::unnecessary_mut_passed",
+    "clippy::unnecessary_sort_by",
+    "clippy::unnecessary_unwrap",
+    "clippy::unneeded_wildcard_pattern",
+    "clippy::unwrap_or_default",
+    "clippy::useless_conversion",
+    "clippy::useless_format",
+    "unreachable_pub"
+  ],
+  "src/react_compiler/lint.rs": [
+    "clippy::disallowed_types"
+  ],
+  "src/react_compiler/optimization/mod.rs": [
+    "clippy::assigning_clones",
+    "clippy::clone_on_copy",
+    "clippy::disallowed_methods",
+    "clippy::disallowed_types",
+    "clippy::if_same_then_else",
+    "clippy::iter_cloned_collect",
+    "clippy::large_enum_variant",
+    "clippy::let_and_return",
+    "clippy::manual_contains",
+    "clippy::manual_map",
+    "clippy::manual_pop_if",
+    "clippy::map_entry",
+    "clippy::match_like_matches_macro",
+    "clippy::needless_borrow",
+    "clippy::needless_borrows_for_generic_args",
+    "clippy::needless_collect",
+    "clippy::needless_pass_by_value",
+    "clippy::neg_multiply",
+    "clippy::or_fun_call",
+    "clippy::ptr_arg",
+    "clippy::question_mark",
+    "clippy::redundant_clone",
+    "clippy::redundant_closure",
+    "clippy::unnecessary_map_or",
+    "clippy::unnecessary_sort_by",
+    "clippy::unnecessary_unwrap",
+    "clippy::unneeded_wildcard_pattern",
+    "clippy::unwrap_or_default",
+    "clippy::useless_conversion",
+    "clippy::useless_format"
+  ],
+  "src/react_compiler/pipeline.rs": [
+    "clippy::disallowed_types"
+  ],
+  "src/react_compiler/reactive_scopes/mod.rs": [
+    "clippy::assigning_clones",
+    "clippy::clone_on_copy",
+    "clippy::disallowed_methods",
+    "clippy::disallowed_types",
+    "clippy::if_same_then_else",
+    "clippy::large_enum_variant",
+    "clippy::let_and_return",
+    "clippy::manual_map",
+    "clippy::map_entry",
+    "clippy::match_like_matches_macro",
+    "clippy::needless_borrow",
+    "clippy::needless_borrows_for_generic_args",
+    "clippy::needless_collect",
+    "clippy::needless_pass_by_value",
+    "clippy::or_fun_call",
+    "clippy::ptr_arg",
+    "clippy::question_mark",
+    "clippy::redundant_clone",
+    "clippy::redundant_closure",
+    "clippy::unnecessary_map_or",
+    "clippy::unnecessary_mut_passed",
+    "clippy::unnecessary_unwrap",
+    "clippy::unneeded_wildcard_pattern",
+    "clippy::unwrap_or_default",
+    "clippy::useless_conversion",
+    "clippy::useless_format",
+    "unreachable_pub"
+  ],
+  "src/react_compiler/ssa/mod.rs": [
+    "clippy::disallowed_methods",
+    "clippy::disallowed_types",
+    "unreachable_pub"
+  ],
+  "src/react_compiler/typeinference/mod.rs": [
+    "clippy::clone_on_copy",
+    "clippy::disallowed_methods",
+    "clippy::disallowed_types",
+    "clippy::if_same_then_else",
+    "clippy::large_enum_variant",
+    "clippy::let_and_return",
+    "clippy::manual_map",
+    "clippy::map_entry",
+    "clippy::match_like_matches_macro",
+    "clippy::needless_borrow",
+    "clippy::needless_borrows_for_generic_args",
+    "clippy::needless_pass_by_value",
+    "clippy::or_fun_call",
+    "clippy::ptr_arg",
+    "clippy::redundant_clone",
+    "clippy::redundant_closure",
+    "clippy::trivially_copy_pass_by_ref",
+    "clippy::unnecessary_map_or",
+    "clippy::unnecessary_mut_passed",
+    "clippy::unnecessary_unwrap",
+    "clippy::unwrap_or_default",
+    "clippy::useless_conversion",
+    "clippy::useless_format",
+    "unreachable_pub"
+  ],
+  "src/react_compiler/utils/mod.rs": [
+    "clippy::disallowed_methods",
+    "clippy::disallowed_types"
+  ],
+  "src/react_compiler/validation/mod.rs": [
+    "clippy::assigning_clones",
+    "clippy::clone_on_copy",
+    "clippy::disallowed_methods",
+    "clippy::disallowed_types",
+    "clippy::format_collect",
+    "clippy::if_same_then_else",
+    "clippy::large_enum_variant",
+    "clippy::let_and_return",
+    "clippy::manual_contains",
+    "clippy::manual_map",
+    "clippy::map_entry",
+    "clippy::match_like_matches_macro",
+    "clippy::needless_borrow",
+    "clippy::needless_borrows_for_generic_args",
+    "clippy::needless_collect",
+    "clippy::needless_pass_by_value",
+    "clippy::or_fun_call",
+    "clippy::ptr_arg",
+    "clippy::question_mark",
+    "clippy::redundant_clone",
+    "clippy::redundant_closure",
+    "clippy::unnecessary_map_or",
+    "clippy::unnecessary_unwrap",
+    "clippy::unneeded_wildcard_pattern",
+    "clippy::unwrap_or_default",
+    "clippy::useless_conversion",
+    "clippy::useless_format"
+  ],
+  "src/resolve_builtins/lib.rs": [
+    "non_snake_case"
+  ],
+  "src/resolver/lib.rs": [
+    "non_snake_case",
+    "non_upper_case_globals"
+  ],
+  "src/runtime/api/bun/h2/connection.rs": [
+    "dead_code"
+  ],
+  "src/runtime/api/bun/h2/flow_control.rs": [
+    "dead_code"
+  ],
+  "src/runtime/api/bun/h2/hpack.rs": [
+    "dead_code"
+  ],
+  "src/runtime/api/bun/h2/stream.rs": [
+    "dead_code"
+  ],
+  "src/runtime/api/bun/h2/wire.rs": [
+    "dead_code"
+  ],
+  "src/runtime/api/bun/h2_frame_parser.rs": [
+    "clippy::too_many_arguments",
+    "non_camel_case_types",
+    "non_upper_case_globals"
+  ],
+  "src/runtime/bake/bake_body.rs": [
+    "unexpected_cfgs"
+  ],
+  "src/runtime/build.rs": [
+    "clippy::disallowed_macros",
+    "clippy::disallowed_methods",
+    "clippy::disallowed_types"
+  ],
+  "src/runtime/ffi/ffi_body.rs": [
+    "unexpected_cfgs"
+  ],
+  "src/runtime/generated_classes.rs": [
+    "clippy::missing_safety_doc",
+    "clippy::not_unsafe_ptr_arg_deref",
+    "clippy::redundant_closure",
+    "clippy::unused_unit",
+    "dead_code",
+    "improper_ctypes",
+    "improper_ctypes_definitions",
+    "non_camel_case_types",
+    "non_snake_case",
+    "non_upper_case_globals",
+    "unused_imports",
+    "unused_unsafe",
+    "unused_variables"
+  ],
+  "src/runtime/generated_host_exports.rs": [
+    "// Thunks pass `*mut <RustStruct>` where C++ stores it as `void*` and never\n\n    improper_ctypes",
+    "clippy::missing_safety_doc",
+    "clippy::not_unsafe_ptr_arg_deref",
+    "clippy::redundant_closure",
+    "clippy::unused_unit",
+    "improper_ctypes_definitions",
+    "non_camel_case_types",
+    "non_snake_case",
+    "non_upper_case_globals"
+  ],
+  "src/runtime/generated_js2native.rs": [
+    "clippy::missing_safety_doc",
+    "clippy::not_unsafe_ptr_arg_deref",
+    "clippy::redundant_closure",
+    "clippy::unused_unit",
+    "non_camel_case_types",
+    "non_snake_case",
+    "non_upper_case_globals"
+  ],
+  "src/runtime/generated_jssink.rs": [
+    "clippy::not_unsafe_ptr_arg_deref",
+    "non_camel_case_types",
+    "non_snake_case",
+    "non_upper_case_globals"
+  ],
+  "src/runtime/image/backend_wic.rs": [
+    "non_snake_case",
+    "non_upper_case_globals"
+  ],
+  "src/runtime/lib.rs": [
+    "dead_code",
+    "internal_features",
+    "non_camel_case_types",
+    "non_snake_case",
+    "non_upper_case_globals"
+  ],
+  "src/runtime/shell/shell_body.rs": [
+    "clippy::too_many_arguments"
+  ],
+  "src/runtime/socket/SocketAddress.rs": [
+    "non_camel_case_types",
+    "non_camel_case_types"
+  ],
+  "src/semver_jsc/lib.rs": [
+    "non_snake_case"
+  ],
+  "src/shell_parser/lib.rs": [
+    "incomplete_features"
+  ],
+  "src/sql/lib.rs": [
+    "non_camel_case_types",
+    "non_snake_case"
+  ],
+  "src/sql/postgres/types/int_types.rs": [
+    "non_camel_case_types"
+  ],
+  "src/standalone_graph/lib.rs": [
+    "non_snake_case"
+  ],
+  "src/sys/lib.rs": [
+    "clippy::disallowed_methods",
+    "clippy::disallowed_types",
+    "non_camel_case_types",
+    "non_snake_case",
+    "non_upper_case_globals"
+  ],
+  "src/sys/windows/mod.rs": [
+    "non_camel_case_types",
+    "non_snake_case"
+  ],
+  "src/sys_jsc/lib.rs": [
+    "non_snake_case"
+  ],
+  "src/uws/lib.rs": [
+    "non_camel_case_types",
+    "non_snake_case",
+    "non_upper_case_globals"
+  ],
+  "src/uws_sys/lib.rs": [
+    "clippy::not_unsafe_ptr_arg_deref",
+    "non_camel_case_types",
+    "non_snake_case",
+    "non_upper_case_globals"
+  ],
+  "src/windows_sys/lib.rs": [
+    "non_camel_case_types",
+    "non_snake_case",
+    "non_upper_case_globals"
+  ],
+  "src/zlib_sys/lib.rs": [
+    "non_camel_case_types"
+  ]
+}

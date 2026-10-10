@@ -1,0 +1,113 @@
+use bun_lint::prelude::*;
+
+/// Enforce type definitions to consistently use either `interface` or `type`.
+pub struct ConsistentTypeDefinitions {
+    prefers_type: bool,
+}
+
+const INTERFACE_OVER_TYPE: Message =
+    Message::new("interfaceOverType", "Use an `interface` instead of a `type`.");
+const TYPE_OVER_INTERFACE: Message =
+    Message::new("typeOverInterface", "Use a `type` instead of an `interface`.");
+
+fn is_within_declare_global(statement: Stmt) -> bool {
+    Node::Stmt(statement).ancestors().any(|ancestor| match ancestor {
+        Node::Stmt(outer) => match outer.kind() {
+            StmtKind::Module(module) => {
+                // oxlint does not ask for the `declare`.
+                matches!(module.name(), ModuleName::Global)
+                    && (outer.flags().contains(Flags::AMBIENT) || outer.file().language().is_oxlint)
+            }
+            _ => false,
+        },
+        _ => false,
+    })
+}
+
+fn fix_type_alias<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, alias: Alias<'a>) -> Option<Vec<Fix>> {
+    let (file, ty) = (fixer.file(), alias.ty().span());
+    let type_token = file.tokens_before(alias.name()).find(|token| token.is("type"))?;
+    let equals_token = file.tokens_before(ty).find(|token| token.is("="))?;
+    let before_equals_token = file.tokens_before(equals_token).with_comments().next()?;
+    Some(vec![
+        fixer.replace(type_token, "interface"),
+        fixer.replace(Span::before(before_equals_token.end(), ty), " "),
+        fixer.remove(Span::new(ty.end, statement.span().end)),
+    ])
+}
+
+fn fix_interface<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, interface: Interface<'a>) -> Vec<Fix> {
+    let (file, name, body) = (fixer.file(), interface.name(), interface.body_span());
+    let head_end = interface.type_params().angle_brackets_span().map_or_else(|| name.span().end, |it| it.end);
+    let mut fixes = Vec::new();
+    if let Some(first_token) = file.token_before(name) {
+        fixes.push(fixer.replace(first_token, "type"));
+        fixes.push(fixer.replace(Span::before(head_end, body), " = "));
+    }
+    // oxlint replaces all of the declaration, so that no other fix is made in it at the same time.
+    if file.language().is_oxlint {
+        fixes.push(fixer.replace(body, file.slice(body).to_vec()));
+    }
+    for heritage in interface.extends() {
+        fixes.push(fixer.insert_after(body, [&b" & "[..], heritage.text()].concat()));
+    }
+    if statement.is_default_export()
+        && let Some(export) = statement.export_span()
+    {
+        fixes.push(fixer.remove(Span::new(export.start, statement.span_without_export().start)));
+        fixes.push(fixer.insert_after(body, [&b"\nexport default "[..], name.bytes()].concat()));
+    }
+    fixes
+}
+
+/// oxlint points at the keyword, which is before the name.
+fn place<'a>(name: Ident<'a>, keyword: &str, cx: &Cx<'a, ConsistentTypeDefinitions>) -> Span {
+    if !cx.language().is_oxlint {
+        return name.span();
+    }
+    let end = cx.file().end_of_token_before(name.span().start);
+    Span::new(end.saturating_sub(keyword.len() as u32), end)
+}
+
+impl Rule for ConsistentTypeDefinitions {
+    const META: Meta = Meta::typescript("consistent-type-definitions", Kind::Suggestion)
+        .fixable(Fixable::Code)
+        .presets(Presets::STYLISTIC);
+    const ON: On = On::new().stmts(&[StmtTag::Interface, StmtTag::TypeAlias]);
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        ConsistentTypeDefinitions {
+            prefers_type: options.str(0) == Some("type"),
+        }
+    }
+
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        On::new().stmts(&[if self.prefers_type { StmtTag::Interface } else { StmtTag::TypeAlias }])
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if self.prefers_type {
+            let StmtKind::Interface(interface) = statement.kind() else {
+                return;
+            };
+            let report = cx.report(place(interface.name(), "interface", cx), TYPE_OVER_INTERFACE);
+            let fix = |fixer: Fixer<'a>| fix_interface(fixer, statement, interface);
+            match is_within_declare_global(statement) {
+                false => report.fix(fix),
+                // For oxlint the fix is dangerous there.
+                true if cx.language().is_oxlint => report.fix_dangerously(fix),
+                true => report,
+            };
+            // oxlint comes to it twice: as what is exported and as the interface. The second fix is in the first.
+            if cx.language().is_oxlint && statement.is_default_export() {
+                cx.report(place(interface.name(), "interface", cx), TYPE_OVER_INTERFACE);
+            }
+        } else if let StmtKind::TypeAlias(alias) = statement.kind()
+            && alias.ty().tag() == TypeTag::Object
+        {
+            cx.report(place(alias.name(), "type", cx), INTERFACE_OVER_TYPE)
+                .fix(|fixer| fix_type_alias(fixer, statement, alias));
+        }
+    }
+}

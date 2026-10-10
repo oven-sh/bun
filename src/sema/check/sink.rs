@@ -37,6 +37,7 @@
 use super::explain::NOWHERE;
 use super::task::Finished;
 use super::*;
+use crate::util::SharedSort;
 use bun_threading::Guarded;
 
 /// `args ...any` of `NewDiagnostic` and `reportError`.
@@ -329,7 +330,7 @@ impl super::Program<'_> {
 
     /// `SortAndDeduplicateDiagnostics`
     pub(super) fn sort_and_deduplicate_diagnostics(&self, reported: &mut Vec<Reported>) {
-        reported.sort_by(|a, b| self.compare_diagnostics(a, b));
+        reported.shared_sort_by(|a, b| self.compare_diagnostics(a, b));
         // `compactAndMergeRelatedInfos`: diagnostics that differ only in their related information
         // are merged into one that has all of it, sorted.
         reported.dedup_by(|next, first| {
@@ -337,7 +338,7 @@ impl super::Program<'_> {
             if is_same {
                 let related = &mut first.related_information;
                 related.append(&mut next.related_information);
-                related.sort_by(|a, b| self.compare_diagnostics(a, b));
+                related.shared_sort_by(|a, b| self.compare_diagnostics(a, b));
                 related.dedup_by(|next, first| equal_diagnostics(next, first));
             }
             is_same

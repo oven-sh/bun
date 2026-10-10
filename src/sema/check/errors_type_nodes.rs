@@ -19,7 +19,7 @@ use crate::bind::{Decl, MemberOwner, Parent};
 
 /// `hasParseDiagnostics`: the parser or the scanner reported an error in the file, so
 /// `grammarErrorOnNode` and similar functions report nothing.
-/// `parse_for_sema` sets the flag by the origin of each error, so a code the parser shares with
+/// The parser sets the flag by the origin of each error, so a code the parser shares with
 /// `grammarErrorOnNode` (1005 ..) does not count.
 pub(super) fn has_parse_diagnostics(hir: &hir::File) -> bool {
     hir.has_parse_diagnostics || hir.has_errors

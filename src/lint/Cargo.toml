@@ -1,0 +1,28 @@
+[package]
+name = "bun_lint"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+bun_sema.workspace = true
+bun_alloc.workspace = true
+bun_ast.workspace = true
+bun_collections.workspace = true
+bun_core.workspace = true
+bun_glob.workspace = true
+bun_node_path.workspace = true
+bun_parsers.workspace = true
+bun_paths.workspace = true
+bun_threading.workspace = true
+bun_wyhash.workspace = true
+bun_yarr.workspace = true
+bstr.workspace = true
+bitflags.workspace = true
+smallvec.workspace = true
+rustc-hash = "2"
+
+[lints]
+workspace = true

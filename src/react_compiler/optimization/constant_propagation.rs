@@ -26,6 +26,7 @@
 
 use crate::collections::IdMap;
 use crate::diagnostics::JsString;
+use crate::hir::assert_terminal_blocks_exist::assert_terminal_successors_exist;
 use crate::hir::cfg_utils::{
     get_reverse_postordered_blocks, mark_instruction_ids, mark_predecessors,
     remove_dead_do_while_statements, remove_unnecessary_try_catch, remove_unreachable_for_updates,
@@ -34,7 +35,7 @@ use crate::hir::environment::Environment;
 use crate::hir::{
     BinaryOperator, BlockKind, FloatValue, FunctionId, GotoVariant, HirFunction, IdentifierId,
     InstructionValue, NonLocalBinding, Phi, Place, PrimitiveValue, PropertyLiteral, SourceLocation,
-    Terminal, UnaryOperator, UpdateOperator, format_js_number,
+    Terminal, UnaryOperator, UpdateOperator,
 };
 use crate::ssa::enter_ssa::placeholder_function;
 
@@ -94,7 +95,10 @@ fn constant_propagation_impl(
          * If terminals have changed then blocks may have become newly unreachable.
          * Re-run minification of the graph (incl reordering instruction ids)
          */
-        func.body.blocks = get_reverse_postordered_blocks(&func.body, &func.instructions);
+        match get_reverse_postordered_blocks(&func.body, &func.instructions) {
+            Ok(blocks) => func.body.blocks = blocks,
+            Err(invariant) => return env.record_diagnostic(invariant),
+        }
         remove_unreachable_for_updates(&mut func.body);
         remove_dead_do_while_statements(&mut func.body);
         remove_unnecessary_try_catch(&mut func.body);
@@ -119,11 +123,16 @@ fn constant_propagation_impl(
          * Finally, merge together any blocks that are now guaranteed to execute
          * consecutively
          */
-        merge_consecutive_blocks(func, &mut env.functions);
+        if let Err(invariant) = merge_consecutive_blocks(func, &mut env.functions) {
+            env.record_diagnostic(invariant);
+            break;
+        }
 
-        // TODO: port assertConsistentIdentifiers(fn) and assertTerminalSuccessorsExist(fn)
-        // from TS HIR validation. These are debug assertions that verify structural
-        // invariants after the CFG cleanup helpers run.
+        // TODO: port assertConsistentIdentifiers(fn).
+        if let Err(invariant) = assert_terminal_successors_exist(func) {
+            env.record_diagnostic(invariant);
+            break;
+        }
     }
 }
 
@@ -597,7 +606,11 @@ fn evaluate_instruction(
                         result.extend_from_slice(if *b { b"true" } else { b"false" })
                     }
                     PrimitiveValue::Number(n) => {
-                        result.extend_from_slice(format_js_number(n.value()).as_bytes())
+                        let mut buffer = [0; 124];
+                        result.extend_from_slice(bun_core::fmt::FormatDouble::dtoa(
+                            &mut buffer,
+                            n.value(),
+                        ))
                     }
                     PrimitiveValue::String(s) => match s.as_bytes() {
                         Some(b) => result.extend_from_slice(b),

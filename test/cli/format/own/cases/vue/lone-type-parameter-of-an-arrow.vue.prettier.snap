@@ -1,0 +1,34 @@
+------------------
+{ printWidth: 40 }
+------------------
+<script lang="ts">
+const f = <T,>() => 1;
+</script>
+<template>
+  <a
+    :b="<T,>(c: T) => c"
+    @d="<T,>(c: T) => c"
+  ></a>
+</template>
+
+------------------
+{ printWidth: 80 }
+------------------
+<script lang="ts">
+const f = <T,>() => 1;
+</script>
+<template>
+  <a :b="<T,>(c: T) => c" @d="<T,>(c: T) => c"></a>
+</template>
+
+-------------------
+{ printWidth: 100 }
+-------------------
+<script lang="ts">
+const f = <T,>() => 1;
+</script>
+<template>
+  <a :b="<T,>(c: T) => c" @d="<T,>(c: T) => c"></a>
+</template>
+
+===================== End =====================

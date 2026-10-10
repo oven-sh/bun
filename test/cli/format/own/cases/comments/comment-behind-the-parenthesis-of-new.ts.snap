@@ -1,0 +1,51 @@
+------------------
+{ printWidth: 80 }
+------------------
+new A(b, c); // 1
+function d() {
+  throw new Error( // 2
+    `A message that is long enough: ${someName} and ${someOtherName}, is it`,
+  );
+}
+e = new A(b); // 3
+new A /* 4 */(b);
+new A(
+  // 5
+  b,
+);
+new A(() => {}); // 6
+new A<B>(b); // 7
+a(
+  // 8
+  b,
+);
+new A(
+  // 9
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+new A(b, c); // 1
+function d() {
+  throw new Error( // 2
+    `A message that is long enough: ${someName} and ${someOtherName}, is it`,
+  );
+}
+e = new A(b); // 3
+new A /* 4 */(b);
+new A(
+  // 5
+  b,
+);
+new A(() => {}); // 6
+new A<B>(b); // 7
+a(
+  // 8
+  b,
+);
+new A(
+  // 9
+);
+
+===================== End =====================

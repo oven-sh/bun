@@ -1,0 +1,16 @@
+export default a(() => {
+  b
+})
+
+// comment
+;(function () {})()?.foo
+
+c()
+
+// comment
+;[1].d()
+
+e()
+// comment
+
+;[1].d()

@@ -1,0 +1,543 @@
+//! `a ? b : c` and `A extends B ? C : D`. Prettier's `printTernary`.
+
+use super::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
+use super::typecast::is_cast_target_that_hides_its_kind;
+use crate::js::print::binary_like_expression::is_angular_pipe;
+use crate::prelude::*;
+use crate::write;
+
+#[derive(Copy, Clone)]
+pub(crate) enum ConditionalLike<'a> {
+    ConditionalExpression(Expr<'a>),
+    TSConditionalType(TypeNode<'a>),
+}
+
+/// An operand of either.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Operand<'a> {
+    Expr(Expr<'a>),
+    Type(TypeNode<'a>),
+}
+
+impl Spanned for Operand<'_> {
+    fn span(&self) -> Span {
+        match self {
+            Operand::Expr(e) => e.span(),
+            Operand::Type(ty) => ty.span(),
+        }
+    }
+}
+
+impl<'a> Format<'a> for Operand<'a> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        match self {
+            Operand::Expr(e) => e.fmt(f),
+            Operand::Type(ty) => ty.fmt(f),
+        }
+    }
+}
+
+impl Operand<'_> {
+    fn is_conditional(self) -> bool {
+        match self {
+            Operand::Expr(e) => matches!(e.kind(), ExprKind::Cond { .. }),
+            Operand::Type(ty) => matches!(ty.kind(), TypeKind::Cond { .. }),
+        }
+    }
+}
+
+impl<'a> ConditionalLike<'a> {
+    fn span(&self) -> Span {
+        match self {
+            ConditionalLike::ConditionalExpression(e) => e.span(),
+            ConditionalLike::TSConditionalType(ty) => ty.span(),
+        }
+    }
+
+    fn parent(&self) -> AstNodes<'a> {
+        match self {
+            ConditionalLike::ConditionalExpression(e) => e.ast_parent(),
+            ConditionalLike::TSConditionalType(ty) => ty.ast_parent(),
+        }
+    }
+
+    /// What is after the `?`, and what is after the `:`.
+    fn consequent_and_alternate(&self) -> Option<(Operand<'a>, Operand<'a>)> {
+        match self {
+            ConditionalLike::ConditionalExpression(e) => match e.kind() {
+                ExprKind::Cond { yes, no, .. } => Some((Operand::Expr(yes), Operand::Expr(no))),
+                _ => None,
+            },
+            ConditionalLike::TSConditionalType(ty) => match ty.kind() {
+                TypeKind::Cond { yes, no, .. } => Some((Operand::Type(yes), Operand::Type(no))),
+                _ => None,
+            },
+        }
+    }
+}
+
+/// Where a conditional is in another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConditionalLayout {
+    /// It is not in another conditional.
+    Root {
+        /// One of the operands of it or of the conditionals in it is a JSX element.
+        jsx_chain: bool,
+    },
+    /// ```javascript
+    /// (
+    ///   a
+    ///     ? b
+    ///     : c
+    /// )
+    ///   ? d
+    ///   : e;
+    /// ```
+    NestedTest {
+        /// The same as for `Root`.
+        jsx_chain: bool,
+    },
+    /// ```javascript
+    /// a
+    ///   ? b
+    ///     ? c
+    ///     : d
+    ///   : e;
+    /// ```
+    NestedConsequent,
+    /// The condition is aligned with what is after the `:` of the parent.
+    ///
+    /// ```javascript
+    /// a
+    ///   ? b
+    ///   : c +
+    ///       d
+    ///     ? e
+    ///     : f;
+    /// ```
+    NestedAlternate,
+}
+
+impl ConditionalLayout {
+    fn is_root(self) -> bool {
+        matches!(self, Self::Root { .. })
+    }
+
+    fn is_nested_test(self) -> bool {
+        matches!(self, Self::NestedTest { .. })
+    }
+
+    fn is_nested_alternate(self) -> bool {
+        matches!(self, Self::NestedAlternate)
+    }
+
+    fn is_jsx_chain(self) -> bool {
+        matches!(
+            self,
+            Self::Root { jsx_chain: true } | Self::NestedTest { jsx_chain: true }
+        )
+    }
+}
+
+/// Writes the comments after an operand, up to `operator` or to the end of the line. `gap`: what is
+/// between the operand and the next one.
+fn format_operand_trailing_comments<'a>(gap: Span, operator: u8, f: &mut Formatter<'a>) {
+    if f.is_quiet() {
+        return;
+    }
+    let Span { mut start, end } = gap;
+    let comments = f.comments().unprinted_comments();
+    let source_text = f.source_text();
+    let mut index_before_operator = None;
+    let mut count = None;
+    for (index, comment) in comments.iter().enumerate() {
+        if comment.end() > end {
+            count = Some(index_before_operator.unwrap_or(index));
+            break;
+        }
+        if source_text.contains_newline(Span::before(start, comment.span)) {
+            // It is on a new line.
+            count = Some(index);
+            break;
+        } else if comment.is_line() || comment.followed_by_newline() {
+            // Prettier's `handleClosureTypeCastComments`: `a ? /** @type {T} */ ⏎ b : c`
+            count = Some(index + usize::from(!f.comments().looks_like_type_cast_comment(comment)));
+            break;
+        } else if source_text.contains_byte(Span::before(start, comment.span), operator) {
+            index_before_operator = Some(index);
+        }
+        start = comment.span.end;
+    }
+    let count = count.unwrap_or_else(|| index_before_operator.unwrap_or(comments.len()));
+    FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default()).fmt(f);
+}
+
+fn is_jsx_conditional_chain(e: Expr<'_>) -> bool {
+    let mut pending = smallvec::SmallVec::<[Expr<'_>; 8]>::new();
+    pending.push(e);
+    while let Some(e) = pending.pop() {
+        let ExprKind::Cond { test, yes, no } = e.kind() else {
+            continue;
+        };
+        for operand in [test, yes, no] {
+            match operand.tag() {
+                ExprTag::Jsx => return true,
+                ExprTag::Cond => pending.push(operand),
+                _ => {}
+            }
+        }
+    }
+    false
+}
+
+impl<'a> FormatConditionalLike<'a> {
+    fn layout(&self, f: &Formatter<'a>) -> ConditionalLayout {
+        match (self.conditional, self.conditional.parent()) {
+            // For Prettier the parentheses of a type cast are a node, which is what it is in then.
+            (
+                ConditionalLike::ConditionalExpression(e),
+                AstNodes::ConditionalExpression(parent),
+            ) if !is_cast_target_that_hides_its_kind(e, f) => match parent.kind() {
+                ExprKind::Cond { test, .. } if test == e => ConditionalLayout::NestedTest {
+                    jsx_chain: is_jsx_conditional_chain(e),
+                },
+                ExprKind::Cond { yes, .. } if yes == e => ConditionalLayout::NestedConsequent,
+                _ => ConditionalLayout::NestedAlternate,
+            },
+            (ConditionalLike::TSConditionalType(ty), AstNodes::TSConditionalType(parent)) => {
+                match parent.kind() {
+                    TypeKind::Cond { check, extends, .. } if check == ty || extends == ty => {
+                        ConditionalLayout::NestedTest { jsx_chain: false }
+                    }
+                    TypeKind::Cond { yes, .. } if yes == ty => ConditionalLayout::NestedConsequent,
+                    _ => ConditionalLayout::NestedAlternate,
+                }
+            }
+            (ConditionalLike::ConditionalExpression(e), _) => ConditionalLayout::Root {
+                jsx_chain: is_jsx_conditional_chain(e),
+            },
+            _ => ConditionalLayout::Root { jsx_chain: false },
+        }
+    }
+
+    /// Whether it is what a chain of member accesses and calls starts with, which is the whole of
+    /// what is returned, assigned, ..:
+    ///
+    /// ```javascript
+    /// return (
+    ///   a
+    ///     ? b
+    ///     : c
+    /// ).member;
+    /// ```
+    fn should_extra_indent(&self, layout: ConditionalLayout) -> bool {
+        let ConditionalLike::ConditionalExpression(conditional) = self.conditional else {
+            return false;
+        };
+        if !layout.is_root() {
+            return false;
+        }
+
+        let mut expression = conditional;
+        let mut parent = conditional.ast_parent();
+        loop {
+            let is = |head: Option<Expr<'a>>| head == Some(expression);
+            match parent {
+                AstNodes::ChainExpression(_) => {}
+                AstNodes::StaticMemberExpression(e)
+                | AstNodes::PrivateFieldExpression(e)
+                | AstNodes::ComputedMemberExpression(e)
+                    if is(e.object()) =>
+                {
+                    expression = e;
+                }
+                AstNodes::CallExpression(e) if is(e.callee()) => expression = e,
+                AstNodes::TSNonNullExpression(e) => expression = e,
+                // The chain ends here.
+                AstNodes::NewExpression(e) if is(e.callee()) => {
+                    expression = e;
+                    parent = parent.parent();
+                    break;
+                }
+                AstNodes::TSAsExpression(e) | AstNodes::TSSatisfiesExpression(e) => {
+                    expression = e;
+                    parent = parent.parent();
+                    break;
+                }
+                _ => break,
+            }
+            parent = parent.parent();
+        }
+        if expression == conditional {
+            return false;
+        }
+
+        match parent {
+            AstNodes::VariableDeclarator(declarator) => declarator.init() == Some(expression),
+            AstNodes::ReturnStatement(_) | AstNodes::ThrowStatement(_) => true,
+            AstNodes::UnaryExpression(e)
+            | AstNodes::YieldExpression(e)
+            | AstNodes::AwaitExpression(e) => e.argument() == Some(expression),
+            AstNodes::AssignmentExpression(assignment) => assignment.right() == Some(expression),
+            _ => false,
+        }
+    }
+
+    fn is_parent_static_member_expression(
+        &self,
+        layout: ConditionalLayout,
+        f: &Formatter<'a>,
+    ) -> bool {
+        layout.is_root()
+            && matches!(self.conditional, ConditionalLike::ConditionalExpression(_))
+            && match self.conditional.parent() {
+                AstNodes::StaticMemberExpression(_) | AstNodes::PrivateFieldExpression(_) => true,
+                // It is the left side.
+                AstNodes::BinaryExpression(binary) => binary
+                    .binary_operator()
+                    .is_some_and(|operator| is_angular_pipe(operator, f)),
+                _ => false,
+            }
+    }
+
+    fn format_test(&self, f: &mut Formatter<'a>, layout: ConditionalLayout) {
+        let format_inner = format_with(|f| {
+            let gap = match self.conditional {
+                ConditionalLike::ConditionalExpression(conditional) => {
+                    let ExprKind::Cond { test, yes, .. } = conditional.kind() else {
+                        return;
+                    };
+                    write!(f, FormatNodeWithoutTrailingComments(&test));
+                    test.span().between(yes.span())
+                }
+                ConditionalLike::TSConditionalType(conditional) => {
+                    let TypeKind::Cond {
+                        check,
+                        extends,
+                        yes,
+                        ..
+                    } = conditional.kind()
+                    else {
+                        return;
+                    };
+                    write!(f, [check, space(), "extends", space()]);
+                    // A union writes the comments after it in its own group.
+                    match extends.kind() {
+                        TypeKind::Union(types) if types.len() > 1 => write!(f, extends),
+                        _ => write!(f, FormatNodeWithoutTrailingComments(&extends)),
+                    }
+                    extends.span().between(yes.span())
+                }
+            };
+            format_operand_trailing_comments(gap, b'?', f);
+        });
+
+        if layout.is_nested_alternate() {
+            // The comments before it are not aligned.
+            let comments = f.comments().comments_before(self.conditional.span().start);
+            write!(
+                f,
+                [
+                    FormatLeadingComments::Comments(comments),
+                    align(2, &format_inner)
+                ]
+            );
+        } else {
+            write!(f, format_inner);
+        }
+    }
+
+    fn format_consequent_and_alternate(&self, f: &mut Formatter<'a>) {
+        let Some((consequent, alternate)) = self.conditional.consequent_and_alternate() else {
+            return;
+        };
+        let is_space = f.options().indent_style.is_space();
+        write!(f, [soft_line_break_or_space(), "?", space()]);
+
+        let format_consequent_with_trailing_comments = format_with(|f| {
+            write!(f, FormatNodeWithoutTrailingComments(&consequent));
+            format_operand_trailing_comments(consequent.span().between(alternate.span()), b':', f);
+        });
+        let format_consequent = format_with(|f| match is_space {
+            true => write!(f, align(2, &format_consequent_with_trailing_comments)),
+            false => write!(f, indent(&format_consequent_with_trailing_comments)),
+        });
+        // `a ? (b ? c : d) : e`
+        let is_nested_consequent = consequent.is_conditional();
+        write!(
+            f,
+            [
+                is_nested_consequent.then_some(if_group_fits_on_line(&"(")),
+                format_consequent,
+                is_nested_consequent.then_some(if_group_fits_on_line(&")")),
+                soft_line_break_or_space(),
+                ":",
+                space()
+            ]
+        );
+
+        let format_alternate = FormatNodeWithoutTrailingComments(&alternate);
+        match is_space {
+            true => write!(f, align(2, &format_alternate)),
+            false => write!(f, indent(&format_alternate)),
+        }
+    }
+}
+
+impl<'a> Format<'a> for ConditionalLike<'a> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        if f.options().experimental_ternaries {
+            return super::experimental_ternary::write_ternary(*self, f);
+        }
+        FormatConditionalLike {
+            conditional: *self,
+            jsx_chain: false,
+        }
+        .fmt(f);
+    }
+}
+
+struct FormatConditionalLike<'a> {
+    conditional: ConditionalLike<'a>,
+    /// It is in a conditional that is a JSX chain.
+    jsx_chain: bool,
+}
+
+impl<'a> Format<'a> for FormatConditionalLike<'a> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        let layout = self.layout(f);
+        let should_extra_indent = self.should_extra_indent(layout);
+        let is_jsx_chain = self.jsx_chain || layout.is_jsx_chain();
+
+        let format_inner = format_with(|f| {
+            self.format_test(f, layout);
+
+            let tail = format_with(|f| self.format_consequent_and_alternate(f));
+            if is_jsx_chain
+                && let ConditionalLike::ConditionalExpression(conditional) = self.conditional
+                && let ExprKind::Cond { yes, no, .. } = conditional.kind()
+            {
+                write!(
+                    f,
+                    [
+                        space(),
+                        "?",
+                        space(),
+                        FormatJsxChainExpression {
+                            expression: yes,
+                            following: Some(no)
+                        },
+                        space(),
+                        ":",
+                        space(),
+                        FormatJsxChainExpression {
+                            expression: no,
+                            following: None
+                        }
+                    ]
+                );
+            } else {
+                match layout {
+                    ConditionalLayout::Root { .. } | ConditionalLayout::NestedTest { .. } => {
+                        write!(f, indent(&tail))
+                    }
+                    // The `dedent` takes back the `align` of the parent, which with tabs would
+                    // become an indentation of its own.
+                    ConditionalLayout::NestedConsequent => write!(f, dedent(&indent(&tail))),
+                    ConditionalLayout::NestedAlternate => write!(f, tail),
+                }
+            }
+
+            // ```text
+            // (a
+            //   ? b
+            //   : c
+            // ).d
+            // ```
+            if !should_extra_indent
+                && !is_jsx_chain
+                && self.is_parent_static_member_expression(layout, f)
+            {
+                write!(f, soft_line_break());
+            }
+        });
+
+        let grouped = format_with(|f| match layout.is_root() || layout.is_nested_test() {
+            true => write!(f, group(&format_inner)),
+            false => write!(f, format_inner),
+        });
+
+        match layout.is_nested_test() || should_extra_indent {
+            true => write!(f, group(&soft_block_indent(&grouped))),
+            false => write!(f, grouped),
+        }
+    }
+}
+
+/// An operand of a conditional that has a JSX element in it. If the conditional breaks, it is in
+/// parentheses, unless it is `null`, `undefined` or a conditional after the `:`.
+///
+/// ```javascript
+/// a ? (
+///   <b>
+///     <c />
+///   </b>
+/// ) : (
+///   <d>
+///     <e />
+///   </d>
+/// );
+/// ```
+struct FormatJsxChainExpression<'a> {
+    expression: Expr<'a>,
+    /// What is after the `:`, if `expression` is what is before it.
+    following: Option<Expr<'a>>,
+}
+
+impl<'a> Format<'a> for FormatJsxChainExpression<'a> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        // A conditional expression in here is not written by way of `Expr`.
+        if !f.context_mut().has_stack_left() {
+            return;
+        }
+        let expression = self.expression;
+        let is_conditional = matches!(expression.kind(), ExprKind::Cond { .. });
+        let no_wrap = match expression.kind() {
+            ExprKind::Ident(name) => name.bytes() == b"undefined",
+            ExprKind::Null => true,
+            _ => is_conditional && self.following.is_none(),
+        };
+
+        let format_expression = format_with(|f| match is_conditional {
+            true => FormatConditionalLike {
+                conditional: ConditionalLike::ConditionalExpression(expression),
+                jsx_chain: true,
+            }
+            .fmt(f),
+            false => match self.following {
+                Some(following) => {
+                    write!(f, FormatNodeWithoutTrailingComments(&expression));
+                    format_operand_trailing_comments(
+                        expression.span().between(following.span()),
+                        b':',
+                        f,
+                    );
+                }
+                None => expression.fmt(f),
+            },
+        });
+
+        if no_wrap {
+            write!(f, format_expression);
+        } else {
+            write!(
+                f,
+                [
+                    if_group_breaks(&"("),
+                    soft_block_indent(&format_expression),
+                    if_group_breaks(&")")
+                ]
+            );
+        }
+    }
+}

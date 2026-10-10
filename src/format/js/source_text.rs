@@ -1,0 +1,281 @@
+//! Questions about the source text around a position.
+
+use bun_lint::span::{Span, Spanned};
+
+#[derive(Copy, Clone)]
+pub(crate) struct SourceText<'a> {
+    text: &'a [u8],
+}
+
+/// `\n`, `\r`, U+2028 or U+2029 at the start of `text`: its length.
+#[inline]
+fn line_terminator_len(text: &[u8]) -> usize {
+    match text {
+        [b'\n' | b'\r', ..] => 1,
+        [0xE2, 0x80, 0xA8 | 0xA9, ..] => 3,
+        _ => 0,
+    }
+}
+
+/// The same at the end of `text`.
+#[inline]
+fn line_terminator_len_back(text: &[u8]) -> usize {
+    match text {
+        [.., b'\n' | b'\r'] => 1,
+        [.., 0xE2, 0x80, 0xA8 | 0xA9] => 3,
+        _ => 0,
+    }
+}
+
+fn has_line_terminator(mut rest: &[u8]) -> bool {
+    if matches!(rest, [] | [_, b'\n', ..]) {
+        return !rest.is_empty();
+    }
+    // 0xE2 starts U+2028 and U+2029, and many other characters.
+    while let Some(at) = bun_core::strings::index_of_any(rest, b"\n\r\xE2") {
+        if line_terminator_len(&rest[at..]) != 0 {
+            return true;
+        }
+        rest = &rest[at + 1..];
+    }
+    false
+}
+
+/// `WhiteSpace` of the specification at the start of `text`: its length.
+#[inline]
+fn white_space_len(text: &[u8]) -> usize {
+    match text {
+        [b' ' | b'\t' | 0x0B | 0x0C, ..] => 1,
+        [0xC2, 0xA0, ..] => 2,
+        [0xEF, 0xBB, 0xBF, ..]
+        | [0xE1, 0x9A, 0x80, ..]
+        | [0xE2, 0x80, 0x80..=0x8A | 0xAF, ..]
+        | [0xE2, 0x81, 0x9F, ..]
+        | [0xE3, 0x80, 0x80, ..] => 3,
+        _ => 0,
+    }
+}
+
+/// The same at the end of `text`.
+#[inline]
+fn white_space_len_back(text: &[u8]) -> usize {
+    match text {
+        [.., b' ' | b'\t' | 0x0B | 0x0C] => 1,
+        [.., 0xEF, 0xBB, 0xBF]
+        | [.., 0xE1, 0x9A, 0x80]
+        | [.., 0xE2, 0x80, 0x80..=0x8A | 0xAF]
+        | [.., 0xE2, 0x81, 0x9F]
+        | [.., 0xE3, 0x80, 0x80] => 3,
+        [.., 0xC2, 0xA0] => 2,
+        _ => 0,
+    }
+}
+
+impl<'a> SourceText<'a> {
+    #[inline]
+    pub(crate) fn new(text: &'a [u8]) -> Self {
+        Self { text }
+    }
+
+    #[inline]
+    pub(crate) fn as_bytes(self) -> &'a [u8] {
+        self.text
+    }
+
+    #[inline]
+    fn from(self, position: u32) -> &'a [u8] {
+        self.text.get(position as usize..).unwrap_or_default()
+    }
+
+    #[inline]
+    fn to(self, position: u32) -> &'a [u8] {
+        self.text.get(..position as usize).unwrap_or_default()
+    }
+
+    #[inline]
+    pub(crate) fn text_for(self, it: &impl Spanned) -> &'a [u8] {
+        let span = it.span();
+        self.text
+            .get(span.start as usize..span.end.max(span.start) as usize)
+            .unwrap_or_default()
+    }
+
+    #[inline]
+    pub(crate) fn byte_at(self, position: u32) -> Option<u8> {
+        self.text.get(position as usize).copied()
+    }
+
+    pub(crate) fn next_non_whitespace_byte_is(self, position: u32, expected: u8) -> bool {
+        let mut rest = self.from(position).trim_ascii_start();
+        while rest.first().is_some_and(|b| !b.is_ascii()) {
+            match white_space_len(rest).max(line_terminator_len(rest)) {
+                0 => break,
+                len => rest = rest[len..].trim_ascii_start(),
+            }
+        }
+        rest.first() == Some(&expected)
+    }
+
+    pub(crate) fn contains_byte(self, span: Span, byte: u8) -> bool {
+        bun_core::strings::contains_char(self.text_for(&span), byte)
+    }
+
+    /// White space that is not ASCII counts as a space, U+2028 and U+2029 as `\n`.
+    pub(crate) fn all_bytes(self, span: Span, predicate: impl Fn(u8) -> bool) -> bool {
+        let mut rest = self.text_for(&span);
+        while let Some(at) = rest.iter().position(|&b| !predicate(b)) {
+            rest = &rest[at..];
+            let (len, stands_for) = match (white_space_len(rest), line_terminator_len(rest)) {
+                (0, len) => (len, b'\n'),
+                (len, _) => (len, b' '),
+            };
+            if len < 2 || !predicate(stands_for) {
+                return false;
+            }
+            rest = &rest[len..];
+        }
+        true
+    }
+
+    /// The number of characters in `span`.
+    pub(crate) fn span_width(self, span: Span) -> usize {
+        bstr::ByteSlice::chars(self.text_for(&span)).count()
+    }
+
+    pub(crate) fn contains_newline(self, span: Span) -> bool {
+        has_line_terminator(self.text_for(&span))
+    }
+
+    /// Prettier's `hasNewlineInRange`, which does not know U+2028 and U+2029.
+    pub(crate) fn has_newline_in_range(self, span: Span) -> bool {
+        bun_core::strings::index_of_any(self.text_for(&span), b"\n\r").is_some()
+    }
+
+    /// The number of line breaks between `end` and the next thing that is not whitespace. 0 if
+    /// there is nothing more.
+    pub(crate) fn lines_after(self, end: u32) -> usize {
+        let (mut rest, mut count) = (self.from(end), 0);
+        loop {
+            let space = white_space_len(rest);
+            if space != 0 {
+                rest = &rest[space..];
+                continue;
+            }
+            match line_terminator_len(rest) {
+                0 if rest.is_empty() => return 0,
+                0 => return count,
+                _ if rest.starts_with(b"\r\n") => rest = &rest[2..],
+                len => rest = &rest[len..],
+            }
+            count += 1;
+        }
+    }
+
+    /// The number of line breaks between the previous token and `span`, or the comments that lead
+    /// up to it, the first of which is `first_unprinted_comment`. Parentheses around `span` are
+    /// looked through.
+    ///
+    /// `looks_past_comma`: in `a: 1\n\n, b: 2` the comma is on the line of what follows it, and the line breaks before it count.
+    pub(crate) fn get_lines_before(
+        self,
+        span: Span,
+        first_unprinted_comment: Option<Span>,
+        looks_past_comma: bool,
+    ) -> usize {
+        let mut start = span.start;
+        if let Some(comment) = first_unprinted_comment
+            && comment.end <= start
+        {
+            start = comment.start;
+        } else if start != 0 && self.byte_at(start - 1) == Some(b';') {
+            // `;(function() {})`
+            start -= 1;
+        }
+
+        let mut count = 0;
+        let mut is_after_comma = !looks_past_comma;
+        let mut following = self.from(span.end);
+        let mut before = self.to(start);
+        loop {
+            // What there is between most nodes.
+            while let [rest @ .., last @ (b' ' | b'\t' | b'\n')] = before {
+                before = rest;
+                if *last == b'\n' {
+                    count += 1;
+                    before = before.strip_suffix(b"\r").unwrap_or(before);
+                }
+            }
+            let space = white_space_len_back(before);
+            if space != 0 {
+                before = &before[..before.len() - space];
+                continue;
+            }
+            if let [rest @ .., b'('] = before {
+                // The line breaks inside the parentheses do not count.
+                following = following.trim_ascii_start();
+                match following.split_first() {
+                    Some((b')', rest)) => following = rest,
+                    Some(_) => return count,
+                    None => {}
+                }
+                before = rest;
+                count = 0;
+                continue;
+            }
+            match line_terminator_len_back(before) {
+                0 if before.is_empty() => return 0,
+                0 if count == 0 && !is_after_comma && before.ends_with(b",") => {
+                    before = &before[..before.len() - 1];
+                    is_after_comma = true;
+                    continue;
+                }
+                0 => return count,
+                _ if before.ends_with(b"\r\n") => before = &before[..before.len() - 2],
+                len => before = &before[..before.len() - len],
+            }
+            count += 1;
+        }
+    }
+
+    /// Whether only spaces and tabs are between the previous line break and `position`.
+    pub(crate) fn has_line_terminator_before(self, position: u32) -> bool {
+        let before = self.to(position);
+        let end = before
+            .iter()
+            .rposition(|b| !matches!(b, b' ' | b'\t'))
+            .map_or(0, |at| at + 1);
+        line_terminator_len_back(&before[..end]) != 0
+    }
+
+    /// Whether only spaces and tabs are between `position` and the next line break.
+    pub(crate) fn has_line_terminator_after(self, position: u32) -> bool {
+        let after = self.from(position);
+        let start = after
+            .iter()
+            .position(|b| !matches!(b, b' ' | b'\t'))
+            .unwrap_or(after.len());
+        line_terminator_len(&after[start..]) != 0
+    }
+
+    /// Whether there is a line break between `position` and the next token, which can be in or
+    /// after a comment.
+    pub(crate) fn has_line_terminator_after_skipping_comments(self, position: u32) -> bool {
+        let mut rest = self.from(position);
+        loop {
+            match rest {
+                [b' ' | b'\t', tail @ ..] => rest = tail,
+                [b'/', b'/', tail @ ..] => {
+                    return has_line_terminator(tail);
+                }
+                [b'/', b'*', tail @ ..] => {
+                    let end = bun_core::strings::index_of(tail, b"*/").unwrap_or(tail.len());
+                    if has_line_terminator(&tail[..end]) {
+                        return true;
+                    }
+                    rest = tail.get(end + 2..).unwrap_or_default();
+                }
+                _ => return line_terminator_len(rest) != 0,
+            }
+        }
+    }
+}

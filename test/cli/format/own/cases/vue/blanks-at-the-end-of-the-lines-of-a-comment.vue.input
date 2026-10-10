@@ -1,0 +1,13 @@
+<script>
+/**
+ * Two blanks at the end.  
+ * Three.   
+ * None.
+ */
+const a = 1;
+
+/*
+ * No JSDoc comment.  
+ */
+const b = 2;
+</script>

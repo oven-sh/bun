@@ -10,6 +10,7 @@
 //! preserving side effects and program semantics.
 //!
 //! Ported from TypeScript `src/Optimization/DeadCodeElimination.ts`.
+//! Caught throws: https://github.com/oxc-project/oxc (Copyright VoidZero Inc. and contributors, MIT License).
 
 use std::collections::HashSet;
 
@@ -18,8 +19,9 @@ use crate::hir::object_shape::HookKind;
 use crate::hir::visitors;
 use crate::hir::{
     ArrayPatternElement, AstAlloc, BlockId, BlockKind, HirFunction, HirVec, IdentifierId,
-    InstructionKind, InstructionValue, ObjectPropertyOrSpread, Pattern,
+    InstructionKind, InstructionValue, ObjectPropertyOrSpread, Pattern, Terminal,
 };
+use crate::optimization::prune_maybe_throws::value_may_throw;
 
 /// Implements dead-code elimination, eliminating instructions whose values are unused.
 ///
@@ -28,7 +30,7 @@ use crate::hir::{
 /// Corresponds to TS `deadCodeElimination(fn: HIRFunction): void`.
 pub(crate) fn dead_code_elimination(func: &mut HirFunction, env: &Environment) {
     // Phase 1: Find/mark all referenced identifiers
-    let state = find_referenced_identifiers(func, env);
+    let state = find_referenced_identifiers(func, env, true);
 
     // Phase 2: Prune / sweep unreferenced identifiers and instructions
     // Collect instructions to rewrite (two-phase: collect then apply to avoid borrow conflicts)
@@ -50,8 +52,15 @@ pub(crate) fn dead_code_elimination(func: &mut HirFunction, env: &Environment) {
         let retained_count = block.instructions.len();
         for i in 0..retained_count {
             let is_block_value = block.kind != BlockKind::Block && i == retained_count - 1;
-            if !is_block_value {
-                instructions_to_rewrite.push(block.instructions[i]);
+            let instr_id = block.instructions[i];
+            // To read a property that nothing uses can throw as well.
+            let is_caught_destructure = is_caught(&block.terminal)
+                && matches!(
+                    func.instructions[instr_id.0 as usize].value,
+                    InstructionValue::Destructure { .. }
+                );
+            if !is_block_value && !is_caught_destructure {
+                instructions_to_rewrite.push(instr_id);
             }
         }
     }
@@ -150,8 +159,24 @@ fn reference_reassigned_variables(
     }
 }
 
+/// What throws in a block that ends so goes to a handler.
+fn is_caught(terminal: &Terminal) -> bool {
+    matches!(
+        terminal,
+        Terminal::MaybeThrow {
+            handler: Some(_),
+            ..
+        }
+    )
+}
+
 /// Phase 1: Find all referenced identifiers via fixed-point iteration.
-fn find_referenced_identifiers(func: &HirFunction, env: &Environment) -> State {
+/// `preserve_caught_throws`: upstream takes `try { props.a.b; } catch { return null; }` for nothing.
+fn find_referenced_identifiers(
+    func: &HirFunction,
+    env: &Environment,
+    preserve_caught_throws: bool,
+) -> State {
     let has_loop = has_back_edge(func);
     // Collect block ids in reverse order (postorder - successors before predecessors)
     let reversed_block_ids: Vec<BlockId> = func.body.blocks.keys().rev().copied().collect();
@@ -187,6 +212,10 @@ fn find_referenced_identifiers(func: &HirFunction, env: &Environment) -> State {
                     // Nor is it rewritten, so every variable it reassigns stays assigned.
                     reference_reassigned_variables(&mut state, &env.identifiers, &instr.value);
                 } else if is_id_or_name_used(&state, &env.identifiers, instr.lvalue.identifier)
+                    // That it throws can be seen, even where nothing uses what it gives.
+                    || (preserve_caught_throws
+                        && is_caught(&block.terminal)
+                        && value_may_throw(&instr.value))
                     || !pruneable_value(&instr.value, &state, env)
                 {
                     reference(&mut state, &env.identifiers, instr.lvalue.identifier);
@@ -205,6 +234,14 @@ fn find_referenced_identifiers(func: &HirFunction, env: &Environment) -> State {
                     } else {
                         for place in visitors::each_instruction_value_operand(&instr.value, env) {
                             reference(&mut state, &env.identifiers, place.identifier);
+                        }
+                        if preserve_caught_throws && is_caught(&block.terminal) {
+                            // Such a Destructure is not rewritten.
+                            reference_reassigned_variables(
+                                &mut state,
+                                &env.identifiers,
+                                &instr.value,
+                            );
                         }
                     }
                 }
@@ -226,6 +263,34 @@ fn find_referenced_identifiers(func: &HirFunction, env: &Environment) -> State {
     }
 
     state
+}
+
+/// By id: kept only because a handler sees it throw. A scope's guard is outside the `try`: only the root is read there.
+pub(crate) fn find_semantic_only_caught_instructions(
+    func: &HirFunction,
+    env: &Environment,
+) -> Option<Vec<bool>> {
+    let mut candidates = Vec::new();
+    for block in func.body.blocks.values() {
+        if is_caught(&block.terminal) {
+            candidates.extend(
+                block.instructions.iter().copied().filter(|instr_id| {
+                    value_may_throw(&func.instructions[instr_id.0 as usize].value)
+                }),
+            );
+        }
+    }
+    if candidates.is_empty() {
+        return None;
+    }
+
+    let state = find_referenced_identifiers(func, env, false);
+    let mut semantic_only = vec![false; func.instructions.len()];
+    for instr_id in candidates {
+        let lvalue = func.instructions[instr_id.0 as usize].lvalue.identifier;
+        semantic_only[instr_id.0 as usize] = !is_id_or_name_used(&state, &env.identifiers, lvalue);
+    }
+    Some(semantic_only)
 }
 
 /// Rewrite a retained instruction (destructuring cleanup, StoreLocal -> DeclareLocal).

@@ -13,6 +13,7 @@ use super::sink::{MAX_SERIALIZATION_LEVEL, NO_DIRECTIVE, held};
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
 use crate::program::SymbolTable;
+use crate::util::SharedSort;
 use bun_core::strings;
 
 /// The diagnostics `check_file` passes to `Program::finish_file`, finalized. Diagnostics reported
@@ -93,7 +94,7 @@ impl Program<'_> {
             // `getDiagnosticsWithPrecedingDirectives`
             let used = out.iter().map(|d| d.directive);
             let mut used: Vec<u32> = used.filter(|&start| start != NO_DIRECTIVE).collect();
-            used.sort_unstable();
+            used.shared_sort_unstable();
             // `FilterNoEmitSemanticDiagnostics` comes after the directives.
             let no_emit = self.files.options.no_emit;
             out.retain(|d| d.directive == NO_DIRECTIVE && !(no_emit && d.skipped_on_no_emit));
@@ -180,6 +181,7 @@ impl Checker<'_, '_> {
             .begin_file(file, !self.files().module(file).is_leaf);
         self.provisional.clear();
         self.refused_expressions.clear();
+        self.side_effect_free.get_mut().clear();
         self.work_trap = WORK_TRAP_DISARMED;
         self.limits = 0;
         // tsgo never resets it, so each of its checkers reports nothing that needs the type of a
@@ -1282,7 +1284,7 @@ impl Checker<'_, '_> {
         while !self.unresolved_identifiers.is_empty() {
             let mut unresolved = std::mem::take(&mut self.unresolved_identifiers);
             unresolved.retain(|u| Some(u.0) == self.task.file);
-            unresolved.sort_unstable_by_key(|u| (u.0, u.1));
+            unresolved.shared_sort_unstable_by_key(|u| (u.0, u.1));
             unresolved.dedup_by_key(|u| (u.0, u.1));
             for (file, e, name) in unresolved {
                 self.report_unresolved_identifier(file, e, name);

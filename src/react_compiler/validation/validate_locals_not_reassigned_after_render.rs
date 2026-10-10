@@ -259,11 +259,17 @@ fn get_context_reassignment(
 
                     for operand in &operands {
                         // Invariant: effects must be inferred before this pass runs
-                        assert!(
-                            operand.effect != Effect::Unknown,
-                            "Expected effects to be inferred prior to \
-                             ValidateLocalsNotReassignedAfterRender"
-                        );
+                        if operand.effect == Effect::Unknown {
+                            diagnostics.push(
+                                crate::diagnostics::cold_invariant(
+                                    "Expected effects to be inferred prior to ValidateLocalsNotReassignedAfterRender",
+                                    None,
+                                    None,
+                                )
+                                .into(),
+                            );
+                            return None;
+                        }
 
                         if let Some(reassignment_place) =
                             reassigning_functions.get(operand.identifier).cloned()

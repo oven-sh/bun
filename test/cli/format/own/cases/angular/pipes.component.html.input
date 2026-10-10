@@ -1,0 +1,17 @@
+<a [x]="value | first: (test ? one : another | second: argument | third)"></a>
+<a [x]="value | first: (inner | second) : (test ? one : two) : one + two"></a>
+<a [x]="(test ? one : two) | first | second: someLongerArgument : anotherArgument"></a>
+<a [x]="item => item.name | first"></a>
+<a [x]="one && two ?? three | first"></a>
+<a [x]="one ?? two || three"></a>
+<a [x]="one && (two && three) && someLongerName && (anotherLongerName && last)"></a>
+<a [x]="(one | first) + two"></a>
+<a [x]="list[index | first]"></a>
+<a [x]="list?.[index | first]"></a>
+<a [x]="list?.inner[index | first]"></a>
+<a [x]="list?.inner`text`.other[index | first]"></a>
+<a [x]="{ one: value | first, two: (value | second) }"></a>
+<a [x]="[...(list | first), `${value | second}`, !(value | third)]"></a>
+<a [x]="list[index] = value"></a>
+{{ { one: { two: three } } }}
+{{ value | first: { one: { two: three } } }}

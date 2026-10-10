@@ -1080,12 +1080,14 @@ pub(crate) fn infer_mutation_aliasing_ranges(
                 continue;
             }
 
-            let from_node = state.nodes.get(&from.identifier);
-            assert!(
-                from_node.is_some(),
-                "Expected a node to exist for all parameters and context variables"
-            );
-            let from_node = from_node.unwrap();
+            let Some(from_node) = state.nodes.get(&from.identifier) else {
+                return Err(cold_invariant(
+                    "Expected a node to exist for all parameters and context variables",
+                    None,
+                    None,
+                )
+                .into());
+            };
 
             if from_node.last_mutated == mutation_index {
                 if into.identifier == returns_identifier_id {

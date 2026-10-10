@@ -7,6 +7,14 @@ pub(crate) fn is_whitespace(c: u8) -> bool {
     matches!(c, b' ' | b'\t' | b'\n' | b'\r' | 0x0C | 0x0B)
 }
 
+/// `line` without the spaces and tabs at its end.
+pub(crate) fn trim_blank_end(mut line: &[u8]) -> &[u8] {
+    while let [rest @ .., b' ' | b'\t'] = line {
+        line = rest;
+    }
+    line
+}
+
 /// Check if a byte is a blank character (space or tab).
 #[inline]
 pub(crate) fn is_blank(c: u8) -> bool {
@@ -47,7 +55,7 @@ pub(crate) fn is_unicode_whitespace(codepoint: u32) -> bool {
 }
 
 /// Check if a Unicode codepoint is punctuation per CommonMark spec.
-pub(crate) fn is_unicode_punctuation(codepoint: u32) -> bool {
+pub fn is_unicode_punctuation(codepoint: u32) -> bool {
     if codepoint < 128 {
         return is_ascii_punctuation(u8::try_from(codepoint).expect("int cast"));
     }

@@ -1,0 +1,13 @@
+const expression = /** @type {Expression} */ (
+  visit_assignment_expression(node, context, build_assignment) ?? context.next()
+);
+const o = {
+  import:
+    /** @type {EntryDescriptionNormalized["import"]} */
+    (value.import && (Array.isArray(value.import) ? value.import : [value.import111111])),
+};
+function f() {
+  return /** @type {Expression} */ (visit_assignment_expression(node, context, build_assignment) ?? context.next());
+}
+g(/** @type {Expression} */ (visit_assignment_expression(node, context, build_assignment) ?? context.next()));
+x = /** @type {Expression} */ (visit_assignment_expression(node, context, build_assignment) ?? context.next());

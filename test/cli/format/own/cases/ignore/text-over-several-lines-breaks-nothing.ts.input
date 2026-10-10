@@ -1,0 +1,9 @@
+type A = /* prettier-ignore */ 'a'   | 'b'
+   | 'c';
+type B = /* prettier-ignore */
+  | 'a'
+  | 'b';
+let c = /* prettier-ignore */ [1,
+   2];
+let d = foo(/* prettier-ignore */ [1,
+   2], 3);

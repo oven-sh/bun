@@ -89,6 +89,24 @@ mod timing {
     }
 }
 
+/// `BUN_REACT_COMPILER_DUMP_HIR=1`: prints what a function is lowered to, to compare the trees of
+/// the two callers of the lowering.
+#[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
+#[allow(clippy::disallowed_methods, clippy::disallowed_macros)]
+pub(crate) fn dump_lowered(hir: &crate::hir::HirFunction, env: &Environment) {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *ENABLED.get_or_init(|| std::env::var_os("BUN_REACT_COMPILER_DUMP_HIR").is_some()) {
+        let names: Vec<_> = env.identifiers.iter().map(|it| &it.name).collect();
+        eprintln!(
+            "lowered {:?} {hir:?} functions {:?} names {names:?} errors {:?}",
+            hir.id, env.functions, env.errors
+        );
+    }
+}
+#[cfg(not(any(debug_assertions, bun_asan, feature = "fixtures")))]
+#[inline(always)]
+pub(crate) fn dump_lowered(_: &crate::hir::HirFunction, _: &Environment) {}
+
 #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
 fn ensure_timing_dump_registered() {
     timing::ensure_dump_registered();
@@ -153,6 +171,8 @@ pub(crate) fn compile_fn(
         "Lowering",
         lowering::lower(func, fn_name, &*host, &mut env, import_bindings)
     )?;
+
+    dump_lowered(&hir, &env);
 
     // Copy renames from lowering to context (keep on env for codegen to apply to type annotations)
     if !env.renames.is_empty() {
@@ -337,6 +357,16 @@ fn run_hir_passes(
     env: &mut Environment,
     context: &mut ProgramContext,
 ) -> Result<(crate::hir::reactive::ReactiveFunction, HashSet<String>), CompilerError> {
+    run_analysis_passes(hir, env, context)?;
+    run_reactive_scope_passes(hir, env, context)
+}
+
+/// The passes up to and including the validations of the HIR.
+pub(crate) fn run_analysis_passes(
+    hir: &mut crate::hir::HirFunction,
+    env: &mut Environment,
+    context: &mut ProgramContext,
+) -> Result<(), CompilerError> {
     timed!(
         "PruneMaybeThrows",
         crate::optimization::prune_maybe_throws(hir, &mut env.functions)
@@ -347,10 +377,13 @@ fn run_hir_passes(
         crate::validation::validate_context_variable_lvalues(hir, env)
     )?;
 
-    let _void_memo_errors = timed!(
+    let void_memo_errors = timed!(
         "ValidateUseMemo",
         crate::validation::validate_use_memo(hir, env)
     );
+    if env.output_mode == OutputMode::Lint {
+        context.logged.merge(void_memo_errors);
+    }
 
     timed!(
         "DropManualMemoization",
@@ -368,7 +401,8 @@ fn run_hir_passes(
             hir,
             &mut env.functions,
         )
-    );
+    )?;
+    crate::hir::assert_terminal_blocks_exist::assert_terminal_successors_exist(hir)?;
 
     timed!("EnterSSA", crate::ssa::enter_ssa(hir, env)).map_err(ssa_diag_to_error)?;
 
@@ -392,15 +426,6 @@ fn run_hir_passes(
             )?;
         }
 
-        #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
-        if env.config.validate_no_jsx_in_try_statements && env.output_mode == OutputMode::Lint {
-            let _ = timed!(
-                "ValidateNoJSXInTryStatement",
-                crate::validation::validate_no_jsx_in_try_statement(hir)
-            );
-        }
-
-        #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
         if env.config.validate_no_capitalized_calls.is_some() {
             timed!(
                 "ValidateNoCapitalizedCalls",
@@ -470,15 +495,6 @@ fn run_hir_passes(
             )?;
         }
 
-        #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
-        if env.config.validate_no_set_state_in_effects && env.output_mode == OutputMode::Lint {
-            let _ = timed!(
-                "ValidateNoSetStateInEffects",
-                crate::validation::validate_no_set_state_in_effects(hir, env)
-            );
-        }
-
-        #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
         if env.config.validate_no_derived_computations_in_effects {
             timed!(
                 "ValidateNoDerivedComputationsInEffects",
@@ -486,25 +502,32 @@ fn run_hir_passes(
             )?;
         }
 
+        if env.config.validate_no_set_state_in_effects && env.output_mode == OutputMode::Lint {
+            context.logged.merge(timed!(
+                "ValidateNoSetStateInEffects",
+                crate::validation::validate_no_set_state_in_effects(hir, env)
+            )?);
+        }
+
+        if env.config.validate_no_jsx_in_try_statements && env.output_mode == OutputMode::Lint {
+            context.logged.merge(timed!(
+                "ValidateNoJSXInTryStatement",
+                crate::validation::validate_no_jsx_in_try_statement(hir)
+            ));
+        }
+
         timed!(
             "ValidateNoFreezingKnownMutableFunctions",
             crate::validation::validate_no_freezing_known_mutable_functions(hir, env)
         );
-
-        #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
-        if env.config.validate_static_components && env.output_mode == OutputMode::Lint {
-            let _ = timed!(
-                "ValidateStaticComponents",
-                crate::validation::validate_static_components(hir)
-            );
-        }
     }
 
     // Upstream `.unwrap()`s the four validations above, so a recorded error
     // throws here. The Bun ports record into `env.errors` and return `()`;
     // gate explicitly so the reactive-scope passes are not run on a function
     // the end-of-pipeline `has_errors()` check is going to discard anyway.
-    if env.has_errors() {
+    // A linter wants what the later validations say too.
+    if env.output_mode != OutputMode::Lint && env.has_errors() {
         return Err(env.take_errors());
     }
 
@@ -525,6 +548,26 @@ fn run_hir_passes(
         crate::ssa::rewrite_instruction_kinds_based_on_reassignment(hir, env)
     )?;
 
+    if env.enable_validations()
+        && env.config.validate_static_components
+        && env.output_mode == OutputMode::Lint
+    {
+        context.logged.merge(timed!(
+            "ValidateStaticComponents",
+            crate::validation::validate_static_components(hir)
+        ));
+    }
+
+    Ok(())
+}
+
+/// The passes from the inference of reactive scopes to the last validation, which is of the
+/// `ReactiveFunction`.
+pub(crate) fn run_reactive_scope_passes(
+    hir: &mut crate::hir::HirFunction,
+    env: &mut Environment,
+    context: &mut ProgramContext,
+) -> Result<(crate::hir::reactive::ReactiveFunction, HashSet<String>), CompilerError> {
     if env.enable_memoization() {
         timed!(
             "InferReactiveScopeVariables",
@@ -569,12 +612,13 @@ fn run_hir_passes(
     timed!(
         "PruneUnusedLabelsHIR",
         crate::optimization::prune_unused_labels_hir(hir)
-    );
+    )?;
+    crate::hir::assert_terminal_blocks_exist::assert_terminal_successors_exist(hir)?;
 
     timed!(
         "AlignReactiveScopesToBlockScopesHIR",
         crate::inference::align_reactive_scopes_to_block_scopes_hir(hir, env)
-    );
+    )?;
     timed!(
         "MergeOverlappingReactiveScopesHIR",
         crate::inference::merge_overlapping_reactive_scopes_hir(hir, env)
@@ -583,7 +627,8 @@ fn run_hir_passes(
     timed!(
         "BuildReactiveScopeTerminalsHIR",
         crate::inference::build_reactive_scope_terminals_hir(hir, env)
-    );
+    )?;
+    crate::hir::assert_terminal_blocks_exist::assert_terminal_successors_exist(hir)?;
 
     timed!(
         "FlattenReactiveLoopsHIR",
@@ -593,11 +638,12 @@ fn run_hir_passes(
         "FlattenScopesWithHooksOrUseHIR",
         crate::inference::flatten_scopes_with_hooks_or_use_hir(hir, env)
     )?;
+    crate::hir::assert_terminal_blocks_exist::assert_terminal_successors_exist(hir)?;
 
     timed!(
         "PropagateScopeDependenciesHIR",
         crate::inference::propagate_scope_dependencies_hir(hir, env)
-    );
+    )?;
 
     let mut reactive_fn = timed!(
         "BuildReactiveFunction",
@@ -607,7 +653,7 @@ fn run_hir_passes(
     timed!(
         "AssertWellFormedBreakTargets",
         crate::reactive_scopes::assert_well_formed_break_targets(&reactive_fn, env)
-    );
+    )?;
 
     timed!(
         "PruneUnusedLabels",
@@ -626,7 +672,7 @@ fn run_hir_passes(
     timed!(
         "PruneNonReactiveDependencies",
         crate::reactive_scopes::prune_non_reactive_dependencies(&mut reactive_fn, env)
-    );
+    )?;
     timed!(
         "PruneUnusedScopes",
         crate::reactive_scopes::prune_unused_scopes(&mut reactive_fn, env)
@@ -657,7 +703,7 @@ fn run_hir_passes(
             env,
             &fbt_operands.inline
         )
-    );
+    )?;
     timed!(
         "ExtractScopeDeclarationsFromDestructuring",
         crate::reactive_scopes::extract_scope_declarations_from_destructuring(

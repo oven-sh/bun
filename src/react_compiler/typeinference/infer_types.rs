@@ -8,9 +8,11 @@
 //! Generates type equations from the HIR, unifies them, and applies the
 //! resolved types back to identifiers. Analogous to TS `InferTypes.ts`.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use crate::collections::IdMap;
+use crate::collections::{FxHashMap, FxHashSet, IdMap};
 use crate::diagnostics::{CompilerDiagnostic, ErrorCategory};
 use crate::hir::environment::{Environment, is_hook_name};
 use crate::hir::object_shape::{
@@ -47,7 +49,11 @@ pub(crate) fn infer_types(
         custom_hook_type,
         enable_treat_set_identifiers_as_state_setters,
     );
-    generate(func, env, &mut unifier)?;
+    let generated = generate(func, env, &mut unifier);
+    if let Some(why) = unifier.gave_up() {
+        return Err(why);
+    }
+    generated?;
 
     apply_function(
         func,
@@ -56,7 +62,10 @@ pub(crate) fn infer_types(
         &mut env.types,
         &mut unifier,
     );
-    Ok(())
+    match unifier.gave_up() {
+        Some(why) => Err(why),
+        None => Ok(()),
+    }
 }
 
 // =============================================================================
@@ -70,7 +79,7 @@ fn get_type(id: IdentifierId, identifiers: &[Identifier]) -> Type {
 }
 
 /// Allocate a new TypeVar in the types arena (standalone, no &mut Environment needed).
-fn make_type(types: &mut HirVec<Type>) -> Type {
+fn make_type(types: &mut Vec<Type>) -> Type {
     let id = TypeId(types.len() as u32);
     types.push(Type::TypeVar { id });
     Type::TypeVar { id }
@@ -407,11 +416,11 @@ fn generate(
         // Phis
         for phi in &block.phis {
             let left = get_type(phi.place.identifier, &env.identifiers);
-            let operands = AstAlloc::vec_from_iter(
-                phi.operands
-                    .values()
-                    .map(|p| get_type(p.identifier, &env.identifiers)),
-            );
+            let operands = phi
+                .operands
+                .values()
+                .map(|p| get_type(p.identifier, &env.identifiers))
+                .collect();
             unifier.unify(left, Type::Phi { operands }, &env.shapes)?;
         }
 
@@ -445,7 +454,7 @@ fn generate(
         unifier.unify(
             returns_type,
             Type::Phi {
-                operands: return_types,
+                operands: Arc::from(&return_types[..]),
             },
             &env.shapes,
         )?;
@@ -463,7 +472,7 @@ fn generate(
 fn generate_for_function_id(
     func_id: FunctionId,
     identifiers: &[Identifier],
-    types: &mut HirVec<Type>,
+    types: &mut Vec<Type>,
     functions: &mut HirVec<HirFunction>,
     global_types: &HashMap<(u32, InstructionId), Type>,
     shapes: &ShapeRegistry,
@@ -508,11 +517,11 @@ fn generate_for_function_id(
     for (_block_id, block) in &inner.body.blocks {
         for phi in &block.phis {
             let left = get_type(phi.place.identifier, identifiers);
-            let operands = AstAlloc::vec_from_iter(
-                phi.operands
-                    .values()
-                    .map(|p| get_type(p.identifier, identifiers)),
-            );
+            let operands = phi
+                .operands
+                .values()
+                .map(|p| get_type(p.identifier, identifiers))
+                .collect();
             unifier.unify(left, Type::Phi { operands }, shapes)?;
         }
 
@@ -542,7 +551,7 @@ fn generate_for_function_id(
         unifier.unify(
             returns_type,
             Type::Phi {
-                operands: inner_return_types,
+                operands: Arc::from(&inner_return_types[..]),
             },
             shapes,
         )?;
@@ -564,7 +573,7 @@ fn generate_instruction_types(
     instr_id: InstructionId,
     function_key: u32,
     identifiers: &[Identifier],
-    types: &mut HirVec<Type>,
+    types: &mut Vec<Type>,
     functions: &mut HirVec<HirFunction>,
     names: &mut IdMap<IdentifierId, StoreStr>,
     global_types: &HashMap<(u32, InstructionId), Type>,
@@ -986,7 +995,7 @@ fn apply_function(
     func: &HirFunction,
     functions: &[HirFunction],
     identifiers: &mut [Identifier],
-    types: &mut HirVec<Type>,
+    types: &mut Vec<Type>,
     unifier: &Unifier,
 ) {
     for (_block_id, block) in &func.body.blocks {
@@ -1041,7 +1050,7 @@ fn apply_function(
 fn resolve_identifier(
     id: IdentifierId,
     identifiers: &mut [Identifier],
-    types: &mut HirVec<Type>,
+    types: &mut Vec<Type>,
     unifier: &Unifier,
 ) {
     let type_id = identifiers[id.0 as usize].type_;
@@ -1054,11 +1063,18 @@ fn resolve_identifier(
 // Unifier
 // =============================================================================
 
+/// What was made of a phi, by the address of its operands, which are held so that the address stays theirs.
+type OfPhis<T> = FxHashMap<*const Type, (Arc<[Type]>, T)>;
+
 struct Unifier {
     substitutions: HashMap<TypeId, Type>,
+    /// What `get` made of a phi since `substitutions` was last written. `None`: nothing in it had changed.
+    resolved: RefCell<OfPhis<Option<Arc<[Type]>>>>,
     enable_treat_ref_like_identifiers_as_refs: bool,
     enable_treat_set_identifiers_as_state_setters: bool,
     custom_hook_type: Option<Type>,
+    stack: bun_core::StackCheck,
+    is_out_of_stack: std::cell::Cell<bool>,
 }
 
 impl Unifier {
@@ -1069,10 +1085,33 @@ impl Unifier {
     ) -> Self {
         Unifier {
             substitutions: HashMap::new(),
+            resolved: RefCell::default(),
             enable_treat_ref_like_identifiers_as_refs,
             enable_treat_set_identifiers_as_state_setters,
             custom_hook_type,
+            stack: bun_core::StackCheck::init(),
+            is_out_of_stack: std::cell::Cell::new(false),
         }
+    }
+
+    /// As `Environment::has_stack`, whose fields `infer_types` lends out one by one.
+    fn has_stack(&self) -> bool {
+        if !self.stack.is_safe_to_recurse() {
+            self.is_out_of_stack.set(true);
+        }
+        !self.is_out_of_stack.get()
+    }
+
+    #[inline]
+    fn substitute(&mut self, id: TypeId, ty: Type) {
+        self.substitutions.insert(id, ty);
+        self.resolved.get_mut().clear();
+    }
+
+    /// Something was left out, and `infer_types` fails.
+    #[inline]
+    fn gave_up(&self) -> Option<CompilerDiagnostic> {
+        (!self.has_stack()).then(crate::lowering::nested_too_deeply)
     }
 
     fn unify(
@@ -1134,6 +1173,9 @@ impl Unifier {
 
         if type_equals(&t_a, &t_b) {
             return Ok(());
+        }
+        if let Some(why) = self.gave_up() {
+            return Err(why);
         }
 
         if let Type::TypeVar { .. } = &t_a {
@@ -1206,7 +1248,7 @@ impl Unifier {
             }
 
             let mut candidate_type: Option<Type> = None;
-            for operand in operands {
+            for operand in operands.iter() {
                 let resolved = self.get(operand);
                 match &candidate_type {
                     None => {
@@ -1234,9 +1276,9 @@ impl Unifier {
         }
 
         if self.occurs_check(&v, &ty) {
-            let resolved_type = self.try_resolve_type(&v, &ty);
+            let resolved_type = self.try_resolve_type(&v, &ty, &mut OfPhis::default());
             if let Some(resolved) = resolved_type {
-                self.substitutions.insert(v_id, resolved);
+                self.substitute(v_id, resolved);
                 return Ok(());
             }
             return Err(CompilerDiagnostic {
@@ -1248,15 +1290,28 @@ impl Unifier {
             });
         }
 
-        self.substitutions.insert(v_id, ty);
+        self.substitute(v_id, ty);
         Ok(())
     }
 
-    fn try_resolve_type(&mut self, v: &Type, ty: &Type) -> Option<Type> {
+    /// `done`: what this made of each phi. What phis share comes from `get`, so that no type variable in it is bound.
+    fn try_resolve_type(
+        &mut self,
+        v: &Type,
+        ty: &Type,
+        done: &mut OfPhis<Arc<[Type]>>,
+    ) -> Option<Type> {
+        if !self.has_stack() {
+            return None;
+        }
         match ty {
             Type::Phi { operands } => {
-                let mut new_operands = AstAlloc::vec();
-                for operand in operands {
+                if let Some((_, known)) = done.get(&operands.as_ptr()) {
+                    let operands = Arc::clone(known);
+                    return Some(Type::Phi { operands });
+                }
+                let mut new_operands = Vec::with_capacity(operands.len());
+                for operand in operands.iter() {
                     if let Type::TypeVar { id } = operand {
                         if let Type::TypeVar { id: v_id } = v {
                             if id == v_id {
@@ -1264,9 +1319,21 @@ impl Unifier {
                             }
                         }
                     }
-                    let resolved = self.try_resolve_type(v, operand)?;
+                    let resolved = self.try_resolve_type(v, operand, done)?;
                     new_operands.push(resolved);
                 }
+                let is_as_it_was = new_operands.len() == operands.len()
+                    && std::iter::zip(&new_operands, operands.iter())
+                        .all(|(a, b)| is_the_same(a, b));
+                let new_operands = if is_as_it_was {
+                    Arc::clone(operands)
+                } else {
+                    new_operands.into()
+                };
+                done.insert(
+                    operands.as_ptr(),
+                    (Arc::clone(operands), Arc::clone(&new_operands)),
+                );
                 Some(Type::Phi {
                     operands: new_operands,
                 })
@@ -1274,8 +1341,8 @@ impl Unifier {
             Type::TypeVar { id } => {
                 let substitution = self.get(ty);
                 if !type_equals(&substitution, ty) {
-                    let resolved = self.try_resolve_type(v, &substitution)?;
-                    self.substitutions.insert(*id, resolved.clone());
+                    let resolved = self.try_resolve_type(v, &substitution, done)?;
+                    self.substitute(*id, resolved.clone());
                     Some(resolved)
                 } else {
                     Some(ty.clone())
@@ -1287,7 +1354,7 @@ impl Unifier {
                 property_name,
             } => {
                 let resolved_obj = self.get(object_type);
-                let object_type = self.try_resolve_type(v, &resolved_obj)?;
+                let object_type = self.try_resolve_type(v, &resolved_obj, done)?;
                 Some(Type::Property {
                     object_type: Box::new(object_type),
                     object_name: *object_name,
@@ -1300,7 +1367,7 @@ impl Unifier {
                 is_constructor,
             } => {
                 let resolved_ret = self.get(return_type);
-                let return_type = self.try_resolve_type(v, &resolved_ret)?;
+                let return_type = self.try_resolve_type(v, &resolved_ret, done)?;
                 Some(Type::Function {
                     shape_id: *shape_id,
                     return_type: Box::new(return_type),
@@ -1313,55 +1380,138 @@ impl Unifier {
         }
     }
 
+    /// Whether the type variable `v` occurs in another type.
     fn occurs_check(&self, v: &Type, ty: &Type) -> bool {
+        match ty {
+            Type::Phi { operands } => {
+                let seen = &mut FxHashSet::default();
+                let may_go_on = self.has_stack();
+                may_go_on && operands.iter().any(|o| self.occurs_in(v, o, seen))
+            }
+            Type::Function { .. } | Type::TypeVar { .. } => {
+                self.occurs_in(v, ty, &mut FxHashSet::default())
+            }
+            _ => false,
+        }
+    }
+
+    /// `seen`: the phis in which it does not occur, by the address of their operands.
+    fn occurs_in(&self, v: &Type, ty: &Type, seen: &mut FxHashSet<*const Type>) -> bool {
         if type_equals(v, ty) {
             return true;
         }
 
         if let Type::TypeVar { id } = ty {
             if let Some(sub) = self.substitutions.get(id) {
-                return self.occurs_check(v, sub);
+                return self.has_stack() && self.occurs_in(v, sub, seen);
             }
         }
 
         if let Type::Phi { operands } = ty {
-            return operands.iter().any(|o| self.occurs_check(v, o));
+            let may_go_on = seen.insert(operands.as_ptr()) && self.has_stack();
+            return may_go_on && operands.iter().any(|o| self.occurs_in(v, o, seen));
         }
 
         if let Type::Function { return_type, .. } = ty {
-            return self.occurs_check(v, return_type);
+            return self.has_stack() && self.occurs_in(v, return_type, seen);
         }
 
         false
     }
 
-    fn get(&self, ty: &Type) -> Type {
-        if let Type::TypeVar { id } = ty {
-            if let Some(sub) = self.substitutions.get(id) {
-                return self.get(sub);
-            }
-        }
-
-        if let Type::Phi { operands } = ty {
-            return Type::Phi {
-                operands: AstAlloc::vec_from_iter(operands.iter().map(|o| self.get(o))),
-            };
-        }
-
-        if let Type::Function {
-            is_constructor,
-            shape_id,
-            return_type,
-        } = ty
+    fn get<'a>(&'a self, mut ty: &'a Type) -> Type {
+        while let Type::TypeVar { id } = ty
+            && let Some(sub) = self.substitutions.get(id)
         {
-            return Type::Function {
+            ty = sub;
+        }
+        match ty {
+            Type::Phi { operands } => Type::Phi {
+                operands: self
+                    .get_operands_if_changed(operands)
+                    .unwrap_or_else(|| Arc::clone(operands)),
+            },
+            Type::Function {
+                is_constructor,
+                shape_id,
+                return_type,
+            } if self.has_stack() => Type::Function {
                 is_constructor: *is_constructor,
                 shape_id: *shape_id,
                 return_type: Box::new(self.get(return_type)),
-            };
+            },
+            _ => ty.clone(),
         }
+    }
 
-        ty.clone()
+    /// `get`, or `None` where no type variable in it is bound.
+    fn get_if_changed(&self, ty: &Type) -> Option<Type> {
+        match ty {
+            Type::TypeVar { id } => self.substitutions.get(id).map(|sub| self.get(sub)),
+            Type::Phi { operands } => self
+                .get_operands_if_changed(operands)
+                .map(|operands| Type::Phi { operands }),
+            Type::Function {
+                is_constructor,
+                shape_id,
+                return_type,
+            } if self.has_stack() => {
+                self.get_if_changed(return_type)
+                    .map(|return_type| Type::Function {
+                        is_constructor: *is_constructor,
+                        shape_id: *shape_id,
+                        return_type: Box::new(return_type),
+                    })
+            }
+            _ => None,
+        }
+    }
+
+    fn get_operands_if_changed(&self, operands: &Arc<[Type]>) -> Option<Arc<[Type]>> {
+        if let Some((_, known)) = self.resolved.borrow().get(&operands.as_ptr()) {
+            return known.clone();
+        }
+        if !self.has_stack() {
+            return None;
+        }
+        let mut changed: Option<Vec<Type>> = None;
+        let mut has_leaves_only = true;
+        for (index, operand) in operands.iter().enumerate() {
+            let ty = self.get_if_changed(operand);
+            let is_leaf = !matches!(
+                ty.as_ref().unwrap_or(operand),
+                Type::Phi { .. } | Type::Function { .. }
+            );
+            has_leaves_only &= is_leaf;
+            if ty.is_some() && changed.is_none() {
+                let mut as_they_were = Vec::with_capacity(operands.len());
+                as_they_were.extend_from_slice(&operands[..index]);
+                changed = Some(as_they_were);
+            }
+            if let Some(changed) = &mut changed {
+                changed.push(ty.unwrap_or_else(|| operand.clone()));
+            }
+        }
+        let changed: Option<Arc<[Type]>> = changed.map(Arc::from);
+        if has_leaves_only {
+            // To go through it again costs no more than to look it up.
+            return changed;
+        }
+        let mut resolved = self.resolved.borrow_mut();
+        if let Some(changed) = &changed {
+            resolved.insert(changed.as_ptr(), (Arc::clone(changed), None));
+        }
+        resolved.insert(operands.as_ptr(), (Arc::clone(operands), changed.clone()));
+        changed
+    }
+}
+
+/// The one is a copy of the other that shares what can be shared.
+fn is_the_same(a: &Type, b: &Type) -> bool {
+    match (a, b) {
+        (Type::Phi { operands: a }, Type::Phi { operands: b }) => Arc::ptr_eq(a, b),
+        (Type::Function { .. }, _) | (Type::Property { .. }, _) => false,
+        _ => type_equals(a, b),
     }
 }
 

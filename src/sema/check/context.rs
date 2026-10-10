@@ -6,6 +6,7 @@ use super::shape::{IgnoreReturnTypes, IgnoreThisTypes, PartialMatch};
 use super::symbols::IterationUse;
 use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent};
+use crate::util::SharedSort;
 use smallvec::SmallVec;
 
 /// The names of the discriminant properties of a union, each with the type of the value given for
@@ -27,7 +28,49 @@ pub(super) enum ReportErrors {
     Yes,
 }
 
+/// `indexOfNode`: where `e` is among `items`, which are in the order of the text.
+pub(super) fn index_of_node(hir: &File, items: IdList<ExprId>, e: ExprId) -> Option<usize> {
+    let pos = hir[e].pos;
+    let (mut low, mut high) = (0, items.len());
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if hir[hir.id_at(items, middle)].pos < pos {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    // Where nothing is written several begin at one place.
+    (low..items.len())
+        .take_while(|&i| hir[hir.id_at(items, i)].pos == pos)
+        .find(|&i| hir.id_at(items, i) == e)
+        .or_else(|| hir.ids(items).position(|i| i == e))
+}
+
 impl<'p, 's> Checker<'p, 's> {
+    /// `getSpreadIndices`: the first and the last spread among `items`, which are the elements of the array literal or the
+    /// arguments of the call `owner`.
+    pub(super) fn spread_indices(
+        &mut self,
+        file: FileId,
+        owner: ExprId,
+        items: IdList<ExprId>,
+    ) -> Option<(usize, usize)> {
+        let hir = self.hir(file);
+        let is_spread = |i: ExprId| matches!(hir[i].kind, ExprKind::Spread(_));
+        let find = || {
+            let first = hir.ids(items).position(is_spread)?;
+            Some((first, hir.ids(items).rposition(is_spread)?))
+        };
+        if items.len() <= 16 {
+            return find();
+        }
+        *self
+            .spread_indices_of_many
+            .entry((file, owner))
+            .or_insert_with(find)
+    }
+
     /// `getContainingFunctionOrClassStaticBlock`
     #[inline]
     pub fn enclosing_fn_of_expr(&self, file: FileId, e: ExprId) -> Option<FnId> {
@@ -122,6 +165,10 @@ impl<'p, 's> Checker<'p, 's> {
                             && self.p.calls.get(&self.task, &(file, parent)).is_none()
                             && !self.stack.contains(&Query::Call(file, parent))
                         {
+                            // No query is entered on the way up through calls in arguments of calls, so nothing else looks at the stack.
+                            if self.is_stack_low() {
+                                return;
+                            }
                             // The call may be an argument itself: resolve the outermost enclosing call first. As the outermost query,
                             // `resolved_signature` does that itself. Doing it twice doubles the work per nesting level if the enclosing
                             // calls are non-cacheable.
@@ -368,6 +415,9 @@ impl<'p, 's> Checker<'p, 's> {
             PatKind::Object(props) => {
                 let mut shape = Shape::new_in(self.arena);
                 let mut has_computed_names = false;
+                // Where the property of a name is in `shape.props`, if the pattern has many.
+                let has_many = props.len() > 16;
+                let mut places: FxHashMap<Atom, usize> = FxHashMap::default();
                 for p in props.iter() {
                     let prop = &hir[p];
                     if prop.is_rest {
@@ -406,16 +456,26 @@ impl<'p, 's> Checker<'p, 's> {
                         mapper: MapperId::IDENTITY,
                         name_type: TypeId::UNRESOLVED,
                     };
-                    match shape.props.iter_mut().find(|p| p.name == name) {
-                        Some(earlier) => *earlier = implied,
-                        None => shape.props.push(implied),
+                    let earlier = if has_many {
+                        places.get(&name).copied()
+                    } else {
+                        shape.props.iter().position(|p| p.name == name)
+                    };
+                    match earlier {
+                        Some(earlier) => shape.props[earlier] = implied,
+                        None => {
+                            if has_many {
+                                places.insert(name, shape.props.len());
+                            }
+                            shape.props.push(implied);
+                        }
                     }
                 }
                 // `getNamedMembers`: members without a declaration are ordered by name.
                 let atoms = &self.atoms();
                 shape
                     .props
-                    .sort_by(|a, b| atoms.bytes(a.name).cmp(atoms.bytes(b.name)));
+                    .shared_sort_by(|a, b| atoms.bytes(a.name).cmp(atoms.bytes(b.name)));
                 // `patternForType`
                 if for_context == IncludePatternInType::Yes {
                     shape.literal = if has_computed_names {
@@ -1140,7 +1200,7 @@ impl<'p, 's> Checker<'p, 's> {
         // An index past the fixed prefix of a tuple falls in the part covered by its rest element.
         if let TypeData::Tuple { flags, .. } = self.data(part)
             && self.is_numeric_name(name)
-            && crate::atom::parse_number(self.atoms().bytes(name)).is_some_and(|n| n >= 0.0)
+            && bun_core::fmt::parse_f64(self.atoms().bytes(name)).is_some_and(|n| n >= 0.0)
         {
             let elems = self.type_arguments(part);
             let fixed = Self::fixed_length(flags);
@@ -1749,11 +1809,8 @@ impl<'p, 's> Checker<'p, 's> {
             }
             ExprKind::Array(items) => {
                 let context = self.apparent_type_of_contextual_type(file, parent, context_flags)?;
-                let index = hir.ids(items).position(|i| i == e)?;
-                // `getSpreadIndices`
-                let is_spread = |i: ExprId| matches!(hir[i].kind, ExprKind::Spread(_));
-                let first = hir.ids(items).position(is_spread);
-                let last = first.and_then(|_| hir.ids(items).rposition(is_spread));
+                let index = index_of_node(hir, items, e)?;
+                let (first, last) = self.spread_indices(file, parent, items).unzip();
                 self.contextual_element_at(context, index, Some(items.len()), first, last)
             }
             // An expression spread into an array or an argument list has no contextual type. A

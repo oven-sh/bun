@@ -105,6 +105,39 @@ pub fn sort_slice_unstable_by<T>(items: &mut [T], mut cmp: impl FnMut(&T, &T) ->
     apply_permutation_in_place(items, &mut order);
 }
 
+/// `items.sort()` through [`sort_slice_by`].
+pub fn sort_slice<T: Ord>(items: &mut [T]) {
+    sort_slice_by(items, T::cmp);
+}
+
+/// `items.sort_unstable()` through [`sort_slice_unstable_by`].
+pub fn sort_slice_unstable<T: Ord>(items: &mut [T]) {
+    sort_slice_unstable_by(items, T::cmp);
+}
+
+/// `items.sort_by_key(key)` through [`sort_slice_by`].
+pub fn sort_slice_by_key<T, K: Ord>(items: &mut [T], mut key: impl FnMut(&T) -> K) {
+    sort_slice_by(items, |a, b| key(a).cmp(&key(b)));
+}
+
+/// `items.sort_unstable_by_key(key)` through [`sort_slice_unstable_by`].
+pub fn sort_slice_unstable_by_key<T, K: Ord>(items: &mut [T], mut key: impl FnMut(&T) -> K) {
+    sort_slice_unstable_by(items, |a, b| key(a).cmp(&key(b)));
+}
+
+/// `items.sort_by_cached_key(key)`: stable, and `key` is called once for each element.
+pub fn sort_slice_by_cached_key<T, K: Ord>(items: &mut [T], key: impl FnMut(&T) -> K) {
+    if items.len() < 2 {
+        return;
+    }
+    let keys: Vec<K> = items.iter().map(key).collect();
+    let mut order = identity(items.len());
+    sort_indices(&mut order, &mut |a, b| {
+        keys[a as usize].cmp(&keys[b as usize])
+    });
+    apply_permutation_in_place(items, &mut order);
+}
+
 /// Stable partition: elements for which `pred` is true move to the front, relative order preserved.
 pub fn stable_partition<T>(items: &mut [T], mut pred: impl FnMut(&T) -> bool) -> usize {
     let mut front = 0;
@@ -130,6 +163,27 @@ mod tests {
         assert_eq!(a, b);
         sort_slice_unstable_by(&mut a, |x, y| y.cmp(x));
         b.sort_by(|x, y| y.cmp(x));
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn sorts_by_key_match_std() {
+        let mut a: Vec<(u64, usize)> = (0..1000).map(|i| ((i as u64 * 7919) % 257, i)).collect();
+        let mut b = a.clone();
+        sort_slice_by_key(&mut a, |it| it.0);
+        b.sort_by_key(|it| it.0);
+        assert_eq!(a, b);
+        sort_slice_by_cached_key(&mut a, |it| core::cmp::Reverse(it.0 % 10));
+        b.sort_by_cached_key(|it| core::cmp::Reverse(it.0 % 10));
+        assert_eq!(a, b);
+        sort_slice_unstable_by_key(&mut a, |it| it.1);
+        b.sort_unstable_by_key(|it| it.1);
+        assert_eq!(a, b);
+        sort_slice(&mut a);
+        b.sort();
+        assert_eq!(a, b);
+        a.reverse();
+        sort_slice_unstable(&mut a);
         assert_eq!(a, b);
     }
 

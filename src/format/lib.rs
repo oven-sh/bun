@@ -1,0 +1,87 @@
+//! The formatter: prints the syntax of a file the way Prettier does.
+//!
+//! See `CLAUDE.md` in this directory.
+//!
+//! The intermediate representation and the printer (`ir/`) come from
+//! [Biome](https://github.com/biomejs/biome) by way of `oxc_formatter_core`, and the rules for
+//! JavaScript and TypeScript (`js/`) are a port of
+//! [`oxc_formatter`](https://github.com/oxc-project/oxc/tree/main/crates/oxc_formatter) to the
+//! syntax tree of `bun check`. Both are under the MIT license. What they implement is
+//! [Prettier](https://github.com/prettier/prettier), also under the MIT license, which is the
+//! specification wherever they differ from it.
+
+#![forbid(unsafe_code)]
+
+pub mod css;
+pub mod cursor;
+mod front_matter;
+pub mod graphql;
+pub mod handlebars;
+pub mod html;
+mod ir;
+mod js;
+pub mod json;
+pub mod markdown;
+pub mod options;
+pub mod pragma;
+pub mod range;
+mod sort;
+pub mod svelte;
+pub mod syntax_error;
+pub mod tailwind;
+mod text;
+pub mod toml;
+pub mod verify;
+pub mod yaml;
+
+/// What a caller does for a file of Flow.
+pub mod flow {
+    pub use crate::js::print::flow::{goes_to_babel, may_have_comment_types, uncommented};
+}
+
+/// Sorting imports.
+pub mod sort_imports {
+    pub use crate::js::sort_imports::{Settings, SortImports, sorted_text};
+}
+
+pub use ir::run::{Scratch, dump_document, format};
+pub use options::FormatOptions;
+
+// Not in the prelude: a glob import cannot shadow the macros of the same names in `std`.
+pub(crate) use crate::ir::macros::{best_fitting, format_args, write};
+
+/// What nearly every file of this crate needs.
+pub(crate) mod prelude {
+    pub(crate) use crate::ir::prelude::*;
+    pub(crate) use crate::js::prelude::*;
+    pub(crate) use crate::options::*;
+    pub(crate) use bun_lint::ast::*;
+    pub(crate) use bun_lint::span::{Span, Spanned};
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum FormatError {
+    /// The file has syntax errors. It is left as it is. What they are is for the caller to know: the parser of scripts
+    /// has told it.
+    SyntaxError,
+    /// The same, from a parser of this crate.
+    SyntaxErrorAt(syntax_error::SyntaxError),
+    /// The syntax is nested so deeply that formatting it would overflow the stack. The file is left
+    /// as it is.
+    NestedTooDeeply,
+    /// A bug in the formatter: the document it wrote is malformed.
+    InvalidDocument,
+}
+
+impl FormatError {
+    /// See [`syntax_error::SyntaxError::before_normalizing_end_of_line`].
+    #[cold]
+    pub(crate) fn before_normalizing_end_of_line(self, original: &[u8]) -> FormatError {
+        match self {
+            FormatError::SyntaxErrorAt(error) => {
+                FormatError::SyntaxErrorAt(error.before_normalizing_end_of_line(original))
+            }
+            other => other,
+        }
+    }
+}

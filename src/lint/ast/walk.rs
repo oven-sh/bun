@@ -1,0 +1,420 @@
+//! The way down: the children of a node, and a walk over a whole file in source order.
+
+use super::{ExprKind, File, FnBody, Key, KeyKind, Modifier, Node, PatKind, StmtKind, TypeKind};
+
+impl<'a> Node<'a> {
+    /// Calls `visit` with each child, in source order.
+    ///
+    /// A [`Func`](super::Func) is the only child of the expression or the statement that owns it,
+    /// and a [`Class`](super::Class) likewise. Left out are holes in arrays and array patterns, the
+    /// empty `{}` of JSX, and the statements that are [wrappers](super::Stmt::is_wrapper): what they
+    /// wrap takes their place. Of `with { key: "value" }` only the values are nodes.
+    pub fn for_each_child(self, mut visit: impl FnMut(Node<'a>)) {
+        self.children_into(None, &mut visit);
+    }
+
+    /// Calls `visit` with the children that `offset` can be in, in source order: of a long list, only with the last element
+    /// that starts at or before `offset`. So it takes the logarithm of the number of children.
+    pub fn for_each_child_near(self, offset: u32, mut visit: impl FnMut(Node<'a>)) {
+        self.children_into(Some(offset), &mut visit);
+    }
+
+    /// The children, in source order.
+    pub fn children(self) -> Vec<Node<'a>> {
+        let mut children = Vec::new();
+        self.children_into(None, &mut |child| children.push(child));
+        children
+    }
+
+    fn children_into(self, near: Option<u32>, visit: &mut dyn FnMut(Node<'a>)) {
+        macro_rules! one {
+            ($it:expr) => {
+                visit($it.into())
+            };
+        }
+        macro_rules! opt {
+            ($it:expr) => {
+                if let Some(it) = $it {
+                    visit(it.into());
+                }
+            };
+        }
+        macro_rules! all {
+            ($list:expr) => {
+                for it in $list {
+                    visit(it.into());
+                }
+            };
+        }
+        macro_rules! list {
+            ($list:expr) => {
+                for it in $list.near(near) {
+                    visit(it.into());
+                }
+            };
+        }
+        fn computed<'a>(key: Option<Key<'a>>) -> Option<super::Expr<'a>> {
+            match key?.kind() {
+                KeyKind::Computed(e) => Some(e),
+                _ => None,
+            }
+        }
+        /// The strings in `with { key: "value" }`.
+        fn attribute_values<'a>(
+            attributes: Option<super::ImportAttributes<'a>>,
+        ) -> impl Iterator<Item = super::Expr<'a>> {
+            attributes
+                .into_iter()
+                .flat_map(|it| it.entries())
+                .filter_map(super::Prop::value)
+        }
+        /// What is in the head of a `for`: a `Var`, or the expression in a wrapper.
+        fn head(statement: super::Stmt) -> Node {
+            match statement.kind() {
+                StmtKind::Expr(e) => Node::Expr(e),
+                _ => Node::Stmt(statement),
+            }
+        }
+        match self {
+            Node::File(file) => list!(file.body()),
+            Node::Expr(e) => match e.kind() {
+                ExprKind::Missing
+                | ExprKind::Ident(_)
+                | ExprKind::PrivateIdentifier(_)
+                | ExprKind::This
+                | ExprKind::Super
+                | ExprKind::Null
+                | ExprKind::True
+                | ExprKind::False
+                | ExprKind::Number(_)
+                | ExprKind::String(_)
+                | ExprKind::BigInt(_)
+                | ExprKind::Regex(_)
+                | ExprKind::ImportMeta
+                | ExprKind::NewTarget => {}
+                ExprKind::Template(template) => list!(template.exprs()),
+                ExprKind::TaggedTemplate(call) => {
+                    one!(call.callee());
+                    list!(call.type_args());
+                    opt!(call.template());
+                }
+                ExprKind::Array(elements) => all!(elements.near(near).filter(|e| !e.is_missing())),
+                ExprKind::Object(props) => list!(props),
+                ExprKind::Fn(func) => one!(func),
+                ExprKind::Class(class) => one!(class),
+                ExprKind::Dot { obj, .. } => one!(obj),
+                ExprKind::Index { obj, index, .. } => {
+                    one!(obj);
+                    one!(index);
+                }
+                ExprKind::Call(call) | ExprKind::New(call) => {
+                    one!(call.callee());
+                    list!(call.type_args());
+                    list!(call.args());
+                }
+                ExprKind::Unary { operand, .. }
+                | ExprKind::Spread(operand)
+                | ExprKind::Await(operand)
+                | ExprKind::AsConst(operand)
+                | ExprKind::NonNull(operand) => one!(operand),
+                ExprKind::Binary { left, right, .. } => {
+                    one!(left);
+                    one!(right);
+                }
+                ExprKind::Assign { target, value, .. } => {
+                    one!(target);
+                    one!(value);
+                }
+                ExprKind::Cond { test, yes, no } => {
+                    one!(test);
+                    one!(yes);
+                    one!(no);
+                }
+                ExprKind::Yield { value, .. } => opt!(value),
+                ExprKind::As { expr, ty } if e.is_angle_bracket_assertion() => {
+                    one!(ty);
+                    one!(expr);
+                }
+                ExprKind::As { expr, ty } | ExprKind::Satisfies { expr, ty } => {
+                    one!(expr);
+                    one!(ty);
+                }
+                ExprKind::Instantiation { expr, type_args } => {
+                    one!(expr);
+                    list!(type_args);
+                }
+                ExprKind::Jsx(jsx) => {
+                    opt!(jsx.tag());
+                    list!(jsx.type_args());
+                    list!(jsx.attrs());
+                    all!(jsx.children().near(near).filter(|e| !e.is_missing()));
+                    opt!(jsx.close_tag());
+                }
+                ExprKind::ImportCall { args } => all!(args.near(near).filter(|e| !e.is_missing())),
+            },
+            Node::Stmt(s) => match s.kind() {
+                StmtKind::Empty
+                | StmtKind::Debugger
+                | StmtKind::Break(_)
+                | StmtKind::Continue(_)
+                | StmtKind::ImportEquals(_)
+                | StmtKind::ExportAsNamespace(_) => {}
+                StmtKind::ExportStar { .. } => all!(attribute_values(s.import_attributes())),
+                StmtKind::Expr(e)
+                | StmtKind::Throw(e)
+                | StmtKind::ExportDefault(e)
+                | StmtKind::ExportAssign(e) => one!(e),
+                StmtKind::Return(e) => opt!(e),
+                StmtKind::Var(declarations) => list!(declarations),
+                StmtKind::Fn(func) => one!(func),
+                StmtKind::Class(class) => one!(class),
+                StmtKind::Interface(interface) => {
+                    list!(interface.type_params());
+                    list!(interface.extends());
+                    list!(interface.members());
+                }
+                StmtKind::TypeAlias(alias) => {
+                    list!(alias.type_params());
+                    one!(alias.ty());
+                }
+                StmtKind::Enum(it) => list!(it.members()),
+                StmtKind::Module(module) => list!(module.innermost().body()),
+                StmtKind::If { test, yes, no } => {
+                    one!(test);
+                    one!(yes);
+                    opt!(no);
+                }
+                StmtKind::For {
+                    init,
+                    test,
+                    update,
+                    body,
+                } => {
+                    opt!(init.map(head));
+                    opt!(test);
+                    opt!(update);
+                    one!(body);
+                }
+                StmtKind::ForIn { left, expr, body }
+                | StmtKind::ForOf {
+                    left, expr, body, ..
+                } => {
+                    one!(head(left));
+                    one!(expr);
+                    one!(body);
+                }
+                StmtKind::While { test, body } => {
+                    one!(test);
+                    one!(body);
+                }
+                StmtKind::DoWhile { body, test } => {
+                    one!(body);
+                    one!(test);
+                }
+                StmtKind::Block(statements) => list!(statements),
+                StmtKind::With { object, body } => {
+                    one!(object);
+                    one!(body);
+                }
+                StmtKind::Switch { expr, cases } => {
+                    one!(expr);
+                    list!(cases);
+                }
+                StmtKind::Try {
+                    block,
+                    param,
+                    handler,
+                    finalizer,
+                } => {
+                    one!(block);
+                    opt!(param);
+                    opt!(handler);
+                    opt!(finalizer);
+                }
+                StmtKind::Labeled { body, .. } => one!(body),
+                StmtKind::Import(import) => {
+                    list!(import.named());
+                    all!(attribute_values(import.attributes()));
+                }
+                StmtKind::ExportNamed(export) => {
+                    list!(export.items());
+                    all!(attribute_values(export.attributes()));
+                }
+            },
+            Node::Func(func) => {
+                list!(func.type_params());
+                opt!(func.this_param());
+                list!(func.params());
+                opt!(func.return_type());
+                match func.body() {
+                    FnBody::None => {}
+                    FnBody::Block(statements) => list!(statements),
+                    FnBody::Expr(e) => one!(e),
+                }
+            }
+            Node::Param(param) => {
+                all!(param.modifiers().iter().filter_map(Modifier::decorator));
+                one!(param.pat());
+                opt!(param.ty());
+                opt!(param.default());
+            }
+            Node::TypeParam(param) => {
+                opt!(param.constraint());
+                opt!(param.default());
+            }
+            Node::Pat(pat) => match pat.kind() {
+                PatKind::Missing | PatKind::Ident(_) => {}
+                PatKind::Object(props) => list!(props),
+                PatKind::Array(elements) => {
+                    all!(elements.near(near).filter(|it| it.pat().is_some()))
+                }
+            },
+            Node::PatProp(prop) => {
+                opt!(computed(prop.key()));
+                one!(prop.value());
+                opt!(prop.default());
+            }
+            Node::PatElem(element) => {
+                opt!(element.pat());
+                opt!(element.default());
+            }
+            Node::Class(class) => {
+                all!(class.decorators());
+                list!(class.type_params());
+                opt!(class.extends());
+                list!(class.extends_args());
+                list!(class.implements());
+                list!(class.members());
+            }
+            Node::Member(member) => {
+                all!(member.decorators());
+                opt!(computed(member.key()));
+                opt!(member.func());
+                opt!(member.ty());
+                opt!(member.init());
+            }
+            Node::Prop(prop) => {
+                opt!(computed(prop.key()));
+                opt!(prop.value());
+            }
+            Node::VarDecl(declaration) => {
+                one!(declaration.pat());
+                opt!(declaration.ty());
+                opt!(declaration.init());
+            }
+            Node::Case(case) => {
+                opt!(case.test());
+                list!(case.body());
+            }
+            Node::EnumMember(member) => {
+                opt!(computed(member.key()));
+                opt!(member.init());
+            }
+            Node::ImportSpec(_) | Node::ExportSpec(_) => {}
+            Node::TupleElem(element) => one!(element.ty()),
+            Node::Type(ty) => match ty.kind() {
+                TypeKind::Error
+                | TypeKind::Keyword(_)
+                | TypeKind::StringLit(_)
+                | TypeKind::NumberLit(_)
+                | TypeKind::BigIntLit { .. }
+                | TypeKind::BoolLit(_)
+                | TypeKind::UniqueSymbol => {}
+                TypeKind::Heritage { expr, args } | TypeKind::Typeof { expr, args } => {
+                    one!(expr);
+                    list!(args);
+                }
+                TypeKind::Ref { args, .. } => list!(args),
+                TypeKind::Import { args, .. } => {
+                    all!(attribute_values(ty.import_attributes()));
+                    list!(args);
+                }
+                TypeKind::Template(types)
+                | TypeKind::Union(types)
+                | TypeKind::Intersection(types) => {
+                    list!(types)
+                }
+                TypeKind::Array(operand)
+                | TypeKind::Keyof(operand)
+                | TypeKind::Readonly(operand)
+                | TypeKind::Unique(operand) => {
+                    one!(operand)
+                }
+                TypeKind::Tuple(elements) => list!(elements),
+                TypeKind::Fn(func) => one!(func),
+                TypeKind::Object(members) => list!(members),
+                TypeKind::Cond {
+                    check,
+                    extends,
+                    yes,
+                    no,
+                } => {
+                    one!(check);
+                    one!(extends);
+                    one!(yes);
+                    one!(no);
+                }
+                TypeKind::Infer(param) => one!(param),
+                TypeKind::Mapped(mapped) => {
+                    one!(mapped.param());
+                    opt!(mapped.name_type());
+                    opt!(mapped.ty());
+                }
+                TypeKind::IndexedAccess { obj, index } => {
+                    one!(obj);
+                    one!(index);
+                }
+                TypeKind::Predicate { ty, .. } => opt!(ty),
+            },
+        }
+    }
+}
+
+/// What a walk calls.
+pub trait Visitor<'a> {
+    /// Before the children of `node`.
+    fn enter(&mut self, node: Node<'a>);
+    /// After them.
+    fn exit(&mut self, node: Node<'a>);
+}
+
+/// Visits every node of `file`, in source order.
+pub fn walk<'a>(file: &'a File<'a>, visitor: &mut impl Visitor<'a>) {
+    walk_node(Node::File(file), visitor);
+}
+
+/// Visits `node` and everything in it, in source order. However deep the syntax is nested, it does
+/// not run out of stack.
+pub fn walk_node<'a>(node: Node<'a>, visitor: &mut impl Visitor<'a>) {
+    recurse(node, visitor, bun_core::StackCheck::init());
+}
+
+fn recurse<'a, V: Visitor<'a>>(node: Node<'a>, visitor: &mut V, stack: bun_core::StackCheck) {
+    if !stack.is_safe_to_recurse() {
+        return walk_without_recursion(node, visitor);
+    }
+    visitor.enter(node);
+    node.children_into(None, &mut |child| recurse(child, visitor, stack));
+    visitor.exit(node);
+}
+
+#[cold]
+fn walk_without_recursion<'a>(node: Node<'a>, visitor: &mut impl Visitor<'a>) {
+    enum Step<'a> {
+        Enter(Node<'a>),
+        Exit(Node<'a>),
+    }
+    let mut steps = vec![Step::Enter(node)];
+    while let Some(step) = steps.pop() {
+        match step {
+            Step::Exit(node) => visitor.exit(node),
+            Step::Enter(node) => {
+                visitor.enter(node);
+                steps.push(Step::Exit(node));
+                let first = steps.len();
+                node.children_into(None, &mut |child| steps.push(Step::Enter(child)));
+                steps[first..].reverse();
+            }
+        }
+    }
+}

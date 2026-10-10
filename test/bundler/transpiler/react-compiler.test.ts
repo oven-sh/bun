@@ -743,6 +743,447 @@ describe("bundler", () => {
     },
   });
 
+  // DeadCodeElimination took a read that nothing uses out of a `try`. Its block was then empty and could not throw, so the
+  // handler went too: another result for the first two, a panic for the third, and the fourth was not compiled.
+  itBundled("react-compiler/CaughtThrowIsNotDeadCode", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function Returns(props) { try { props.a.b; } catch (e) { return <b />; } return <div>{props.c}</div>; }
+        function Global(props) { try { notDefined; } catch (e) { return <b />; } return <div>{props.c}</div>; }
+        function Assigns(props) { let a = props.a; try { props.d.m; } catch (e) { a = props.x; } return <div>{a}</div>; }
+        function Joins(props) { let a; try { notDefined; a = props.o; } catch (e) {} return <div>{a}</div>; }
+        const rendered = [
+          Returns({ c: 1 }),
+          Returns({ c: 1, a: {} }),
+          Global({ c: 1 }),
+          Assigns({ a: 1, x: 2 }),
+          Assigns({ a: 1, x: 2, d: {} }),
+          Joins({ o: 1 }),
+        ];
+        console.log(rendered.map(it => it.t + " " + it.p.children).join(", "));
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "b undefined, div 1, b undefined, div 2, div 1, div undefined" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
+  // `c` is assigned in a scope that lies in the scope of `d`. Only the inner one had it as an output, so a render in which
+  // the outer one is not run again gave `undefined`. babel-plugin-react-compiler 1.0.0 does the same.
+  itBundled("react-compiler/ReassignedInAScopeInAScope", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        const f = x => x;
+        function Component(props) {
+          let c = null, d = [], e = {};
+          c = { k: c || "x" };
+          { const s = \`\${props.x}-\${e}\`; f(s); { const s = c; f(() => s); } }
+          { const s = props.y; f(() => s); }
+          { const s = d; f(() => s); }
+          return <div>{c}{d}{e}</div>;
+        }
+        const rendered = [Component({ x: 1 }), Component({ x: 1 }), Component({ x: 2 })];
+        console.log(rendered.map(it => JSON.stringify(it.p.children[0])).join(", "));
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `let cache; exports.c = n => (cache ??= new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: `{"k":"x"}, {"k":"x"}, {"k":"x"}` },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
+  // What is caught is declared before the `try`, so it is a candidate for a dependency of a scope around the `try` or in it.
+  // There its name is not bound. It is only left out because it is not reactive.
+  itBundled("react-compiler/WhatIsCaughtIsNoDependencyOutsideTheHandler", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        const check = text => {
+          if (text.startsWith("!")) throw new Error(text);
+          return text;
+        };
+        const mutate = it => { it.k = it.k + "!"; };
+        function Around(props) {
+          let r;
+          try { r = { k: check(props.text) }; } catch (e) { return null; }
+          mutate(r);
+          return <div>{r.k}</div>;
+        }
+        function AroundAndRead(props) {
+          let r;
+          try { r = { k: check(props.text) }; } catch (e) { r = { k: e.message }; }
+          mutate(r);
+          return <div>{r.k}</div>;
+        }
+        function Within(props) {
+          const text = props.text + "";
+          let s = null;
+          try {
+            const r = { k: check(text) };
+            if (r.k) s = mutate(r) ?? r.k;
+            else console.warn(r.k);
+          } catch (error) {
+            mutate(error);
+          }
+          if (s === null) return <p>none</p>;
+          return <div>{s}</div>;
+        }
+        for (const component of [Around, AroundAndRead, Within]) {
+          globalThis.rendering = component;
+          console.log(["a", "!b", "!c", "a", "a"].map(text => component({ text })?.p.children ?? "nothing").join(", "));
+        }
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `
+        const caches = new Map();
+        exports.c = n => {
+          if (!caches.has(globalThis.rendering))
+            caches.set(globalThis.rendering, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+          return caches.get(globalThis.rendering);
+        };
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "a!, nothing, nothing, a!, a!\na!, !b!, !c!, a!, a!\na!, none, none, a!, a!" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
+  // Whether `JSON.parse(props.text)` throws depends on a prop, but what is assigned in the `try` or in the handler, and
+  // what is caught, do not count as reactive: the first render's element is kept for ever. Upstream 1.0.0 does the same.
+  itBundled("react-compiler/WhatDependsOnAThrowIsReactive", {
+    todo: true,
+    files: {
+      "/entry.jsx": /* jsx */ `
+        const check = text => {
+          if (text.startsWith("!")) throw new Error(text);
+          return text;
+        };
+        function Valid(props) {
+          let valid = true;
+          try { JSON.parse(props.text); } catch { valid = false; }
+          return <div>{valid ? "yes" : "no"}</div>;
+        }
+        function Caught(props) {
+          let v;
+          try { v = check(props.text); } catch (e) { return <div>{e.message}</div>; }
+          return <b>{v}</b>;
+        }
+        function Where(props) {
+          let a = 1;
+          try { check(props.text); a = 2; check(props.more); } catch { return <div>{a}</div>; }
+          return <b>{a}</b>;
+        }
+        const render = (component, props) => {
+          globalThis.rendering = component;
+          const it = component(props);
+          return it.t + " " + it.p.children;
+        };
+        console.log(["1", "{", "2"].map(text => render(Valid, { text })).join(", "));
+        console.log(["!a", "!b", "c"].map(text => render(Caught, { text })).join(", "));
+        console.log([["!a", "b"], ["a", "!b"], ["a", "b"]].map(([text, more]) => render(Where, { text, more })).join(", "));
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `
+        const caches = new Map();
+        exports.c = n => {
+          if (!caches.has(globalThis.rendering))
+            caches.set(globalThis.rendering, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+          return caches.get(globalThis.rendering);
+        };
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "div yes, div no, div yes\ndiv !a, div !b, b c\ndiv 1, div 2, b 2" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
+  // The scope depends on `a` and assigns it. What it remembered to compare with was `a` after the assignment, so `null`
+  // in the second render looked like no change. babel-plugin-react-compiler 1.0.0 does the same.
+  itBundled("react-compiler/DependencyThatTheScopeAssigns", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function Component(props) {
+          let a = props.a;
+          const c = (a = a ? null : 3) || { k: 1 };
+          return <div>{a}{c}</div>;
+        }
+        const rendered = [Component({ a: 1 }), Component({ a: null }), Component({ a: 1 }), Component({ a: 1 })];
+        console.log(rendered.map(it => JSON.stringify(it.p.children)).join(", "));
+        console.log(rendered[2] === rendered[3]);
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `let cache; exports.c = n => (cache ??= new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: `[null,{"k":1}], [3,3], [null,{"k":1}], [null,{"k":1}]\ntrue` },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
+  // `a++` in a scope was not an output of it: a render that reused the scope did not count. Upstream 1.0.0 does the same.
+  itBundled("react-compiler/UpdateInAScope", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function Component(props) {
+          let a = props.x;
+          const c = a++ || { k: 1 };
+          return <div>{a}{c}</div>;
+        }
+        const rendered = [Component({ x: 0 }), Component({ x: 1 }), Component({ x: 0 }), Component({ x: 0 })];
+        console.log(rendered.map(it => JSON.stringify(it.p.children)).join(", "));
+        console.log(rendered[2] === rendered[3]);
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `let cache; exports.c = n => (cache ??= new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: `[1,{"k":1}], [2,1], [1,{"k":1}], [1,{"k":1}]\ntrue` },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
+  // The scope around each loop has the variable as an output and as a dependency. Upstream gives the variable to a scope
+  // in the loop alone, and prunes the one around it.
+  itBundled("react-compiler/LoopThatAssignsWhatItReads", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function Max(props) {
+          let max = 0;
+          for (const line of props.lines) {
+            for (const d of props.data) {
+              const value = [d, line].reduce((a, b) => a + b, 0);
+              if (value > max) max = value;
+            }
+          }
+          return <div>{max}</div>;
+        }
+        function Sum(props) {
+          let exact = true;
+          let sum = props.start;
+          for (const id of [...props.lines].filter(it => it > 1)) {
+            const found = props.data.find(it => it > id);
+            if (!found) exact = false;
+            else sum = sum + found;
+          }
+          return <div>{sum + " " + exact}</div>;
+        }
+        function Freshest(props) {
+          let freshest = null;
+          for (const a of props.lines) {
+            for (const b of props.data) {
+              const at = { t: a * b };
+              if (!freshest || at.t > freshest.t) freshest = at;
+            }
+          }
+          return <div>{freshest ? freshest.t : "none"}</div>;
+        }
+        const lines = [1, 2, 3], data = [3, 4], more = [5, 1], none = [];
+        const renders = [
+          { lines, data, start: 0 },
+          { lines, data, start: 0 },
+          { lines, data: more, start: 0 },
+          { lines, data, start: 0 },
+          { lines, data, start: 7 },
+          { lines: none, data, start: 7 },
+          { lines, data, start: 0 },
+        ];
+        for (const component of [Max, Sum, Freshest]) {
+          globalThis.rendering = component;
+          const rendered = renders.map(props => component(props));
+          console.log(rendered.map(it => it.p.children).join(", "), rendered[0] === rendered[1]);
+        }
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `
+        const caches = new Map();
+        exports.c = n => {
+          if (!caches.has(globalThis.rendering))
+            caches.set(globalThis.rendering, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+          return caches.get(globalThis.rendering);
+        };
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: [
+        "7, 7, 8, 7, 7, 0, 7 true",
+        "7 true, 7 true, 10 true, 7 true, 14 true, 7 true, 7 true true",
+        "12, 12, 15, 12, 12, none, 12 true",
+      ].join("\n"),
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
+  // The pattern was what is left when all slashes are taken off both ends: `/^https?:\/\//` lost the one that closes it.
+  itBundled("react-compiler/RegExpThatEndsInASlash", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function Link(props) {
+          const href = /^https?:\\/\\//.test(props.to) ? props.to : "https://" + props.to;
+          const parts = [
+            props.to.replace(/\\//g, "|"),
+            /a\\/\\//i.test(props.to),
+            props.to.split(/[/]/).length,
+            /\\/$/u.test(props.to),
+          ];
+          return <a href={href}>{parts}</a>;
+        }
+        for (const to of ["a.b", "http://a.b", "A//", "a.b"]) {
+          const it = Link({ to });
+          console.log(it.p.href, it.p.children.join(" "));
+        }
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `let cache; exports.c = n => (cache ??= new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: [
+        "https://a.b a.b false 1 false",
+        "http://a.b http:||a.b false 3 false",
+        "https://A// A|| true 3 true",
+        "https://a.b a.b false 1 false",
+      ].join("\n"),
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
+  // The name of a function expression is taken for a local that nobody declares. Upstream stops at that with an invariant,
+  // and leaves the function alone. Where the name is read from a callback the port went on, and printed a symbol of its own
+  // for it, `Callback3`, which is not bound.
+  itBundled("react-compiler/FunctionExpressionThatNamesItself", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { forwardRef, memo } from "react";
+        const Callback = memo(function Callback({ depth, items }) {
+          if (depth === 0) return <b />;
+          return <div>{items.map(i => <Callback key={i} depth={depth - 1} items={items} />)}</div>;
+        });
+        const Direct = memo(function Direct({ depth, items }) {
+          if (depth === 0) return <b />;
+          return <div title={[items]}><Direct depth={depth - 1} items={items} /></div>;
+        });
+        const Outer = forwardRef(function Inner({ depth, items }, ref) {
+          if (depth === 0) return <b ref={ref} />;
+          return <div>{items.map(i => <Inner key={i} depth={depth - 1} items={items} />)}</div>;
+        });
+        const Shadowed = memo(function Shadowed({ Shadowed: Other, items }) {
+          return <div>{items.map(i => <Other key={i} />)}</div>;
+        });
+        const useItself = function useItself(items) {
+          return items.map(() => typeof useItself);
+        };
+        const render = (component, props) => {
+          globalThis.rendering = component;
+          return component(props);
+        };
+        const props = { depth: 1, items: [1] };
+        console.log(
+          render(Callback, props).p.children[0].t === Callback,
+          render(Direct, props).p.children.t === Direct,
+          render(Outer, props).p.children[0].t === Outer,
+          render(Shadowed, { Shadowed: "p", items: [1] }).p.children[0].t,
+          render(useItself, [1])[0],
+        );
+      `,
+      "/node_modules/react/index.js": `exports.memo = it => it; exports.forwardRef = it => it;`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `
+        const caches = new Map();
+        exports.c = n => {
+          if (!caches.has(globalThis.rendering))
+            caches.set(globalThis.rendering, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+          return caches.get(globalThis.rendering);
+        };
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "true true true p function" },
+    onAfterBundle(api) {
+      // Not compiled: a compiled function takes `t0` and destructures it in its body.
+      const out = api.readFile("/out.js");
+      expect(out).toMatch(/function Callback\d*\(\{ depth, items \}\)/);
+      expect(out).toMatch(/function Direct\d*\(\{ depth, items \}\)/);
+      expect(out).toMatch(/function Inner\d*\(\{ depth, items \}, ref\)/);
+    },
+  });
+
+  // The lexer keeps the place of the flags in 16 bits. From 65,536 on the flags were taken from the wrong place, and the
+  // literal came out as a comment.
+  itBundled("react-compiler/RegExpWhoseFlagsBeginBehind64KB", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function Long(props) {
+          "use memo";
+          const last = /${Buffer.alloc(65533, "a").toString()}/gi;
+          const first = /${Buffer.alloc(65534, "a").toString()}/gi;
+          const more = /${Buffer.alloc(70000, "a").toString()}/gi;
+          const none = /${Buffer.alloc(70000, "a").toString()}/;
+          return [last, first, more, none].map(it => it.source.length + it.flags).concat(props.a);
+        }
+        console.log(Long({ a: 1 }).join(" "));
+      `,
+      "/node_modules/react/compiler-runtime.js": `let cache; exports.c = n => (cache ??= new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "65533gi 65534gi 70000gi 70000 1" },
+  });
+
   // Sibling of the above: `WAS_ORIGINALLY_TYPEOF_IDENTIFIER` was also dropped,
   // so the printer wrapped `typeof undeclared` as `typeof (0, undeclared)`,
   // which throws ReferenceError instead of returning "undefined" — breaking
@@ -3067,10 +3508,11 @@ describe("bundler", () => {
 // rebuilt a hash index for each block it took out of a map. A chain of 400
 // terms took 979 MB, and an array pattern of 300 elements with defaults 1 GB.
 test("react-compiler memory does not grow with the square of the size of a component", async () => {
-  // A debug build is 20 times slower, and its larger frames overflow the stack
-  // on a longer chain.
+  // A debug build is 20 times slower, and its larger frames leave the stack for
+  // a chain of 94: a longer one is not compiled.
   const small = isDebug || isASAN;
-  const terms = small ? 100 : 400;
+  // A chain is nested as deeply as it is long, and more than 256 levels are not compiled.
+  const terms = small ? 90 : 250;
   const elements = small ? 120 : 300;
   using dir = tempDir("react-compiler-memory", {
     "empty.jsx": `export default function App() { return null; }`,
@@ -3116,10 +3558,176 @@ test("react-compiler memory does not grow with the square of the size of a compo
 
   const [empty, chain, pattern] = await Promise.all([peakMB("empty.jsx"), peakMB("chain.jsx"), peakMB("pattern.jsx")]);
   // Above the empty build, without the fixes: 110 MB and 125 MB for the small
-  // inputs, 940 MB and 1050 MB for the large ones.
-  const bound = small ? 70 : 300;
-  expect(chain - empty).toBeLessThan(bound);
-  expect(pattern - empty).toBeLessThan(bound);
+  // inputs, 1050 MB for the large pattern, and 940 MB for a chain of 400 terms,
+  // which is 370 MB for 250.
+  expect(chain - empty).toBeLessThan(small ? 70 : 120);
+  expect(pattern - empty).toBeLessThan(small ? 70 : 300);
+});
+
+// Each default in a pattern is a join. EnterSSA made a phi at each join for each variable that is read after it, and
+// EliminateRedundantPhi took them out again: 1,000 defaults, half a million phis, 484 MB. Now 150 MB.
+// Not where the empty build takes 330 MB, which is more than either pattern does.
+test.skipIf(isDebug || isASAN)(
+  "react-compiler memory does not grow with the square of the defaults in a pattern",
+  async () => {
+    const pattern = (elements: number) => `
+    import { useState } from "react";
+    export default function App(p) {
+      const [s] = useState(0);
+      const [${Array.from({ length: elements }, (_, i) => `e${i} = ${i}`).join(", ")}] = p.items;
+      return <div>{e0 + e${elements - 1}}{s}</div>;
+    }
+  `;
+    using dir = tempDir("react-compiler-defaults", {
+      "empty.jsx": `export default function App() { return null; }`,
+      "half.jsx": pattern(500),
+      "whole.jsx": pattern(1000),
+      // The peak of a process is never below that of the one that spawned it, and this one is small.
+      "measure.js": `
+      const peak = entry =>
+        Bun.spawnSync({
+          cmd: [process.execPath, "build", "--react-compiler", "--target=browser", "--external=*", entry],
+          stdout: "ignore",
+          stderr: "inherit",
+        }).resourceUsage.maxRSS;
+      console.log(JSON.stringify(["empty.jsx", "half.jsx", "whole.jsx"].map(peak)));
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "measure.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const [empty, half, whole] = JSON.parse(stdout);
+    // 4.8 times. Else what is measured is not the pattern.
+    expect(half).toBeGreaterThan(empty * 2);
+    // 1.9, and 2.95 without the fix.
+    expect((whole - empty) / (half - empty)).toBeLessThan(2.5);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// InferTypes puts the type of a phi into each phi that it is an operand of, and it copied it. Variables that are assigned
+// from each other in loops with joins multiply: these 500 bytes took all the memory there is, in the original too.
+// Where the fix is missing, this test takes all the memory that the machine gives it until its time is over.
+test("react-compiler ends on a component whose types are made of each other", async () => {
+  using dir = tempDir("react-compiler-types", {
+    "entry.jsx": `
+      export default function Component(props) {
+        let a, b, c, d, e;
+        while (props.x) {
+          switch (c?.p) {
+            case 0: {
+              while (props.y) {
+                switch (f0) {
+                  default: {
+                    try {} catch (err) {}
+                    for (const x3 of 0) {
+                      e = (props.x && (props.x ?? d)) || {};
+                    }
+                    ({ p: a = e, q: c } = props.o);
+                  }
+                  case 0: {
+                    if (fprops.x) {
+                      d = props.y && (fprops.x ? a : f0);
+                    }
+                  }
+                  case 1: {}
+                }
+                while (f(props.x ? null : a) < props.x) {
+                  if (0 === 0) {
+                    ({ p: e = b, q: a } = props.o);
+                    d = d;
+                  }
+                }
+              }
+            }
+            case 1: {}
+            default: {}
+          }
+        }
+        a = {};
+        return <div>{a}{b}{c}{d}{e}</div>;
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("function Component");
+  expect(exitCode).toBe(0);
+});
+
+// ValidateNoRefAccessInRender gives a function the type of what it returns. The port
+// copied all that is nested in a type at each level of each join, so n functions that
+// return each other took the cube of n: 400 of them 10 seconds, 1,000 more than a minute.
+test("react-compiler does not end the process on a try in which nothing but a read that nobody uses can throw", async () => {
+  using dir = tempDir("react-compiler-try", {
+    "entry.jsx": `
+      export default function Component(props) {
+        let a = props.a;
+        try {
+          props.d.m;
+        } catch (err) {
+          a = props.x;
+        }
+        return <div>{a}</div>;
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("function Component(props)");
+  expect(exitCode).toBe(0);
+});
+
+test("react-compiler time does not grow with the cube of a chain of functions", async () => {
+  const source = (n: number) => `
+    import { useState } from "react";
+    export default function App() {
+      const [s] = useState(0);
+      const f0 = () => s;
+      ${Array.from({ length: n }, (_, i) => `const f${i + 1} = () => f${i};`).join("\n")}
+      return <div onClick={f${n}} />;
+    }
+  `;
+  const n = isDebug || isASAN ? 80 : 200;
+  using dir = tempDir("react-compiler-chain-of-functions", { "n.jsx": source(n), "2n.jsx": source(2 * n) });
+
+  const cpuTime = async (entry: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("react/compiler-runtime");
+    expect(exitCode).toBe(0);
+    return Number(proc.resourceUsage()!.cpuTime.total);
+  };
+
+  // Without the fix: 5.5 in a debug build, 14 in a release build.
+  expect((await cpuTime("2n.jsx")) / (await cpuTime("n.jsx"))).toBeLessThan(4);
 });
 
 // ValidateExhaustiveDependencies gives each phi the dependencies of its
@@ -3292,4 +3900,145 @@ test("react-compiler compile time is not exponential in the function nesting dep
   expect(stdout).toContain("p.a + s");
   expect(stdout).toMatch(/\b_c\(\d+\)/);
   expect(exitCode).toBe(0);
+});
+
+// The parser has a stack check. The lowering, which takes more of the stack for a
+// level of the source than the parser does, had none: `bun build --react-compiler`
+// died by SIGSEGV on 250 effects in each other, on 500 arrow functions, on 800
+// `if` statements or elements of JSX, and on a sum of 16,000 operands. With a check
+// in the lowering alone, 800 `switch` statements still overflowed in a later pass,
+// and where a thread has a larger stack 1,600 `try` statements took all the memory.
+// So a function that is nested more than 256 levels deep is not compiled anywhere.
+describe("react-compiler does not overflow the stack on a component that is nested deeply", () => {
+  const nest = (n: number, open: (i: number) => string, inner: string, close: string) =>
+    Array.from({ length: n }, (_, i) => open(i)).join("") + inner + close.repeat(n);
+  const component = (body: string, result = "<div>{s}</div>") => `
+    import { useEffect, useMemo, useState } from "react";
+    export default function App(props) {
+      const [s, setS] = useState(0);
+      ${body}
+      return ${result};
+    }
+  `;
+  // How large a frame is depends on the build. Each depth is less than the parser and
+  // the printer have the stack for in that build. A debug build has the stack for fewer
+  // than 256 levels, so there each is more than the lowering has the stack for.
+  const depthOf = (debug: number, releaseWithASAN: number, release: number) =>
+    isDebug ? debug : isASAN ? releaseWithASAN : release;
+  const flat = ["scopes that statements in a row nest", "variables that are each the one before"];
+  const within = ["if statements with blocks, within the limit", "JSX, within the limit", "methods, within the limit"];
+  const shapes: [name: string, depth: number, source: (n: number) => string][] = [
+    // Blocks are counted apart, so these are 200 levels and not 400.
+    [within[0], depthOf(10, 10, 200), n => component(nest(n, () => "if (props.a) {", "props.f(s);", "}"))],
+    // So are the call, the object and the array that an element of JSX is, and the property of a method call.
+    [
+      within[1],
+      depthOf(10, 10, 200),
+      n =>
+        component(
+          "",
+          nest(n, () => "<div><a />", "{s}", "</div>"),
+        ),
+    ],
+    [within[2], depthOf(10, 10, 200), n => component(`const x = props.a${".m(s)".repeat(n)};`, "<div>{x}</div>")],
+    ["effects", depthOf(60, 250, 500), n => component(nest(n, () => "useEffect(() => {", "setS(1);", "}, []);"))],
+    [
+      "called arrow functions",
+      depthOf(120, 400, 600),
+      n => component(`const x = ${nest(n, () => "(() => ", "s", ")()")};`),
+    ],
+    ["useMemo", depthOf(120, 400, 600), n => component(`const x = ${nest(n, () => "useMemo(() => ", "s", ", [s])")};`)],
+    ["arrow functions", depthOf(180, 600, 1000), n => component(`const f = ${nest(n, i => `(a${i}) => `, "s", "")};`)],
+    ["function declarations", depthOf(100, 500, 1000), n => component(nest(n, i => `function f${i}() {`, "s;", "}"))],
+    ["if", depthOf(70, 600, 1600), n => component(nest(n, () => "if (props.a) {", "s;", "}"))],
+    ["try", depthOf(90, 600, 1600), n => component(nest(n, () => "try {", "s;", "} catch (e) {}"))],
+    ["switch", depthOf(90, 600, 1600), n => component(nest(n, () => "switch (props.a) { case 1: ", "s;", "}"))],
+    ["labels", depthOf(90, 600, 1600), n => component(nest(n, i => `l${i}: `, "{ s; }", ""))],
+    ["try, half as deep", depthOf(45, 300, 800), n => component(nest(n, () => "try {", "s;", "} catch (e) {}"))],
+    [
+      "switch, half as deep",
+      depthOf(45, 300, 800),
+      n => component(nest(n, () => "switch (props.a) { case 1: ", "s;", "}")),
+    ],
+    ["labels, half as deep", depthOf(45, 300, 800), n => component(nest(n, i => `l${i}: `, "{ s; }", ""))],
+    ["calls", depthOf(280, 600, 1600), n => component(`const x = ${nest(n, () => "f(", "s", ")")};`)],
+    [
+      "conditional expressions",
+      depthOf(220, 600, 1600),
+      n => component(`const x = ${nest(n, () => "props.a ? s : ", "s", "")};`),
+    ],
+    [
+      "JSX",
+      depthOf(120, 600, 1600),
+      n =>
+        component(
+          "",
+          nest(n, () => "<a>", "{s}", "</a>"),
+        ),
+    ],
+    ["a sum", depthOf(2000, 32000, 32000), n => component(`const x = ${Array(n).fill("s").join(" + ")};`)],
+    ["a chain of ||", depthOf(2000, 32000, 32000), n => component(`const x = ${Array(n).fill("s").join(" || ")};`)],
+    ["an optional chain", depthOf(200, 400, 1000), n => component(`const x = props${Array(n).fill("?.b").join("")};`)],
+    // Each array is changed after all that were made after it, so its scope has theirs in it.
+    [
+      flat[0],
+      depthOf(60, 300, 1000),
+      n =>
+        component(
+          Array.from({ length: n }, (_, i) => `const a${i} = [];`).join("") +
+            Array.from({ length: n }, (_, i) => `a${n - 1 - i}.push(s);`).join(""),
+          "<div>{a0}</div>",
+        ),
+    ],
+    // Blocks in a row, which three walks of the control flow graph and the renaming for SSA
+    // followed one call deep each. A variable named `fbt` ends the compilation after the lowering, and
+    // one that is read before its declaration ends it in SSA, so what a case costs does not depend on the stack.
+    [
+      "assignments in a try",
+      depthOf(4000, 8000, 16000),
+      n => component(`const fbt = s; let x; try { ${Array(n).fill("x = <a />;").join("")} } catch (e) {}`),
+    ],
+    [
+      "if statements in a row",
+      depthOf(5000, 10000, 30000),
+      n => component(`const fbt = s; ${Array(n).fill("if (s) {}").join("")}`),
+    ],
+    [
+      "a read after if statements in a row",
+      depthOf(2000, 5000, 10000),
+      n => component(`${Array(n).fill("if (props.a) {}").join("")} props.f(x); let x = 0;`),
+    ],
+    // Values in a row, each the one before, which PruneNonEscapingScopes followed one call deep each. That pass
+    // is a late one. One declaration for all: the lowering looks through a block once for each of its declarations.
+    // Not in a release build, which overflowed from 16,000: so many take 11 G instructions.
+    [
+      flat[1],
+      depthOf(2600, 5000, 0),
+      n =>
+        component(
+          `let [${Array.from({ length: n + 1 }, (_, i) => `v${i}`).join(",")}] = props.l;` +
+            Array.from({ length: n }, (_, i) => `v${i + 1} = v${i};`).join(""),
+          `<div>{v${n}}</div>`,
+        ),
+    ],
+  ];
+
+  test.concurrent.each(shapes.filter(([, depth]) => depth > 0))("%s", async (name, depth, source) => {
+    using dir = tempDir("react-compiler-depth", { "entry.jsx": source(depth) });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "--outfile=out.js", "entry.jsx"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const out = await Bun.file(join(String(dir), "out.js")).text();
+    expect(out).toContain("useState(0)");
+    // In a debug build, and for what is not nested in the source, that depends on how much of the stack is left.
+    if (within.includes(name)) expect(out).toContain("react/compiler-runtime");
+    else if (!isDebug && !flat.includes(name)) expect(out).not.toContain("react/compiler-runtime");
+    expect(exitCode).toBe(0);
+  });
 });

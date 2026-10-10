@@ -422,6 +422,16 @@ pub fn cold_todo(reason: &'static str, loc: Option<SourceLocation>) -> CompilerE
     cold_diagnostic(ErrorCategory::Todo, reason, None, loc)
 }
 
+/// Upstream's `CompilerError.invariant(holds, { reason })`. A panic would end the process.
+#[inline]
+pub fn invariant(holds: bool, reason: &'static str) -> Result<(), CompilerDiagnostic> {
+    if holds {
+        Ok(())
+    } else {
+        Err(cold_invariant(reason, None, None).into())
+    }
+}
+
 #[cold]
 #[inline(never)]
 pub fn cold_invariant(

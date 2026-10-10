@@ -300,6 +300,11 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.iife_resolving.is_empty() && self.iife_resolving.contains(&(file, call)) {
             return self.any_signature_while_arguments_are_checked();
         }
+        if self.calls_to_resolve_afresh.is_some()
+            && let Some(resolved) = self.resolve_signature_afresh(file, call)
+        {
+            return resolved;
+        }
         if let Some(known) = self.cached_resolved_signature(file, call) {
             return known;
         }
@@ -405,6 +410,37 @@ impl<'p, 's> Checker<'p, 's> {
             self.reported.extend(reported);
         }
         resolved
+    }
+
+    /// `resolved_signature` of one of `calls_to_resolve_afresh`, once for each. What is stored for the call, and what was
+    /// reported for it, stays as it is. `None`: it is not one of them, or it is asked for while it is resolved so: then
+    /// what is stored answers.
+    #[cold]
+    fn resolve_signature_afresh(&mut self, file: FileId, call: ExprId) -> Option<ResolvedCall> {
+        let (of, start, end) = self.calls_to_resolve_afresh?;
+        if of != file || !(start..end).contains(&self.hir(file)[call].pos) {
+            return None;
+        }
+        if let Some(&(_, known)) = self.calls_resolved_afresh.iter().find(|it| it.0 == call) {
+            return known;
+        }
+        let resolution_start = self.resolution_start;
+        if !self.enter(Query::Call(file, call)) {
+            return None;
+        }
+        let at = self.calls_resolved_afresh.len();
+        self.calls_resolved_afresh.push((call, None));
+        self.resolution_start = self.stack.len();
+        let around = self.call_resolution_errors.take();
+        let resolved = self.resolve_signature(file, call);
+        self.call_resolution_errors = around;
+        self.resolution_start = resolution_start;
+        self.resolved_meanwhile.push((file, call, resolved));
+        let resolved = self.with_return_type(resolved);
+        self.resolved_meanwhile.pop();
+        let _ = self.leave(Query::Call(file, call));
+        self.calls_resolved_afresh[at].1 = Some(resolved);
+        Some(resolved)
     }
 
     fn effective_args(&mut self, file: FileId, args: IdList<ExprId>) -> Args {
@@ -3092,7 +3128,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !pulls
             && let ExprKind::Call(c) = hir[call].kind
             && let ExprKind::Fn(func) = hir[hir[c].callee].kind
-            && let Some(index) = hir.ids(hir[c].args).position(|a| a == arg)
+            && let Some(index) = super::context::index_of_node(hir, hir[c].args, arg)
         {
             let params = hir[func].params;
             let param = if index < params.len() {
@@ -3118,13 +3154,10 @@ impl<'p, 's> Checker<'p, 's> {
             }
             _ => return None,
         };
-        let mut index = hir.ids(hir[id].args).position(|a| a == arg)?;
+        let mut index = super::context::index_of_node(hir, hir[id].args, arg)?;
         // `getEffectiveCallArguments`: a spread tuple counts as its elements, anything else as one
         // argument.
-        if hir
-            .ids(hir[id].args)
-            .any(|a| matches!(hir[a].kind, ExprKind::Spread(_)))
-        {
+        if self.spread_indices(file, call, hir[id].args).is_some() {
             let effective = self.effective_args(file, hir[id].args);
             index = effective.iter().position(
                 |a| matches!(a, Arg::Expr(e) | Arg::SpreadElement(_, _, _, e) if *e == arg),

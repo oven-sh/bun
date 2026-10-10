@@ -1,0 +1,32 @@
+use crate::oxlint::jsdoc::{JSDoc, JSDocFinder, JSDocPluginSettings};
+use bun_lint::prelude::*;
+use bun_lint::rule::Plugin;
+
+/// Requires a type on the `@throws` tag.
+pub struct RequireThrowsType;
+
+const REQUIRE_THROWS_TYPE: Message = Message::new("", "Missing JSDoc `@throws` type.");
+
+impl Rule for RequireThrowsType {
+    const META: Meta = Meta::oxlint(Plugin::Jsdoc, "require-throws-type", Kind::Suggestion);
+    const ON: On = On::new().finish();
+    type State<'a> = JSDocFinder<'a>;
+
+    fn new(_: &Options) -> Self {
+        RequireThrowsType
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<JSDocFinder<'a>> {
+        let finder = JSDocFinder::new(file);
+        (!finder.is_empty()).then_some(finder)
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let settings = JSDocPluginSettings::new(cx.file());
+        for tag in cx.state.iter_checked(&settings).flat_map(JSDoc::tags) {
+            if matches!(tag.kind.parsed(), b"throws" | b"exception") && tag.type_comment().0.is_none() {
+                cx.report(tag.kind.span, REQUIRE_THROWS_TYPE);
+            }
+        }
+    }
+}

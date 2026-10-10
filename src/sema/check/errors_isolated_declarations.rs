@@ -20,6 +20,7 @@ use super::enclosing_declaration::Enclosing;
 use super::sink::held;
 use super::*;
 use crate::bind::{Decl, MemberOwner, Parent, PatParent};
+use crate::util::SharedSort;
 use smallvec::SmallVec;
 use std::ops::ControlFlow;
 
@@ -156,7 +157,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `SortAndDeduplicateDiagnostics`, `compactAndMergeRelatedInfos`: a diagnostic reported twice
     /// becomes one error, with the related information of both in file order.
     fn iso_report_all(&mut self, file: FileId, mut reported: Vec<IsoDiagnostic>) {
-        reported.sort_by(|a, b| {
+        reported.shared_sort_by(|a, b| {
             (a.start, a.end, a.code)
                 .cmp(&(b.start, b.end, b.code))
                 .then_with(|| a.args.cmp(&b.args))
@@ -176,7 +177,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         for mut one in all {
             if one.is_merged {
-                one.related.sort_by(|a, b| {
+                one.related.shared_sort_by(|a, b| {
                     (a.file, a.start, a.end)
                         .cmp(&(b.file, b.start, b.end))
                         .then(a.code.cmp(&b.code))
@@ -595,7 +596,15 @@ impl<'p, 's> Checker<'p, 's> {
         };
         if let Some(members) = self.members(holder) {
             let source = PropSource::Symbol(self.symbol_of_member(file, m));
-            if let Some(prop) = members.shape().props.iter().find(|it| it.source == source) {
+            let name = match hir[m].key {
+                PropKey::Computed(_) => None,
+                key => self.declared_member_name(file, key),
+            };
+            let prop = name
+                .and_then(|name| members.resolved.prop(name))
+                .filter(|it| it.source == source)
+                .or_else(|| members.shape().props.iter().find(|it| it.source == source));
+            if let Some(prop) = prop {
                 return self.type_of_prop(prop, MapperId::IDENTITY);
             }
         }

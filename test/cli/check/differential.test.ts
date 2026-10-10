@@ -1,8 +1,11 @@
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { endChildren, longLimit, spawn } from "../children";
 import { env, inTurns, linesOf, modulesInRings, tsc } from "./differential";
+
+afterAll(endChildren);
 
 // Small programs generated as cross products, checked by `bun check` and by TypeScript 7, which have to agree. No
 // expectation is stored: TypeScript is the oracle. Each program is one function on one line, so a line names a
@@ -43,7 +46,7 @@ test.concurrent.skipIf(!tsc)("one thread enters every cycle where `tsc --singleT
 
 /** The error lines of `cmd`, which are in the format of `tsc --pretty false`, by line of `a.ts`. */
 async function errorsOf(cmd: string[], cwd: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
+  await using proc = spawn({ timeout: longLimit, cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
   const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
   const byLine = new Map<number, string[]>();
   for (const text of stdout.split("\n")) {
@@ -507,7 +510,7 @@ differential("callbacks: the callee, the form of the callback, and the context o
 // suppresses the other errors of its project, so a case that can have one is a project of its own.
 /** What `cmd` prints about each line of `a.ts`. A line that continues a message belongs to the error above it. */
 async function messagesOf(cmd: string[], cwd: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
+  await using proc = spawn({ timeout: longLimit, cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
   const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
   const byLine = new Map<number, string[]>();
   let line = 0;
@@ -1981,7 +1984,7 @@ differential("the files that are checked, by layout of the project and by comman
     for (const side of ["theirs", "ours"]) for (const path in it[3]) files[`${index}/${side}/${path}`] = it[3][path];
   using dir = tempDir("bun-check-contract", files);
   const outcomeOf = async (cmd: string[], cwd: string, root: string) => {
-    await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
+    await using proc = spawn({ timeout: longLimit, cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
     const lines = stdout.replaceAll("\\", "/").replaceAll(root.replaceAll("\\", "/"), "").split(/\r?\n/);
     // tsc exits with 2 if it has written files in spite of errors.

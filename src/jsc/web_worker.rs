@@ -1019,45 +1019,13 @@ impl WebWorker {
         drop(self.vm_handle.lock().take());
         let vm_ptr = self.vm.replace(core::ptr::null_mut());
 
-        // ---- 2. User exit handlers -----------------------------------------
+        // ---- 2–5. User exit handlers; stop, forbid script, wait, ~VM, loops, destroy
         let mut exit_code: i32 = 0;
         if !vm_ptr.is_null() {
-            // SAFETY: vm_ptr valid; no other thread holds a pointer to it (they
-            // only ever held its handle) — `&mut` is exclusive.
-            let vm = unsafe { &mut *vm_ptr };
-            vm.is_shutting_down = true;
-            vm.on_exit();
-            exit_code = i32::from(vm.exit_handler.exit_code);
-            log!(
-                "[{}] shutdown: exit handlers done",
-                self.execution_context_id
-            );
-
-            // ---- 3–5. Stop, forbid script, wait, ~VM, loops, destroy ----------
-            // SAFETY: this thread's VM; sole owner.
-            unsafe { VirtualMachine::teardown(vm_ptr, crate::virtual_machine::Teardown::Worker) };
-
-            // `destroy()` deinits the fields; reclaim the storage `init` put on
-            // the global heap (worker `init_worker` always passes `log: None`,
-            // so the log box is VM-owned here).
-            // SAFETY: sole owner; nothing past this point dereferences the VM.
-            unsafe {
-                let console = core::mem::replace(&mut (*vm_ptr).console, core::ptr::null_mut());
-                if !console.is_null() {
-                    bun_core::heap::destroy(console);
-                }
-                if let Some(log) = (*vm_ptr).log.take() {
-                    bun_core::heap::destroy(log.as_ptr());
-                }
-                virtual_machine::VMHolder::set_vm(None);
-                // The VM was `alloc_zeroed(Layout::<VirtualMachine>())` in
-                // `init`, NOT `Box::new` — dealloc the raw storage directly so
-                // field `Drop`s do not re-run on already-`deinit`'d state.
-                std::alloc::dealloc(
-                    vm_ptr.cast::<u8>(),
-                    core::alloc::Layout::new::<VirtualMachine>(),
-                );
-            }
+            // SAFETY: this thread's VM, whose API lock `thread_main` took; no other
+            // thread holds a pointer to it (they only ever held its handle);
+            // `init_worker` always passes `log: None`.
+            exit_code = i32::from(unsafe { VirtualMachine::exit_and_free(vm_ptr) });
         }
         log!(
             "[{}] shutdown: VirtualMachine destroyed",

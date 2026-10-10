@@ -1,0 +1,551 @@
+//! The formats that `bun check` has too: `pretty`, which shows the code around each problem the way
+//! Bun prints its own errors, `agent`, the same in tags and without colors, and `github`, the
+//! workflow commands that GitHub Actions turns into annotations.
+
+use super::Meta;
+use crate::paths;
+use crate::results::FileResult;
+use bstr::BStr;
+use bun_core::strings;
+use bun_lint::context::Severity;
+use bun_lint::linter::{LintMessage, RuleId};
+use bun_lint::rule::Plugin;
+use bun_sema::util::FxHashMap;
+use std::io::Write;
+
+macro_rules! pretty {
+    ($($arg:tt)*) => {
+        let _ = bun_core::write_pretty!($($arg)*);
+    };
+}
+
+/// Above this many problems, identical ones are grouped instead of printed one by one.
+const GROUP_THRESHOLD: usize = 50;
+/// Groups printed with a source excerpt. The others take a line each.
+const MAX_GROUPS: usize = 12;
+const MAX_COMPACT_GROUPS: usize = 30;
+/// Files listed under a group.
+const MAX_FILES: usize = 8;
+
+/// A problem, and the file that has it.
+#[derive(Copy, Clone)]
+struct Problem<'r> {
+    result: &'r FileResult,
+    message: &'r LintMessage,
+}
+
+impl Problem<'_> {
+    fn is_error(&self) -> bool {
+        self.message.is_fatal || self.message.severity == Severity::Error
+    }
+
+    fn rule(&self) -> Vec<u8> {
+        self.message
+            .rule_id
+            .as_ref()
+            .map(|id| id.to_vec())
+            .unwrap_or_default()
+    }
+}
+
+/// Relative to the working directory, or absolute when that would need two or more `../`.
+fn display_path(path: &[u8], cwd: &[u8]) -> Vec<u8> {
+    let path = paths::from_native(path);
+    if !paths::is_absolute(&path) {
+        return path;
+    }
+    let relative = paths::relative(cwd, &path);
+    if relative.starts_with(b"../../") {
+        path
+    } else {
+        relative
+    }
+}
+
+/// Where [`lines`] has been, for the next problem, which is in the same file further down as a rule.
+#[derive(Default)]
+struct Place<'r> {
+    text: &'r [u8],
+    /// A line, counted from 1, and where it starts.
+    line: u32,
+    start: usize,
+    /// What was asked for last, and the answer.
+    last: (u32, u32, Vec<&'r [u8]>),
+    /// The file that [`with_help`] has asked about last, and the answer.
+    helped: Option<(&'r FileResult, Vec<LintMessage>)>,
+}
+
+/// The message of `problem` with what oxlint says besides it, if that was not made when the file was linted: [`Meta::help`]. It is
+/// what the same rule says at the same place in the same words.
+fn with_help<'r>(problem: Problem<'r>, meta: &Meta, place: &mut Place<'r>) -> Option<LintMessage> {
+    let (lint, Problem { result, message }) = (meta.help?, problem);
+    if !(place.helped.as_ref()).is_some_and(|it| std::ptr::eq(it.0, result)) {
+        place.helped = Some((result, lint(result)));
+    }
+    let rule = |it: &LintMessage| it.rule_id.as_ref().map(|id| id.to_vec());
+    let is_same = |it: &&LintMessage| {
+        (it.line, it.column, it.end) == (message.line, message.column, message.end)
+            && it.message == message.message
+            && rule(it) == rule(message)
+    };
+    let found = place.helped.as_ref()?.1.iter().find(is_same)?;
+    Some(LintMessage {
+        details: found.details.clone(),
+        constant_help: found.constant_help,
+        ..message.clone()
+    })
+}
+
+/// The lines `from..=to` of `text`, counted from 1 as ESLint counts them, without their ends.
+fn lines<'r>(text: &'r [u8], from: u32, to: u32, place: &mut Place<'r>) -> Vec<&'r [u8]> {
+    let text = strings::without_utf8_bom(text);
+    let is_same_text = std::ptr::eq(place.text, text);
+    if is_same_text && (place.last.0, place.last.1) == (from, to) {
+        return place.last.2.clone();
+    }
+    let (mut found, mut line, mut at) = match is_same_text && place.line <= from {
+        true => (Vec::new(), place.line, place.start),
+        false => (Vec::new(), 1, 0),
+    };
+    while line <= to && at <= text.len() {
+        if line == from {
+            (place.text, place.line, place.start) = (text, line, at);
+        }
+        let rest = &text[at..];
+        let mut end = rest.len();
+        let mut next = rest.len() + 1;
+        let mut from_here = 0;
+        // U+2028 and U+2029 start with 0xE2.
+        while let Some(found) = strings::index_of_any(&rest[from_here..], b"\n\r\xE2") {
+            let candidate = from_here + found;
+            let len = match &rest[candidate..] {
+                [b'\r', b'\n', ..] => 2,
+                [b'\r' | b'\n', ..] => 1,
+                [0xE2, 0x80, 0xA8 | 0xA9, ..] => 3,
+                _ => 0,
+            };
+            if len > 0 {
+                (end, next) = (candidate, candidate + len);
+                break;
+            }
+            from_here = candidate + 1;
+        }
+        if line >= from {
+            found.push(&rest[..end]);
+        }
+        line += 1;
+        at += next;
+    }
+    if std::ptr::eq(place.text, text) {
+        place.last = (from, to, found.clone());
+    }
+    found
+}
+
+fn all<'r>(results: &'r [FileResult]) -> Vec<Problem<'r>> {
+    let problems = results.iter().flat_map(|result| {
+        result
+            .messages
+            .iter()
+            .map(move |message| Problem { result, message })
+    });
+    problems.collect()
+}
+
+/// What is the same for two problems if [`Problem::rule`] is, and is not written anew for each.
+#[derive(PartialEq, Eq, Hash)]
+enum Rule<'r> {
+    None,
+    BuiltIn(Plugin, &'static str),
+    Written(&'r [u8]),
+}
+
+impl<'r> Rule<'r> {
+    fn of(problem: &Problem<'r>) -> Rule<'r> {
+        match &problem.message.rule_id {
+            None => Rule::None,
+            Some(RuleId::Known(meta)) => Rule::BuiltIn(meta.plugin, meta.name),
+            Some(RuleId::Js(rule)) => Rule::Written(&rule.id),
+            Some(RuleId::Named(_, id)) => Rule::Written(id),
+            Some(RuleId::Unknown(id)) => Rule::Written(id),
+        }
+    }
+}
+
+/// The groups of problems with the same rule and message, the largest first.
+fn grouped<'r>(problems: &[Problem<'r>]) -> Vec<Vec<Problem<'r>>> {
+    let mut index: FxHashMap<(Rule, &[u8]), usize> = FxHashMap::default();
+    let mut groups: Vec<Vec<Problem>> = Vec::new();
+    for problem in problems {
+        let at = *index
+            .entry((Rule::of(problem), &problem.message.message[..]))
+            .or_insert_with(|| {
+                groups.push(Vec::new());
+                groups.len() - 1
+            });
+        groups[at].push(*problem);
+    }
+    bun_lint::utils::sort::sort_by_key(&mut groups, |group| std::cmp::Reverse(group.len()));
+    groups
+}
+
+fn plural(count: usize, noun: &str) -> String {
+    format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
+}
+
+/// How many of `group` each file has, the most first.
+fn by_file<'r>(group: &[Problem<'r>]) -> Vec<(Problem<'r>, usize)> {
+    let mut files: Vec<(Problem, usize)> = Vec::new();
+    for problem in group {
+        // They are in the order of the files.
+        match files.last_mut() {
+            Some(last) if std::ptr::eq(last.0.result, problem.result) => last.1 += 1,
+            _ => files.push((*problem, 1)),
+        }
+    }
+    bun_lint::utils::sort::sort_by_key(&mut files, |it| std::cmp::Reverse(it.1));
+    files
+}
+
+fn write_pretty_problem<'r>(
+    out: &mut Vec<u8>,
+    problem: Problem<'r>,
+    meta: &Meta,
+    place: &mut Place<'r>,
+) {
+    let helped = with_help(problem, meta, place);
+    let (result, message) = (problem.result, helped.as_ref().unwrap_or(problem.message));
+    let mut text = message.message.clone();
+    let rule = problem.rule();
+    if !rule.is_empty() {
+        pretty!(&mut text, meta.color, "<r>  <d>{}", BStr::new(&rule));
+    }
+    let shown = match (&result.text, message.line) {
+        (Some(text), line @ 1..) => lines(text, line.saturating_sub(2).max(1), line, place),
+        _ => Vec::new(),
+    };
+    // Not lines that nobody has written, which fill the screen.
+    let is_hidden = shown.last().is_none_or(|line| line.trim_ascii().is_empty())
+        || shown.iter().any(|line| line.len() > 1000);
+    let shown = if is_hidden { Vec::new() } else { shown };
+    let blank = shown
+        .iter()
+        .take_while(|line| line.trim_ascii().is_empty())
+        .count();
+    let data = bun_ast::Data {
+        text: text.into(),
+        location: Some(bun_ast::Location {
+            file: display_path(&result.path, meta.cwd).into(),
+            line: message.line as i32,
+            column: message.column as i32,
+            line_text: Some(
+                strings::replace_owned(&shown[blank..].join(&b'\n'), b"\t", b" ").into(),
+            ),
+            ..Default::default()
+        }),
+    };
+    let mut notes = Vec::new();
+    let said = |text: &str| bun_ast::Data {
+        text: text.as_bytes().to_vec().into(),
+        location: None,
+    };
+    let details = message.details.as_deref();
+    let texts = [message.first_label(), message.help(), message.note()];
+    notes.extend(texts.iter().filter(|it| !it.is_empty()).map(|it| said(it)));
+    if let Some(details) = details {
+        for ((line, column), _, text) in details.labels.iter().filter(|it| !it.2.is_empty()) {
+            let shown = result
+                .text
+                .as_deref()
+                .map(|it| lines(it, *line, *line, place));
+            let shown = shown
+                .and_then(|it| it.first().copied())
+                .filter(|it| it.len() <= 1000);
+            notes.push(bun_ast::Data {
+                location: Some(bun_ast::Location {
+                    file: display_path(&result.path, meta.cwd).into(),
+                    line: *line as i32,
+                    column: *column as i32,
+                    line_text: shown.map(|it| strings::replace_owned(it, b"\t", b" ").into()),
+                    ..Default::default()
+                }),
+                ..said(text)
+            });
+        }
+    }
+    let message = bun_ast::Msg {
+        kind: if problem.is_error() {
+            bun_ast::Kind::Err
+        } else {
+            bun_ast::Kind::Warn
+        },
+        data,
+        notes: notes.into(),
+        ..Default::default()
+    };
+    let to = &mut bun_core::fmt::VecWriter(out);
+    let _ = match meta.color {
+        true => message.write_format::<true>(to),
+        false => message.write_format::<false>(to),
+    };
+    out.push(b'\n');
+}
+
+pub(super) fn write_pretty(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
+    let problems = all(results);
+    let place = &mut Place::default();
+    if problems.len() <= GROUP_THRESHOLD || meta.shows_all {
+        for (i, problem) in problems.into_iter().enumerate() {
+            if i > 0 {
+                out.push(b'\n');
+            }
+            write_pretty_problem(out, problem, meta, place);
+        }
+        return;
+    }
+    let groups = grouped(&problems);
+    let shown = groups.len().min(MAX_GROUPS);
+    for group in &groups[..shown] {
+        write_pretty_problem(out, group[0], meta, place);
+        if group.len() > 1 {
+            let files = by_file(group);
+            pretty!(
+                out,
+                meta.color,
+                "    <b><yellow>{} times<r><d> in {}<r>\n",
+                group.len(),
+                plural(files.len(), "file")
+            );
+            for (first, count) in files.iter().take(MAX_FILES) {
+                let path = display_path(&first.result.path, meta.cwd);
+                pretty!(
+                    out,
+                    meta.color,
+                    "      {:>4}  <cyan>{}<r><d>:{}<r>\n",
+                    count,
+                    BStr::new(&path),
+                    first.message.line
+                );
+            }
+            if files.len() > MAX_FILES {
+                pretty!(
+                    out,
+                    meta.color,
+                    "      <d>and {}<r>\n",
+                    plural(files.len() - MAX_FILES, "more file")
+                );
+            }
+        }
+        out.push(b'\n');
+    }
+    let compact = (groups.len() - shown).min(MAX_COMPACT_GROUPS);
+    for group in &groups[shown..shown + compact] {
+        let first_line = strings::split(&group[0].message.message, b"\n")
+            .next()
+            .unwrap_or_default();
+        pretty!(
+            out,
+            meta.color,
+            "  {:>4}  {}  <d>{}<r>\n",
+            group.len(),
+            BStr::new(first_line),
+            BStr::new(&group[0].rule())
+        );
+    }
+    let rest: usize = groups[shown + compact..].iter().map(Vec::len).sum();
+    if rest > 0 {
+        pretty!(
+            out,
+            meta.color,
+            "  <d>and {} of {}<r>\n",
+            plural(rest, "more problem"),
+            plural(groups.len() - shown - compact, "other kind")
+        );
+    }
+    if compact > 0 {
+        out.push(b'\n');
+    }
+    pretty!(
+        out,
+        meta.color,
+        "<cyan>bun lint --all<r><d>  show every problem<r>"
+    );
+}
+
+/// An attribute value, without the quotes.
+fn attribute(text: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len());
+    for byte in text {
+        out.extend_from_slice(
+            strings::xml_escape_entity(*byte).unwrap_or_else(|| std::slice::from_ref(byte)),
+        );
+    }
+    out
+}
+
+fn write_agent_problem<'r>(
+    out: &mut Vec<u8>,
+    group: &[Problem<'r>],
+    meta: &Meta,
+    place: &mut Place<'r>,
+) {
+    let Some(&problem) = group.first() else {
+        return;
+    };
+    let helped = with_help(problem, meta, place);
+    let (result, message) = (problem.result, helped.as_ref().unwrap_or(problem.message));
+    let tag = if problem.is_error() {
+        "error"
+    } else {
+        "warning"
+    };
+    let _ = write!(
+        out,
+        "<{tag} file=\"{}\" line=\"{}\" column=\"{}\"",
+        BStr::new(&attribute(&display_path(&result.path, meta.cwd))),
+        message.line,
+        message.column
+    );
+    let rule = problem.rule();
+    if !rule.is_empty() {
+        let _ = write!(out, " rule=\"{}\"", BStr::new(&attribute(&rule)));
+    }
+    if message.fix.is_some() {
+        out.extend_from_slice(b" fixable=\"true\"");
+    }
+    if group.len() > 1 {
+        let _ = write!(out, " times=\"{}\"", group.len());
+    }
+    out.extend_from_slice(b">\n");
+    out.extend_from_slice(&message.message);
+    out.push(b'\n');
+    if let (Some(text), line @ 1..) = (&result.text, message.line) {
+        let first = line.saturating_sub(2).max(1);
+        let mut shown = lines(text, first, line + 1, place);
+        // A blank line after it says nothing.
+        if shown.len() as u32 > line - first + 1
+            && shown.last().is_some_and(|it| it.trim_ascii().is_empty())
+        {
+            shown.pop();
+        }
+        if shown.iter().all(|line| line.len() <= 1000) && !shown.is_empty() {
+            let from = message.column.saturating_sub(1) as usize;
+            let to = (message.end.filter(|end| end.0 == line))
+                .map(|(_, end_column)| end_column.saturating_sub(1) as usize);
+            bun_sema_driver::format::write_agent_source(out, first, &shown, line, (from, to));
+        }
+    }
+    let first = ((message.line, message.column), message.first_label());
+    let others = message.details.iter().flat_map(|it| &it.labels);
+    for ((line, column), text) in std::iter::once(first).chain(others.map(|it| (it.0, &*it.2))) {
+        if !text.is_empty() {
+            let _ = writeln!(
+                out,
+                "<label line=\"{line}\" column=\"{column}\">{text}</label>"
+            );
+        }
+    }
+    for (tag, text) in [("help", message.help()), ("note", message.note())] {
+        if !text.is_empty() {
+            let _ = writeln!(out, "<{tag}>{text}</{tag}>");
+        }
+    }
+    for suggestion in &message.suggestions {
+        let _ = writeln!(
+            out,
+            "<suggestion>{}</suggestion>",
+            BStr::new(&suggestion.message)
+        );
+    }
+    if group.len() > 1 {
+        const MAX_LOCATIONS: usize = 10;
+        out.extend_from_slice(b"<also>");
+        for (i, other) in group[1..].iter().take(MAX_LOCATIONS).enumerate() {
+            let path = display_path(&other.result.path, meta.cwd);
+            let space = if i > 0 { " " } else { "" };
+            let _ = write!(
+                out,
+                "{space}{}:{}:{}",
+                BStr::new(&path),
+                other.message.line,
+                other.message.column
+            );
+        }
+        if group.len() - 1 > MAX_LOCATIONS {
+            let _ = write!(out, " and {} more", group.len() - 1 - MAX_LOCATIONS);
+        }
+        out.extend_from_slice(b"</also>\n");
+    }
+    let _ = writeln!(out, "</{tag}>");
+}
+
+pub(super) fn write_agent(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
+    let problems = all(results);
+    let place = &mut Place::default();
+    if problems.len() <= GROUP_THRESHOLD || meta.shows_all {
+        problems.iter().for_each(|problem| {
+            write_agent_problem(out, std::slice::from_ref(problem), meta, place)
+        });
+    } else {
+        let groups = grouped(&problems);
+        let shown = groups.len().min(MAX_GROUPS + MAX_COMPACT_GROUPS);
+        groups[..shown]
+            .iter()
+            .for_each(|group| write_agent_problem(out, group, meta, place));
+        let rest: usize = groups[shown..].iter().map(Vec::len).sum();
+        if rest > 0 {
+            let _ = writeln!(
+                out,
+                "<not-shown>{} of {}. Run `bun lint --all` to list every problem, or `bun lint <path>` to lint one file or directory.</not-shown>",
+                plural(rest, "more problem"),
+                plural(groups.len() - shown, "other kind")
+            );
+        }
+    }
+    // The caller adds the end of the last line.
+    if !problems.is_empty() {
+        out.pop();
+    }
+}
+
+/// `::error file=a.js,line=1,col=1,endLine=1,endColumn=10,title=no-var::Unexpected var.`
+pub(super) fn write_github(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
+    // GitHub takes the path from the root of the repository, wherever the step runs.
+    let workspace = bun_core::env_var::GITHUB_WORKSPACE::get().map(paths::from_native);
+    let from = workspace.as_deref().unwrap_or(meta.cwd);
+    for (i, problem) in all(results).into_iter().enumerate() {
+        if i > 0 {
+            out.push(b'\n');
+        }
+        let Problem { result, message } = problem;
+        let path = paths::from_native(&result.path);
+        let path = if paths::is_absolute(&path) {
+            paths::relative(from, &path)
+        } else {
+            path
+        };
+        let (end_line, end_column) = message.end.unwrap_or((message.line, message.column));
+        let _ = write!(
+            out,
+            "::{} file={},line={},col={},endLine={end_line},endColumn={end_column},title={}::",
+            if problem.is_error() {
+                "error"
+            } else {
+                "warning"
+            },
+            bun_core::fmt::github_action_property(&path),
+            message.line.max(1),
+            message.column.max(1),
+            bun_core::fmt::github_action_property(&match problem.rule() {
+                rule if rule.is_empty() => b"bun lint".to_vec(),
+                rule => rule,
+            }),
+        );
+        let text = strings::replace_owned(
+            &strings::replace_owned(&message.message, b"%", b"%25"),
+            b"\r",
+            b"%0D",
+        );
+        out.extend_from_slice(&strings::replace_owned(&text, b"\n", b"%0A"));
+    }
+}

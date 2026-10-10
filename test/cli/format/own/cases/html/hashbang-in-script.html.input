@@ -1,0 +1,8 @@
+<script>#!a
+b</script>
+<script type="module">#!/usr/bin/env node
+</script>
+<script>#!a
+
+// c
+</script>

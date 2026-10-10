@@ -73,7 +73,7 @@ pub(crate) fn prune_non_escaping_scopes(
     }
 
     // Then walk outward from the returned values and find all captured operands.
-    let memoized = compute_memoized_identifiers(&state)?;
+    let memoized = compute_memoized_identifiers(&state, env)?;
 
     // Prune scopes that do not declare/reassign any escaping values
     let mut transform = PruneScopesTransform {
@@ -1100,6 +1100,7 @@ type IdentNodeTuple = (
 
 fn compute_memoized_identifiers(
     state: &CollectState,
+    env: &Environment,
 ) -> Result<HashSet<DeclarationId>, CompilerError> {
     let mut memoized = HashSet::new();
 
@@ -1129,12 +1130,22 @@ fn compute_memoized_identifiers(
         identifier_nodes: &mut IdMap<DeclarationId, IdentNodeTuple>,
         scope_nodes: &mut IdMap<ScopeId, (Vec<DeclarationId>, bool)>,
         memoized: &mut HashSet<DeclarationId>,
+        env: &Environment,
     ) -> Result<bool, CompilerError> {
+        // TS: CompilerError.invariant(node !== undefined, ...)
         let Some(&(level, _, _, _, seen)) = identifier_nodes.get(id) else {
-            return Ok(false);
+            let found = format!("none found for `{}`", id.0);
+            return Err(cold_invariant(
+                "Expected a node for all identifiers",
+                Some(found),
+                None,
+            ));
         };
         if seen {
             return Ok(identifier_nodes.get(id).unwrap().1);
+        }
+        if !env.has_stack() {
+            return Err(crate::lowering::nested_too_deeply().into());
         }
 
         // Mark as seen, temporarily mark as non-memoized
@@ -1151,7 +1162,7 @@ fn compute_memoized_identifiers(
             .collect();
         let mut has_memoized_dependency = false;
         for dep in deps {
-            let is_dep_memoized = visit(dep, false, identifier_nodes, scope_nodes, memoized)?;
+            let is_dep_memoized = visit(dep, false, identifier_nodes, scope_nodes, memoized, env)?;
             has_memoized_dependency |= is_dep_memoized;
         }
 
@@ -1175,6 +1186,7 @@ fn compute_memoized_identifiers(
                     identifier_nodes,
                     scope_nodes,
                     memoized,
+                    env,
                 )?;
             }
         }
@@ -1186,6 +1198,7 @@ fn compute_memoized_identifiers(
         identifier_nodes: &mut IdMap<DeclarationId, IdentNodeTuple>,
         scope_nodes: &mut IdMap<ScopeId, (Vec<DeclarationId>, bool)>,
         memoized: &mut HashSet<DeclarationId>,
+        env: &Environment,
     ) -> Result<(), CompilerError> {
         // TS: CompilerError.invariant(node !== undefined, ...)
         let Some(node) = scope_nodes.get_mut(id) else {
@@ -1198,7 +1211,7 @@ fn compute_memoized_identifiers(
 
         let deps: Vec<DeclarationId> = node.0.clone();
         for dep in deps {
-            visit(dep, true, identifier_nodes, scope_nodes, memoized)?;
+            visit(dep, true, identifier_nodes, scope_nodes, memoized, env)?;
         }
         Ok(())
     }
@@ -1212,6 +1225,7 @@ fn compute_memoized_identifiers(
             &mut identifier_nodes,
             &mut scope_nodes,
             &mut memoized,
+            env,
         )?;
     }
 

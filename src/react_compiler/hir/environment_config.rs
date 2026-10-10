@@ -78,6 +78,13 @@ pub struct EnvironmentConfig {
     pub enable_name_anonymous_functions: bool,
     pub validate_hooks_usage: bool,
     pub validate_ref_access_during_render: bool,
+    /// For `validate_ref_access_during_render`: a ref value that meets a value of another kind, at a
+    /// phi or in an object, stays the ref value that it was. It is then reported where `.current`
+    /// is read. Upstream forgets where that was, and reports it at each use.
+    pub joined_ref_values_keep_their_place: bool,
+    /// For `validate_ref_access_during_render`: a function expression knows which of the variables
+    /// that it captures are refs and values of refs. Upstream does not look at them.
+    pub captured_refs_are_known_in_functions: bool,
     pub validate_no_set_state_in_render: bool,
     pub enable_use_keyed_state: bool,
     pub validate_no_set_state_in_effects: bool,
@@ -127,6 +134,8 @@ impl Default for EnvironmentConfig {
             enable_name_anonymous_functions: false,
             validate_hooks_usage: true,
             validate_ref_access_during_render: true,
+            joined_ref_values_keep_their_place: false,
+            captured_refs_are_known_in_functions: true,
             validate_no_set_state_in_render: true,
             enable_use_keyed_state: false,
             validate_no_set_state_in_effects: false,

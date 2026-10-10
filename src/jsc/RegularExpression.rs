@@ -1,7 +1,7 @@
 use bun_core::String as BunString;
 
 bun_opaque::opaque_ffi! {
-    /// Opaque FFI handle for `JSC::Yarr::RegularExpression`.
+    /// Opaque FFI handle for `Bun::RegularExpression` (RegularExpression.cpp).
     pub struct RegularExpression;
 }
 
@@ -116,4 +116,11 @@ fn __bun_regex_matches(regex: core::ptr::NonNull<()>, input: &BunString) -> bool
 fn __bun_regex_drop(regex: core::ptr::NonNull<()>) {
     // SAFETY: `regex` was produced by `__bun_regex_compile`; consumed here.
     unsafe { RegularExpression::destroy(regex.as_ptr().cast()) }
+}
+
+// `bun_yarr` is below this crate too. It calls RegularExpression.cpp itself: this is all it needs from here.
+#[unsafe(no_mangle)]
+fn __bun_yarr_initialize() {
+    // Idempotent. `bun lint` and `bun format` reach this before anything else starts JSC, and the defaults are theirs.
+    crate::initialize(crate::InitializeOptions::default());
 }

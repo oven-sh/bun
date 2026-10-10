@@ -1,0 +1,2 @@
+x = a ? '_o('.concat(f(t, e), ',').concat(e.onceId++, ',').concat(o, ')') : b;
+y = a ? '_o('.concat(f(t, e), ',').concat(onceId++, ',').concat(o, ')') : b;

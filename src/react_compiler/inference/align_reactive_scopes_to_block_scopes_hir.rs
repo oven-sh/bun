@@ -91,7 +91,7 @@ struct BlockFallthroughRange {
 pub(crate) fn align_reactive_scopes_to_block_scopes_hir(
     func: &mut HirFunction,
     env: &mut Environment,
-) {
+) -> Result<(), crate::diagnostics::CompilerDiagnostic> {
     // Save original scope ranges BEFORE this pass modifies them.
     // In TS, identifier.mutableRange and scope.range may or may not be the same
     // JS object. Only identifiers whose mutableRange IS the scope's range object
@@ -208,10 +208,10 @@ pub(crate) fn align_reactive_scopes_to_block_scopes_hir(
                     range: env.new_mutable_range(terminal_eval_order, next_id),
                 });
 
-                assert!(
+                crate::diagnostics::invariant(
                     !value_block_nodes.contains_key(ft),
-                    "Expect hir blocks to have unique fallthroughs"
-                );
+                    "Expect hir blocks to have unique fallthroughs",
+                )?;
                 if let Some(n) = &node {
                     value_block_nodes.insert(ft, n.clone());
                 }
@@ -259,7 +259,13 @@ pub(crate) fn align_reactive_scopes_to_block_scopes_hir(
                 // or for ternary/logical/optional terminals.
                 let value_range = if node.is_none() {
                     // Transition from block -> value block
-                    let ft = fallthrough.expect("Expected a fallthrough for value block");
+                    let ft = fallthrough.ok_or_else(|| {
+                        crate::diagnostics::cold_invariant(
+                            "Expected a fallthrough for value block",
+                            None,
+                            None,
+                        )
+                    })?;
                     let next_id = block_first_id(func, ft);
                     env.new_mutable_range(terminal_eval_order, next_id)
                 } else {
@@ -294,6 +300,7 @@ pub(crate) fn align_reactive_scopes_to_block_scopes_hir(
             }
         }
     }
+    Ok(())
 }
 
 /// Records a place's scope as active and adjusts scope ranges for value blocks.

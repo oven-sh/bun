@@ -1,0 +1,1166 @@
+---
+title: "Linting"
+description: "Lint JavaScript and TypeScript with bun lint, a fast linter that is compatible with ESLint"
+---
+
+`bun lint` lints JavaScript and TypeScript. It reads your `eslint.config.js`, runs the rules of ESLint and typescript-eslint, prints what `eslint` prints, and uses every CPU core.
+
+```bash terminal icon="terminal"
+bun lint
+```
+
+```txt
+/app/src/index.ts
+  3:7   error    'count' is never reassigned. Use 'const' instead  prefer-const
+  9:14  warning  Unexpected any. Specify a different type          @typescript-eslint/no-explicit-any
+
+✖ 2 problems (1 error, 1 warning)
+  1 error and 0 warnings potentially fixable with the `--fix` option.
+```
+
+`bun lint` exits with code `1` if it finds an error, `0` if it finds none, and `2` if it could not lint, for example because the configuration is invalid. See [Exit codes](#exit-codes).
+
+You don't need the `eslint` package, and you don't need a configuration file.
+
+## Without a configuration file
+
+`bun lint` uses `eslint:recommended`, plus `typescript-eslint/recommended` for TypeScript files. It lints `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, and `.tsx` files, and knows the globals of browsers, Node.js, and Bun, and in test files those of `bun test`. It skips `node_modules`, `*.min.js`, and what `.gitignore` ignores.
+
+With `--infer-globals`, or `inferGlobals = true` in `bunfig.toml`, the globals of a file that a `tsconfig.json` or `jsconfig.json` includes are what the types of the project declare: its `lib`, its `types`, and `declare global`. So `window` is undefined in a project without the `dom` library. In JavaScript that the project does not check (`checkJs`), and beside a configuration file, they are added to the globals there are. If the packages of the project are not installed, or an entry of `types` is missing, nothing is inferred. With the `dom` library, `name`, `event`, `status`, `length`, `parent`, `top` and about 90 more such names count as defined everywhere, as for `tsc`.
+
+Loading the libraries and the types takes 40 to 450 ms, more than linting a small project. A file that is linted with `--type-aware` has them anyway, so there it is the default.
+
+`--infer-globals=fast` is for JavaScript without a configuration file, and reads only the compiler options at first. `lib`, `target` and `types` choose among the environments that `bun lint` knows: `dom` is `browser`, `webworker` is `worker`, `es2022` is `es2022`, and the types of `node`, `bun`, `jest`, `mocha`, `jasmine`, `jquery` and `vitest/globals` are the environments of those names. The types are loaded only when `no-undef` is about to report a name, and then they decide. Such a run takes 25 to 110 ms longer: SvelteKit lints in 140 ms instead of 34 ms, and 75 false reports of globals that its declaration files declare are gone. Every other rule knows the names of those environments only.
+
+To change a rule, add a configuration file:
+
+```js eslint.config.js icon="/icons/javascript.svg"
+export default [
+  {
+    rules: {
+      eqeqeq: "error",
+      "no-console": "warn",
+    },
+  },
+];
+```
+
+A configuration file replaces the defaults. See [Configure ESLint](https://eslint.org/docs/latest/use/configure/) for everything it can contain.
+
+## Replace ESLint
+
+`bun lint` reads the same configuration, lints the same files, and takes the same flags, so most projects only change the command.
+
+<Steps>
+  <Step title="Change the lint script">
+
+    ```json package.json icon="file-json"
+    {
+      "scripts": {
+        "lint": "bun lint --max-warnings 0"
+      }
+    }
+    ```
+
+    Keep the flags and the arguments. `eslint --max-warnings 0 src` becomes `bun lint --max-warnings 0 src`.
+
+    Change the script before you try the command. While the script says `eslint`, `bun lint` [runs the script](#if-packagejson-has-a-lint-script), so it runs ESLint.
+
+  </Step>
+  <Step title="Run it">
+
+    ```bash terminal icon="terminal"
+    bun run lint
+    ```
+
+    The report and the [exit code](#exit-codes) are those of `eslint`. If the run ends with `The configuration asks for what cannot be done yet`, the lines below that name [what `bun lint` left out](#what-cannot-be-linted).
+
+  </Step>
+  <Step title="Change CI, lint-staged, and Git hooks">
+
+    Replace `eslint`, `npx eslint`, and `bunx eslint` with `bun lint`. See [Run in CI](#run-in-ci) and [Check before you commit](#check-before-you-commit).
+
+  </Step>
+  <Step title="Keep the packages that the configuration imports">
+
+    Bun runs your `eslint.config.js`, so `typescript-eslint`, `@eslint/js`, `globals`, and the plugins stay in `devDependencies`.
+
+    Keep `eslint` too in any of these cases:
+
+    - The configuration imports `typescript-eslint`, or a plugin that imports `eslint`.
+    - The ESLint extension of your editor uses it.
+    - The configuration lints [other languages](#other-languages).
+
+    In any other project, run `bun remove eslint`.
+
+  </Step>
+</Steps>
+
+| Instead of                        | Run                                 |
+| --------------------------------- | ----------------------------------- |
+| `eslint`                          | `bun lint`                          |
+| `eslint src test`                 | `bun lint src test`                 |
+| `eslint --fix`                    | `bun lint --fix`                    |
+| `eslint --max-warnings 0`         | `bun lint --max-warnings 0`         |
+| `eslint -f json -o report.json .` | `bun lint -f json -o report.json .` |
+
+`bun lint` takes every flag of ESLint 10 except `--inspect-config` and `--mcp`. See [Differences from ESLint](#differences-from-eslint).
+
+If the project runs oxlint too, write `bun lint --flavor=eslint`. See [A project with both tools](#a-project-with-both-tools).
+
+Rule names, options, messages, locations, fixes, and `eslint-disable` comments are those of ESLint 10 and typescript-eslint 8, whichever versions you have installed. A project on ESLint 9 sees what it would see after the upgrade.
+
+### Plugins
+
+The rules of ESLint and typescript-eslint are built into Bun, and so are the rules of `react-hooks`, including its React Compiler rules, and some of `import`, `n`, and `oxc`. They run as native code. With an `.oxlintrc.json`, so do [the rules of oxlint's plugins](#replace-oxlint).
+
+A built-in plugin runs as native code under its usual name: `@typescript-eslint`, `react-hooks`, `import`, `n`. Under another name, such as `ts` or `node` in `@antfu/eslint-config`, it runs in JavaScript like any other plugin.
+
+Every other plugin runs as it is. `bun lint` loads the plugins that your `eslint.config.js` has in `plugins`, and runs their rules in JavaScript, with the same `context`, `sourceCode`, scopes, and fixers that ESLint gives them.
+
+```js eslint.config.js icon="file-code"
+import unicorn from "eslint-plugin-unicorn";
+
+export default [
+  {
+    plugins: { unicorn },
+    rules: { "unicorn/prefer-node-protocol": "error" },
+  },
+];
+```
+
+Rules in JavaScript are slower than the built-in ones. A file costs nothing extra if no rule in JavaScript is on for it, and a plugin is only loaded where a file is linted that has one of its rules on. If a module of the plugin exports the rule, only that module is loaded, without the other rules. Use `--timing` to see how much JavaScript a run has loaded.
+
+Import plugins from a module. For a plugin that is written in `eslint.config.js` itself, Bun has to run that file again, with everything it imports, to get at the rules.
+
+Plugins run inside `bun lint`, on threads of their own, as they run inside `eslint`:
+
+- What a plugin prints goes to the terminal, and `process.exit()` ends the run.
+- Its `process.on("exit")` handlers run after the report.
+- A rule that throws ends the run with exit code `2`. With an `.oxlintrc.json` the error is reported for the file, and the run goes on.
+- Each thread that runs rules in JavaScript loads the plugins for itself, so state at the top level of a module is per thread, and so are the handlers.
+- The rules in JavaScript run on one thread, on two if the files that they are for have 2 MB, on 4 from 9 MB, on 8 from 35 MB, on 16 from 135 MB, and never on more than `--threads`: each has to load the plugins again, and takes memory. Files of 256 KB and more are not counted: they all go to one of these threads, one at a time. Together they plan to stay within half of the memory that is free, in the machine and in the container: there are fewer of them if the plugins are large.
+
+Types are not there for a rule in JavaScript. `parserServices.program` is `null`, also with `--type-aware`. A rule that asks for types with `getParserServices()` of typescript-eslint does not run. See [what cannot be linted](#what-cannot-be-linted).
+
+#### Run the rules of the package
+
+The built-in rules of `@typescript-eslint`, `react-hooks`, `import`, `n`, `react`, and `prettier` run in place of the rules of the package that your configuration loads. Use `--no-native-plugin-rules` to run the rules of the installed packages, in JavaScript. The rules of ESLint itself stay built in.
+
+```bash terminal icon="terminal"
+bun lint --no-native-plugin-rules
+bun lint --native-plugin-rules=@typescript-eslint,import # only these two stay built in
+```
+
+In [`bunfig.toml`](#bunfigtoml):
+
+```toml bunfig.toml icon="settings"
+[lint]
+nativePluginRules = false
+# Or name the plugins that stay built in:
+# nativePluginRules = ["@typescript-eslint", "import"]
+```
+
+- Write the name that the configuration has for the plugin, before the `/` of its rules.
+- A plugin goes to its package only where the configuration loads that package. Everywhere else, as without a configuration file, the built-in rules stay.
+- With an `.eslintrc` that names the plugin, the package has to be installed. A built-in plugin otherwise needs no package there.
+- The rules of `@typescript-eslint` that need types do not run in JavaScript. The run says which, and fails. Keep `@typescript-eslint` in the list for them.
+- With an `.oxlintrc.json` the option changes nothing. `plugins` names the plugins that are built into oxlint, and what `jsPlugins` names runs in JavaScript.
+- `bun lint --print-config <file>` names the rules that run in JavaScript for that file, on stderr.
+
+#### `prettier/prettier`
+
+The rule of [eslint-plugin-prettier](https://github.com/prettier/eslint-plugin-prettier) is built in. It compares each file with what [`bun format`](/runtime/format) prints, so no Prettier is started. The options, the messages, the places and the fixes are those of the package.
+
+```js eslint.config.js icon="file-code"
+import prettier from "eslint-plugin-prettier";
+
+export default [{ plugins: { prettier }, rules: { "prettier/prettier": "error" } }];
+```
+
+It answers only where its text is Prettier's, byte for byte. For every other file the rule of the package runs in JavaScript, and a note says why:
+
+- `prettier` 3.9 and `eslint-plugin-prettier` 5 are not what is installed
+- a plugin of Prettier that `bun format` does not have may print the file
+- the rule or the configuration has an option that `bun format` does not know
+- the file is not JavaScript or TypeScript
+- `bun format` finds a syntax error in the file
+
+### Other languages
+
+A file for which the configuration has a `language` of a plugin, such as `json/json` of `@eslint/json`, `markdown/gfm` or `css/css`, or a parser for another kind of file, such as `yaml-eslint-parser` or `vue-eslint-parser`, or `eslint-plugin-html`, is linted by the `Linter` of the `eslint` package that the project has installed. `bun lint` finds the files, works out the configuration, applies the fixes and prints the report. All rules for such a file run in JavaScript, also those that are built in. If its parser is asked for types, all such files are linted on one thread: each thread would make a TypeScript program of its own. Keep `eslint`, 8.57 or later, in `devDependencies` for these files. Without it they [cannot be linted](#what-cannot-be-linted).
+
+### Processors
+
+A `processor` takes code out of files that are not JavaScript, such as the code blocks of a Markdown file. `bun lint` calls the processor, lints each block with the configuration for its name, such as `README.md/0_example.js`, and lets the processor put the problems where they belong. `--fix` fixes the blocks in the file if the processor supports it.
+
+```js eslint.config.js icon="file-code"
+import markdown from "@eslint/markdown";
+
+export default [
+  { files: ["**/*.md"], plugins: { markdown }, processor: "markdown/markdown" },
+  { files: ["**/*.md/*.js"], rules: { "no-var": "error" } },
+];
+```
+
+Only the processor runs in JavaScript. The built-in rules lint the blocks as native code. Rules that need types do not run on a file with a processor.
+
+### `.eslintrc`
+
+Where there is no `eslint.config.js`, `bun lint` reads the configuration files of ESLint 8, as ESLint 8 does:
+
+- `.eslintrc.js`, `.eslintrc.cjs`, `.eslintrc.yaml`, `.eslintrc.yml`, `.eslintrc.json`, `.eslintrc`, and `eslintConfig` in `package.json`.
+- `extends` of files, of packages such as `"next/core-web-vitals"`, and of `plugin:` configurations. `plugins`, their rules, environments and processors, and `--resolve-plugins-relative-to`.
+- The files of the parent directories count too, up to one with `root: true`.
+- `.eslintignore`, and `eslintIgnore` in `package.json`.
+- Of a directory, `.js` files are linted, and what `overrides` or `--ext` name. A pattern such as `"src/**/*.ts"` lints every file that it matches.
+- `/* eslint-env */` comments, `--env`, `--rulesdir`, `--no-eslintrc`, `--ignore-path`, and `ESLINT_USE_FLAT_CONFIG`.
+- `eslint:recommended` and `eslint:all` are those of ESLint 8.57.
+- Without `parser`, the code is read as ESLint 8 reads it: as a script in ES5, unless `parserOptions` or `env` say otherwise. `let a` is then `Parsing error: Unexpected token a`.
+- A rule that ESLint 8 does not have is reported in every file: `Definition for rule 'x' was not found.`
+
+The rules are those of ESLint 10, with the default options, the option schemas, the fixes and the suggestions of ESLint 8.57.
+
+The rules of typescript-eslint are those of version 8. Where version 5, 6 or 7 is installed, they have the default options of that version, and a line on stderr says so.
+
+`--print-config` prints the configuration as a flat one.
+
+## Replace oxlint
+
+`bun lint` reads `.oxlintrc.json` and `oxlint.config.ts`, including `plugins`, `categories`, `env`, `globals`, `overrides`, `ignorePatterns`, `extends`, `options`, and nested configuration files. It takes the flags of `oxlint`, lints the same files, and prints the same report with the same exit code.
+
+<Steps>
+  <Step title="Change the lint script">
+
+    ```json package.json icon="file-json"
+    {
+      "scripts": {
+        "lint": "bun lint --deny-warnings"
+      }
+    }
+    ```
+
+    Keep the flags and the arguments. `oxlint --deny-warnings src` becomes `bun lint --deny-warnings src`.
+
+    If the project runs ESLint too, add `--flavor=oxlint`: `oxlint --fix` becomes `bun lint --flavor=oxlint --fix`. Without it, `bun lint` [stops and asks](#a-project-with-both-tools).
+
+    Change the script before you try the command. While the script says `oxlint`, `bun lint` [runs the script](#if-packagejson-has-a-lint-script), so it runs oxlint.
+
+  </Step>
+  <Step title="Run it">
+
+    ```bash terminal icon="terminal"
+    bun run lint
+    ```
+
+    If the run ends with `The configuration asks for what cannot be done yet`, the lines below that name [what `bun lint` left out](#what-cannot-be-linted).
+
+  </Step>
+  <Step title="Change CI, lint-staged, and Git hooks">
+
+    Replace `oxlint`, `npx oxlint`, and `bunx oxlint` with `bun lint`.
+
+  </Step>
+  <Step title="Write a configuration file if there is none">
+
+    ```bash terminal icon="terminal"
+    bun run lint --init
+    ```
+
+    Without a configuration file, `bun lint` knows from the `oxlint` dependency that it stands in for oxlint. `--init` writes oxlint's defaults to an `.oxlintrc.json`, so the choice stays when you remove the package.
+
+  </Step>
+  <Step title="Remove the packages">
+
+    ```bash terminal icon="terminal"
+    bun remove oxlint oxlint-tsgolint
+    ```
+
+    `import { defineConfig } from "oxlint"` in an `oxlint.config.ts` keeps working without the package. The rules that need types use the type checker that is built into Bun.
+
+    Keep `oxlint` if the oxc extension of your editor uses it. `bun lint` has no language server.
+
+  </Step>
+</Steps>
+
+| Instead of                 | Run                          |
+| -------------------------- | ---------------------------- |
+| `oxlint`                   | `bun lint`                   |
+| `oxlint -D no-console src` | `bun lint -D no-console src` |
+| `oxlint --type-aware`      | `bun lint --type-aware`      |
+| `oxlint --type-check`      | `bun lint --type-check`      |
+| `oxlint --deny-warnings`   | `bun lint --deny-warnings`   |
+| `oxlint --import-plugin`   | `bun lint --import-plugin`   |
+| `oxlint --fix-suggestions` | `bun lint --fix-suggestions` |
+| `oxlint -f json`           | `bun lint -f json`           |
+| `oxlint --rules`           | `bun lint --rules`           |
+| `oxlint --init`            | `bun lint --init`            |
+
+`bun lint` takes every flag of oxlint 1.87 except `--lsp`. See [Differences from oxlint](#differences-from-oxlint).
+
+If you run `oxlint && eslint`, say which tool each command replaces: `bun lint --flavor=oxlint && bun lint --flavor=eslint`. See [A project with both tools](#a-project-with-both-tools).
+
+In a project with `vite-plus` in its `package.json` and no configuration file of a linter, `bun lint` reads what `vp lint` reads: `lint` in the `vite.config.ts`.
+
+### Rules
+
+The rules of oxlint's plugins are built in: `unicorn`, `oxc`, `react`, `react-perf`, `jsx-a11y`, `nextjs`, `import`, `promise`, `node`, `jest`, `vitest`, `vue`, and `jsdoc`. These 569 rules do what oxlint 1.87 does, with its options, messages, and fixes. The 22 React Compiler rules of `react`, such as `react/refs` and `react/set-state-in-effect`, run the React Compiler that is built into Bun. With an `eslint.config.js` these names mean the plugins that the configuration imports.
+
+The rules that oxlint shares with ESLint and typescript-eslint are ports of the originals. With an `.oxlintrc.json` they report what oxlint reports, at its places, with its messages. In the few cases where they still differ, `bun lint` does what ESLint does.
+
+The plugins in `jsPlugins` are loaded and run. As in oxlint, a rule that is written `n/..` is the one of the plugin that is called `n`, and `node/..` is the one that is built in. If rules ran in JavaScript that are built in, a note after the report says so. Run `bun lint --rules` to list the rules that are built in. A rule that is not built in [cannot be linted](#what-cannot-be-linted).
+
+### What an `.oxlintrc.json` changes
+
+Where an `.oxlintrc.json` is the configuration, `bun lint` behaves like oxlint, not like ESLint:
+
+- It skips what `.gitignore` ignores, and follows symbolic links. `node_modules` is skipped because `.gitignore` has it.
+- A configuration file with a key that oxlint does not know is an error.
+- If the command line or a configuration file cannot be used, the exit code is `1`.
+- Every format but `pretty` and `json-with-metadata` prints what oxlint prints: paths from the working directory, columns in bytes, rules as `eslint(no-var)`. Scripts and problem matchers written for oxlint keep working.
+- The default format is `pretty`. In GitHub Actions it is `github`, and no annotations are added to another format.
+- Everything is printed on stdout: the report, the summary line, `No files found to lint`, and why a configuration file cannot be used. Only a command line that cannot be read, and warnings about what `bun lint` leaves out, go to stderr.
+- `--quiet` and `--silent` hide problems. They still count, for `--max-warnings`, `--deny-warnings`, and the exit code.
+- Suppressions in `oxlint-suppressions.json` that no longer occur are an error in the report, so the exit code is `1`.
+- Rules that need types are skipped without `--type-aware`, and nothing is said about it.
+- An argument that matches nothing is not an error, as long as there is a file to lint. If there is none, the exit code is `1`.
+- `--report-unused-disable-directives` warns.
+- `--fix` applies the fixes once. ESLint lints again, up to ten times. What is left is reported where it was before the fixes.
+- The `<script>` blocks of `.vue` and `.svelte` files are linted, and the frontmatter and the `<script>` blocks of `.astro` files. Each block is linted by itself. The template is not read, so `no-unused-vars` is off in these files, and `prefer-const` is off in `.vue` and `.svelte` files.
+
+## Bun's own rules
+
+The rules that start with `bun/` exist only in `bun lint`. All of them are off until a configuration file turns them on. No plugin has to be named.
+
+ESLint and oxlint do not know these rules. They refuse a configuration file or a comment that names one.
+
+```json .oxlintrc.json icon="file-json"
+{
+  "rules": {
+    "bun/no-eager-dynamic-import": "error",
+    "bun/no-env-at-module-scope": ["warn", { "allow": ["NODE_ENV", "CI"] }]
+  }
+}
+```
+
+Several rules are about code that runs **while a module is evaluated**: everything outside functions, plus functions that are called where they are written, static fields and static blocks. That code runs on every start, whether or not its result is used.
+
+### `bun/no-eager-dynamic-import`
+
+An `import()` outside any function starts to load at once. It looks lazy and is not.
+
+```ts
+const parser = import("./parser"); // ✗
+
+const loadParser = () => import("./parser"); // ✓
+```
+
+`vi.mock(import("./module"))` is left alone: that is how Vitest is told which module to mock.
+
+### `bun/no-eager-native-addon`
+
+A native addon (`*.node`) that is imported or required outside any function is loaded on every start.
+
+```ts
+const addon = require("./build/Release/addon.node"); // ✗
+
+let addon;
+const getAddon = () => (addon ??= require("./build/Release/addon.node")); // ✓
+```
+
+### `bun/no-env-at-module-scope`
+
+An environment variable that is read while a module is evaluated is fixed before anything can set it, such as a test or a `.env` loader. The rule knows `process.env`, `Bun.env` and `import.meta.env`.
+
+```ts
+const port = process.env.PORT; // ✗
+
+const getPort = () => process.env.PORT; // ✓
+```
+
+| Option  | Default        | Meaning                             |
+| ------- | -------------- | ----------------------------------- |
+| `allow` | `["NODE_ENV"]` | Variables that can be read anywhere |
+
+`NODE_ENV` is allowed by default because bundlers replace it with a constant.
+
+### `bun/no-literal-temp-dir`
+
+`/tmp` does not exist on Windows, and `TMPDIR` can point elsewhere.
+
+```ts
+const file = "/tmp/report.json"; // ✗
+
+const file = join(tmpdir(), "report.json"); // ✓
+```
+
+| Option        | Default                | Meaning                           |
+| ------------- | ---------------------- | --------------------------------- |
+| `directories` | `["/tmp", "/var/tmp"]` | The directories that are reported |
+
+### `bun/no-negative-repeat-count`
+
+`"x".repeat(n)` throws a `RangeError` if `n` is negative. A count that comes out of a subtraction needs a lower bound. The rule suggests one.
+
+```ts
+const padding = " ".repeat(width - label.length); // ✗
+
+const padding = " ".repeat(Math.max(0, width - label.length)); // ✓
+```
+
+### `bun/no-redundant-catch-type`
+
+With `strict` or `useUnknownInCatchVariables`, the variable of a `catch` clause is `unknown` already. `--fix` removes the annotation.
+
+```ts
+try {
+  run();
+} catch (error: unknown) {} // ✗
+```
+
+### `bun/no-useless-spread-fallback`
+
+Spreading `false`, `null` or `undefined` into an object does nothing, so the empty object is allocated for nothing. The rule suggests `&&`.
+
+```ts
+const options = { ...(verbose ? { level: "debug" } : {}) }; // ✗
+
+const options = { ...(verbose && { level: "debug" }) }; // ✓
+```
+
+| Option                     | Default | Meaning                                                                                         |
+| -------------------------- | ------- | ----------------------------------------------------------------------------------------------- |
+| `ignoreConditionsThatCall` | `[]`    | Conditions that call one of these functions are left alone, such as `feature` from `bun:bundle` |
+
+### `bun/no-array-just-to-count`
+
+`.split(",").length` builds an array of all the pieces to count them. The rule reports separators of one character.
+
+```ts
+const columns = row.split(",").length; // ✗
+```
+
+| Option          | Default | Meaning                                                                                                    |
+| --------------- | ------- | ---------------------------------------------------------------------------------------------------------- |
+| `countFunction` | none    | A function `(text, separator) => number` that counts occurrences. `--fix` calls it wherever it is in scope |
+
+### `bun/prefer-builtin-sleep`
+
+A promise that only waits for a timer is [`Bun.sleep()`](/runtime/utils#bun-sleep). The rule suggests it.
+
+```ts
+await new Promise(done => setTimeout(done, 250)); // ✗
+
+await Bun.sleep(250); // ✓
+```
+
+### `bun/react-prefer-updater-function`
+
+State that a callback has captured can be out of date when the setter is called. A function gets the current state.
+
+```tsx
+setRows([...rows, row]); // ✗
+
+setRows(previous => [...previous, row]); // ✓
+```
+
+### `bun/prefer-lazy-schema`
+
+A validation schema that is built outside any function costs time on every start, whether or not something is validated. By default the rule looks at what starts with `z`, as [Zod](https://zod.dev) is usually imported.
+
+```ts
+const User = z.object({ name: z.string() }); // ✗
+
+const getUser = once(() => z.object({ name: z.string() })); // ✓
+```
+
+| Option          | Default | Meaning                                                     |
+| --------------- | ------- | ----------------------------------------------------------- |
+| `roots`         | `["z"]` | The names that a schema starts with                         |
+| `methods`       | `[]`    | Methods that make a schema of another one, such as `extend` |
+| `factorySuffix` | none    | Functions whose name ends like this make a schema           |
+| `lazyWrapper`   | none    | A function of yours that the message recommends             |
+
+### `bun/no-side-effects-on-import`
+
+A statement outside any function that calls something, or assigns to a property, makes `import` do more than define things. Bundlers cannot drop such a module. `module.exports` and `exports` are left alone.
+
+```ts
+connect(); // ✗
+
+export function start() {
+  connect(); // ✓
+}
+```
+
+| Option  | Default | Meaning                                                   |
+| ------- | ------- | --------------------------------------------------------- |
+| `allow` | `[]`    | Calls that are fine, as they are written: `"console.log"` |
+
+### `bun/no-cwd-dependent-path`
+
+What a relative path means to `node:fs`, `path.resolve()`, `Bun.file()` and `Bun.write()` depends on the directory that the process was started in.
+
+```ts
+const text = readFileSync("./schema.sql", "utf8"); // ✗
+
+const text = readFileSync(new URL("./schema.sql", import.meta.url), "utf8"); // ✓
+```
+
+The patterns of `fs.glob()` are left alone.
+
+| Option      | Default | Meaning                                       |
+| ----------- | ------- | --------------------------------------------- |
+| `functions` | `[]`    | More functions whose first argument is a path |
+
+### `bun/no-unportable-commands`
+
+The rule looks at the commands that `node:child_process` and `Bun.spawn()` start, where they are written out:
+
+- `npm`, `npx`, `pnpm`, `pnpx` and `yarn` are `.cmd` scripts on Windows, which need a shell.
+- Windows has no `ls`, `grep`, `rm` and so on.
+- `&&`, `|`, `>` and the like are read by a shell, and which shell that is depends on the system.
+- The options of `ps` differ from system to system. This is reported in any string.
+
+```ts
+spawn("npm", ["install"]); // ✗
+execSync("rm -rf dist"); // ✗
+
+await rm("dist", { recursive: true, force: true }); // ✓
+```
+
+| Option      | Default               | Meaning                                          |
+| ----------- | --------------------- | ------------------------------------------------ |
+| `scripts`   | the five above        | Commands that are scripts on Windows             |
+| `posixOnly` | 33 utilities of POSIX | Commands that Windows does not have              |
+| `launchers` | `[]`                  | More functions whose first argument is a command |
+
+### `bun/no-console-window-flash`
+
+A child process gets a console window of its own on Windows, which opens and closes at once. It does not if `windowsHide` is set, or if the child shares a stream with its parent (`"inherit"`).
+
+```ts
+spawn("git", ["status"]); // ✗
+
+spawn("git", ["status"], { windowsHide: true }); // ✓
+```
+
+### `bun/no-unseeded-random-in-property-test`
+
+In a property of [fast-check](https://fast-check.dev), values that come from `fc.sample()` or `Math.random()` are not decided by the seed. A failure cannot be replayed or shrunk.
+
+```ts
+fc.property(fc.nat(), a => check(a, fc.sample(fc.nat(), 1)[0])); // ✗
+
+fc.property(fc.nat(), fc.nat(), (a, b) => check(a, b)); // ✓
+```
+
+### `bun/react-no-namespace-hooks`
+
+`--fix` imports the hook by name.
+
+```tsx
+const [count, setCount] = React.useState(0); // ✗
+
+const [count, setCount] = useState(0); // ✓
+```
+
+### `bun/react-no-latest-value-ref`
+
+React can render a component more than once, or throw a render away, so a ref must not change while it renders. An effect that only copies a value into a ref is what [`useEffectEvent`](https://react.dev/reference/react/useEffectEvent) is for.
+
+```tsx
+function Search({ query }) {
+  const lastQuery = useRef(query);
+  lastQuery.current = query; // ✗
+}
+```
+
+### `bun/jsx-no-forbidden-nesting`
+
+By default the rule knows what HTML rules out: `<a>` and `<button>` inside `<a>` or `<button>`, `<form>` inside `<form>`, `<label>` inside `<label>`.
+
+```tsx
+<a href="/">
+  <button>Home</button> {/* ✗ */}
+</a>
+```
+
+| Option  | Default   | Meaning                                                                        |
+| ------- | --------- | ------------------------------------------------------------------------------ |
+| `pairs` | see above | `{ "outer": "Text", "inner": "View" }`: no `<View>` anywhere inside a `<Text>` |
+
+### `bun/consistent-directive-prefix`
+
+`bun lint` and oxlint read both `eslint-disable` and `oxlint-disable` comments. ESLint reads only its own. `--fix` rewrites the others.
+
+| Option   | Default    | Meaning                  |
+| -------- | ---------- | ------------------------ |
+| `prefix` | `"eslint"` | `"eslint"` or `"oxlint"` |
+
+### `bun/no-restricted-text`
+
+Reports text that matches a regular expression. It looks at text as it is written in the source, not at identifiers.
+
+```json .oxlintrc.json icon="file-json"
+{
+  "rules": {
+    "bun/no-restricted-text": [
+      "error",
+      { "patterns": [{ "pattern": "\\bTODO\\b", "message": "Open an issue instead.", "in": ["comments"] }] }
+    ]
+  }
+}
+```
+
+| Of a pattern | Default | Meaning                                                                       |
+| ------------ | ------- | ----------------------------------------------------------------------------- |
+| `pattern`    |         | The regular expression                                                        |
+| `flags`      | `"u"`   | Its flags                                                                     |
+| `message`    |         | What to say                                                                   |
+| `in`         | all     | `"strings"`, `"templates"`, `"jsxText"`, `"comments"`, `"regularExpressions"` |
+
+### `bun/prefer-timeout-signal`
+
+An `AbortController` that nothing but a timer aborts, and of which nothing but the signal is used, is what [`AbortSignal.timeout()`](https://developer.mozilla.org/docs/Web/API/AbortSignal/timeout_static) makes.
+
+```ts
+const controller = new AbortController(); // ✗
+setTimeout(() => controller.abort(), 2000);
+await fetch(address, { signal: controller.signal });
+
+await fetch(address, { signal: AbortSignal.timeout(2000) }); // ✓
+```
+
+| Option      | Default | Meaning                                   |
+| ----------- | ------- | ----------------------------------------- |
+| `factories` | `[]`    | Functions of yours that make a controller |
+
+### `bun/prefer-url-for-sibling-files`
+
+Bundlers follow `new URL("./file", import.meta.url)` to the file and copy it. They cannot follow a path that is joined onto `import.meta.dirname` or `__dirname`.
+
+```ts
+const schema = join(import.meta.dirname, "schema.sql"); // ✗
+
+const schema = new URL("./schema.sql", import.meta.url); // ✓
+```
+
+A path that ends in `..`, `.` or `/` names a directory and is left alone.
+
+### `bun/react-no-local-render-helpers`
+
+A component that makes a function such as `renderCell` in its body, and uses it in its JSX, makes it anew on every render. React cannot tell what it renders from the component around it. It should be a component of its own.
+
+```tsx
+function Table({ rows }) {
+  const renderCell = row => <tr key={row.id} />; // ✗
+  return <table>{rows.map(renderCell)}</table>;
+}
+```
+
+| Option    | Default          | Meaning                                       |
+| --------- | ---------------- | --------------------------------------------- |
+| `pattern` | `"^render[A-Z]"` | A regular expression for the names of helpers |
+
+### `bun/prefer-local-module`
+
+For a project that wraps a package in a module of its own. `--fix` rewrites the import.
+
+```json .oxlintrc.json icon="file-json"
+{
+  "rules": {
+    "bun/prefer-local-module": [
+      "error",
+      {
+        "modules": [{ "package": "axios", "use": "@/http", "default": "http" }],
+        "exemptFiles": ["src/http.ts"]
+      }
+    ]
+  }
+}
+```
+
+```ts
+import axios from "axios"; // ✗
+
+import { http as axios } from "@/http"; // ✓
+```
+
+| Of a module | Meaning                                                                         |
+| ----------- | ------------------------------------------------------------------------------- |
+| `package`   | The package                                                                     |
+| `use`       | The specifier to import in its place, as it is to be written                    |
+| `default`   | The name under which your module exports the default export of the package      |
+| `names`     | `{ "theirName": "yourName" }` for exports that have another name in your module |
+
+`exemptFiles` are the ends of paths: `"src/http.ts"` is every file of that name in a directory `src`.
+
+### `bun/no-unbounded-requests`
+
+[axios](https://axios-http.com/docs/req_config) has no timeout unless it is given one: a server that never answers holds the request for ever. A request, and an instance made with `axios.create()`, needs a `timeout` above 0 or a `signal`.
+
+```ts
+await axios.get("/rows"); // ✗
+await axios.get("/rows", { timeout: 0 }); // ✗
+
+await axios.get("/rows", { timeout: 8000 }); // ✓
+await axios.get("/rows", { signal }); // ✓
+```
+
+A configuration that is not written out in the call is left alone, and so is a file that sets `axios.defaults.timeout`.
+
+| Option    | Default | Meaning                                                                                                                    |
+| --------- | ------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `clients` | `[]`    | `{ "module": "./http", "names": ["http"] }`: what else takes the arguments of `axios`. Without `names`: the default export |
+
+### `bun/no-unhandled-emitter-errors`
+
+An [`EventEmitter`](https://nodejs.org/api/events.html#error-events) that emits `error` and has no listener for it throws the error, which ends the process. So a child process that cannot be started, or a file that cannot be opened, takes the program down.
+
+```ts
+spawn("convert", [file]).on("exit", done); // ✗
+
+spawn("convert", [file]).on("exit", done).on("error", fail); // ✓
+await pipeline(createReadStream(file), target); // ✓
+```
+
+It looks at the functions of Node.js that begin to work when they are called and return an object with a documented `'error'` event: `spawn()` and `fork()`, `cluster.fork()`, `fs.createReadStream()`, `createWriteStream()` and `watch()`, `request()` and `get()` of `http` and `https`, `http2.connect()`, `net.connect()` and `createConnection()`, `tls.connect()`. What is returned, stored in an object or handed to a function is left alone.
+
+| Option      | Default | Meaning                                                                                                               |
+| ----------- | ------- | --------------------------------------------------------------------------------------------------------------------- |
+| `factories` | `[]`    | `{ "module": "./observer", "names": ["observe"] }`: what else returns an emitter. Without `names`: the default export |
+
+### `bun/no-cast-to-brand`
+
+A branded type, such as `string & { readonly brand: unique symbol }`, says that a value has been checked. A cast says so without a check. With this rule only the module that declares the type casts to it, and only the listed files import the function that makes one of any value.
+
+```json .oxlintrc.json icon="file-json"
+{
+  "rules": {
+    "bun/no-cast-to-brand": [
+      "error",
+      { "branded": [{ "module": "src/ids", "type": "UserId", "mint": ["toUserId"], "mintedIn": ["src/session.ts"] }] }
+    ]
+  }
+}
+```
+
+```ts
+import type { UserId } from "../ids";
+
+const id = text as UserId; // ✗
+const all = texts as readonly UserId[]; // ✗
+```
+
+The type is found in arrays, tuples and unions, under another name, through `import * as ids` and through an alias.
+
+| Key        | Meaning                                                                       |
+| ---------- | ----------------------------------------------------------------------------- |
+| `module`   | The end of the path of the file that declares the type, without the extension |
+| `type`     | The name of the type                                                          |
+| `mint`     | The functions of the module that make a value of the type without a check     |
+| `mintedIn` | The ends of the paths of the files that may import them, besides the module   |
+
+### `bun/format`
+
+The same rule for a project without Prettier: it reports where a file differs from what `bun format` prints, whatever is installed. The `[format]` section of [`bunfig.toml`](/runtime/bunfig#formatter) counts, as for `bun format`.
+
+```json .oxlintrc.json icon="file-json"
+{ "rules": { "bun/format": "error" } }
+```
+
+| Option            | Default | Meaning                                                             |
+| ----------------- | ------- | ------------------------------------------------------------------- |
+| the first         | `{}`    | Options of Prettier, which win over those of the configuration file |
+| `usePrettierrc`   | `true`  | Whether the configuration file and `.editorconfig` count            |
+| `fileInfoOptions` | `{}`    | `ignorePath`, `withNodeModules`                                     |
+
+## What cannot be linted
+
+A configuration can ask for more than `bun lint` can do:
+
+- A rule of ESLint or oxlint that is not built in.
+- Files in [another language](#other-languages), without the `eslint` package.
+- A rule in JavaScript that [asks for types](#plugins).
+- A rule that only a `/* eslint plugin/rule: "error" */` comment turns on, of a plugin that has no rule on in the configuration.
+
+`bun lint` lints everything else, prints the report, and then fails with exit code `2` and an error that names what it left out. It never reports less than the tool it replaces without saying so.
+
+```txt
+error: The configuration asks for what cannot be done yet. All else was linted.
+  3 files were not linted, only JavaScript and TypeScript can be (2 *.css, 1 *.json): a.css, b.css, package.json. The package "eslint" lints other languages, if it is installed
+  --allow-unsupported makes this a warning.
+```
+
+With `--allow-unsupported` these lines are warnings, and the exit code is that of the report.
+
+## Exit codes
+
+| Code | With a configuration of ESLint, or none                                                                                  | With a configuration of oxlint                                                                                           |
+| ---- | ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `0`  | No errors                                                                                                                | No errors                                                                                                                |
+| `1`  | Errors, or more warnings than `--max-warnings`                                                                           | The same. Also warnings with `--deny-warnings`, no file to lint, and a command line or configuration that cannot be used |
+| `2`  | A command line or configuration that cannot be used, an argument that matches no file, suppressions that no longer occur | Never, as in oxlint                                                                                                      |
+| `2`  | The configuration asks for [what cannot be linted](#what-cannot-be-linted)                                               | The same                                                                                                                 |
+| `2`  | [Both tools](#a-project-with-both-tools) have a configuration, and nothing says which one the run is for                 | The same                                                                                                                 |
+
+## Which configuration file
+
+No tool reads the configuration files of another. So `bun lint` first decides which tool it stands in for. It looks in the working directory, and in each parent directory, for these files:
+
+- oxlint: `.oxlintrc.json`, `.oxlintrc.jsonc`, `oxlint.config.ts`, `oxlint.config.mts`
+- ESLint: `eslint.config.js`, `.mjs`, `.cjs`, `.ts`, `.mts`, `.cts`
+- ESLint 8, if there is none of the above: [`.eslintrc` files](#eslintrc)
+
+Only the files of that tool count, also in the directories further down. For each file, `bun lint` uses the nearest of them: it looks in the directory of the file, then in each parent directory. Apart from the files of ESLint 8, configuration files are not merged.
+
+Use `-c` to use one file for everything, or `--no-config-lookup` to use none.
+
+```bash terminal icon="terminal"
+bun lint -c eslint.ci.config.js
+```
+
+Bun runs `eslint.config.js` in a separate process. A TypeScript configuration file needs no extra package.
+
+### `bunfig.toml`
+
+The `[lint]` section of `bunfig.toml` sets the defaults of the flags. A key is the name of the flag in camelCase.
+
+```toml bunfig.toml icon="settings"
+[lint]
+maxWarnings = 0 # --max-warnings 0
+inlineConfig = false # --no-inline-config
+ignorePatterns = ["vendor/"] # --ignore-pattern vendor/
+
+[lint.rules] # --rule
+"no-console" = "warn"
+eqeqeq = ["error", "smart"]
+```
+
+The command line overrides `bunfig.toml`. `bunfig.toml` overrides the configuration file where the flag does.
+
+A key does not say which tool the run stands in for, as a flag of only one tool does. Use `flavor` for that.
+
+Bun reads the `bunfig.toml` of the working directory. Write `bun --config=other.toml lint` for another file.
+
+See [`bunfig.toml`](/runtime/bunfig#linter) for every key.
+
+### A project with both tools
+
+A project that runs `oxlint && eslint` has files of both. Say which tool each run stands in for:
+
+```json package.json icon="file-json"
+{
+  "scripts": {
+    "lint": "bun lint --flavor=oxlint && bun lint --flavor=eslint"
+  }
+}
+```
+
+A flag that only one of the two tools has says so too, such as `-D`, `--deny-warnings`, and `--type-aware` of oxlint, or `--cache` and `--ext` of ESLint. Most commands of oxlint have none: `oxlint`, `oxlint .`, and `oxlint --fix` become `bun lint --flavor=oxlint`, with the same arguments.
+
+If nothing says so, `bun lint` lints nothing and exits with code `2`. A run for the wrong tool would leave out the rules of the other without a word.
+
+```txt
+error: Both /app/eslint.config.js and /app/.oxlintrc.json are here. Say which one this run is for: --flavor=oxlint or --flavor=eslint.
+```
+
+oxlint needs no configuration file. So `bun lint` asks the same in a project with an `eslint.config.js` and `oxlint` in the dependencies of `package.json`.
+
+### No configuration file
+
+Without any configuration file, `bun lint` uses the defaults of oxlint if the command line has a flag that only oxlint has, or if `package.json` depends on `oxlint`. Run `bun lint --init` to write these defaults to an `.oxlintrc.json`.
+
+## Choose what to lint
+
+Pass files, directories, or glob patterns. Without arguments, `bun lint` lints the current directory.
+
+```bash terminal icon="terminal"
+bun lint src/index.ts
+bun lint src test
+bun lint "src/**/*.test.ts"
+```
+
+In a directory, `bun lint` lints the files that a `files` pattern of the configuration matches, plus `.js`, `.mjs`, and `.cjs` files. `node_modules` and `.git` are always skipped.
+
+To ignore files, add `ignores` to the configuration, or use `--ignore-pattern`:
+
+```js eslint.config.js icon="/icons/javascript.svg"
+export default [{ ignores: ["dist/", "**/*.generated.ts"] }];
+```
+
+```bash terminal icon="terminal"
+bun lint --ignore-pattern "dist/"
+```
+
+If you name a file that is ignored, `bun lint` warns about it. lint-staged does that often: add `--no-warn-ignored`.
+
+## Rules that need types
+
+Rules such as `@typescript-eslint/no-floating-promises` need type information. `bun lint` gets it from the type checker of [`bun check`](/runtime/check), which is built in and uses every CPU core. You don't need the `typescript` package.
+
+These rules run if the configuration asks for types, as for typescript-eslint:
+
+```js eslint.config.js icon="/icons/javascript.svg"
+import tseslint from "typescript-eslint";
+
+export default tseslint.config(...tseslint.configs.recommendedTypeChecked, {
+  languageOptions: { parserOptions: { projectService: true } },
+});
+```
+
+Or use `--type-aware`, whatever the configuration says. Without a configuration file, that flag selects `typescript-eslint/recommended-type-checked`.
+
+```bash terminal icon="terminal"
+bun lint --type-aware
+```
+
+Bun checks each file with the `tsconfig.json` your editor uses for it: the nearest one. Use `-p` to name another. `bun lint` does not report type errors. Run `bun check` for those, or add `--type-check`, as for oxlint:
+
+```bash terminal icon="terminal"
+bun lint --type-aware --type-check
+```
+
+## Fix problems
+
+`--fix` applies the fixes that rules offer and writes the files.
+
+```bash terminal icon="terminal"
+bun lint --fix
+bun lint --fix --fix-type layout,suggestion
+```
+
+`--fix-dry-run` fixes without writing. With `-f json`, the fixed code is in `output`.
+
+## Adopt a rule in an old codebase
+
+Turn the rule on as an error, then record the errors that exist today. `bun lint` tolerates those and reports new ones, like ESLint's [bulk suppressions](https://eslint.org/docs/latest/use/suppressions).
+
+```bash terminal icon="terminal"
+bun lint --suppress-rule @typescript-eslint/no-explicit-any
+```
+
+That writes `eslint-suppressions.json`. Commit it. When you have fixed some of the errors, `bun lint` exits with code `2` until you remove them from the file:
+
+```bash terminal icon="terminal"
+bun lint --prune-suppressions
+```
+
+## Run in CI
+
+```yaml .github/workflows/lint.yml icon="file-code"
+name: Lint
+on: [push, pull_request]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun lint --max-warnings 0
+```
+
+In GitHub Actions, `bun lint` also prints a workflow command for each problem. GitHub shows them as annotations on the lines of the pull request diff. They go to stdout after a report for people (`stylish`, `pretty`), or alone if `--output-file` takes the report. They are never in that file, and never among the output of a format that programs read.
+
+```txt
+::error file=src/index.ts,line=3,col=7,endLine=3,endColumn=12,title=prefer-const::'count' is never reassigned. Use 'const' instead.
+```
+
+- **Install first.** `eslint.config.js` imports packages such as `typescript-eslint`.
+- **The report goes to stdout.** Warnings about the run, and the summary line, go to stderr.
+- **Warnings don't fail the job.** Use `--max-warnings 0` if they should.
+- **An empty run fails.** If an argument matches no file, `bun lint` exits with code `2`.
+
+## Check before you commit
+
+With [lint-staged](https://github.com/lint-staged/lint-staged):
+
+```json package.json icon="file-json"
+{
+  "lint-staged": {
+    "*.{js,ts,tsx}": "bun lint --fix --no-warn-ignored"
+  }
+}
+```
+
+## If `package.json` has a `lint` script
+
+Your script wins. `bun lint` runs it, like `bun run lint`.
+
+A `lint` script in `package.json`, a file such as `lint.ts`, or `node_modules/.bin/lint` keeps the name: `bun lint` runs that, as it did before. A package called lint somewhere in node_modules, or a directory called lint without an index file, does not.
+
+```json package.json icon="file-json"
+{
+  "scripts": {
+    "lint": "bun lint --max-warnings 0"
+  }
+}
+```
+
+Inside the `lint` script, and in any script it starts, `bun lint` is the linter. That makes the script above work.
+
+The first line of the output tells you that the script ran: `$ bun lint --max-warnings 0`.
+
+In another script, `bun lint` runs the `lint` script too, with the flags added. With the script above, `"lint:fix": "bun lint --fix"` runs `bun lint --max-warnings 0 --fix`.
+
+<Warning>
+  A version of Bun that has no linter runs `"lint": "bun lint"` again and again, without end. If not everyone on your
+  team has upgraded, keep `eslint` in the script until they have.
+</Warning>
+
+## Output
+
+Choose a format with `-f`.
+
+| Format               | What it prints                                                      |
+| -------------------- | ------------------------------------------------------------------- |
+| `stylish`            | ESLint's default format. The default                                |
+| `pretty`             | The source code around each problem, like `bun check` in a terminal |
+| `json`               | ESLint's JSON format                                                |
+| `json-with-metadata` | The same, with the metadata of the run                              |
+| `unix`               | One line per problem: `file:line:column: message [Error/rule]`      |
+| `github`             | Workflow commands for GitHub Actions                                |
+| `agent`              | A tagged block per problem, with the source lines                   |
+| `checkstyle`         | Checkstyle XML                                                      |
+| `junit`              | JUnit XML                                                           |
+| `gitlab`             | GitLab's Code Quality report                                        |
+| `sarif`              | SARIF 2.1.0                                                         |
+
+`stylish` and `json` are byte for byte what ESLint prints, so problem matchers, editors, and scripts written for ESLint keep working. With an `.oxlintrc.json`, the formats are [oxlint's](#replace-oxlint).
+
+```txt
+2 | export function total(items) {
+3 |   let count = items.length;
+          ^
+error: 'count' is never reassigned. Use 'const' instead.  prefer-const
+    at src/index.ts:3:7
+```
+
+Above 50 problems, `pretty` and `agent` show each distinct problem once, with how often and where it occurs. Use `--all` to show every problem.
+
+### AI agents
+
+When `AGENT=1`, `CLAUDECODE=1`, or `REPL_ID=1` is set, the default format is `agent`. With an `.oxlintrc.json` that is oxlint's `agent`: one line per problem. There the variables that oxlint looks at count too, such as `AI_AGENT`, `CURSOR_AGENT`, `GEMINI_CLI`, and `CODEX_SANDBOX`, unless `AGENT` is set.
+
+```txt
+<error file="src/index.ts" line="3" column="7" rule="prefer-const" fixable="true">
+'count' is never reassigned. Use 'const' instead.
+<source>
+2 | export function total(items) {
+3 |   let count = items.length;
+          ^^^^^
+4 |   return count;
+</source>
+</error>
+```
+
+## Differences from ESLint
+
+`bun lint` aims to report exactly what ESLint 10 with typescript-eslint 8 reports. If it reports something else for a rule it supports, that is a bug in Bun. [Open an issue on GitHub](https://github.com/oven-sh/bun/issues) with code that shows the difference.
+
+These differences are intentional:
+
+- **No configuration file is not an error.** ESLint stops. `bun lint` uses [defaults](#without-a-configuration-file).
+- **The rules are those of ESLint 10.12, typescript-eslint 8.71, eslint-plugin-react-hooks 7.1, eslint-plugin-import 2.32, eslint-plugin-n 18.4, and eslint-plugin-react 7.37**, whichever versions you have installed. If a plugin is installed in an older version, a note after the report says so.
+- **Custom formatters do not load.** The rules, the processors, the parsers and the [languages](#other-languages) of plugins run.
+- **`--inspect-config` and `--mcp` are errors:** `bun lint does not support --inspect-config.`
+- **`--init` is oxlint's.** It writes an `.oxlintrc.json`. In a project with a configuration file of ESLint it is an error.
+- **One parser.** Bun's parser reads all files. The wording of a syntax error can differ from espree's.
+- **A rule that needs types never stops the run.** If the configuration does not ask for types, typescript-eslint throws. `bun lint` skips the rule and says so.
+- **A file that no project includes is still linted.** If `parserOptions.project` is a path, a pattern or a list of them, each file is checked with the first of these `tsconfig.json` that includes it, as typescript-eslint does with `--fix` and in an editor. A file that none includes is checked with its nearest `tsconfig.json`; ESLint stops there. Without `--fix`, ESLint also accepts a listed project that only imports the file.
+- **Types are those of TypeScript 7**, as in `bun check`, whichever version of `typescript` you have installed.
+- **`--cache` and `--stats` have no effect.** Every run lints every file.
+- **`--print-config` leaves out the default options of rules.**
+- **A rule reports at most 65,536 problems in one file**, and at most 256 MB of messages and fixes. One more problem then says that the rest are not shown.
+- **`--fix` leaves a file as it is if the fixes would make it larger than 64 MB and than 64 times its size.** A warning says so.
+- **`--fix` does not write a file that no longer parses.** If the fixes of a pass leave a syntax error, `bun lint` takes them back, reports the problems as not fixed, and names the rules in a warning. ESLint writes the file.
+- **`--fix` does not write through a link that leads out of the repository**, or out of the working directory if that is in no repository. ESLint and oxlint do. The run fails and names the file.
+- **A file that TypeScript finds too large for control flow analysis (TS2563) gets a warning.** What rules that need types say about it may be wrong or incomplete, as in typescript-eslint, which says nothing.
+- **A configuration file that leaves a timer or a server running does not keep the run alive.** ESLint prints its report and never exits.
+- **What a configuration file prints is shown only if it fails.** ESLint runs the file in its own process, so a `console.log` in it ends up in the report.
+- **A summary line on stderr** says how many files were linted and how long it took.
+
+## Differences from oxlint
+
+With an `.oxlintrc.json`, `bun lint` aims to report exactly what oxlint 1.87 reports. If it reports something else, that is a bug in Bun. [Open an issue on GitHub](https://github.com/oven-sh/bun/issues) with code that shows the difference.
+
+These differences are intentional:
+
+- **The rules are those of oxlint 1.87**, whichever version you had installed. A project on an older version sees what it would see after the upgrade.
+- **No language server.** `--lsp` is an error: `bun lint does not support --lsp.`
+- **A rule that is not built in does not stop the run.** oxlint refuses the configuration. `bun lint` runs the other rules, and then [fails with exit code `2`](#what-cannot-be-linted). A configuration that is written for a newer oxlint still runs.
+- **The default format is `pretty`**, which looks like `bun check`. Every other format prints what oxlint prints.
+- **Files and problems are sorted.** oxlint prints a file when a thread is done with it.
+- **One parser.** Bun's parser reads all files. The wording and the place of a syntax error can differ. oxlint refuses some programs that `bun lint` lints, such as `let a; let a;`.
+- **Types come from the type checker of `bun check`**, not from `oxlint-tsgolint`. Both follow TypeScript 7. `bun lint` says nothing about a `tsconfig.json` that cannot be loaded.
+- **In a file with a byte order mark, what needs types is reported where it is.** oxlint places it 3 bytes too far to the left.
+- **`checkstyle`, `junit`, and `github` escape the names of files and rules.** oxlint prints them as they are, so a name with `"` or `<` breaks its report.
+- **A problem that is at no place in a file keeps its message and its severity** in `unix`, `github`, `gitlab`, `junit`, and `checkstyle`. oxlint prints an empty message there, and calls an error a warning.
+- **`--init` leaves an `.oxlintrc.json` that exists as it is.** oxlint writes over it.
+- **`--ignore-path ./file` works.** Without an argument, or with `.`, oxlint reads the file only if it is named without a directory.
+- **More is accepted:** an argument with `..` in it, `--max-warnings -1`, and a configuration file that starts with a byte order mark. oxlint refuses them.
+- **A pattern in the options of a rule is a JavaScript regular expression.** oxlint compiles it with Rust's `regex`, where `(?x)`, `\z`, and `[[:alpha:]]` mean something else.
+- **`--fix` does not write a file that no longer parses.** `bun lint` leaves the file as it is, reports the problems as not fixed, and names the rules in a warning. oxlint writes the file: `foo(...[,])` becomes `foo(,)`.
+- **The limits on problems and fixes** in [Differences from ESLint](#differences-from-eslint) apply too.
+
+## CLI usage
+
+```bash
+bun lint [flags] [...files, directories or patterns]
+```
+
+| Flag                                       | Description                                                        |
+| ------------------------------------------ | ------------------------------------------------------------------ |
+| `-c`, `--config <path>`                    | Use this configuration file instead of looking for one             |
+| `--no-config-lookup`                       | Do not look for a configuration file                               |
+| `--flavor <tool>`                          | The tool that the run stands in for: `eslint` or `oxlint`          |
+| `--rule <rule>`                            | Configure a rule: `--rule 'eqeqeq: [error, smart]'`                |
+| `--global <names>`                         | Define global variables: `--global a,b:true`                       |
+| `--parser-options <options>`               | Set parser options: `--parser-options projectService:true`         |
+| `--ext <extensions>`                       | Lint files with these extensions too                               |
+| `--fix`                                    | Fix what can be fixed, and write the files                         |
+| `--fix-dry-run`                            | Fix without writing                                                |
+| `--fix-type <types>`                       | Only `directive`, `problem`, `suggestion`, or `layout` fixes       |
+| `--fix-suggestions`                        | Apply suggestions, as oxlint does. Without `--fix`, nothing else   |
+| `--fix-dangerously`                        | Apply every fix and suggestion, as oxlint does                     |
+| `--ignore-pattern <pattern>`               | Ignore the files that match                                        |
+| `--no-ignore`                              | Lint ignored files too                                             |
+| `--no-warn-ignored`                        | Do not warn about an ignored file that is named as an argument     |
+| `--stdin`, `--stdin-filename <path>`       | Lint the code on standard input, as that file                      |
+| `--quiet`                                  | Report errors only                                                 |
+| `--max-warnings <n>`                       | Exit with `1` if there are more warnings than this                 |
+| `-f`, `--format <name>`                    | The [output format](#output)                                       |
+| `--all`                                    | Show every problem. Without it, `pretty` groups them above 50      |
+| `-o`, `--output-file <path>`               | Write the report to a file                                         |
+| `--color`, `--no-color`                    | Always or never use colors                                         |
+| `--no-inline-config`                       | Ignore `eslint-disable` and other configuration comments           |
+| `--report-unused-disable-directives`       | Report `eslint-disable` comments that disable nothing              |
+| `--suppress-all`, `--suppress-rule <rule>` | Record the errors that exist in `eslint-suppressions.json`         |
+| `--prune-suppressions`                     | Remove from that file what no longer occurs                        |
+| `--no-error-on-unmatched-pattern`          | Do not fail if an argument matches no file                         |
+| `--pass-on-no-patterns`                    | Exit with `0` if there are no arguments                            |
+| `--exit-on-fatal-error`                    | Exit with `2` if a file cannot be parsed                           |
+| `--allow-unsupported`                      | Only warn about [what cannot be linted](#what-cannot-be-linted)    |
+| `--native-plugin-rules <plugins>`          | Plugins that [stay built in](#run-the-rules-of-the-package)        |
+| `--no-native-plugin-rules`                 | Run the rules of the installed plugins, not the built-in ones      |
+| `--print-config <path>`                    | Print the configuration of a file, and lint nothing                |
+| `--type-aware`, `--no-type-aware`          | Run or skip the rules that need types                              |
+| `--infer-globals`, `--no-infer-globals`    | Take the globals of a file from the types of its project, or not   |
+| `--type-check`                             | With `--type-aware`: report type errors too                        |
+| `-p`, `--project <path>`                   | The `tsconfig.json` for the rules that need types                  |
+| `-A`, `-W`, `-D <rule or category>`        | Allow, warn about, or deny a rule, with an `.oxlintrc.json`        |
+| `--<name>-plugin`                          | Turn a plugin of oxlint on: `--import-plugin`, `--react-plugin`    |
+| `--disable-<name>-plugin`                  | Turn `unicorn`, `oxc`, or `typescript` off                         |
+| `--deny-warnings`                          | Exit with `1` if there are warnings                                |
+| `--silent`                                 | Print no problems                                                  |
+| `--ignore-path <path>`                     | A file with patterns to ignore, in place of `.eslintignore`        |
+| `--disable-nested-config`                  | Use the configuration file of the working directory for every file |
+| `--init`                                   | Write an `.oxlintrc.json` with the defaults of oxlint              |
+| `--rules`                                  | List the rules that are built in                                   |
+| `--threads <n>`                            | Number of threads. Default: one per CPU core                       |
+| `--timing`                                 | Print how long each phase took, and how much JavaScript was loaded |
+| `--cwd <path>`                             | Set the working directory                                          |
+| `-h`, `--help`                             | Print the help menu                                                |

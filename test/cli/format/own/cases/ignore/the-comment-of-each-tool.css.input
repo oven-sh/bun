@@ -1,0 +1,10 @@
+/* prettier-ignore */
+a   {  color : red  }
+/* oxfmt-ignore */
+b   {  color : red  }
+c {
+  /* prettier-ignore */
+  color  :  red;
+  /* oxfmt-ignore */
+  color  :  blue;
+}

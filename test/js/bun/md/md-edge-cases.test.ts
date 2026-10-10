@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { renderToString } from "react-dom/server";
@@ -804,7 +804,8 @@ describe("pathological bracket inputs", () => {
         const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
         const cases = [
           ["nested inline images", fill(43000, "![") + fill(43000, "](u)"), out => out === '<p><img src="u" alt="" /></p>\\n'],
-          ["link/image alternation", fill(36000, "[![") + fill(36000, "](u)"), out => out.endsWith('<a href="u"><img src="u" alt="" /></a></p>\\n')],
+          // Only the innermost "[" starts a link: the others have a link in them, be it in the description of an image.
+          ["link/image alternation", fill(36000, "[![") + fill(36000, "](u)"), out => out === "<p>" + fill(18000, "[![") + '[<img src="u" alt="' + fill(17998, "[") + fill(17998, "](u)") + '" />](u)</p>\\n'],
           ["nested reference images", "[r]: /u\\n\\n" + fill(40000, "![") + fill(40000, "][r]"), out => out === '<p><img src="/u" alt="" /></p>\\n'],
           ["nested images, unclosed tail", fill(60000, "![") + "x", out => out.includes("![![")],
         ];
@@ -1801,3 +1802,244 @@ describe.concurrent("importing .md modules", () => {
     expect(exitCode).not.toBe(0);
   });
 });
+
+describe("empty list items and paragraphs", () => {
+  test.each(["1. ", "* \t"])("%j does not interrupt a paragraph", marker => {
+    expect(Markdown.html(`a\n${marker}\nb\n`)).not.toContain("<li>");
+  });
+});
+
+describe("closing code fences and containers", () => {
+  test("a fence outside of the list item does not close the code in it", () => {
+    expect(Markdown.html("- ```\n  a\n```\n\n  - b\n")).toBe(
+      "<ul>\n<li>\n<pre><code>a\n</code></pre>\n</li>\n</ul>\n<pre><code>\n  - b\n</code></pre>\n",
+    );
+  });
+
+  test("a fence outside of the block quote does not close the code in it", () => {
+    expect(Markdown.html("> ```\n> a\n```\nb\n")).toBe(
+      "<blockquote>\n<pre><code>a\n</code></pre>\n</blockquote>\n<pre><code>b\n</code></pre>\n",
+    );
+  });
+});
+
+describe("HTML declarations", () => {
+  test("the letter behind <! can be a small one", () => {
+    expect(Markdown.html("<!a>\nb\n\nc <!d> e\n")).toBe("<!a>\n<p>b</p>\n<p>c <!d> e</p>\n");
+  });
+});
+
+describe("list items with code in them", () => {
+  test("what follows fenced code with deeply indented lines stays in the item", () => {
+    expect(Markdown.html("- a\n  ```\n      b\n      c\n  ```\n\n  d\n")).toBe(
+      "<ul>\n<li>\n<p>a</p>\n<pre><code>    b\n    c\n</code></pre>\n<p>d</p>\n</li>\n</ul>\n",
+    );
+  });
+});
+
+describe("indented HTML in a paragraph", () => {
+  test("a tag that is indented by four columns does not end the paragraph", () => {
+    expect(Markdown.html("a\n    <!-- b -->\n\nc\n    <div>\n")).toBe("<p>a\n<!-- b --></p>\n<p>c\n<div></p>\n");
+  });
+});
+
+describe("blank lines of code in list items", () => {
+  test("blanks that are less than the indentation of the item are not code", () => {
+    expect(Markdown.html("- ```\n  a\n \n  ```\n")).toBe("<ul>\n<li>\n<pre><code>a\n\n</code></pre>\n</li>\n</ul>\n");
+  });
+});
+
+describe("white space behind the marker of a block quote", () => {
+  test("only the first space belongs to the marker", () => {
+    expect(Markdown.html(">   - a\n>   - b\n")).toBe(
+      "<blockquote>\n<ul>\n<li>a</li>\n<li>b</li>\n</ul>\n</blockquote>\n",
+    );
+    expect(Markdown.html(">   ```\n>   a\n>   ```\n")).toBe(
+      "<blockquote>\n<pre><code>a\n</code></pre>\n</blockquote>\n",
+    );
+    expect(Markdown.html(">   <div>\n")).toBe("<blockquote>\n  <div>\n</blockquote>\n");
+  });
+});
+
+describe("the end of a script", () => {
+  test("an end tag without its > does not end the HTML", () => {
+    expect(Markdown.html("<script>\na\n</script\n>\nb\n")).toBe("<script>\na\n</script\n>\nb\n");
+  });
+});
+
+describe("email autolinks", () => {
+  test.each(["5892063+a@b.c", "a@b", "a.b!#$%&'*+/=?^_`{|}~-@c-d.e"])("<%s>", address => {
+    expect(Markdown.html(`<${address}>\n`)).toStartWith('<p><a href="mailto:');
+  });
+
+  test.each(["a@-b.c", "a@b-.c"])("<%s> is not one", address => {
+    expect(Markdown.html(`<${address}>\n`)).toBe(`<p>&lt;${address}&gt;</p>\n`);
+  });
+});
+
+describe("links in links", () => {
+  test("a link in brackets in the text of a link", () => {
+    expect(Markdown.html("[link [foo [bar]]](/uri)\n\n[bar]: /url\n")).toBe(
+      '<p>[link [foo <a href="/url">bar</a>]](/uri)</p>\n',
+    );
+  });
+
+  test("a link in the description of an image in the text of a link", () => {
+    expect(Markdown.html("[a ![b [c](d)](e)](f)\n")).toBe('<p>[a <img src="e" alt="b c" />](f)</p>\n');
+  });
+});
+
+describe("brackets behind the text of a link", () => {
+  test("one in a title does not open anything", () => {
+    expect(Markdown.html('[a ![b](c "[") d](e)\n')).toBe(
+      '<p><a href="e">a <img src="c" alt="b" title="[" /> d</a></p>\n',
+    );
+  });
+
+  test("one in a destination does not close anything", () => {
+    expect(Markdown.html("![a [b](c]) d](e)\n")).toBe('<p><img src="e" alt="a b d" /></p>\n');
+  });
+});
+
+describe("a wiki link behind a !", () => {
+  const html = (text: string) => Markdown.html(text, { wikiLinks: true });
+
+  test("what is in it hides nothing behind it", () => {
+    expect(html("![[a`b]] then `code` and <br> and [x](u) and *em*\n")).toBe(
+      '<p>!<x-wikilink data-target="a`b">a`b</x-wikilink> then <code>code</code> and <br> and <a href="u">x</a> and <em>em</em></p>\n',
+    );
+    expect(html("![[a`b]] then <ab:c> `\n")).toBe(
+      '<p>!<x-wikilink data-target="a`b">a`b</x-wikilink> then <a href="ab:c">ab:c</a> `</p>\n',
+    );
+    expect(html('![[a<b c="]] x `code` [l](u) "> z\n')).toBe(
+      '<p>!<x-wikilink data-target="a&lt;b c=&quot;">a&lt;b c=&quot;</x-wikilink> x <code>code</code> <a href="u">l</a> &quot;&gt; z</p>\n',
+    );
+    expect(html("![[a`b]](u) `c`\n")).toBe(
+      '<p>!<x-wikilink data-target="a`b">a`b</x-wikilink>(u) <code>c</code></p>\n',
+    );
+  });
+
+  test("brackets in the description of an image are no wiki link", () => {
+    expect(html("![[a]](u) `c`\n")).toBe('<p><img src="u" alt="[a]" /> <code>c</code></p>\n');
+    expect(html("![[a|b]](u)\n")).toBe('<p><img src="u" alt="[a|b]" /></p>\n');
+    expect(html("![[a `b`]](u)\n")).toBe('<p><img src="u" alt="[a b]" /></p>\n');
+    expect(html("![[a]][r]\n\n[r]: /u\n")).toBe('<p><img src="/u" alt="[a]" /></p>\n');
+  });
+});
+
+describe("a line of dashes under reference definitions", () => {
+  test("is a thematic break: there is nothing to make a heading of", () => {
+    expect(Markdown.html("[ref]: /uri\n---\n")).toBe("<hr />\n");
+  });
+});
+
+test("list markers on one line are not looked at again from each of them", () => {
+  const depth = 100_000;
+  const html = Markdown.html("- ".repeat(depth) + "a\n");
+  expect(html.length).toBe("<ul>\n<li>\n</li>\n</ul>\n".length * depth);
+});
+
+test("a delimiter at the edge of the text of a link has the bracket next to it", () => {
+  // Both runs can open and close then, so the rule of three keeps them apart.
+  expect(Markdown.html("[**<x:y>*](u)\n")).toBe('<p><a href="u">**&lt;x:y&gt;*</a></p>\n');
+  expect(Markdown.html("[*a*](u) [**b**](u)\n")).toBe(
+    '<p><a href="u"><em>a</em></a> <a href="u"><strong>b</strong></a></p>\n',
+  );
+});
+
+test("white space is between the destination of a link and its title", () => {
+  expect(Markdown.html('[a](<b>"c")\n')).toBe("<p>[a](<b>&quot;c&quot;)</p>\n");
+  expect(Markdown.html('[a](<b> "c")\n')).toBe('<p><a href="b" title="c">a</a></p>\n');
+});
+
+// What some scan once started again for each repetition, and what is like it, weighed against as many bytes of prose by
+// the time of the processor: that holds on a busy machine and in a debug build.
+test.each([
+  ["CommonMark", {}],
+  [
+    "every extension",
+    {
+      tables: true,
+      strikethrough: true,
+      tasklists: true,
+      autolinks: true,
+      wikiLinks: true,
+      latexMath: true,
+      underline: true,
+    },
+  ],
+])(
+  "rendering takes time in proportion to the size of the text: %s",
+  async (_, options) => {
+    const units = [
+      ..."a b c\n|a b\n\n|- a\n|- a\n\n|1. a\n|- a\n* a\n|1. a\n1) a\n|- |> |> a\n\n|> a\n|- [ ] a\n".split("|"),
+      ..."[a](b) ,[a][b] ,[a] ,![a](b) ,[,],![,[[a]] ,[[,[^a] ,[a]: b\n,[^a]: b\n\n".split(","),
+      ..."*a* ,**a** ,*,* a,_a,a_,~~a~~ ,~,`,`a` ,$a$ ,$,&,&amp; ,\\,\\* ".split(","),
+      ..."<,<a> ,<a ,<!-- a --> ,<!--,<!-- a -->\n\n,<div>\na\n</div>\n\n,<?,<![CDATA[".split(","),
+      ..."# a\n,a\n=\n,---\n\n,```\na\n```\n\n,```\n,    a\n\n,:-\n,a\n    - b\n".split(","),
+      ..."| a |\n| - |\n| b |\n\n,| - |\n,|\n,http://a.b ,www.a.b ,a@b.c ,a@,a  \n,a\\\n".split(","),
+      ..."中文 a\n,a,\ta\n,\n, , ,😀 ".split(","),
+    ];
+    const script = `
+      const count = ${isDebug || isASAN ? 2_000 : 40_000};
+      const texts = ${JSON.stringify(units)}.map(unit => unit.repeat(count) + "a\\n");
+      const prose = "The quick brown fox jumps over the lazy dog, and *then* it \`rests\` for a [while](u).\\n\\n";
+      const length = texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length;
+      const plain = prose.repeat(Math.ceil(length / prose.length));
+      const time = texts => {
+        const before = process.cpuUsage();
+        for (const text of texts) Bun.markdown.html(text, ${JSON.stringify(options)});
+        const { user, system } = process.cpuUsage(before);
+        return user + system;
+      };
+      time([plain]);
+      console.log(time(texts) / time(texts.map(() => plain)));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(Number(stdout)).toBeLessThan(6);
+    expect(exitCode).toBe(0);
+  },
+  90_000,
+);
+
+// The same weighing for what is opened many times on one line, with many lines behind it that do not close it.
+test("a line does not look through the block quotes and list items that are open", async () => {
+  const script = `
+    const count = ${isDebug || isASAN ? 10_000 : 40_000};
+    const lines = ${JSON.stringify(["a\n", "a b\n", "*a*\n", "[a]\n", "<a>\n", "<!-- a\n", "&amp;\n", "\\\n", ":::\n", "a |\n"])};
+    const texts = [">", "> ", "+ ", "- ", "1. "].flatMap(mark => lines.map(line => mark.repeat(count) + "a\\n" + line.repeat(count)));
+    const prose = "The quick brown fox jumps over the lazy dog, and *then* it \`rests\` for a [while](u).\\n\\n";
+    const length = texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length;
+    const plain = prose.repeat(Math.ceil(length / prose.length));
+    const time = texts => {
+      const before = process.cpuUsage();
+      for (const text of texts) Bun.markdown.html(text);
+      const { user, system } = process.cpuUsage(before);
+      return user + system;
+    };
+    time([plain]);
+    console.log(time(texts) / time(texts.map(() => plain)));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 60_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // 3 to 5 when all is well: opening and closing them is most of it. 50 and 300 when each line walks them.
+  expect(Number(stdout)).toBeLessThan(15);
+  expect(exitCode).toBe(0);
+}, 90_000);

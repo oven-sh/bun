@@ -7,6 +7,7 @@
 
 use super::enclosing_declaration::Enclosing;
 use super::errors_declaration_emit::{EndOfChain, Meaning};
+use crate::util::SharedSort;
 
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, ScopeId, ScopeKind, SymbolId};
@@ -21,9 +22,9 @@ use std::ops::ControlFlow;
 mod node_reuse;
 
 /// `nodebuilder.Flags`, those that change what is printed or reported.
-const NO_TRUNCATION: u32 = 1 << 0;
+pub(super) const NO_TRUNCATION: u32 = 1 << 0;
 pub(super) const USE_FULLY_QUALIFIED_TYPE: u32 = 1 << 1;
-const ALLOW_UNIQUE_ES_SYMBOL_TYPE: u32 = 1 << 2;
+pub(super) const ALLOW_UNIQUE_ES_SYMBOL_TYPE: u32 = 1 << 2;
 pub(super) const USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE: u32 = 1 << 3;
 pub(super) const NO_TYPE_REDUCTION: u32 = 1 << 4;
 const GENERATE_NAMES_FOR_SHADOWED_TYPE_PARAMS: u32 = 1 << 5;
@@ -32,12 +33,12 @@ const ALLOW_ANONYMOUS_IDENTIFIER: u32 = 1 << 7;
 const ALLOW_NODE_MODULES_RELATIVE_PATHS: u32 = 1 << 8;
 const ALLOW_THIS_IN_OBJECT_LITERAL: u32 = 1 << 9;
 pub(super) const WRITE_CLASS_EXPRESSION_AS_TYPE_LITERAL: u32 = 1 << 10;
-const USE_TYPE_OF_FUNCTION: u32 = 1 << 11;
-const USE_STRUCTURAL_FALLBACK: u32 = 1 << 12;
-const MULTILINE_OBJECT_LITERALS: u32 = 1 << 13;
+pub(super) const USE_TYPE_OF_FUNCTION: u32 = 1 << 11;
+pub(super) const USE_STRUCTURAL_FALLBACK: u32 = 1 << 12;
+pub(super) const MULTILINE_OBJECT_LITERALS: u32 = 1 << 13;
 const FORBID_INDEXED_ACCESS_SYMBOL_REFERENCES: u32 = 1 << 14;
 pub(super) const WRITE_TYPE_PARAMETERS_IN_QUALIFIED_NAME: u32 = 1 << 15;
-const WRITE_ARRAY_AS_GENERIC_TYPE: u32 = 1 << 16;
+pub(super) const WRITE_ARRAY_AS_GENERIC_TYPE: u32 = 1 << 16;
 /// What `typeToString` hands `typeToStringEx`.
 pub(super) const TYPE_TO_STRING: u32 =
     ALLOW_UNIQUE_ES_SYMBOL_TYPE | USE_ALIAS_DEFINED_OUTSIDE_CURRENT_SCOPE;
@@ -626,7 +627,7 @@ pub(super) enum Written {
 }
 
 /// `typeToStringEx`. `enclosing_declaration`: with the expression that it is.
-fn type_to_string_with(
+pub(super) fn type_to_string_with(
     checker: &mut Checker<'_, '_>,
     ty: TypeId,
     enclosing_declaration: Option<(Enclosing, ExprId)>,
@@ -636,7 +637,7 @@ fn type_to_string_with(
     if counts && checker.serialization_level >= super::sink::MAX_SERIALIZATION_LEVEL {
         return b"?".to_vec();
     }
-    let no_truncation = checker.files().options.no_error_truncation;
+    let no_truncation = checker.files().options.no_error_truncation || flags & NO_TRUNCATION != 0;
     let flags = if no_truncation {
         flags | NO_TRUNCATION
     } else {
@@ -4384,7 +4385,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 Place::Nowhere => ((1, (false, 0, 0), name), prop),
             });
         }
-        keyed.sort_by(|a, b| a.0.cmp(&b.0));
+        keyed.shared_sort_by(|a, b| a.0.cmp(&b.0));
         let arena = self.c.arena;
         (keyed.into_iter().map(|entry| entry.1.clone_in(arena))).collect()
     }

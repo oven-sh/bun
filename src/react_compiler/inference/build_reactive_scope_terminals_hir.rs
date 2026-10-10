@@ -102,7 +102,10 @@ impl TerminalRewriteInfo {
 // =============================================================================
 
 /// Collect all scope rewrites by traversing scopes in pre-order.
-fn collect_scope_rewrites(func: &HirFunction, env: &mut Environment) -> Vec<TerminalRewriteInfo> {
+fn collect_scope_rewrites(
+    func: &HirFunction,
+    env: &mut Environment,
+) -> Result<Vec<TerminalRewriteInfo>, crate::diagnostics::CompilerDiagnostic> {
     let scope_ids = get_scopes(func, env);
 
     // Sort: ascending by start, descending by end for ties
@@ -134,15 +137,15 @@ fn collect_scope_rewrites(func: &HirFunction, env: &mut Environment) -> Vec<Term
             let parent_end = env.scopes[maybe_parent.0 as usize].range.end;
             let disjoint = curr_start >= parent_end;
             let nested = curr_end <= parent_end;
-            assert!(
+            crate::diagnostics::invariant(
                 disjoint || nested,
-                "Invalid nesting in program blocks or scopes"
-            );
+                "Invalid nesting in program blocks or scopes",
+            )?;
             if disjoint {
                 // Exit this scope
-                let fallthrough_id = *fallthroughs
-                    .get(maybe_parent)
-                    .expect("Expected scope to exist");
+                let fallthrough_id = *fallthroughs.get(maybe_parent).ok_or_else(|| {
+                    crate::diagnostics::cold_invariant("Expected scope to exist", None, None)
+                })?;
                 let end_instr_id = env.scopes[maybe_parent.0 as usize].range.end;
                 rewrites.push(TerminalRewriteInfo::EndScope {
                     instr_id: end_instr_id,
@@ -170,7 +173,9 @@ fn collect_scope_rewrites(func: &HirFunction, env: &mut Environment) -> Vec<Term
 
     // Exit remaining active items
     while let Some(curr) = active_items.pop() {
-        let fallthrough_id = *fallthroughs.get(curr).expect("Expected scope to exist");
+        let fallthrough_id = *fallthroughs.get(curr).ok_or_else(|| {
+            crate::diagnostics::cold_invariant("Expected scope to exist", None, None)
+        })?;
         let end_instr_id = env.scopes[curr.0 as usize].range.end;
         rewrites.push(TerminalRewriteInfo::EndScope {
             instr_id: end_instr_id,
@@ -178,7 +183,7 @@ fn collect_scope_rewrites(func: &HirFunction, env: &mut Environment) -> Vec<Term
         });
     }
 
-    rewrites
+    Ok(rewrites)
 }
 
 // =============================================================================
@@ -262,9 +267,12 @@ fn handle_rewrite(
 /// to fallthroughs. Given a function whose reactive scope ranges have been
 /// correctly aligned and merged, this pass rewrites blocks to introduce
 /// ReactiveScopeTerminals and their fallthrough blocks.
-pub(crate) fn build_reactive_scope_terminals_hir(func: &mut HirFunction, env: &mut Environment) {
+pub(crate) fn build_reactive_scope_terminals_hir(
+    func: &mut HirFunction,
+    env: &mut Environment,
+) -> Result<(), crate::diagnostics::CompilerDiagnostic> {
     // Step 1: Collect rewrites
-    let mut queued_rewrites = collect_scope_rewrites(func, env);
+    let mut queued_rewrites = collect_scope_rewrites(func, env)?;
 
     // Step 2: Apply rewrites by splitting blocks
     let mut rewritten_final_blocks: IdMap<BlockId, BlockId> = IdMap::new();
@@ -351,12 +359,13 @@ pub(crate) fn build_reactive_scope_terminals_hir(func: &mut HirFunction, env: &m
     }
 
     // Step 4: Fixup HIR to restore RPO, correct predecessors, renumber instructions
-    func.body.blocks = get_reverse_postordered_blocks(&func.body, &func.instructions);
+    func.body.blocks = get_reverse_postordered_blocks(&func.body, &func.instructions)?;
     mark_predecessors(&mut func.body);
     mark_instruction_ids(&mut func.body, &mut func.instructions);
 
     // Step 5: Fix scope and identifier ranges to account for renumbered instructions
     fix_scope_and_identifier_ranges(func, env);
+    Ok(())
 }
 
 /// Fix scope ranges after instruction renumbering.

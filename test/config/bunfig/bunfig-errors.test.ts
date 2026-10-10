@@ -243,3 +243,56 @@ describe.concurrent.skipIf(isWindows)("config paths that do not fit in a path bu
     });
   });
 });
+
+// ESLint and Prettier end with 2 if their configuration cannot be used. Every other command ends with 1.
+describe.concurrent("bun lint and bun format", () => {
+  async function run(command: string[], config: string) {
+    using dir = tempDir("bunfig-lint-format", { "bunfig.toml": config, "a.js": "a;\n" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...command],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, error: stderr.split("\n").find(line => line.startsWith("error:")), exitCode };
+  }
+
+  test.each([
+    ["lint", "[lint]\nquiet = 1\n", "error: expected boolean but received number"],
+    ["format", "[format]\nsemi = 1\n", "error: expected boolean but received number"],
+    ["lint", "lint = true\n", "error: expected object but received boolean"],
+    ["format", "format = true\n", "error: expected object but received boolean"],
+    ["lint", "logLevel = 3\n", "error: expected string but received number"],
+    ["format", "logLevel = 3\n", "error: expected string but received number"],
+  ])("bun %s with %j", async (command, config, error) => {
+    expect(await run([command, "a.js"], config)).toEqual({ stdout: "", error, exitCode: 2 });
+  });
+
+  test.each(["lint", "format"])("bun %s with a file that is not TOML", async command => {
+    const result = await run([command, "a.js"], "[install\n");
+    expect(result.stdout).toBe("");
+    expect(result.exitCode).toBe(2);
+  });
+
+  // `bun lint` has a rule that holds a file against what `bun format` prints.
+  test("[format] is read by both, [lint] by bun lint, and neither by another command", async () => {
+    const [ofLint, ofFormat] = ["[lint]\nnoSuchKey = 1\n", "[format]\nnoSuchKey = 1\n"];
+    const [lint, format, other] = await Promise.all([
+      run(["lint", "a.js"], ofLint),
+      run(["format", "a.js"], ofFormat),
+      run(["-e", "console.log(1)"], ofLint + ofFormat),
+    ]);
+    expect(lint.error).toStartWith(`error: unknown key "noSuchKey" in [lint].`);
+    expect(format.error).toStartWith(`error: unknown key "noSuchKey" in [format].`);
+    expect(other).toEqual({ stdout: "1\n", error: undefined, exitCode: 0 });
+    const [onlyFormat, onlyLint] = await Promise.all([
+      run(["lint", "--no-config-lookup", "a.js"], ofFormat),
+      run(["format", "--check", "a.js"], ofLint),
+    ]);
+    expect(onlyFormat.error).toStartWith(`error: unknown key "noSuchKey" in [format].`);
+    expect(onlyFormat.exitCode).toBe(2);
+    expect(onlyLint).toEqual({ stdout: expect.any(String), error: undefined, exitCode: 0 });
+  });
+});

@@ -6,6 +6,7 @@ use super::*;
 use crate::bind::Decl;
 use crate::bind::Parent;
 use crate::resolve::{is_cased_since_unicode_16, to_lowercase_unicode_15, to_uppercase_unicode_15};
+use crate::util::SharedSort;
 use smallvec::SmallVec;
 
 /// `accessNode` of `getIndexedAccessTypeOrUndefined`. `None`: an access that instantiation or a constraint produces. `Other`: a name in a
@@ -860,7 +861,7 @@ impl<'p, 's> Checker<'p, 's> {
                         value: EnumValue::String(value),
                         ..
                     } if c.is_numeric_name(value) => {
-                        crate::atom::parse_number(c.atoms().bytes(value)).unwrap_or(f64::NAN)
+                        bun_core::fmt::parse_f64(c.atoms().bytes(value)).unwrap_or(f64::NAN)
                     }
                     _ => return false,
                 };
@@ -1020,7 +1021,7 @@ impl<'p, 's> Checker<'p, 's> {
                 });
             }
             if self.is_numeric_name(name) && self.every_type(object, |c, t| c.is_tuple(t)) {
-                let at = crate::atom::parse_number(self.atoms().bytes(name)).unwrap_or(f64::NAN);
+                let at = bun_core::fmt::parse_f64(self.atoms().bytes(name)).unwrap_or(f64::NAN);
                 let ends = |c: &Self, t: TypeId| matches!(c.data(t), TypeData::Tuple { flags, .. } if Self::fixed_length(flags) == flags.len());
                 if access_node != AccessNode::None
                     && !access_flags.contains(AccessFlags::ALLOW_MISSING)
@@ -1318,7 +1319,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }),
             );
         }
-        out.sort_unstable();
+        out.shared_sort_unstable();
     }
 
     /// `getConditionalTypeInstantiation` without an alias.
@@ -2576,14 +2577,14 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The key types that `resolveMappedTypeMembers` and `getIndexTypeForMappedType` iterate over,
     /// for the mapped type at `node` under `mapper`, whose constraint is `constraint`. Also returns
-    /// the `T` of `keyof T` (`getModifiersTypeFromMappedType`) as an object, with its members.
+    /// the `T` of `keyof T` (`getModifiersTypeFromMappedType`).
     fn mapped_key_types(
         &mut self,
         file: FileId,
         node: TypeNodeId,
         mapper: MapperId,
         constraint: TypeId,
-    ) -> (List<'p, TypeId>, Option<(TypeId, Members<'p>)>) {
+    ) -> (List<'p, TypeId>, Option<Modifiers<'p>>) {
         let source = self.mapped_modifiers_source(file, node);
         let over_keyof = matches!(source, Some((_, true)));
         // `getReducedApparentType`: the constraint of a type parameter, and an intersection that
@@ -2602,19 +2603,22 @@ impl<'p, 's> Checker<'p, 's> {
         {
             self.create_properties_of_intersection_in_progress(ty);
         }
-        let owner = match modifiers_ty {
-            Some(ty) if self.is_union(ty) => Some(self.union_as_object(ty)),
-            other => other,
-        };
-        let modifiers = match owner {
-            Some(ty) => self.members(ty).map(|members| (ty, members)),
+        let modifiers = match modifiers_ty {
+            Some(ty) if self.is_union(ty) && !over_keyof => Some(Modifiers::Union(ty)),
+            Some(ty) => {
+                let owner = match self.is_union(ty) {
+                    true => self.union_as_object(ty),
+                    false => ty,
+                };
+                (self.members(owner)).map(|members| Modifiers::Object(owner, members))
+            }
             None => None,
         };
         let keys = match modifiers {
             // `forEachMappedTypePropertyKeyTypeAndIndexSignatureKeyType`. Over `keyof T`, the
             // properties and index signatures of `T` one by one: in the union `keyof T`, `string`
             // has absorbed the names.
-            Some((owner, m)) if over_keyof => {
+            Some(Modifiers::Object(owner, m)) if over_keyof => {
                 let renames = self.mapped_decl(file, node).name_ty.is_some();
                 let mut keys = Vec::with_capacity(m.shape().props.len() + m.shape().index.len());
                 for prop in &m.shape().props {
@@ -2864,8 +2868,11 @@ impl<'p, 's> Checker<'p, 's> {
             let key_name = self.property_name_of_type(key);
             // `modifiersProp`: `getPropertyOfType(modifiersType, ..)`
             let source_prop = match (&modifiers, key_name) {
-                (Some((modifiers_type, m)), Some(name)) => self
+                (Some(Modifiers::Object(modifiers_type, m)), Some(name)) => self
                     .property_in_type(*modifiers_type, m, name)
+                    .map(|(prop, _)| prop),
+                (Some(Modifiers::Union(union)), Some(name)) => self
+                    .get_property_of_type(*union, name)
                     .map(|(prop, _)| prop),
                 _ => None,
             };
@@ -2984,9 +2991,19 @@ impl<'p, 's> Checker<'p, 's> {
                         let readonly = match (mapped.readonly, &modifiers) {
                             (MappedModifier::Add, _) => true,
                             // `getApplicableIndexInfo(modifiersType, propNameType)`
-                            (MappedModifier::None, Some((_, m))) => self
-                                .applicable_index_info(m, name_ty)
-                                .is_some_and(|info| info.readonly),
+                            (MappedModifier::None, Some(modifiers)) => {
+                                let members = match *modifiers {
+                                    Modifiers::Object(_, members) => Some(members),
+                                    Modifiers::Union(union) => {
+                                        let object = self.union_as_object(union);
+                                        self.members(object)
+                                    }
+                                };
+                                members.is_some_and(|m| {
+                                    self.applicable_index_info(&m, name_ty)
+                                        .is_some_and(|info| info.readonly)
+                                })
+                            }
                             _ => false,
                         };
                         // `appendIndexInfo`
@@ -3264,4 +3281,15 @@ pub(super) fn combine_surrogate_pairs(text: &mut Vec<u8>) {
         text.splice(at..at + 6, ch.encode_utf8(&mut [0; 4]).bytes());
         at += 4;
     }
+}
+
+/// `getModifiersTypeFromMappedType`, as `Checker::mapped_key_types` returns it.
+#[derive(Clone, Copy)]
+enum Modifiers<'p> {
+    /// As an object, with its members.
+    Object(TypeId, Members<'p>),
+    /// A union whose properties are not what the mapped type iterates over, as in `Pick<A | B, "id">`. A property of a union is
+    /// created with the types of those that it combines, so only those that are asked for by name may be:
+    /// `interface B { id: string; shape?: keyof typeof shapes }`, with a `Pick<A | B, "id">` in the initializer of `shapes`.
+    Union(TypeId),
 }

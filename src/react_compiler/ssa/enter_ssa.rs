@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use crate::collections::{IdMap, IndexMap};
+use crate::collections::IndexMap;
 use crate::diagnostics::{CompilerDiagnostic, ErrorCategory, cold_diagnostic, cold_invariant};
 use crate::hir::environment::Environment;
 use crate::hir::visitors;
@@ -15,14 +15,81 @@ struct IncompletePhi {
     new_place: Place,
 }
 
+mod definitions {
+    use crate::collections::FxHashMap;
+    use crate::hir::{BlockId, IdentifierId};
+
+    /// What each variable is at the end of each block that was started.
+    pub(super) struct Definitions {
+        /// Indexed by `BlockId.0`.
+        blocks: Vec<Option<FxHashMap<IdentifierId, IdentifierId>>>,
+        /// The phis whose operands are being looked up, by ascending id, and whether `get` has returned that id.
+        phis_in_the_making: Vec<(IdentifierId, bool)>,
+    }
+
+    impl Definitions {
+        pub(super) fn new(num_blocks: usize) -> Self {
+            Definitions {
+                blocks: vec![None; num_blocks],
+                phis_in_the_making: Vec::new(),
+            }
+        }
+
+        pub(super) fn start_block(&mut self, block_id: BlockId) {
+            self.blocks[block_id.0 as usize] = Some(FxHashMap::default());
+        }
+
+        /// The only way to read a definition.
+        pub(super) fn get(&mut self, block_id: BlockId, old: IdentifierId) -> Option<IdentifierId> {
+            let new = *self.blocks[block_id.0 as usize].as_ref()?.get(&old)?;
+            let phi = self
+                .phis_in_the_making
+                .binary_search_by_key(&new, |it| it.0);
+            if let Ok(index) = phi {
+                self.phis_in_the_making[index].1 = true;
+            }
+            Some(new)
+        }
+
+        pub(super) fn set(&mut self, block_id: BlockId, old: IdentifierId, new: IdentifierId) {
+            let block = self.blocks[block_id.0 as usize].as_mut();
+            block.expect("the block was started").insert(old, new);
+        }
+
+        /// `phi` is newer than all ids so far.
+        pub(super) fn begin_phi(&mut self, phi: IdentifierId) {
+            self.phis_in_the_making.push((phi, false));
+        }
+
+        /// Whether `get` has returned the id of the phi that was begun last.
+        pub(super) fn end_phi(&mut self) -> bool {
+            self.phis_in_the_making
+                .pop()
+                .is_none_or(|(_, was_read)| was_read)
+        }
+    }
+}
+
 struct State {
-    defs: IdMap<IdentifierId, IdentifierId>,
     incomplete_phis: Vec<IncompletePhi>,
+}
+
+/// A block whose predecessors `get_id_at` is looking in.
+enum Lookup {
+    OnePredecessor(BlockId),
+    Phi {
+        block_id: BlockId,
+        new_id: IdentifierId,
+        operands: Vec<IdentifierId>,
+    },
 }
 
 struct SSABuilder {
     /// Indexed by `BlockId.0`.
     states: Vec<Option<State>>,
+    definitions: definitions::Definitions,
+    /// Not where the entry has a predecessor: then a variable can be a phi of nothing but phis.
+    leaves_out_trivial_phis: bool,
     current: Option<BlockId>,
     /// Indexed by `BlockId.0`.
     unsealed_preds: Vec<Option<u32>>,
@@ -45,6 +112,8 @@ impl SSABuilder {
         states.resize_with(num_blocks, || None);
         SSABuilder {
             states,
+            definitions: definitions::Definitions::new(num_blocks),
+            leaves_out_trivial_phis: false,
             current: None,
             unsealed_preds: vec![None; num_blocks],
             block_preds,
@@ -59,15 +128,6 @@ impl SSABuilder {
         for (id, block) in &func.body.blocks {
             self.block_preds[id.0 as usize] = block.preds.iter().copied().collect();
         }
-    }
-
-    fn state_mut(&mut self) -> &mut State {
-        let current = self
-            .current
-            .expect("we need to be in a block to access state!");
-        self.states[current.0 as usize]
-            .as_mut()
-            .expect("state not found for current block")
     }
 
     fn make_id(&mut self, old_id: IdentifierId, env: &mut Environment) -> IdentifierId {
@@ -111,7 +171,10 @@ impl SSABuilder {
         }
 
         let new_id = self.make_id(old_id, env);
-        self.state_mut().defs.insert(old_id, new_id);
+        let current = self
+            .current
+            .expect("we need to be in a block to access state!");
+        self.definitions.set(current, old_id, new_id);
         Ok(Place {
             identifier: new_id,
             effect: old_place.effect,
@@ -149,20 +212,66 @@ impl SSABuilder {
         block_id: BlockId,
         env: &mut Environment,
     ) -> IdentifierId {
-        if let Some(state) = &self.states[block_id.0 as usize] {
-            if let Some(&new_id) = state.defs.get(old_place.identifier) {
-                return new_id;
+        let old_id = old_place.identifier;
+        let mut lookups: Vec<Lookup> = Vec::new();
+        let mut block_id = block_id;
+        loop {
+            let mut found = match self.look_in(old_place, block_id, env) {
+                Ok(found) => found,
+                Err(lookup) => {
+                    block_id = self.block_preds[block_id.0 as usize][0];
+                    lookups.push(lookup);
+                    continue;
+                }
+            };
+            // What was found is what the variable is at the end of a predecessor of the last of `lookups`.
+            loop {
+                match lookups.pop() {
+                    None => return found,
+                    Some(Lookup::OnePredecessor(block_id)) => {
+                        self.definitions.set(block_id, old_id, found);
+                    }
+                    Some(Lookup::Phi {
+                        block_id: phi_block,
+                        new_id,
+                        mut operands,
+                    }) => {
+                        operands.push(found);
+                        if let Some(&next) =
+                            self.block_preds[phi_block.0 as usize].get(operands.len())
+                        {
+                            block_id = next;
+                            lookups.push(Lookup::Phi {
+                                block_id: phi_block,
+                                new_id,
+                                operands,
+                            });
+                            break;
+                        }
+                        found = self.finish_phi(phi_block, old_place, new_id, &operands);
+                    }
+                }
             }
         }
+    }
 
-        let preds = &self.block_preds[block_id.0 as usize];
-
-        if preds.is_empty() {
-            self.unknown.insert(old_place.identifier);
-            return old_place.identifier;
+    /// What `old_place` is at the end of the block, or that it depends on its predecessors. Then it has one at least.
+    fn look_in(
+        &mut self,
+        old_place: &Place,
+        block_id: BlockId,
+        env: &mut Environment,
+    ) -> Result<IdentifierId, Lookup> {
+        if let Some(new_id) = self.definitions.get(block_id, old_place.identifier) {
+            return Ok(new_id);
         }
-        let preds_len = preds.len();
-        let first_pred = preds[0];
+
+        let preds_len = self.block_preds[block_id.0 as usize].len();
+
+        if preds_len == 0 {
+            self.unknown.insert(old_place.identifier);
+            return Ok(old_place.identifier);
+        }
 
         let unsealed = self.unsealed_preds[block_id.0 as usize].unwrap_or(0);
         if unsealed > 0 {
@@ -178,34 +287,64 @@ impl SSABuilder {
                 old_place: old_place.clone(),
                 new_place,
             });
-            state.defs.insert(old_place.identifier, new_id);
-            return new_id;
+            self.definitions.set(block_id, old_place.identifier, new_id);
+            return Ok(new_id);
         }
 
         if preds_len == 1 {
-            let new_id = self.get_id_at(old_place, first_pred, env);
-            self.states[block_id.0 as usize]
-                .as_mut()
-                .unwrap()
-                .defs
-                .insert(old_place.identifier, new_id);
-            return new_id;
+            return Err(Lookup::OnePredecessor(block_id));
         }
 
         let new_id = self.make_id(old_place.identifier, env);
-        self.states[block_id.0 as usize]
-            .as_mut()
-            .unwrap()
-            .defs
-            .insert(old_place.identifier, new_id);
+        self.definitions.set(block_id, old_place.identifier, new_id);
+        self.definitions.begin_phi(new_id);
+        Err(Lookup::Phi {
+            block_id,
+            new_id,
+            operands: Vec::with_capacity(preds_len),
+        })
+    }
+
+    /// What `old_place` is at the end of the block, now that it is known for each predecessor.
+    fn finish_phi(
+        &mut self,
+        block_id: BlockId,
+        old_place: &Place,
+        new_id: IdentifierId,
+        operands: &[IdentifierId],
+    ) -> IdentifierId {
+        let was_read = self.definitions.end_phi();
+        // Braun et al.'s trivial phi, where nothing has its id yet: EliminateRedundantPhi would put `same` for it.
+        if self.leaves_out_trivial_phis
+            && !was_read
+            && let Some(&same) = operands.first()
+            && operands.iter().all(|&operand| operand == same)
+        {
+            self.definitions.set(block_id, old_place.identifier, same);
+            return same;
+        }
         let new_place = Place {
             identifier: new_id,
             effect: old_place.effect,
             reactive: old_place.reactive,
             loc: old_place.loc,
         };
-        self.add_phi(block_id, old_place, &new_place, env);
+        self.push_phi(block_id, old_place, &new_place, operands);
         new_id
+    }
+
+    /// What `old_place` is at the end of each predecessor of the block, in their order.
+    fn phi_operands(
+        &mut self,
+        block_id: BlockId,
+        old_place: &Place,
+        env: &mut Environment,
+    ) -> Vec<IdentifierId> {
+        let preds = self.block_preds[block_id.0 as usize].clone();
+        preds
+            .iter()
+            .map(|&pred_block_id| self.get_id_at(old_place, pred_block_id, env))
+            .collect()
     }
 
     fn add_phi(
@@ -215,11 +354,20 @@ impl SSABuilder {
         new_place: &Place,
         env: &mut Environment,
     ) {
-        let preds = self.block_preds[block_id.0 as usize].clone();
+        let operands = self.phi_operands(block_id, old_place, env);
+        self.push_phi(block_id, old_place, new_place, &operands);
+    }
 
+    fn push_phi(
+        &mut self,
+        block_id: BlockId,
+        old_place: &Place,
+        new_place: &Place,
+        operands: &[IdentifierId],
+    ) {
+        let preds = &self.block_preds[block_id.0 as usize];
         let mut pred_defs: IndexMap<BlockId, Place> = IndexMap::new();
-        for pred_block_id in &preds {
-            let pred_id = self.get_id_at(old_place, *pred_block_id, env);
+        for (pred_block_id, &pred_id) in preds.iter().zip(operands) {
             pred_defs.insert(
                 *pred_block_id,
                 Place {
@@ -253,8 +401,8 @@ impl SSABuilder {
 
     fn start_block(&mut self, block_id: BlockId) {
         self.current = Some(block_id);
+        self.definitions.start_block(block_id);
         self.states[block_id.0 as usize] = Some(State {
-            defs: IdMap::new(),
             incomplete_phis: Vec::new(),
         });
     }
@@ -271,7 +419,11 @@ pub(crate) fn enter_ssa(
     let num_blocks = env.next_block_id_counter as usize;
     let mut builder = SSABuilder::new(&func.body.blocks, num_blocks);
     let root_entry = func.body.entry;
+    builder.leaves_out_trivial_phis = func.body.blocks[&root_entry].preds.is_empty();
     enter_ssa_impl(func, &mut builder, env, root_entry)?;
+    if !env.has_stack() {
+        return Err(crate::lowering::nested_too_deeply());
+    }
 
     // Apply all pending phis to the actual blocks
     apply_pending_phis(func, env, &mut builder);

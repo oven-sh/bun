@@ -1,0 +1,41 @@
+------------------
+{ printWidth: 80 }
+------------------
+:root {
+  --a: 1px 2px;
+  --b: [1, "2", [4]];
+  --d: [{"a":1}];
+  --e: f(x)  {  y  };
+  --h: (a, b);
+  --i: #fff RED;
+  --j: 1px   !foo;
+  --k: a:b;
+  --l: "a:b" c;
+  --m: url(data:x) c;
+  --u3: $a b;
+  --u4: @a   b;
+  --u6: a b !important;
+  --u7: a:b !important;
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+:root {
+  --a: 1px 2px;
+  --b: [1, "2", [4]];
+  --d: [{"a":1}];
+  --e: f(x)  {  y  };
+  --h: (a, b);
+  --i: #fff RED;
+  --j: 1px   !foo;
+  --k: a:b;
+  --l: "a:b" c;
+  --m: url(data:x) c;
+  --u3: $a b;
+  --u4: @a   b;
+  --u6: a b !important;
+  --u7: a:b !important;
+}
+
+===================== End =====================

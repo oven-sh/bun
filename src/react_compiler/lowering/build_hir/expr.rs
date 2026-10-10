@@ -22,6 +22,9 @@ pub(crate) fn lower_expression(
     builder: &mut HirBuilder,
     expr: &Expr,
 ) -> Result<InstructionValue, CompilerError> {
+    if !builder.environment().has_stack() {
+        return Err(crate::lowering::nested_too_deeply().into());
+    }
     let loc = convert_loc(expr.loc);
     match &expr.data {
         Data::EObjectJSON(_) | Data::EArrayJSON(_) => Ok(unsupported_node("JSONValue", loc)),
@@ -1338,6 +1341,9 @@ fn is_reorderable_expression(
     expr: &Expr,
     allow_local_identifiers: bool,
 ) -> bool {
+    if !builder.environment().has_stack() {
+        return false;
+    }
     match &expr.data {
         Data::EIdentifier(ident) => {
             if is_module_level_or_global(builder, ident.ref_) {
@@ -1469,17 +1475,7 @@ fn is_module_level_or_global(builder: &HirBuilder, ref_: Ref) -> bool {
     ) {
         return true;
     }
-    if let Some(member) = builder
-        .host()
-        .module_scope()
-        .members
-        .get(sym.original_name.slice())
-    {
-        if member.ref_ == ref_ {
-            return true;
-        }
-    }
-    false
+    builder.host().is_module_level(ref_)
 }
 
 // =============================================================================

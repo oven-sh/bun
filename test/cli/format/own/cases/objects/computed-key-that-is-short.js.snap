@@ -1,0 +1,46 @@
+------------------
+{ printWidth: 80 }
+------------------
+x = {
+  [1 /* CDATA_IN_HTML_CONTENT_AAAAAAAAAAAAAAA */]: "CDATA section is allowed only in XML context.",
+  [a.b]:
+    "CDATA section is allowed only in XML context. CDATA section is allowed only in",
+  [a()]:
+    "CDATA section is allowed only in XML context. CDATA section is allowed only in",
+  [`a`]:
+    "CDATA section is allowed only in XML context. CDATA section is allowed only in",
+  [a.bc]:
+    "CDATA section is allowed only in XML context. CDATA section is allowed only in",
+  [/* c */ 1]: "CDATA section is allowed only in XML context. CDATA section is allowed only in",
+  [ab /* ccccccccccccccccccc */]: "CDATA section is allowed only in XML context. CDATA section",
+  ["a" /* ccccccccccccccccccc */]:
+    "CDATA section is allowed only in XML context. CDATA section",
+  [a]: "CDATA section is allowed only in XML context. CDATA section is allowed only in",
+  [abc]:
+    "CDATA section is allowed only in XML context. CDATA section is allowed only in",
+};
+const {
+  [a.b]:
+    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+} = c;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+x = {
+  [1 /* CDATA_IN_HTML_CONTENT_AAAAAAAAAAAAAAA */]: "CDATA section is allowed only in XML context.",
+  [a.b]: "CDATA section is allowed only in XML context. CDATA section is allowed only in",
+  [a()]: "CDATA section is allowed only in XML context. CDATA section is allowed only in",
+  [`a`]: "CDATA section is allowed only in XML context. CDATA section is allowed only in",
+  [a.bc]: "CDATA section is allowed only in XML context. CDATA section is allowed only in",
+  [/* c */ 1]: "CDATA section is allowed only in XML context. CDATA section is allowed only in",
+  [ab /* ccccccccccccccccccc */]: "CDATA section is allowed only in XML context. CDATA section",
+  ["a" /* ccccccccccccccccccc */]: "CDATA section is allowed only in XML context. CDATA section",
+  [a]: "CDATA section is allowed only in XML context. CDATA section is allowed only in",
+  [abc]: "CDATA section is allowed only in XML context. CDATA section is allowed only in",
+};
+const {
+  [a.b]: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+} = c;
+
+===================== End =====================

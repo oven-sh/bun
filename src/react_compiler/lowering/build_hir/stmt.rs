@@ -219,6 +219,9 @@ fn catch_param_referenced_in_nested_fn(builder: &HirBuilder, target: Ref, body: 
 }
 
 fn ref_in_nested_fn_stmt(builder: &HirBuilder, target: Ref, stmt: &Stmt, depth: u32) -> bool {
+    if !builder.environment().has_stack() {
+        return false;
+    }
     match &stmt.data {
         Data::SBlock(b) => b
             .stmts
@@ -326,6 +329,9 @@ fn ref_in_nested_fn_binding(
     binding: &Binding,
     depth: u32,
 ) -> bool {
+    if !builder.environment().has_stack() {
+        return false;
+    }
     match &binding.data {
         b::B::BArray(arr) => arr.items().iter().any(|item| {
             ref_in_nested_fn_binding(builder, target, &item.binding, depth)
@@ -387,6 +393,9 @@ fn ref_in_nested_fn_class(builder: &HirBuilder, target: Ref, class: &G::Class, d
 }
 
 fn ref_in_nested_fn_expr(builder: &HirBuilder, target: Ref, e: &Expr, depth: u32) -> bool {
+    if !builder.environment().has_stack() {
+        return false;
+    }
     match &e.data {
         ExprData::EIdentifier(id) => depth > 0 && builder.resolve_ref(id.ref_) == target,
         ExprData::EImportIdentifier(id) => depth > 0 && builder.resolve_ref(id.ref_) == target,
@@ -498,6 +507,9 @@ fn lower_statement(
     stmt: &Stmt,
     label: Option<String>,
 ) -> Result<(), CompilerDiagnostic> {
+    if !builder.environment().has_stack() {
+        return Err(crate::lowering::nested_too_deeply());
+    }
     let stmt_loc = stmt.loc;
     match stmt.data {
         Data::SEmpty(_) => {
@@ -1710,6 +1722,9 @@ pub(super) fn lower_assignment_binding(
     value: Place,
     assignment_style: AssignmentStyle,
 ) -> Result<Option<Place>, CompilerError> {
+    if !builder.environment().has_stack() {
+        return Err(crate::lowering::nested_too_deeply().into());
+    }
     match target.data {
         b::B::BIdentifier(id) => {
             let id_loc = convert_loc(target.loc);
@@ -1843,7 +1858,7 @@ pub(super) fn lower_assignment_binding(
                     }
                     _ => {
                         // Nested pattern, default value, or context variable: use temporary + followup
-                        let elem_loc = convert_loc(element.binding.loc);
+                        let elem_loc = convert_loc(builder.with_default(element.binding.loc));
                         let temp = build_temporary_place(builder, elem_loc);
                         promote_temporary(builder, temp.identifier);
                         if is_spread {
@@ -1874,7 +1889,7 @@ pub(super) fn lower_assignment_binding(
             )?;
 
             for (place, path, default) in followups {
-                let followup_loc = convert_loc(path.loc).or(loc);
+                let followup_loc = convert_loc(builder.with_default(path.loc)).or(loc);
                 let resolved = match default {
                     Some(d) => lower_default_value(builder, followup_loc, place, d)?,
                     None => place,
@@ -1896,7 +1911,7 @@ pub(super) fn lower_assignment_binding(
             let mut followups: Vec<(Place, &Binding, Option<&Expr>)> = Vec::new();
 
             for prop in pattern.properties() {
-                let prop_loc = convert_loc(prop.value.loc);
+                let prop_loc = convert_loc(builder.with_default(prop.value.loc));
                 if prop.flags.contains(ast::flags::Property::IsSpread) {
                     match prop.value.data {
                         b::B::BIdentifier(id)
@@ -2021,7 +2036,7 @@ pub(super) fn lower_assignment_binding(
             )?;
 
             for (place, path, default) in followups {
-                let followup_loc = convert_loc(path.loc).or(loc);
+                let followup_loc = convert_loc(builder.with_default(path.loc)).or(loc);
                 let resolved = match default {
                     Some(d) => lower_default_value(builder, followup_loc, place, d)?,
                     None => place,

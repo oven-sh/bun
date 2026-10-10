@@ -1,0 +1,73 @@
+use crate::rules::no_require_imports::required_path;
+use bun_lint::prelude::*;
+
+/// Disallow `require` statements except in import statements.
+pub struct NoVarRequires {
+    allow: Vec<Regex>,
+}
+
+const NO_VAR_REQS: Message =
+    Message::new("noVarReqs", "Require statement not part of import statement.");
+
+impl NoVarRequires {
+    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Call(call) = e.kind() else {
+            return;
+        };
+        let callee = call.callee();
+        if !callee.is_ident("require") || callee.symbol().is_some() {
+            return;
+        }
+        let is_used = match e.parent() {
+            // For oxlint it is used wherever it is not a statement, if it has one argument.
+            parent if cx.language().is_oxlint => {
+                let is_statement = matches!(parent, Node::Stmt(it) if it.tag() == StmtTag::Expr);
+                call.args().len() == 1 && (!is_statement || e.is_parenthesized())
+            }
+            Node::VarDecl(_) => true,
+            Node::Expr(parent) => matches!(
+                parent.kind(),
+                ExprKind::Call(_)
+                    | ExprKind::New(_)
+                    | ExprKind::Dot { .. }
+                    | ExprKind::Index { .. }
+                    | ExprKind::As { .. }
+                    | ExprKind::AsConst(_)
+            ),
+            _ => false,
+        };
+        if !is_used {
+            return;
+        }
+        let path = required_path(call);
+        if path.is_some_and(|path| self.allow.iter().any(|pattern| pattern.test(path.bytes()))) {
+            return;
+        }
+        // Upstream looks `require` up by its name alone, so a type of that name counts too.
+        if Node::Expr(e).scope().resolve("require").is_none() {
+            cx.report(e, NO_VAR_REQS);
+        }
+    }
+}
+
+impl Rule for NoVarRequires {
+    const META: Meta = Meta::typescript("no-var-requires", Kind::Problem).deprecated();
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    type State<'a> = ();
+
+    fn new(options: &Options) -> Self {
+        NoVarRequires {
+            allow: (options.object(0).strings("allow").into_iter())
+                .filter_map(|pattern| Regex::new(pattern, "u").ok())
+                .collect(),
+        }
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("require").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(e, cx);
+    }
+}

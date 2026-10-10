@@ -56,6 +56,7 @@ mod flow;
 mod grammarchecks;
 mod infer;
 mod instantiate;
+pub mod jsdoc;
 mod jsx;
 mod late_bound;
 mod loop_cycles;
@@ -66,9 +67,10 @@ pub(crate) mod regexp_scanner;
 mod relate;
 mod related;
 mod related_expected;
+pub mod services;
 mod shape;
 mod sink;
-pub(crate) mod spans;
+pub mod spans;
 mod symbol_ids;
 #[cfg(feature = "baselines")]
 #[path = "../standalone/symbol_writer.rs"]
@@ -100,8 +102,8 @@ use errors_names_and_exports::{root_declaration, root_pattern};
 use errors_type_nodes::array_element_type_node;
 use errors_type_nodes::has_parse_diagnostics;
 use errors_type_nodes::start_of_type;
+pub use regexp_scanner::get_spelling_suggestion;
 use regexp_scanner::spelling_suggestion;
-pub use regexp_scanner::{decode_rune, get_spelling_suggestion};
 use shape::members_among;
 use sink::{Arg, Reported};
 use spans::end_of_brackets;
@@ -199,6 +201,8 @@ pub struct Program<'s> {
     emit_helper_errors_of_earlier_files: Guarded<Vec<errors_emit_helpers::EarlierEmitHelperError>>,
     /// `autoArrayType`
     auto_array_type: TypeId,
+    /// See `Services::file_info`. Made when it is first asked for.
+    package_names_of_linked_files: std::sync::OnceLock<FxHashMap<FileId, Vec<u8>>>,
     pub files: &'s Files<'s>,
     pub types: TypeStore<'s>,
 
@@ -460,6 +464,7 @@ impl<'s> Program<'s> {
             properties_referenced_before: Default::default(),
             emit_helper_errors_of_earlier_files: Default::default(),
             auto_array_type,
+            package_names_of_linked_files: Default::default(),
             types,
             expr_types: ByNode::new_in(&exprs, session),
             type_node_types: ByNode::new_in(&type_nodes, session),
@@ -654,6 +659,8 @@ impl<'s> Program<'s> {
             printing_floors: Vec::new(),
             serialized_types: Default::default(),
             context_free_level: usize::MAX,
+            calls_to_resolve_afresh: None,
+            calls_resolved_afresh: Vec::new(),
             found_cycle: false,
             left_a_cycle: false,
             stale_resolutions: Vec::new(),
@@ -747,6 +754,8 @@ impl<'s> Program<'s> {
             conditional_constraint_depth: 0,
             deepest_stack: std::cell::Cell::new(0),
             ran_out_of_stack: std::cell::Cell::new(false),
+            scopes_of_what_is_in: Default::default(),
+            spread_indices_of_many: Default::default(),
             times_cut_short: std::cell::Cell::new(0),
             exprs_by_kind: None,
             provisional_shapes: Default::default(),
@@ -830,6 +839,7 @@ impl<'s> Program<'s> {
             work: 0,
             work_trap: WORK_TRAP_DISARMED,
             refused_expressions: Vec::new(),
+            side_effect_free: Default::default(),
             unwind_to: usize::MAX,
             unwind_work: 0,
             restart_with: None,
@@ -1194,6 +1204,11 @@ pub struct Checker<'p, 's> {
     /// The height of `inference_contexts` while `getContextFreeTypeOfExpression` rechecks an
     /// expression: diagnostics reported then are kept.
     context_free_level: usize,
+    /// `resolved_signature` resolves the calls in this range of a file as if nothing had resolved them, and stores nothing:
+    /// see `context_free_type_of_call_resolved_afresh`.
+    calls_to_resolve_afresh: Option<(FileId, u32, u32)>,
+    /// Those that it has resolved so, each with what it has found, or `None` while it is at it.
+    calls_resolved_afresh: Vec<(ExprId, Option<ResolvedCall>)>,
     /// The stack depth at each point where a query was made that TypeScript would not have made
     /// there, or not yet.
     /// A cycle through such a point may be an artifact of this resolver: the result is unresolved,
@@ -1422,6 +1437,10 @@ pub struct Checker<'p, 's> {
     conditional_constraint_depth: u32,
     deepest_stack: std::cell::Cell<usize>,
     ran_out_of_stack: std::cell::Cell<bool>,
+    /// `enclosing_scope_of_expr` of what is in these expressions.
+    scopes_of_what_is_in: std::cell::RefCell<FxHashMap<(FileId, ExprId), crate::bind::ScopeId>>,
+    /// `spread_indices` of the array literals and the calls with many elements or arguments.
+    spread_indices_of_many: FxHashMap<(FileId, ExprId), Option<(usize, usize)>>,
     /// How often the native stack ran low, or a result of `relations_cut_short` or `variances_cut_short` was read.
     times_cut_short: std::cell::Cell<u64>,
     /// For the most recently queried file.
@@ -1653,6 +1672,8 @@ pub struct Checker<'p, 's> {
     work_trap: u64,
     /// The file, start and end of the expressions in which a query was refused for lack of native stack. See `refuse_for_lack_of_stack`.
     refused_expressions: Vec<(FileId, u32, u32)>,
+    /// `is_side_effect_free` of the binary expressions that have many on their left.
+    side_effect_free: std::cell::RefCell<FxHashMap<(FileId, ExprId), bool>>,
     /// A query was refused at `MAX_DEPTH`: `enter` refuses every query while `stack` is higher than this. `usize::MAX`: none was. See
     /// `refuse_as_too_deep`.
     unwind_to: usize,
@@ -1921,9 +1942,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// The slow path of the first test in `enter`. `false`: `q` is not refused.
     ///
     /// After a refusal no query in flight is cacheable. Every later query about a part of the same
-    /// expression would descend the same chain and be refused again, which costs depth^3 for nested
-    /// calls. So the outermost expression in flight is recorded, and until the end of `check_file`
-    /// every query about an expression inside it is refused immediately.
+    /// expression or type node would descend the same chain and be refused again, which costs depth^3
+    /// for nested calls. So the outermost one in flight is recorded, and until the end of `check_file`
+    /// every query about an expression or a type node inside it is refused immediately.
     #[cold]
     #[inline(never)]
     fn refuse_for_lack_of_stack(&mut self, q: Query) -> bool {
@@ -1943,6 +1964,10 @@ impl<'p, 's> Checker<'p, 's> {
             Query::Expr(file, e) | Query::Call(file, e) => {
                 Some((file, c.start_of(file, e), c.end_of_expr(file, e)))
             }
+            Query::TypeNode(file, node) => {
+                let node = &c.hir(file)[node];
+                Some((file, node.pos, node.end.max(node.pos)))
+            }
             _ => None,
         };
         let is_refused = |c: &Self, (file, start, end): (FileId, u32, u32)| {
@@ -1953,11 +1978,16 @@ impl<'p, 's> Checker<'p, 's> {
         let queried = span_of(self, q);
         let is_low = self.is_stack_low();
         if is_low {
-            let outermost = self.stack.iter().find_map(|&q| span_of(self, q));
-            if let Some(outermost) = outermost.or(queried)
-                && !is_refused(self, outermost)
+            let mut in_flight = self.stack.iter().chain([&q]);
+            let outermost = in_flight.find_map(|&q| Some((q, span_of(self, q)?)));
+            if let Some((outermost, span)) = outermost
+                && !is_refused(self, span)
             {
-                self.refused_expressions.push(outermost);
+                let span = match outermost {
+                    Query::TypeNode(..) => self.span_of_statement_around(span),
+                    _ => span,
+                };
+                self.refused_expressions.push(span);
             }
         }
         // Every later `enter` takes this path.
@@ -1972,6 +2002,19 @@ impl<'p, 's> Checker<'p, 's> {
         self.last_enter = EnterOutcome::Refused;
         self.bailed_out();
         true
+    }
+
+    /// `checkSourceElement` is no query, and asks for the type of a type node after it has visited what is in the node. So
+    /// the outermost type node in flight is the one that it has come back to, and the next one it comes back to is around
+    /// that: it would descend to what is refused, be cut short, and the one around it in turn, which costs depth^2 and,
+    /// with the search in `stack`, more. What is refused is the statement of the file that `span` is in.
+    fn span_of_statement_around(&self, span: (FileId, u32, u32)) -> (FileId, u32, u32) {
+        let hir = self.hir(span.0);
+        let mut statements = hir.ids(hir.body).map(|s| hir[s].loc);
+        match statements.find(|loc| (loc.pos..loc.end).contains(&span.1)) {
+            Some(loc) => (span.0, loc.pos, loc.end.max(span.2)),
+            None => span,
+        }
     }
 
     /// `q` would be entry `MAX_DEPTH` of `stack`. Always `false`.
@@ -3112,14 +3155,19 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(frame) = self.left_frame.take() else {
             return;
         };
-        let flow = frame.incomplete_flow;
+        // A frame that `enter` has pushed above a resolution has the mark of the frame below it, but has seen no loop from
+        // below the resolution (`is_flow_loop_visible`): its result is no more short-lived than that of any other
+        // non-cacheable frame. It is asked for from where the loop is not visible either, where a result that follows from a
+        // loop is no hit: every use would compute it again, and uses in uses cost uses ^ depth.
+        let flow = frame.incomplete_flow
+            && (self.flow_loops.last())
+                .is_some_and(|innermost| self.is_flow_loop_visible(innermost.5));
         // tsgo computes it again, and then finds in `flowLoopCache` the loop of which this
         // computation saw the types collected so far.
         if flow && self.is_flow_loop_cached_since(frame.serial) {
             return;
         }
         let scope = if flow {
-            // No loop on `flow_loops`: `type_of_expr_outside_loops` has set them aside, so the height is unknown and nothing is stored.
             let innermost_loop = self.flow_loops.last().map(|in_progress| in_progress.5);
             let outermost = self.frames.iter().position(|frame| frame.incomplete_flow);
             (outermost.zip(innermost_loop))

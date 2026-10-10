@@ -1,0 +1,39 @@
+[package]
+name = "bun_lint_standalone"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "bun-lint"
+path = "main.rs"
+
+[dependencies]
+bun_alloc.workspace = true
+bun_lint.workspace = true
+bun_lint_eslint.workspace = true
+bun_lint_typescript.workspace = true
+bun_lint_plugins.workspace = true
+bun_lint_unicorn.workspace = true
+bun_lint_react.workspace = true
+bun_lint_jest.workspace = true
+bun_lint_graph.workspace = true
+bun_lint_react_compiler.workspace = true
+# For `BUN_REACT_COMPILER_DUMP_HIR`.
+bun_react_compiler = { path = "../../react_compiler", features = ["fixtures"] }
+bun_format.workspace = true
+bun_format_conformance.workspace = true
+bun_glob.workspace = true
+bun_lint_driver.workspace = true
+bun_lint_conformance.workspace = true
+bun_sema_driver.workspace = true
+bun_threading.workspace = true
+bun_sema.workspace = true
+bun_sema_standalone = { path = "../../sema/standalone" }
+bun_sema_parser.workspace = true
+bun_core.workspace = true
+bun_paths.workspace = true
+bstr.workspace = true
+rustc-hash = "2"
+
+[lints]
+workspace = true

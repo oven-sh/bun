@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use crate::collections::{FxHashSet as HashSet, IdMap};
 
 use crate::diagnostics::{
@@ -52,7 +54,7 @@ enum RefAccessType {
         ref_id: Option<RefId>,
     },
     Structure {
-        value: Option<Box<RefAccessRefType>>,
+        value: Option<Rc<RefAccessRefType>>,
         fn_type: Option<RefFnType>,
     },
 }
@@ -82,6 +84,8 @@ impl PartialEq for RefAccessType {
     }
 }
 
+impl Eq for RefAccessType {}
+
 /// Corresponds to TS `RefAccessRefType` — the subset of `RefAccessType` that can appear
 /// inside `Structure.value` and be joined via `join_ref_access_ref_types`.
 ///
@@ -97,7 +101,7 @@ enum RefAccessRefType {
         ref_id: Option<RefId>,
     },
     Structure {
-        value: Option<Box<RefAccessRefType>>,
+        value: Option<Rc<RefAccessRefType>>,
         fn_type: Option<RefFnType>,
     },
 }
@@ -125,10 +129,12 @@ impl PartialEq for RefAccessRefType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+impl Eq for RefAccessRefType {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct RefFnType {
     read_ref_effect: bool,
-    return_type: Box<RefAccessType>,
+    return_type: Rc<RefAccessType>,
 }
 
 impl RefAccessType {
@@ -166,7 +172,17 @@ impl RefAccessType {
 
 // --- Join operations ---
 
-fn join_ref_access_ref_types(a: &RefAccessRefType, b: &RefAccessRefType) -> RefAccessRefType {
+struct Joins {
+    /// `EnvironmentConfig::joined_ref_values_keep_their_place`
+    keeps_place: bool,
+}
+
+fn join_ref_access_ref_types(
+    a: &RefAccessRefType,
+    b: &RefAccessRefType,
+    joins: &Joins,
+) -> RefAccessRefType {
+    let keeps_place = joins.keeps_place;
     match (a, b) {
         (
             RefAccessRefType::RefValue { ref_id: a_id, .. },
@@ -181,6 +197,8 @@ fn join_ref_access_ref_types(a: &RefAccessRefType, b: &RefAccessRefType) -> RefA
                 }
             }
         }
+        (RefAccessRefType::RefValue { .. }, _) if keeps_place => a.clone(),
+        (_, RefAccessRefType::RefValue { .. }) if keeps_place => b.clone(),
         (RefAccessRefType::RefValue { .. }, _) => RefAccessRefType::RefValue {
             loc: None,
             ref_id: None,
@@ -217,16 +235,22 @@ fn join_ref_access_ref_types(a: &RefAccessRefType, b: &RefAccessRefType) -> RefA
                 (None, other) | (other, None) => other.clone(),
                 (Some(a_fn), Some(b_fn)) => Some(RefFnType {
                     read_ref_effect: a_fn.read_ref_effect || b_fn.read_ref_effect,
-                    return_type: Box::new(join_ref_access_types(
-                        &a_fn.return_type,
-                        &b_fn.return_type,
-                    )),
+                    return_type: if Rc::ptr_eq(&a_fn.return_type, &b_fn.return_type) {
+                        Rc::clone(&a_fn.return_type)
+                    } else {
+                        Rc::new(join_ref_access_types(
+                            &a_fn.return_type,
+                            &b_fn.return_type,
+                            joins,
+                        ))
+                    },
                 }),
             };
             let value = match (a_value, b_value) {
                 (None, other) | (other, None) => other.clone(),
+                (Some(a_val), Some(b_val)) if Rc::ptr_eq(a_val, b_val) => Some(Rc::clone(a_val)),
                 (Some(a_val), Some(b_val)) => {
-                    Some(Box::new(join_ref_access_ref_types(a_val, b_val)))
+                    Some(Rc::new(join_ref_access_ref_types(a_val, b_val, joins)))
                 }
             };
             RefAccessRefType::Structure { value, fn_type }
@@ -234,7 +258,7 @@ fn join_ref_access_ref_types(a: &RefAccessRefType, b: &RefAccessRefType) -> RefA
     }
 }
 
-fn join_ref_access_types(a: &RefAccessType, b: &RefAccessType) -> RefAccessType {
+fn join_ref_access_types(a: &RefAccessType, b: &RefAccessType, joins: &Joins) -> RefAccessType {
     match (a, b) {
         (RefAccessType::None, other) | (other, RefAccessType::None) => other.clone(),
         (RefAccessType::Guard { ref_id: a_id }, RefAccessType::Guard { ref_id: b_id }) => {
@@ -252,7 +276,7 @@ fn join_ref_access_types(a: &RefAccessType, b: &RefAccessType) -> RefAccessType 
         (RefAccessType::Nullable, other) | (other, RefAccessType::Nullable) => other.clone(),
         _ => match (a.to_ref_type(), b.to_ref_type()) {
             (Some(a_ref), Some(b_ref)) => {
-                RefAccessType::from_ref_type(&join_ref_access_ref_types(&a_ref, &b_ref))
+                RefAccessType::from_ref_type(&join_ref_access_ref_types(&a_ref, &b_ref, joins))
             }
             (Some(r), None) | (None, Some(r)) => RefAccessType::from_ref_type(&r),
             _ => RefAccessType::None,
@@ -260,23 +284,28 @@ fn join_ref_access_types(a: &RefAccessType, b: &RefAccessType) -> RefAccessType 
     }
 }
 
-fn join_ref_access_types_many(types: &[RefAccessType]) -> RefAccessType {
-    types
-        .iter()
-        .fold(RefAccessType::None, |acc, t| join_ref_access_types(&acc, t))
+fn join_ref_access_types_many(types: &[RefAccessType], joins: &Joins) -> RefAccessType {
+    types.iter().fold(RefAccessType::None, |acc, t| {
+        join_ref_access_types(&acc, t, joins)
+    })
 }
 
 // --- Env ---
 
 struct Env {
+    joins: Joins,
+    /// `EnvironmentConfig::captured_refs_are_known_in_functions`
+    looks_into_functions: bool,
     changed: bool,
     data: IdMap<IdentifierId, RefAccessType>,
     temporaries: IdMap<IdentifierId, Place>,
 }
 
 impl Env {
-    fn new() -> Self {
+    fn new(keeps_place: bool, looks_into_functions: bool) -> Self {
         Self {
+            joins: Joins { keeps_place },
+            looks_into_functions,
             changed: false,
             data: IdMap::default(),
             temporaries: IdMap::default(),
@@ -311,7 +340,8 @@ impl Env {
             .map(|p| p.identifier)
             .unwrap_or(key);
         let current = self.data.get(operand_id);
-        let widened_value = join_ref_access_types(&value, current.unwrap_or(&RefAccessType::None));
+        let widened_value =
+            join_ref_access_types(&value, current.unwrap_or(&RefAccessType::None), &self.joins);
         if current.is_none() && widened_value == RefAccessType::None {
             // No change needed
         } else if current.map_or(true, |c| c != &widened_value) {
@@ -500,7 +530,10 @@ fn guard_check(errors: &mut Vec<CompilerDiagnostic>, operand: &Place, env: &Env)
 // --- Main entry point ---
 
 pub(crate) fn validate_no_ref_access_in_render(func: &HirFunction, env: &mut Environment) {
-    let mut ref_env = Env::new();
+    let mut ref_env = Env::new(
+        env.config.joined_ref_values_keep_their_place,
+        env.config.captured_refs_are_known_in_functions,
+    );
     collect_temporaries_sidemap(
         func,
         &mut ref_env,
@@ -535,7 +568,9 @@ fn collect_temporaries_sidemap(
             let instr = &func.instructions[instr_id.0 as usize];
             match &instr.value {
                 InstructionValue::ObjectMethod { lowered_func, .. }
-                | InstructionValue::FunctionExpression { lowered_func, .. } => {
+                | InstructionValue::FunctionExpression { lowered_func, .. }
+                    if env.looks_into_functions =>
+                {
                     let inner = &functions[lowered_func.func.0 as usize];
                     collect_temporaries_sidemap(inner, env, identifiers, types, functions);
                 }
@@ -600,11 +635,13 @@ fn validate_no_ref_access_in_render_impl(
     // recognized as Ref/RefValue inside the lambda body. Callbacks passed to
     // useState/useReducer (and IIFEs) execute during render, so a captured ref
     // read must be detected here for `read_ref_effect` to propagate.
-    for place in &func.context {
-        ref_env.set(
-            place.identifier,
-            ref_type_of_type(place.identifier, identifiers, types),
-        );
+    if ref_env.looks_into_functions {
+        for place in &func.context {
+            ref_env.set(
+                place.identifier,
+                ref_type_of_type(place.identifier, identifiers, types),
+            );
+        }
     }
 
     // Collect identifiers that are interpolated as JSX children
@@ -655,7 +692,8 @@ fn validate_no_ref_access_in_render_impl(
                             .unwrap_or(RefAccessType::None)
                     })
                     .collect();
-                ref_env.set(phi.place.identifier, join_ref_access_types_many(&phi_types));
+                let joined = join_ref_access_types_many(&phi_types, &ref_env.joins);
+                ref_env.set(phi.place.identifier, joined);
             }
 
             // Process instructions
@@ -789,7 +827,7 @@ fn validate_no_ref_access_in_render_impl(
                                 value: None,
                                 fn_type: Some(RefFnType {
                                     read_ref_effect,
-                                    return_type: Box::new(return_type),
+                                    return_type: Rc::new(return_type),
                                 }),
                             },
                         );
@@ -808,7 +846,7 @@ fn validate_no_ref_access_in_render_impl(
                             ..
                         }) = &fn_type
                         {
-                            return_type = *fn_ty.return_type.clone();
+                            return_type = (*fn_ty.return_type).clone();
                             if fn_ty.read_ref_effect {
                                 did_error = true;
                                 errors.push(ref_access_error(
@@ -853,6 +891,16 @@ fn validate_no_ref_access_in_render_impl(
                             } else if hook_kind.is_none() && instr.effects.is_some() {
                                 let mut visited_effects: HashSet<(IdentifierId, bool)> =
                                     HashSet::default();
+                                // A call with n arguments has about n * n effects.
+                                let frozen: HashSet<IdentifierId> = (instr
+                                    .effects
+                                    .iter()
+                                    .flatten())
+                                .filter_map(|effect| match effect {
+                                    AliasingEffect::Freeze { value, .. } => Some(value.identifier),
+                                    _ => None,
+                                })
+                                .collect();
                                 for effect in instr.effects.as_ref().unwrap() {
                                     let (place, ref_passed): (&Place, bool) = match effect {
                                         AliasingEffect::Freeze { value, .. } => (value, false),
@@ -869,15 +917,7 @@ fn validate_no_ref_access_in_render_impl(
                                         | AliasingEffect::Assign { from, .. }
                                         | AliasingEffect::CreateFrom { from, .. } => (from, true),
                                         AliasingEffect::ImmutableCapture { from, .. } => {
-                                            let is_frozen =
-                                                instr.effects.as_ref().unwrap().iter().any(|e| {
-                                                    matches!(
-                                                        e,
-                                                        AliasingEffect::Freeze { value, .. }
-                                                            if value.identifier == from.identifier
-                                                    )
-                                                });
-                                            (from, !is_frozen)
+                                            (from, !frozen.contains(&from.identifier))
                                         }
                                         AliasingEffect::Create { .. }
                                         | AliasingEffect::CreateFunction { .. }
@@ -926,7 +966,7 @@ fn validate_no_ref_access_in_render_impl(
                                     .unwrap_or(RefAccessType::None),
                             );
                         }
-                        let value = join_ref_access_types_many(&types_vec);
+                        let value = join_ref_access_types_many(&types_vec, &ref_env.joins);
                         match &value {
                             RefAccessType::None
                             | RefAccessType::Guard { .. }
@@ -937,7 +977,7 @@ fn validate_no_ref_access_in_render_impl(
                                 ref_env.set(
                                     instr.lvalue.identifier,
                                     RefAccessType::Structure {
-                                        value: value.to_ref_type().map(Box::new),
+                                        value: value.to_ref_type().map(Rc::new),
                                         fn_type: None,
                                     },
                                 );
@@ -977,7 +1017,8 @@ fn validate_no_ref_access_in_render_impl(
                                 if let Some(RefAccessType::Structure { .. }) = &value_type {
                                     let mut object_type = value_type.unwrap();
                                     if let Some(t) = &target {
-                                        object_type = join_ref_access_types(&object_type, t);
+                                        object_type =
+                                            join_ref_access_types(&object_type, t, &ref_env.joins);
                                     }
                                     ref_env.set(object.identifier, object_type);
                                 }
@@ -1091,6 +1132,7 @@ fn validate_no_ref_access_in_render_impl(
                             &RefAccessType::Ref {
                                 ref_id: next_ref_id(),
                             },
+                            &ref_env.joins,
                         ),
                     );
                 }
@@ -1112,6 +1154,7 @@ fn validate_no_ref_access_in_render_impl(
                                 loc: instr.loc,
                                 ref_id: None,
                             },
+                            &ref_env.joins,
                         ),
                     );
                 }
@@ -1161,5 +1204,5 @@ fn validate_no_ref_access_in_render_impl(
         return RefAccessType::None;
     }
 
-    join_ref_access_types_many(&return_values)
+    join_ref_access_types_many(&return_values, &ref_env.joins)
 }

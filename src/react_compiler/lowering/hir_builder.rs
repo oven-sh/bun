@@ -12,10 +12,10 @@ use crate::diagnostics::CompilerError;
 use crate::diagnostics::CompilerErrorDetail;
 use crate::diagnostics::ErrorCategory;
 use crate::diagnostics::Position;
+use crate::hir::cfg_utils::get_reverse_postordered_blocks;
 use crate::hir::cfg_utils::mark_instruction_ids;
+use crate::hir::cfg_utils::mark_predecessors;
 use crate::hir::environment::Environment;
-use crate::hir::visitors::each_terminal_successor;
-use crate::hir::visitors::terminal_fallthrough;
 use crate::hir::*;
 use bun_ast::{self as ast, E, G, Loc, Ref, Symbol, symbol};
 
@@ -130,7 +130,7 @@ fn convert_binding_kind(kind: symbol::Kind) -> BindingKind {
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy)]
-pub(crate) enum FunctionNode<'a> {
+pub enum FunctionNode<'a> {
     Function(&'a G::Fn),
     Arrow(&'a E::Arrow),
 }
@@ -281,10 +281,10 @@ pub(crate) struct HirBuilder<'h> {
     context: IndexMap<Ref, Option<SourceLocation>>,
     /// Resolved bindings: maps a `Ref` to the HIR IdentifierId created for it.
     bindings: IndexMap<Ref, IdentifierId>,
-    /// Refs already resolved to bindings, for collision avoidance.
-    used_refs: IndexSet<Ref>,
     env: &'h mut Environment,
     host: &'h dyn Host,
+    type_casts: &'h [(Loc, Loc)],
+    targets_with_defaults: &'h [(Loc, Loc)],
     exception_handler_stack: Vec<BlockId>,
     /// Flat instruction table being built up.
     instruction_table: HirVec<Instruction>,
@@ -324,7 +324,6 @@ impl<'h> HirBuilder<'h> {
         bindings: Option<IndexMap<Ref, IdentifierId>>,
         context: Option<IndexMap<Ref, Option<SourceLocation>>>,
         entry_block_kind: Option<BlockKind>,
-        used_refs: Option<IndexSet<Ref>>,
     ) -> Self {
         let entry = env.next_block_id();
         let kind = entry_block_kind.unwrap_or(BlockKind::Block);
@@ -335,9 +334,10 @@ impl<'h> HirBuilder<'h> {
             scopes: Vec::new(),
             context: context.unwrap_or_default(),
             bindings: bindings.unwrap_or_default(),
-            used_refs: used_refs.unwrap_or_default(),
             env,
             host,
+            type_casts: host.type_casts(),
+            targets_with_defaults: host.targets_with_defaults(),
             exception_handler_stack: Vec::new(),
             instruction_table: AstAlloc::vec(),
             function_scope,
@@ -358,6 +358,19 @@ impl<'h> HirBuilder<'h> {
 
     pub(crate) fn host(&self) -> &'h dyn Host {
         self.host
+    }
+
+    pub(crate) fn type_cast_around(&self, operand: Loc) -> Option<Loc> {
+        let casts = self.type_casts;
+        let at = casts.binary_search_by_key(&operand.start, |it| it.0.start);
+        Some(casts.get(at.ok()?)?.1)
+    }
+
+    /// The place of `x = d` for that of its `x`. What has no default has its own.
+    pub(crate) fn with_default(&self, target: Loc) -> Loc {
+        let all = self.targets_with_defaults;
+        let at = all.binary_search_by_key(&target.start, |it| it.0.start);
+        at.ok().and_then(|at| all.get(at)).map_or(target, |it| it.1)
     }
 
     pub(crate) fn set_import_bindings(&mut self, bindings: IndexMap<Ref, VariableBinding>) {
@@ -437,24 +450,14 @@ impl<'h> HirBuilder<'h> {
         (self.host, self.env)
     }
 
-    pub(crate) fn bindings(&self) -> &IndexMap<Ref, IdentifierId> {
-        &self.bindings
+    /// For the builder of a nested function, which starts with the bindings of this one.
+    pub(crate) fn take_bindings(&mut self) -> IndexMap<Ref, IdentifierId> {
+        std::mem::take(&mut self.bindings)
     }
 
-    pub(crate) fn used_refs(&self) -> &IndexSet<Ref> {
-        &self.used_refs
-    }
-
-    pub(crate) fn merge_used_refs(&mut self, child_used_refs: &IndexSet<Ref>) {
-        for &ref_ in child_used_refs.iter() {
-            self.used_refs.insert(ref_);
-        }
-    }
-
-    pub(crate) fn merge_bindings(&mut self, child_bindings: IndexMap<Ref, IdentifierId>) {
-        for (ref_, identifier_id) in child_bindings {
-            self.bindings.entry(ref_).or_insert(identifier_id);
-        }
+    /// What [`Self::take_bindings`] gave, and the bindings that the nested function added.
+    pub(crate) fn put_bindings(&mut self, child_bindings: IndexMap<Ref, IdentifierId>) {
+        self.bindings = child_bindings;
     }
 
     pub(crate) fn push(&mut self, instruction: Instruction) {
@@ -595,20 +598,19 @@ impl<'h> HirBuilder<'h> {
             break_block,
         });
         let value = f(self)?;
-        let last = self
-            .scopes
-            .pop()
-            .expect("Mismatched loop scope: stack empty");
+        let last = self.scopes.pop().ok_or_else(|| {
+            crate::diagnostics::cold_invariant("Mismatched loop scope: stack empty", None, None)
+        })?;
         match &last {
             Scope::Loop {
                 label: l,
                 continue_block: c,
                 break_block: b,
             } => {
-                assert!(
+                crate::diagnostics::invariant(
                     *l == label && *c == continue_block && *b == break_block,
-                    "Mismatched loop scope"
-                );
+                    "Mismatched loop scope",
+                )?;
             }
             _ => {
                 return Err(CompilerDiagnostic::new(
@@ -633,16 +635,18 @@ impl<'h> HirBuilder<'h> {
             break_block,
         });
         let value = f(self)?;
-        let last = self
-            .scopes
-            .pop()
-            .expect("Mismatched label scope: stack empty");
+        let last = self.scopes.pop().ok_or_else(|| {
+            crate::diagnostics::cold_invariant("Mismatched label scope: stack empty", None, None)
+        })?;
         match &last {
             Scope::Label {
                 label: l,
                 break_block: b,
             } => {
-                assert!(*l == label && *b == break_block, "Mismatched label scope");
+                crate::diagnostics::invariant(
+                    *l == label && *b == break_block,
+                    "Mismatched label scope",
+                )?;
             }
             _ => {
                 return Err(CompilerDiagnostic::new(
@@ -667,16 +671,18 @@ impl<'h> HirBuilder<'h> {
             break_block,
         });
         let value = f(self)?;
-        let last = self
-            .scopes
-            .pop()
-            .expect("Mismatched switch scope: stack empty");
+        let last = self.scopes.pop().ok_or_else(|| {
+            crate::diagnostics::cold_invariant("Mismatched switch scope: stack empty", None, None)
+        })?;
         match &last {
             Scope::Switch {
                 label: l,
                 break_block: b,
             } => {
-                assert!(*l == label && *b == break_block, "Mismatched switch scope");
+                crate::diagnostics::invariant(
+                    *l == label && *b == break_block,
+                    "Mismatched switch scope",
+                )?;
             }
             _ => {
                 return Err(CompilerDiagnostic::new(
@@ -761,15 +767,7 @@ impl<'h> HirBuilder<'h> {
 
     pub(crate) fn build(
         mut self,
-    ) -> Result<
-        (
-            HIR,
-            HirVec<Instruction>,
-            IndexSet<Ref>,
-            IndexMap<Ref, IdentifierId>,
-        ),
-        CompilerError,
-    > {
+    ) -> Result<(HIR, HirVec<Instruction>, IndexMap<Ref, IdentifierId>), CompilerError> {
         let mut hir = HIR {
             blocks: std::mem::take(&mut self.completed),
             entry: self.entry,
@@ -777,7 +775,7 @@ impl<'h> HirBuilder<'h> {
 
         let mut instructions = AstAlloc::take(&mut self.instruction_table);
 
-        let rpo_blocks = get_reverse_postordered_blocks(&hir, &instructions);
+        let rpo_blocks = get_reverse_postordered_blocks(&hir, &instructions)?;
 
         for (id, block) in &hir.blocks {
             if !rpo_blocks.contains_key(id) {
@@ -812,9 +810,8 @@ impl<'h> HirBuilder<'h> {
         mark_instruction_ids(&mut hir, &mut instructions);
         mark_predecessors(&mut hir);
 
-        let used_refs = self.used_refs;
         let bindings = self.bindings;
-        Ok((hir, instructions, used_refs, bindings))
+        Ok((hir, instructions, bindings))
     }
 
     // -----------------------------------------------------------------------
@@ -881,37 +878,21 @@ impl<'h> HirBuilder<'h> {
             return Err(CompilerError::from(reserved_identifier_diagnostic(&name)));
         }
 
-        let name_taken = |env: &Environment,
-                          used_refs: &IndexSet<Ref>,
-                          bindings: &IndexMap<Ref, IdentifierId>,
-                          candidate: &[u8],
-                          ref_: Ref|
-         -> bool {
-            used_refs.iter().any(|&r| {
-                r != ref_
-                    && bindings.get(&r).is_some_and(|&id| {
-                        matches!(
-                            &env.identifiers[id.0 as usize].name,
-                            Some(IdentifierName::Named(n)) if n.slice() == candidate
-                        )
-                    })
-            })
-        };
-
+        // The first of `name`, `name_0`, `name_1`, .. that no binding has.
+        let stored_name = StoreStr::new(self.host.ref_name(ref_));
         let mut candidate = name.clone();
-        let mut index = 0u32;
-        while name_taken(
-            self.env,
-            &self.used_refs,
-            &self.bindings,
-            candidate.as_bytes(),
-            ref_,
-        ) {
-            candidate = format!("{}_{}", name, index);
-            index += 1;
+        if let Some(&first_untried) = self.env.binding_names.get(&stored_name) {
+            let mut index = first_untried;
+            loop {
+                candidate = format!("{}_{}", name, index);
+                index += 1;
+                if !self.env.binding_names.contains_key(candidate.as_bytes()) {
+                    break;
+                }
+            }
+            self.env.binding_names.insert(stored_name, index);
         }
 
-        let stored_name = StoreStr::new(self.host.ref_name(ref_));
         let stored_candidate = if candidate == name {
             stored_name
         } else {
@@ -935,7 +916,7 @@ impl<'h> HirBuilder<'h> {
             self.env.identifiers[id.0 as usize].loc = Some(loc);
         }
 
-        self.used_refs.insert(ref_);
+        self.env.binding_names.insert(stored_candidate, 0);
         self.bindings.insert(ref_, id);
         Ok(id)
     }
@@ -1015,11 +996,8 @@ impl<'h> HirBuilder<'h> {
             _ => {}
         }
 
-        let module_scope = self.host.module_scope();
-        if let Some(member) = module_scope.members.get(sym.original_name.slice()) {
-            if member.ref_ == ref_ {
-                return Ok(VariableBinding::ModuleLocal { name });
-            }
+        if self.host.is_module_level(ref_) {
+            return Ok(VariableBinding::ModuleLocal { name });
         }
         // Module-scope generated symbols (jsx-runtime `jsx`/`jsxDEV`/`Fragment`,
         // compiler-runtime `c`, etc.) are minted by the parser's visit pass after
@@ -1027,7 +1005,7 @@ impl<'h> HirBuilder<'h> {
         // and `import_bindings`. They are module-level imports, not locals —
         // classify them as Global so inference initializes them as Frozen instead
         // of tripping the "Expected value kind to be initialized" invariant.
-        if module_scope.generated.contains(&ref_) {
+        if self.host.module_scope().generated.contains(&ref_) {
             return Ok(VariableBinding::Global { name });
         }
 
@@ -1043,15 +1021,8 @@ impl<'h> HirBuilder<'h> {
     /// enclosing function scope).
     pub(crate) fn is_context_identifier(&self, ref_: Ref) -> bool {
         let ref_ = self.resolve_ref(ref_);
-        if let Some(member) = self.symbol(ref_).and_then(|sym| {
-            self.host
-                .module_scope()
-                .members
-                .get(sym.original_name.slice())
-        }) {
-            if member.ref_ == ref_ {
-                return false;
-            }
+        if ref_.is_symbol() && self.host.is_module_level(ref_) {
+            return false;
         }
         self.context_identifiers.contains(&ref_)
     }
@@ -1064,103 +1035,6 @@ impl<'h> HirBuilder<'h> {
 // ---------------------------------------------------------------------------
 // Post-build helper functions
 // ---------------------------------------------------------------------------
-
-fn get_reverse_postordered_blocks(
-    hir: &HIR,
-    _instructions: &[Instruction],
-) -> IndexMap<BlockId, BasicBlock> {
-    let mut visited: IndexSet<BlockId> = IndexSet::new();
-    let mut used: IndexSet<BlockId> = IndexSet::new();
-    let mut used_fallthroughs: IndexSet<BlockId> = IndexSet::new();
-    let mut postorder: Vec<BlockId> = Vec::new();
-
-    fn visit(
-        hir: &HIR,
-        block_id: BlockId,
-        is_used: bool,
-        visited: &mut IndexSet<BlockId>,
-        used: &mut IndexSet<BlockId>,
-        used_fallthroughs: &mut IndexSet<BlockId>,
-        postorder: &mut Vec<BlockId>,
-    ) {
-        let was_used = used.contains(&block_id);
-        let was_visited = visited.contains(&block_id);
-        visited.insert(block_id);
-        if is_used {
-            used.insert(block_id);
-        }
-        if was_visited && (was_used || !is_used) {
-            return;
-        }
-
-        let block = hir
-            .blocks
-            .get(&block_id)
-            .unwrap_or_else(|| panic!("[HIRBuilder] expected block {:?} to exist", block_id));
-
-        let mut successors = each_terminal_successor(&block.terminal);
-        successors.reverse();
-
-        let fallthrough = terminal_fallthrough(&block.terminal);
-
-        if let Some(ft) = fallthrough {
-            if is_used {
-                used_fallthroughs.insert(ft);
-            }
-            visit(hir, ft, false, visited, used, used_fallthroughs, postorder);
-        }
-        for successor in successors {
-            visit(
-                hir,
-                successor,
-                is_used,
-                visited,
-                used,
-                used_fallthroughs,
-                postorder,
-            );
-        }
-
-        if !was_visited {
-            postorder.push(block_id);
-        }
-    }
-
-    visit(
-        hir,
-        hir.entry,
-        true,
-        &mut visited,
-        &mut used,
-        &mut used_fallthroughs,
-        &mut postorder,
-    );
-
-    let mut blocks = IndexMap::new();
-    for block_id in postorder.into_iter().rev() {
-        let block = hir.blocks.get(&block_id).unwrap();
-        if used.contains(&block_id) {
-            blocks.insert(block_id, block.clone());
-        } else if used_fallthroughs.contains(&block_id) {
-            blocks.insert(
-                block_id,
-                BasicBlock {
-                    kind: block.kind,
-                    id: block_id,
-                    instructions: AstAlloc::vec(),
-                    terminal: Terminal::Unreachable {
-                        id: block.terminal.evaluation_order(),
-                        loc: block.terminal.loc().copied(),
-                    },
-                    preds: block.preds.clone(),
-                    phis: AstAlloc::vec(),
-                },
-            );
-        }
-    }
-
-    blocks
-}
 
 fn remove_unreachable_for_updates(hir: &mut HIR) {
     let block_ids: IndexSet<BlockId> = hir.blocks.keys().copied().collect();
@@ -1248,46 +1122,6 @@ fn remove_unnecessary_try_catch(hir: &mut HIR) {
             }
         }
     }
-}
-
-fn mark_predecessors(hir: &mut HIR) {
-    for block in hir.blocks.values_mut() {
-        block.preds.clear();
-    }
-
-    let mut visited: IndexSet<BlockId> = IndexSet::new();
-
-    fn visit(
-        hir: &mut HIR,
-        block_id: BlockId,
-        prev_block_id: Option<BlockId>,
-        visited: &mut IndexSet<BlockId>,
-    ) {
-        if let Some(prev_id) = prev_block_id {
-            if let Some(block) = hir.blocks.get_mut(&block_id) {
-                block.preds.insert(prev_id);
-            } else {
-                return;
-            }
-        }
-
-        if visited.contains(&block_id) {
-            return;
-        }
-        visited.insert(block_id);
-
-        let successors = if let Some(block) = hir.blocks.get(&block_id) {
-            each_terminal_successor(&block.terminal)
-        } else {
-            return;
-        };
-
-        for successor in successors {
-            visit(hir, successor, Some(block_id), visited);
-        }
-    }
-
-    visit(hir, hir.entry, None, &mut visited);
 }
 
 // ---------------------------------------------------------------------------

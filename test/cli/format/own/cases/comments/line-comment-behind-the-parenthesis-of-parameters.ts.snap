@@ -1,0 +1,75 @@
+------------------
+{ printWidth: 80 }
+------------------
+export function alias<TTable extends SingleStoreTable, TAlias extends string>(
+  // | SingleStoreViewBase
+  table: TTable,
+  alias: TAlias,
+): X {
+  return 1;
+}
+export function alia2(
+  // c
+  table: TTable,
+): X {
+  return 1;
+}
+class A {
+  from<TFrom extends SingleStoreTable | Subquery | SQL>(
+    // | SingleStoreViewBase
+    source: TFrom,
+  ): X {}
+  fro2(
+    // c
+    source: TFrom,
+  ): X {}
+}
+interface I {
+  <Base, D = Draft<Base>>(
+    // By using a default inferred D
+    base: Base,
+  ): Base;
+  (
+    // c
+    base: Base,
+  ): Base;
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+export function alias<TTable extends SingleStoreTable, TAlias extends string>(
+  // | SingleStoreViewBase
+  table: TTable,
+  alias: TAlias,
+): X {
+  return 1;
+}
+export function alia2(
+  // c
+  table: TTable,
+): X {
+  return 1;
+}
+class A {
+  from<TFrom extends SingleStoreTable | Subquery | SQL>(
+    // | SingleStoreViewBase
+    source: TFrom,
+  ): X {}
+  fro2(
+    // c
+    source: TFrom,
+  ): X {}
+}
+interface I {
+  <Base, D = Draft<Base>>(
+    // By using a default inferred D
+    base: Base,
+  ): Base;
+  (
+    // c
+    base: Base,
+  ): Base;
+}
+
+===================== End =====================

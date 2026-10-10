@@ -11,6 +11,8 @@
 //! creation, aliasing, mutation, freezing, and error conditions for each
 //! instruction and terminal in the HIR.
 
+use std::rc::Rc;
+
 use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::diagnostics::CompilerDiagnostic;
@@ -60,7 +62,7 @@ pub(crate) fn infer_mutation_aliasing_effects(
     is_function_expression: bool,
 ) -> Result<(), CompilerDiagnostic> {
     // ValueIds are dense and pass-local so `InferenceState.values` can be a
-    // flat Vec; allocation starts at 0 and continues via `Context.next_value_id`.
+    // `ChunkedVec`; allocation starts at 0 and continues via `Context.next_value_id`.
     let mut next_value_id = 0u32;
 
     let mut initial_state = InferenceState::empty(is_function_expression, env.identifiers.len());
@@ -243,6 +245,9 @@ pub(crate) fn infer_mutation_aliasing_effects(
         }
     }
 
+    if !env.has_stack() {
+        return Err(crate::lowering::nested_too_deeply());
+    }
     Ok(())
 }
 
@@ -290,7 +295,7 @@ fn blocks_reachable_from_back_edges(func: &HirFunction) -> HashSet<BlockId> {
 /// Unique allocation-site identifier, replacing TS's object-identity on InstructionValue.
 ///
 /// IDs are dense and pass-local (allocated via `Context.next_value_id`) so
-/// `InferenceState.values` can be a flat Vec.
+/// `InferenceState.values` can be a `ChunkedVec`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 struct ValueId(u32);
@@ -317,81 +322,42 @@ fn hashset_of(r: ValueReason) -> ValueReasonSet {
 /// 16-byte points-to set for an identifier.
 ///
 /// Typical cardinality is 1; phis with N predecessors merge N sets. The inline
-/// storage holds up to 3 `ValueId`s in 12 bytes; the 4th byte word is the
-/// length. Past 3 entries the inline words are repurposed as a heap pointer +
-/// capacity. The dense `Variables::Dense` Vec is mostly inline cells, so its
-/// `clone()` is one allocation + a memcpy.
-///
-/// Layout (64-bit only):
-///   - inline (`len <= INLINE_CAP`): `words[..len]` are `ValueId`s.
-///   - heap (`len > INLINE_CAP`): `words[0..2]` is `*mut ValueId`, `words[2]`
-///     is capacity, `len` is the element count.
-struct ValueIdSet {
-    words: [u32; 3],
-    len: u32,
+/// storage holds up to 3 `ValueId`s; states share a larger set until one inserts into it.
+#[derive(Clone)]
+enum ValueIdSet {
+    Inline { len: u8, items: [ValueId; 3] },
+    Spilled(Rc<Vec<ValueId>>),
 }
 
 const _: () = assert!(std::mem::size_of::<ValueIdSet>() == 16);
-const _: () = assert!(std::mem::size_of::<usize>() == 8);
 
 impl ValueIdSet {
-    const INLINE_CAP: u32 = 3;
-
     #[inline]
     const fn new() -> Self {
-        ValueIdSet {
-            words: [0; 3],
+        ValueIdSet::Inline {
             len: 0,
+            items: [ValueId(0); 3],
         }
     }
 
     #[inline]
     fn singleton(v: ValueId) -> Self {
-        ValueIdSet {
-            words: [v.0, 0, 0],
+        ValueIdSet::Inline {
             len: 1,
+            items: [v, ValueId(0), ValueId(0)],
         }
     }
 
     #[inline]
     fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
-    #[inline]
-    fn is_heap(&self) -> bool {
-        self.len > Self::INLINE_CAP
-    }
-
-    #[inline]
-    fn heap_ptr(&self) -> *mut ValueId {
-        debug_assert!(self.is_heap());
-        let raw = (self.words[0] as u64) | ((self.words[1] as u64) << 32);
-        raw as usize as *mut ValueId
-    }
-
-    #[inline]
-    fn set_heap_ptr(&mut self, ptr: *mut ValueId, cap: u32) {
-        let raw = ptr as usize as u64;
-        self.words[0] = raw as u32;
-        self.words[1] = (raw >> 32) as u32;
-        self.words[2] = cap;
+        matches!(self, ValueIdSet::Inline { len: 0, .. })
     }
 
     #[inline]
     fn as_slice(&self) -> &[ValueId] {
-        if self.is_heap() {
-            // SAFETY: heap layout invariant — `heap_ptr()` points at a live
-            // `Vec<ValueId>` allocation of `len` initialized elements (see
-            // `push`/`clone`/`Drop`).
-            unsafe { std::slice::from_raw_parts(self.heap_ptr(), self.len as usize) }
-        } else {
-            // SAFETY: `ValueId` is `#[repr(transparent)]` over `u32`, so the
-            // inline `[u32; 3]` is layout-identical to `[ValueId; 3]`; `len <=
-            // INLINE_CAP` in this branch.
-            unsafe {
-                std::slice::from_raw_parts(self.words.as_ptr().cast::<ValueId>(), self.len as usize)
-            }
+        match self {
+            ValueIdSet::Inline { len, items } => &items[..usize::from(*len)],
+            ValueIdSet::Spilled(values) => values,
         }
     }
 
@@ -401,37 +367,20 @@ impl ValueIdSet {
     }
 
     fn push(&mut self, v: ValueId) {
-        if self.is_heap() {
-            let cap = self.words[2];
-            if self.len == cap {
-                let new_cap = cap * 2;
-                // SAFETY: heap layout invariant — `heap_ptr()/len/cap` are the
-                // exact `(ptr, len, cap)` triple stored by the previous
-                // `push`/`clone`, originating from a `Vec<ValueId>` allocation.
-                let mut vec = std::mem::ManuallyDrop::new(unsafe {
-                    Vec::from_raw_parts(self.heap_ptr(), self.len as usize, cap as usize)
-                });
-                vec.reserve_exact((new_cap - cap) as usize);
-                vec.push(v);
-                self.set_heap_ptr(vec.as_mut_ptr(), vec.capacity() as u32);
-                self.len = vec.len() as u32;
-            } else {
-                // SAFETY: `len < cap`, so `heap_ptr().add(len)` lies within the
-                // owned allocation; `ValueId` is `Copy` so no drop is skipped.
-                unsafe { *self.heap_ptr().add(self.len as usize) = v };
-                self.len += 1;
-            }
-        } else if self.len < Self::INLINE_CAP {
-            self.words[self.len as usize] = v.0;
-            self.len += 1;
-        } else {
-            let mut vec = std::mem::ManuallyDrop::new(Vec::<ValueId>::with_capacity(8));
-            vec.push(ValueId(self.words[0]));
-            vec.push(ValueId(self.words[1]));
-            vec.push(ValueId(self.words[2]));
-            vec.push(v);
-            self.set_heap_ptr(vec.as_mut_ptr(), vec.capacity() as u32);
-            self.len = vec.len() as u32;
+        match self {
+            ValueIdSet::Inline { len, items } => match items.get_mut(usize::from(*len)) {
+                Some(item) => {
+                    *item = v;
+                    *len += 1;
+                }
+                None => {
+                    let mut values = Vec::with_capacity(8);
+                    values.extend_from_slice(items.as_slice());
+                    values.push(v);
+                    *self = ValueIdSet::Spilled(Rc::new(values));
+                }
+            },
+            ValueIdSet::Spilled(values) => Rc::make_mut(values).push(v),
         }
     }
 
@@ -446,44 +395,52 @@ impl ValueIdSet {
         }
     }
 
+    /// `insert` of each value of `other`, in its order. Returns `true` if any was inserted.
+    ///
+    /// The set of a phi at the end of n branches has n values, and is merged n times.
+    fn union_with(&mut self, other: &ValueIdSet) -> bool {
+        const FEW: usize = 16;
+        if self.is_empty() {
+            *self = other.clone();
+            return !other.is_empty();
+        }
+        if let (ValueIdSet::Spilled(this), ValueIdSet::Spilled(that)) = (&*self, other)
+            && Rc::ptr_eq(this, that)
+        {
+            return false;
+        }
+        let mut changed = false;
+        let few = self.as_slice().len() <= FEW && other.as_slice().len() <= FEW;
+        if few || other.as_slice().len() <= 1 {
+            for v in other {
+                changed |= self.insert(*v);
+            }
+            return changed;
+        }
+        // What is merged is most often an earlier state of the same set.
+        if self.as_slice().starts_with(other.as_slice()) {
+            return false;
+        }
+        let mut members: HashSet<ValueId> = self.iter().copied().collect();
+        for v in other {
+            if members.insert(*v) {
+                self.push(*v);
+                changed = true;
+            }
+        }
+        changed
+    }
+
     #[inline]
     fn iter(&self) -> std::slice::Iter<'_, ValueId> {
         self.as_slice().iter()
     }
 }
 
-impl Clone for ValueIdSet {
+impl Default for ValueIdSet {
     #[inline]
-    fn clone(&self) -> Self {
-        if self.is_heap() {
-            let mut vec = std::mem::ManuallyDrop::new(self.as_slice().to_vec());
-            let mut out = ValueIdSet {
-                words: [0; 3],
-                len: vec.len() as u32,
-            };
-            out.set_heap_ptr(vec.as_mut_ptr(), vec.capacity() as u32);
-            out
-        } else {
-            ValueIdSet {
-                words: self.words,
-                len: self.len,
-            }
-        }
-    }
-}
-
-impl Drop for ValueIdSet {
-    #[inline]
-    fn drop(&mut self) {
-        if self.is_heap() {
-            let cap = self.words[2] as usize;
-            // SAFETY: heap layout invariant — exactly the `(ptr, len, cap)`
-            // produced by `push`/`clone` from a `Vec<ValueId>` allocation, and
-            // `ValueIdSet` is not `Copy`, so this is the unique owner.
-            unsafe {
-                drop(Vec::from_raw_parts(self.heap_ptr(), self.len as usize, cap));
-            }
-        }
+    fn default() -> Self {
+        ValueIdSet::new()
     }
 }
 
@@ -502,6 +459,60 @@ impl<'a> IntoIterator for &'a ValueIdSet {
     }
 }
 
+const CHUNK: usize = 64;
+
+/// A vector in chunks that its clones share until one of them writes to the chunk.
+#[derive(Debug, Clone)]
+struct ChunkedVec<T>(Vec<Rc<[T; CHUNK]>>);
+
+impl<T: Clone + Default> ChunkedVec<T> {
+    fn with_len(len: usize) -> Self {
+        let mut this = ChunkedVec(Vec::new());
+        this.grow(len.div_ceil(CHUNK));
+        this
+    }
+
+    fn grow(&mut self, chunks: usize) {
+        if chunks > self.0.len() {
+            let empty = Rc::new(std::array::from_fn(|_| T::default()));
+            self.0.resize(chunks, empty);
+        }
+    }
+
+    #[inline]
+    fn get(&self, i: usize) -> Option<&T> {
+        self.0.get(i / CHUNK).map(|chunk| &chunk[i % CHUNK])
+    }
+
+    #[inline]
+    fn get_mut(&mut self, i: usize) -> &mut T {
+        self.grow(i / CHUNK + 1);
+        &mut Rc::make_mut(&mut self.0[i / CHUNK])[i % CHUNK]
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &T> {
+        self.0.iter().flat_map(|chunk| chunk.iter())
+    }
+
+    /// Puts `merged(mine, theirs)` at each index where it is something, and copies no chunk for less. Whether it was.
+    fn merge_from(&mut self, other: &Self, merged: impl Fn(&T, &T) -> Option<T>) -> bool {
+        self.grow(other.0.len());
+        let mut changed = false;
+        for (mine, theirs) in self.0.iter_mut().zip(&other.0) {
+            if Rc::ptr_eq(mine, theirs) {
+                continue;
+            }
+            for (at, theirs) in theirs.iter().enumerate() {
+                if let Some(merged) = merged(&mine[at], theirs) {
+                    Rc::make_mut(mine)[at] = merged;
+                    changed = true;
+                }
+            }
+        }
+        changed
+    }
+}
+
 // =============================================================================
 // Variables — IdentifierId → ValueIdSet, dense or sparse
 // =============================================================================
@@ -510,102 +521,33 @@ impl<'a> IntoIterator for &'a ValueIdSet {
 ///
 /// `IdentifierId` indexes `env.identifiers`, which is shared across the
 /// top-level component and all nested closures. For the top-level component
-/// (where most fixpoint time is spent) a flat `Vec` indexed by `IdentifierId`
-/// makes `clone()` one allocation + memcpy. For nested function expressions the
+/// it indexes a [`ChunkedVec`]. For nested function expressions the
 /// same Vec would be thousands of empty slots for a handful of live ids, so
 /// those keep a `HashMap`.
-///
-/// `any_heap` records whether any `Dense` slot has spilled past
-/// [`ValueIdSet::INLINE_CAP`]. While it stays `false` (the overwhelming
-/// common case) the slab is plain data — `Clone` is one `memcpy` and `Drop` is
-/// one deallocation, with no per-element loop.
+#[derive(Clone)]
 enum Variables {
-    Dense {
-        vec: Vec<ValueIdSet>,
-        any_heap: bool,
-    },
+    Dense(ChunkedVec<ValueIdSet>),
     Sparse(HashMap<IdentifierId, ValueIdSet>),
-}
-
-impl Clone for Variables {
-    fn clone(&self) -> Self {
-        match self {
-            Variables::Dense { vec, any_heap } => {
-                let len = vec.len();
-                let mut out = Vec::<ValueIdSet>::with_capacity(len);
-                let dst = out.as_mut_ptr();
-                // SAFETY: `dst` has `len` uninitialized slots. Inline cells are
-                // valid as bitcopies; heap cells are overwritten with a fresh
-                // allocation via `ptr::write` (no drop of the bit-aliased
-                // pointer) before `set_len` makes `dst` droppable.
-                unsafe {
-                    std::ptr::copy_nonoverlapping(vec.as_ptr(), dst, len);
-                    if *any_heap {
-                        for (i, src) in vec.iter().enumerate() {
-                            if src.is_heap() {
-                                dst.add(i).write(src.clone());
-                            }
-                        }
-                    }
-                    out.set_len(len);
-                }
-                Variables::Dense {
-                    vec: out,
-                    any_heap: *any_heap,
-                }
-            }
-            Variables::Sparse(m) => Variables::Sparse(m.clone()),
-        }
-    }
-}
-
-impl Drop for Variables {
-    #[inline]
-    fn drop(&mut self) {
-        if let Variables::Dense {
-            vec,
-            any_heap: false,
-        } = self
-        {
-            // SAFETY: every element is inline (no owned heap), so dropping
-            // them is a no-op; clearing `len` lets `Vec`'s own drop deallocate
-            // without the per-element `ValueIdSet::drop` loop.
-            unsafe { vec.set_len(0) };
-        }
-    }
 }
 
 impl Variables {
     #[inline]
     fn get(&self, id: IdentifierId) -> Option<&ValueIdSet> {
         match self {
-            Variables::Dense { vec, .. } => match vec.get(id.0 as usize) {
-                Some(set) if !set.is_empty() => Some(set),
-                _ => None,
-            },
+            Variables::Dense(sets) => sets.get(id.0 as usize).filter(|set| !set.is_empty()),
             Variables::Sparse(m) => m.get(&id),
         }
     }
 
     #[inline]
     fn is_defined(&self, id: IdentifierId) -> bool {
-        match self {
-            Variables::Dense { vec, .. } => vec.get(id.0 as usize).is_some_and(|s| !s.is_empty()),
-            Variables::Sparse(m) => m.contains_key(&id),
-        }
+        self.get(id).is_some()
     }
 
     fn insert(&mut self, id: IdentifierId, set: ValueIdSet) {
         debug_assert!(!set.is_empty());
         match self {
-            Variables::Dense { vec, any_heap } => {
-                *any_heap |= set.is_heap();
-                let i = id.0 as usize;
-                if i >= vec.len() {
-                    vec.resize_with(i + 1, ValueIdSet::new);
-                }
-                vec[i] = set;
-            }
+            Variables::Dense(sets) => *sets.get_mut(id.0 as usize) = set,
             Variables::Sparse(m) => {
                 m.insert(id, set);
             }
@@ -613,26 +555,19 @@ impl Variables {
     }
 
     /// Set-union `values` into the existing entry at `id`. No-op if `id` is
-    /// undefined. Only call site of the former `get_mut_defined`, folded in so
-    /// `any_heap` stays accurate.
+    /// undefined.
     fn extend_values(&mut self, id: IdentifierId, values: &ValueIdSet) {
         match self {
-            Variables::Dense { vec, any_heap } => {
-                let Some(prev) = vec.get_mut(id.0 as usize).filter(|s| !s.is_empty()) else {
-                    return;
-                };
-                for v in values {
-                    prev.insert(*v);
+            Variables::Dense(sets) => {
+                if sets.get(id.0 as usize).is_some_and(|set| !set.is_empty()) {
+                    sets.get_mut(id.0 as usize).union_with(values);
                 }
-                *any_heap |= prev.is_heap();
             }
             Variables::Sparse(m) => {
                 let Some(prev) = m.get_mut(&id) else {
                     return;
                 };
-                for v in values {
-                    prev.insert(*v);
-                }
+                prev.union_with(values);
             }
         }
     }
@@ -642,8 +577,8 @@ impl std::fmt::Debug for Variables {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut map = f.debug_map();
         match self {
-            Variables::Dense { vec, .. } => {
-                for (i, set) in vec.iter().enumerate() {
+            Variables::Dense(sets) => {
+                for (i, set) in sets.iter().enumerate() {
                     if !set.is_empty() {
                         map.entry(&i, set);
                     }
@@ -665,14 +600,12 @@ impl std::fmt::Debug for Variables {
 
 /// The abstract state tracked during inference.
 ///
-/// `values` is a dense Vec indexed by `ValueId.0` (pass-local, starts at 0) so
-/// `clone()` is a memcpy of small `Copy` cells and `merge_from()` is an
-/// elementwise loop. `variables` is dense (`Vec`) for the top-level function
+/// `variables` is dense for the top-level function
 /// and sparse (`HashMap`) for nested function expressions — see [`Variables`].
 #[derive(Debug, Clone)]
 struct InferenceState {
     /// Kind of each allocation site, indexed by `ValueId.0`. `None` = unset.
-    values: Vec<Option<AbstractValue>>,
+    values: ChunkedVec<Option<AbstractValue>>,
     /// Points-to set per identifier.
     variables: Variables,
     uninitialized_access: std::cell::Cell<Option<(IdentifierId, Option<SourceLocation>)>>,
@@ -683,15 +616,10 @@ impl InferenceState {
         let variables = if is_function_expression {
             Variables::Sparse(HashMap::default())
         } else {
-            let mut vec = Vec::with_capacity(identifier_capacity);
-            vec.resize_with(identifier_capacity, ValueIdSet::new);
-            Variables::Dense {
-                vec,
-                any_heap: false,
-            }
+            Variables::Dense(ChunkedVec::with_len(identifier_capacity))
         };
         InferenceState {
-            values: Vec::new(),
+            values: ChunkedVec::with_len(0),
             variables,
             uninitialized_access: std::cell::Cell::new(None),
         }
@@ -699,11 +627,7 @@ impl InferenceState {
 
     #[inline]
     fn value_slot(&mut self, id: ValueId) -> &mut Option<AbstractValue> {
-        let i = id.0 as usize;
-        if i >= self.values.len() {
-            self.values.resize(i + 1, None);
-        }
-        &mut self.values[i]
+        self.values.get_mut(id.0 as usize)
     }
 
     /// Check the kind of a place, recording the usage location for error reporting.
@@ -846,67 +770,27 @@ impl InferenceState {
 
     /// Merge `other` into `self` in place. Returns `true` if `self` changed.
     fn merge_from(&mut self, other: &InferenceState) -> bool {
-        let mut changed = false;
-
-        if other.values.len() > self.values.len() {
-            self.values.resize(other.values.len(), None);
-        }
-        for (i, ov) in other.values.iter().enumerate() {
-            let Some(ov) = *ov else { continue };
-            match self.values[i] {
-                Some(this) => {
-                    let merged = merge_abstract_values(this, ov);
-                    if merged != this {
-                        self.values[i] = Some(merged);
-                        changed = true;
-                    }
-                }
-                None => {
-                    self.values[i] = Some(ov);
-                    changed = true;
-                }
-            }
-        }
+        let mut changed = self.values.merge_from(&other.values, |value, ov| {
+            let ov = (*ov)?;
+            let merged = match *value {
+                Some(this) => merge_abstract_values(this, ov),
+                None => ov,
+            };
+            (*value != Some(merged)).then_some(Some(merged))
+        });
 
         match (&mut self.variables, &other.variables) {
-            (
-                Variables::Dense {
-                    vec: this,
-                    any_heap,
-                },
-                Variables::Dense { vec: that, .. },
-            ) => {
-                if that.len() > this.len() {
-                    this.resize_with(that.len(), ValueIdSet::new);
-                }
-                for (i, other_values) in that.iter().enumerate() {
-                    if other_values.is_empty() {
-                        continue;
-                    }
-                    let this_values = &mut this[i];
-                    if this_values.is_empty() {
-                        *this_values = other_values.clone();
-                        changed = true;
-                    } else {
-                        for ov in other_values {
-                            if this_values.insert(*ov) {
-                                changed = true;
-                            }
-                        }
-                    }
-                    *any_heap |= this_values.is_heap();
-                }
+            (Variables::Dense(this), Variables::Dense(that)) => {
+                changed |= this.merge_from(that, |mine, theirs| {
+                    let mut all = mine.clone();
+                    all.union_with(theirs).then_some(all)
+                });
             }
             (Variables::Sparse(this), Variables::Sparse(that)) => {
                 for (id, other_values) in that {
                     match this.entry(*id) {
                         std::collections::hash_map::Entry::Occupied(mut e) => {
-                            let this_values = e.get_mut();
-                            for ov in other_values {
-                                if this_values.insert(*ov) {
-                                    changed = true;
-                                }
-                            }
+                            changed |= e.get_mut().union_with(other_values);
                         }
                         std::collections::hash_map::Entry::Vacant(e) => {
                             e.insert(other_values.clone());
@@ -930,9 +814,7 @@ impl InferenceState {
         let mut values = ValueIdSet::new();
         for (_, operand) in phi_operands {
             if let Some(operand_values) = self.variables.get(operand.identifier) {
-                for v in operand_values {
-                    values.insert(*v);
-                }
+                values.union_with(operand_values);
             }
             // If not found, it's a backedge that will be handled later by merge
         }
@@ -1691,6 +1573,9 @@ fn freeze_function_captures_transitive(
     reason: ValueReason,
 ) {
     if let Some(&func_id) = context.function_values.get(&value_id) {
+        if !env.has_stack() {
+            return;
+        }
         let ctx_ids: Vec<IdentifierId> = env.functions[func_id.0 as usize]
             .context
             .iter()
@@ -1760,10 +1645,10 @@ fn apply_effect(
             value: kind,
             reason,
         } => {
-            assert!(
+            crate::diagnostics::invariant(
                 !initialized.contains(&into.identifier),
-                "[InferMutationAliasingEffects] Cannot re-initialize variable within an instruction"
-            );
+                "[InferMutationAliasingEffects] Cannot re-initialize variable within an instruction",
+            )?;
             initialized.insert(into.identifier);
             let value_id = context.get_or_create_value_id(&effect);
             state.initialize(
@@ -1788,10 +1673,10 @@ fn apply_effect(
             }
         }
         AliasingEffect::CreateFrom { ref from, ref into } => {
-            assert!(
+            crate::diagnostics::invariant(
                 !initialized.contains(&into.identifier),
-                "[InferMutationAliasingEffects] Cannot re-initialize variable within an instruction"
-            );
+                "[InferMutationAliasingEffects] Cannot re-initialize variable within an instruction",
+            )?;
             initialized.insert(into.identifier);
             let from_value = state.kind(from.identifier);
             let value_id = context.get_or_create_value_id(&effect);
@@ -1842,10 +1727,10 @@ fn apply_effect(
             function_id,
             ref into,
         } => {
-            assert!(
+            crate::diagnostics::invariant(
                 !initialized.contains(&into.identifier),
-                "[InferMutationAliasingEffects] Cannot re-initialize variable within an instruction"
-            );
+                "[InferMutationAliasingEffects] Cannot re-initialize variable within an instruction",
+            )?;
             initialized.insert(into.identifier);
             effects.push(effect.clone());
 
@@ -1942,10 +1827,10 @@ fn apply_effect(
             let is_capture = matches!(effect, AliasingEffect::Capture { .. });
             let is_maybe_alias = matches!(effect, AliasingEffect::MaybeAlias { .. });
             // For Alias, destination must already be initialized (Capture/MaybeAlias are exempt)
-            assert!(
+            crate::diagnostics::invariant(
                 is_capture || is_maybe_alias || initialized.contains(&into.identifier),
-                "[InferMutationAliasingEffects] Expected destination to already be initialized within this instruction"
-            );
+                "[InferMutationAliasingEffects] Expected destination to already be initialized within this instruction",
+            )?;
 
             // Check destination kind
             let into_kind = state.kind_with_loc(into.identifier, into.loc).kind;
@@ -1998,10 +1883,10 @@ fn apply_effect(
             }
         }
         AliasingEffect::Assign { ref from, ref into } => {
-            assert!(
+            crate::diagnostics::invariant(
                 !initialized.contains(&into.identifier),
-                "[InferMutationAliasingEffects] Cannot re-initialize variable within an instruction"
-            );
+                "[InferMutationAliasingEffects] Cannot re-initialize variable within an instruction",
+            )?;
             initialized.insert(into.identifier);
             let from_value = state.kind_with_loc(from.identifier, from.loc);
             match from_value.kind {
@@ -2084,6 +1969,10 @@ fn apply_effect(
             ref signature,
             ref loc,
         } => {
+            // The one kind whose effects can be of its own kind: each cycle of calls comes through here.
+            if !env.has_stack() {
+                return Err(crate::lowering::nested_too_deeply());
+            }
             // First, check if the callee is a locally-declared function expression
             // whose aliasing effects we already know (TS lines 1016-1068)
             if state.is_defined(function.identifier) {

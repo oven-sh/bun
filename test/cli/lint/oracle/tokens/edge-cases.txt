@@ -1,0 +1,606 @@
+# Source texts where the tokens depend on the syntax. `=== <file name> [script]` starts a group, every line after it is
+# one text, in which `\n`, `\r`, `\\` and `\uXXXX` stand for that character.
+=== file.tsx
+<div>{(x as typeof a.b).c}</div>
+<div>{x as a.b}</div>
+<div>{a!.b}{(a).b}{((a)).b}{a?.b?.[c]?.d}{a.b<T>()}{new a.b()}{a.#b}</div>
+<div>{class extends a.b {}}{class implements a.b {}}</div>
+<div>{import.meta.env}{new.target.x}{function(){ return this.a.b }}</div>
+<div>{a.b`x${c.d}`}{`${e.f}`}</div>
+<div>{a /* c */ . /* d */ b}{a\n.b}{a // x\n.b}</div>
+<A.B.C x={d.e} y={(f: g.h) => i.j} />
+<div>{a.if}{a.type}{a.static}{a.let}{a.true}{a.null}{a.this}{this.this}</div>
+<div>{(): a.b => c.d}{<T extends a.b,>() => c.d}</div>
+<div>{a[b.c].d}{a().b}{a.b().c}{a.b.c.d}{(a.b).c}{a.b!.c}</div>
+<div>{typeof a.b}{void a.b}{let_.a}{x satisfies a.b}</div>
+<div onClick={() => { let x: typeof y.z = y.z; type Q = a.b; }} />
+<div>{function f(this: a.b) { super.x; }}</div>
+<div>{a.b}{a.b}{ñ.é}</div>
+a.b; <i/>; c.d; <i>{e.f}</i>; g.h
+const f = <T,>(x: T) => x;
+const f = <T extends U>(x: T) => x;
+const f = <const T,>(x: T) => x;
+<A<B> c="d" />
+<A<B<C>>></A>
+<A<B<C<D>>>>e</A>
+<A<() => void> b={1} />
+<A<{a: B<C>}> />
+<A<`a${B<C>}`> />
+<A<B, C<D>> {...e} />
+<A<typeof b.c> />
+<a-b c-d="e" f-g-h />
+<a:b c:d="e" />
+<a:b-c d-e:f-g="h"></a:b-c>
+<a.b.c />
+<this.a this="1" />
+<this />
+<a.this />
+<a this={this} if="1" class="x" for={y} type="z" null true false />
+<a /* c */ b // d\n c="d" />
+< a >x</ a >
+<a\n  b\n  =\n  "c"\n/>
+<a b="\" c='"' d="\n" e='\\' />
+<a b=<c/> />
+<a b=<c>d</c> e="f" />
+<a b={<c d={<e/>}/>}/>
+<a {...b} />
+<a>{...b}</a>
+<a>'"`// /* */ text</a>
+<a> b </a>
+<a>\n  b\n</a>
+<a>\n</a>
+<a>&nbsp;&lt;</a>
+<a>{/* c */}</a>
+<a>{// c\n}</a>
+<a>{}</a>
+<a>{" "}b{' '}</a>
+<a><b/><c></c>{d}<></></a>
+<><a/></>
+<>{a}</>
+<></>
+<a>{`}`}</a>
+<a>{/}/}</a>
+<a>{"}"}</a>
+<a>{{}}</a>
+<a b={{c: {d: 1}}} />
+<a>{b ? <c/> : <d>e</d>}</a>
+<a>{b < c}</a>
+<a>{b > c}{b >> c}{b >= c}{b >>> c}</a>
+<a>{b => <c/>}</a>
+x = a < b > c
+x = <a>{1}</a> / 2
+x = <a/> / 2 / 3
+x = a <b> c </b>
+<a>{/re/.test(x)}</a>
+<a b={/>/} />
+<a b={`>`}>c</a>
+`${<a>{`${<b/>}`}</a>}`
+<a>ñ 𝒜   é</a>
+<ñ é="ü" />
+=== file.ts
+a < b > c
+a<b>(c)
+a < b >> c
+a<b>>c
+f<A<B<C>>>(x)
+f<A<B<C>>>()
+new F<A<B>>()
+new F<A<B>>
+a >>> b
+a >>>= b
+a >>= b
+a <<= b
+a << b
+a <= b
+type A = B<C<D>>;
+type A = B<C<D<E>>>;
+let x: A<B>= y
+let x: A<B<C>>= y
+let x: A<B<C<D>>>= y
+let x = a as B<C> >= d
+let x = (a as B<C>)>=d
+(a) >= b
+((a)) >> b
+(a /* ) */) >= b
+a /* >= */ >= b
+a // >=\n>= b
+f<<T>(x: T) => void>(y)
+type A = B<<T>(x: T) => void>
+type A = B< <T>(x: T) => void>
+let x: A<B>>= 1
+function f<T = A<B>>() {}
+function f<T extends A<B>= C>() {}
+class A<T> extends B<C<T>> implements D<E<F>>, G {}
+class A<T = B<C>>{}
+interface A<T> extends B<C<T>> {}
+let f: <T>(x: T) => A<B<T>>= g
+let f = <T>(x: T): A<B<T>>=> x
+let x = <T>y
+let x = <A<B>>y
+let x = <const>y
+let x = <const>["const"]
+x as const
+(x as const).y
+[x as const]
+x as unknown as const
+let x = y as any as A<B>
+a! >= b
+a!>=b
+a!==b
+a! == b
+a!.b!.c!
+a!!
+let a: typeof this.x
+let a: typeof this
+let a: typeof import("x")
+let a: typeof a.default
+let a: import("x").default
+let a: A.default.if
+function f(this: X): this is Y {}
+function f(x, this: Y) {}
+function f(): asserts this is T {}
+function f(x): asserts x {}
+function f(x): x is T {}
+let f: (this: void) => void
+type T = [a: string, b?: number, ...c: X[]]
+type T = [in: string]
+type T = [...default: X[]]
+type T = [new?: X]
+type T = { [K in keyof U]: V }
+type T = { readonly [K in U]?: V }
+type T = { -readonly [K in U]-?: V; +readonly [L in U]+?: V }
+type T = A extends infer U extends V ? U : never
+type T = `a${B}c${`d${E}`}f`
+type T = `${A<B<C>>}`
+type T = new () => X
+type T = abstract new () => X
+type T = { new(): X; new: 1; if(): void; delete?: 1; (): void; readonly default: 1; get in(): 1; set in(v) }
+type T = unique symbol
+type T = keyof typeof x
+type T = true | false | null | undefined | void | never | this
+type T = -1 | 1n | -1n | "a"
+interface I { new(): X; new: 1; if(): void; delete?: 1; class: X; function(): void; static: 1; let: 2; private: 3 }
+interface I { public: 1; protected(): void; implements?: 1; interface: 1; package: 1; yield: 1 }
+export * as default from "x"
+export * as if from "x"
+export { a as default, if, default as b, default } from "y"
+export { a as default }
+export { type a, type b as default, type as as as }
+import { default as z, if as y, type default as w, type as, type as as } from "y"
+import type { default as z } from "y"
+import type X from "y"
+import type from "y"
+import x, * as y from "z"
+import x = require("y")
+import x = A.default.B
+import type x = require("y")
+export import x = A.B
+export = x
+export as namespace X
+export default class {}
+export default function () {}
+export default interface A {}
+export default abstract class A {}
+export type * from "x"
+export type * as default from "x"
+import x from "y" with { type: "json", if: "a" }
+new.target
+import.meta
+import("x")
+class C { static static; static async *if() {}; get in() {}; constructor() {}; declare readonly default: 1 }
+class C { static {} static = 1; static() {} }
+class C { static static() {} static get static() {} static set static(v) {} }
+class C { static\nstatic\nx }
+class C { get get() {} set set(v) {} async async() {} static async static() {} }
+class C { private private; public public; protected protected; private static readonly x }
+class C { private; public; protected; static; }
+class C { private() {} public = 1; protected?: 1; static!: 1 }
+class C { constructor(private a, public readonly b, protected c, readonly d) {} }
+class C { constructor(private, public, protected) {} }
+class C { accessor x; static accessor y; accessor; accessor() {} }
+class C { override x; declare y; abstract z }
+class C { new() {} delete() {} if = 1; in; instanceof; typeof() {} void; null; true; false = 1; this; }
+class C { "a"() {} 1() {} [a]() {} #a; #b() {} static #c; get #d() {} }
+class C { @a b; @a() c() {} @a.b.c d; @(a) e }
+class C { x = this.y; z = new X; w = typeof v; u = a in b; [this.k] = 1 }
+class C { declare; readonly; abstract; override }
+@a class C {}
+@a.if @b() export class C {}
+export @a class C {}
+abstract class D { abstract x; abstract y(): void; private abstract z }
+({ async *if() {}, get new() {}, set delete(v) {}, null: 1, true: 2, false, this: 3, default: 4, class: 5 })
+({ static: 1, let: 2, yield: 3, private: 4, public() {}, get protected() {}, implements, interface })
+({ if() {}, async if() {}, *if() {}, async: 1, get: 2, set: 3, async() {}, get() {}, set() {} })
+({ a: this, b: null, c: true, d: typeof e, f: new G, h: function() {}, i: class {}, j: void 0, k: l in m })
+({ ...this, ...null, [this.a]: 1, [typeof a]: 2 })
+var {if: q, default: r = 1, class: {new: s}, ...t} = a
+({if: q, default: r = 1, class: {new: s}} = a)
+function f({if: q, default: r}) {}
+a ? this : null
+a ? true : false
+a ? { default: 1 } : { if: 2 }
+switch (a) { case this: default: case null: break }
+switch (a) { case b: { default: 1 } }
+label: for(;;) break label
+enum E { true, false, if = 1, default, "a", in }
+const enum E { A = 1 << 2, B = A >> 1 }
+declare enum E {}
+declare module "x" { export default x }
+declare module A.default {}
+declare global { var x }
+declare function f(): void
+declare let x, y
+declare const x
+namespace N.default.if {}
+namespace A { export let x }
+module A {}
+let v: void | null | undefined | unique symbol
+let let_, x
+let x, y = 1, z
+let\nx
+let [a] = b
+let {a} = b
+for (let x of y);
+for (let x in y);
+for (let x = 0;;);
+for (let [a] of b);
+for await (let x of y);
+export let x
+export declare let x
+using x = y
+await using x = y
+for (using x of y);
+function* g() { yield; yield 1; yield* 2; x = yield; (yield) }
+function* g() { ({ yield: 1 }); a.yield; class A { yield() {} } }
+async function f() { await x; for await (y of z); await using a = b }
+async () => {}
+async x => x
+async <T>(x) => x
+async(x)
+a.async.await.of.get.set.static.let.yield.type.as
+type type = type
+type as = as
+as as as
+x satisfies y
+x as y satisfies z
+let x: asserts
+abstract
+declare
+accessor
+a?.5:1
+a?.b
+a ?. b
+a??b
+a??=b
+a||=b
+a&&=b
+a?.[0]
+a?.()
+a?.`x`
+a ? .5 : 1
+a?b:c
+a ? (b) : c => d
+a**b
+a**=b
+a*=b
+a++ + ++b
+a-- - --b
+a+ +b
+a- -b
+a+++b
+a---b
+...a
+[...a, ...b]
+f(...a)
+a.b
+a. b
+1.a
+1..a
+1.0.a
+1 .a
+1.e3
+1.e+3
+1e3
+1E-3
+.5
+.5e1
+0.5
+5.
+0
+00
+0x1F
+0X1f
+0b11
+0B11
+0o17
+0O17
+1_000
+1_000.000_1
+1_0e1_0
+0x1_F
+1n
+0n
+0x1Fn
+0b1n
+0o7n
+1_0n
+0x1e+5
+0b1+1
+1+1
+1-1
+1e1+1
+a / b / c
+a /= b
+a / b
+x = /=/
+x = /[/]/g
+x = /a/gimsuyd
+x = /a/v
+a++ / 2
+(a) / 2
+[a] / 2
+x = /\//
+x = /\\/
+x = /[\]/]/
+x = /`/
+x = /'/
+x = /"/
+x = /\/*/
+x = a / /b/
+x = a / /b/ / c
+x = /a/ / /b/
+if (a) /b/.test(c)
+{} /a/
+x = {} / a
+return_ / a / b
+x = y\n/a/g
+typeof /a/
+void /a/
+f(/a/, /b/)
+[/a/, /b/]
+a = b ? /c/ : /d/
+!/a/
+`${/}/}`
+`${/`/}`
+``
+`a`
+`a${b}c`
+`a${b}c${d}e`
+`${a}`
+`${a}${b}`
+`a${`b${c}d`}e`
+`${{a:1}.a}`
+`${{}}`
+`${{a:{b:{}}}}`
+`${() => { return {} }}`
+`${function(){}}`
+`\${`
+`\``
+`\\`
+`\\${a}`
+`$`
+`$$`
+`$${a}`
+`$ {`
+`{$}`
+`}`
+`${"}"}`
+`${'`'}`
+`${/* } */ a}`
+`${// }\n a}`
+`a\nb`
+`a\r\nb${c}\n`
+f`a${b}c`
+f<T>`x${y}`
+a.b`c`
+`a``b`
+`a`.b
+"a"
+'a'
+"a'b"
+'a"b'
+"a\"b"
+'a\'b'
+"a\\"
+"a\\\\"
+"a\\\nb"
+"a\\\r\nb"
+"a\\\rb"
+" "
+"a\\ b"
+""
+''
+"//"
+"/*"
+"`"
+// c
+// c\n
+// c\r\na
+// c\ra
+// c a
+// c a
+// é\na
+// €\na
+//
+//\n
+/**/
+/* c */
+/* c\n */
+/* * / */
+/***/
+/* // */
+// /*\na
+a /* b */ c
+a // b\n c
+/* a *//* b */
+/* a */// b
+a/**/b
+a/* */ / /* */b
+#!shebang\na
+#!shebang\r\na
+#!shebang
+#!\na
+#! /usr/bin/env node\n// c\na
+ a 
+﻿a
+a﻿b
+a b
+a b
+a　b
+a b c d e f
+a\u000bb\u000cc
+ñ
+añb
+a‌b
+a‍b
+𝒜
+a𝒜b
+中文
+\\u0061
+\\u{61}
+a\\u0062c
+a\\u{62}c
+\\u{1d49c}
+a.\\u0069f
+({ \\u0069f: 1 })
+({ cl\\u0061ss: 1 })
+a.#b
+#a in b
+this.#a.#b
+class A { #ñ; #\\u0061 }
+@a
+a@b
+=== file.js
+a.static; a.let; a.yield; ({ static: 1, let: 2, yield: 3 })
+class A { static static; static let; yield() {} static() {} let; }
+class A { static {} }
+a.implements; a.interface; a.package; a.private; a.protected; a.public; a.enum
+({ implements: 1, interface: 2, package: 3, private: 4, protected: 5, public: 6, enum: 7 })
+a.if; a.true; a.null; a.this; a?.class
+({ if: 1, true: 2, null: 3, this: 4, class: 5, default: 6 })
+class A { if() {} true; null = 1; static this; get new() {} }
+export { a as default, b as if }
+import { default as a } from "b"
+export * as default from "x"
+var { if: a, default: b } = c
+st\\u0061tic
+a.st\\u0061tic
+({ st\\u0061tic: 1, l\\u0065t: 2, yi\\u0065ld: 3, cl\\u0061ss: 4 })
+<a:b c:d="e" />
+<this.a this="1" />
+<this />
+<a>{b.c}</a>
+<a b={c.d} />
+<a if class for type />
+<a-b c-d="e" />
+<a.b.c />
+<a>{/* c */}</a>
+<a /* c */ b />
+<a> b </a>
+<a b="\" />
+a >> b >>> c >= d << e <= f
+a >>= b; a >>>= c; a <<= d
+a < b > c
+x = <a/> / 2
+async () => { await x; for await (y of z); }
+function* g() { yield* 1; yield }
+let async; of; get; set
+let x
+=== file.js script
+var static, let, yield, implements, interface, package, private, protected, public
+let = 1
+let.a
+let[a] = b
+let\nx
+let: x
+let()
+(let)
+(let[a])
+for (let in x);
+for (let.a in x);
+for (let = 0;;);
+for (let;;);
+for ((let) of x);
+yield = 1
+yield: x
+yield\n/a/g
+yield / a / g
+function yield() {}
+function f(yield, let, static) {}
+await = 1
+await / a / g
+async = 1
+017
+017.a
+08.5
+09e1
+019
+0777
+"\\1"
+"\\08"
+with (a) b
+if (a) function f() {}
+a <!-- b\nc
+a\n--> b\nc
+--> a\nb
+/* a */ --> b\nc
+/* a\n */ --> b\nc
+a --> b
+a /* \n */ --> b\nc
+x = a-->b
+x = a<!--b\n
+<!-- a
+<!--
+-->
+a; /**/ --> b
+=== file.cjs
+return
+let x; a.let
+=== file.mjs
+await x
+a.static
+=== file.mts
+let x = <T>y
+=== file.cts
+let x = <T>y
+=== file.d.ts
+declare let x: A<B<C>>
+export default x
+interface I { static: 1 }
+=== file.js
+x = /** @type {const} */ (false)
+x = /** @type {const} */ ([false])
+x = /** @type {const} */ ({ a: false })
+/** @typedef {{ if: string, default: number }} T */ if (a) b
+/** @type {import("x").default} */ var a = this
+/** @param {typeof this.x} a @this {Foo} */ function f(a) { return this }
+/** @satisfies {A<B<C>>} */ var x = a >> b
+=== file.ts
+let x = <const>y.const
+let x = <const>y as const
+let x = <const>(y as const)
+let x = <T>y as const
+let x = (<const>y).z as const
+=== file.js
+this .a
+this﻿.a; null ; true　; false ; typeof a; function f() {}
+if (a) return_ ; else b
+let a; class A { static b; static {} }
+a.if ; ({ if : 1, default : 2 })
+a .b; ab 
+<a>{this .b}{c .d}</a>
+thisé; nullé; ifñ
+a\\u0062 === ab; a\\u0062 === a\\u{62}; x.a\\u0062 === x.ab; x.\\u0069f === x.if
+class A { #a\\u0062; m() { this.#a\\u0062 === this.#ab; this.#a\\u{62} } #ab }
+({ a\\u0062: 1, ab: 1, st\\u0061tic: 2, static: 2 })
+\\u{1d49c} === 𝒜; \\u{61}\\u{10400}é
+"\\u0061" === "a"; `\\u0061`; /\\u0061/
+=== file.ts
+this .a
+this﻿.a; null ; true　; false ; typeof a; function f() {}
+let a: void ; class A { static b; private c; static {} }
+interface I { if : 1 } class B implements I {}
+a\\u0062 === ab; x.\\u0069f === x.if
+class A { #a\\u0062; m() { this.#a\\u0062 === this.#ab } #ab }
+=== file.tsx
+<a>{this .b}{c .d}</a>

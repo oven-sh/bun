@@ -1,0 +1,323 @@
+FAIL oxfmt css/format/css/combinator-spacing.css { printWidth: 80 }
+FAIL oxfmt css/format/css/combinator-spacing.css { printWidth: 100 }
+FAIL oxfmt css/format/css/custom-media.css { printWidth: 80 }
+FAIL oxfmt css/format/css/custom-media.css { printWidth: 100 }
+FAIL oxfmt css/format/css/custom-property-raw-verbatim.css { printWidth: 80 }
+FAIL oxfmt css/format/css/custom-property-raw-verbatim.css { printWidth: 100 }
+FAIL oxfmt css/format/css/document-url-brace.css { printWidth: 80 }
+FAIL oxfmt css/format/css/document-url-brace.css { printWidth: 100 }
+FAIL oxfmt css/format/css/important-comments.css { printWidth: 80 }
+FAIL oxfmt css/format/css/important-comments.css { printWidth: 100 }
+FAIL oxfmt css/format/css/keyframe-selector-comment.css { printWidth: 80 }
+FAIL oxfmt css/format/css/keyframe-selector-comment.css { printWidth: 100 }
+FAIL oxfmt css/format/css/missed-semicolon-accepted.css { printWidth: 80 }
+FAIL oxfmt css/format/css/missed-semicolon-accepted.css { printWidth: 100 }
+FAIL oxfmt css/format/css/nest-params-indent.css { printWidth: 80 }
+FAIL oxfmt css/format/css/nth-an-plus-b.css { printWidth: 80 }
+FAIL oxfmt css/format/css/nth-an-plus-b.css { printWidth: 100 }
+FAIL oxfmt css/format/css/paren-group-glued-word.css { printWidth: 80 }
+FAIL oxfmt css/format/css/paren-group-glued-word.css { printWidth: 100 }
+FAIL oxfmt css/format/css/postcss-simple-vars/vars.css { printWidth: 80 }
+FAIL oxfmt css/format/css/postcss-simple-vars/vars.css { printWidth: 100 }
+FAIL oxfmt css/format/css/prelude-keyword-case.css { printWidth: 80 }
+FAIL oxfmt css/format/css/prelude-keyword-case.css { printWidth: 100 }
+FAIL oxfmt css/format/css/supports-function-args-indent.css { printWidth: 80 }
+FAIL oxfmt css/format/css/supports-function-args-indent.css { printWidth: 100 }
+FAIL oxfmt css/format/css/token-soup-math-glue.css { printWidth: 80 }
+FAIL oxfmt css/format/css/token-soup-math-glue.css { printWidth: 100 }
+FAIL oxfmt css/format/css/unknown-qualified-rule.css { printWidth: 80 }
+FAIL oxfmt css/format/css/unknown-qualified-rule.css { printWidth: 100 }
+FAIL oxfmt css/format/css/word-glued-bracket.css { printWidth: 80 }
+FAIL oxfmt css/format/css/word-glued-bracket.css { printWidth: 100 }
+FAIL oxfmt css/format/less/escaped-string-gap.less { printWidth: 80 }
+FAIL oxfmt css/format/less/escaped-string-gap.less { printWidth: 100 }
+FAIL oxfmt css/format/less/extend-rule.less { printWidth: 80 }
+FAIL oxfmt css/format/less/extend-rule.less { printWidth: 100 }
+FAIL oxfmt css/format/less/important-comments.less { printWidth: 80 }
+FAIL oxfmt css/format/less/important-comments.less { printWidth: 100 }
+FAIL oxfmt css/format/less/javascript-verbatim.less { printWidth: 80 }
+FAIL oxfmt css/format/less/javascript-verbatim.less { printWidth: 100 }
+FAIL oxfmt css/format/less/line-comment-continuation-indent.less { printWidth: 80 }
+FAIL oxfmt css/format/less/line-comment-continuation-indent.less { printWidth: 100 }
+FAIL oxfmt css/format/less/lookup-glue.less { printWidth: 80 }
+FAIL oxfmt css/format/less/lookup-glue.less { printWidth: 100 }
+FAIL oxfmt css/format/less/merge-property.less { printWidth: 80 }
+FAIL oxfmt css/format/less/merge-property.less { printWidth: 100 }
+FAIL oxfmt css/format/less/mixin-selector-list.less { printWidth: 80 }
+FAIL oxfmt css/format/less/mixin-selector-list.less { printWidth: 100 }
+FAIL oxfmt css/format/less/signed-value-args.less { printWidth: 80 }
+FAIL oxfmt css/format/less/signed-value-args.less { printWidth: 100 }
+FAIL oxfmt css/format/less/variable-value-comments.less { printWidth: 80 }
+FAIL oxfmt css/format/less/variable-value-comments.less { printWidth: 100 }
+FAIL oxfmt css/format/scss/at-rule-comment-before-block.scss { printWidth: 80 }
+FAIL oxfmt css/format/scss/at-rule-comment-before-block.scss { printWidth: 100 }
+FAIL oxfmt css/format/scss/at-rule-prelude-comments.scss { printWidth: 80 }
+FAIL oxfmt css/format/scss/at-rule-prelude-comments.scss { printWidth: 100 }
+FAIL oxfmt css/format/scss/bracket-list.scss { printWidth: 80 }
+FAIL oxfmt css/format/scss/bracket-list.scss { printWidth: 100 }
+FAIL oxfmt css/format/scss/custom-property-raw-verbatim.scss { printWidth: 80 }
+FAIL oxfmt css/format/scss/custom-property-raw-verbatim.scss { printWidth: 100 }
+FAIL oxfmt css/format/scss/custom-property-text.scss { printWidth: 80 }
+FAIL oxfmt css/format/scss/custom-property-text.scss { printWidth: 100 }
+FAIL oxfmt css/format/scss/forward-members-wrap.scss { printWidth: 80 }
+FAIL oxfmt css/format/scss/forward-members-wrap.scss { printWidth: 100 }
+FAIL oxfmt css/format/scss/line-comment-after-comma.scss { printWidth: 80 }
+FAIL oxfmt css/format/scss/line-comment-after-comma.scss { printWidth: 100 }
+FAIL oxfmt css/format/scss/line-comment-before-comma.scss { printWidth: 80 }
+FAIL oxfmt css/format/scss/line-comment-before-comma.scss { printWidth: 100 }
+FAIL oxfmt css/format/scss/line-comment-continuation-indent.scss { printWidth: 80 }
+FAIL oxfmt css/format/scss/line-comment-continuation-indent.scss { printWidth: 100 }
+FAIL oxfmt css/format/scss/map-comment-only.scss { printWidth: 80 }
+FAIL oxfmt css/format/scss/map-comment-only.scss { printWidth: 100 }
+FAIL oxfmt css/format/scss/module-config-comments.scss { printWidth: 80 }
+FAIL oxfmt css/format/scss/module-config-comments.scss { printWidth: 100 }
+FAIL oxfmt css/format/scss/module-head-seams.scss { printWidth: 80 }
+FAIL oxfmt css/format/scss/paren-tail-own-line-comment.scss { printWidth: 80 }
+FAIL oxfmt css/format/scss/paren-tail-own-line-comment.scss { printWidth: 100 }
+FAIL oxfmt css/format/scss/progid-comments.scss { printWidth: 80 }
+FAIL oxfmt css/format/scss/progid-comments.scss { printWidth: 100 }
+FAIL oxfmt css/format/scss/single-item-list-trailing-comma.scss { printWidth: 80 }
+FAIL oxfmt css/format/scss/single-item-list-trailing-comma.scss { printWidth: 100 }
+FAIL oxfmt css/format/scss/supports-selector-inline-comments.scss { printWidth: 80 }
+FAIL oxfmt css/format/scss/supports-selector-inline-comments.scss { printWidth: 100 }
+FAIL oxfmt css/format/scss/trailing-comma-none/single-item-list.scss { printWidth: 80, trailingComma: "none" }
+FAIL oxfmt css/format/scss/trailing-comma-none/single-item-list.scss { printWidth: 100, trailingComma: "none" }
+FAIL oxfmt css/format/scss/value-glued-minus.scss { printWidth: 80 }
+FAIL oxfmt css/format/scss/value-glued-minus.scss { printWidth: 100 }
+FAIL oxfmt css/format/scss/variable-inline-comment.scss { printWidth: 80 }
+FAIL oxfmt css/format/scss/variable-inline-comment.scss { printWidth: 100 }
+FAIL prettier edge-cases/xxx-in-js-comment/broken-template-comment-indent.js { printWidth: 80 }
+FAIL prettier edge-cases/xxx-in-js-comment/broken-template-comment-indent.js { printWidth: 100 }
+FAIL prettier edge-cases/xxx-in-md/handlebars-mdx-code-blocks.md { printWidth: 80 }
+FAIL prettier edge-cases/xxx-in-md/handlebars-mdx-code-blocks.md { printWidth: 100 }
+FAIL prettier edge-cases/xxx-in-md/lwc-code-block.md { printWidth: 80 }
+FAIL prettier edge-cases/xxx-in-md/lwc-code-block.md { printWidth: 100 }
+FAIL oxfmt graphql/graphql/comment-after-opening-delimiter.graphql { printWidth: 80 }
+FAIL oxfmt graphql/graphql/comment-after-opening-delimiter.graphql { printWidth: 100 }
+FAIL oxfmt graphql/graphql/comments-inside-node-spans.graphql { printWidth: 80 }
+FAIL oxfmt graphql/graphql/comments-inside-node-spans.graphql { printWidth: 100 }
+FAIL oxfmt graphql/graphql/string-escapes.graphql { printWidth: 80 }
+FAIL oxfmt graphql/graphql/string-escapes.graphql { printWidth: 100 }
+FAIL oxfmt js/calls/callee-opener-comment.js { printWidth: 80 }
+FAIL oxfmt js/calls/callee-opener-comment.js { printWidth: 100 }
+FAIL oxfmt js/calls/issue-16125.js { printWidth: 80 }
+FAIL oxfmt js/calls/issue-16125.js { printWidth: 100 }
+FAIL oxfmt js/calls/test-call-comment-order.js { printWidth: 80 }
+FAIL oxfmt js/calls/test-call-comment-order.js { printWidth: 100 }
+FAIL oxfmt js/comments/array-holes.js { printWidth: 80 }
+FAIL oxfmt js/comments/array-holes.js { printWidth: 100 }
+FAIL oxfmt js/comments/arrow.js { printWidth: 80 }
+FAIL oxfmt js/comments/arrow.js { printWidth: 100 }
+FAIL oxfmt js/comments/assignment-eol-line-comment.js { printWidth: 80 }
+FAIL oxfmt js/comments/assignment-eol-line-comment.js { printWidth: 100 }
+FAIL oxfmt js/comments/do-while-head.js { printWidth: 80 }
+FAIL oxfmt js/comments/do-while-head.js { printWidth: 100 }
+FAIL oxfmt js/comments/empty-statement-head.js { printWidth: 80 }
+FAIL oxfmt js/comments/empty-statement-head.js { printWidth: 100 }
+FAIL oxfmt js/comments/for-head-slots.js { printWidth: 80 }
+FAIL oxfmt js/comments/for-head-slots.js { printWidth: 100 }
+FAIL oxfmt js/comments/head-body-blocks.js { printWidth: 80 }
+FAIL oxfmt js/comments/head-body-blocks.js { printWidth: 100 }
+FAIL oxfmt js/comments/head-paren-line-comment.js { printWidth: 80 }
+FAIL oxfmt js/comments/head-paren-line-comment.js { printWidth: 100 }
+FAIL oxfmt js/comments/multiline-block-head.js { printWidth: 80 }
+FAIL oxfmt js/comments/multiline-block-head.js { printWidth: 100 }
+FAIL oxfmt js/comments/parenthesized-trailing-comment.js { printWidth: 80 }
+FAIL oxfmt js/comments/parenthesized-trailing-comment.js { printWidth: 100 }
+FAIL oxfmt js/comments/try-catch-finally-head.js { printWidth: 80 }
+FAIL oxfmt js/comments/try-catch-finally-head.js { printWidth: 100 }
+FAIL oxfmt js/comments/type-cast-comment-inside-added-parens.js { printWidth: 80 }
+FAIL oxfmt js/comments/type-cast-comment-inside-added-parens.js { printWidth: 100 }
+FAIL oxfmt js/comments/type-cast-with-regex-parens.js { printWidth: 80 }
+FAIL oxfmt js/comments/type-cast-with-regex-parens.js { printWidth: 100 }
+FAIL oxfmt js/comments/unary-argument-parens.js { printWidth: 80 }
+FAIL oxfmt js/comments/unary-argument-parens.js { printWidth: 100 }
+FAIL oxfmt js/ignore/expression-statement.js { printWidth: 80 }
+FAIL oxfmt js/ignore/expression-statement.js { printWidth: 100 }
+FAIL oxfmt js/ignore/issue-18595.js { printWidth: 80 }
+FAIL oxfmt js/ignore/issue-18595.js { printWidth: 100 }
+FAIL oxfmt js/jsx/logical-chain-jsx-leading-comment.jsx { printWidth: 80 }
+FAIL oxfmt js/jsx/logical-chain-jsx-leading-comment.jsx { printWidth: 100 }
+FAIL oxfmt js/operator-position/comments.js { experimentalOperatorPosition: "start", printWidth: 80 }
+FAIL oxfmt js/operator-position/comments.js { experimentalOperatorPosition: "start", printWidth: 100 }
+FAIL oxfmt js/semicolons/empty-line.js { printWidth: 80, semi: false }
+FAIL oxfmt js/semicolons/empty-line.js { printWidth: 100, semi: false }
+FAIL prettier js/semicolons/suppressed-cast-comment-asi-guard.js { printWidth: 80, semi: false }
+FAIL prettier js/semicolons/suppressed-cast-comment-asi-guard.js { printWidth: 100, semi: false }
+FAIL oxfmt js/semicolons/suppressed-for-head-declaration.js { printWidth: 80, semi: true }
+FAIL oxfmt js/semicolons/suppressed-for-head-declaration.js { printWidth: 100, semi: true }
+FAIL oxfmt js/semicolons/suppressed-source-paren-asi-guard.js { printWidth: 80, semi: false }
+FAIL oxfmt js/semicolons/suppressed-source-paren-asi-guard.js { printWidth: 100, semi: false }
+FAIL prettier js/semicolons/suppressed-statement.js { printWidth: 80, semi: true }
+FAIL prettier js/semicolons/suppressed-statement.js { printWidth: 100, semi: true }
+FAIL prettier js/semicolons/suppressed-statement.js { printWidth: 80, semi: false }
+FAIL prettier js/semicolons/suppressed-statement.js { printWidth: 100, semi: false }
+FAIL oxfmt js/semicolons/suppressed-statement.js { printWidth: 80, semi: true }
+FAIL oxfmt js/semicolons/suppressed-statement.js { printWidth: 100, semi: true }
+FAIL oxfmt js/semicolons/suppressed-statement.js { printWidth: 80, semi: false }
+FAIL oxfmt js/semicolons/suppressed-statement.js { printWidth: 100, semi: false }
+FAIL oxfmt js/semicolons/suppressed-trailing-semicolon.js { printWidth: 80, semi: false }
+FAIL oxfmt js/semicolons/suppressed-trailing-semicolon.js { printWidth: 100, semi: false }
+FAIL oxfmt js/switch/clause-block-comment.js { printWidth: 80 }
+FAIL oxfmt js/switch/clause-block-comment.js { printWidth: 100 }
+FAIL oxfmt js/typecast/comments-inside-cast-parens.js { printWidth: 80 }
+FAIL oxfmt js/typecast/comments-inside-cast-parens.js { printWidth: 100 }
+FAIL oxfmt markdown/markdown/fence-info-backtick.md { printWidth: 80 }
+FAIL oxfmt markdown/markdown/fence-info-backtick.md { printWidth: 100 }
+FAIL oxfmt markdown/markdown/front-matter.md { printWidth: 80 }
+FAIL oxfmt markdown/markdown/front-matter.md { printWidth: 100 }
+FAIL oxfmt markdown/markdown/html-block-trailing-newline.md { printWidth: 80 }
+FAIL oxfmt markdown/markdown/html-block-trailing-newline.md { printWidth: 100 }
+FAIL oxfmt markdown/markdown/indented-code-tab.md { printWidth: 80 }
+FAIL oxfmt markdown/markdown/indented-code-tab.md { printWidth: 100 }
+FAIL oxfmt markdown/markdown/lazy-html-block.md { printWidth: 80 }
+FAIL oxfmt markdown/markdown/lazy-html-block.md { printWidth: 100 }
+FAIL oxfmt markdown/markdown/leading-dashes-paragraph.md { printWidth: 80 }
+FAIL oxfmt markdown/markdown/leading-dashes-paragraph.md { printWidth: 100 }
+FAIL oxfmt markdown/markdown/leading-thematic-break.md { printWidth: 80 }
+FAIL oxfmt markdown/markdown/leading-thematic-break.md { printWidth: 100 }
+FAIL oxfmt markdown/markdown/list-after-html-block.md { printWidth: 80 }
+FAIL oxfmt markdown/markdown/list-after-html-block.md { printWidth: 100 }
+FAIL oxfmt markdown/markdown/list-marker-after-ignored-list.md { printWidth: 80 }
+FAIL oxfmt markdown/markdown/list-marker-after-ignored-list.md { printWidth: 100 }
+FAIL oxfmt markdown/markdown/nul-character.md { printWidth: 80 }
+FAIL oxfmt markdown/markdown/nul-character.md { printWidth: 100 }
+FAIL oxfmt markdown/markdown/oxfmt-ignore.md { printWidth: 80 }
+FAIL oxfmt markdown/markdown/oxfmt-ignore.md { printWidth: 100 }
+FAIL oxfmt markdown/markdown/prose-wrap/cj-line-break.md { printWidth: 80, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/cj-line-break.md { printWidth: 100, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/cj-line-break.md { printWidth: 80, proseWrap: "never" }
+FAIL oxfmt markdown/markdown/prose-wrap/cj-line-break.md { printWidth: 100, proseWrap: "never" }
+FAIL oxfmt markdown/markdown/prose-wrap/code-span-fence-at-line-start.md { printWidth: 80, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/code-span-fence-at-line-start.md { printWidth: 100, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/code-span-fence-at-line-start.md { printWidth: 80, proseWrap: "never" }
+FAIL oxfmt markdown/markdown/prose-wrap/code-span-fence-at-line-start.md { printWidth: 100, proseWrap: "never" }
+FAIL oxfmt markdown/markdown/prose-wrap/code-span-fence-at-line-start.md { printWidth: 80, proseWrap: "preserve" }
+FAIL oxfmt markdown/markdown/prose-wrap/code-span-fence-at-line-start.md { printWidth: 100, proseWrap: "preserve" }
+FAIL oxfmt markdown/markdown/prose-wrap/container-directive-blanks.md { printWidth: 80, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/container-directive-blanks.md { printWidth: 100, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/container-directive-blanks.md { printWidth: 80, proseWrap: "never" }
+FAIL oxfmt markdown/markdown/prose-wrap/container-directive-blanks.md { printWidth: 100, proseWrap: "never" }
+FAIL oxfmt markdown/markdown/prose-wrap/container-directive.md { printWidth: 80, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/container-directive.md { printWidth: 100, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/container-directive.md { printWidth: 80, proseWrap: "never" }
+FAIL oxfmt markdown/markdown/prose-wrap/container-directive.md { printWidth: 100, proseWrap: "never" }
+FAIL oxfmt markdown/markdown/prose-wrap/container-directive.md { printWidth: 80, proseWrap: "preserve" }
+FAIL oxfmt markdown/markdown/prose-wrap/container-directive.md { printWidth: 100, proseWrap: "preserve" }
+FAIL oxfmt markdown/markdown/prose-wrap/definition-shaped-first-line.md { printWidth: 80, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/definition-shaped-first-line.md { printWidth: 100, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/definition-shaped-first-line.md { printWidth: 80, proseWrap: "never" }
+FAIL oxfmt markdown/markdown/prose-wrap/definition-shaped-first-line.md { printWidth: 100, proseWrap: "never" }
+FAIL oxfmt markdown/markdown/prose-wrap/footnote-kept-line-break.md { printWidth: 80, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/footnote-kept-line-break.md { printWidth: 100, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/footnote-kept-line-break.md { printWidth: 80, proseWrap: "never" }
+FAIL oxfmt markdown/markdown/prose-wrap/footnote-kept-line-break.md { printWidth: 100, proseWrap: "never" }
+FAIL oxfmt markdown/markdown/prose-wrap/footnote-kept-line-break.md { printWidth: 80, proseWrap: "preserve" }
+FAIL oxfmt markdown/markdown/prose-wrap/footnote-kept-line-break.md { printWidth: 100, proseWrap: "preserve" }
+FAIL oxfmt markdown/markdown/prose-wrap/ignored-block-trailing-quote-line.md { printWidth: 80, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/ignored-block-trailing-quote-line.md { printWidth: 100, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/line-shapes.md { printWidth: 80, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/line-shapes.md { printWidth: 100, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/line-shapes.md { printWidth: 80, proseWrap: "never" }
+FAIL oxfmt markdown/markdown/prose-wrap/line-shapes.md { printWidth: 100, proseWrap: "never" }
+FAIL oxfmt markdown/markdown/prose-wrap/liquid-inline-wrap.md { printWidth: 80, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/liquid-inline-wrap.md { printWidth: 100, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/liquid-inline-wrap.md { printWidth: 80, proseWrap: "never" }
+FAIL oxfmt markdown/markdown/prose-wrap/liquid-inline-wrap.md { printWidth: 100, proseWrap: "never" }
+FAIL oxfmt markdown/markdown/prose-wrap/setext-heading-wrap.md { printWidth: 80, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/setext-heading-wrap.md { printWidth: 100, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/stray-delimiters.md { printWidth: 80, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/stray-delimiters.md { printWidth: 100, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/stray-delimiters.md { printWidth: 80, proseWrap: "never" }
+FAIL oxfmt markdown/markdown/prose-wrap/stray-delimiters.md { printWidth: 100, proseWrap: "never" }
+FAIL oxfmt markdown/markdown/prose-wrap/stray-delimiters.md { printWidth: 80, proseWrap: "preserve" }
+FAIL oxfmt markdown/markdown/prose-wrap/stray-delimiters.md { printWidth: 100, proseWrap: "preserve" }
+FAIL oxfmt markdown/markdown/prose-wrap/wiki-link-code-span.md { printWidth: 80, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/wiki-link-code-span.md { printWidth: 100, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/wiki-link-code-span.md { printWidth: 80, proseWrap: "never" }
+FAIL oxfmt markdown/markdown/prose-wrap/wiki-link-code-span.md { printWidth: 100, proseWrap: "never" }
+FAIL oxfmt markdown/markdown/prose-wrap/wiki-link-risk-link-text.md { printWidth: 80, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/wiki-link-risk-link-text.md { printWidth: 100, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/wiki-link-risk-link-text.md { printWidth: 80, proseWrap: "never" }
+FAIL oxfmt markdown/markdown/prose-wrap/wiki-link-risk-link-text.md { printWidth: 100, proseWrap: "never" }
+FAIL oxfmt markdown/markdown/prose-wrap/wiki-link-risk-link-text.md { printWidth: 80, proseWrap: "preserve" }
+FAIL oxfmt markdown/markdown/prose-wrap/wiki-link-risk-link-text.md { printWidth: 100, proseWrap: "preserve" }
+FAIL oxfmt markdown/markdown/prose-wrap/wrapped-block-starts.md { printWidth: 80, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/wrapped-block-starts.md { printWidth: 100, proseWrap: "always" }
+FAIL oxfmt markdown/markdown/prose-wrap/wrapped-block-starts.md { printWidth: 80, proseWrap: "never" }
+FAIL oxfmt markdown/markdown/prose-wrap/wrapped-block-starts.md { printWidth: 100, proseWrap: "never" }
+FAIL oxfmt markdown/markdown/prose-wrap/wrapped-block-starts.md { printWidth: 80, proseWrap: "preserve" }
+FAIL oxfmt markdown/markdown/prose-wrap/wrapped-block-starts.md { printWidth: 100, proseWrap: "preserve" }
+FAIL oxfmt markdown/markdown/tab-width-4/list-html-block-alignment.md { printWidth: 80, tabWidth: 4 }
+FAIL oxfmt markdown/markdown/tab-width-4/list-html-block-alignment.md { printWidth: 100, tabWidth: 4 }
+FAIL oxfmt markdown/markdown/tab-width-4/ordered-marker-before-indented-code.md { printWidth: 80, tabWidth: 4 }
+FAIL oxfmt markdown/markdown/tab-width-4/ordered-marker-before-indented-code.md { printWidth: 100, tabWidth: 4 }
+FAIL oxfmt markdown/markdown/url-escaping.md { printWidth: 80 }
+FAIL oxfmt markdown/markdown/url-escaping.md { printWidth: 100 }
+FAIL oxfmt markdown/markdown/verbatim-inline-continuation.md { printWidth: 80 }
+FAIL oxfmt markdown/markdown/verbatim-inline-continuation.md { printWidth: 100 }
+FAIL oxfmt ts/arguments/issue-26465.ts { printWidth: 80 }
+FAIL oxfmt ts/assignments/type-alias-leading-comment.ts { printWidth: 80 }
+FAIL oxfmt ts/assignments/type-alias-leading-comment.ts { printWidth: 100 }
+FAIL oxfmt ts/calls/callee-opener-comment.ts { printWidth: 80 }
+FAIL oxfmt ts/calls/callee-opener-comment.ts { printWidth: 100 }
+FAIL oxfmt ts/comments/assignments.ts { printWidth: 80 }
+FAIL oxfmt ts/comments/assignments.ts { printWidth: 100 }
+FAIL oxfmt ts/comments/declaration-head-body.ts { printWidth: 80 }
+FAIL oxfmt ts/comments/declaration-head-body.ts { printWidth: 100 }
+FAIL oxfmt ts/comments/if.ts { printWidth: 80 }
+FAIL oxfmt ts/comments/if.ts { printWidth: 100 }
+FAIL oxfmt ts/comments/method.ts { printWidth: 80 }
+FAIL oxfmt ts/comments/method.ts { printWidth: 100 }
+FAIL oxfmt ts/comments/type-alias-multiline-block-comment.ts { printWidth: 80 }
+FAIL oxfmt ts/comments/type-alias-multiline-block-comment.ts { printWidth: 100 }
+FAIL oxfmt ts/comments/type-alias.ts { printWidth: 80 }
+FAIL oxfmt ts/comments/type-alias.ts { printWidth: 100 }
+FAIL oxfmt ts/ignore/decorated-class-export.ts { printWidth: 80 }
+FAIL oxfmt ts/ignore/decorated-class-export.ts { printWidth: 100 }
+FAIL oxfmt ts/ignore/eol-after-operator.ts { printWidth: 80 }
+FAIL oxfmt ts/ignore/eol-after-operator.ts { printWidth: 100 }
+FAIL oxfmt ts/import-phases/issue-22691.ts { printWidth: 80 }
+FAIL oxfmt ts/import-phases/issue-22691.ts { printWidth: 100 }
+FAIL oxfmt ts/parenthesis/type-assertion-exponentiation.ts { printWidth: 80 }
+FAIL oxfmt ts/parenthesis/type-assertion-exponentiation.ts { printWidth: 100 }
+FAIL oxfmt ts/quote-props/enums.ts { printWidth: 80, quoteProps: "as-needed" }
+FAIL oxfmt ts/quote-props/enums.ts { printWidth: 100, quoteProps: "as-needed" }
+FAIL oxfmt ts/quote-props/enums.ts { printWidth: 80, quoteProps: "preserve" }
+FAIL oxfmt ts/quote-props/enums.ts { printWidth: 100, quoteProps: "preserve" }
+FAIL oxfmt ts/quote-props/enums.ts { printWidth: 80, quoteProps: "consistent" }
+FAIL oxfmt ts/quote-props/enums.ts { printWidth: 100, quoteProps: "consistent" }
+FAIL oxfmt ts/quote-props/enums.ts { printWidth: 80, quoteProps: "consistent", singleQuote: true }
+FAIL oxfmt ts/quote-props/enums.ts { printWidth: 100, quoteProps: "consistent", singleQuote: true }
+FAIL prettier ts/semicolons/suppressed-class-member.ts { printWidth: 80, semi: true }
+FAIL prettier ts/semicolons/suppressed-class-member.ts { printWidth: 100, semi: true }
+FAIL prettier ts/semicolons/suppressed-class-member.ts { printWidth: 80, semi: false }
+FAIL prettier ts/semicolons/suppressed-class-member.ts { printWidth: 100, semi: false }
+FAIL oxfmt ts/semicolons/suppressed-class-member.ts { printWidth: 80, semi: true }
+FAIL oxfmt ts/semicolons/suppressed-class-member.ts { printWidth: 100, semi: true }
+FAIL oxfmt ts/semicolons/suppressed-class-member.ts { printWidth: 80, semi: false }
+FAIL oxfmt ts/semicolons/suppressed-class-member.ts { printWidth: 100, semi: false }
+FAIL oxfmt ts/semicolons/suppressed-declaration-parens.ts { printWidth: 80, semi: true }
+FAIL oxfmt ts/semicolons/suppressed-declaration-parens.ts { printWidth: 100, semi: true }
+FAIL oxfmt ts/semicolons/suppressed-declaration-parens.ts { printWidth: 80, semi: false }
+FAIL oxfmt ts/semicolons/suppressed-declaration-parens.ts { printWidth: 100, semi: false }
+FAIL prettier ts/semicolons/trailing-comments-class-members.ts { printWidth: 80, semi: true }
+FAIL prettier ts/semicolons/trailing-comments-class-members.ts { printWidth: 100, semi: true }
+FAIL prettier ts/semicolons/trailing-comments-class-members.ts { printWidth: 80, semi: false }
+FAIL prettier ts/semicolons/trailing-comments-class-members.ts { printWidth: 100, semi: false }
+FAIL oxfmt ts/semicolons/trailing-comments-class-members.ts { printWidth: 80, semi: true }
+FAIL oxfmt ts/semicolons/trailing-comments-class-members.ts { printWidth: 100, semi: true }
+FAIL oxfmt ts/semicolons/trailing-comments-class-members.ts { printWidth: 80, semi: false }
+FAIL oxfmt ts/semicolons/trailing-comments-class-members.ts { printWidth: 100, semi: false }
+FAIL oxfmt ts/semicolons/trailing-comments-parens.ts { printWidth: 80, semi: true }
+FAIL oxfmt ts/semicolons/trailing-comments-parens.ts { printWidth: 100, semi: true }
+FAIL oxfmt ts/semicolons/trailing-comments-parens.ts { printWidth: 80, semi: false }
+FAIL oxfmt ts/semicolons/trailing-comments-parens.ts { printWidth: 100, semi: false }
+FAIL oxfmt ts/semicolons/trailing-comments.ts { printWidth: 80, semi: true }
+FAIL oxfmt ts/semicolons/trailing-comments.ts { printWidth: 100, semi: true }
+FAIL oxfmt ts/semicolons/trailing-comments.ts { printWidth: 80, semi: false }
+FAIL oxfmt ts/semicolons/trailing-comments.ts { printWidth: 100, semi: false }
+FAIL prettier ts/union/suppression.ts { printWidth: 80 }
+FAIL prettier ts/union/suppression.ts { printWidth: 100 }
+as Prettier prints them: 1548/1570
+as oxfmt prints them, in its flavor: 1102/1498

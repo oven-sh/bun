@@ -11,6 +11,74 @@ struct Label {
     is_loop: bool,
 }
 
+/// The names of a scope, or the exports or the members of a symbol, while the file is being bound.
+/// Most have a few, which take no allocation and are compared one after the other.
+#[derive(Default)]
+struct Table {
+    few: SmallVec<[(Atom, SymbolId); Table::FEW]>,
+    /// In place of `few`, once there are more than `Table::FEW`.
+    many: Option<Names>,
+}
+
+type Names = FxHashMap<Atom, SymbolId>;
+
+impl Table {
+    const FEW: usize = 8;
+
+    #[inline]
+    fn get(&self, name: Atom) -> Option<&SymbolId> {
+        match &self.many {
+            None => (self.few.iter().find(|entry| entry.0 == name)).map(|entry| &entry.1),
+            Some(many) => many.get(&name),
+        }
+    }
+
+    #[inline]
+    fn contains_key(&self, name: Atom) -> bool {
+        self.get(name).is_some()
+    }
+
+    /// Returns what the name stood for. `spare`: maps that are empty and have room.
+    fn insert(&mut self, name: Atom, symbol: SymbolId, spare: &mut Vec<Names>) -> Option<SymbolId> {
+        if let Some(many) = &mut self.many {
+            return many.insert(name, symbol);
+        }
+        if let Some(entry) = self.few.iter_mut().find(|entry| entry.0 == name) {
+            return Some(std::mem::replace(&mut entry.1, symbol));
+        }
+        if self.few.len() < Table::FEW {
+            self.few.push((name, symbol));
+            return None;
+        }
+        let mut many = spare.pop().unwrap_or_default();
+        many.extend(self.few.drain(..));
+        many.insert(name, symbol);
+        self.many = Some(many);
+        None
+    }
+
+    fn extend(
+        &mut self,
+        entries: impl IntoIterator<Item = (Atom, SymbolId)>,
+        spare: &mut Vec<Names>,
+    ) {
+        for (name, symbol) in entries {
+            self.insert(name, symbol, spare);
+        }
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.many.as_ref().map_or(self.few.len(), |many| many.len())
+    }
+
+    /// In no particular order.
+    fn iter(&self) -> impl Iterator<Item = (&Atom, &SymbolId)> {
+        let few = self.few.iter().map(|entry| (&entry.0, &entry.1));
+        few.chain(self.many.iter().flat_map(|many| many.iter()))
+    }
+}
+
 /// Set in the placeholder id of a label while the file is being bound. The remaining bits are its
 /// index in `Binder::label_edges`.
 const PENDING: u32 = 1 << 31;
@@ -29,12 +97,49 @@ enum IsComputedName {
     Yes,
 }
 
+/// What a run of the binder leaves for the next one on the thread: lists that are empty and have room.
+#[derive(Default)]
+pub(super) struct Room {
+    pub(super) b: BoundBuilder,
+    tables: Vec<Table>,
+    spare_names: Vec<Names>,
+    statement_lists: Vec<IdList<StmtId>>,
+    idents: Vec<(ExprId, ScopeId)>,
+    assigned: Vec<ExprId>,
+    expando_assignments: Vec<(ExprId, ScopeId)>,
+    containing_classes: Vec<ClassId>,
+    returns: Vec<u32>,
+    yields: Vec<u32>,
+}
+
+thread_local! {
+    /// A linter binds one file after the other, and is done with each before the next.
+    static ROOM: std::cell::Cell<Option<Box<Room>>> = const { std::cell::Cell::new(None) };
+}
+
+pub(super) fn take_room() -> Box<Room> {
+    ROOM.take().unwrap_or_default()
+}
+
+pub(super) fn leave_room(room: Box<Room>) {
+    ROOM.set(Some(room));
+}
+
+/// `list`, which is empty, with `len` times `value`.
+fn filled<T: Clone>(mut list: Vec<T>, len: usize, value: T) -> Vec<T> {
+    list.clear();
+    list.resize(len, value);
+    list
+}
+
 pub(super) struct Binder<'f, 's> {
     f: &'f File<'s>,
     options: BindOptions,
     atoms: &'f dyn crate::atom::Intern,
     b: BoundBuilder,
-    tables: Vec<FxHashMap<Atom, SymbolId>>,
+    tables: Vec<Table>,
+    /// For `Table::insert`.
+    spare_names: Vec<Names>,
     scope: ScopeId,
     /// The enclosing statement lists, innermost last: of the file, of namespaces and of blocks.
     statement_lists: Vec<IdList<StmtId>>,
@@ -115,7 +220,31 @@ pub(super) struct Binder<'f, 's> {
     /// its name, and the function whose parameter it is or is part of. No name: there is no such
     /// declaration, or `withinDeferredContext`.
     associated_declaration: (PatId, FnId),
+    /// By `ModuleId`: see `Binder::module_instance_state`.
+    instance_states: Vec<InstanceState>,
+    /// See `Binder::answer_along_chain`.
+    chain_answers: std::cell::RefCell<Vec<u8>>,
     stack_check: bun_core::StackCheck,
+}
+
+/// What is known of the `ModuleInstanceState` of a module.
+#[derive(Copy, Clone)]
+enum InstanceState {
+    Unknown,
+    /// The question is being answered.
+    InProgress,
+    Known(ModuleInstanceState),
+}
+
+/// One question to `Binder::module_instance_state`.
+struct InstanceStates {
+    /// By `ModuleId`.
+    of: Vec<InstanceState>,
+    /// The modules that became known with this question.
+    answered: Vec<ModuleId>,
+    /// A module that was in progress was asked about.
+    met_one_in_progress: bool,
+    ran_out_of_stack: bool,
 }
 
 /// See `Binder::assignment_target_in`.
@@ -131,26 +260,40 @@ impl<'f, 's> Binder<'f, 's> {
         options: BindOptions,
         atoms: &'f dyn crate::atom::Intern,
     ) -> BoundBuilder {
+        Self::run_in(f, options, atoms, &mut Room::default())
+    }
+
+    fn run_in(
+        f: &'f File<'s>,
+        options: BindOptions,
+        atoms: &'f dyn crate::atom::Intern,
+        room: &mut Room,
+    ) -> BoundBuilder {
+        room.b.clear();
+        let old = std::mem::take(&mut room.b);
         let mut b = BoundBuilder {
-            expr_symbol: vec![SymbolId::NONE; f.exprs.len()],
-            expr_parent: vec![Parent::None; f.exprs.len()],
-            expr_flow: vec![UNREACHABLE; f.exprs.len()],
-            stmt_parent: vec![Parent::None; f.stmts.len()],
-            stmt_scope: vec![ScopeId::NONE; f.stmts.len()],
-            stmt_flow: vec![UNREACHABLE; f.stmts.len()],
-            case_fallthrough: vec![FlowId::NONE; f.cases.len()],
-            type_scope: vec![ScopeId::NONE; f.types.len()],
-            type_by_alias: vec![false; f.types.len()],
-            pat_parent: vec![PatParent::None; f.pats.len()],
-            pat_symbol: vec![SymbolId::NONE; f.pats.len()],
-            prop_owner: vec![ExprId::NONE; f.props.len()],
-            member_owner: vec![MemberOwner::None; f.members.len()],
-            member_symbol: vec![SymbolId::NONE; f.members.len()],
-            member_scope: vec![ScopeId::NONE; f.members.len()],
-            param_fn: vec![FnId::NONE; f.params.len()],
-            type_param_symbol: vec![SymbolId::NONE; f.type_params.len()],
-            type_param_scope: vec![ScopeId::NONE; f.type_params.len()],
-            fns: vec![
+            expr_kinds: filled(old.expr_kinds, 0, NOT_REACHED),
+            expr_symbol: filled(old.expr_symbol, f.exprs.len(), SymbolId::NONE),
+            expr_parent: filled(old.expr_parent, f.exprs.len(), Parent::None),
+            expr_flow: filled(old.expr_flow, f.exprs.len(), UNREACHABLE),
+            stmt_parent: filled(old.stmt_parent, f.stmts.len(), Parent::None),
+            stmt_scope: filled(old.stmt_scope, f.stmts.len(), ScopeId::NONE),
+            stmt_flow: filled(old.stmt_flow, f.stmts.len(), UNREACHABLE),
+            case_fallthrough: filled(old.case_fallthrough, f.cases.len(), FlowId::NONE),
+            type_scope: filled(old.type_scope, f.types.len(), ScopeId::NONE),
+            type_by_alias: filled(old.type_by_alias, f.types.len(), false),
+            pat_parent: filled(old.pat_parent, f.pats.len(), PatParent::None),
+            pat_symbol: filled(old.pat_symbol, f.pats.len(), SymbolId::NONE),
+            prop_owner: filled(old.prop_owner, f.props.len(), ExprId::NONE),
+            member_owner: filled(old.member_owner, f.members.len(), MemberOwner::None),
+            member_symbol: filled(old.member_symbol, f.members.len(), SymbolId::NONE),
+            member_scope: filled(old.member_scope, f.members.len(), ScopeId::NONE),
+            param_fn: filled(old.param_fn, f.params.len(), FnId::NONE),
+            type_param_symbol: filled(old.type_param_symbol, f.type_params.len(), SymbolId::NONE),
+            type_param_scope: filled(old.type_param_scope, f.type_params.len(), ScopeId::NONE),
+            fns: filled(
+                old.fns,
+                f.fns.len(),
                 FnInfo {
                     owner: FnOwner::None,
                     scope: ScopeId::NONE,
@@ -160,46 +303,63 @@ impl<'f, 's> Binder<'f, 's> {
                     end: UNREACHABLE,
                     exit: FlowId::NONE,
                     contains_this: false,
-                };
-                f.fns.len()
-            ],
-            requires_scope_change: vec![false; f.fns.len()],
-            fn_symbol: vec![SymbolId::NONE; f.fns.len()],
-            class_symbol: vec![SymbolId::NONE; f.classes.len()],
-            class_owner: vec![ClassOwner::Stmt(StmtId::NONE); f.classes.len()],
-            class_scope: vec![ScopeId::NONE; f.classes.len()],
-            interface_symbol: vec![SymbolId::NONE; f.interfaces.len()],
-            interface_scope: vec![ScopeId::NONE; f.interfaces.len()],
-            interface_contains_this: vec![false; f.interfaces.len()],
-            enum_scope: vec![ScopeId::NONE; f.enums.len()],
-            module_scope: vec![ScopeId::NONE; f.modules.len()],
-            alias_symbol: vec![SymbolId::NONE; f.aliases.len()],
-            alias_scope: vec![ScopeId::NONE; f.aliases.len()],
-            enum_symbol: vec![SymbolId::NONE; f.enums.len()],
-            enum_member_symbol: vec![SymbolId::NONE; f.enum_members.len()],
-            enum_member_owner: vec![EnumId::NONE; f.enum_members.len()],
-            module_symbol: vec![SymbolId::NONE; f.modules.len()],
-            module_instance_state: vec![ModuleInstanceState::NonInstantiated; f.modules.len()],
-            var_stmt: vec![StmtId::NONE; f.var_decls.len()],
-            case_stmt: vec![StmtId::NONE; f.cases.len()],
-            import_scope: vec![ScopeId::NONE; f.imports.len()],
-            import_equals_scope: vec![ScopeId::NONE; f.import_equals.len()],
-            export_scope: vec![ScopeId::NONE; f.exports.len()],
-            ..Default::default()
+                },
+            ),
+            requires_scope_change: filled(old.requires_scope_change, f.fns.len(), false),
+            fn_symbol: filled(old.fn_symbol, f.fns.len(), SymbolId::NONE),
+            class_symbol: filled(old.class_symbol, f.classes.len(), SymbolId::NONE),
+            class_owner: filled(
+                old.class_owner,
+                f.classes.len(),
+                ClassOwner::Stmt(StmtId::NONE),
+            ),
+            class_scope: filled(old.class_scope, f.classes.len(), ScopeId::NONE),
+            interface_symbol: filled(old.interface_symbol, f.interfaces.len(), SymbolId::NONE),
+            interface_scope: filled(old.interface_scope, f.interfaces.len(), ScopeId::NONE),
+            interface_contains_this: filled(old.interface_contains_this, f.interfaces.len(), false),
+            enum_scope: filled(old.enum_scope, f.enums.len(), ScopeId::NONE),
+            module_scope: filled(old.module_scope, f.modules.len(), ScopeId::NONE),
+            alias_symbol: filled(old.alias_symbol, f.aliases.len(), SymbolId::NONE),
+            alias_scope: filled(old.alias_scope, f.aliases.len(), ScopeId::NONE),
+            enum_symbol: filled(old.enum_symbol, f.enums.len(), SymbolId::NONE),
+            enum_member_symbol: filled(
+                old.enum_member_symbol,
+                f.enum_members.len(),
+                SymbolId::NONE,
+            ),
+            enum_member_owner: filled(old.enum_member_owner, f.enum_members.len(), EnumId::NONE),
+            module_symbol: filled(old.module_symbol, f.modules.len(), SymbolId::NONE),
+            module_instance_state: filled(
+                old.module_instance_state,
+                f.modules.len(),
+                ModuleInstanceState::NonInstantiated,
+            ),
+            var_stmt: filled(old.var_stmt, f.var_decls.len(), StmtId::NONE),
+            case_stmt: filled(old.case_stmt, f.cases.len(), StmtId::NONE),
+            import_scope: filled(old.import_scope, f.imports.len(), ScopeId::NONE),
+            import_equals_scope: filled(
+                old.import_equals_scope,
+                f.import_equals.len(),
+                ScopeId::NONE,
+            ),
+            export_scope: filled(old.export_scope, f.exports.len(), ScopeId::NONE),
+            // Empty, with the room they had.
+            ..old
         };
         b.flow.push(Flow::Unreachable);
 
-        let mut this = Binder {
+        let mut this = Self {
             f,
             options,
             atoms,
             b,
-            tables: Vec::new(),
+            tables: std::mem::take(&mut room.tables),
+            spare_names: std::mem::take(&mut room.spare_names),
             scope: ScopeId::NONE,
-            statement_lists: Vec::new(),
-            idents: Vec::new(),
-            assigned: Vec::new(),
-            expando_assignments: Vec::new(),
+            statement_lists: std::mem::take(&mut room.statement_lists),
+            idents: std::mem::take(&mut room.idents),
+            assigned: std::mem::take(&mut room.assigned),
+            expando_assignments: std::mem::take(&mut room.expando_assignments),
             flow: UNREACHABLE,
             is_reached: false,
             is_unchecked: false,
@@ -223,10 +383,10 @@ impl<'f, 's> Binder<'f, 's> {
             cur_member: MemberId::NONE,
             this_member: MemberId::NONE,
             this_property: PropId::NONE,
-            containing_classes: Vec::new(),
+            containing_classes: std::mem::take(&mut room.containing_classes),
             is_in_class_decorator: false,
-            returns: Vec::new(),
-            yields: Vec::new(),
+            returns: std::mem::take(&mut room.returns),
+            yields: std::mem::take(&mut room.yields),
             seen_this: false,
             this_in_name: false,
             flow_after_name: FlowId::NONE,
@@ -234,6 +394,8 @@ impl<'f, 's> Binder<'f, 's> {
             type_literal_depth: 0,
             scope_change_of: FnId::NONE,
             associated_declaration: (PatId::NONE, FnId::NONE),
+            instance_states: Vec::new(),
+            chain_answers: Default::default(),
             stack_check: bun_core::StackCheck::init(),
         };
         this.file();
@@ -243,7 +405,29 @@ impl<'f, 's> Binder<'f, 's> {
                 ..Default::default()
             };
         }
-        this.finish()
+        this.finish();
+        for mut names in this.tables.iter_mut().filter_map(|table| table.many.take()) {
+            names.clear();
+            this.spare_names.push(names);
+        }
+        this.tables.clear();
+        this.statement_lists.clear();
+        this.idents.clear();
+        this.assigned.clear();
+        this.expando_assignments.clear();
+        this.containing_classes.clear();
+        this.returns.clear();
+        this.yields.clear();
+        room.tables = this.tables;
+        room.spare_names = this.spare_names;
+        room.statement_lists = this.statement_lists;
+        room.idents = this.idents;
+        room.assigned = this.assigned;
+        room.expando_assignments = this.expando_assignments;
+        room.containing_classes = this.containing_classes;
+        room.returns = this.returns;
+        room.yields = this.yields;
+        this.b
     }
 
     /// Whether the HIR is too deep to bind on this thread's stack. Every recursive path of the
@@ -258,7 +442,7 @@ impl<'f, 's> Binder<'f, 's> {
     // ───────────────────────────── symbols and scopes ─────────────────────────────
 
     fn new_table(&mut self) -> TableId {
-        self.tables.push(FxHashMap::default());
+        self.tables.push(Table::default());
         TableId(self.tables.len() as u32 - 1)
     }
 
@@ -538,14 +722,14 @@ impl<'f, 's> Binder<'f, 's> {
         };
         // `InternalSymbolNameMissing`, `HasDynamicName`
         let is_in_no_table = name.is_none() || name == known::missing || name == known::computed;
-        let existing = self.tables[table.idx()].get(&name).copied();
+        let existing = self.tables[table.idx()].get(name).copied();
         let existing = existing.filter(|_| !is_in_no_table);
         let replaceable = SymFlags::REPLACEABLE_BY_METHOD;
         let symbol = match existing {
             None => {
                 let symbol = self.new_symbol(SymFlags::empty(), name);
                 if !is_in_no_table {
-                    self.tables[table.idx()].insert(name, symbol);
+                    self.tables[table.idx()].insert(name, symbol, &mut self.spare_names);
                 }
                 if is_replaceable_by_method {
                     self.b.symbols[symbol.idx()].flags |= replaceable;
@@ -564,7 +748,7 @@ impl<'f, 's> Binder<'f, 's> {
                 } else if there.contains(replaceable) {
                     // "Javascript constructor-declared symbols can be discarded in favor of prototype symbols like methods."
                     let symbol = self.new_symbol(SymFlags::empty(), name);
-                    self.tables[table.idx()].insert(name, symbol);
+                    self.tables[table.idx()].insert(name, symbol, &mut self.spare_names);
                     symbol
                 } else if includes.intersects(variable) && there.contains(assignment)
                     || includes.contains(assignment) && there.intersects(variable)
@@ -865,12 +1049,73 @@ impl<'f, 's> Binder<'f, 's> {
         !self.label_edges[self.edges_of(label)].edges.is_empty()
     }
 
+    /// The answer to a question that `step` answers for an expression or passes on to the next
+    /// one down a chain such as `a.b.c`. The binder asks at every link. So that a chain of n links
+    /// does not take n * n steps, an answer that was found many links down is written at each link
+    /// on the way, in a table by `ExprId` that only a file with such a chain has.
+    /// `question`: 0 or 1, for its two bits of an entry: the answer is known, and it is yes.
+    /// `is_lasting`: asked after the walk, whether `step` says the same for ever.
+    fn answer_along_chain(
+        &self,
+        question: u8,
+        e: ExprId,
+        step: impl Fn(&Self, ExprId) -> Result<bool, ExprId>,
+        is_lasting: impl FnOnce() -> bool,
+    ) -> bool {
+        let (is_known, is_yes) = (1 << (2 * question), 2 << (2 * question));
+        let mut at = e;
+        let mut links = 0;
+        let answer = loop {
+            let written = self.chain_answers.borrow().get(at.idx()).copied();
+            if let Some(entry) = written
+                && entry & is_known != 0
+            {
+                break entry & is_yes != 0;
+            }
+            match step(self, at) {
+                Ok(answer) => break answer,
+                Err(next) => at = next,
+            }
+            links += 1;
+        };
+        if links > 32 && is_lasting() {
+            let entry = is_known | if answer { is_yes } else { 0 };
+            self.chain_answers
+                .borrow_mut()
+                .resize(self.f.exprs.len(), 0);
+            let last = at;
+            at = e;
+            while at != last {
+                self.chain_answers.borrow_mut()[at.idx()] |= entry;
+                let Err(next) = step(self, at) else { break };
+                at = next;
+            }
+        }
+        answer
+    }
+
+    /// `isNarrowableReference`
+    fn is_narrowable_reference(&self, e: ExprId) -> bool {
+        let step = |binder: &Self, e| narrowable_reference_step(binder.f, e);
+        self.answer_along_chain(0, e, step, || true)
+    }
+
     /// `containsNarrowableReference`
     fn contains_narrowable_reference(&self, e: ExprId) -> bool {
-        is_narrowable_reference(self.f, e)
-            || self
+        // `chain_of` looks at the parent of `x!`, which is known once the binder has been there.
+        let has_non_null = std::cell::Cell::new(false);
+        let step = |binder: &Self, e: ExprId| {
+            if binder.is_narrowable_reference(e) {
+                return Ok(true);
+            }
+            if matches!(binder.f[e].kind, ExprKind::NonNull(_)) {
+                has_non_null.set(true);
+            }
+            binder
                 .chain_of(e)
-                .is_some_and(|(inner, _)| self.contains_narrowable_reference(inner))
+                .map_or(Ok(false), |(inner, _)| Err(inner))
+        };
+        self.answer_along_chain(1, e, step, || !has_non_null.get())
     }
 
     /// `isNarrowingExpression`: `x as T` and `x satisfies T` are not narrowing expressions.
@@ -1155,7 +1400,7 @@ impl<'f, 's> Binder<'f, 's> {
             // `isNarrowableReference` are concerned.
             _ => {}
         }
-        if is_bound && is_narrowable_reference(self.f, e) {
+        if is_bound && self.is_narrowable_reference(e) {
             self.flow_mutation(Flow::Assign {
                 before: self.flow,
                 target: FlowTarget::Expr(e),
@@ -1255,11 +1500,11 @@ impl<'f, 's> Binder<'f, 's> {
         if self.b.commonjs_indicator.is_some() {
             let locals = self.b.scopes[self.scope.idx()].locals;
             for name in [known::module, known::exports] {
-                if !self.tables[locals.idx()].contains_key(&name) {
+                if !self.tables[locals.idx()].contains_key(name) {
                     let (flags, decl) = (SymFlags::MODULE_EXPORTS, Decl::CommonJsVariable);
                     let variable = flags | SymFlags::FUNCTION_SCOPED_VARIABLE;
                     let symbol = self.bind_anonymous_declaration(decl, variable, name);
-                    self.tables[locals.idx()].insert(name, symbol);
+                    self.tables[locals.idx()].insert(name, symbol, &mut self.spare_names);
                     // Its parent is `module`, which `getSymbolChain` never prints, because its
                     // declaration is the file.
                     if name == known::module {
@@ -1280,7 +1525,7 @@ impl<'f, 's> Binder<'f, 's> {
     /// =` are also exports of the `export =` symbol, which then becomes a namespace.
     fn bind_commonjs_type_exports(&mut self, module: SymbolId) {
         let exports = &self.tables[self.b.symbols[module.idx()].exports.idx()];
-        let Some(&equals) = exports.get(&known::export_equals) else {
+        let Some(&equals) = exports.get(known::export_equals) else {
             return;
         };
         let promoted: Vec<(Atom, SymbolId)> = exports
@@ -1297,7 +1542,7 @@ impl<'f, 's> Binder<'f, 's> {
             return;
         }
         let table = self.get_exports(equals);
-        self.tables[table.idx()].extend(promoted);
+        self.tables[table.idx()].extend(promoted, &mut self.spare_names);
         self.b.symbols[equals.idx()].flags |= SymFlags::NAMESPACE_MODULE;
     }
 
@@ -1305,7 +1550,7 @@ impl<'f, 's> Binder<'f, 's> {
     /// declaration whose body is `scope`.
     fn lookup_name(&self, name: Atom, scope: ScopeId) -> Option<SymbolId> {
         let s = &self.b.scopes[scope.idx()];
-        if let Some(&local) = self.tables[s.locals.idx()].get(&name) {
+        if let Some(&local) = self.tables[s.locals.idx()].get(name) {
             let export_symbol = self.b.symbols[local.idx()].export_symbol;
             return Some(if export_symbol.is_some() {
                 export_symbol
@@ -1358,28 +1603,37 @@ impl<'f, 's> Binder<'f, 's> {
 
     /// `lookupEntity`. `IsEntityNameExpressionEx`: `a["b"]` and `a[0]` are entity names only in
     /// JavaScript, and a parenthesized expression is not one.
-    fn lookup_entity(&mut self, e: ExprId, scope: ScopeId) -> Option<SymbolId> {
-        if is_parenthesized(self.f, e) {
-            return None;
-        }
-        let (obj, name) = match self.f[e].kind {
-            ExprKind::Ident(name) => return self.lookup_name(name, scope),
-            ExprKind::Dot {
-                obj,
-                name,
-                name_pos,
-                ..
-            } if !is_private_name_at(self.f, name_pos) => (obj, name),
-            ExprKind::Index { obj, index, .. }
-                if self.f.is_js && is_string_or_numeric_literal_like(self.f, index) =>
-            {
-                (obj, self.literal_name(index))
+    fn lookup_entity(&mut self, mut e: ExprId, scope: ScopeId) -> Option<SymbolId> {
+        // The names after the first, from the last to the second. A loop: `a.b.c` is as deep as it
+        // is long.
+        let mut names: smallvec::SmallVec<[Atom; 8]> = smallvec::SmallVec::new();
+        let mut symbol = loop {
+            if is_parenthesized(self.f, e) {
+                return None;
             }
-            _ => return None,
+            let (obj, name) = match self.f[e].kind {
+                ExprKind::Ident(name) => break self.lookup_name(name, scope)?,
+                ExprKind::Dot {
+                    obj,
+                    name,
+                    name_pos,
+                    ..
+                } if !is_private_name_at(self.f, name_pos) => (obj, name),
+                ExprKind::Index { obj, index, .. }
+                    if self.f.is_js && is_string_or_numeric_literal_like(self.f, index) =>
+                {
+                    (obj, self.literal_name(index))
+                }
+                _ => return None,
+            };
+            names.push(name);
+            e = obj;
         };
-        let owner = self.lookup_entity(obj, scope)?;
-        let owner = self.initializer_symbol(owner)?;
-        self.export_of(owner, name)
+        for &name in names.iter().rev() {
+            let owner = self.initializer_symbol(symbol)?;
+            symbol = self.export_of(owner, name)?;
+        }
+        Some(symbol)
     }
 
     /// `getInitializerSymbol`
@@ -1461,7 +1715,7 @@ impl<'f, 's> Binder<'f, 's> {
         if exports.is_none() {
             return None;
         }
-        self.tables[exports.idx()].get(&name).copied()
+        self.tables[exports.idx()].get(name).copied()
     }
 
     /// Whether a declaration other than an assignment declares `name` among the exports of
@@ -1507,7 +1761,8 @@ impl<'f, 's> Binder<'f, 's> {
     /// `bindDeferredExpandoAssignments`: `f.name = value`, `f[key] = value` and, in JavaScript,
     /// `Object.defineProperty(f, key, descriptor)` declare a property of `f`.
     fn bind_deferred_expando_assignments(&mut self) {
-        for (e, scope) in std::mem::take(&mut self.expando_assignments) {
+        let assignments = std::mem::take(&mut self.expando_assignments);
+        for &(e, scope) in &assignments {
             let Some(scope) = self.container_of_expando(e, scope) else {
                 continue;
             };
@@ -1573,6 +1828,7 @@ impl<'f, 's> Binder<'f, 's> {
             }
             self.b.expando_declarations.push(e);
         }
+        self.expando_assignments = assignments;
         self.b.expando_declarations.as_mut_slice().sort_unstable();
     }
 
@@ -1590,12 +1846,12 @@ impl<'f, 's> Binder<'f, 's> {
             if let ScopeKind::PropertyDeclaration(_, constructor)
             | ScopeKind::PropertyType(_, constructor) = s.kind
                 && let Some(&local) =
-                    tables[b.scopes[b.fns[constructor.idx()].scope.idx()].locals.idx()].get(&name)
+                    tables[b.scopes[b.fns[constructor.idx()].scope.idx()].locals.idx()].get(name)
                 && b.symbols[local.idx()].flags.intersects(SymFlags::VALUE)
             {
                 return Some(SymbolId::NONE);
             }
-            if let Some(&symbol) = tables[s.locals.idx()].get(&name)
+            if let Some(&symbol) = tables[s.locals.idx()].get(name)
                 && b.symbols[symbol.idx()]
                     .flags
                     .intersects(SymFlags::VALUE | SymFlags::EXPORT_VALUE | SymFlags::ALIAS)
@@ -1608,7 +1864,7 @@ impl<'f, 's> Binder<'f, 's> {
             // namespace scope everything but the members.
             if s.symbol.is_some()
                 && name != known::default
-                && let Some(&symbol) = tables[b.symbols[s.symbol.idx()].exports.idx()].get(&name)
+                && let Some(&symbol) = tables[b.symbols[s.symbol.idx()].exports.idx()].get(name)
                 // "purely an export specifier, it is not actually considered in scope"
                 && !(b.symbols[symbol.idx()].flags.contains(SymFlags::EXPORT_ONLY)
                     && b.is_external_module(self.f, scope))
@@ -1628,7 +1884,7 @@ impl<'f, 's> Binder<'f, 's> {
             // there `useResult` is false for a type and for a function scoped variable.
             if let ScopeKind::FunctionName(f) = s.kind
                 && let Some(&symbol) =
-                    tables[b.scopes[b.fns[f.idx()].scope.idx()].locals.idx()].get(&name)
+                    tables[b.scopes[b.fns[f.idx()].scope.idx()].locals.idx()].get(name)
                 && b.symbols[symbol.idx()]
                     .flags
                     .intersects(SymFlags::VALUE | SymFlags::ALIAS)
@@ -1821,7 +2077,7 @@ impl<'f, 's> Binder<'f, 's> {
         scope
     }
 
-    fn finish(mut self) -> BoundBuilder {
+    fn finish(&mut self) {
         // Resolves names, now that everything is declared.
         let idents = std::mem::take(&mut self.idents);
         for &(expr, scope) in &idents {
@@ -1855,13 +2111,16 @@ impl<'f, 's> Binder<'f, 's> {
                 self.b.alias_idents.push((expr, scope));
             }
         }
-        for expr in std::mem::take(&mut self.assigned) {
+        self.idents = idents;
+        let assigned = std::mem::take(&mut self.assigned);
+        for &expr in &assigned {
             let symbol = self.b.expr_symbol[expr.idx()];
             if symbol.is_some() {
                 self.b.symbols[symbol.idx()].flags |= SymFlags::ASSIGNED;
                 self.b.assignments.push((symbol, expr));
             }
         }
+        self.assigned = assigned;
         self.b.assignments.sort_unstable_by_key(|a| (a.0.0, a.1.0));
         let (expr_symbol, arguments_objects) = (&self.b.expr_symbol, &self.b.arguments_objects);
         self.b.unchecked_assignment_targets.retain(|target| {
@@ -1944,13 +2203,14 @@ impl<'f, 's> Binder<'f, 's> {
         if !self.b.module_augmentations.is_empty() {
             self.b.module_augmentations.retain(|s| seen.insert(*s));
         }
-        self.b
     }
 
-    fn list(&mut self, items: &[u32]) -> (u32, u32) {
-        let start = self.b.ids.len() as u32;
-        self.b.ids.extend_from_slice(items);
-        (start, items.len() as u32)
+    /// Moves `items[first..]` to the end of `ids`. Returns where they are.
+    fn list(ids: &mut Vec<u32>, items: &mut Vec<u32>, first: usize) -> (u32, u32) {
+        let (start, len) = (ids.len() as u32, (items.len() - first) as u32);
+        ids.extend_from_slice(&items[first..]);
+        items.truncate(first);
+        (start, len)
     }
 
     // ───────────────────────────── statements ─────────────────────────────
@@ -2652,9 +2912,7 @@ impl<'f, 's> Binder<'f, 's> {
     fn module(&mut self, m: ModuleId) {
         let decl = &self.f[m];
         let ambient = decl.flags.contains(Flags::AMBIENT) || self.f.kind == FileKind::Declaration;
-        // `GetModuleInstanceState`
-        let mut outer = self.statement_lists.clone();
-        let state = self.instance_state_of_module(m, &mut outer, &mut Vec::new());
+        let state = self.module_instance_state(m);
         self.b.module_instance_state[m.idx()] = state;
         let instantiated = state != ModuleInstanceState::NonInstantiated;
         let is_at_top = matches!(self.b.scopes[self.scope.idx()].kind, ScopeKind::File);
@@ -2778,25 +3036,62 @@ impl<'f, 's> Binder<'f, 's> {
         }
     }
 
+    /// `GetModuleInstanceState`, of a module in the innermost of `statement_lists`.
+    ///
+    /// TypeScript forgets what it has found about the modules inside once the question is answered,
+    /// and asks again when it binds them: quadratic time for namespaces in namespaces. Here it is
+    /// kept, unless a module in progress was asked about: what was found then depends on where the
+    /// question started.
+    fn module_instance_state(&mut self, m: ModuleId) -> ModuleInstanceState {
+        let mut states = InstanceStates {
+            of: std::mem::take(&mut self.instance_states),
+            answered: Vec::new(),
+            met_one_in_progress: false,
+            ran_out_of_stack: false,
+        };
+        states
+            .of
+            .resize(self.f.modules.len(), InstanceState::Unknown);
+        let mut outer = std::mem::take(&mut self.statement_lists);
+        let state = self.instance_state_of_module(m, &mut outer, &mut states);
+        self.statement_lists = outer;
+        if states.met_one_in_progress {
+            for &answered in &states.answered {
+                states.of[answered.idx()] = InstanceState::Unknown;
+            }
+        }
+        self.b.ran_out_of_stack |= states.ran_out_of_stack;
+        self.instance_states = states.of;
+        state
+    }
+
     /// `getModuleInstanceState`, and `getModuleInstanceStateCached` for the body. `outer`: the
-    /// statement lists that enclose `m`, innermost last. `visited`: the bodies already queried. A
-    /// body queried while it is in progress contributes nothing.
+    /// statement lists that enclose `m`, innermost last. A body queried while it is in progress
+    /// contributes nothing.
     /// (A cycle through a statement always passes through a body.)
     fn instance_state_of_module(
         &self,
         m: ModuleId,
         outer: &mut Vec<IdList<StmtId>>,
-        visited: &mut Vec<(ModuleId, Option<ModuleInstanceState>)>,
+        visited: &mut InstanceStates,
     ) -> ModuleInstanceState {
         let module = &self.f[m];
         if !module.has_body {
             return ModuleInstanceState::Instantiated;
         }
-        if let Some(&(_, state)) = visited.iter().find(|v| v.0 == m) {
-            return state.unwrap_or(ModuleInstanceState::NonInstantiated);
+        match visited.of[m.idx()] {
+            InstanceState::Known(state) => return state,
+            InstanceState::InProgress => {
+                visited.met_one_in_progress = true;
+                return ModuleInstanceState::NonInstantiated;
+            }
+            InstanceState::Unknown => {}
         }
-        let slot = visited.len();
-        visited.push((m, None));
+        if !self.stack_check.is_safe_to_recurse() {
+            visited.ran_out_of_stack = true;
+            return ModuleInstanceState::Instantiated;
+        }
+        visited.of[m.idx()] = InstanceState::InProgress;
         outer.push(module.body);
         let mut state = ModuleInstanceState::NonInstantiated;
         for s in self.f.ids(module.body) {
@@ -2810,7 +3105,8 @@ impl<'f, 's> Binder<'f, 's> {
             }
         }
         outer.pop();
-        visited[slot].1 = Some(state);
+        visited.of[m.idx()] = InstanceState::Known(state);
+        visited.answered.push(m);
         state
     }
 
@@ -2819,7 +3115,7 @@ impl<'f, 's> Binder<'f, 's> {
         &self,
         s: StmtId,
         outer: &mut Vec<IdList<StmtId>>,
-        visited: &mut Vec<(ModuleId, Option<ModuleInstanceState>)>,
+        visited: &mut InstanceStates,
     ) -> ModuleInstanceState {
         match self.f[s].kind {
             StmtKind::Interface(_) | StmtKind::TypeAlias(_) => ModuleInstanceState::NonInstantiated,
@@ -2857,7 +3153,7 @@ impl<'f, 's> Binder<'f, 's> {
         &self,
         spec: ExportSpecId,
         outer: &[IdList<StmtId>],
-        visited: &mut Vec<(ModuleId, Option<ModuleInstanceState>)>,
+        visited: &mut InstanceStates,
     ) -> ModuleInstanceState {
         let ExportSpec {
             local: name,
@@ -3108,9 +3404,9 @@ impl<'f, 's> Binder<'f, 's> {
             SymFlags::TYPE_PARAMETER,
             SymFlags::TYPE_PARAMETER_EXCLUDES,
         );
-        self.tables[locals.idx()]
-            .entry(self.f[p].name)
-            .or_insert(symbol);
+        if !self.tables[locals.idx()].contains_key(self.f[p].name) {
+            self.tables[locals.idx()].insert(self.f[p].name, symbol, &mut self.spare_names);
+        }
         symbol
     }
 
@@ -3199,9 +3495,9 @@ impl<'f, 's> Binder<'f, 's> {
             self.false_target,
             self.cur_fn,
             std::mem::take(&mut self.labels),
-            std::mem::take(&mut self.returns),
-            std::mem::take(&mut self.yields),
         );
+        // Those of this function are what is added from here on.
+        let (first_return, first_yield) = (self.returns.len(), self.yields.len());
         // `getImmediatelyInvokedFunctionExpression`
         let is_invoked = matches!(f.kind, FnKind::Expr | FnKind::Arrow)
             && matches!(owner, FnOwner::Expr(e) if matches!(self.b.expr_parent[e.idx()], Parent::Expr(call)
@@ -3370,13 +3666,16 @@ impl<'f, 's> Binder<'f, 's> {
         } else {
             FlowId::NONE
         };
-        let returns = std::mem::take(&mut self.returns);
-        let yields = std::mem::take(&mut self.yields);
         // `forEachYieldExpression` visits a static block like any statement: its yield expressions
         // belong to the enclosing function.
         let passes_yields_on = f.kind == FnKind::StaticBlock;
-        let (rs, rl) = self.list(&returns);
-        let (ys, yl) = self.list(&yields[..if passes_yields_on { 0 } else { yields.len() }]);
+        let (rs, rl) = Self::list(&mut self.b.ids, &mut self.returns, first_return);
+        let first_yield = if passes_yields_on {
+            self.yields.len()
+        } else {
+            first_yield
+        };
+        let (ys, yl) = Self::list(&mut self.b.ids, &mut self.yields, first_yield);
         self.b.fns[id.idx()] = FnInfo {
             owner,
             scope,
@@ -3416,14 +3715,9 @@ impl<'f, 's> Binder<'f, 's> {
             self.false_target,
             self.cur_fn,
             self.labels,
-            self.returns,
-            self.yields,
         ) = saved;
         if is_immediately_invoked {
             self.flow = exit;
-        }
-        if passes_yields_on {
-            self.yields.extend_from_slice(&yields);
         }
         self.pop_scope();
         if has_own_name {
@@ -3462,7 +3756,8 @@ impl<'f, 's> Binder<'f, 's> {
         let exports = self.get_exports(symbol);
         let prototype = self.new_symbol(SymFlags::PROPERTY, known::prototype);
         self.b.symbols[prototype.idx()].parent = symbol;
-        if let Some(exported) = self.tables[exports.idx()].insert(known::prototype, prototype)
+        if let Some(exported) =
+            self.tables[exports.idx()].insert(known::prototype, prototype, &mut self.spare_names)
             && let Some(&decl) = self.b.symbols[exported.idx()].decls.first()
         {
             self.b.redeclarations.push(Redeclaration {
@@ -4137,7 +4432,7 @@ impl<'f, 's> Binder<'f, 's> {
                     if !is_stray {
                         let own = self.push_scope(ScopeKind::InferConstraint, SymbolId::NONE);
                         let locals = self.b.scopes[own.idx()].locals;
-                        self.tables[locals.idx()].insert(name, symbol);
+                        self.tables[locals.idx()].insert(name, symbol, &mut self.spare_names);
                     }
                     self.ty(constraint);
                     if !is_stray {
@@ -4214,7 +4509,7 @@ impl<'f, 's> Binder<'f, 's> {
     /// `bind` for `a.b` and `a[b]`: only a narrowable reference gets a flow node. Any other has its
     /// declared type.
     fn access_flow(&mut self, id: ExprId) {
-        if is_narrowable_reference(self.f, id) {
+        if self.is_narrowable_reference(id) {
             self.b.expr_flow[id.idx()] = self.flow;
         }
     }
@@ -4321,7 +4616,7 @@ impl<'f, 's> Binder<'f, 's> {
             }
         }
         // `bind`, `KindCallExpression`: a call in an optional chain is a call expression too.
-        if matches!(self.f[id].kind, ExprKind::Call(_)) {
+        if self.f.is_js && matches!(self.f[id].kind, ExprKind::Call(_)) {
             match assignment_declaration_kind(self.f, id) {
                 JsDeclarationKind::ObjectDefinePropertyValue => {
                     self.expando_assignments.push((id, self.scope));
@@ -4343,9 +4638,9 @@ impl<'f, 's> Binder<'f, 's> {
             | ExprKind::ImportMeta
             | ExprKind::NewTarget(_) => {}
             ExprKind::Ident(_) => {
-                self.b.expr_flow[id.idx()] = self.flow;
                 self.idents.push((id, self.scope));
                 let (name, func) = self.associated_declaration;
+                self.b.expr_flow[id.idx()] = self.flow;
                 if name.is_some() {
                     self.b.identifiers_in_parameters.push((id, name, func));
                 }
@@ -4354,7 +4649,9 @@ impl<'f, 's> Binder<'f, 's> {
                 self.seen_this = true;
                 self.b.expr_flow[id.idx()] = self.flow;
             }
-            ExprKind::Super => self.b.expr_flow[id.idx()] = self.flow,
+            ExprKind::Super => {
+                self.b.expr_flow[id.idx()] = self.flow;
+            }
             ExprKind::Template { exprs, .. } => self.exprs(exprs, me),
             ExprKind::TaggedTemplate(c) => {
                 let call = self.f[c];
@@ -4640,11 +4937,11 @@ impl<'f, 's> Binder<'f, 's> {
     /// `addLateBoundAssignmentDeclarationToSymbol`
     fn add_late_bound_assignment_declaration_to_symbol(&mut self, decl: Decl, symbol: SymbolId) {
         let (exports, name) = (self.get_exports(symbol), known::assignment_declaration);
-        match self.tables[exports.idx()].get(&name) {
+        match self.tables[exports.idx()].get(name) {
             Some(&all) => self.add_declaration_to_symbol(all, decl, SymFlags::empty()),
             None => {
                 let all = self.bind_anonymous_declaration(decl, SymFlags::empty(), name);
-                self.tables[exports.idx()].insert(name, all);
+                self.tables[exports.idx()].insert(name, all, &mut self.spare_names);
             }
         }
     }

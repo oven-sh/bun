@@ -344,8 +344,14 @@ pub(crate) mod dedupe_command;
 pub(crate) mod filter_arg;
 #[path = "filter_run.rs"]
 pub(crate) mod filter_run;
+#[path = "format_command.rs"]
+pub(crate) mod format_command;
 #[path = "link_command.rs"]
 pub(crate) mod link_command;
+#[path = "lint_command.rs"]
+pub(crate) mod lint_command;
+#[path = "lint_js.rs"]
+pub(crate) mod lint_js;
 #[path = "multi_run.rs"]
 pub(crate) mod multi_run;
 #[path = "outdated_command.rs"]
@@ -383,6 +389,8 @@ pub(crate) mod publish_command;
 pub(crate) mod remove_command;
 #[path = "scan_command.rs"]
 pub(crate) mod scan_command;
+#[path = "script_or_command.rs"]
+pub(crate) mod script_or_command;
 mod typescript_libs;
 #[path = "unlink_command.rs"]
 pub(crate) mod unlink_command;
@@ -645,9 +653,11 @@ pub(crate) mod help_command {
 
 <b>Commands:<r>
   <b><magenta>run<r>       <d>./my-script.ts<r>       Execute a file with Bun
-            <d>lint<r>                 Run a package.json script
+            <d>dev<r>                  Run a package.json script
   <b><magenta>test<r>                           Run unit tests with Bun
   <b><magenta>check<r>                          Type check a TypeScript project
+  <b><magenta>lint<r>                           Lint JavaScript and TypeScript, like ESLint
+  <b><magenta>format<r>                         Format JavaScript and TypeScript, like Prettier
   <b><magenta>x<r>         <d>{:<16}<r>     Execute a package binary (CLI), installing if needed <d>(bunx)<r>
   <b><magenta>repl<r>                           Start a REPL session with Bun
   <b><magenta>exec<r>                           Run a shell script directly with Bun
@@ -1048,9 +1058,21 @@ pub(crate) mod command {
             return Tag::AuditCommand;
         }
         if x == RootCommandMatcher::case(b"check") {
-            return match super::check_command::is_package_script() {
+            return match super::script_or_command::is_of_the_project(b"check") {
                 true => Tag::AutoCommand,
                 false => Tag::CheckCommand,
+            };
+        }
+        if x == RootCommandMatcher::case(b"lint") {
+            return match super::script_or_command::is_of_the_project(b"lint") {
+                true => Tag::AutoCommand,
+                false => Tag::LintCommand,
+            };
+        }
+        if x == RootCommandMatcher::case(b"format") {
+            return match super::script_or_command::is_of_the_project(b"format") {
+                true => Tag::AutoCommand,
+                false => Tag::FormatCommand,
             };
         }
         if x == RootCommandMatcher::case(b"info") {
@@ -1314,6 +1336,8 @@ pub(crate) mod command {
             Tag::PublishCommand => exec_publish(log),
             Tag::AuditCommand => exec_audit(log),
             Tag::CheckCommand => exec_check(log),
+            Tag::LintCommand => exec_lint(log),
+            Tag::FormatCommand => exec_format(log),
             Tag::DedupeCommand => exec_dedupe(log),
             Tag::PruneCommand => exec_prune(log),
             Tag::WhyCommand => exec_why(log),
@@ -1578,9 +1602,42 @@ pub(crate) mod command {
         // CheckCommand parses its own argv.
         init(Tag::CheckCommand, log)?;
         let argv = argv_zslice();
-        // After the flags of `bun`, and those of `BUN_OPTIONS`.
-        let check = argv.iter().position(|arg| arg.as_bytes() == b"check");
-        super::check_command::CheckCommand::exec(&argv[check.map_or(argv.len(), |at| at + 1)..])
+        super::check_command::CheckCommand::exec(after_command(&argv, b"check"))
+    }
+
+    /// What follows `command`, which stands after the flags of `bun` and those of `BUN_OPTIONS`.
+    fn after_command<'a>(
+        argv: &'a [&'static bun_core::ZStr],
+        command: &[u8],
+    ) -> &'a [&'static bun_core::ZStr] {
+        let mut args = argv.iter().enumerate();
+        while let Some((at, arg)) = args.next() {
+            match arg.as_bytes() {
+                arg if arg == command => return &argv[at + 1..],
+                // `bun --cwd lint lint`
+                b"--cwd" => _ = args.next(),
+                _ => {}
+            }
+        }
+        &[]
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn exec_lint(log: &mut bun_ast::Log) -> CmdResult {
+        // LintCommand parses its own argv.
+        let ctx = init(Tag::LintCommand, log)?;
+        let argv = argv_zslice();
+        super::lint_command::LintCommand::exec(ctx, after_command(&argv, b"lint"))
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn exec_format(log: &mut bun_ast::Log) -> CmdResult {
+        // FormatCommand parses its own argv.
+        let ctx = init(Tag::FormatCommand, log)?;
+        let argv = argv_zslice();
+        super::format_command::FormatCommand::exec(ctx, after_command(&argv, b"format"))
     }
 
     #[cold]
@@ -2234,6 +2291,77 @@ Execute a shell script directly from Bun.
   <b><green>bun<r> <cyan>--check<r> <blue>src/index.ts<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/runtime/check<r>
+"
+                );
+                Output::flush();
+            }
+            Tag::FormatCommand => {
+                pretty!(
+                    "\
+<b>Usage<r>: <b><green>bun format<r> <cyan>[flags]<r> <blue>[...files, directories or patterns]<r>
+  Format JavaScript and TypeScript the way Prettier does, using all CPU cores.
+
+  Writes the files that change, unless <cyan>--check<r> or <cyan>--list-different<r> is given.
+  Uses the nearest <b>.prettierrc<r>, <b>prettier.config.js<r>, <b>package.json#prettier<r> or <b>.oxfmtrc.json<r>, and <b>.editorconfig<r>.
+
+<b>Flags:<r>"
+                );
+                Output::flush();
+                bun_clap::simple_help(crate::cli::format_command::PARAMS);
+                pretty!(
+                    "
+
+<b>Examples:<r>
+  <d>Format the current directory<r>
+  <b><green>bun format<r>
+
+  <d>Format some files and directories<r>
+  <b><green>bun format<r> <blue>src test/a.test.ts<r>
+
+  <d>Fail if a file is not formatted, and write nothing<r>
+  <b><green>bun format<r> <cyan>--check<r>
+
+  <d>Format what an editor has in a buffer<r>
+  <b><green>bun format<r> <cyan>--stdin-filepath<r> <blue>src/index.ts<r>
+
+Full documentation is available at <magenta>https://bun.com/docs/runtime/format<r>
+"
+                );
+                Output::flush();
+            }
+            Tag::LintCommand => {
+                pretty!(
+                    "\
+<b>Usage<r>: <b><green>bun lint<r> <cyan>[flags]<r> <blue>[...files, directories or patterns]<r>
+  Lint JavaScript and TypeScript with the rules of ESLint and typescript-eslint, using all CPU cores.
+
+  Uses the nearest <b>eslint.config.js<r>, <b>.oxlintrc.json<r> or <b>.eslintrc.json<r>, and takes the flags of <b>eslint<r> and <b>oxlint<r>.
+  Without a configuration file: <b>eslint:recommended<r>, and <b>typescript-eslint/recommended<r> for TypeScript.
+
+<b>Flags:<r>"
+                );
+                Output::flush();
+                bun_clap::simple_help(crate::cli::lint_command::PARAMS);
+                pretty!(
+                    "
+
+<b>Examples:<r>
+  <d>Lint the current directory<r>
+  <b><green>bun lint<r>
+
+  <d>Lint some files and directories<r>
+  <b><green>bun lint<r> <blue>src test/a.test.ts<r>
+
+  <d>Fix what can be fixed<r>
+  <b><green>bun lint<r> <cyan>--fix<r>
+
+  <d>Fail on warnings too<r>
+  <b><green>bun lint<r> <cyan>--max-warnings 0<r>
+
+  <d>Try a rule without editing the configuration<r>
+  <b><green>bun lint<r> <cyan>--rule<r> <blue>'eqeqeq: error'<r>
+
+Full documentation is available at <magenta>https://bun.com/docs/runtime/lint<r>
 "
                 );
                 Output::flush();

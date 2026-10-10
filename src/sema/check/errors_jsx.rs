@@ -20,6 +20,7 @@ use super::symbols::IterationUse;
 use super::*;
 use crate::bind::ScopeId;
 use crate::resolve::JsxEmit;
+use crate::util::SharedSort;
 
 impl Checker<'_, '_> {
     pub(super) fn check_jsx(&mut self, file: FileId) {
@@ -76,7 +77,7 @@ impl Checker<'_, '_> {
             .copied()
             .filter(|e| !bound.is_unchecked(e.idx()))
             .collect();
-        elements.sort_unstable_by_key(|&e| hir[e].pos);
+        elements.shared_sort_unstable_by_key(|&e| hir[e].pos);
         // An error reported once per file is reported on the element that is checked first.
         // Elements the walk does not reach come last, in source order.
         let (mut first, mut first_fragment) = (None, None);

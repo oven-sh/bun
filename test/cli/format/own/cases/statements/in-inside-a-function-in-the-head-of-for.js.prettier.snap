@@ -1,0 +1,43 @@
+------------------
+{ printWidth: 80 }
+------------------
+for (
+  !(function (t) {
+    for (o in t) if (a && ("x" in M)) for (o in n) (o in t) || b;
+    (c in d);
+    if (e) (f in g);
+  })(i);
+  n < M;
+  n++
+);
+for (var a = (b in c); ;);
+for (var a = () => (b in c); ;);
+for (
+  var a = () => {
+    (b in c);
+  };
+  ;
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+for (
+  !(function (t) {
+    for (o in t) if (a && ("x" in M)) for (o in n) (o in t) || b;
+    (c in d);
+    if (e) (f in g);
+  })(i);
+  n < M;
+  n++
+);
+for (var a = (b in c); ;);
+for (var a = () => (b in c); ;);
+for (
+  var a = () => {
+    (b in c);
+  };
+  ;
+);
+
+===================== End =====================

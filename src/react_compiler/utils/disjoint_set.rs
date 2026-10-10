@@ -49,18 +49,26 @@ impl<K: Copy + Eq + Hash> DisjointSet<K> {
     /// Note: callers that need null/None semantics for missing items should
     /// use `find_opt()` instead.
     pub(crate) fn find(&mut self, item: K) -> K {
-        let parent = match self.entries.get(&item) {
-            Some(&p) => p,
-            None => {
-                self.entries.insert(item, item);
-                return item;
+        let mut root = item;
+        let mut child_of_root = item;
+        loop {
+            match self.entries.get(&root) {
+                Some(&parent) if parent != root => {
+                    child_of_root = root;
+                    root = parent;
+                }
+                Some(_) => break,
+                None => {
+                    self.entries.insert(root, root);
+                    break;
+                }
             }
-        };
-        if parent == item {
-            return item;
         }
-        let root = self.find(parent);
-        self.entries.insert(item, root);
+        let mut current = item;
+        while current != child_of_root {
+            let parent = self.entries.insert(current, root);
+            current = parent.unwrap_or(child_of_root);
+        }
         root
     }
 

@@ -1,0 +1,17 @@
+(4)["x"];
+(4).x;
+4["x"];
+for (var a = (1) in b);
+for (var a = 1 in b);
+for (var a = c in b);
+for (var a = "d" in b);
+for (var a = [1] in b);
+for (var a = {} in b);
+for (var a = 1 + 2 in b);
+for (var a = c || d in b);
+for (var a = function () {} in b);
+for (var a = class {} in b);
+for (var a = () => {} in b);
+for (var a = c() in b);
+for (var a = c ? d : e in b);
+for (var a = -c in b);

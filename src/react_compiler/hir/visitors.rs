@@ -696,9 +696,14 @@ pub fn map_terminal_successors(terminal: &mut Terminal, f: &mut impl FnMut(Block
 /// this function yields every block ID that `map_terminal_successors` would visit.
 pub fn each_terminal_all_successors(terminal: &Terminal) -> Vec<BlockId> {
     let mut result = Vec::new();
+    for_each_terminal_all_successor(terminal, &mut |block| result.push(block));
+    result
+}
+
+pub fn for_each_terminal_all_successor(terminal: &Terminal, f: &mut impl FnMut(BlockId)) {
     match terminal {
         Terminal::Goto { block, .. } => {
-            result.push(*block);
+            f(*block);
         }
         Terminal::If {
             consequent,
@@ -706,9 +711,9 @@ pub fn each_terminal_all_successors(terminal: &Terminal) -> Vec<BlockId> {
             fallthrough,
             ..
         } => {
-            result.push(*consequent);
-            result.push(*alternate);
-            result.push(*fallthrough);
+            f(*consequent);
+            f(*alternate);
+            f(*fallthrough);
         }
         Terminal::Branch {
             consequent,
@@ -716,17 +721,17 @@ pub fn each_terminal_all_successors(terminal: &Terminal) -> Vec<BlockId> {
             fallthrough,
             ..
         } => {
-            result.push(*consequent);
-            result.push(*alternate);
-            result.push(*fallthrough);
+            f(*consequent);
+            f(*alternate);
+            f(*fallthrough);
         }
         Terminal::Switch {
             cases, fallthrough, ..
         } => {
             for case in cases {
-                result.push(case.block);
+                f(case.block);
             }
-            result.push(*fallthrough);
+            f(*fallthrough);
         }
         Terminal::Logical {
             test, fallthrough, ..
@@ -737,8 +742,8 @@ pub fn each_terminal_all_successors(terminal: &Terminal) -> Vec<BlockId> {
         | Terminal::Optional {
             test, fallthrough, ..
         } => {
-            result.push(*test);
-            result.push(*fallthrough);
+            f(*test);
+            f(*fallthrough);
         }
         Terminal::Return { .. } | Terminal::Throw { .. } => {}
         Terminal::DoWhile {
@@ -747,9 +752,9 @@ pub fn each_terminal_all_successors(terminal: &Terminal) -> Vec<BlockId> {
             fallthrough,
             ..
         } => {
-            result.push(*loop_block);
-            result.push(*test);
-            result.push(*fallthrough);
+            f(*loop_block);
+            f(*test);
+            f(*fallthrough);
         }
         Terminal::While {
             test,
@@ -757,9 +762,9 @@ pub fn each_terminal_all_successors(terminal: &Terminal) -> Vec<BlockId> {
             fallthrough,
             ..
         } => {
-            result.push(*test);
-            result.push(*loop_block);
-            result.push(*fallthrough);
+            f(*test);
+            f(*loop_block);
+            f(*fallthrough);
         }
         Terminal::For {
             init,
@@ -769,13 +774,13 @@ pub fn each_terminal_all_successors(terminal: &Terminal) -> Vec<BlockId> {
             fallthrough,
             ..
         } => {
-            result.push(*init);
-            result.push(*test);
+            f(*init);
+            f(*test);
             if let Some(update) = update {
-                result.push(*update);
+                f(*update);
             }
-            result.push(*loop_block);
-            result.push(*fallthrough);
+            f(*loop_block);
+            f(*fallthrough);
         }
         Terminal::ForOf {
             init,
@@ -784,10 +789,10 @@ pub fn each_terminal_all_successors(terminal: &Terminal) -> Vec<BlockId> {
             fallthrough,
             ..
         } => {
-            result.push(*init);
-            result.push(*test);
-            result.push(*loop_block);
-            result.push(*fallthrough);
+            f(*init);
+            f(*test);
+            f(*loop_block);
+            f(*fallthrough);
         }
         Terminal::ForIn {
             init,
@@ -795,9 +800,9 @@ pub fn each_terminal_all_successors(terminal: &Terminal) -> Vec<BlockId> {
             fallthrough,
             ..
         } => {
-            result.push(*init);
-            result.push(*loop_block);
-            result.push(*fallthrough);
+            f(*init);
+            f(*loop_block);
+            f(*fallthrough);
         }
         Terminal::Label {
             block, fallthrough, ..
@@ -805,17 +810,17 @@ pub fn each_terminal_all_successors(terminal: &Terminal) -> Vec<BlockId> {
         | Terminal::Sequence {
             block, fallthrough, ..
         } => {
-            result.push(*block);
-            result.push(*fallthrough);
+            f(*block);
+            f(*fallthrough);
         }
         Terminal::MaybeThrow {
             continuation,
             handler,
             ..
         } => {
-            result.push(*continuation);
+            f(*continuation);
             if let Some(handler) = handler {
-                result.push(*handler);
+                f(*handler);
             }
         }
         Terminal::Try {
@@ -824,9 +829,9 @@ pub fn each_terminal_all_successors(terminal: &Terminal) -> Vec<BlockId> {
             fallthrough,
             ..
         } => {
-            result.push(*block);
-            result.push(*handler);
-            result.push(*fallthrough);
+            f(*block);
+            f(*handler);
+            f(*fallthrough);
         }
         Terminal::Scope {
             block, fallthrough, ..
@@ -834,12 +839,11 @@ pub fn each_terminal_all_successors(terminal: &Terminal) -> Vec<BlockId> {
         | Terminal::PrunedScope {
             block, fallthrough, ..
         } => {
-            result.push(*block);
-            result.push(*fallthrough);
+            f(*block);
+            f(*fallthrough);
         }
         Terminal::Unreachable { .. } | Terminal::Unsupported { .. } => {}
     }
-    result
 }
 
 // =============================================================================
@@ -915,7 +919,10 @@ impl ScopeBlockTraversal {
 
     /// Record scope information for a block's terminal.
     /// Equivalent to TS `recordScopes`.
-    pub fn record_scopes(&mut self, block: &BasicBlock) {
+    pub fn record_scopes(
+        &mut self,
+        block: &BasicBlock,
+    ) -> Result<(), crate::diagnostics::CompilerDiagnostic> {
         if let Some(block_info) = self.block_infos.get(&block.id) {
             match block_info {
                 ScopeBlockInfo::Begin { scope, .. } => {
@@ -923,11 +930,10 @@ impl ScopeBlockTraversal {
                 }
                 ScopeBlockInfo::End { scope, .. } => {
                     let top = self.active_scopes.last();
-                    assert_eq!(
-                        Some(scope),
-                        top,
-                        "Expected traversed block fallthrough to match top-most active scope"
-                    );
+                    crate::diagnostics::invariant(
+                        Some(scope) == top,
+                        "Expected traversed block fallthrough to match top-most active scope",
+                    )?;
                     self.active_scopes.pop();
                 }
             }
@@ -940,11 +946,11 @@ impl ScopeBlockTraversal {
                 scope,
                 ..
             } => {
-                assert!(
+                crate::diagnostics::invariant(
                     !self.block_infos.contains_key(scope_block)
                         && !self.block_infos.contains_key(fallthrough),
-                    "Expected unique scope blocks and fallthroughs"
-                );
+                    "Expected unique scope blocks and fallthroughs",
+                )?;
                 self.block_infos.insert(
                     *scope_block,
                     ScopeBlockInfo::Begin {
@@ -967,11 +973,11 @@ impl ScopeBlockTraversal {
                 scope,
                 ..
             } => {
-                assert!(
+                crate::diagnostics::invariant(
                     !self.block_infos.contains_key(scope_block)
                         && !self.block_infos.contains_key(fallthrough),
-                    "Expected unique scope blocks and fallthroughs"
-                );
+                    "Expected unique scope blocks and fallthroughs",
+                )?;
                 self.block_infos.insert(
                     *scope_block,
                     ScopeBlockInfo::Begin {
@@ -990,6 +996,7 @@ impl ScopeBlockTraversal {
             }
             _ => {}
         }
+        Ok(())
     }
 
     /// Returns true if the given scope is currently 'active', i.e. if the scope start

@@ -1,0 +1,1047 @@
+{
+ "0-no-lonely-if": {
+  "fix": "if (a) {} else { if (b) {} }\n",
+  "suggestions": "if (a) {} else { if (b) {} }\n",
+  "dangerously": "if (a) {} else { if (b) {} }\n"
+ },
+ "1-no-extra-bind": {
+  "fix": "a = function () {}.bind(b);\n",
+  "suggestions": "a = function () {}.bind(b);\n",
+  "dangerously": "a = function () {}.bind(b);\n"
+ },
+ "2-no-useless-return": {
+  "fix": "function a() { return; }\n",
+  "suggestions": "function a() { return; }\n",
+  "dangerously": "function a() { return; }\n"
+ },
+ "3-logical-assignment-operators": {
+  "fix": "a = a || b;\n",
+  "suggestions": "a = a || b;\n",
+  "dangerously": "a = a || b;\n"
+ },
+ "4-method-signature-style": {
+  "fix": "interface A { b(): void }\n",
+  "suggestions": "interface A { b(): void }\n",
+  "dangerously": "interface A { b(): void }\n"
+ },
+ "5-no-empty-interface": {
+  "fix": "interface A extends B {}\n",
+  "suggestions": "interface A extends B {}\n",
+  "dangerously": "interface A extends B {}\n"
+ },
+ "6-no-inferrable-types": {
+  "fix": "let a: number = 1;\n",
+  "suggestions": "let a = 1;\n",
+  "dangerously": "let a = 1;\n"
+ },
+ "7-no-debugger": {
+  "fix": "debugger;\n",
+  "suggestions": "\n",
+  "dangerously": "\n"
+ },
+ "8-no-console": {
+  "fix": "console.log(1);\n",
+  "suggestions": "\n",
+  "dangerously": "\n"
+ },
+ "10-no-unneeded-ternary": {
+  "fix": "a = b ? true : false;\n",
+  "suggestions": "a = b ? true : false;\n",
+  "dangerously": "a = !!b;\n"
+ },
+ "11-no-unneeded-ternary": {
+  "fix": "a = b ? b : c;\n",
+  "suggestions": "a = b ? b : c;\n",
+  "dangerously": "a = b ? b : c;\n"
+ },
+ "12-require-await": {
+  "fix": "async function a() { b(); }\n",
+  "suggestions": "async function a() { b(); }\n",
+  "dangerously": "function a() { b(); }\n"
+ },
+ "13-radix": {
+  "fix": "parseInt(a);\n",
+  "suggestions": "parseInt(a);\n",
+  "dangerously": "parseInt(a, 10);\n"
+ },
+ "14-no-eq-null": {
+  "fix": "a == null;\n",
+  "suggestions": "a == null;\n",
+  "dangerously": "a === null;\n"
+ },
+ "15-no-extraneous-class": {
+  "fix": "class A {}\n",
+  "suggestions": "\n",
+  "dangerously": "\n"
+ },
+ "16-no-extra-boolean-cast": {
+  "fix": "if (!!a) {}\n",
+  "suggestions": "if (a) {}\n",
+  "dangerously": "if (a) {}\n"
+ },
+ "17-no-extra-boolean-cast": {
+  "fix": "if (a) {}\n",
+  "suggestions": "if (Boolean(a)) {}\n",
+  "dangerously": "if (a) {}\n"
+ },
+ "18-eqeqeq": {
+  "fix": "a == 'b'; typeof a === 'c'; a == b;\n",
+  "suggestions": "a == 'b'; typeof a == 'c'; a == b;\n",
+  "dangerously": "a === 'b'; typeof a === 'c'; a === b;\n"
+ },
+ "19-operator-assignment": {
+  "fix": "a += b;\n",
+  "suggestions": "a = a + b;\n",
+  "dangerously": "a += b;\n"
+ },
+ "20-consistent-type-definitions": {
+  "fix": "interface A { b: 1 }\n",
+  "suggestions": "type A = { b: 1 };\n",
+  "dangerously": "interface A { b: 1 }\n"
+ },
+ "21-no-unused-vars": {
+  "fix": "import a from 'a'; const b = 1; export {};\n",
+  "suggestions": " const b = 1; export {};\n",
+  "dangerously": "  export {};\n"
+ },
+ "22-no-compare-neg-zero": {
+  "fix": "a === -0;\n",
+  "suggestions": "Object.is(a, -0);\n",
+  "dangerously": "Object.is(a, -0);\n"
+ },
+ "23-explicit-member-accessibility": {
+  "fix": "class A { b = 1 }\n",
+  "suggestions": "class A { public b = 1 }\n",
+  "dangerously": "class A { public b = 1 }\n"
+ },
+ "24-prefer-as-const": {
+  "fix": "let a = 'b' as const; let c = 'd' as const;\n",
+  "suggestions": "let a: 'b' = 'b'; let c = 'd' as 'd';\n",
+  "dangerously": "let a = 'b' as const; let c = 'd' as const;\n"
+ },
+ "25-no-div-regex": {
+  "fix": "a = /[=]b/;\n",
+  "suggestions": "a = /=b/;\n",
+  "dangerously": "a = /[=]b/;\n"
+ },
+ "26-no-var": {
+  "fix": "const a = 1; a;\n",
+  "suggestions": "var a = 1; a;\n",
+  "dangerously": "const a = 1; a;\n"
+ },
+ "27-no-var": {
+  "fix": "let a = 1; a = 2;\n",
+  "suggestions": "var a = 1; a = 2;\n",
+  "dangerously": "let a = 1; a = 2;\n"
+ },
+ "28-prefer-const": {
+  "fix": "const a = 1; a;\n",
+  "suggestions": "let a = 1; a;\n",
+  "dangerously": "const a = 1; a;\n"
+ },
+ "29-curly": {
+  "fix": "if (a) {b();}\n",
+  "suggestions": "if (a) b();\n",
+  "dangerously": "if (a) {b();}\n"
+ },
+ "30-no-useless-escape": {
+  "fix": "a = 'd';\n",
+  "suggestions": "a = '\\d';\n",
+  "dangerously": "a = 'd';\n"
+ },
+ "31-valid-typeof": {
+  "fix": "typeof a == \"undefined\";\n",
+  "suggestions": "typeof a == undefined;\n",
+  "dangerously": "typeof a == \"undefined\";\n"
+ },
+ "32-no-implicit-coercion": {
+  "fix": "a = Boolean(b); a = Number(b);\n",
+  "suggestions": "a = !!b; a = +b;\n",
+  "dangerously": "a = Boolean(b); a = Number(b);\n"
+ },
+ "33-func-names": {
+  "fix": "a = function  a() {};\n",
+  "suggestions": "a = function () {};\n",
+  "dangerously": "a = function  a() {};\n"
+ },
+ "34-sort-keys": {
+  "fix": "a = { b: 2, c: 1 };\n",
+  "suggestions": "a = { c: 1, b: 2 };\n",
+  "dangerously": "a = { b: 2, c: 1 };\n"
+ },
+ "35-no-negated-condition": {
+  "fix": "if (a) { c(); } else { b(); }\n",
+  "suggestions": "if (!a) { b(); } else { c(); }\n",
+  "dangerously": "if (a) { c(); } else { b(); }\n"
+ },
+ "44-no-else-return": {
+  "fix": "export function f(a) {\n  if (a) {\n    return 1;\n  }\n    return 2;\n  \n}\n",
+  "suggestions": "export function f(a) {\n  if (a) {\n    return 1;\n  } else {\n    return 2;\n  }\n}\n",
+  "dangerously": "export function f(a) {\n  if (a) {\n    return 1;\n  }\n    return 2;\n  \n}\n"
+ },
+ "45-no-else-return": {
+  "fix": "export function g(a) {\n  if (a) return 1;return 2;\n}\n",
+  "suggestions": "export function g(a) {\n  if (a) return 1; else return 2;\n}\n",
+  "dangerously": "export function g(a) {\n  if (a) return 1;return 2;\n}\n"
+ },
+ "46-no-else-return": {
+  "fix": "export function h(a) {\n  if (a) return 1\nreturn 2\n}\n",
+  "suggestions": "export function h(a) {\n  if (a) return 1\n  else return 2\n}\n",
+  "dangerously": "export function h(a) {\n  if (a) return 1\nreturn 2\n}\n"
+ },
+ "47-no-else-return": {
+  "fix": "export function i(a) {\n  if (a) { return 1 } b() ; c();\n}\n",
+  "suggestions": "export function i(a) {\n  if (a) { return 1 } else { b() } c();\n}\n",
+  "dangerously": "export function i(a) {\n  if (a) { return 1 } b() ; c();\n}\n"
+ },
+ "48-no-else-return": {
+  "fix": "export function j(a) {\n  if (a) {\n    return 1;\n  } else if (b) {\n    return 2;\n  }\n    return 3;\n  \n}\n",
+  "suggestions": "export function j(a) {\n  if (a) {\n    return 1;\n  } else if (b) {\n    return 2;\n  } else {\n    return 3;\n  }\n}\n",
+  "dangerously": "export function j(a) {\n  if (a) {\n    return 1;\n  } else if (b) {\n    return 2;\n  }\n    return 3;\n  \n}\n"
+ },
+ "49-no-else-return": {
+  "fix": "export function k(a) {\n  if (a) {\n    return 1;\n  }\n    if (b) {\n      return 2;\n    } else {\n      return 3;\n    }\n  \n}\n",
+  "suggestions": "export function k(a) {\n  if (a) {\n    return 1;\n  } else {\n    if (b) {\n      return 2;\n    } else {\n      return 3;\n    }\n  }\n}\n",
+  "dangerously": "export function k(a) {\n  if (a) {\n    return 1;\n  }\n    if (b) {\n      return 2;\n    } else {\n      return 3;\n    }\n  \n}\n"
+ },
+ "50-no-else-return": {
+  "fix": "export function l(a) {\n  if (a) { return 1; } x(); \n  if (a) { return 1; } y(); \n}\n",
+  "suggestions": "export function l(a) {\n  if (a) { return 1; } else { x(); }\n  if (a) { return 1; } else { y(); }\n}\n",
+  "dangerously": "export function l(a) {\n  if (a) { return 1; } x(); \n  if (a) { return 1; } y(); \n}\n"
+ },
+ "51-no-else-return": {
+  "fix": "export function m(a) {\n  let n = 1;\n  if (a) { return n; } else { let n = 2; return n; }\n}\n",
+  "suggestions": "export function m(a) {\n  let n = 1;\n  if (a) { return n; } else { let n = 2; return n; }\n}\n",
+  "dangerously": "export function m(a) {\n  let n = 1;\n  if (a) { return n; } else { let n = 2; return n; }\n}\n"
+ },
+ "52-no-else-return": {
+  "fix": "export function o(a) {\n  if (a) { return 1; } let p = 2; return p; \n  function q() { return p; }\n}\n",
+  "suggestions": "export function o(a) {\n  if (a) { return 1; } else { let p = 2; return p; }\n  function q() { return p; }\n}\n",
+  "dangerously": "export function o(a) {\n  if (a) { return 1; } let p = 2; return p; \n  function q() { return p; }\n}\n"
+ },
+ "53-no-else-return": {
+  "fix": "export function r(a) {\n  if (a) { return 1; } return 2; \n}\n",
+  "suggestions": "export function r(a) {\n  if (a) { return 1; } /* s */ else /* t */ { return 2; }\n}\n",
+  "dangerously": "export function r(a) {\n  if (a) { return 1; } return 2; \n}\n"
+ },
+ "54-no-else-return": {
+  "fix": "export function w(a) {\n  if (a) return 1\n(b)\n}\n",
+  "suggestions": "export function w(a) {\n  if (a) return 1\n  else (b)\n}\n",
+  "dangerously": "export function w(a) {\n  if (a) return 1\n(b)\n}\n"
+ },
+ "55-no-else-return": {
+  "fix": "export function x(a) {\n  if (a) { return 1; } b \n  [c]\n}\n",
+  "suggestions": "export function x(a) {\n  if (a) { return 1; } else { b }\n  [c]\n}\n",
+  "dangerously": "export function x(a) {\n  if (a) { return 1; } b \n  [c]\n}\n"
+ },
+ "56-no-var": {
+  "fix": "const a = 1; a;\n",
+  "suggestions": "var a = 1; a;\n",
+  "dangerously": "const a = 1; a;\n"
+ },
+ "57-no-var": {
+  "fix": "const [a, ...b] = c; b = 1; a;\n",
+  "suggestions": "var [a, ...b] = c; b = 1; a;\n",
+  "dangerously": "const [a, ...b] = c; b = 1; a;\n"
+ },
+ "58-no-var": {
+  "fix": "let { a, ...b } = c; b = 1; a;\n",
+  "suggestions": "var { a, ...b } = c; b = 1; a;\n",
+  "dangerously": "let { a, ...b } = c; b = 1; a;\n"
+ },
+ "59-no-var": {
+  "fix": "let { a, b = 1 } = c; a; b;\n",
+  "suggestions": "var { a, b = 1 } = c; a; b;\n",
+  "dangerously": "let { a, b = 1 } = c; a; b;\n"
+ },
+ "60-no-var": {
+  "fix": "let a = 1, b; a; b;\n",
+  "suggestions": "var a = 1, b; a; b;\n",
+  "dangerously": "let a = 1, b; a; b;\n"
+ },
+ "61-no-var": {
+  "fix": "if (x) { var a = 1; } a;\n",
+  "suggestions": "if (x) { var a = 1; } a;\n",
+  "dangerously": "if (x) { var a = 1; } a;\n"
+ },
+ "62-no-var": {
+  "fix": "if (x) { const a = 1; a; }\n",
+  "suggestions": "if (x) { var a = 1; a; }\n",
+  "dangerously": "if (x) { const a = 1; a; }\n"
+ },
+ "63-no-var": {
+  "fix": "for (let i = 0; i < 1; i++) {}\n",
+  "suggestions": "for (var i = 0; i < 1; i++) {}\n",
+  "dangerously": "for (let i = 0; i < 1; i++) {}\n"
+ },
+ "64-no-var": {
+  "fix": "for (const i = 0; i < 1; ) {}\n",
+  "suggestions": "for (var i = 0; i < 1; ) {}\n",
+  "dangerously": "for (const i = 0; i < 1; ) {}\n"
+ },
+ "65-no-var": {
+  "fix": "for (let i of x) { i; }\n",
+  "suggestions": "for (var i of x) { i; }\n",
+  "dangerously": "for (let i of x) { i; }\n"
+ },
+ "66-no-var": {
+  "fix": "export var a = 1;\na;\n",
+  "suggestions": "export var a = 1;\na;\n",
+  "dangerously": "export var a = 1;\na;\n"
+ },
+ "67-no-var": {
+  "fix": "export const a = 1;\n",
+  "suggestions": "export var a = 1;\n",
+  "dangerously": "export const a = 1;\n"
+ },
+ "68-no-var": {
+  "fix": "a; const a = 1;\n",
+  "suggestions": "a; var a = 1;\n",
+  "dangerously": "a; const a = 1;\n"
+ },
+ "69-no-var": {
+  "fix": "const a = 1; const a = 2;\n",
+  "suggestions": "var a = 1; var a = 2;\n",
+  "dangerously": "const a = 1; const a = 2;\n"
+ },
+ "70-no-var": {
+  "fix": "switch (x) { case 1: var a = 1; a; break; case 2: a; }\n",
+  "suggestions": "switch (x) { case 1: var a = 1; a; break; case 2: a; }\n",
+  "dangerously": "switch (x) { case 1: var a = 1; a; break; case 2: a; }\n"
+ },
+ "71-no-var": {
+  "fix": "switch (x) { case 1: const a = 1; a; }\n",
+  "suggestions": "switch (x) { case 1: var a = 1; a; }\n",
+  "dangerously": "switch (x) { case 1: const a = 1; a; }\n"
+ },
+ "72-no-var": {
+  "fix": "const a = 1, /* c */ b = 2 // d\n;a; b;\n",
+  "suggestions": "var a = 1, /* c */ b = 2 // d\n;a; b;\n",
+  "dangerously": "const a = 1, /* c */ b = 2 // d\n;a; b;\n"
+ },
+ "73-no-var": {
+  "fix": "const a = a;\n",
+  "suggestions": "var a = a;\n",
+  "dangerously": "const a = a;\n"
+ },
+ "74-no-var": {
+  "fix": "let a = function () { a = 1; };\n",
+  "suggestions": "var a = function () { a = 1; };\n",
+  "dangerously": "let a = function () { a = 1; };\n"
+ },
+ "75-no-var": {
+  "fix": "let a = 1; a++;\n",
+  "suggestions": "var a = 1; a++;\n",
+  "dangerously": "let a = 1; a++;\n"
+ },
+ "76-no-var": {
+  "fix": "declare let a: number;\nexport {};\n",
+  "suggestions": "declare var a: number;\nexport {};\n",
+  "dangerously": "declare let a: number;\nexport {};\n"
+ },
+ "77-no-var": {
+  "fix": "namespace N { const a = 1; a; }\n",
+  "suggestions": "namespace N { var a = 1; a; }\n",
+  "dangerously": "namespace N { const a = 1; a; }\n"
+ },
+ "78-no-var": {
+  "fix": "namespace N { export const a = 1; }\nN.a;\n",
+  "suggestions": "namespace N { export var a = 1; }\nN.a;\n",
+  "dangerously": "namespace N { export const a = 1; }\nN.a;\n"
+ },
+ "79-no-var": {
+  "fix": "const a: number = 1; type B = typeof a;\n",
+  "suggestions": "var a: number = 1; type B = typeof a;\n",
+  "dangerously": "const a: number = 1; type B = typeof a;\n"
+ },
+ "80-no-var": {
+  "fix": "class C { static { const a = 1; a; } }\n",
+  "suggestions": "class C { static { var a = 1; a; } }\n",
+  "dangerously": "class C { static { const a = 1; a; } }\n"
+ },
+ "81-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", { cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\"); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", { cause: e }); }\n"
+ },
+ "82-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"\", { cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"\", { cause: e }); }\n"
+ },
+ "83-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error; }\n",
+  "suggestions": "try {} catch (e) { throw new Error; }\n",
+  "dangerously": "try {} catch (e) { throw new Error; }\n"
+ },
+ "84-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", { cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", {}); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", { cause: e }); }\n"
+ },
+ "85-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", {  cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", { }); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", {  cause: e }); }\n"
+ },
+ "86-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", { b: 1, cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", { b: 1 }); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", { b: 1, cause: e }); }\n"
+ },
+ "87-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", { b: 1, cause: e, }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", { b: 1, }); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", { b: 1, cause: e, }); }\n"
+ },
+ "88-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", { cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", { cause: f }); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", { cause: e }); }\n"
+ },
+ "89-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", { cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", { cause }); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", { cause: e }); }\n"
+ },
+ "90-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error((\"a\"), { cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error((\"a\")); }\n",
+  "dangerously": "try {} catch (e) { throw new Error((\"a\"), { cause: e }); }\n"
+ },
+ "91-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", { cause: e },); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\",); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", { cause: e },); }\n"
+ },
+ "92-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new TypeError(`a${b}`, { cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new TypeError(`a${b}`); }\n",
+  "dangerously": "try {} catch (e) { throw new TypeError(`a${b}`, { cause: e }); }\n"
+ },
+ "93-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new AggregateError([], \"\", { cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new AggregateError(); }\n",
+  "dangerously": "try {} catch (e) { throw new AggregateError([], \"\", { cause: e }); }\n"
+ },
+ "94-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new AggregateError([], \"\", { cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new AggregateError([]); }\n",
+  "dangerously": "try {} catch (e) { throw new AggregateError([], \"\", { cause: e }); }\n"
+ },
+ "95-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new AggregateError([], \"a\", { cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new AggregateError([], \"a\"); }\n",
+  "dangerously": "try {} catch (e) { throw new AggregateError([], \"a\", { cause: e }); }\n"
+ },
+ "96-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new AggregateError([], \"a\", {}); }\n",
+  "suggestions": "try {} catch (e) { throw new AggregateError([], \"a\", {}); }\n",
+  "dangerously": "try {} catch (e) { throw new AggregateError([], \"a\", {}); }\n"
+ },
+ "97-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw Error(\"a\", { cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw Error(\"a\"); }\n",
+  "dangerously": "try {} catch (e) { throw Error(\"a\", { cause: e }); }\n"
+ },
+ "98-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", o); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", o); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", o); }\n"
+ },
+ "99-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new RangeError(\"a\"); }\n",
+  "suggestions": "try {} catch (e) { throw new RangeError(\"a\"); }\n",
+  "dangerously": "try {} catch (e) { throw new RangeError(\"a\"); }\n"
+ },
+ "100-preserve-caught-error": {
+  "fix": "try {} catch ({ e }) { throw new Error(\"a\"); }\n",
+  "suggestions": "try {} catch ({ e }) { throw new Error(\"a\"); }\n",
+  "dangerously": "try {} catch ({ e }) { throw new Error(\"a\"); }\n"
+ },
+ "101-preserve-caught-error": {
+  "fix": "try {} catch (e) { if (a) { throw new Error(\"a\", { cause: e }); } else { throw new Error(\"b\"); } }\n",
+  "suggestions": "try {} catch (e) { if (a) { throw new Error(\"a\"); } else { throw new Error(\"b\"); } }\n",
+  "dangerously": "try {} catch (e) { if (a) { throw new Error(\"a\", { cause: e }); } else { throw new Error(\"b\"); } }\n"
+ },
+ "102-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", ({})); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", ({})); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", ({})); }\n"
+ },
+ "103-no-import-type-side-effects": {
+  "fix": "import type {} from \"a\";\n",
+  "suggestions": "import {} from \"a\";\n",
+  "dangerously": "import type {} from \"a\";\n"
+ },
+ "104-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", { cause: e, cause: g }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", { cause: f, cause: g }); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", { cause: e, cause: g }); }\n"
+ },
+ "105-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", { \"cause\": e, cause: e }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", { \"cause\": e }); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", { \"cause\": e, cause: e }); }\n"
+ },
+ "106-preserve-caught-error": {
+  "fix": "try {} catch (e) { const g = () => { throw new Error(\"a\", { cause: e }); }; }\n",
+  "suggestions": "try {} catch (e) { const g = () => { throw new Error(\"a\"); }; }\n",
+  "dangerously": "try {} catch (e) { const g = () => { throw new Error(\"a\", { cause: e }); }; }\n"
+ },
+ "107-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", 1, 2); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", 1, 2); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", 1, 2); }\n"
+ },
+ "108-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw (new Error(\"a\")); }\n",
+  "suggestions": "try {} catch (e) { throw (new Error(\"a\")); }\n",
+  "dangerously": "try {} catch (e) { throw (new Error(\"a\")); }\n"
+ },
+ "109-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", { cause: e, ...c }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", { cause: f, ...c }); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", { cause: e, ...c }); }\n"
+ },
+ "110-preserve-caught-error": {
+  "fix": "try {} catch (e) { throw new Error(\"a\", { b, ...c }); }\n",
+  "suggestions": "try {} catch (e) { throw new Error(\"a\", { b, ...c }); }\n",
+  "dangerously": "try {} catch (e) { throw new Error(\"a\", { b, ...c }); }\n"
+ },
+ "111-preserve-caught-error": {
+  "fix": "try {} catch (e) { class A { static { throw new Error(\"a\", { cause: e }); } b = () => { throw new Error(\"b\"); }; c() { throw new Error(\"c\"); } } }\n",
+  "suggestions": "try {} catch (e) { class A { static { throw new Error(\"a\"); } b = () => { throw new Error(\"b\"); }; c() { throw new Error(\"c\"); } } }\n",
+  "dangerously": "try {} catch (e) { class A { static { throw new Error(\"a\", { cause: e }); } b = () => { throw new Error(\"b\"); }; c() { throw new Error(\"c\"); } } }\n"
+ },
+ "112-arrow-body-style": {
+  "fix": "a = () =>  b ;\nc = () => (\n  { d: 1 }\n);\nfor (e = () => ( f in g );;) {}\n",
+  "suggestions": "a = () => { return b; };\nc = () => {\n  return { d: 1 };\n};\nfor (e = () => { return f in g; };;) {}\n",
+  "dangerously": "a = () =>  b ;\nc = () => (\n  { d: 1 }\n);\nfor (e = () => ( f in g );;) {}\n"
+ },
+ "113-arrow-body-style": {
+  "fix": "a = () =>  () => { return b; } ;\n",
+  "suggestions": "a = () => { return () => { return b; }; };\n",
+  "dangerously": "a = () =>  () => { return b; } ;\n"
+ },
+ "114-no-negated-condition": {
+  "fix": "if (a) { c(); } else { b(); }\nd = e === f ? h : g;\n",
+  "suggestions": "if (!a) { b(); } else { c(); }\nd = e !== f ? g : h;\n",
+  "dangerously": "if (a) { c(); } else { b(); }\nd = e === f ? h : g;\n"
+ },
+ "115-yoda": {
+  "fix": "a = [ c === 'b' ,d]; if (e>1) {}\n",
+  "suggestions": "a = ['b' === c,d]; if (1<e) {}\n",
+  "dangerously": "a = [ c === 'b' ,d]; if (e>1) {}\n"
+ },
+ "116-eqeqeq": {
+  "fix": "typeof a === 'b'; c /* d */ == 'e';\n",
+  "suggestions": "typeof a=='b'; c /* d */ == 'e';\n",
+  "dangerously": "typeof a === 'b'; c === 'e';\n"
+ },
+ "117-prefer-object-has-own": {
+  "fix": "if (! Object.hasOwn(a, b)) {} c = Object.hasOwn(d, e);\n",
+  "suggestions": "if (!Object.prototype.hasOwnProperty.call(a, b)) {} c = {}.hasOwnProperty.call(d, e);\n",
+  "dangerously": "if (! Object.hasOwn(a, b)) {} c = Object.hasOwn(d, e);\n"
+ },
+ "118-no-new-wrappers": {
+  "fix": "a = 'b'; c = Number(d); e = Boolean;\n",
+  "suggestions": "a = new String('b'); c = new Number(d); e = new Boolean;\n",
+  "dangerously": "a = 'b'; c = Number(d); e = Boolean;\n"
+ },
+ "119-prefer-exponentiation-operator": {
+  "fix": "a = b ** c; d = (e + f) ** -g * 2; h = -(i ** j);\n",
+  "suggestions": "a = Math.pow(b, c); d = Math.pow(e + f, -g) * 2; h = -Math.pow(i, j);\n",
+  "dangerously": "a = b ** c; d = (e + f) ** -g * 2; h = -(i ** j);\n"
+ },
+ "120-no-empty": {
+  "fix": "try { a(); } catch {}\nif (b) {}\ntry { c(); } catch (e) { f(); } finally {}\nswitch (d) {}\n",
+  "suggestions": "try { a(); } catch {}\n\ntry { c(); } catch (e) { f(); } \n\n",
+  "dangerously": "try { a(); } catch {}\n\ntry { c(); } catch (e) { f(); } \n\n"
+ },
+ "121-no-implicit-coercion": {
+  "fix": "a = String(b); c += ''; d = Number(e, f); g = typeofNumber(h); i = ~j.indexOf(k);\n",
+  "suggestions": "a = '' + b; c += ''; d = +(e, f); g = typeof+h; i = ~j.indexOf(k);\n",
+  "dangerously": "a = String(b); c += ''; d = Number(e, f); g = typeofNumber(h); i = ~j.indexOf(k);\n"
+ },
+ "122-no-console": {
+  "fix": "if (a) console.log(1); b = () => console.log(2); c = d ? console.log(3) : 4; console.log(5)\ne(console.log);\n",
+  "suggestions": "if (a) {} b = () => {}; c = d ? console.log(3) : 4; \n\n",
+  "dangerously": "if (a) {} b = () => {}; c = d ? undefined : 4; \n\n"
+ },
+ "123-prefer-arrow-callback": {
+  "fix": "a(() => { b(function () {}); }); c(() => { return this; }); d(e || (async (g) => {}));\n",
+  "suggestions": "a(function () { b(function () {}); }); c(function () { return this; }.bind(this)); d(e || async function f(g) {});\n",
+  "dangerously": "a(() => { b(function () {}); }); c(() => { return this; }); d(e || (async (g) => {}));\n"
+ },
+ "124-use-isnan": {
+  "fix": "isNaN(a); !isNaN(b); c < NaN; d.indexOf(NaN);\n",
+  "suggestions": "a === NaN; b != Number.NaN; c < NaN; d.indexOf(NaN);\n",
+  "dangerously": "isNaN(a); !isNaN(b); c < NaN; d.indexOf(NaN);\n"
+ },
+ "125-no-useless-rename": {
+  "fix": "import { a } from 'b'; const { c, e = 1 } = f; export { c };\n",
+  "suggestions": "import { a as a } from 'b'; const { c /* d */: c, e: e = 1 } = f; export { c as c };\n",
+  "dangerously": "import { a } from 'b'; const { c, e = 1 } = f; export { c };\n"
+ },
+ "126-no-useless-rename": {
+  "fix": "import { type a } from 'b'; export { type a };\n",
+  "suggestions": "import { type a as a } from 'b'; export { type a as a };\n",
+  "dangerously": "import { type a } from 'b'; export { type a };\n"
+ },
+ "127-no-compare-neg-zero": {
+  "fix": "a < 0; 0 == b; c !== 0;\n",
+  "suggestions": "a < -0; -0 == b; c !== -0;\n",
+  "dangerously": "a < 0; 0 == b; c !== 0;\n"
+ },
+ "128-no-unused-labels": {
+  "fix": "for (;;) {}\nD: e();\n",
+  "suggestions": "A: /* b */ for (;;) {}\nC: D: e();\n",
+  "dangerously": "for (;;) {}\nD: e();\n"
+ },
+ "129-no-unsafe-negation": {
+  "fix": "!(a in b); !((c) instanceof d);\n",
+  "suggestions": "!a in b; !(c) instanceof  d;\n",
+  "dangerously": "!(a in b); !((c) instanceof d);\n"
+ },
+ "130-no-iterator": {
+  "fix": "a.__iterator__ = b; c['__iterator__'];\n",
+  "suggestions": "a[Symbol.iterator] = b; c[Symbol.iterator];\n",
+  "dangerously": "a[Symbol.iterator] = b; c[Symbol.iterator];\n"
+ },
+ "131-no-empty-static-block": {
+  "fix": "class A { static {} }\n",
+  "suggestions": "class A {  }\n",
+  "dangerously": "class A {  }\n"
+ },
+ "132-no-debugger": {
+  "fix": "if (a) debugger; else debugger\nfor (;;) debugger;\n",
+  "suggestions": "if (a) {} else {}\nfor (;;) {}\n",
+  "dangerously": "if (a) {} else {}\nfor (;;) {}\n"
+ },
+ "133-for-direction": {
+  "fix": "for (let i = 0; i < 1; i--) {} for (let j = 0; j < 1; j -= 1) {} for (let k = 1; k > 0; ++k) {}\n",
+  "suggestions": "for (let i = 0; i < 1; i--) {} for (let j = 0; j < 1; j -= 1) {} for (let k = 1; k > 0; ++k) {}\n",
+  "dangerously": "for (let i = 0; i < 1; i++) {} for (let j = 0; j < 1; j+=1) {} for (let k = 1; k > 0; --k) {}\n"
+ },
+ "134-no-useless-escape": {
+  "fix": "a = /[*\\?]/; b = 'd\\e';\n",
+  "suggestions": "a = /[\\*\\?]/; b = '\\d\\e';\n",
+  "dangerously": "a = /[*\\?]/; b = 'd\\e';\n"
+ },
+ "135-prefer-destructuring": {
+  "fix": "const {a} = (b || c); const {d} = e; const {f} = h.i;\n",
+  "suggestions": "const a = (b || c).a; const d = e['d']; const f /* g */ = (h.i).f;\n",
+  "dangerously": "const {a} = (b || c); const {d} = e; const {f} = h.i;\n"
+ },
+ "136-no-unneeded-ternary": {
+  "fix": "a = (b !== c) ? true : false; d = e & f ? true : false; g = h == i ? false : true; j = k[l] ? false : true;\n",
+  "suggestions": "a = (b !== c) ? true : false; d = e & f ? true : false; g = h == i ? false : true; j = k[l] ? false : true;\n",
+  "dangerously": "a = !!((b !== c)); d = e & f; g = h != i; j = !(k[l]);\n"
+ },
+ "137-sort-vars": {
+  "fix": "var a, b; var d = e(), c, f, g = 1; var i, /* j */ h;\n",
+  "suggestions": "var b, a; var d = e(), c, g = 1, f; var i, /* j */ h;\n",
+  "dangerously": "var a, b; var d = e(), c, f, g = 1; var i, /* j */ h;\n"
+ },
+ "138-one-var": {
+  "fix": "const a = 1,  b = 2; export const c = 3;\n",
+  "suggestions": "const a = 1; const b = 2; export const c = 3;\n",
+  "dangerously": "const a = 1,  b = 2; export const c = 3;\n"
+ },
+ "139-one-var": {
+  "fix": "declare const a: number; const b = 2,  c = 3;\n",
+  "suggestions": "declare const a: number; const b = 2; const c = 3;\n",
+  "dangerously": "declare const a: number; const b = 2,  c = 3;\n"
+ },
+ "140-prefer-template": {
+  "fix": "a = `${b}${c}`; d = `${e +\n  (f ? 'g' : 'h')  }i`;\n`j${  k}`\n",
+  "suggestions": "a = `${b}` + c; d = e +\n  (f ? 'g' : 'h') + 'i';\n'j' + k\n",
+  "dangerously": "a = `${b}${c}`; d = `${e +\n  (f ? 'g' : 'h')  }i`;\n`j${  k}`\n"
+ },
+ "141-no-explicit-any": {
+  "fix": "let a: any; type B = keyof any; function c(...d: any) {}\n",
+  "suggestions": "let a: any; type B = keyof any; function c(...d: any) {}\n",
+  "dangerously": "let a: any; type B = keyof any; function c(...d: any) {}\n"
+ },
+ "142-ban-ts-comment": {
+  "fix": "// @ts-expect-error\nlet a: number = 'b';\n/* @ts-expect-error: @ts-expect-error */\nlet c: number = 'd';\n",
+  "suggestions": "// @ts-ignore\nlet a: number = 'b';\n/* @ts-ignore: @ts-ignore */\nlet c: number = 'd';\n",
+  "dangerously": "// @ts-expect-error\nlet a: number = 'b';\n/* @ts-expect-error: @ts-expect-error */\nlet c: number = 'd';\n"
+ },
+ "143-consistent-type-assertions": {
+  "fix": "a = (c as B); d(f as E); g = (i as H) ? 1 : 2; j = ((l, m) as K); n = () => ({} as O);\n",
+  "suggestions": "a = <B>c; d(<E>f); g = <H>i ? 1 : 2; j = <K>(l, m); n = () => <O>{};\n",
+  "dangerously": "a = (c as B); d(f as E); g = (i as H) ? 1 : 2; j = ((l, m) as K); n = () => ({} as O);\n"
+ },
+ "144-prefer-function-type": {
+  "fix": "type A = () => void;\nexport type B<C> = (d: C) => void;\ntype E = () => void;\n",
+  "suggestions": "interface A { (): void }\nexport interface B<C> { (d: C): void; }\ntype E = { (): void };\n",
+  "dangerously": "type A = () => void;\nexport type B<C> = (d: C) => void;\ntype E = () => void;\n"
+ },
+ "145-no-empty-object-type": {
+  "fix": "interface A<B> extends C<B> {}\ninterface A<B> { d: B }\ninterface E extends F {}\n",
+  "suggestions": "interface A<B> extends C<B> {}\ninterface A<B> { d: B }\ntype E = F\n",
+  "dangerously": "interface A<B> extends C<B> {}\ninterface A<B> { d: B }\ntype E = F\n"
+ },
+ "146-consistent-indexed-object-style": {
+  "fix": "type A = Record<D, E>;\ntype F = Record<string, H>;\n",
+  "suggestions": "type A = {\n  /** b */\n  [C in D]: E;\n};\ninterface F { [g: string]: H /* i */ }\n",
+  "dangerously": "type A = Record<D, E>;\ntype F = Record<string, H>;\n"
+ },
+ "147-sort-keys": {
+  "fix": "a = { a: 3, b: { d: 2, e: 1 }, c: 1 };\nf = {\n  g: 2,\n  /** h */\n  h: 1, // i,\n};\nj = { ...k, l: 2, m: 1, ...n };\no = { q: 1, /* r */ p: 2 };\n",
+  "suggestions": "a = { c: 1, b: { e: 1, d: 2 }, a: 3 };\nf = {\n  /** h */\n  h: 1, // i\n  g: 2,\n};\nj = { ...k, m: 1, l: 2, ...n };\no = { q: 1, /* r */ p: 2 };\n",
+  "dangerously": "a = { a: 3, b: { d: 2, e: 1 }, c: 1 };\nf = {\n  g: 2,\n  /** h */\n  h: 1, // i,\n};\nj = { ...k, l: 2, m: 1, ...n };\no = { q: 1, /* r */ p: 2 };\n"
+ },
+ "148-func-names": {
+  "fix": "var a = function  a() {}; b.c = function*  c() {}; d = { e: function  e() { e; }, 'f': async function  f() {}, g: h(function  g() {}) }; (function () {})();\n",
+  "suggestions": "var a = function () {}; b.c = function* () {}; d = { e: function () { e; }, 'f': async function () {}, g: h(function () {}) }; (function () {})();\n",
+  "dangerously": "var a = function  a() {}; b.c = function*  c() {}; d = { e: function  e() { e; }, 'f': async function  f() {}, g: h(function  g() {}) }; (function () {})();\n"
+ },
+ "149-no-plusplus": {
+  "fix": "a++; --b.c; d['e']++; f[g]--; for (;; h++) {}\n",
+  "suggestions": "a += 1; b.c -= 1; d['e'] += 1; f[g]--; for (;; h += 1) {}\n",
+  "dangerously": "a += 1; b.c -= 1; d['e'] += 1; f[g]--; for (;; h += 1) {}\n"
+ },
+ "150-no-void": {
+  "fix": "a = void 0; void b(); c(void (d));\n",
+  "suggestions": "a = undefined; undefined; c(undefined);\n",
+  "dangerously": "a = undefined; undefined; c(undefined);\n"
+ },
+ "151-no-eq-null": {
+  "fix": "a == null; null != (b); c /* d */ == /* e */ null;\n",
+  "suggestions": "a == null; null != (b); c /* d */ == /* e */ null;\n",
+  "dangerously": "a === null; null !== (b); c === null;\n"
+ },
+ "152-no-throw-literal": {
+  "fix": "function a() { throw 'b'; } function c() { throw (`d`); } function e() { throw 1; }\n",
+  "suggestions": "function a() { throw new Error('b'); } function c() { throw new Error((`d`)); } function e() { throw 1; }\n",
+  "dangerously": "function a() { throw new Error('b'); } function c() { throw new Error((`d`)); } function e() { throw 1; }\n"
+ },
+ "153-no-unexpected-multiline": {
+  "fix": "a\n(b || c).d();\ne\n[f].g();\nh\n`i`;\n",
+  "suggestions": "a\n(b || c).d();\ne\n[f].g();\nh\n`i`;\n",
+  "dangerously": "a\n;(b || c).d();\ne\n;[f].g();\nh\n;`i`;\n"
+ },
+ "154-no-extraneous-class": {
+  "fix": "export class A {}\nclass B {}\n@c class D {}\ne = class {};\n",
+  "suggestions": "\n\n@c class D {}\ne = class {};\n",
+  "dangerously": "\n\n@c class D {}\ne = class {};\n"
+ },
+ "155-no-unnecessary-parameter-property-assignment": {
+  "fix": "class A { constructor(public b: number, private c: string) { this.b = b; d(this.c = c); } }\n",
+  "suggestions": "class A { constructor(public b: number, private c: string) {  d(this.c = c); } }\n",
+  "dangerously": "class A { constructor(public b: number, private c: string) {  d(this.c = c); } }\n"
+ },
+ "164-no-unused-vars": {
+  "fix": "import a from 'm1';\nimport b, { c, d } from 'm2';\nimport e, * as f from 'm3';\nimport { g, h /* i */, j } from 'm4';\nimport k = require('m5');\nimport { l, m } from 'm6';\nc; e; h;\n",
+  "suggestions": "import { c } from 'm2';\nimport e from 'm3';\nimport { h } from 'm4';\nimport k = require('m5');\nc; e; h;\n",
+  "dangerously": "import { c } from 'm2';\nimport e from 'm3';\nimport { h } from 'm4';\nimport k = require('m5');\nc; e; h;\n"
+ },
+ "165-no-unused-vars": {
+  "fix": "let a = 1;\nvar b = 1, c = 2, d = 3;\nlet e = 1; e = 2;\nconst { f, g } = c, [h, i, ...j] = c;\nconst [k, ...[l]] = c;\nfor (const n of c) {}\ntry {} catch (o) {}\nfunction p(q: number, _q: number): q is 1 { return _q; }\nconst r = () => {};\nconst s = c(); (b, s, d);\nb; d; g; i; k; p;\n",
+  "suggestions": "let a = 1;\nvar b = 1, c = 2, d = 3;\nlet e = 1; e = 2;\nconst { f, g } = c, [h, i, ...j] = c;\nconst [k, ...[l]] = c;\nfor (const n of c) {}\ntry {} catch  {}\nfunction p(q: number, _q: number): q is 1 { return _q; }\nconst r = () => {};\nconst s = c(); (b, s, d);\nb; d; g; i; k; p;\n",
+  "dangerously": "\nvar b = 1, c = 2, d = 3;\nlet _e = 1; _e = 2;\nconst { g } = c, [,i, ...j] = c;\nconst [k] = c;\nfor (const _n of c) {}\ntry {} catch  {}\nfunction p(q: number, _q: number): q is 1 { return _q; }\nconst r = () => {};\nconst _s = c(); (b, _s, d);\nb; d; g; i; k; p;\n"
+ },
+ "166-no-unused-vars": {
+  "fix": "import { c } from 'm2';\nimport e from 'm3';\nimport { h } from 'm4';\nimport k = require('m5');\nc; e; h;\nlet n = 1;\n",
+  "suggestions": "import a from 'm1';\nimport b, { c, d } from 'm2';\nimport e, * as f from 'm3';\nimport { g, h /* i */, j } from 'm4';\nimport k = require('m5');\nimport { l, m } from 'm6';\nc; e; h;\nlet n = 1;\n",
+  "dangerously": "import { c } from 'm2';\nimport e from 'm3';\nimport { h } from 'm4';\nimport k = require('m5');\nc; e; h;\nlet n = 1;\n"
+ },
+ "167-no-unused-vars": {
+  "fix": "import a from 'm1';\nimport b, { c, d } from 'm2';\nimport e, * as f from 'm3';\nimport { g, h /* i */, j } from 'm4';\nimport k = require('m5');\nimport { l, m } from 'm6';\nc; e; h;\nlet n = 1; let o = 1; o = 2;\n",
+  "suggestions": "import a from 'm1';\nimport b, { c, d } from 'm2';\nimport e, * as f from 'm3';\nimport { g, h /* i */, j } from 'm4';\nimport k = require('m5');\nimport { l, m } from 'm6';\nc; e; h;\nlet n = 1; let o = 1; o = 2;\n",
+  "dangerously": "import { c } from 'm2';\nimport e from 'm3';\nimport { h } from 'm4';\nimport k = require('m5');\nc; e; h;\n let _o = 1; _o = 2;\n"
+ },
+ "168-no-unused-vars": {
+  "fix": "import a from 'm1';\nimport b, { c, d } from 'm2';\nimport e, * as f from 'm3';\nimport { g, h /* i */, j } from 'm4';\nimport k = require('m5');\nimport { l, m } from 'm6';\nc; e; h;\ntry {} catch (n) {}\n",
+  "suggestions": "import a from 'm1';\nimport b, { c, d } from 'm2';\nimport e, * as f from 'm3';\nimport { g, h /* i */, j } from 'm4';\nimport k = require('m5');\nimport { l, m } from 'm6';\nc; e; h;\ntry {} catch  {}\n",
+  "dangerously": "import a from 'm1';\nimport b, { c, d } from 'm2';\nimport e, * as f from 'm3';\nimport { g, h /* i */, j } from 'm4';\nimport k = require('m5');\nimport { l, m } from 'm6';\nc; e; h;\ntry {} catch  {}\n"
+ },
+ "169-no-unused-vars": {
+  "fix": "import _a, { b } from 'm';\nconst _c = 1; _a; _c;\ntry {} catch (_d) { _d; }\n",
+  "suggestions": "import _a from 'm';\nconst _c = 1; _a; _c;\ntry {} catch (_d) { _d; }\n",
+  "dangerously": "import _a from 'm';\nconst _c = 1; _a; _c;\ntry {} catch (_d) { _d; }\n"
+ },
+ "204-consistent-generic-constructors": {
+  "fix": "declare class Tree<A, B> { a: A; b: B }\ndeclare function make<T>(c: T): void;\ndeclare function gen<T>(): T;\nmake(Tree<number, void>);\nexport const i1 = Tree<number, void>;\nexport const i2 = gen<void>;\nexport const i3 = gen<void>();\nexport const i4 = new Tree<number, void>();\nexport type I5 = Tree<number, void>;\nexport const i6: Tree<number, void> | undefined = undefined;\nexport function c1(file: string, seen = new Set<string>()) { file; seen; }\nexport const c2 = new Set<string>([\"a\"]);\nexport const c3 = new Set<string>();\nexport const c4 = new Set<string>();\nexport class C5 { a = new Set<string>(); constructor(public b = new Map<string, number>()) {} }\nexport const c6 = (seen = new Set<string>()) => seen;\nexport function c7({ s }: { s: Set<string> } = { s: new Set() }) { s; }\nexport const c8: Set<string> = new Set<string>();\nexport let c9 = new Array<string>();\nexport const d1: Set<string> = new (Set)();\nexport const d2: globalThis.Set<string> = new globalThis.Set();\n",
+  "suggestions": "declare class Tree<A, B> { a: A; b: B }\ndeclare function make<T>(c: T): void;\ndeclare function gen<T>(): T;\nmake(Tree<number, void>);\nexport const i1 = Tree<number, void>;\nexport const i2 = gen<void>;\nexport const i3 = gen<void>();\nexport const i4 = new Tree<number, void>();\nexport type I5 = Tree<number, void>;\nexport const i6: Tree<number, void> | undefined = undefined;\nexport function c1(file: string, seen: Set<string> = new Set()) { file; seen; }\nexport const c2: Set<string> = new Set([\"a\"]);\nexport const c3: Set<string> = new Set();\nexport const c4 = new Set<string>();\nexport class C5 { a: Set<string> = new Set(); constructor(public b: Map<string, number> = new Map()) {} }\nexport const c6 = (seen: Set<string> = new Set()) => seen;\nexport function c7({ s }: { s: Set<string> } = { s: new Set() }) { s; }\nexport const c8: Set<string> = new Set<string>();\nexport let c9: Array<string> = new Array();\nexport const d1: Set<string> = new (Set)();\nexport const d2: globalThis.Set<string> = new globalThis.Set();\n",
+  "dangerously": "declare class Tree<A, B> { a: A; b: B }\ndeclare function make<T>(c: T): void;\ndeclare function gen<T>(): T;\nmake(Tree<number, void>);\nexport const i1 = Tree<number, void>;\nexport const i2 = gen<void>;\nexport const i3 = gen<void>();\nexport const i4 = new Tree<number, void>();\nexport type I5 = Tree<number, void>;\nexport const i6: Tree<number, void> | undefined = undefined;\nexport function c1(file: string, seen = new Set<string>()) { file; seen; }\nexport const c2 = new Set<string>([\"a\"]);\nexport const c3 = new Set<string>();\nexport const c4 = new Set<string>();\nexport class C5 { a = new Set<string>(); constructor(public b = new Map<string, number>()) {} }\nexport const c6 = (seen = new Set<string>()) => seen;\nexport function c7({ s }: { s: Set<string> } = { s: new Set() }) { s; }\nexport const c8: Set<string> = new Set<string>();\nexport let c9 = new Array<string>();\nexport const d1: Set<string> = new (Set)();\nexport const d2: globalThis.Set<string> = new globalThis.Set();\n"
+ },
+ "9-non-nullable-type-assertion-style": {
+  "fix": "declare const a: string | null; export const b = a as string;\n",
+  "suggestions": "declare const a: string | null; export const b = a!;\n",
+  "dangerously": "declare const a: string | null; export const b = a!;\n"
+ },
+ "36-dot-notation": {
+  "fix": "declare const a: { b: 1 }; a.b;\n",
+  "suggestions": "declare const a: { b: 1 }; a[\"b\"];\n",
+  "dangerously": "declare const a: { b: 1 }; a.b;\n"
+ },
+ "37-prefer-readonly": {
+  "fix": "export class A { private readonly b = 1; c() { return this.b; } }\n",
+  "suggestions": "export class A { private b = 1; c() { return this.b; } }\n",
+  "dangerously": "export class A { private readonly b = 1; c() { return this.b; } }\n"
+ },
+ "38-prefer-string-starts-ends-with": {
+  "fix": "declare const a: string; a.startsWith(\"b\");\n",
+  "suggestions": "declare const a: string; a[0] === \"b\";\n",
+  "dangerously": "declare const a: string; a.startsWith(\"b\");\n"
+ },
+ "39-no-unnecessary-boolean-literal-compare": {
+  "fix": "declare const a: boolean; if (a) {}\n",
+  "suggestions": "declare const a: boolean; if (a === true) {}\n",
+  "dangerously": "declare const a: boolean; if (a) {}\n"
+ },
+ "40-prefer-regexp-exec": {
+  "fix": "/b/.exec(\"a\");\n",
+  "suggestions": "\"a\".match(/b/);\n",
+  "dangerously": "/b/.exec(\"a\");\n"
+ },
+ "41-consistent-type-exports": {
+  "fix": "type A = 1; export type { A };\n",
+  "suggestions": "type A = 1; export { A };\n",
+  "dangerously": "type A = 1; export type { A };\n"
+ },
+ "42-no-unnecessary-qualifier": {
+  "fix": "namespace A { export type B = 1; const c: B = 1; }\n",
+  "suggestions": "namespace A { export type B = 1; const c: A.B = 1; }\n",
+  "dangerously": "namespace A { export type B = 1; const c: B = 1; }\n"
+ },
+ "43-prefer-includes": {
+  "fix": "declare const a: string[]; a.includes(\"b\");\n",
+  "suggestions": "declare const a: string[]; a.indexOf(\"b\") !== -1;\n",
+  "dangerously": "declare const a: string[]; a.includes(\"b\");\n"
+ },
+ "156-no-unnecessary-boolean-literal-compare": {
+  "fix": "declare const b: boolean, n: boolean | null, x: unknown, f: (a?: boolean) => boolean, o: { p?: boolean }; let r;\nif (b) {}\nif (!b) {}\nif (!b) {}\nif (b) {}\nif ( b) {}\nif ( b) {}\nif (! b) {}\nif (! (x instanceof Error)) {}\nr =  b;\nr = ! b;\nr = !b;\nr = b;\nr = b;\nr = b;\nr = ! (x instanceof Error);\nr = !( x instanceof Error);\nr = ! f();\nif (n === true) {}\nif (n !== true) {}\nif (n === false) {}\nif (n !== false) {}\nr = n === true;\nr = n !== true;\nr = n === false;\nr = n !== false;\nr = !(n === true);\nr = !(n !== true);\nr = !(n === false);\nr =  (n ?? b);\nr = ! (n ?? b);\nr = n === true && b;\nr = n === true ? 1 : 2;\nwhile (n === true) {}\nr =  b;\nr =  /* d */ b;\nr =  b;\nr = \n  b;\nr = !!(n === true);\nfor (; n === true; ) {}\ndo {} while (n === true);\nr = [n === true];\nr = f(n === true);\nexport {};\n",
+  "suggestions": "declare const b: boolean, n: boolean | null, x: unknown, f: (a?: boolean) => boolean, o: { p?: boolean }; let r;\nif (b === true) {}\nif (b !== true) {}\nif (b === false) {}\nif (b !== false) {}\nif (true === b) {}\nif (false !== b) {}\nif (true !== b) {}\nif (false === (x instanceof Error)) {}\nr = b === true;\nr = b === false;\nr = !(b === true);\nr = !(b !== true);\nr = !(b === false);\nr = !((b === false));\nr = (x instanceof Error) === false;\nr = x instanceof Error === false;\nr = f() === false;\nif (n === true) {}\nif (n !== true) {}\nif (n === false) {}\nif (n !== false) {}\nr = n === true;\nr = n !== true;\nr = n === false;\nr = n !== false;\nr = !(n === true);\nr = !(n !== true);\nr = !(n === false);\nr = (n ?? b) === true;\nr = (n ?? b) === false;\nr = n === true && b;\nr = n === true ? 1 : 2;\nwhile (n === true) {}\nr = b /* c */ === /* d */ true;\nr = true /* c */ === /* d */ b;\nr = b\n  === true;\nr = true ===\n  b;\nr = !!(n === true);\nfor (; n === true; ) {}\ndo {} while (n === true);\nr = [n === true];\nr = f(n === true);\nexport {};\n",
+  "dangerously": "declare const b: boolean, n: boolean | null, x: unknown, f: (a?: boolean) => boolean, o: { p?: boolean }; let r;\nif (b) {}\nif (!b) {}\nif (!b) {}\nif (b) {}\nif ( b) {}\nif ( b) {}\nif (! b) {}\nif (! (x instanceof Error)) {}\nr =  b;\nr = ! b;\nr = !b;\nr = b;\nr = b;\nr = b;\nr = ! (x instanceof Error);\nr = !( x instanceof Error);\nr = ! f();\nif (n === true) {}\nif (n !== true) {}\nif (n === false) {}\nif (n !== false) {}\nr = n === true;\nr = n !== true;\nr = n === false;\nr = n !== false;\nr = !(n === true);\nr = !(n !== true);\nr = !(n === false);\nr =  (n ?? b);\nr = ! (n ?? b);\nr = n === true && b;\nr = n === true ? 1 : 2;\nwhile (n === true) {}\nr =  b;\nr =  /* d */ b;\nr =  b;\nr = \n  b;\nr = !!(n === true);\nfor (; n === true; ) {}\ndo {} while (n === true);\nr = [n === true];\nr = f(n === true);\nexport {};\n"
+ },
+ "157-no-unnecessary-boolean-literal-compare": {
+  "fix": "declare const b: boolean, n: boolean | null, x: unknown, f: (a?: boolean) => boolean, o: { p?: boolean }; let r;\nif (n) {}\nif (!n) {}\nif (!(n ?? true)) {}\nif ((n ?? true)) {}\nr = (!!n);\nr = ! n;\nr = !( n ?? true);\nr = ( n ?? true);\nr = !n;\nr = (!!n);\nr = (n ?? true);\nr =  (n ?? b);\nr = ! (n ?? b);\nr = (!!n) && b;\nr =  n ? 1 : 2;\nwhile (n) {}\nr = !!n;\nfor (;  n; ) {}\ndo {} while (n);\nr = [(!!n)];\nr = f((!!n));\nr = (!!n);\nr = !( n ?? true);\nr = ( n ?? true);\nr = (!!o.p);\nr = !( o.p ?? true);\nr = (!!(b ? n : null));\nr = !( (b ? n : null) ?? true);\nr = !( !(b ? n : null));\nif ((n ?? true)) {}\nif ((n)) {}\nr = (!!n) || b;\nif (n || b) {}\nr = !(n ?? true);\nr =  n!;\nr = !( (n as boolean | null) ?? true);\nr = (!!(n as boolean | null));\nexport {};\n",
+  "suggestions": "declare const b: boolean, n: boolean | null, x: unknown, f: (a?: boolean) => boolean, o: { p?: boolean }; let r;\nif (n === true) {}\nif (n !== true) {}\nif (n === false) {}\nif (n !== false) {}\nr = n === true;\nr = n !== true;\nr = n === false;\nr = n !== false;\nr = !(n === true);\nr = !(n !== true);\nr = !(n === false);\nr = (n ?? b) === true;\nr = (n ?? b) === false;\nr = n === true && b;\nr = n === true ? 1 : 2;\nwhile (n === true) {}\nr = !!(n === true);\nfor (; n === true; ) {}\ndo {} while (n === true);\nr = [n === true];\nr = f(n === true);\nr = true === n;\nr = false === n;\nr = false !== n;\nr = o.p === true;\nr = o.p === false;\nr = (b ? n : null) === true;\nr = (b ? n : null) === false;\nr = !(b ? n : null) === false;\nif (!(n === false)) {}\nif ((n === true)) {}\nr = n === true || b;\nif (n === true || b) {}\nr = !(n !== false);\nr = n! === true;\nr = (n as boolean | null) === false;\nr = (n as boolean | null) === true;\nexport {};\n",
+  "dangerously": "declare const b: boolean, n: boolean | null, x: unknown, f: (a?: boolean) => boolean, o: { p?: boolean }; let r;\nif (n) {}\nif (!n) {}\nif (!(n ?? true)) {}\nif ((n ?? true)) {}\nr = (!!n);\nr = ! n;\nr = !( n ?? true);\nr = ( n ?? true);\nr = !n;\nr = (!!n);\nr = (n ?? true);\nr =  (n ?? b);\nr = ! (n ?? b);\nr = (!!n) && b;\nr =  n ? 1 : 2;\nwhile (n) {}\nr = !!n;\nfor (;  n; ) {}\ndo {} while (n);\nr = [(!!n)];\nr = f((!!n));\nr = (!!n);\nr = !( n ?? true);\nr = ( n ?? true);\nr = (!!o.p);\nr = !( o.p ?? true);\nr = (!!(b ? n : null));\nr = !( (b ? n : null) ?? true);\nr = !( !(b ? n : null));\nif ((n ?? true)) {}\nif ((n)) {}\nr = (!!n) || b;\nif (n || b) {}\nr = !(n ?? true);\nr =  n!;\nr = !( (n as boolean | null) ?? true);\nr = (!!(n as boolean | null));\nexport {};\n"
+ },
+ "158-no-meaningless-void-operator": {
+  "fix": "let r;\n (() => {})();\nfunction g() {}\n g();\n  g2();\nfunction g2() {}\n/* c */g3();\nfunction g3() {}\n\ng4();\nfunction g4() {}\nfunction g5(): never { throw 1; }\nvoid g5();\nr =  g6();\nfunction g6() {}\n  g7();\nfunction g7() {}\n (g8());\nfunction g8() {}\ndeclare const u: undefined;\n u;\nexport {};\n",
+  "suggestions": "let r;\nvoid (() => {})();\nfunction g() {}\nvoid g();\nvoid  g2();\nfunction g2() {}\nvoid/* c */g3();\nfunction g3() {}\nvoid\ng4();\nfunction g4() {}\nfunction g5(): never { throw 1; }\nvoid g5();\nr = void g6();\nfunction g6() {}\nvoid void g7();\nfunction g7() {}\nvoid (g8());\nfunction g8() {}\ndeclare const u: undefined;\nvoid u;\nexport {};\n",
+  "dangerously": "let r;\n (() => {})();\nfunction g() {}\n g();\n  g2();\nfunction g2() {}\n/* c */g3();\nfunction g3() {}\n\ng4();\nfunction g4() {}\nfunction g5(): never { throw 1; }\nvoid g5();\nr =  g6();\nfunction g6() {}\n  g7();\nfunction g7() {}\n (g8());\nfunction g8() {}\ndeclare const u: undefined;\n u;\nexport {};\n"
+ },
+ "159-promise-function-async": {
+  "fix": "const a =  async function (p: Promise<void>) { return p; };\n async function b(p: Promise<void>) { return p; }\nexport async function c(p: Promise<void>) { return p; }\nexport default async function d(p: Promise<void>) { return p; }\nconst e =  async (p: Promise<void>) => p;\nconst f = {  async g(p: Promise<void>) { return p; }, h:  async function (p: Promise<void>) { return p; }, i:  async (p: Promise<void>) => p,  async [\"j\"](p: Promise<void>) { return p; } };\nclass K {  async l(p: Promise<void>) { return p; } public  async m(p: Promise<void>) { return p; } static  async n(p: Promise<void>) { return p; } public static  async o(p: Promise<void>) { return p; }  async [\"q\"](p: Promise<void>) { return p; } r =  async (p: Promise<void>) => p; }\nfunction s(p: boolean) { return p ? Promise.resolve(5) : 5; }\nexport function t(p: boolean) { return p ? Promise.resolve(5) : 5; }\nconst u = (p: boolean) => (p ? Promise.resolve(5) : 5);\nfunction v(p: boolean): Promise<number> | number { return p ? Promise.resolve(5) : 5; }\n async function w(p: boolean): Promise<number> | Promise<string> { return p ? Promise.resolve(5) : Promise.resolve(\"\"); }\nx( async function (p: Promise<void>) { return p; });\ndeclare function x(a: unknown): void;\n   async function y(p: Promise<void>) { return p; }\n/* z */  async function z(p: Promise<void>) { return p; }\ndeclare const dec: any;\nclass A1 { @dec  async b1(p: Promise<void>) { return p; } }\nclass A2 { /* c */  async b2(p: Promise<void>) { return p; } }\nabstract class A3 { protected  async b3(p: Promise<void>) { return p; } override toString(): any { return Promise.resolve(); } }\nexport {};\n",
+  "suggestions": "const a = function (p: Promise<void>) { return p; };\nfunction b(p: Promise<void>) { return p; }\nexport function c(p: Promise<void>) { return p; }\nexport default function d(p: Promise<void>) { return p; }\nconst e = (p: Promise<void>) => p;\nconst f = { g(p: Promise<void>) { return p; }, h: function (p: Promise<void>) { return p; }, i: (p: Promise<void>) => p, [\"j\"](p: Promise<void>) { return p; } };\nclass K { l(p: Promise<void>) { return p; } public m(p: Promise<void>) { return p; } static n(p: Promise<void>) { return p; } public static o(p: Promise<void>) { return p; } [\"q\"](p: Promise<void>) { return p; } r = (p: Promise<void>) => p; }\n async function s(p: boolean) { return p ? Promise.resolve(5) : 5; }\nexport async function t(p: boolean) { return p ? Promise.resolve(5) : 5; }\nconst u =  async (p: boolean) => (p ? Promise.resolve(5) : 5);\nfunction v(p: boolean): Promise<number> | number { return p ? Promise.resolve(5) : 5; }\nfunction w(p: boolean): Promise<number> | Promise<string> { return p ? Promise.resolve(5) : Promise.resolve(\"\"); }\nx(function (p: Promise<void>) { return p; });\ndeclare function x(a: unknown): void;\n  function y(p: Promise<void>) { return p; }\n/* z */ function z(p: Promise<void>) { return p; }\ndeclare const dec: any;\nclass A1 { @dec b1(p: Promise<void>) { return p; } }\nclass A2 { /* c */ b2(p: Promise<void>) { return p; } }\nabstract class A3 { protected b3(p: Promise<void>) { return p; } override toString(): any { return Promise.resolve(); } }\nexport {};\n",
+  "dangerously": "const a =  async function (p: Promise<void>) { return p; };\n async function b(p: Promise<void>) { return p; }\nexport async function c(p: Promise<void>) { return p; }\nexport default async function d(p: Promise<void>) { return p; }\nconst e =  async (p: Promise<void>) => p;\nconst f = {  async g(p: Promise<void>) { return p; }, h:  async function (p: Promise<void>) { return p; }, i:  async (p: Promise<void>) => p,  async [\"j\"](p: Promise<void>) { return p; } };\nclass K {  async l(p: Promise<void>) { return p; } public  async m(p: Promise<void>) { return p; } static  async n(p: Promise<void>) { return p; } public static  async o(p: Promise<void>) { return p; }  async [\"q\"](p: Promise<void>) { return p; } r =  async (p: Promise<void>) => p; }\n async function s(p: boolean) { return p ? Promise.resolve(5) : 5; }\nexport async function t(p: boolean) { return p ? Promise.resolve(5) : 5; }\nconst u =  async (p: boolean) => (p ? Promise.resolve(5) : 5);\nfunction v(p: boolean): Promise<number> | number { return p ? Promise.resolve(5) : 5; }\n async function w(p: boolean): Promise<number> | Promise<string> { return p ? Promise.resolve(5) : Promise.resolve(\"\"); }\nx( async function (p: Promise<void>) { return p; });\ndeclare function x(a: unknown): void;\n   async function y(p: Promise<void>) { return p; }\n/* z */  async function z(p: Promise<void>) { return p; }\ndeclare const dec: any;\nclass A1 { @dec  async b1(p: Promise<void>) { return p; } }\nclass A2 { /* c */  async b2(p: Promise<void>) { return p; } }\nabstract class A3 { protected  async b3(p: Promise<void>) { return p; } override toString(): any { return Promise.resolve(); } }\nexport {};\n"
+ },
+ "160-prefer-readonly": {
+  "fix": "class A { private readonly a: number; }\nclass B { readonly #b: number; }\nclass C { private readonly c = 1; }\nclass D { private readonly d: number; constructor() { this.d = 1; } }\nclass E { private [Symbol.iterator] = 7; }\nclass F { private [1] = 7; }\nclass G { private [\"g\"] = 7; }\nclass H { private readonly \"h\" = 7; }\nclass I { private readonly 1 = 7; }\nclass J { private static readonly j: number; }\nclass K { private static readonly k = 1; }\nclass L { constructor(private readonly l: number) {} }\nclass M { private readonly m?: number; }\nclass N { private declare readonly n: number; }\nclass O { private readonly o!: number; }\nclass P { private readonly p: number | undefined; q() { return this.p; } }\nexport {};\n",
+  "suggestions": "class A { private a: number; }\nclass B { #b: number; }\nclass C { private c = 1; }\nclass D { private d: number; constructor() { this.d = 1; } }\nclass E { private [Symbol.iterator] = 7; }\nclass F { private [1] = 7; }\nclass G { private [\"g\"] = 7; }\nclass H { private \"h\" = 7; }\nclass I { private 1 = 7; }\nclass J { private static j: number; }\nclass K { private static k = 1; }\nclass L { constructor(private l: number) {} }\nclass M { private m?: number; }\nclass N { private declare n: number; }\nclass O { private o!: number; }\nclass P { private p: number | undefined; q() { return this.p; } }\nexport {};\n",
+  "dangerously": "class A { private readonly a: number; }\nclass B { readonly #b: number; }\nclass C { private readonly c = 1; }\nclass D { private readonly d: number; constructor() { this.d = 1; } }\nclass E { private [Symbol.iterator] = 7; }\nclass F { private [1] = 7; }\nclass G { private [\"g\"] = 7; }\nclass H { private readonly \"h\" = 7; }\nclass I { private readonly 1 = 7; }\nclass J { private static readonly j: number; }\nclass K { private static readonly k = 1; }\nclass L { constructor(private readonly l: number) {} }\nclass M { private readonly m?: number; }\nclass N { private declare readonly n: number; }\nclass O { private readonly o!: number; }\nclass P { private readonly p: number | undefined; q() { return this.p; } }\nexport {};\n"
+ },
+ "161-prefer-string-starts-ends-with": {
+  "fix": "declare const s: string;\ns.match(/^bar/) !== undefined;\ns.match(/^bar/) === undefined;\ns.startsWith(\"bar\");\n!s.startsWith(\"bar\");\ns.startsWith(\"bar\");\n!s.startsWith(\"bar\");\ns.startsWith(\"bar\");\n!s.startsWith(\"bar\");\nconst m = undefined;\ns.match(/^bar/) === m;\nconst n = null;\n!s.startsWith(\"bar\");\nconst o = null;\ns.startsWith(\"bar\");\ns.match(/bar$/) !== void 0;\nnull !== s.match(/^bar/);\nundefined !== s.match(/^bar/);\nexport {};\n",
+  "suggestions": "declare const s: string;\ns.match(/^bar/) !== undefined;\ns.match(/^bar/) === undefined;\ns.match(/^bar/) != undefined;\ns.match(/^bar/) == undefined;\ns.match(/^bar/) !== null;\ns.match(/^bar/) === null;\ns.match(/^bar/) != null;\ns.match(/^bar/) == null;\nconst m = undefined;\ns.match(/^bar/) === m;\nconst n = null;\ns.match(/^bar/) === n;\nconst o = null;\ns.match(/^bar/) != o;\ns.match(/bar$/) !== void 0;\nnull !== s.match(/^bar/);\nundefined !== s.match(/^bar/);\nexport {};\n",
+  "dangerously": "declare const s: string;\ns.match(/^bar/) !== undefined;\ns.match(/^bar/) === undefined;\ns.startsWith(\"bar\");\n!s.startsWith(\"bar\");\ns.startsWith(\"bar\");\n!s.startsWith(\"bar\");\ns.startsWith(\"bar\");\n!s.startsWith(\"bar\");\nconst m = undefined;\ns.match(/^bar/) === m;\nconst n = null;\n!s.startsWith(\"bar\");\nconst o = null;\ns.startsWith(\"bar\");\ns.match(/bar$/) !== void 0;\nnull !== s.match(/^bar/);\nundefined !== s.match(/^bar/);\nexport {};\n"
+ },
+ "162-no-unnecessary-type-assertion": {
+  "fix": "enum E { A, B }\nenum S { A = \"a\" }\ndeclare const e: E, n: number, s: S, k: \"A\" | \"B\", eu: E | undefined, nu: number | undefined;\nexport const a1 = e as number;\nexport const a2 = n as E;\nexport const a3 = E[k] as number;\nexport const a4 = (1 as number) as E;\nexport const a5 = eu as number | undefined;\nexport const a6 = nu as E | undefined;\nexport const a7 = <number>e;\nexport const a8 = <E>n;\nexport const a9 = E[n as E];\nexport const b1 = s as string;\nexport const b2: number = e;\nexport const b3: E = n;\ndeclare function f(x: number): void; declare function g(x: E): void;\nf(e);\ng(n);\nexport const b4 = E.A as number;\nexport const b5 = E.A as E;\nexport const b6 = e;\nexport const b7 = [e as number];\nexport const b8 = { c: e as number };\nexport function b9(): number { return e; }\n",
+  "suggestions": "enum E { A, B }\nenum S { A = \"a\" }\ndeclare const e: E, n: number, s: S, k: \"A\" | \"B\", eu: E | undefined, nu: number | undefined;\nexport const a1 = e as number;\nexport const a2 = n as E;\nexport const a3 = E[k] as number;\nexport const a4 = (1 as number) as E;\nexport const a5 = eu as number | undefined;\nexport const a6 = nu as E | undefined;\nexport const a7 = <number>e;\nexport const a8 = <E>n;\nexport const a9 = E[n as E];\nexport const b1 = s as string;\nexport const b2: number = e as number;\nexport const b3: E = n as E;\ndeclare function f(x: number): void; declare function g(x: E): void;\nf(e as number);\ng(n as E);\nexport const b4 = E.A as number;\nexport const b5 = E.A as E;\nexport const b6 = e as E;\nexport const b7 = [e as number];\nexport const b8 = { c: e as number };\nexport function b9(): number { return e as number; }\n",
+  "dangerously": "enum E { A, B }\nenum S { A = \"a\" }\ndeclare const e: E, n: number, s: S, k: \"A\" | \"B\", eu: E | undefined, nu: number | undefined;\nexport const a1 = e as number;\nexport const a2 = n as E;\nexport const a3 = E[k] as number;\nexport const a4 = (1 as number) as E;\nexport const a5 = eu as number | undefined;\nexport const a6 = nu as E | undefined;\nexport const a7 = <number>e;\nexport const a8 = <E>n;\nexport const a9 = E[n as E];\nexport const b1 = s as string;\nexport const b2: number = e;\nexport const b3: E = n;\ndeclare function f(x: number): void; declare function g(x: E): void;\nf(e);\ng(n);\nexport const b4 = E.A as number;\nexport const b5 = E.A as E;\nexport const b6 = e;\nexport const b7 = [e as number];\nexport const b8 = { c: e as number };\nexport function b9(): number { return e; }\n"
+ },
+ "163-no-unnecessary-type-assertion": {
+  "fix": "type V = string | undefined;\nexport function n1(value: V, c: boolean) { value = c ? (value as string) : \"\"; return value.length; }\nexport function n2(value: V) { value = (console.log(), value as string); return value.length; }\nexport function n3(value: V) { [value] = [value as string]; return value.length; }\nexport function n4(value: V) { ({ value } = { value: value as string }); return value.length; }\nexport function n5(value: V) { ({ value } = { ...{ value: value as string } }); return value.length; }\nexport function n7(value: V, other: string) { value = other && (value as string); return value.length; }\nexport function n8(value: V, other: V) { value = other ?? (value as string); return value.length; }\nexport function n9(value: V, other: string) { value = (value) || other; return value.length; }\nexport function m1(value: V) { value = value as string; return value.length; }\nexport function m2(value: V, o: { v: V }) { o.v = value as string; }\nexport function m3(value: V) { const x: V = value; return x; }\nexport function m4(value: V, f: (a?: string) => void) { f(value); }\nexport function m5(value: V) { let y: V; y = [value as string][0]; return y; }\nexport function m6(value: V) { let y: { v?: string }; y = { v: value }; return y; }\nexport function m7(value: V, c: boolean) { value = c ? (value) : \"\"; return value; }\nexport function m8(value: V) { let y: V; y = (value) ?? \"\"; return y; }\nexport function m9(value: V) { let y: V; [y] = [value]; return y; }\nexport function p1<T extends { a: number }>(o: T) { (o as { a: number }).a = 1; }\nexport function p2<T extends { a: { b: number } }>(o: T) { (o as { a: { b: number } }).a.b++; }\nexport function p3<T extends { a: number }>(o: T) { return (o as { a: number }).a; }\nexport function p4<T extends { a: number }>(o: T) { return (o).a; }\n",
+  "suggestions": "type V = string | undefined;\nexport function n1(value: V, c: boolean) { value = c ? (value as string) : \"\"; return value.length; }\nexport function n2(value: V) { value = (console.log(), value as string); return value.length; }\nexport function n3(value: V) { [value] = [value as string]; return value.length; }\nexport function n4(value: V) { ({ value } = { value: value as string }); return value.length; }\nexport function n5(value: V) { ({ value } = { ...{ value: value as string } }); return value.length; }\nexport function n7(value: V, other: string) { value = other && (value as string); return value.length; }\nexport function n8(value: V, other: V) { value = other ?? (value as string); return value.length; }\nexport function n9(value: V, other: string) { value = (value as string) || other; return value.length; }\nexport function m1(value: V) { value = value as string; return value.length; }\nexport function m2(value: V, o: { v: V }) { o.v = value as string; }\nexport function m3(value: V) { const x: V = value as string; return x; }\nexport function m4(value: V, f: (a?: string) => void) { f(value as string); }\nexport function m5(value: V) { let y: V; y = [value as string][0]; return y; }\nexport function m6(value: V) { let y: { v?: string }; y = { v: value as string }; return y; }\nexport function m7(value: V, c: boolean) { value = c ? (value as V) : \"\"; return value; }\nexport function m8(value: V) { let y: V; y = (value as string) ?? \"\"; return y; }\nexport function m9(value: V) { let y: V; [y] = [value as V]; return y; }\nexport function p1<T extends { a: number }>(o: T) { (o as { a: number }).a = 1; }\nexport function p2<T extends { a: { b: number } }>(o: T) { (o as { a: { b: number } }).a.b++; }\nexport function p3<T extends { a: number }>(o: T) { return (o as { a: number }).a; }\nexport function p4<T extends { a: number }>(o: T) { return (o as T).a; }\n",
+  "dangerously": "type V = string | undefined;\nexport function n1(value: V, c: boolean) { value = c ? (value as string) : \"\"; return value.length; }\nexport function n2(value: V) { value = (console.log(), value as string); return value.length; }\nexport function n3(value: V) { [value] = [value as string]; return value.length; }\nexport function n4(value: V) { ({ value } = { value: value as string }); return value.length; }\nexport function n5(value: V) { ({ value } = { ...{ value: value as string } }); return value.length; }\nexport function n7(value: V, other: string) { value = other && (value as string); return value.length; }\nexport function n8(value: V, other: V) { value = other ?? (value as string); return value.length; }\nexport function n9(value: V, other: string) { value = (value) || other; return value.length; }\nexport function m1(value: V) { value = value as string; return value.length; }\nexport function m2(value: V, o: { v: V }) { o.v = value as string; }\nexport function m3(value: V) { const x: V = value; return x; }\nexport function m4(value: V, f: (a?: string) => void) { f(value); }\nexport function m5(value: V) { let y: V; y = [value as string][0]; return y; }\nexport function m6(value: V) { let y: { v?: string }; y = { v: value }; return y; }\nexport function m7(value: V, c: boolean) { value = c ? (value) : \"\"; return value; }\nexport function m8(value: V) { let y: V; y = (value) ?? \"\"; return y; }\nexport function m9(value: V) { let y: V; [y] = [value]; return y; }\nexport function p1<T extends { a: number }>(o: T) { (o as { a: number }).a = 1; }\nexport function p2<T extends { a: { b: number } }>(o: T) { (o as { a: { b: number } }).a.b++; }\nexport function p3<T extends { a: number }>(o: T) { return (o as { a: number }).a; }\nexport function p4<T extends { a: number }>(o: T) { return (o).a; }\n"
+ },
+ "170-prefer-optional-chain": {
+  "fix": "declare const foo: { bar: { baz: { buzz: number } | undefined } | undefined } | undefined;\ndeclare const nul: { bar: { baz: number } | null } | null;\ndeclare const both: { bar: { baz: number } | null | undefined } | null | undefined;\nfoo === undefined || foo.bar === undefined || foo.bar.baz === undefined || foo.bar.baz.buzz === undefined;\nfoo === undefined || foo.bar === undefined;\n!foo?.bar;\nfoo === undefined || foo.bar === 1;\nfoo?.bar !== undefined;\nfoo !== undefined && foo.bar !== undefined && foo.bar.baz;\nfoo !== undefined && foo.bar;\nnul === null || nul.bar === null;\nnul === null || nul.bar === null || nul.bar.baz === 1;\nnul !== null && nul.bar !== null;\nnul !== null && nul.bar;\nboth?.bar == null;\nboth == null || both.bar == null || both.bar.baz === 1;\nboth?.bar != null;\nboth != null && both.bar;\n!foo?.bar;\n!foo?.bar?.baz;\nfoo?.bar;\nfoo?.bar?.baz;\ntypeof foo === \"undefined\" || foo.bar === undefined;\nfoo?.bar == undefined;\nexport {};\n",
+  "suggestions": "declare const foo: { bar: { baz: { buzz: number } | undefined } | undefined } | undefined;\ndeclare const nul: { bar: { baz: number } | null } | null;\ndeclare const both: { bar: { baz: number } | null | undefined } | null | undefined;\nfoo?.bar?.baz?.buzz === undefined;\nfoo?.bar === undefined;\nfoo === undefined || !foo.bar;\nfoo === undefined || foo.bar === 1;\nfoo !== undefined && foo.bar !== undefined;\nfoo?.bar?.baz;\nfoo?.bar;\nnul?.bar === null;\nnul === null || nul.bar === null || nul.bar.baz === 1;\nnul !== null && nul.bar !== null;\nnul?.bar;\nboth == null || both.bar == null;\nboth == null || both.bar == null || both.bar.baz === 1;\nboth != null && both.bar != null;\nboth?.bar;\n!foo || !foo.bar;\n!foo || !foo.bar || !foo.bar.baz;\nfoo && foo.bar;\nfoo && foo.bar && foo.bar.baz;\nfoo?.bar === undefined;\nfoo == undefined || foo.bar == undefined;\nexport {};\n",
+  "dangerously": "declare const foo: { bar: { baz: { buzz: number } | undefined } | undefined } | undefined;\ndeclare const nul: { bar: { baz: number } | null } | null;\ndeclare const both: { bar: { baz: number } | null | undefined } | null | undefined;\nfoo?.bar?.baz?.buzz === undefined;\nfoo?.bar === undefined;\n!foo?.bar;\nfoo === undefined || foo.bar === 1;\nfoo?.bar !== undefined;\nfoo?.bar?.baz;\nfoo?.bar;\nnul?.bar === null;\nnul === null || nul.bar === null || nul.bar.baz === 1;\nnul !== null && nul.bar !== null;\nnul?.bar;\nboth?.bar == null;\nboth == null || both.bar == null || both.bar.baz === 1;\nboth?.bar != null;\nboth?.bar;\n!foo?.bar;\n!foo?.bar?.baz;\nfoo?.bar;\nfoo?.bar?.baz;\nfoo?.bar === undefined;\nfoo?.bar == undefined;\nexport {};\n"
+ },
+ "171-prefer-optional-chain": {
+  "fix": "declare const foo: { bar: { baz: number | undefined } | undefined } | undefined;\ndeclare const both: { bar: { baz: number } | null | undefined } | null | undefined;\ndeclare const c: { d: number };\nfoo?.bar?.baz === 1;\nfoo && foo.bar && foo.bar.baz !== 1;\nfoo && foo.bar && foo.bar.baz == null;\nfoo?.bar?.baz != null;\nfoo && foo.bar && foo.bar.baz === undefined;\nfoo?.bar?.baz !== undefined;\nfoo?.bar && foo.bar.baz > 1;\nboth?.bar?.baz === 1;\nboth != null && both.bar != null && both.bar.baz !== 1;\nboth?.bar != null && both.bar.baz > 1;\nboth == null || both.bar == null || both.bar.baz === 1;\nboth?.bar?.baz !== 1;\nboth?.bar == null || both.bar.baz > 1;\nboth?.bar?.baz == null;\nboth?.bar?.baz === undefined;\nboth?.bar == null || c.d === 1;\nboth?.bar == null || c.d === 1 || both.bar.baz === 1;\n!foo || !foo.bar || foo.bar.baz === 1;\nfoo?.bar?.baz !== 1;\n!foo?.bar || foo.bar.baz > 1;\n!both?.bar || both.bar.baz === c.d;\n!both?.bar || both.bar.baz !== c.d;\nboth == null || both.bar == null || both.bar.baz === 1 || both.bar.baz === 2;\nexport {};\n",
+  "suggestions": "declare const foo: { bar: { baz: number | undefined } | undefined } | undefined;\ndeclare const both: { bar: { baz: number } | null | undefined } | null | undefined;\ndeclare const c: { d: number };\nfoo && foo.bar && foo.bar.baz === 1;\nfoo && foo.bar && foo.bar.baz !== 1;\nfoo && foo.bar && foo.bar.baz == null;\nfoo && foo.bar && foo.bar.baz != null;\nfoo && foo.bar && foo.bar.baz === undefined;\nfoo && foo.bar && foo.bar.baz !== undefined;\nfoo && foo.bar && foo.bar.baz > 1;\nboth != null && both.bar != null && both.bar.baz === 1;\nboth != null && both.bar != null && both.bar.baz !== 1;\nboth != null && both.bar != null && both.bar.baz > 1;\nboth == null || both.bar == null || both.bar.baz === 1;\nboth == null || both.bar == null || both.bar.baz !== 1;\nboth == null || both.bar == null || both.bar.baz > 1;\nboth == null || both.bar == null || both.bar.baz == null;\nboth == null || both.bar == null || both.bar.baz === undefined;\nboth == null || both.bar == null || c.d === 1;\nboth == null || both.bar == null || c.d === 1 || both.bar.baz === 1;\n!foo || !foo.bar || foo.bar.baz === 1;\n!foo || !foo.bar || foo.bar.baz !== 1;\n!foo || !foo.bar || foo.bar.baz > 1;\n!both || !both.bar || both.bar.baz === c.d;\n!both || !both.bar || both.bar.baz !== c.d;\nboth == null || both.bar == null || both.bar.baz === 1 || both.bar.baz === 2;\nexport {};\n",
+  "dangerously": "declare const foo: { bar: { baz: number | undefined } | undefined } | undefined;\ndeclare const both: { bar: { baz: number } | null | undefined } | null | undefined;\ndeclare const c: { d: number };\nfoo?.bar?.baz === 1;\nfoo && foo.bar && foo.bar.baz !== 1;\nfoo && foo.bar && foo.bar.baz == null;\nfoo?.bar?.baz != null;\nfoo && foo.bar && foo.bar.baz === undefined;\nfoo?.bar?.baz !== undefined;\nfoo?.bar && foo.bar.baz > 1;\nboth?.bar?.baz === 1;\nboth != null && both.bar != null && both.bar.baz !== 1;\nboth?.bar != null && both.bar.baz > 1;\nboth == null || both.bar == null || both.bar.baz === 1;\nboth?.bar?.baz !== 1;\nboth?.bar == null || both.bar.baz > 1;\nboth?.bar?.baz == null;\nboth?.bar?.baz === undefined;\nboth?.bar == null || c.d === 1;\nboth?.bar == null || c.d === 1 || both.bar.baz === 1;\n!foo || !foo.bar || foo.bar.baz === 1;\nfoo?.bar?.baz !== 1;\n!foo?.bar || foo.bar.baz > 1;\n!both?.bar || both.bar.baz === c.d;\n!both?.bar || both.bar.baz !== c.d;\nboth == null || both.bar == null || both.bar.baz === 1 || both.bar.baz === 2;\nexport {};\n"
+ },
+ "172-prefer-optional-chain": {
+  "fix": "declare const foo: { bar: { baz: number | undefined | null } | undefined } | undefined;\ndeclare const both: { bar: { baz: number | null } | null | undefined } | null | undefined;\nfoo?.bar && !foo.bar.baz;\nfoo?.bar?.baz === null;\nfoo && foo.bar && foo.bar.baz !== null;\nfoo?.bar && typeof foo.bar.baz === \"undefined\";\ntypeof foo?.bar?.baz !== \"undefined\";\n!foo || !foo.bar || foo.bar.baz;\n!foo || !foo.bar || foo.bar.baz != null;\n!foo || !foo.bar || foo.bar.baz !== undefined;\nfoo?.bar?.baz !== null;\n!foo || !foo.bar || foo.bar.baz === null;\nfoo?.bar?.baz == null;\nfoo?.bar?.baz === undefined;\nboth == null || both.bar == null || both.bar.baz != null;\nboth?.bar == null || both.bar.baz;\n!both?.bar?.baz;\nboth != null && both.bar != null && both.bar.baz == null;\nboth?.bar != null && !both.bar.baz;\nboth != null && both.bar != null && both.bar.baz;\nboth?.bar?.baz != null;\nfoo?.bar && !foo.bar.baz && foo.bar.baz === 1;\nfoo?.bar?.baz === null && 1;\nexport {};\n",
+  "suggestions": "declare const foo: { bar: { baz: number | undefined | null } | undefined } | undefined;\ndeclare const both: { bar: { baz: number | null } | null | undefined } | null | undefined;\nfoo && foo.bar && !foo.bar.baz;\nfoo && foo.bar && foo.bar.baz === null;\nfoo && foo.bar && foo.bar.baz !== null;\nfoo && foo.bar && typeof foo.bar.baz === \"undefined\";\nfoo && foo.bar && typeof foo.bar.baz !== \"undefined\";\n!foo || !foo.bar || foo.bar.baz;\n!foo || !foo.bar || foo.bar.baz != null;\n!foo || !foo.bar || foo.bar.baz !== undefined;\n!foo || !foo.bar || foo.bar.baz !== null;\n!foo || !foo.bar || foo.bar.baz === null;\n!foo || !foo.bar || foo.bar.baz == null;\n!foo || !foo.bar || foo.bar.baz === undefined;\nboth == null || both.bar == null || both.bar.baz != null;\nboth == null || both.bar == null || both.bar.baz;\nboth == null || both.bar == null || !both.bar.baz;\nboth != null && both.bar != null && both.bar.baz == null;\nboth != null && both.bar != null && !both.bar.baz;\nboth?.bar?.baz;\nboth != null && both.bar != null && both.bar.baz != null;\nfoo && foo.bar && !foo.bar.baz && foo.bar.baz === 1;\nfoo && foo.bar && foo.bar.baz === null && 1;\nexport {};\n",
+  "dangerously": "declare const foo: { bar: { baz: number | undefined | null } | undefined } | undefined;\ndeclare const both: { bar: { baz: number | null } | null | undefined } | null | undefined;\nfoo?.bar && !foo.bar.baz;\nfoo?.bar?.baz === null;\nfoo && foo.bar && foo.bar.baz !== null;\nfoo?.bar && typeof foo.bar.baz === \"undefined\";\ntypeof foo?.bar?.baz !== \"undefined\";\n!foo || !foo.bar || foo.bar.baz;\n!foo || !foo.bar || foo.bar.baz != null;\n!foo || !foo.bar || foo.bar.baz !== undefined;\nfoo?.bar?.baz !== null;\n!foo || !foo.bar || foo.bar.baz === null;\nfoo?.bar?.baz == null;\nfoo?.bar?.baz === undefined;\nboth == null || both.bar == null || both.bar.baz != null;\nboth?.bar == null || both.bar.baz;\n!both?.bar?.baz;\nboth != null && both.bar != null && both.bar.baz == null;\nboth?.bar != null && !both.bar.baz;\nboth?.bar?.baz;\nboth?.bar?.baz != null;\nfoo?.bar && !foo.bar.baz && foo.bar.baz === 1;\nfoo?.bar?.baz === null && 1;\nexport {};\n"
+ },
+ "173-prefer-optional-chain": {
+  "fix": "declare const a: { b: { c: number } | null } | undefined;\ndeclare const foo: { bar: { baz: number | undefined | null } | undefined } | undefined;\ndeclare const both: { bar: { baz: number | null } | null | undefined } | null | undefined;\na && a.b !== null;\na?.b?.c;\n!a || a.b === null;\n!a?.b?.c;\n!foo?.bar || typeof foo.bar.baz !== \"undefined\";\nboth?.bar != null && typeof both.bar.baz === \"undefined\";\ntypeof both?.bar?.baz !== \"undefined\";\nboth?.bar == null || typeof both.bar.baz !== \"undefined\";\nfoo && typeof foo.bar === \"undefined\";\ntypeof foo?.bar !== \"undefined\";\n!foo || typeof foo.bar !== \"undefined\";\nfoo && foo.bar !== null;\n!foo || foo.bar === null;\nfoo?.bar === null;\nfoo?.bar !== null;\nfoo?.bar && \"undefined\" === typeof foo.bar.baz;\nfoo && foo.bar && null !== foo.bar.baz;\nfoo && foo.bar && undefined === foo.bar.baz;\nexport {};\n",
+  "suggestions": "declare const a: { b: { c: number } | null } | undefined;\ndeclare const foo: { bar: { baz: number | undefined | null } | undefined } | undefined;\ndeclare const both: { bar: { baz: number | null } | null | undefined } | null | undefined;\na && a.b !== null;\na && a.b !== null && a.b.c;\n!a || a.b === null;\n!a || a.b === null || !a.b.c;\n!foo || !foo.bar || typeof foo.bar.baz !== \"undefined\";\nboth != null && both.bar != null && typeof both.bar.baz === \"undefined\";\nboth != null && both.bar != null && typeof both.bar.baz !== \"undefined\";\nboth == null || both.bar == null || typeof both.bar.baz !== \"undefined\";\nfoo && typeof foo.bar === \"undefined\";\nfoo && typeof foo.bar !== \"undefined\";\n!foo || typeof foo.bar !== \"undefined\";\nfoo && foo.bar !== null;\n!foo || foo.bar === null;\nfoo && foo.bar === null;\n!foo || foo.bar !== null;\nfoo && foo.bar && \"undefined\" === typeof foo.bar.baz;\nfoo && foo.bar && null !== foo.bar.baz;\nfoo && foo.bar && undefined === foo.bar.baz;\nexport {};\n",
+  "dangerously": "declare const a: { b: { c: number } | null } | undefined;\ndeclare const foo: { bar: { baz: number | undefined | null } | undefined } | undefined;\ndeclare const both: { bar: { baz: number | null } | null | undefined } | null | undefined;\na && a.b !== null;\na?.b?.c;\n!a || a.b === null;\n!a?.b?.c;\n!foo?.bar || typeof foo.bar.baz !== \"undefined\";\nboth?.bar != null && typeof both.bar.baz === \"undefined\";\ntypeof both?.bar?.baz !== \"undefined\";\nboth?.bar == null || typeof both.bar.baz !== \"undefined\";\nfoo && typeof foo.bar === \"undefined\";\ntypeof foo?.bar !== \"undefined\";\n!foo || typeof foo.bar !== \"undefined\";\nfoo && foo.bar !== null;\n!foo || foo.bar === null;\nfoo?.bar === null;\nfoo?.bar !== null;\nfoo?.bar && \"undefined\" === typeof foo.bar.baz;\nfoo && foo.bar && null !== foo.bar.baz;\nfoo && foo.bar && undefined === foo.bar.baz;\nexport {};\n"
+ },
+ "174-no-unnecessary-type-assertion": {
+  "fix": "type El = HTMLElement; type In = HTMLInputElement;\ntype Fn<T> = (c: El, id: string) => T;\ntype Cond<T> = T extends string ? number : string;\ntype Via<T> = Parameters<Fn<T>>;\ntype Box<T> = { v: T };\ndeclare function f1<T extends El = El>(...a: Parameters<Fn<T>>): T;\ndeclare function f2<T extends El = El>(a: Cond<T>): T;\ndeclare function f3<T extends El = El>(a: T extends In ? number : string): T;\ndeclare function f4<T extends El = El>(...a: Via<T>): T;\ndeclare function f5<T extends El = El>(a: T[\"id\"]): T;\ndeclare function f6<T extends El = El>(a: keyof T): T;\ndeclare function f7<T extends El = El>(a: Partial<T>): T;\ndeclare function f8<T extends El = El>(a: Box<T>): T;\ndeclare function f9<T extends El = El>(a: (x: T) => void): T;\ndeclare function g1<T extends El = El>(a: string, b?: T): T;\ndeclare function g2<T extends El = El>(a: string, ...b: T[]): T;\ndeclare function g3<T extends El = El>(a: ReturnType<Fn<T>>): T;\ndeclare function g4<T extends El = El>(a: NonNullable<T>): T;\ndeclare function g5<T extends El = El>(a: Exclude<T, null>): T;\ndeclare function g6<T extends El = El>(a: Awaited<T>): T;\ndeclare function g7<T extends El = El>(a: Readonly<T>): T;\ndeclare function g8<T extends El = El>(a: Pick<T, \"id\">): T;\ndeclare const el: El, inp: In;\nexport const a1 = f1(el, \"a\") as In;\nexport const a2 = f2(\"a\") as In;\nexport const a3 = f3(\"a\") as In;\nexport const a4 = f4(el, \"a\") as In;\nexport const a5 = f5(\"a\") as In;\nexport const a6 = f6(\"id\") as In;\nexport const a7 = f7({}) as In;\nexport const a8 = f8({ v: inp });\nexport const a9 = f9(() => {}) as In;\nexport const b1 = g1(\"a\") as In;\nexport const b2 = g2(\"a\") as In;\nexport const b3 = g3(inp);\nexport const b4 = g4(inp);\nexport const b5 = g5(inp);\nexport const b6 = g6(inp);\nexport const b8 = g8({ id: \"a\" }) as In;\nexport const c1 = g1(\"a\", inp);\nexport const c2 = g2(\"a\", inp);\n",
+  "suggestions": "type El = HTMLElement; type In = HTMLInputElement;\ntype Fn<T> = (c: El, id: string) => T;\ntype Cond<T> = T extends string ? number : string;\ntype Via<T> = Parameters<Fn<T>>;\ntype Box<T> = { v: T };\ndeclare function f1<T extends El = El>(...a: Parameters<Fn<T>>): T;\ndeclare function f2<T extends El = El>(a: Cond<T>): T;\ndeclare function f3<T extends El = El>(a: T extends In ? number : string): T;\ndeclare function f4<T extends El = El>(...a: Via<T>): T;\ndeclare function f5<T extends El = El>(a: T[\"id\"]): T;\ndeclare function f6<T extends El = El>(a: keyof T): T;\ndeclare function f7<T extends El = El>(a: Partial<T>): T;\ndeclare function f8<T extends El = El>(a: Box<T>): T;\ndeclare function f9<T extends El = El>(a: (x: T) => void): T;\ndeclare function g1<T extends El = El>(a: string, b?: T): T;\ndeclare function g2<T extends El = El>(a: string, ...b: T[]): T;\ndeclare function g3<T extends El = El>(a: ReturnType<Fn<T>>): T;\ndeclare function g4<T extends El = El>(a: NonNullable<T>): T;\ndeclare function g5<T extends El = El>(a: Exclude<T, null>): T;\ndeclare function g6<T extends El = El>(a: Awaited<T>): T;\ndeclare function g7<T extends El = El>(a: Readonly<T>): T;\ndeclare function g8<T extends El = El>(a: Pick<T, \"id\">): T;\ndeclare const el: El, inp: In;\nexport const a1 = f1(el, \"a\") as In;\nexport const a2 = f2(\"a\") as In;\nexport const a3 = f3(\"a\") as In;\nexport const a4 = f4(el, \"a\") as In;\nexport const a5 = f5(\"a\") as In;\nexport const a6 = f6(\"id\") as In;\nexport const a7 = f7({}) as In;\nexport const a8 = f8({ v: inp }) as In;\nexport const a9 = f9(() => {}) as In;\nexport const b1 = g1(\"a\") as In;\nexport const b2 = g2(\"a\") as In;\nexport const b3 = g3(inp) as In;\nexport const b4 = g4(inp) as In;\nexport const b5 = g5(inp) as In;\nexport const b6 = g6(inp) as In;\nexport const b8 = g8({ id: \"a\" }) as In;\nexport const c1 = g1(\"a\", inp) as In;\nexport const c2 = g2(\"a\", inp) as In;\n",
+  "dangerously": "type El = HTMLElement; type In = HTMLInputElement;\ntype Fn<T> = (c: El, id: string) => T;\ntype Cond<T> = T extends string ? number : string;\ntype Via<T> = Parameters<Fn<T>>;\ntype Box<T> = { v: T };\ndeclare function f1<T extends El = El>(...a: Parameters<Fn<T>>): T;\ndeclare function f2<T extends El = El>(a: Cond<T>): T;\ndeclare function f3<T extends El = El>(a: T extends In ? number : string): T;\ndeclare function f4<T extends El = El>(...a: Via<T>): T;\ndeclare function f5<T extends El = El>(a: T[\"id\"]): T;\ndeclare function f6<T extends El = El>(a: keyof T): T;\ndeclare function f7<T extends El = El>(a: Partial<T>): T;\ndeclare function f8<T extends El = El>(a: Box<T>): T;\ndeclare function f9<T extends El = El>(a: (x: T) => void): T;\ndeclare function g1<T extends El = El>(a: string, b?: T): T;\ndeclare function g2<T extends El = El>(a: string, ...b: T[]): T;\ndeclare function g3<T extends El = El>(a: ReturnType<Fn<T>>): T;\ndeclare function g4<T extends El = El>(a: NonNullable<T>): T;\ndeclare function g5<T extends El = El>(a: Exclude<T, null>): T;\ndeclare function g6<T extends El = El>(a: Awaited<T>): T;\ndeclare function g7<T extends El = El>(a: Readonly<T>): T;\ndeclare function g8<T extends El = El>(a: Pick<T, \"id\">): T;\ndeclare const el: El, inp: In;\nexport const a1 = f1(el, \"a\") as In;\nexport const a2 = f2(\"a\") as In;\nexport const a3 = f3(\"a\") as In;\nexport const a4 = f4(el, \"a\") as In;\nexport const a5 = f5(\"a\") as In;\nexport const a6 = f6(\"id\") as In;\nexport const a7 = f7({}) as In;\nexport const a8 = f8({ v: inp });\nexport const a9 = f9(() => {}) as In;\nexport const b1 = g1(\"a\") as In;\nexport const b2 = g2(\"a\") as In;\nexport const b3 = g3(inp);\nexport const b4 = g4(inp);\nexport const b5 = g5(inp);\nexport const b6 = g6(inp);\nexport const b8 = g8({ id: \"a\" }) as In;\nexport const c1 = g1(\"a\", inp);\nexport const c2 = g2(\"a\", inp);\n"
+ },
+ "175-no-unnecessary-type-assertion": {
+  "fix": "import type { ClientBase } from \"pg\";\ninterface Config { dir: string }\ninterface WithUrl { databaseUrl: string }\ninterface WithClient { dbClient: ClientBase }\ninterface Known { dbClient: { query(): void } }\ninterface WithAny { dbClient: any }\ndeclare function r1(o: Config & (WithClient | WithUrl)): void;\ndeclare function r2(o: Config & WithClient): void;\ndeclare function r3(o: (Config & WithClient) | (Config & WithUrl)): void;\ndeclare function r4(o: Config & (Known | WithUrl)): void;\ndeclare function r5(o: Config & (WithAny | WithUrl)): void;\ndeclare function r6(o: Config & (WithAny | WithUrl)): void;\ndeclare const u: unknown, n: number;\nr1({ dbClient: u as ClientBase, dir: \"a\" });\nr2({ dbClient: u, dir: \"a\" });\nr3({ dbClient: u as ClientBase, dir: \"a\" });\nr4({ dbClient: u as { query(): void }, dir: \"a\" });\nr5({ dbClient: u as any, dir: \"a\" });\nr6({ dbClient: n, dir: \"a\" });\nr1({ dbClient: n, dir: \"a\" });\nr1({ dbClient: n as unknown as ClientBase, dir: \"a\" });\nr5({ dbClient: n as unknown as any, dir: \"a\" });\nr5({ dbClient: n as unknown as string, dir: \"a\" });\n",
+  "suggestions": "import type { ClientBase } from \"pg\";\ninterface Config { dir: string }\ninterface WithUrl { databaseUrl: string }\ninterface WithClient { dbClient: ClientBase }\ninterface Known { dbClient: { query(): void } }\ninterface WithAny { dbClient: any }\ndeclare function r1(o: Config & (WithClient | WithUrl)): void;\ndeclare function r2(o: Config & WithClient): void;\ndeclare function r3(o: (Config & WithClient) | (Config & WithUrl)): void;\ndeclare function r4(o: Config & (Known | WithUrl)): void;\ndeclare function r5(o: Config & (WithAny | WithUrl)): void;\ndeclare function r6(o: Config & (WithAny | WithUrl)): void;\ndeclare const u: unknown, n: number;\nr1({ dbClient: u as ClientBase, dir: \"a\" });\nr2({ dbClient: u as ClientBase, dir: \"a\" });\nr3({ dbClient: u as ClientBase, dir: \"a\" });\nr4({ dbClient: u as { query(): void }, dir: \"a\" });\nr5({ dbClient: u as any, dir: \"a\" });\nr6({ dbClient: n as any, dir: \"a\" });\nr1({ dbClient: n as number, dir: \"a\" });\nr1({ dbClient: n as unknown as ClientBase, dir: \"a\" });\nr5({ dbClient: n as unknown as any, dir: \"a\" });\nr5({ dbClient: n as unknown as string, dir: \"a\" });\n",
+  "dangerously": "import type { ClientBase } from \"pg\";\ninterface Config { dir: string }\ninterface WithUrl { databaseUrl: string }\ninterface WithClient { dbClient: ClientBase }\ninterface Known { dbClient: { query(): void } }\ninterface WithAny { dbClient: any }\ndeclare function r1(o: Config & (WithClient | WithUrl)): void;\ndeclare function r2(o: Config & WithClient): void;\ndeclare function r3(o: (Config & WithClient) | (Config & WithUrl)): void;\ndeclare function r4(o: Config & (Known | WithUrl)): void;\ndeclare function r5(o: Config & (WithAny | WithUrl)): void;\ndeclare function r6(o: Config & (WithAny | WithUrl)): void;\ndeclare const u: unknown, n: number;\nr1({ dbClient: u as ClientBase, dir: \"a\" });\nr2({ dbClient: u, dir: \"a\" });\nr3({ dbClient: u as ClientBase, dir: \"a\" });\nr4({ dbClient: u as { query(): void }, dir: \"a\" });\nr5({ dbClient: u as any, dir: \"a\" });\nr6({ dbClient: n, dir: \"a\" });\nr1({ dbClient: n, dir: \"a\" });\nr1({ dbClient: n as unknown as ClientBase, dir: \"a\" });\nr5({ dbClient: n as unknown as any, dir: \"a\" });\nr5({ dbClient: n as unknown as string, dir: \"a\" });\n"
+ },
+ "176-no-array-delete": {
+  "fix": "namespace N0 {\ndeclare const a: number[]; delete a[0];\n}\nnamespace N1 {\ndeclare const a: number[]; delete a[0, 1];\n}\nnamespace N2 {\ndeclare const a: number[]; delete a.length;\n}\nnamespace N3 {\ndeclare const a: number[]; delete (a)[0];\n}\nnamespace N4 {\ndeclare const a: number[]; delete a [ 0 ] ;\n}\nnamespace N5 {\ndeclare const a: number[]; delete a[\"x\"];\n}\nnamespace N6 {\ndeclare const a: number[]; delete/* b */a[0];\n}\nnamespace N7 {\ndeclare const a: number[][]; delete a[0][1];\n}\nnamespace N8 {\ndeclare const a: number[]; delete a![0];\n}\nnamespace N9 {\ndeclare const a: number[]; delete (a as number[])[0];\n}\nnamespace N10 {\ndeclare const a: number[]; void delete a[0];\n}\n",
+  "suggestions": "namespace N0 {\ndeclare const a: number[];  a.splice(0, 1);\n}\nnamespace N1 {\ndeclare const a: number[];  a.splice(0, 1, 1);\n}\nnamespace N2 {\ndeclare const a: number[]; delete a.length;\n}\nnamespace N3 {\ndeclare const a: number[];  (a).splice(0, 1);\n}\nnamespace N4 {\ndeclare const a: number[];  a .splice( 0 , 1) ;\n}\nnamespace N5 {\ndeclare const a: number[];  a.splice(\"x\", 1);\n}\nnamespace N6 {\ndeclare const a: number[]; /* b */a.splice(0, 1);\n}\nnamespace N7 {\ndeclare const a: number[][];  a[0].splice(1, 1);\n}\nnamespace N8 {\ndeclare const a: number[];  a!.splice(0, 1);\n}\nnamespace N9 {\ndeclare const a: number[];  (a as number[]).splice(0, 1);\n}\nnamespace N10 {\ndeclare const a: number[]; void  a.splice(0, 1);\n}\n",
+  "dangerously": "namespace N0 {\ndeclare const a: number[];  a.splice(0, 1);\n}\nnamespace N1 {\ndeclare const a: number[];  a.splice(0, 1, 1);\n}\nnamespace N2 {\ndeclare const a: number[]; delete a.length;\n}\nnamespace N3 {\ndeclare const a: number[];  (a).splice(0, 1);\n}\nnamespace N4 {\ndeclare const a: number[];  a .splice( 0 , 1) ;\n}\nnamespace N5 {\ndeclare const a: number[];  a.splice(\"x\", 1);\n}\nnamespace N6 {\ndeclare const a: number[]; /* b */a.splice(0, 1);\n}\nnamespace N7 {\ndeclare const a: number[][];  a[0].splice(1, 1);\n}\nnamespace N8 {\ndeclare const a: number[];  a!.splice(0, 1);\n}\nnamespace N9 {\ndeclare const a: number[];  (a as number[]).splice(0, 1);\n}\nnamespace N10 {\ndeclare const a: number[]; void  a.splice(0, 1);\n}\n"
+ },
+ "177-no-misused-spread": {
+  "fix": "namespace N0 {\ndeclare const m: Map<string, number>; const o = { ...m };\n}\nnamespace N1 {\ndeclare const m: Map<string, number>; const o = { ...m, };\n}\nnamespace N2 {\ndeclare const m: Map<string, number>; const o = {...m};\n}\nnamespace N3 {\ndeclare const m: Map<string, number>; const o = { a: 1, ...m };\n}\nnamespace N4 {\ndeclare const m: Map<string, number>; const o = { .../* c */m /* d */ };\n}\nnamespace N5 {\ndeclare const m: Map<string, number>; const o = ({ ...m });\n}\nnamespace N6 {\ndeclare const m: Map<string, number>; f({ ...m }); declare function f(x: object): void;\n}\nnamespace N7 {\ndeclare const m: Map<string, number>; const o = { ...m as Map<string, number> };\n}\nnamespace N8 {\ndeclare const m: Map<string, number>; const o = { ...(m) , };\n}\nnamespace N9 {\ndeclare const p: Promise<{a: 1}>; async function f() { return { ...p }; }\n}\nnamespace N10 {\ndeclare const p: Promise<{a: 1}>, q: boolean; async function f() { return { ...(q ? p : p) }; }\n}\nnamespace N11 {\ndeclare const p: Promise<{a: 1}>, q: boolean; async function f() { return { ...q ? p : p }; }\n}\n",
+  "suggestions": "namespace N0 {\ndeclare const m: Map<string, number>; const o =  Object.fromEntries(m) ;\n}\nnamespace N1 {\ndeclare const m: Map<string, number>; const o =  Object.fromEntries(m) ;\n}\nnamespace N2 {\ndeclare const m: Map<string, number>; const o = Object.fromEntries(m);\n}\nnamespace N3 {\ndeclare const m: Map<string, number>; const o = { a: 1, ...Object.fromEntries(m) };\n}\nnamespace N4 {\ndeclare const m: Map<string, number>; const o =  Object.fromEntries(/* c */m) /* d */ ;\n}\nnamespace N5 {\ndeclare const m: Map<string, number>; const o = ( Object.fromEntries(m) );\n}\nnamespace N6 {\ndeclare const m: Map<string, number>; f( Object.fromEntries(m) ); declare function f(x: object): void;\n}\nnamespace N7 {\ndeclare const m: Map<string, number>; const o =  Object.fromEntries(m as Map<string, number>) ;\n}\nnamespace N8 {\ndeclare const m: Map<string, number>; const o =  Object.fromEntries((m)) ;\n}\nnamespace N9 {\ndeclare const p: Promise<{a: 1}>; async function f() { return { ...await p }; }\n}\nnamespace N10 {\ndeclare const p: Promise<{a: 1}>, q: boolean; async function f() { return { ...(await (q ? p : p)) }; }\n}\nnamespace N11 {\ndeclare const p: Promise<{a: 1}>, q: boolean; async function f() { return { ...await (q ? p : p) }; }\n}\n",
+  "dangerously": "namespace N0 {\ndeclare const m: Map<string, number>; const o =  Object.fromEntries(m) ;\n}\nnamespace N1 {\ndeclare const m: Map<string, number>; const o =  Object.fromEntries(m) ;\n}\nnamespace N2 {\ndeclare const m: Map<string, number>; const o = Object.fromEntries(m);\n}\nnamespace N3 {\ndeclare const m: Map<string, number>; const o = { a: 1, ...Object.fromEntries(m) };\n}\nnamespace N4 {\ndeclare const m: Map<string, number>; const o =  Object.fromEntries(/* c */m) /* d */ ;\n}\nnamespace N5 {\ndeclare const m: Map<string, number>; const o = ( Object.fromEntries(m) );\n}\nnamespace N6 {\ndeclare const m: Map<string, number>; f( Object.fromEntries(m) ); declare function f(x: object): void;\n}\nnamespace N7 {\ndeclare const m: Map<string, number>; const o =  Object.fromEntries(m as Map<string, number>) ;\n}\nnamespace N8 {\ndeclare const m: Map<string, number>; const o =  Object.fromEntries((m)) ;\n}\nnamespace N9 {\ndeclare const p: Promise<{a: 1}>; async function f() { return { ...await p }; }\n}\nnamespace N10 {\ndeclare const p: Promise<{a: 1}>, q: boolean; async function f() { return { ...(await (q ? p : p)) }; }\n}\nnamespace N11 {\ndeclare const p: Promise<{a: 1}>, q: boolean; async function f() { return { ...await (q ? p : p) }; }\n}\n"
+ },
+ "178-no-confusing-void-expression": {
+  "fix": "namespace N0 {\nconst a = () =>{  console.log(1); };\n}\nnamespace N1 {\nconst a = () =>{ console.log(1); };\n}\nnamespace N2 {\nconst a = () =>{ console.log(1); };\n}\nnamespace N3 {\nconst a = () =>{  /* c */ console.log(1); };\n}\nnamespace N4 {\nconst a = () =>{  console.log(1); } /* d */;\n}\nnamespace N5 {\nconst a = () =>{ \n  console.log(1); };\n}\nnamespace N6 {\nconst a = (): number => console.log(1) as any;\n}\nnamespace N7 {\nf(() =>{  console.log(1); }); declare function f(x: () => void): void;\n}\nnamespace N8 {\nfunction f() {  console.log(1); }\n}\nnamespace N9 {\nfunction f() {  console.log(1) }\n}\nnamespace N10 {\nfunction f() { ; (console.log(1)); }\n}\nnamespace N11 {\nfunction f() {  /* c */ console.log(1); }\n}\nnamespace N12 {\nfunction f(c: boolean) { if (c) {  console.log(1);; return; } f(c); }\n}\nnamespace N13 {\nfunction f(c: boolean) { if (c) {  console.log(1);; return; } f(c); }\n}\nnamespace N14 {\nfunction f(c: boolean) { if (c) {  console.log(1); return; } f(c); }\n}\nnamespace N15 {\nfunction f(c: boolean) { if (c) {  console.log(1); return; }\nf(c); }\n}\nnamespace N16 {\nfunction f() { g()\n; [1].forEach(console.log) }\ndeclare function g(): void;\n}\nnamespace N17 {\nfunction f() { g()\n; (console.log(1)) }\ndeclare function g(): void;\n}\nnamespace N18 {\nfunction f(c: boolean) { g()\nif (c) { ; [1].forEach(console.log); return; } g() }\ndeclare function g(): void;\n}\nnamespace N19 {\nfunction f() {  `a`.length ? console.log(1) : console.log(2); }\n}\nnamespace N20 {\nconst x = console.log(1);\n}\nnamespace N21 {\nfunction f(): number { return console.log(1) as any; }\n}\nnamespace N22 {\nfunction f(c: boolean) { label: {  console.log(1);; return; } }\n}\nnamespace N23 {\nfunction f(c: boolean) { switch (c) { case true: {  console.log(1);; return; } } }\n}\nnamespace N24 {\nfunction f(c: boolean) { try {  console.log(1);; return; } finally {} }\n}\n",
+  "suggestions": "namespace N0 {\nconst a = () => console.log(1);\n}\nnamespace N1 {\nconst a = () => (console.log(1));\n}\nnamespace N2 {\nconst a = () => ((console.log(1)));\n}\nnamespace N3 {\nconst a = () => /* c */ console.log(1);\n}\nnamespace N4 {\nconst a = () => console.log(1) /* d */;\n}\nnamespace N5 {\nconst a = () =>\n  console.log(1);\n}\nnamespace N6 {\nconst a = (): number => console.log(1) as any;\n}\nnamespace N7 {\nf(() => console.log(1)); declare function f(x: () => void): void;\n}\nnamespace N8 {\nfunction f() { return console.log(1); }\n}\nnamespace N9 {\nfunction f() { return console.log(1) }\n}\nnamespace N10 {\nfunction f() { return (console.log(1)); }\n}\nnamespace N11 {\nfunction f() { return /* c */ console.log(1); }\n}\nnamespace N12 {\nfunction f(c: boolean) { if (c) return console.log(1); f(c); }\n}\nnamespace N13 {\nfunction f(c: boolean) { if (c) { return console.log(1); } f(c); }\n}\nnamespace N14 {\nfunction f(c: boolean) { if (c) { return console.log(1) } f(c); }\n}\nnamespace N15 {\nfunction f(c: boolean) { if (c) return console.log(1)\nf(c); }\n}\nnamespace N16 {\nfunction f() { g()\nreturn [1].forEach(console.log) }\ndeclare function g(): void;\n}\nnamespace N17 {\nfunction f() { g()\nreturn (console.log(1)) }\ndeclare function g(): void;\n}\nnamespace N18 {\nfunction f(c: boolean) { g()\nif (c) { return [1].forEach(console.log) } g() }\ndeclare function g(): void;\n}\nnamespace N19 {\nfunction f() { return `a`.length ? console.log(1) : console.log(2); }\n}\nnamespace N20 {\nconst x = console.log(1);\n}\nnamespace N21 {\nfunction f(): number { return console.log(1) as any; }\n}\nnamespace N22 {\nfunction f(c: boolean) { label: return console.log(1); }\n}\nnamespace N23 {\nfunction f(c: boolean) { switch (c) { case true: return console.log(1); } }\n}\nnamespace N24 {\nfunction f(c: boolean) { try { return console.log(1); } finally {} }\n}\n",
+  "dangerously": "namespace N0 {\nconst a = () =>{  console.log(1); };\n}\nnamespace N1 {\nconst a = () =>{ console.log(1); };\n}\nnamespace N2 {\nconst a = () =>{ console.log(1); };\n}\nnamespace N3 {\nconst a = () =>{  /* c */ console.log(1); };\n}\nnamespace N4 {\nconst a = () =>{  console.log(1); } /* d */;\n}\nnamespace N5 {\nconst a = () =>{ \n  console.log(1); };\n}\nnamespace N6 {\nconst a = (): number => console.log(1) as any;\n}\nnamespace N7 {\nf(() =>{  console.log(1); }); declare function f(x: () => void): void;\n}\nnamespace N8 {\nfunction f() {  console.log(1); }\n}\nnamespace N9 {\nfunction f() {  console.log(1) }\n}\nnamespace N10 {\nfunction f() { ; (console.log(1)); }\n}\nnamespace N11 {\nfunction f() {  /* c */ console.log(1); }\n}\nnamespace N12 {\nfunction f(c: boolean) { if (c) {  console.log(1);; return; } f(c); }\n}\nnamespace N13 {\nfunction f(c: boolean) { if (c) {  console.log(1);; return; } f(c); }\n}\nnamespace N14 {\nfunction f(c: boolean) { if (c) {  console.log(1); return; } f(c); }\n}\nnamespace N15 {\nfunction f(c: boolean) { if (c) {  console.log(1); return; }\nf(c); }\n}\nnamespace N16 {\nfunction f() { g()\n; [1].forEach(console.log) }\ndeclare function g(): void;\n}\nnamespace N17 {\nfunction f() { g()\n; (console.log(1)) }\ndeclare function g(): void;\n}\nnamespace N18 {\nfunction f(c: boolean) { g()\nif (c) { ; [1].forEach(console.log); return; } g() }\ndeclare function g(): void;\n}\nnamespace N19 {\nfunction f() {  `a`.length ? console.log(1) : console.log(2); }\n}\nnamespace N20 {\nconst x = console.log(1);\n}\nnamespace N21 {\nfunction f(): number { return console.log(1) as any; }\n}\nnamespace N22 {\nfunction f(c: boolean) { label: {  console.log(1);; return; } }\n}\nnamespace N23 {\nfunction f(c: boolean) { switch (c) { case true: {  console.log(1);; return; } } }\n}\nnamespace N24 {\nfunction f(c: boolean) { try {  console.log(1);; return; } finally {} }\n}\n"
+ },
+ "179-no-unnecessary-type-conversion": {
+  "fix": "namespace N0 {\nconst arr = ['asdf']; arr[0] += '';\n}\nnamespace N1 {\nconst obj = { prop: 'asdf' }; obj.prop += '';\n}\nnamespace N2 {\nlet s = 'asdf'; s += '';\n}\nnamespace N3 {\nlet s = 'asdf'; (s) += '';\n}\nnamespace N4 {\n'asdf'.toString(console.log('extra'));\n}\nnamespace N5 {\nString('asdf', console.log('extra'));\n}\nnamespace N6 {\nString('asdf');\n}\nnamespace N7 {\n'asdf'.toString();\n}\nnamespace N8 {\nNumber(1, 2);\n}\nnamespace N9 {\nBoolean(true, 1);\n}\nnamespace N10 {\nBigInt(1n, 2);\n}\nnamespace N11 {\nfunction f<T extends string>(x: T) { return x + ''; }\n}\nnamespace N12 {\nfunction f<T extends string>(x: T) { return '' + x; }\n}\nnamespace N13 {\nfunction f<T extends string>(x: T) { x += ''; return x; }\n}\nnamespace N14 {\nfunction f<T extends number>(x: T) { return +x; }\n}\nnamespace N15 {\nfunction f<T extends boolean>(x: T) { return !!x; }\n}\nnamespace N16 {\nfunction f<T extends 3 | 4>(x: T) { return ~~x; }\n}\nnamespace N17 {\nfunction f<T extends string>(x: T) { return String(x); }\n}\nnamespace N18 {\nfunction f<T extends string>(x: T) { return x.toString(); }\n}\nnamespace N19 {\nfunction f<T extends string | number>(x: T) { return String(x); }\n}\nnamespace N20 {\nfunction f<T>(x: T) { return String(x); }\n}\nnamespace N21 {\nfunction f<T extends number>(x: T) { return Number(x); }\n}\nnamespace N22 {\nfunction f<T extends bigint>(x: T) { return BigInt(x); }\n}\nnamespace N23 {\nfunction f(x: string & { a: 1 }) { return String(x); }\n}\n",
+  "suggestions": "namespace N0 {\nconst arr = ['asdf']; arr[0] += '';\n}\nnamespace N1 {\nconst obj = { prop: 'asdf' }; obj.prop += '';\n}\nnamespace N2 {\nlet s = 'asdf'; \n}\nnamespace N3 {\nlet s = 'asdf'; (s) += '';\n}\nnamespace N4 {\n'asdf'.toString(console.log('extra'));\n}\nnamespace N5 {\nString('asdf', console.log('extra'));\n}\nnamespace N6 {\n'asdf';\n}\nnamespace N7 {\n'asdf';\n}\nnamespace N8 {\nNumber(1, 2);\n}\nnamespace N9 {\nBoolean(true, 1);\n}\nnamespace N10 {\nBigInt(1n, 2);\n}\nnamespace N11 {\nfunction f<T extends string>(x: T) { return x; }\n}\nnamespace N12 {\nfunction f<T extends string>(x: T) { return x; }\n}\nnamespace N13 {\nfunction f<T extends string>(x: T) {  return x; }\n}\nnamespace N14 {\nfunction f<T extends number>(x: T) { return x; }\n}\nnamespace N15 {\nfunction f<T extends boolean>(x: T) { return x; }\n}\nnamespace N16 {\nfunction f<T extends 3 | 4>(x: T) { return x; }\n}\nnamespace N17 {\nfunction f<T extends string>(x: T) { return x; }\n}\nnamespace N18 {\nfunction f<T extends string>(x: T) { return x; }\n}\nnamespace N19 {\nfunction f<T extends string | number>(x: T) { return String(x); }\n}\nnamespace N20 {\nfunction f<T>(x: T) { return String(x); }\n}\nnamespace N21 {\nfunction f<T extends number>(x: T) { return x; }\n}\nnamespace N22 {\nfunction f<T extends bigint>(x: T) { return x; }\n}\nnamespace N23 {\nfunction f(x: string & { a: 1 }) { return String(x); }\n}\n",
+  "dangerously": "namespace N0 {\nconst arr = ['asdf']; arr[0] += '';\n}\nnamespace N1 {\nconst obj = { prop: 'asdf' }; obj.prop += '';\n}\nnamespace N2 {\nlet s = 'asdf'; \n}\nnamespace N3 {\nlet s = 'asdf'; (s) += '';\n}\nnamespace N4 {\n'asdf'.toString(console.log('extra'));\n}\nnamespace N5 {\nString('asdf', console.log('extra'));\n}\nnamespace N6 {\n'asdf';\n}\nnamespace N7 {\n'asdf';\n}\nnamespace N8 {\nNumber(1, 2);\n}\nnamespace N9 {\nBoolean(true, 1);\n}\nnamespace N10 {\nBigInt(1n, 2);\n}\nnamespace N11 {\nfunction f<T extends string>(x: T) { return x; }\n}\nnamespace N12 {\nfunction f<T extends string>(x: T) { return x; }\n}\nnamespace N13 {\nfunction f<T extends string>(x: T) {  return x; }\n}\nnamespace N14 {\nfunction f<T extends number>(x: T) { return x; }\n}\nnamespace N15 {\nfunction f<T extends boolean>(x: T) { return x; }\n}\nnamespace N16 {\nfunction f<T extends 3 | 4>(x: T) { return x; }\n}\nnamespace N17 {\nfunction f<T extends string>(x: T) { return x; }\n}\nnamespace N18 {\nfunction f<T extends string>(x: T) { return x; }\n}\nnamespace N19 {\nfunction f<T extends string | number>(x: T) { return String(x); }\n}\nnamespace N20 {\nfunction f<T>(x: T) { return String(x); }\n}\nnamespace N21 {\nfunction f<T extends number>(x: T) { return x; }\n}\nnamespace N22 {\nfunction f<T extends bigint>(x: T) { return x; }\n}\nnamespace N23 {\nfunction f(x: string & { a: 1 }) { return String(x); }\n}\n"
+ },
+ "180-dot-notation": {
+  "fix": "namespace N0 {\nclass E { private _b = 0; public get priv(): number { return this._b; } private set priv(v: number) { this._b = v; } }\ndeclare const obj: E;\nobj['priv'] = 1;\n}\nnamespace N1 {\nclass E { private _b = 0; public get priv(): number { return this._b; } private set priv(v: number) { this._b = v; } }\ndeclare const obj: E;\nobj.priv;\n}\nnamespace N2 {\nclass E { private _b = 0; private set priv(v: number) { this._b = v; } public get priv(): number { return this._b; } }\ndeclare const obj: E;\nobj.priv;\n}\nnamespace N3 {\nclass E { private _b = 0; private set priv(v: number) { this._b = v; } public get priv(): number { return this._b; } }\ndeclare const obj: E;\nobj['priv'] = 1;\n}\nnamespace N4 {\nclass E { private _b = 0; public get priv(): number { return this._b; } private set priv(v: number) { this._b = v; } }\ndeclare const obj: E;\nobj['priv'] += 1;\n}\nnamespace N5 {\nclass E { private _b = 0; public get priv(): number { return this._b; } private set priv(v: number) { this._b = v; } }\ndeclare const obj: E;\nobj['priv']++;\n}\nnamespace N6 {\nclass E { private _b = 0; public get priv(): number { return this._b; } private set priv(v: number) { this._b = v; } }\ndeclare const obj: E;\n[obj['priv']] = [1];\n}\nnamespace N7 {\nclass E { private _b = 0; public get priv(): number { return this._b; } private set priv(v: number) { this._b = v; } }\ndeclare const obj: E;\ndelete obj.priv;\n}\nnamespace N8 {\nclass E { private p = 0; }\ndeclare const obj: E;\nobj['p'] = 1; obj['p'];\n}\nnamespace N9 {\nclass E { public p = 0; }\ndeclare const obj: E;\nobj.p = 1; obj.p;\n}\n",
+  "suggestions": "namespace N0 {\nclass E { private _b = 0; public get priv(): number { return this._b; } private set priv(v: number) { this._b = v; } }\ndeclare const obj: E;\nobj['priv'] = 1;\n}\nnamespace N1 {\nclass E { private _b = 0; public get priv(): number { return this._b; } private set priv(v: number) { this._b = v; } }\ndeclare const obj: E;\nobj['priv'];\n}\nnamespace N2 {\nclass E { private _b = 0; private set priv(v: number) { this._b = v; } public get priv(): number { return this._b; } }\ndeclare const obj: E;\nobj['priv'];\n}\nnamespace N3 {\nclass E { private _b = 0; private set priv(v: number) { this._b = v; } public get priv(): number { return this._b; } }\ndeclare const obj: E;\nobj['priv'] = 1;\n}\nnamespace N4 {\nclass E { private _b = 0; public get priv(): number { return this._b; } private set priv(v: number) { this._b = v; } }\ndeclare const obj: E;\nobj['priv'] += 1;\n}\nnamespace N5 {\nclass E { private _b = 0; public get priv(): number { return this._b; } private set priv(v: number) { this._b = v; } }\ndeclare const obj: E;\nobj['priv']++;\n}\nnamespace N6 {\nclass E { private _b = 0; public get priv(): number { return this._b; } private set priv(v: number) { this._b = v; } }\ndeclare const obj: E;\n[obj['priv']] = [1];\n}\nnamespace N7 {\nclass E { private _b = 0; public get priv(): number { return this._b; } private set priv(v: number) { this._b = v; } }\ndeclare const obj: E;\ndelete obj['priv'];\n}\nnamespace N8 {\nclass E { private p = 0; }\ndeclare const obj: E;\nobj['p'] = 1; obj['p'];\n}\nnamespace N9 {\nclass E { public p = 0; }\ndeclare const obj: E;\nobj['p'] = 1; obj['p'];\n}\n",
+  "dangerously": "namespace N0 {\nclass E { private _b = 0; public get priv(): number { return this._b; } private set priv(v: number) { this._b = v; } }\ndeclare const obj: E;\nobj['priv'] = 1;\n}\nnamespace N1 {\nclass E { private _b = 0; public get priv(): number { return this._b; } private set priv(v: number) { this._b = v; } }\ndeclare const obj: E;\nobj.priv;\n}\nnamespace N2 {\nclass E { private _b = 0; private set priv(v: number) { this._b = v; } public get priv(): number { return this._b; } }\ndeclare const obj: E;\nobj.priv;\n}\nnamespace N3 {\nclass E { private _b = 0; private set priv(v: number) { this._b = v; } public get priv(): number { return this._b; } }\ndeclare const obj: E;\nobj['priv'] = 1;\n}\nnamespace N4 {\nclass E { private _b = 0; public get priv(): number { return this._b; } private set priv(v: number) { this._b = v; } }\ndeclare const obj: E;\nobj['priv'] += 1;\n}\nnamespace N5 {\nclass E { private _b = 0; public get priv(): number { return this._b; } private set priv(v: number) { this._b = v; } }\ndeclare const obj: E;\nobj['priv']++;\n}\nnamespace N6 {\nclass E { private _b = 0; public get priv(): number { return this._b; } private set priv(v: number) { this._b = v; } }\ndeclare const obj: E;\n[obj['priv']] = [1];\n}\nnamespace N7 {\nclass E { private _b = 0; public get priv(): number { return this._b; } private set priv(v: number) { this._b = v; } }\ndeclare const obj: E;\ndelete obj.priv;\n}\nnamespace N8 {\nclass E { private p = 0; }\ndeclare const obj: E;\nobj['p'] = 1; obj['p'];\n}\nnamespace N9 {\nclass E { public p = 0; }\ndeclare const obj: E;\nobj.p = 1; obj.p;\n}\n"
+ },
+ "181-use-unknown-in-catch-callback-variable": {
+  "fix": "namespace N0 {\nlet method = 'catch'; Promise.resolve()[method]((error: Error) => {});\n}\nnamespace N1 {\nconst method = 'catch'; Promise.resolve()[method]((error: Error) => {});\n}\nnamespace N2 {\nPromise.resolve()['catch']((error: Error) => {});\n}\nnamespace N3 {\nPromise.resolve()[`catch`]((error: Error) => {});\n}\nnamespace N4 {\nPromise.resolve().catch((error: Error) => {});\n}\nnamespace N5 {\nlet method = 'then'; Promise.resolve()[method](() => {}, (error: Error) => {});\n}\nnamespace N6 {\ndeclare const method: 'catch'; Promise.resolve()[method]((error: Error) => {});\n}\nnamespace N7 {\ndeclare const method: 'catch' | 'then'; Promise.resolve()[method]((error: Error) => {});\n}\n",
+  "suggestions": "namespace N0 {\nlet method = 'catch'; Promise.resolve()[method]((error: Error) => {});\n}\nnamespace N1 {\nconst method = 'catch'; Promise.resolve()[method]((error: unknown) => {});\n}\nnamespace N2 {\nPromise.resolve()['catch']((error: unknown) => {});\n}\nnamespace N3 {\nPromise.resolve()[`catch`]((error: unknown) => {});\n}\nnamespace N4 {\nPromise.resolve().catch((error: unknown) => {});\n}\nnamespace N5 {\nlet method = 'then'; Promise.resolve()[method](() => {}, (error: Error) => {});\n}\nnamespace N6 {\ndeclare const method: 'catch'; Promise.resolve()[method]((error: unknown) => {});\n}\nnamespace N7 {\ndeclare const method: 'catch' | 'then'; Promise.resolve()[method]((error: Error) => {});\n}\n",
+  "dangerously": "namespace N0 {\nlet method = 'catch'; Promise.resolve()[method]((error: Error) => {});\n}\nnamespace N1 {\nconst method = 'catch'; Promise.resolve()[method]((error: unknown) => {});\n}\nnamespace N2 {\nPromise.resolve()['catch']((error: unknown) => {});\n}\nnamespace N3 {\nPromise.resolve()[`catch`]((error: unknown) => {});\n}\nnamespace N4 {\nPromise.resolve().catch((error: unknown) => {});\n}\nnamespace N5 {\nlet method = 'then'; Promise.resolve()[method](() => {}, (error: Error) => {});\n}\nnamespace N6 {\ndeclare const method: 'catch'; Promise.resolve()[method]((error: unknown) => {});\n}\nnamespace N7 {\ndeclare const method: 'catch' | 'then'; Promise.resolve()[method]((error: Error) => {});\n}\n"
+ },
+ "182-prefer-readonly": {
+  "fix": "namespace N0 {\nclass A { private readonly a: number; }\n}\nnamespace N1 {\nclass A { readonly #a: number; }\n}\nnamespace N2 {\nclass A { private readonly a = 1; }\n}\nnamespace N3 {\nclass A { private readonly a: number; constructor() { this.a = 1; } }\n}\nnamespace N4 {\nclass A { private readonly a?: number; }\n}\nnamespace N5 {\nclass A { private readonly a!: number; }\n}\nnamespace N6 {\nclass A { private static readonly a: number; }\n}\nnamespace N7 {\nclass A { private readonly prop = 7; foo() { this['prop'] = 10; } }\n}\nnamespace N8 {\nclass A { private 'prop' = 7; foo() { this.prop = 10; } }\n}\nnamespace N9 {\nclass A { private readonly 'prop' = 7; foo() { this['prop'] = 10; } }\n}\nnamespace N10 {\nclass A { private readonly prop = 7; foo() { this[`prop`] = 10; } }\n}\nnamespace N11 {\nclass A { private readonly prop = 7; foo() { this['prop']++; } }\n}\nnamespace N12 {\nclass A { private readonly prop = 7; foo() { const k = 'prop'; this[k] = 10; } }\n}\n",
+  "suggestions": "namespace N0 {\nclass A { private a: number; }\n}\nnamespace N1 {\nclass A { #a: number; }\n}\nnamespace N2 {\nclass A { private a = 1; }\n}\nnamespace N3 {\nclass A { private a: number; constructor() { this.a = 1; } }\n}\nnamespace N4 {\nclass A { private a?: number; }\n}\nnamespace N5 {\nclass A { private a!: number; }\n}\nnamespace N6 {\nclass A { private static a: number; }\n}\nnamespace N7 {\nclass A { private prop = 7; foo() { this['prop'] = 10; } }\n}\nnamespace N8 {\nclass A { private 'prop' = 7; foo() { this.prop = 10; } }\n}\nnamespace N9 {\nclass A { private 'prop' = 7; foo() { this['prop'] = 10; } }\n}\nnamespace N10 {\nclass A { private prop = 7; foo() { this[`prop`] = 10; } }\n}\nnamespace N11 {\nclass A { private prop = 7; foo() { this['prop']++; } }\n}\nnamespace N12 {\nclass A { private prop = 7; foo() { const k = 'prop'; this[k] = 10; } }\n}\n",
+  "dangerously": "namespace N0 {\nclass A { private readonly a: number; }\n}\nnamespace N1 {\nclass A { readonly #a: number; }\n}\nnamespace N2 {\nclass A { private readonly a = 1; }\n}\nnamespace N3 {\nclass A { private readonly a: number; constructor() { this.a = 1; } }\n}\nnamespace N4 {\nclass A { private readonly a?: number; }\n}\nnamespace N5 {\nclass A { private readonly a!: number; }\n}\nnamespace N6 {\nclass A { private static readonly a: number; }\n}\nnamespace N7 {\nclass A { private readonly prop = 7; foo() { this['prop'] = 10; } }\n}\nnamespace N8 {\nclass A { private 'prop' = 7; foo() { this.prop = 10; } }\n}\nnamespace N9 {\nclass A { private readonly 'prop' = 7; foo() { this['prop'] = 10; } }\n}\nnamespace N10 {\nclass A { private readonly prop = 7; foo() { this[`prop`] = 10; } }\n}\nnamespace N11 {\nclass A { private readonly prop = 7; foo() { this['prop']++; } }\n}\nnamespace N12 {\nclass A { private readonly prop = 7; foo() { const k = 'prop'; this[k] = 10; } }\n}\n"
+ },
+ "183-prefer-readonly": {
+  "fix": "namespace N0 {\nclass A { private a: number; }\n}\nnamespace N1 {\nclass A { #a: number; }\n}\nnamespace N2 {\nclass A { private a = 1; }\n}\nnamespace N3 {\nclass A { private a: number; constructor() { this.a = 1; } }\n}\nnamespace N4 {\nclass A { private a?: number; }\n}\nnamespace N5 {\nclass A { private a!: number; }\n}\nnamespace N6 {\nclass A { private static a: number; }\n}\nnamespace N7 {\nclass A { private prop = 7; foo() { this['prop'] = 10; } }\n}\nnamespace N8 {\nclass A { private 'prop' = 7; foo() { this.prop = 10; } }\n}\nnamespace N9 {\nclass A { private 'prop' = 7; foo() { this['prop'] = 10; } }\n}\nnamespace N10 {\nclass A { private prop = 7; foo() { this[`prop`] = 10; } }\n}\nnamespace N11 {\nclass A { private prop = 7; foo() { this['prop']++; } }\n}\nnamespace N12 {\nclass A { private prop = 7; foo() { const k = 'prop'; this[k] = 10; } }\n}\n",
+  "suggestions": "namespace N0 {\nclass A { private a: number; }\n}\nnamespace N1 {\nclass A { #a: number; }\n}\nnamespace N2 {\nclass A { private a = 1; }\n}\nnamespace N3 {\nclass A { private a: number; constructor() { this.a = 1; } }\n}\nnamespace N4 {\nclass A { private a?: number; }\n}\nnamespace N5 {\nclass A { private a!: number; }\n}\nnamespace N6 {\nclass A { private static a: number; }\n}\nnamespace N7 {\nclass A { private prop = 7; foo() { this['prop'] = 10; } }\n}\nnamespace N8 {\nclass A { private 'prop' = 7; foo() { this.prop = 10; } }\n}\nnamespace N9 {\nclass A { private 'prop' = 7; foo() { this['prop'] = 10; } }\n}\nnamespace N10 {\nclass A { private prop = 7; foo() { this[`prop`] = 10; } }\n}\nnamespace N11 {\nclass A { private prop = 7; foo() { this['prop']++; } }\n}\nnamespace N12 {\nclass A { private prop = 7; foo() { const k = 'prop'; this[k] = 10; } }\n}\n",
+  "dangerously": "namespace N0 {\nclass A { private a: number; }\n}\nnamespace N1 {\nclass A { #a: number; }\n}\nnamespace N2 {\nclass A { private a = 1; }\n}\nnamespace N3 {\nclass A { private a: number; constructor() { this.a = 1; } }\n}\nnamespace N4 {\nclass A { private a?: number; }\n}\nnamespace N5 {\nclass A { private a!: number; }\n}\nnamespace N6 {\nclass A { private static a: number; }\n}\nnamespace N7 {\nclass A { private prop = 7; foo() { this['prop'] = 10; } }\n}\nnamespace N8 {\nclass A { private 'prop' = 7; foo() { this.prop = 10; } }\n}\nnamespace N9 {\nclass A { private 'prop' = 7; foo() { this['prop'] = 10; } }\n}\nnamespace N10 {\nclass A { private prop = 7; foo() { this[`prop`] = 10; } }\n}\nnamespace N11 {\nclass A { private prop = 7; foo() { this['prop']++; } }\n}\nnamespace N12 {\nclass A { private prop = 7; foo() { const k = 'prop'; this[k] = 10; } }\n}\n"
+ },
+ "184-prefer-readonly": {
+  "fix": "namespace N0 {\nclass A { constructor(private a: number) {} }\n}\nnamespace N1 {\nclass A { constructor(private readonly a = () => 1) {} }\n}\nnamespace N2 {\nclass A { private readonly a = () => 1; }\n}\nnamespace N3 {\nclass A { private a = (() => 1); }\n}\nnamespace N4 {\nclass A { private a = function () {}; }\n}\n",
+  "suggestions": "namespace N0 {\nclass A { constructor(private a: number) {} }\n}\nnamespace N1 {\nclass A { constructor(private a = () => 1) {} }\n}\nnamespace N2 {\nclass A { private a = () => 1; }\n}\nnamespace N3 {\nclass A { private a = (() => 1); }\n}\nnamespace N4 {\nclass A { private a = function () {}; }\n}\n",
+  "dangerously": "namespace N0 {\nclass A { constructor(private a: number) {} }\n}\nnamespace N1 {\nclass A { constructor(private readonly a = () => 1) {} }\n}\nnamespace N2 {\nclass A { private readonly a = () => 1; }\n}\nnamespace N3 {\nclass A { private a = (() => 1); }\n}\nnamespace N4 {\nclass A { private a = function () {}; }\n}\n"
+ },
+ "185-prefer-reduce-type-parameter": {
+  "fix": "namespace N0 {\nlet m = 'reduce'; [1, 2][m]((a: number[], s: number) => a.concat(s), [] as number[]);\n}\nnamespace N1 {\nconst m = 'reduce'; [1, 2][m]< number[]>((a: number[], s: number) => a.concat(s), []);\n}\nnamespace N2 {\ndeclare const m: 'reduce'; [1, 2][m]< number[]>((a: number[], s: number) => a.concat(s), []);\n}\n",
+  "suggestions": "namespace N0 {\nlet m = 'reduce'; [1, 2][m]((a: number[], s: number) => a.concat(s), [] as number[]);\n}\nnamespace N1 {\nconst m = 'reduce'; [1, 2][m]((a: number[], s: number) => a.concat(s), [] as number[]);\n}\nnamespace N2 {\ndeclare const m: 'reduce'; [1, 2][m]((a: number[], s: number) => a.concat(s), [] as number[]);\n}\n",
+  "dangerously": "namespace N0 {\nlet m = 'reduce'; [1, 2][m]((a: number[], s: number) => a.concat(s), [] as number[]);\n}\nnamespace N1 {\nconst m = 'reduce'; [1, 2][m]< number[]>((a: number[], s: number) => a.concat(s), []);\n}\nnamespace N2 {\ndeclare const m: 'reduce'; [1, 2][m]< number[]>((a: number[], s: number) => a.concat(s), []);\n}\n"
+ },
+ "186-prefer-nullish-coalescing": {
+  "fix": "namespace N0 {\ndeclare let a: string | null, b: string | null, c: string, d: string; a || b;\n}\nnamespace N1 {\ndeclare let a: string | null, b: string | null, c: string, d: string; a || b || c;\n}\nnamespace N2 {\ndeclare let a: string | null, b: string | null, c: string, d: string; a || b && c;\n}\nnamespace N3 {\ndeclare let a: string | null, b: string | null, c: string, d: string; a && b || c;\n}\nnamespace N4 {\ndeclare let a: string | null, b: string | null, c: string, d: string; (a && b) || c;\n}\nnamespace N5 {\ndeclare let a: string | null, b: string | null, c: string, d: string; a || (b && c);\n}\nnamespace N6 {\ndeclare let a: string | null, b: string | null, c: string, d: string; (a || b) && c;\n}\nnamespace N7 {\ndeclare let a: string | null, b: string | null, c: string, d: string; c && (a || b);\n}\nnamespace N8 {\ndeclare let a: string | null, b: string | null, c: string, d: string; c && a || b;\n}\nnamespace N9 {\ndeclare let a: string | null, b: string | null, c: string, d: string; a || b ? c : d;\n}\nnamespace N10 {\ndeclare let a: string | null, b: string | null, c: string, d: string; a /* x */ || /* y */ b;\n}\nnamespace N11 {\ndeclare let a: string | null, b: string | null, c: string, d: string; a ||= b;\n}\nnamespace N12 {\ndeclare let a: string | null, b: string | null, c: string, d: string; (a || b) || c;\n}\nnamespace N13 {\ndeclare let a: string | null, b: string | null, c: string, d: string; a || (b || c);\n}\nnamespace N15 {\ndeclare let a: string | null, b: boolean, c: boolean, d: string; const x = b || c || a;\n}\nnamespace N16 {\ndeclare let a: string | null, b: string | null, c: string, d: string; f(a || b || c || d); declare function f(x: string): void;\n}\n",
+  "suggestions": "namespace N0 {\ndeclare let a: string | null, b: string | null, c: string, d: string; a ?? b;\n}\nnamespace N1 {\ndeclare let a: string | null, b: string | null, c: string, d: string; (a ?? b) || c;\n}\nnamespace N2 {\ndeclare let a: string | null, b: string | null, c: string, d: string; a ?? (b && c);\n}\nnamespace N3 {\ndeclare let a: string | null, b: string | null, c: string, d: string; (a && b) ?? c;\n}\nnamespace N4 {\ndeclare let a: string | null, b: string | null, c: string, d: string; (a && b) ?? c;\n}\nnamespace N5 {\ndeclare let a: string | null, b: string | null, c: string, d: string; a ?? (b && c);\n}\nnamespace N6 {\ndeclare let a: string | null, b: string | null, c: string, d: string; (a ?? b) && c;\n}\nnamespace N7 {\ndeclare let a: string | null, b: string | null, c: string, d: string; c && (a ?? b);\n}\nnamespace N8 {\ndeclare let a: string | null, b: string | null, c: string, d: string; (c && a) ?? b;\n}\nnamespace N9 {\ndeclare let a: string | null, b: string | null, c: string, d: string; a || b ? c : d;\n}\nnamespace N10 {\ndeclare let a: string | null, b: string | null, c: string, d: string; a /* x */ ?? /* y */ b;\n}\nnamespace N11 {\ndeclare let a: string | null, b: string | null, c: string, d: string; a ??= b;\n}\nnamespace N12 {\ndeclare let a: string | null, b: string | null, c: string, d: string; (a ?? b) ?? c;\n}\nnamespace N13 {\ndeclare let a: string | null, b: string | null, c: string, d: string; a ?? (b ?? c);\n}\nnamespace N15 {\ndeclare let a: string | null, b: boolean, c: boolean, d: string; const x = b || c || a;\n}\nnamespace N16 {\ndeclare let a: string | null, b: string | null, c: string, d: string; f((a ?? b) || c || d); declare function f(x: string): void;\n}\n",
+  "dangerously": "namespace N0 {\ndeclare let a: string | null, b: string | null, c: string, d: string; a ?? b;\n}\nnamespace N1 {\ndeclare let a: string | null, b: string | null, c: string, d: string; (a ?? b) || c;\n}\nnamespace N2 {\ndeclare let a: string | null, b: string | null, c: string, d: string; a ?? (b && c);\n}\nnamespace N3 {\ndeclare let a: string | null, b: string | null, c: string, d: string; (a && b) ?? c;\n}\nnamespace N4 {\ndeclare let a: string | null, b: string | null, c: string, d: string; (a && b) ?? c;\n}\nnamespace N5 {\ndeclare let a: string | null, b: string | null, c: string, d: string; a ?? (b && c);\n}\nnamespace N6 {\ndeclare let a: string | null, b: string | null, c: string, d: string; (a ?? b) && c;\n}\nnamespace N7 {\ndeclare let a: string | null, b: string | null, c: string, d: string; c && (a ?? b);\n}\nnamespace N8 {\ndeclare let a: string | null, b: string | null, c: string, d: string; (c && a) ?? b;\n}\nnamespace N9 {\ndeclare let a: string | null, b: string | null, c: string, d: string; a || b ? c : d;\n}\nnamespace N10 {\ndeclare let a: string | null, b: string | null, c: string, d: string; a /* x */ ?? /* y */ b;\n}\nnamespace N11 {\ndeclare let a: string | null, b: string | null, c: string, d: string; a ??= b;\n}\nnamespace N12 {\ndeclare let a: string | null, b: string | null, c: string, d: string; (a ?? b) ?? c;\n}\nnamespace N13 {\ndeclare let a: string | null, b: string | null, c: string, d: string; a ?? (b ?? c);\n}\nnamespace N15 {\ndeclare let a: string | null, b: boolean, c: boolean, d: string; const x = b || c || a;\n}\nnamespace N16 {\ndeclare let a: string | null, b: string | null, c: string, d: string; f((a ?? b) || c || d); declare function f(x: string): void;\n}\n"
+ },
+ "187-no-unnecessary-template-expression": {
+  "fix": "namespace N0 {\nconst a = `x ${' '}\r\ny`;\n}\nnamespace N1 {\nconst a = `x ${' '}\ny`;\n}\nnamespace N2 {\nconst a = `x  \ry`;\n}\nnamespace N3 {\nconst a = `x ${'  '}\ny`;\n}\nnamespace N4 {\nconst a = `x   y`;\n}\n",
+  "suggestions": "namespace N0 {\nconst a = `x ${' '}\r\ny`;\n}\nnamespace N1 {\nconst a = `x ${' '}\ny`;\n}\nnamespace N2 {\nconst a = `x ${' '}\ry`;\n}\nnamespace N3 {\nconst a = `x ${'  '}\ny`;\n}\nnamespace N4 {\nconst a = `x ${' '} y`;\n}\n",
+  "dangerously": "namespace N0 {\nconst a = `x ${' '}\r\ny`;\n}\nnamespace N1 {\nconst a = `x ${' '}\ny`;\n}\nnamespace N2 {\nconst a = `x  \ry`;\n}\nnamespace N3 {\nconst a = `x ${'  '}\ny`;\n}\nnamespace N4 {\nconst a = `x   y`;\n}\n"
+ },
+ "188-dot-notation": {
+  "fix": "declare const foo: { bar: 1 };\nfoo.bar;\nfoo.bar;\n",
+  "suggestions": "declare const foo: { bar: 1 };\nfoo[/* c */ 'bar'];\nfoo['bar' /* c */];\n",
+  "dangerously": "declare const foo: { bar: 1 };\nfoo.bar;\nfoo.bar;\n"
+ },
+ "189-dot-notation": {
+  "fix": "declare const foo: { while: 1 };\nfoo/* c */ [\"while\"];\n",
+  "suggestions": "declare const foo: { while: 1 };\nfoo./* c */ while;\n",
+  "dangerously": "declare const foo: { while: 1 };\nfoo/* c */ [\"while\"];\n"
+ },
+ "190-prefer-includes": {
+  "fix": "function f(a?: string, b = '') {\n  !a?.includes(b);\n  a?.includes(b);\n}\n",
+  "suggestions": "function f(a?: string, b = '') {\n  a?.indexOf(b) === -1;\n  a?.indexOf(b) !== -1;\n}\n",
+  "dangerously": "function f(a?: string, b = '') {\n  !a?.includes(b);\n  a?.includes(b);\n}\n"
+ },
+ "191-prefer-optional-chain": {
+  "fix": "declare const a: { b: { c: { d: number; e(): { f: number } }; g(): { h: number }; [k: string]: any } } | null;\ndeclare const p: any, u: unknown, k: string, rel: string;\ndeclare const attr: { value: string | null } | null;\na && a.b.c;\na && a.b.c.d;\na && a.b.g();\na && a.b.c.e();\na && a.b.c.e().f;\na && a.b.g().h;\na?.b?.[k];\na?.b?.[k]?.c;\na && a[\"b\"].c;\na && a.b;\na && a.b && a.b.c.d;\na && a.b.c && a.b.c.d;\na != null && a.b.c.d;\n!a?.b.c;\n!a?.b.c.d;\n!a || a.b.c.d === 1;\na?.b.c.d === 1;\na && a.b!.c;\na && a.b.c!.d;\na && (a.b).c;\na && (a.b.c).d;\nif (p?.id) { k; }\nif (p?.id?.x) { k; }\np?.id?.x;\np?.id();\nif (attr?.value && (attr.value.toLowerCase() === rel)) { k; }\nif (attr?.value && attr.value.toLowerCase() === rel) { k; }\nif (attr && (attr.value)) { k; }\nif ((attr) && attr.value) { k; }\nif (attr && attr.value && (attr.value.length)) { k; }\nexport {};\n",
+  "suggestions": "declare const a: { b: { c: { d: number; e(): { f: number } }; g(): { h: number }; [k: string]: any } } | null;\ndeclare const p: any, u: unknown, k: string, rel: string;\ndeclare const attr: { value: string | null } | null;\na?.b?.c;\na?.b?.c?.d;\na?.b?.g();\na?.b?.c?.e();\na?.b?.c?.e?.()?.f;\na?.b?.g?.()?.h;\na && a.b[k];\na && a.b[k].c;\na?.[\"b\"]?.c;\na?.b;\na?.b?.c.d;\na?.b.c?.d;\na?.b?.c?.d;\n!a || !a.b.c;\n!a || !a.b.c.d;\n!a || a.b.c.d === 1;\na && a.b.c.d === 1;\na?.b!?.c;\na?.b?.c!?.d;\na?.b?.c;\na?.b?.c?.d;\nif (p && p.id) { k; }\nif (p && p.id.x) { k; }\np && p.id && p.id.x;\np && p.id();\nif (attr?.value && (attr.value.toLowerCase() === rel)) { k; }\nif (attr?.value && attr.value.toLowerCase() === rel) { k; }\nif (attr?.value) { k; }\nif (attr?.value) { k; }\nif (attr?.value?.length) { k; }\nexport {};\n",
+  "dangerously": "declare const a: { b: { c: { d: number; e(): { f: number } }; g(): { h: number }; [k: string]: any } } | null;\ndeclare const p: any, u: unknown, k: string, rel: string;\ndeclare const attr: { value: string | null } | null;\na?.b?.c;\na?.b?.c?.d;\na?.b?.g();\na?.b?.c?.e();\na?.b?.c?.e?.()?.f;\na?.b?.g?.()?.h;\na?.b?.[k];\na?.b?.[k]?.c;\na?.[\"b\"]?.c;\na?.b;\na?.b?.c.d;\na?.b.c?.d;\na?.b?.c?.d;\n!a?.b.c;\n!a?.b.c.d;\n!a || a.b.c.d === 1;\na?.b.c.d === 1;\na?.b!?.c;\na?.b?.c!?.d;\na?.b?.c;\na?.b?.c?.d;\nif (p?.id) { k; }\nif (p?.id?.x) { k; }\np?.id?.x;\np?.id();\nif (attr?.value && (attr.value.toLowerCase() === rel)) { k; }\nif (attr?.value && attr.value.toLowerCase() === rel) { k; }\nif (attr?.value) { k; }\nif (attr?.value) { k; }\nif (attr?.value?.length) { k; }\nexport {};\n"
+ },
+ "192-prefer-optional-chain": {
+  "fix": "declare const attr: { value: string | null; n: { m: string } | null } | null, rel: string, k: string;\ndeclare const parsed: any, maybe: { id?: string } | undefined, j: ReturnType<typeof JSON.parse>;\nattr?.value && attr.value.length;\nattr?.value && attr.value.toLowerCase();\nattr?.value && attr.value.length === 1;\nattr?.value && attr.value.toLowerCase() === rel;\nattr?.value && attr?.value.toLowerCase() === rel;\nattr?.value?.toLowerCase() === rel;\nattr?.value?.length === 1;\nattr?.n && attr.n.m;\nattr?.n && attr.n.m === rel;\nattr?.n && attr?.n.m;\nattr?.n != null && attr.n.m;\nattr?.value === rel;\nattr?.value.length === 1;\nattr?.n?.m === rel;\nif (parsed?.id) { k; }\nif (j?.id) { k; }\nif (maybe?.id) { k; }\nfunction f(x: unknown) { const q = x as any; if (q?.id) { k; } }\ntry { k; } catch (e: any) { if (e?.id) { k; } }\nlet late; late = JSON.parse(k); if (late?.id) { k; }\nlet typed: any; try { typed = JSON.parse(k); } catch {} if (typed?.id) { k; }\nexport {};\n",
+  "suggestions": "declare const attr: { value: string | null; n: { m: string } | null } | null, rel: string, k: string;\ndeclare const parsed: any, maybe: { id?: string } | undefined, j: ReturnType<typeof JSON.parse>;\nattr?.value && attr.value.length;\nattr?.value && attr.value.toLowerCase();\nattr?.value && attr.value.length === 1;\nattr?.value && attr.value.toLowerCase() === rel;\nattr?.value && attr?.value.toLowerCase() === rel;\nattr && attr.value && attr.value.toLowerCase() === rel;\nattr && attr.value && attr.value.length === 1;\nattr?.n && attr.n.m;\nattr?.n && attr.n.m === rel;\nattr?.n && attr?.n.m;\nattr?.n?.m;\nattr && attr.value === rel;\nattr && attr.value.length === 1;\nattr && attr.n && attr.n.m === rel;\nif (parsed && parsed.id) { k; }\nif (j && j.id) { k; }\nif (maybe && maybe.id) { k; }\nfunction f(x: unknown) { const q = x as any; if (q && q.id) { k; } }\ntry { k; } catch (e: any) { if (e && e.id) { k; } }\nlet late; late = JSON.parse(k); if (late && late.id) { k; }\nlet typed: any; try { typed = JSON.parse(k); } catch {} if (typed && typed.id) { k; }\nexport {};\n",
+  "dangerously": "declare const attr: { value: string | null; n: { m: string } | null } | null, rel: string, k: string;\ndeclare const parsed: any, maybe: { id?: string } | undefined, j: ReturnType<typeof JSON.parse>;\nattr?.value && attr.value.length;\nattr?.value && attr.value.toLowerCase();\nattr?.value && attr.value.length === 1;\nattr?.value && attr.value.toLowerCase() === rel;\nattr?.value && attr?.value.toLowerCase() === rel;\nattr?.value?.toLowerCase() === rel;\nattr?.value?.length === 1;\nattr?.n && attr.n.m;\nattr?.n && attr.n.m === rel;\nattr?.n && attr?.n.m;\nattr?.n?.m;\nattr?.value === rel;\nattr?.value.length === 1;\nattr?.n?.m === rel;\nif (parsed?.id) { k; }\nif (j?.id) { k; }\nif (maybe?.id) { k; }\nfunction f(x: unknown) { const q = x as any; if (q?.id) { k; } }\ntry { k; } catch (e: any) { if (e?.id) { k; } }\nlet late; late = JSON.parse(k); if (late?.id) { k; }\nlet typed: any; try { typed = JSON.parse(k); } catch {} if (typed?.id) { k; }\nexport {};\n"
+ },
+ "193-prefer-optional-chain": {
+  "fix": "declare const attr: { n: { m: string; o: { p: string } | null } | null | undefined; f?(): { g: string } | null } | null;\nattr?.n !== null && attr.n.m;\nattr?.n !== undefined && attr.n.m;\nattr?.n !== null && attr?.n !== undefined && attr.n.m;\nattr?.n !== null && attr.n !== undefined && attr.n.m;\nattr?.n !== undefined && attr?.n !== null && attr.n.m;\nattr?.n != null && attr.n.m;\nattr?.n != null && attr.n.o != null && attr.n.o.p;\nattr?.n && attr.n.o && attr.n.o.p;\nattr?.n?.o?.p;\nattr?.n?.o;\n!attr?.n || !attr.n.m;\nattr?.n == null || attr.n.m;\nattr?.n == null || !attr.n.m;\nattr?.n == null || attr.n.o == null;\nattr?.n === null || attr.n.o === null;\nattr?.n === undefined || attr.n.o === undefined;\nattr?.f && attr.f();\nattr?.f?.() && attr.f().g;\nattr?.[\"n\"] && attr[\"n\"].m;\n(attr?.n) && attr.n.m;\nattr?.n! && attr.n.m;\nexport {};\n",
+  "suggestions": "declare const attr: { n: { m: string; o: { p: string } | null } | null | undefined; f?(): { g: string } | null } | null;\nattr?.n !== null && attr.n.m;\nattr?.n !== undefined && attr.n.m;\nattr?.n !== null && attr?.n !== undefined && attr.n.m;\nattr?.n !== null && attr.n !== undefined && attr.n.m;\nattr?.n !== undefined && attr?.n !== null && attr.n.m;\nattr?.n?.m;\nattr?.n?.o?.p;\nattr?.n && attr.n.o && attr.n.o.p;\nattr && attr.n?.o && attr.n.o.p;\nattr && attr.n && attr.n?.o;\n!attr?.n || !attr.n.m;\nattr?.n == null || attr.n.m;\nattr?.n == null || !attr.n.m;\nattr?.n == null || attr.n.o == null;\nattr?.n === null || attr.n.o === null;\nattr?.n === undefined || attr.n.o === undefined;\nattr?.f && attr.f();\nattr?.f?.() && attr.f().g;\nattr?.[\"n\"] && attr[\"n\"].m;\n(attr?.n) && attr.n.m;\nattr?.n! && attr.n.m;\nexport {};\n",
+  "dangerously": "declare const attr: { n: { m: string; o: { p: string } | null } | null | undefined; f?(): { g: string } | null } | null;\nattr?.n !== null && attr.n.m;\nattr?.n !== undefined && attr.n.m;\nattr?.n !== null && attr?.n !== undefined && attr.n.m;\nattr?.n !== null && attr.n !== undefined && attr.n.m;\nattr?.n !== undefined && attr?.n !== null && attr.n.m;\nattr?.n?.m;\nattr?.n?.o?.p;\nattr?.n && attr.n.o && attr.n.o.p;\nattr?.n?.o?.p;\nattr?.n?.o;\n!attr?.n || !attr.n.m;\nattr?.n == null || attr.n.m;\nattr?.n == null || !attr.n.m;\nattr?.n == null || attr.n.o == null;\nattr?.n === null || attr.n.o === null;\nattr?.n === undefined || attr.n.o === undefined;\nattr?.f && attr.f();\nattr?.f?.() && attr.f().g;\nattr?.[\"n\"] && attr[\"n\"].m;\n(attr?.n) && attr.n.m;\nattr?.n! && attr.n.m;\nexport {};\n"
+ },
+ "194-no-unnecessary-condition": {
+  "fix": "type Q = { b: { c: { d: number; e?: number }; f(): { g: { h: number } }; i?: { j: number } }; k: () => { l: number } };\ndeclare const q: Q | undefined, nn: Q;\nq?.b.c?.d;\nq?.b.c.d?.toFixed();\nq?.b?.c;\nq?.b?.c?.d;\nq?.b.i?.j;\nq?.b.c.e?.toFixed();\nq?.b.f?.();\nq?.b.f()?.g;\nq?.b.f().g?.h;\nq?.k()?.l;\nq?.k().l?.toFixed();\nq?.k?.();\nnn.b.c?.d;\nnn?.b.c?.d;\nnn.b?.c.d?.toFixed();\n(q?.b.c)?.d;\nq?.b[\"c\"]?.d;\nq?.[\"b\"].c?.d;\nq!.b.c?.d;\nexport {};\n",
+  "suggestions": "type Q = { b: { c: { d: number; e?: number }; f(): { g: { h: number } }; i?: { j: number } }; k: () => { l: number } };\ndeclare const q: Q | undefined, nn: Q;\nq?.b.c?.d;\nq?.b.c.d?.toFixed();\nq?.b.c;\nq?.b.c.d;\nq?.b.i?.j;\nq?.b.c.e?.toFixed();\nq?.b.f?.();\nq?.b.f().g;\nq?.b.f().g.h;\nq?.k().l;\nq?.k().l.toFixed();\nq?.k();\nnn.b.c.d;\nnn.b.c.d;\nnn.b.c.d.toFixed();\n(q?.b.c)?.d;\nq?.b[\"c\"]?.d;\nq?.[\"b\"].c?.d;\nq!.b.c.d;\nexport {};\n",
+  "dangerously": "type Q = { b: { c: { d: number; e?: number }; f(): { g: { h: number } }; i?: { j: number } }; k: () => { l: number } };\ndeclare const q: Q | undefined, nn: Q;\nq?.b.c?.d;\nq?.b.c.d?.toFixed();\nq?.b.c;\nq?.b.c.d;\nq?.b.i?.j;\nq?.b.c.e?.toFixed();\nq?.b.f?.();\nq?.b.f().g;\nq?.b.f().g.h;\nq?.k().l;\nq?.k().l.toFixed();\nq?.k();\nnn.b.c.d;\nnn.b.c.d;\nnn.b.c.d.toFixed();\n(q?.b.c)?.d;\nq?.b[\"c\"]?.d;\nq?.[\"b\"].c?.d;\nq!.b.c.d;\nexport {};\n"
+ },
+ "195-no-unnecessary-condition": {
+  "fix": "type L = { s?: { d: boolean; e?: { f: number } }; t: { d: boolean }; u: { d: boolean } | null };\ndeclare function ok(v: unknown): asserts v;\ndeclare let l: L | undefined, m: L, un: { s?: { d: boolean } } | { s: { d: boolean } } | undefined;\nexport function a1() { ok(l?.s); return l?.s?.d; }\nexport function a2() { if (l?.s) { return l?.s?.d; } return 0; }\nexport function a3() { if (l?.s) { return l.s?.d; } return 0; }\nexport function a4() { return l?.t?.d; }\nexport function a5() { return l?.u?.d; }\nexport function a6() { if (l?.u) { return l?.u?.d; } return 0; }\nexport function a7() { if (m.s) { return m.s?.d; } return 0; }\nexport function a8() { if (m.s) { return m?.s?.d; } return 0; }\nexport function a9() { if (l?.s?.e) { return l?.s?.e?.f; } return 0; }\nexport function b1() { return un?.s?.d; }\nexport function b2() { if (un?.s) { return un?.s?.d; } return 0; }\nexport function b3() { const s = l?.s; if (s) { return s?.d; } return 0; }\nexport function b4() { if (l?.s) { return l?.s?.d ?? 1; } return 0; }\nexport function b5() { if (l?.s) { if (l?.s) { return 1; } } return 0; }\n",
+  "suggestions": "type L = { s?: { d: boolean; e?: { f: number } }; t: { d: boolean }; u: { d: boolean } | null };\ndeclare function ok(v: unknown): asserts v;\ndeclare let l: L | undefined, m: L, un: { s?: { d: boolean } } | { s: { d: boolean } } | undefined;\nexport function a1() { ok(l?.s); return l.s?.d; }\nexport function a2() { if (l?.s) { return l.s?.d; } return 0; }\nexport function a3() { if (l?.s) { return l.s.d; } return 0; }\nexport function a4() { return l?.t.d; }\nexport function a5() { return l?.u?.d; }\nexport function a6() { if (l?.u) { return l.u?.d; } return 0; }\nexport function a7() { if (m.s) { return m.s.d; } return 0; }\nexport function a8() { if (m.s) { return m.s?.d; } return 0; }\nexport function a9() { if (l?.s?.e) { return l.s?.e?.f; } return 0; }\nexport function b1() { return un?.s?.d; }\nexport function b2() { if (un?.s) { return un.s?.d; } return 0; }\nexport function b3() { const s = l?.s; if (s) { return s.d; } return 0; }\nexport function b4() { if (l?.s) { return l.s?.d ?? 1; } return 0; }\nexport function b5() { if (l?.s) { if (l.s) { return 1; } } return 0; }\n",
+  "dangerously": "type L = { s?: { d: boolean; e?: { f: number } }; t: { d: boolean }; u: { d: boolean } | null };\ndeclare function ok(v: unknown): asserts v;\ndeclare let l: L | undefined, m: L, un: { s?: { d: boolean } } | { s: { d: boolean } } | undefined;\nexport function a1() { ok(l?.s); return l.s?.d; }\nexport function a2() { if (l?.s) { return l.s?.d; } return 0; }\nexport function a3() { if (l?.s) { return l.s.d; } return 0; }\nexport function a4() { return l?.t.d; }\nexport function a5() { return l?.u?.d; }\nexport function a6() { if (l?.u) { return l.u?.d; } return 0; }\nexport function a7() { if (m.s) { return m.s.d; } return 0; }\nexport function a8() { if (m.s) { return m.s?.d; } return 0; }\nexport function a9() { if (l?.s?.e) { return l.s?.e?.f; } return 0; }\nexport function b1() { return un?.s?.d; }\nexport function b2() { if (un?.s) { return un.s?.d; } return 0; }\nexport function b3() { const s = l?.s; if (s) { return s.d; } return 0; }\nexport function b4() { if (l?.s) { return l.s?.d ?? 1; } return 0; }\nexport function b5() { if (l?.s) { if (l.s) { return 1; } } return 0; }\n"
+ },
+ "196-no-unnecessary-template-expression": {
+  "fix": "namespace N0 {\ndeclare const s: string; const a = s;\n}\nnamespace N1 {\ndeclare const s: string; f(s); declare function f(x: string): void;\n}\nnamespace N2 {\ndeclare const s: string; const a = [(s)];\n}\nnamespace N3 {\ndeclare const s: string; const a = [(s), 1];\n}\nnamespace N4 {\ndeclare const s: string; const a = s.trim();\n}\nnamespace N5 {\ndeclare const s: string; f((s.trim())); declare function f(x: string): void;\n}\nnamespace N6 {\ndeclare const s: string; const a = { b: s };\n}\nnamespace N7 {\ndeclare const s: string; const a = s.length;\n}\nnamespace N8 {\ndeclare const s: string; const a = s + s;\n}\nnamespace N9 {\ndeclare const s: string; const a = 'a';\n}\nnamespace N10 {\ndeclare const s: string; function g() { return s; }\n}\nnamespace N11 {\ndeclare const s: string; const a = s + s;\n}\nnamespace N12 {\ndeclare const s: any; const a = [\n  (s as string),\n];\n}\nnamespace N13 {\ntype T = string; declare const type: T; const a = [\n                  (type),\n];\n}\nnamespace N14 {\ndeclare const s: string; const a = (s.trim()).length;\n}\nnamespace N15 {\ndeclare const s: string; const a = s + (s + s);\n}\nnamespace N16 {\ndeclare const s: string; const a = (s + s) + s;\n}\nnamespace N17 {\ndeclare const o: { s: string }; f((o.s)); declare function f(x: string): void;\n}\nnamespace N18 {\ndeclare const o: { s: string }; new F((o.s)); declare class F { constructor(x: string); }\n}\nnamespace N19 {\ndeclare const s: string; new F(s); declare class F { constructor(x: string); }\n}\nnamespace N20 {\ndeclare const s: string; const a = s ? s : s;\n}\nnamespace N21 {\ndeclare const s: string; const a = s ? s + s : s;\n}\nnamespace N22 {\ndeclare const s: string; const a = s ? (s ? s : s) : s;\n}\nnamespace N23 {\ndeclare const s: string; const a = ((s));\n}\nnamespace N24 {\ndeclare const s: string; const a = ((s + s));\n}\nnamespace N25 {\ndeclare const s: string; const a = s as string;\n}\nnamespace N26 {\ndeclare const s: any; const a = (s as string) as string;\n}\nnamespace N27 {\ndeclare const s: string; const a = typeof s;\n}\nnamespace N28 {\ndeclare const s: string; const a = typeof (typeof s);\n}\nnamespace N29 {\ndeclare const s: string; const a = [...s];\n}\nnamespace N30 {\ndeclare const s: string; const a = s!;\n}\nnamespace N31 {\ndeclare const s: string; let a; a = s;\n}\nnamespace N32 {\ndeclare const s: string; let a; a = (a = s);\n}\nnamespace N33 {\ndeclare const s: string; const a = `a${s}`;\n}\nnamespace N34 {\ndeclare const s: string; const a = { [s]: 1 };\n}\nnamespace N35 {\ndeclare const s: string; const a = () => s;\n}\nnamespace N36 {\ndeclare const s: string; const a = s || (s || s);\n}\nnamespace N37 {\ndeclare const s: string; const a = s && (s || s);\n}\nnamespace N38 {\ndeclare const s: string; const a = o[s]; declare const o: Record<string, 1>;\n}\nnamespace N39 {\ndeclare const s: string; const a = o[(s.trim())]; declare const o: Record<string, 1>;\n}\nnamespace N40 {\ndeclare let s: string; const a = () => (s = s);\n}\nnamespace N41 {\ndeclare let s: string; const a = () => s ? s : s;\n}\nnamespace N42 {\ndeclare let s: string; const a = () => s + s;\n}\nnamespace N43 {\ndeclare let s: string; const a = () => (s, s);\n}\nnamespace N44 {\ndeclare let s: string; const a = (s);\n}\nnamespace N45 {\ndeclare let s: string; const a = [(s)];\n}\nnamespace N46 {\ndeclare let s: string; const a = s || (s ?? s);\n}\nnamespace N47 {\ndeclare let s: string; const a = (s ?? s) || s;\n}\nnamespace N48 {\ndeclare let s: string; const a = s && (s ?? s);\n}\nnamespace N49 {\ndeclare let s: string; const a = s ?? `${s ?? s}`;\n}\nnamespace N50 {\ndeclare let s: string; const a = s ?? `${s + s}`;\n}\nnamespace N51 {\ndeclare let s: string; const a = s ?? `${s ? s : s}`;\n}\nnamespace N52 {\ndeclare let s: string; f`${s}`; declare function f(...x: unknown[]): void;\n}\nnamespace N53 {\ndeclare let s: string; s.trim();\n}\nnamespace N54 {\ndeclare let o: { s: string }; (o.s).trim();\n}\nnamespace N55 {\ndeclare let o: { s: string }; const a = (o.s).length;\n}\nnamespace N56 {\ndeclare let o: { s: string }; const a = p[(o.s)]; declare const p: Record<string, 1>;\n}\nnamespace N57 {\ndeclare let o: { s: string }; const a = [(o.s)];\n}\nnamespace N58 {\ndeclare let s: string; async function g() { await s; }\n}\nnamespace N59 {\ndeclare let s: string; function* g() { yield s; }\n}\nnamespace N60 {\ndeclare let s: string; function* g() { yield s + s; }\n}\nnamespace N61 {\ndeclare let s: string; const a = { ...{ b: s } };\n}\nnamespace N62 {\ndeclare let s: string; const a = new (s as any)();\n}\nnamespace N63 {\ndeclare let s: string; if (s) {}\n}\nnamespace N64 {\ndeclare let s: string; s;\n}\nnamespace N65 {\ndeclare let s: string; const a = (s, s);\n}\nnamespace N66 {\ndeclare let s: string; const a = (s, s);\n}\n",
+  "suggestions": "namespace N0 {\ndeclare const s: string; const a = `${s}`;\n}\nnamespace N1 {\ndeclare const s: string; f(`${s}`); declare function f(x: string): void;\n}\nnamespace N2 {\ndeclare const s: string; const a = [`${s}`];\n}\nnamespace N3 {\ndeclare const s: string; const a = [`${s}`, 1];\n}\nnamespace N4 {\ndeclare const s: string; const a = `${s.trim()}`;\n}\nnamespace N5 {\ndeclare const s: string; f(`${s.trim()}`); declare function f(x: string): void;\n}\nnamespace N6 {\ndeclare const s: string; const a = { b: `${s}` };\n}\nnamespace N7 {\ndeclare const s: string; const a = `${s}`.length;\n}\nnamespace N8 {\ndeclare const s: string; const a = `${s + s}`;\n}\nnamespace N9 {\ndeclare const s: string; const a = `${'a'}`;\n}\nnamespace N10 {\ndeclare const s: string; function g() { return `${s}`; }\n}\nnamespace N11 {\ndeclare const s: string; const a = s + `${s}`;\n}\nnamespace N12 {\ndeclare const s: any; const a = [\n  `${s as string}`,\n];\n}\nnamespace N13 {\ntype T = string; declare const type: T; const a = [\n                  `${type}`,\n];\n}\nnamespace N14 {\ndeclare const s: string; const a = `${s.trim()}`.length;\n}\nnamespace N15 {\ndeclare const s: string; const a = s + `${s + s}`;\n}\nnamespace N16 {\ndeclare const s: string; const a = `${s + s}` + s;\n}\nnamespace N17 {\ndeclare const o: { s: string }; f(`${o.s}`); declare function f(x: string): void;\n}\nnamespace N18 {\ndeclare const o: { s: string }; new F(`${o.s}`); declare class F { constructor(x: string); }\n}\nnamespace N19 {\ndeclare const s: string; new F(`${s}`); declare class F { constructor(x: string); }\n}\nnamespace N20 {\ndeclare const s: string; const a = s ? `${s}` : s;\n}\nnamespace N21 {\ndeclare const s: string; const a = s ? `${s + s}` : s;\n}\nnamespace N22 {\ndeclare const s: string; const a = s ? `${s ? s : s}` : s;\n}\nnamespace N23 {\ndeclare const s: string; const a = (`${s}`);\n}\nnamespace N24 {\ndeclare const s: string; const a = (`${s + s}`);\n}\nnamespace N25 {\ndeclare const s: string; const a = `${s}` as string;\n}\nnamespace N26 {\ndeclare const s: any; const a = `${s as string}` as string;\n}\nnamespace N27 {\ndeclare const s: string; const a = typeof `${s}`;\n}\nnamespace N28 {\ndeclare const s: string; const a = typeof `${typeof s}`;\n}\nnamespace N29 {\ndeclare const s: string; const a = [...`${s}`];\n}\nnamespace N30 {\ndeclare const s: string; const a = `${s}`!;\n}\nnamespace N31 {\ndeclare const s: string; let a; a = `${s}`;\n}\nnamespace N32 {\ndeclare const s: string; let a; a = `${a = s}`;\n}\nnamespace N33 {\ndeclare const s: string; const a = `a${`${s}`}`;\n}\nnamespace N34 {\ndeclare const s: string; const a = { [`${s}`]: 1 };\n}\nnamespace N35 {\ndeclare const s: string; const a = () => `${s}`;\n}\nnamespace N36 {\ndeclare const s: string; const a = s || `${s || s}`;\n}\nnamespace N37 {\ndeclare const s: string; const a = s && `${s || s}`;\n}\nnamespace N38 {\ndeclare const s: string; const a = o[`${s}`]; declare const o: Record<string, 1>;\n}\nnamespace N39 {\ndeclare const s: string; const a = o[`${s.trim()}`]; declare const o: Record<string, 1>;\n}\nnamespace N40 {\ndeclare let s: string; const a = () => `${s = s}`;\n}\nnamespace N41 {\ndeclare let s: string; const a = () => `${s ? s : s}`;\n}\nnamespace N42 {\ndeclare let s: string; const a = () => `${s + s}`;\n}\nnamespace N43 {\ndeclare let s: string; const a = () => `${(s, s)}`;\n}\nnamespace N44 {\ndeclare let s: string; const a = `${(s)}`;\n}\nnamespace N45 {\ndeclare let s: string; const a = [`${(s)}`];\n}\nnamespace N46 {\ndeclare let s: string; const a = s || `${s ?? s}`;\n}\nnamespace N47 {\ndeclare let s: string; const a = `${s ?? s}` || s;\n}\nnamespace N48 {\ndeclare let s: string; const a = s && `${s ?? s}`;\n}\nnamespace N49 {\ndeclare let s: string; const a = s ?? `${s ?? s}`;\n}\nnamespace N50 {\ndeclare let s: string; const a = s ?? `${s + s}`;\n}\nnamespace N51 {\ndeclare let s: string; const a = s ?? `${s ? s : s}`;\n}\nnamespace N52 {\ndeclare let s: string; f`${`${s}`}`; declare function f(...x: unknown[]): void;\n}\nnamespace N53 {\ndeclare let s: string; `${s}`.trim();\n}\nnamespace N54 {\ndeclare let o: { s: string }; `${o.s}`.trim();\n}\nnamespace N55 {\ndeclare let o: { s: string }; const a = `${o.s}`.length;\n}\nnamespace N56 {\ndeclare let o: { s: string }; const a = p[`${o.s}`]; declare const p: Record<string, 1>;\n}\nnamespace N57 {\ndeclare let o: { s: string }; const a = [`${o.s}`];\n}\nnamespace N58 {\ndeclare let s: string; async function g() { await `${s}`; }\n}\nnamespace N59 {\ndeclare let s: string; function* g() { yield `${s}`; }\n}\nnamespace N60 {\ndeclare let s: string; function* g() { yield `${s + s}`; }\n}\nnamespace N61 {\ndeclare let s: string; const a = { ...{ b: `${s}` } };\n}\nnamespace N62 {\ndeclare let s: string; const a = new (`${s}` as any)();\n}\nnamespace N63 {\ndeclare let s: string; if (`${s}`) {}\n}\nnamespace N64 {\ndeclare let s: string; `${s}`;\n}\nnamespace N65 {\ndeclare let s: string; const a = (s, `${s}`);\n}\nnamespace N66 {\ndeclare let s: string; const a = (`${s}`, s);\n}\n",
+  "dangerously": "namespace N0 {\ndeclare const s: string; const a = s;\n}\nnamespace N1 {\ndeclare const s: string; f(s); declare function f(x: string): void;\n}\nnamespace N2 {\ndeclare const s: string; const a = [(s)];\n}\nnamespace N3 {\ndeclare const s: string; const a = [(s), 1];\n}\nnamespace N4 {\ndeclare const s: string; const a = s.trim();\n}\nnamespace N5 {\ndeclare const s: string; f((s.trim())); declare function f(x: string): void;\n}\nnamespace N6 {\ndeclare const s: string; const a = { b: s };\n}\nnamespace N7 {\ndeclare const s: string; const a = s.length;\n}\nnamespace N8 {\ndeclare const s: string; const a = s + s;\n}\nnamespace N9 {\ndeclare const s: string; const a = 'a';\n}\nnamespace N10 {\ndeclare const s: string; function g() { return s; }\n}\nnamespace N11 {\ndeclare const s: string; const a = s + s;\n}\nnamespace N12 {\ndeclare const s: any; const a = [\n  (s as string),\n];\n}\nnamespace N13 {\ntype T = string; declare const type: T; const a = [\n                  (type),\n];\n}\nnamespace N14 {\ndeclare const s: string; const a = (s.trim()).length;\n}\nnamespace N15 {\ndeclare const s: string; const a = s + (s + s);\n}\nnamespace N16 {\ndeclare const s: string; const a = (s + s) + s;\n}\nnamespace N17 {\ndeclare const o: { s: string }; f((o.s)); declare function f(x: string): void;\n}\nnamespace N18 {\ndeclare const o: { s: string }; new F((o.s)); declare class F { constructor(x: string); }\n}\nnamespace N19 {\ndeclare const s: string; new F(s); declare class F { constructor(x: string); }\n}\nnamespace N20 {\ndeclare const s: string; const a = s ? s : s;\n}\nnamespace N21 {\ndeclare const s: string; const a = s ? s + s : s;\n}\nnamespace N22 {\ndeclare const s: string; const a = s ? (s ? s : s) : s;\n}\nnamespace N23 {\ndeclare const s: string; const a = ((s));\n}\nnamespace N24 {\ndeclare const s: string; const a = ((s + s));\n}\nnamespace N25 {\ndeclare const s: string; const a = s as string;\n}\nnamespace N26 {\ndeclare const s: any; const a = (s as string) as string;\n}\nnamespace N27 {\ndeclare const s: string; const a = typeof s;\n}\nnamespace N28 {\ndeclare const s: string; const a = typeof (typeof s);\n}\nnamespace N29 {\ndeclare const s: string; const a = [...s];\n}\nnamespace N30 {\ndeclare const s: string; const a = s!;\n}\nnamespace N31 {\ndeclare const s: string; let a; a = s;\n}\nnamespace N32 {\ndeclare const s: string; let a; a = (a = s);\n}\nnamespace N33 {\ndeclare const s: string; const a = `a${s}`;\n}\nnamespace N34 {\ndeclare const s: string; const a = { [s]: 1 };\n}\nnamespace N35 {\ndeclare const s: string; const a = () => s;\n}\nnamespace N36 {\ndeclare const s: string; const a = s || (s || s);\n}\nnamespace N37 {\ndeclare const s: string; const a = s && (s || s);\n}\nnamespace N38 {\ndeclare const s: string; const a = o[s]; declare const o: Record<string, 1>;\n}\nnamespace N39 {\ndeclare const s: string; const a = o[(s.trim())]; declare const o: Record<string, 1>;\n}\nnamespace N40 {\ndeclare let s: string; const a = () => (s = s);\n}\nnamespace N41 {\ndeclare let s: string; const a = () => s ? s : s;\n}\nnamespace N42 {\ndeclare let s: string; const a = () => s + s;\n}\nnamespace N43 {\ndeclare let s: string; const a = () => (s, s);\n}\nnamespace N44 {\ndeclare let s: string; const a = (s);\n}\nnamespace N45 {\ndeclare let s: string; const a = [(s)];\n}\nnamespace N46 {\ndeclare let s: string; const a = s || (s ?? s);\n}\nnamespace N47 {\ndeclare let s: string; const a = (s ?? s) || s;\n}\nnamespace N48 {\ndeclare let s: string; const a = s && (s ?? s);\n}\nnamespace N49 {\ndeclare let s: string; const a = s ?? `${s ?? s}`;\n}\nnamespace N50 {\ndeclare let s: string; const a = s ?? `${s + s}`;\n}\nnamespace N51 {\ndeclare let s: string; const a = s ?? `${s ? s : s}`;\n}\nnamespace N52 {\ndeclare let s: string; f`${s}`; declare function f(...x: unknown[]): void;\n}\nnamespace N53 {\ndeclare let s: string; s.trim();\n}\nnamespace N54 {\ndeclare let o: { s: string }; (o.s).trim();\n}\nnamespace N55 {\ndeclare let o: { s: string }; const a = (o.s).length;\n}\nnamespace N56 {\ndeclare let o: { s: string }; const a = p[(o.s)]; declare const p: Record<string, 1>;\n}\nnamespace N57 {\ndeclare let o: { s: string }; const a = [(o.s)];\n}\nnamespace N58 {\ndeclare let s: string; async function g() { await s; }\n}\nnamespace N59 {\ndeclare let s: string; function* g() { yield s; }\n}\nnamespace N60 {\ndeclare let s: string; function* g() { yield s + s; }\n}\nnamespace N61 {\ndeclare let s: string; const a = { ...{ b: s } };\n}\nnamespace N62 {\ndeclare let s: string; const a = new (s as any)();\n}\nnamespace N63 {\ndeclare let s: string; if (s) {}\n}\nnamespace N64 {\ndeclare let s: string; s;\n}\nnamespace N65 {\ndeclare let s: string; const a = (s, s);\n}\nnamespace N66 {\ndeclare let s: string; const a = (s, s);\n}\n"
+ },
+ "197-prefer-nullish-coalescing": {
+  "fix": "namespace N0 {\ndeclare let a: string | null | undefined; declare let b: string | null | undefined; declare let c: string | null | undefined; declare let d: string | null | undefined;\n(a && b) || c || d;\n}\nnamespace N1 {\ndeclare let a: string | null | undefined; declare let b: string | null | undefined; declare let c: string | null | undefined; declare let d: string | null | undefined;\na || c || d;\n}\nnamespace N2 {\ndeclare let a: string | null | undefined; declare let b: string | null | undefined; declare let c: string | null | undefined; declare let d: string | null | undefined;\na && b || c || d;\n}\nnamespace N3 {\ndeclare let a: string | null | undefined; declare let b: string | null | undefined; declare let c: string | null | undefined; declare let d: string | null | undefined;\n(a || b) || c;\n}\nnamespace N4 {\ndeclare let a: string | null | undefined; declare let b: string | null | undefined; declare let c: string | null | undefined; declare let d: string | null | undefined;\na || (b && c) || d;\n}\nnamespace N5 {\ndeclare let a: string | null | undefined; declare let b: string | null | undefined; declare let c: string | null | undefined; declare let d: string | null | undefined;\na || b && c;\n}\nnamespace N6 {\ndeclare let a: string | null | undefined; declare let b: string | null | undefined; declare let c: string | null | undefined; declare let d: string | null | undefined;\na || b || c && d;\n}\n",
+  "suggestions": "namespace N0 {\ndeclare let a: string | null | undefined; declare let b: string | null | undefined; declare let c: string | null | undefined; declare let d: string | null | undefined;\n((a && b) ?? c) || d;\n}\nnamespace N1 {\ndeclare let a: string | null | undefined; declare let b: string | null | undefined; declare let c: string | null | undefined; declare let d: string | null | undefined;\n(a ?? c) || d;\n}\nnamespace N2 {\ndeclare let a: string | null | undefined; declare let b: string | null | undefined; declare let c: string | null | undefined; declare let d: string | null | undefined;\n(a && b || c) ?? d;\n}\nnamespace N3 {\ndeclare let a: string | null | undefined; declare let b: string | null | undefined; declare let c: string | null | undefined; declare let d: string | null | undefined;\n(a ?? b) ?? c;\n}\nnamespace N4 {\ndeclare let a: string | null | undefined; declare let b: string | null | undefined; declare let c: string | null | undefined; declare let d: string | null | undefined;\n(a ?? (b && c)) || d;\n}\nnamespace N5 {\ndeclare let a: string | null | undefined; declare let b: string | null | undefined; declare let c: string | null | undefined; declare let d: string | null | undefined;\na ?? (b && c);\n}\nnamespace N6 {\ndeclare let a: string | null | undefined; declare let b: string | null | undefined; declare let c: string | null | undefined; declare let d: string | null | undefined;\n(a ?? b) || c && d;\n}\n",
+  "dangerously": "namespace N0 {\ndeclare let a: string | null | undefined; declare let b: string | null | undefined; declare let c: string | null | undefined; declare let d: string | null | undefined;\n((a && b) ?? c) || d;\n}\nnamespace N1 {\ndeclare let a: string | null | undefined; declare let b: string | null | undefined; declare let c: string | null | undefined; declare let d: string | null | undefined;\n(a ?? c) || d;\n}\nnamespace N2 {\ndeclare let a: string | null | undefined; declare let b: string | null | undefined; declare let c: string | null | undefined; declare let d: string | null | undefined;\n(a && b || c) ?? d;\n}\nnamespace N3 {\ndeclare let a: string | null | undefined; declare let b: string | null | undefined; declare let c: string | null | undefined; declare let d: string | null | undefined;\n(a ?? b) ?? c;\n}\nnamespace N4 {\ndeclare let a: string | null | undefined; declare let b: string | null | undefined; declare let c: string | null | undefined; declare let d: string | null | undefined;\n(a ?? (b && c)) || d;\n}\nnamespace N5 {\ndeclare let a: string | null | undefined; declare let b: string | null | undefined; declare let c: string | null | undefined; declare let d: string | null | undefined;\na ?? (b && c);\n}\nnamespace N6 {\ndeclare let a: string | null | undefined; declare let b: string | null | undefined; declare let c: string | null | undefined; declare let d: string | null | undefined;\n(a ?? b) || c && d;\n}\n"
+ },
+ "198-no-confusing-void-expression": {
+  "fix": "namespace N0 {\ndeclare function f(): Promise<void>; const g = async () => {  f(); };\n}\nnamespace N1 {\ndeclare function f(): Promise<void>; const g = async (x: boolean) => { if (x) {  await f();; return; } f(); };\n}\nnamespace N2 {\ndeclare function f(): Promise<void>; const g = async (x: boolean) => { if (x) {  await f();; return; } f(); };\n}\nnamespace N3 {\ndeclare function f(): Promise<void>; const g = async () =>{  await f(); };\n}\nnamespace N4 {\ndeclare function f(): Promise<void>; const g = async () => {  (f()); };\n}\nnamespace N5 {\ndeclare function f(): Promise<void>; const g = async () => { ; (f()); };\n}\nnamespace N6 {\ndeclare function f(): Promise<void>; const g = async () => {  f() };\n}\n",
+  "suggestions": "namespace N0 {\ndeclare function f(): Promise<void>; const g = async () => { return await f(); };\n}\nnamespace N1 {\ndeclare function f(): Promise<void>; const g = async (x: boolean) => { if (x) { return await f(); } f(); };\n}\nnamespace N2 {\ndeclare function f(): Promise<void>; const g = async (x: boolean) => { if (x) return await f(); f(); };\n}\nnamespace N3 {\ndeclare function f(): Promise<void>; const g = async () => await f();\n}\nnamespace N4 {\ndeclare function f(): Promise<void>; const g = async () => { return await (f()); };\n}\nnamespace N5 {\ndeclare function f(): Promise<void>; const g = async () => { return (await f()); };\n}\nnamespace N6 {\ndeclare function f(): Promise<void>; const g = async () => { return await f() };\n}\n",
+  "dangerously": "namespace N0 {\ndeclare function f(): Promise<void>; const g = async () => {  f(); };\n}\nnamespace N1 {\ndeclare function f(): Promise<void>; const g = async (x: boolean) => { if (x) {  await f();; return; } f(); };\n}\nnamespace N2 {\ndeclare function f(): Promise<void>; const g = async (x: boolean) => { if (x) {  await f();; return; } f(); };\n}\nnamespace N3 {\ndeclare function f(): Promise<void>; const g = async () =>{  await f(); };\n}\nnamespace N4 {\ndeclare function f(): Promise<void>; const g = async () => {  (f()); };\n}\nnamespace N5 {\ndeclare function f(): Promise<void>; const g = async () => { ; (f()); };\n}\nnamespace N6 {\ndeclare function f(): Promise<void>; const g = async () => {  f() };\n}\n"
+ },
+ "199-dot-notation": {
+  "fix": "namespace N0 {\ndeclare function make<K extends string>(k: Record<K, 1>): Record<K, { c: string }>; const KEYS = make({ a: 1, b: 1 }); KEYS[\"a\"];\n}\nnamespace N1 {\ndeclare const KEYS: Record<\"a\" | \"b\", 1>; KEYS[\"a\"];\n}\nnamespace N2 {\ndeclare const KEYS: { [K in \"a\" | \"b\"]: 1 }; KEYS[\"a\"];\n}\nnamespace N3 {\ndeclare const KEYS: Record<string, 1>; KEYS[\"a\"];\n}\nnamespace N4 {\ndeclare const KEYS: { a: 1 }; KEYS.a;\n}\nnamespace N5 {\ndeclare const KEYS: Partial<{ a: 1 }>; KEYS.a;\n}\nnamespace N6 {\ndeclare const KEYS: Pick<{ a: 1; b: 2 }, \"a\">; KEYS.a;\n}\nnamespace N7 {\ndeclare const KEYS: { a: 1 } & { b: 2 }; KEYS.a;\n}\nnamespace N8 {\ndeclare const KEYS: { a: 1 } | { a: 2 }; KEYS.a;\n}\nnamespace N9 {\ndeclare const KEYS: Readonly<{ a: 1 }>; KEYS.a;\n}\n",
+  "suggestions": "namespace N0 {\ndeclare function make<K extends string>(k: Record<K, 1>): Record<K, { c: string }>; const KEYS = make({ a: 1, b: 1 }); KEYS[\"a\"];\n}\nnamespace N1 {\ndeclare const KEYS: Record<\"a\" | \"b\", 1>; KEYS[\"a\"];\n}\nnamespace N2 {\ndeclare const KEYS: { [K in \"a\" | \"b\"]: 1 }; KEYS[\"a\"];\n}\nnamespace N3 {\ndeclare const KEYS: Record<string, 1>; KEYS[\"a\"];\n}\nnamespace N4 {\ndeclare const KEYS: { a: 1 }; KEYS[\"a\"];\n}\nnamespace N5 {\ndeclare const KEYS: Partial<{ a: 1 }>; KEYS[\"a\"];\n}\nnamespace N6 {\ndeclare const KEYS: Pick<{ a: 1; b: 2 }, \"a\">; KEYS[\"a\"];\n}\nnamespace N7 {\ndeclare const KEYS: { a: 1 } & { b: 2 }; KEYS[\"a\"];\n}\nnamespace N8 {\ndeclare const KEYS: { a: 1 } | { a: 2 }; KEYS[\"a\"];\n}\nnamespace N9 {\ndeclare const KEYS: Readonly<{ a: 1 }>; KEYS[\"a\"];\n}\n",
+  "dangerously": "namespace N0 {\ndeclare function make<K extends string>(k: Record<K, 1>): Record<K, { c: string }>; const KEYS = make({ a: 1, b: 1 }); KEYS[\"a\"];\n}\nnamespace N1 {\ndeclare const KEYS: Record<\"a\" | \"b\", 1>; KEYS[\"a\"];\n}\nnamespace N2 {\ndeclare const KEYS: { [K in \"a\" | \"b\"]: 1 }; KEYS[\"a\"];\n}\nnamespace N3 {\ndeclare const KEYS: Record<string, 1>; KEYS[\"a\"];\n}\nnamespace N4 {\ndeclare const KEYS: { a: 1 }; KEYS.a;\n}\nnamespace N5 {\ndeclare const KEYS: Partial<{ a: 1 }>; KEYS.a;\n}\nnamespace N6 {\ndeclare const KEYS: Pick<{ a: 1; b: 2 }, \"a\">; KEYS.a;\n}\nnamespace N7 {\ndeclare const KEYS: { a: 1 } & { b: 2 }; KEYS.a;\n}\nnamespace N8 {\ndeclare const KEYS: { a: 1 } | { a: 2 }; KEYS.a;\n}\nnamespace N9 {\ndeclare const KEYS: Readonly<{ a: 1 }>; KEYS.a;\n}\n"
+ },
+ "200-no-unnecessary-condition": {
+  "fix": "type T = { x: number; y?: { z: number } };\ndeclare const arr: T[], maybe: T[] | undefined, o: { l: T[]; m?: T[] }, tup: [T, T], nested: T[][], rec: Record<string, T[]>, k: string;\narr?.[0]?.x;\narr[0]?.x;\nmaybe?.[0]?.x;\nmaybe?.[0].x;\no.l?.[0]?.x;\no.m?.[0]?.x;\no.l[0]?.y?.z;\no.l?.[0]?.y?.z;\ntup?.[0]?.x;\ntup[0]?.x;\nnested?.[0]?.[0]?.x;\nnested[0]?.[0]?.x;\nnested[0][0]?.x;\nrec[k]?.[0]?.x;\nrec?.[k]?.[0]?.x;\n(arr as T[])?.[0]?.x;\narr?.[0]?.x ?? 1;\narr?.at(0)?.x;\nif (arr?.[0]) { k; }\nif (arr?.[0]?.x) { k; }\nexport {};\n",
+  "suggestions": "type T = { x: number; y?: { z: number } };\ndeclare const arr: T[], maybe: T[] | undefined, o: { l: T[]; m?: T[] }, tup: [T, T], nested: T[][], rec: Record<string, T[]>, k: string;\narr[0].x;\narr[0]?.x;\nmaybe?.[0]?.x;\nmaybe?.[0].x;\no.l[0].x;\no.m?.[0]?.x;\no.l[0]?.y?.z;\no.l[0].y?.z;\ntup[0].x;\ntup[0].x;\nnested[0][0].x;\nnested[0]?.[0]?.x;\nnested[0][0]?.x;\nrec[k]?.[0]?.x;\nrec[k][0].x;\n(arr as T[])[0].x;\narr[0].x ?? 1;\narr.at(0)?.x;\nif (arr[0]) { k; }\nif (arr[0].x) { k; }\nexport {};\n",
+  "dangerously": "type T = { x: number; y?: { z: number } };\ndeclare const arr: T[], maybe: T[] | undefined, o: { l: T[]; m?: T[] }, tup: [T, T], nested: T[][], rec: Record<string, T[]>, k: string;\narr[0].x;\narr[0]?.x;\nmaybe?.[0]?.x;\nmaybe?.[0].x;\no.l[0].x;\no.m?.[0]?.x;\no.l[0]?.y?.z;\no.l[0].y?.z;\ntup[0].x;\ntup[0].x;\nnested[0][0].x;\nnested[0]?.[0]?.x;\nnested[0][0]?.x;\nrec[k]?.[0]?.x;\nrec[k][0].x;\n(arr as T[])[0].x;\narr[0].x ?? 1;\narr.at(0)?.x;\nif (arr[0]) { k; }\nif (arr[0].x) { k; }\nexport {};\n"
+ },
+ "201-no-unnecessary-type-assertion": {
+  "fix": "declare const root: HTMLElement, els: NodeListOf<Element>, hs: NodeListOf<HTMLElement>;\ndeclare function id<T>(a: T): T;\ndeclare function wrap<T>(a: T): { v: T };\ndeclare function get<T extends Element = Element>(s: string): T;\ndeclare function list<T extends Element = Element>(s: string): T[];\nexport const a1 = Array.from(root.querySelectorAll(\".a\")) as HTMLElement[];\nexport const a2 = Array.from(els);\nexport const a3 = Array.from(hs);\nexport const a4 = id(get(\"a\")) as HTMLElement;\nexport const a5 = wrap(get(\"a\")) as { v: HTMLElement };\nexport const a6 = id(id(get(\"a\"))) as HTMLElement;\nexport const a7 = [...root.querySelectorAll(\".a\")] as HTMLElement[];\nexport const a8 = Array.from(root.querySelectorAll<HTMLElement>(\".a\"));\nexport const a9 = list(\"a\").map(x => x) as HTMLElement[];\nexport const b1 = id(list(\"a\")) as HTMLElement[];\nexport const b2 = id([get(\"a\")]) as HTMLElement[];\nexport const b3 = id({ v: get(\"a\") }) as { v: HTMLElement };\nexport const b4 = id(root.querySelector(\".a\")) as HTMLElement | null;\nexport const b5 = Array.from(root.querySelectorAll(\".a\"), x => x) as HTMLElement[];\nexport const b6 = Promise.resolve(get(\"a\")) as Promise<HTMLElement>;\nexport const b8 = Array.from(root.children) as HTMLElement[];\nexport const b9 = id(new Set(list(\"a\"))) as Set<HTMLElement>;\n",
+  "suggestions": "declare const root: HTMLElement, els: NodeListOf<Element>, hs: NodeListOf<HTMLElement>;\ndeclare function id<T>(a: T): T;\ndeclare function wrap<T>(a: T): { v: T };\ndeclare function get<T extends Element = Element>(s: string): T;\ndeclare function list<T extends Element = Element>(s: string): T[];\nexport const a1 = Array.from(root.querySelectorAll(\".a\")) as HTMLElement[];\nexport const a2 = Array.from(els) as Element[];\nexport const a3 = Array.from(hs) as HTMLElement[];\nexport const a4 = id(get(\"a\")) as HTMLElement;\nexport const a5 = wrap(get(\"a\")) as { v: HTMLElement };\nexport const a6 = id(id(get(\"a\"))) as HTMLElement;\nexport const a7 = [...root.querySelectorAll(\".a\")] as HTMLElement[];\nexport const a8 = Array.from(root.querySelectorAll<HTMLElement>(\".a\")) as HTMLElement[];\nexport const a9 = list(\"a\").map(x => x) as HTMLElement[];\nexport const b1 = id(list(\"a\")) as HTMLElement[];\nexport const b2 = id([get(\"a\")]) as HTMLElement[];\nexport const b3 = id({ v: get(\"a\") }) as { v: HTMLElement };\nexport const b4 = id(root.querySelector(\".a\")) as HTMLElement | null;\nexport const b5 = Array.from(root.querySelectorAll(\".a\"), x => x) as HTMLElement[];\nexport const b6 = Promise.resolve(get(\"a\")) as Promise<HTMLElement>;\nexport const b8 = Array.from(root.children) as HTMLElement[];\nexport const b9 = id(new Set(list(\"a\"))) as Set<HTMLElement>;\n",
+  "dangerously": "declare const root: HTMLElement, els: NodeListOf<Element>, hs: NodeListOf<HTMLElement>;\ndeclare function id<T>(a: T): T;\ndeclare function wrap<T>(a: T): { v: T };\ndeclare function get<T extends Element = Element>(s: string): T;\ndeclare function list<T extends Element = Element>(s: string): T[];\nexport const a1 = Array.from(root.querySelectorAll(\".a\")) as HTMLElement[];\nexport const a2 = Array.from(els);\nexport const a3 = Array.from(hs);\nexport const a4 = id(get(\"a\")) as HTMLElement;\nexport const a5 = wrap(get(\"a\")) as { v: HTMLElement };\nexport const a6 = id(id(get(\"a\"))) as HTMLElement;\nexport const a7 = [...root.querySelectorAll(\".a\")] as HTMLElement[];\nexport const a8 = Array.from(root.querySelectorAll<HTMLElement>(\".a\"));\nexport const a9 = list(\"a\").map(x => x) as HTMLElement[];\nexport const b1 = id(list(\"a\")) as HTMLElement[];\nexport const b2 = id([get(\"a\")]) as HTMLElement[];\nexport const b3 = id({ v: get(\"a\") }) as { v: HTMLElement };\nexport const b4 = id(root.querySelector(\".a\")) as HTMLElement | null;\nexport const b5 = Array.from(root.querySelectorAll(\".a\"), x => x) as HTMLElement[];\nexport const b6 = Promise.resolve(get(\"a\")) as Promise<HTMLElement>;\nexport const b8 = Array.from(root.children) as HTMLElement[];\nexport const b9 = id(new Set(list(\"a\"))) as Set<HTMLElement>;\n"
+ },
+ "202-non-nullable-type-assertion-style": {
+  "fix": "declare const c: HTMLElement, m: Map<string, HTMLElement>, s: { get<T>(k: string): T | undefined; one(k: string): HTMLElement | null };\nexport const a1 = c.querySelector(\".a\") as HTMLElement;\nexport const a2 = c.querySelector(\".a\") as Element;\nexport const a3 = c.querySelector(\"div\") as HTMLDivElement;\nexport const a4 = m.get(\"a\") as HTMLElement;\nexport const a5 = s.get(\"a\") as HTMLElement;\nexport const a6 = s.get<HTMLElement>(\"a\") as HTMLElement;\nexport const a7 = s.one(\"a\") as HTMLElement;\nexport let a8: HTMLElement; a8 = c.querySelector(\".a\") as HTMLElement;\nexport function a9() { return c.querySelector(\".a\") as HTMLElement; }\nexport const b1 = <HTMLElement>c.querySelector(\".a\");\nexport const b2 = (c.querySelector(\".a\")) as HTMLElement;\n",
+  "suggestions": "declare const c: HTMLElement, m: Map<string, HTMLElement>, s: { get<T>(k: string): T | undefined; one(k: string): HTMLElement | null };\nexport const a1 = c.querySelector(\".a\")!;\nexport const a2 = c.querySelector(\".a\")!;\nexport const a3 = c.querySelector(\"div\")!;\nexport const a4 = m.get(\"a\")!;\nexport const a5 = s.get(\"a\")!;\nexport const a6 = s.get<HTMLElement>(\"a\")!;\nexport const a7 = s.one(\"a\")!;\nexport let a8: HTMLElement; a8 = c.querySelector(\".a\")!;\nexport function a9() { return c.querySelector(\".a\")!; }\nexport const b1 = <HTMLElement>c.querySelector(\".a\")!;\nexport const b2 = (c.querySelector(\".a\"))!;\n",
+  "dangerously": "declare const c: HTMLElement, m: Map<string, HTMLElement>, s: { get<T>(k: string): T | undefined; one(k: string): HTMLElement | null };\nexport const a1 = c.querySelector(\".a\")!;\nexport const a2 = c.querySelector(\".a\")!;\nexport const a3 = c.querySelector(\"div\")!;\nexport const a4 = m.get(\"a\")!;\nexport const a5 = s.get(\"a\")!;\nexport const a6 = s.get<HTMLElement>(\"a\")!;\nexport const a7 = s.one(\"a\")!;\nexport let a8: HTMLElement; a8 = c.querySelector(\".a\")!;\nexport function a9() { return c.querySelector(\".a\")!; }\nexport const b1 = <HTMLElement>c.querySelector(\".a\")!;\nexport const b2 = (c.querySelector(\".a\"))!;\n"
+ },
+ "203-no-unnecessary-type-assertion": {
+  "fix": "type S = { a: number };\ndeclare const st: { readonly value: { readonly a: number } };\ndeclare function define<T>(o: { setup(): T }): T;\ndeclare function plain(o: { setup(): unknown }): void;\nlet e1!: () => S;\nlet e2!: () => S;\nlet e3!: () => S;\nlet e4!: () => S;\nexport const h1 = define({\n  setup() {\n    e1 = () => st.value as S;\n    return () => null;\n  },\n});\nplain({\n  setup() {\n    e2 = () => st.value;\n    return () => null;\n  },\n});\nexport const h3 = define({\n  setup: () => {\n    e3 = () => st.value;\n    return () => null;\n  },\n});\nexport const h4 = define({\n  setup() {\n    e4 = function () {\n      return st.value;\n    };\n    const x: S = st.value as S;\n    return () => x;\n  },\n});\nexport { e1, e2, e3, e4 };\n",
+  "suggestions": "type S = { a: number };\ndeclare const st: { readonly value: { readonly a: number } };\ndeclare function define<T>(o: { setup(): T }): T;\ndeclare function plain(o: { setup(): unknown }): void;\nlet e1!: () => S;\nlet e2!: () => S;\nlet e3!: () => S;\nlet e4!: () => S;\nexport const h1 = define({\n  setup() {\n    e1 = () => st.value as S;\n    return () => null;\n  },\n});\nplain({\n  setup() {\n    e2 = () => st.value as S;\n    return () => null;\n  },\n});\nexport const h3 = define({\n  setup: () => {\n    e3 = () => st.value as S;\n    return () => null;\n  },\n});\nexport const h4 = define({\n  setup() {\n    e4 = function () {\n      return st.value as S;\n    };\n    const x: S = st.value as S;\n    return () => x;\n  },\n});\nexport { e1, e2, e3, e4 };\n",
+  "dangerously": "type S = { a: number };\ndeclare const st: { readonly value: { readonly a: number } };\ndeclare function define<T>(o: { setup(): T }): T;\ndeclare function plain(o: { setup(): unknown }): void;\nlet e1!: () => S;\nlet e2!: () => S;\nlet e3!: () => S;\nlet e4!: () => S;\nexport const h1 = define({\n  setup() {\n    e1 = () => st.value as S;\n    return () => null;\n  },\n});\nplain({\n  setup() {\n    e2 = () => st.value;\n    return () => null;\n  },\n});\nexport const h3 = define({\n  setup: () => {\n    e3 = () => st.value;\n    return () => null;\n  },\n});\nexport const h4 = define({\n  setup() {\n    e4 = function () {\n      return st.value;\n    };\n    const x: S = st.value as S;\n    return () => x;\n  },\n});\nexport { e1, e2, e3, e4 };\n"
+ },
+ "205-prefer-optional-chain": {
+  "fix": "type P = { text?: string; n?: number; o?: { v?: string } | null };\ndeclare const a: P | undefined, g: () => boolean, sel: () => { type: string } | undefined, rq: { data?: { rank: number } | null };\nexport const o1 = a === undefined || a.text === undefined || a.text === \"\";\nexport const o2 = a === undefined || a.text === undefined || a.text !== \"\";\nexport const o3 = a === undefined || a.text === undefined || a.text == \"\";\nexport const o4 = a === undefined || a.text === undefined || a.text != \"\";\nexport const o5 = !a?.text || a.text === \"\";\nexport const o6 = !a?.text || a.text !== \"\";\nexport const o7 = a == null || a.text == null || a.text === \"\";\nexport const o8 = a?.text !== \"x\";\nexport const p1 = a === undefined || a.text === undefined || a.text === \"\" || a.n === 1;\nexport const p2 = a === undefined || a.text === undefined || a.text.length === 0;\nexport const p3 = a === undefined || a.text === undefined || a.text === g.name;\nexport const p4 = a === undefined || a.n === undefined || a.n === 0;\nexport const p5 = a === undefined || a.n === undefined || a.n > 0;\nexport const n1 = a !== undefined && a.text !== undefined && a.text !== \"\";\nexport const n2 = a?.text === \"\";\nexport const n3 = a && a.text && a.text !== \"\";\nexport const n4 = a?.text === \"x\";\nexport const n5 = a != null && a.text != null && a.text !== \"\";\nexport const n6 = a?.text === \"x\";\nexport const n7 = a?.n !== undefined && a.n > 0;\nexport const c1 = sel() !== undefined && sel().type === \"allTime\";\nexport const c2 = rq.data !== undefined && rq.data !== null && sel() !== undefined && sel().type === \"allTime\";\nexport const c3 = sel() && sel().type === \"allTime\";\nexport const c4 = sel() !== undefined && sel().type;\nexport const c5 = rq.data?.rank === 1;\nexport const c6 = sel() != null && sel().type === \"allTime\";\n",
+  "suggestions": "type P = { text?: string; n?: number; o?: { v?: string } | null };\ndeclare const a: P | undefined, g: () => boolean, sel: () => { type: string } | undefined, rq: { data?: { rank: number } | null };\nexport const o1 = a === undefined || a.text === undefined || a.text === \"\";\nexport const o2 = a?.text !== \"\";\nexport const o3 = a === undefined || a.text === undefined || a.text == \"\";\nexport const o4 = a?.text != \"\";\nexport const o5 = !a || !a.text || a.text === \"\";\nexport const o6 = !a || !a.text || a.text !== \"\";\nexport const o7 = a == null || a.text == null || a.text === \"\";\nexport const o8 = a == null || a.text == null || a.text !== \"x\";\nexport const p1 = a === undefined || a.text === undefined || a.text === \"\" || a.n === 1;\nexport const p2 = a === undefined || a.text === undefined || a.text.length === 0;\nexport const p3 = a?.text === undefined || a.text === g.name;\nexport const p4 = a === undefined || a.n === undefined || a.n === 0;\nexport const p5 = a?.n === undefined || a.n > 0;\nexport const n1 = a !== undefined && a.text !== undefined && a.text !== \"\";\nexport const n2 = a !== undefined && a.text !== undefined && a.text === \"\";\nexport const n3 = a && a.text && a.text !== \"\";\nexport const n4 = a && a.text && a.text === \"x\";\nexport const n5 = a != null && a.text != null && a.text !== \"\";\nexport const n6 = a != null && a.text != null && a.text === \"x\";\nexport const n7 = a !== undefined && a.n !== undefined && a.n > 0;\nexport const c1 = sel() !== undefined && sel().type === \"allTime\";\nexport const c2 = rq.data !== undefined && rq.data !== null && sel() !== undefined && sel().type === \"allTime\";\nexport const c3 = sel() && sel().type === \"allTime\";\nexport const c4 = sel() !== undefined && sel().type;\nexport const c5 = rq.data !== undefined && rq.data !== null && rq.data.rank === 1;\nexport const c6 = sel() != null && sel().type === \"allTime\";\n",
+  "dangerously": "type P = { text?: string; n?: number; o?: { v?: string } | null };\ndeclare const a: P | undefined, g: () => boolean, sel: () => { type: string } | undefined, rq: { data?: { rank: number } | null };\nexport const o1 = a === undefined || a.text === undefined || a.text === \"\";\nexport const o2 = a?.text !== \"\";\nexport const o3 = a === undefined || a.text === undefined || a.text == \"\";\nexport const o4 = a?.text != \"\";\nexport const o5 = !a?.text || a.text === \"\";\nexport const o6 = !a?.text || a.text !== \"\";\nexport const o7 = a == null || a.text == null || a.text === \"\";\nexport const o8 = a?.text !== \"x\";\nexport const p1 = a === undefined || a.text === undefined || a.text === \"\" || a.n === 1;\nexport const p2 = a === undefined || a.text === undefined || a.text.length === 0;\nexport const p3 = a?.text === undefined || a.text === g.name;\nexport const p4 = a === undefined || a.n === undefined || a.n === 0;\nexport const p5 = a?.n === undefined || a.n > 0;\nexport const n1 = a !== undefined && a.text !== undefined && a.text !== \"\";\nexport const n2 = a?.text === \"\";\nexport const n3 = a && a.text && a.text !== \"\";\nexport const n4 = a?.text === \"x\";\nexport const n5 = a != null && a.text != null && a.text !== \"\";\nexport const n6 = a?.text === \"x\";\nexport const n7 = a?.n !== undefined && a.n > 0;\nexport const c1 = sel() !== undefined && sel().type === \"allTime\";\nexport const c2 = rq.data !== undefined && rq.data !== null && sel() !== undefined && sel().type === \"allTime\";\nexport const c3 = sel() && sel().type === \"allTime\";\nexport const c4 = sel() !== undefined && sel().type;\nexport const c5 = rq.data?.rank === 1;\nexport const c6 = sel() != null && sel().type === \"allTime\";\n"
+ },
+ "206-prefer-optional-chain": {
+  "fix": "type P = { text?: string; n?: number };\ndeclare const b: P, a: P | undefined;\nexport const s1 = b.text !== undefined && b.text === \"\";\nexport const s2 = b.text && b.text === \"x\";\nexport const s3 = b.text === undefined || b.text !== \"\";\nexport const s4 = b.text != null && b.text === \"x\";\nexport const s5 = a && a === b;\nexport const s6 = a !== undefined && a === b;\nexport const s7 = !b.text || b.text !== \"x\";\nexport const s8 = a?.text === \"x\" && a.n;\nexport const s9 = a?.text === \"x\" && a.n === 1;\nexport const t1 = \"x\" === a?.text;\nexport const t3 = a?.text === \"x\";\nexport const t4 = a?.text === \"x\" || b;\n// oxlint-disable-next-line typescript/prefer-optional-chain\nexport const t5 = a && a.text && a.text === \"x\";\n",
+  "suggestions": "type P = { text?: string; n?: number };\ndeclare const b: P, a: P | undefined;\nexport const s1 = b.text !== undefined && b.text === \"\";\nexport const s2 = b.text && b.text === \"x\";\nexport const s3 = b.text === undefined || b.text !== \"\";\nexport const s4 = b.text != null && b.text === \"x\";\nexport const s5 = a && a === b;\nexport const s6 = a !== undefined && a === b;\nexport const s7 = !b.text || b.text !== \"x\";\nexport const s8 = a && a.text && a.text === \"x\" && a.n;\nexport const s9 = a && a.text && a.text === \"x\" && a.n === 1;\nexport const t1 = a && a.text && \"x\" === a.text;\nexport const t3 = a && a.text !== undefined && a.text !== null && a.text === \"x\";\nexport const t4 = a && a.text && a.text === \"x\" || b;\n// oxlint-disable-next-line typescript/prefer-optional-chain\nexport const t5 = a && a.text && a.text === \"x\";\n",
+  "dangerously": "type P = { text?: string; n?: number };\ndeclare const b: P, a: P | undefined;\nexport const s1 = b.text !== undefined && b.text === \"\";\nexport const s2 = b.text && b.text === \"x\";\nexport const s3 = b.text === undefined || b.text !== \"\";\nexport const s4 = b.text != null && b.text === \"x\";\nexport const s5 = a && a === b;\nexport const s6 = a !== undefined && a === b;\nexport const s7 = !b.text || b.text !== \"x\";\nexport const s8 = a?.text === \"x\" && a.n;\nexport const s9 = a?.text === \"x\" && a.n === 1;\nexport const t1 = \"x\" === a?.text;\nexport const t3 = a?.text === \"x\";\nexport const t4 = a?.text === \"x\" || b;\n// oxlint-disable-next-line typescript/prefer-optional-chain\nexport const t5 = a && a.text && a.text === \"x\";\n"
+ },
+ "207-no-unnecessary-type-assertion": {
+  "fix": "interface A { id: string; shape?: \"c\" }\ninterface B { id: string; shape?: ShapeID }\ntype N = A | B;\ndeclare const k: Omit<N, \"shape\">, l: Pick<N, \"id\">;\nconst shapes = { k, l } satisfies Record<string, { id: string }>;\nexport type ShapeID = keyof typeof shapes;\nexport function isValidShape(shape: string): shape is ShapeID { return shape in shapes; }\ndeclare function alias(s: string): string;\nexport function f1(v: { type?: ShapeID | \"x\" }): ShapeID {\n  const resolved = typeof v.type === \"string\" ? alias(v.type) : v.type;\n  switch (resolved) {\n    case undefined:\n      return \"k\";\n    default:\n      return resolved as ShapeID;\n  }\n}\nexport function f2(v: { type?: ShapeID | \"x\" }) { return alias(v.type as string | undefined ?? \"\"); }\nexport function f3(s: string) { if (!isValidShape(s)) { return `No such shape: ${s}.`; } return s; }\nexport type U = ShapeID | 1;\nexport const f4 = \"k\" as ShapeID;\nexport type V = any | 1;\n// oxlint-disable-next-line typescript/no-redundant-type-constituents\nexport type W = any | 1;\nexport const f5 = f4;\n",
+  "suggestions": "interface A { id: string; shape?: \"c\" }\ninterface B { id: string; shape?: ShapeID }\ntype N = A | B;\ndeclare const k: Omit<N, \"shape\">, l: Pick<N, \"id\">;\nconst shapes = { k, l } satisfies Record<string, { id: string }>;\nexport type ShapeID = keyof typeof shapes;\nexport function isValidShape(shape: string): shape is ShapeID { return shape in shapes; }\ndeclare function alias(s: string): string;\nexport function f1(v: { type?: ShapeID | \"x\" }): ShapeID {\n  const resolved = typeof v.type === \"string\" ? alias(v.type) : v.type;\n  switch (resolved) {\n    case undefined:\n      return \"k\";\n    default:\n      return resolved as ShapeID;\n  }\n}\nexport function f2(v: { type?: ShapeID | \"x\" }) { return alias(v.type as string | undefined ?? \"\"); }\nexport function f3(s: string) { if (!isValidShape(s)) { return `No such shape: ${s}.`; } return s; }\nexport type U = ShapeID | 1;\nexport const f4 = \"k\" as ShapeID;\nexport type V = any | 1;\n// oxlint-disable-next-line typescript/no-redundant-type-constituents\nexport type W = any | 1;\nexport const f5 = f4 as ShapeID;\n",
+  "dangerously": "interface A { id: string; shape?: \"c\" }\ninterface B { id: string; shape?: ShapeID }\ntype N = A | B;\ndeclare const k: Omit<N, \"shape\">, l: Pick<N, \"id\">;\nconst shapes = { k, l } satisfies Record<string, { id: string }>;\nexport type ShapeID = keyof typeof shapes;\nexport function isValidShape(shape: string): shape is ShapeID { return shape in shapes; }\ndeclare function alias(s: string): string;\nexport function f1(v: { type?: ShapeID | \"x\" }): ShapeID {\n  const resolved = typeof v.type === \"string\" ? alias(v.type) : v.type;\n  switch (resolved) {\n    case undefined:\n      return \"k\";\n    default:\n      return resolved as ShapeID;\n  }\n}\nexport function f2(v: { type?: ShapeID | \"x\" }) { return alias(v.type as string | undefined ?? \"\"); }\nexport function f3(s: string) { if (!isValidShape(s)) { return `No such shape: ${s}.`; } return s; }\nexport type U = ShapeID | 1;\nexport const f4 = \"k\" as ShapeID;\nexport type V = any | 1;\n// oxlint-disable-next-line typescript/no-redundant-type-constituents\nexport type W = any | 1;\nexport const f5 = f4;\n"
+ },
+ "208-prefer-optional-chain": {
+  "fix": "declare const c: { editor?: { indentSize?: number | \"tabSize\"; o?: { p?: string } } }, el: { hover?: { content?: string }; item?: number } | undefined, e: { index?: number };\nexport const t1 = c.editor && typeof c.editor.indentSize !== \"undefined\" && c.editor.indentSize !== \"tabSize\";\nexport const t2 = c.editor?.indentSize === \"tabSize\";\nexport const t3 = c.editor && c.editor.indentSize !== undefined && c.editor.indentSize !== \"tabSize\";\nexport const t4 = typeof c.editor?.indentSize !== \"undefined\";\nexport const t5 = typeof c.editor?.indentSize !== \"undefined\" && e.index;\nexport const t6 = c.editor && typeof c.editor.o !== \"undefined\" && c.editor.o.p !== \"x\";\nexport const u1 = el && el.hover?.content && typeof e.index === \"number\";\nexport const u2 = el && el.hover?.content;\nexport const u3 = el && el.hover?.content && e.index;\nexport const u4 = el?.hover && typeof e.index === \"number\";\nexport const u5 = el && el.hover?.content && typeof el.item === \"number\";\nexport const u6 = el?.item && typeof e.index === \"number\";\nexport const u7 = el && el.hover?.content && e.index === 1;\nexport const v1 = el?.hover;\nexport const v2 = el && el?.item === 1;\nexport const v3 = el?.item !== undefined;\nexport const v4 = c.editor && c.editor?.o?.p;\nexport const v5 = c.editor && c.editor.o?.p === \"x\";\nexport const v6 = el && el.hover?.content !== undefined;\nexport const v7 = el != null && el.hover?.content;\nexport const v8 = el?.hover?.content?.length;\nexport const v9 = !el?.hover?.content;\nexport const w1 = el && el.hover!?.content;\nexport const w2 = el && el[\"hover\"]?.content;\nexport const w3 = el && el.hover?.content?.length;\n// oxlint-disable-next-line typescript/prefer-optional-chain\nexport const w4 = el && el?.hover;\n",
+  "suggestions": "declare const c: { editor?: { indentSize?: number | \"tabSize\"; o?: { p?: string } } }, el: { hover?: { content?: string }; item?: number } | undefined, e: { index?: number };\nexport const t1 = c.editor && typeof c.editor.indentSize !== \"undefined\" && c.editor.indentSize !== \"tabSize\";\nexport const t2 = c.editor && typeof c.editor.indentSize !== \"undefined\" && c.editor.indentSize === \"tabSize\";\nexport const t3 = c.editor && c.editor.indentSize !== undefined && c.editor.indentSize !== \"tabSize\";\nexport const t4 = c.editor && typeof c.editor.indentSize !== \"undefined\";\nexport const t5 = c.editor && typeof c.editor.indentSize !== \"undefined\" && e.index;\nexport const t6 = c.editor && typeof c.editor.o !== \"undefined\" && c.editor.o.p !== \"x\";\nexport const u1 = el && el.hover?.content && typeof e.index === \"number\";\nexport const u2 = el && el.hover?.content;\nexport const u3 = el && el.hover?.content && e.index;\nexport const u4 = el && el.hover && typeof e.index === \"number\";\nexport const u5 = el && el.hover?.content && typeof el.item === \"number\";\nexport const u6 = el && el.item && typeof e.index === \"number\";\nexport const u7 = el && el.hover?.content && e.index === 1;\nexport const v1 = el && el?.hover;\nexport const v2 = el && el?.item === 1;\nexport const v3 = el && el?.item !== undefined;\nexport const v4 = c.editor && c.editor?.o?.p;\nexport const v5 = c.editor && c.editor.o?.p === \"x\";\nexport const v6 = el && el.hover?.content !== undefined;\nexport const v7 = el != null && el.hover?.content;\nexport const v8 = el && el.hover && el.hover.content?.length;\nexport const v9 = !el || !el.hover?.content;\nexport const w1 = el && el.hover!?.content;\nexport const w2 = el && el[\"hover\"]?.content;\nexport const w3 = el && el.hover?.content?.length;\n// oxlint-disable-next-line typescript/prefer-optional-chain\nexport const w4 = el && el?.hover;\n",
+  "dangerously": "declare const c: { editor?: { indentSize?: number | \"tabSize\"; o?: { p?: string } } }, el: { hover?: { content?: string }; item?: number } | undefined, e: { index?: number };\nexport const t1 = c.editor && typeof c.editor.indentSize !== \"undefined\" && c.editor.indentSize !== \"tabSize\";\nexport const t2 = c.editor?.indentSize === \"tabSize\";\nexport const t3 = c.editor && c.editor.indentSize !== undefined && c.editor.indentSize !== \"tabSize\";\nexport const t4 = typeof c.editor?.indentSize !== \"undefined\";\nexport const t5 = typeof c.editor?.indentSize !== \"undefined\" && e.index;\nexport const t6 = c.editor && typeof c.editor.o !== \"undefined\" && c.editor.o.p !== \"x\";\nexport const u1 = el && el.hover?.content && typeof e.index === \"number\";\nexport const u2 = el && el.hover?.content;\nexport const u3 = el && el.hover?.content && e.index;\nexport const u4 = el?.hover && typeof e.index === \"number\";\nexport const u5 = el && el.hover?.content && typeof el.item === \"number\";\nexport const u6 = el?.item && typeof e.index === \"number\";\nexport const u7 = el && el.hover?.content && e.index === 1;\nexport const v1 = el?.hover;\nexport const v2 = el && el?.item === 1;\nexport const v3 = el?.item !== undefined;\nexport const v4 = c.editor && c.editor?.o?.p;\nexport const v5 = c.editor && c.editor.o?.p === \"x\";\nexport const v6 = el && el.hover?.content !== undefined;\nexport const v7 = el != null && el.hover?.content;\nexport const v8 = el?.hover?.content?.length;\nexport const v9 = !el?.hover?.content;\nexport const w1 = el && el.hover!?.content;\nexport const w2 = el && el[\"hover\"]?.content;\nexport const w3 = el && el.hover?.content?.length;\n// oxlint-disable-next-line typescript/prefer-optional-chain\nexport const w4 = el && el?.hover;\n"
+ }
+}

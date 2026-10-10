@@ -14,7 +14,7 @@
 //! | 6242–6468 | `jsx` (`lower_jsx_*`) |
 //! | 4257–4361, 5985–6241 | this file: `lower()` entry + `lower_inner()` driver |
 
-use crate::collections::{IndexMap, IndexSet};
+use crate::collections::IndexMap;
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory,
 };
@@ -89,14 +89,13 @@ pub(crate) fn lower(
     // For top-level functions, context is empty (no captured refs)
     let context_map: IndexMap<Ref, Option<SourceLocation>> = IndexMap::new();
 
-    let (hir_func, _used_refs, _child_bindings) = lower_inner(
+    let (hir_func, _child_bindings) = lower_inner(
         func,
         ast_id,
         loc,
         host,
         env,
         None, // no pre-existing bindings for top-level
-        None, // no pre-existing used_refs for top-level
         &context_map,
         scope,
         scope, // component_scope = function_scope for top-level
@@ -104,6 +103,9 @@ pub(crate) fn lower(
         import_bindings,
         true, // is_top_level
     )?;
+    if !env.has_stack() {
+        return Err(super::nested_too_deeply().into());
+    }
 
     Ok(hir_func)
 }
@@ -117,14 +119,13 @@ pub(super) fn lower_inner<'h>(
     host: &'h dyn Host,
     env: &'h mut Environment,
     parent_bindings: Option<IndexMap<Ref, IdentifierId>>,
-    parent_used_refs: Option<IndexSet<Ref>>,
     context_map: &IndexMap<Ref, Option<SourceLocation>>,
     function_scope: &'h ast::Scope,
     component_scope: &'h ast::Scope,
     context_identifiers: &RefSet,
     import_bindings: &IndexMap<Ref, VariableBinding>,
     is_top_level: bool,
-) -> Result<(HirFunction, IndexSet<Ref>, IndexMap<Ref, IdentifierId>), CompilerError> {
+) -> Result<(HirFunction, IndexMap<Ref, IdentifierId>), CompilerError> {
     // `validate_ts_this_parameter`: Bun's parser strips `this` parameters
     // before this pass runs, so the upstream check is a no-op here.
 
@@ -143,7 +144,6 @@ pub(super) fn lower_inner<'h>(
         parent_bindings,
         Some(context_map.clone()),
         None,
-        parent_used_refs,
     );
     builder.set_import_bindings(import_bindings.clone());
 
@@ -170,7 +170,7 @@ pub(super) fn lower_inner<'h>(
     let last = params.len().saturating_sub(1);
     for (i, param) in params.iter().enumerate() {
         let is_rest = has_rest_arg && i == last;
-        let param_loc = convert_loc(param.binding.loc);
+        let param_loc = convert_loc(builder.with_default(param.binding.loc));
 
         if is_rest {
             // Create a temporary place for the spread param
@@ -306,7 +306,7 @@ pub(super) fn lower_inner<'h>(
     builder.pop_scope();
 
     // Build the HIR
-    let (hir_body, instructions, used_refs, child_bindings) = builder.build()?;
+    let (hir_body, instructions, child_bindings) = builder.build()?;
 
     // Create the returns place
     let returns = create_temporary_place(env, loc);
@@ -332,7 +332,6 @@ pub(super) fn lower_inner<'h>(
             directives,
             aliasing_effects: None,
         },
-        used_refs,
         child_bindings,
     ))
 }
@@ -384,9 +383,11 @@ pub(super) fn gather_captured_context<'h>(
     func: &FunctionNode<'_>,
     enclosing_scope: &'h ast::Scope,
     _component_scope: &ast::Scope,
-) -> IndexMap<Ref, Option<SourceLocation>> {
+) -> Result<IndexMap<Ref, Option<SourceLocation>>, CompilerDiagnostic> {
     let mut walker = CaptureWalker {
         host,
+        stack: bun_core::StackCheck::init(),
+        is_out_of_stack: false,
         scope_stack: vec![enclosing_scope],
         declared: RefSet::default(),
         referenced: Vec::new(),
@@ -395,8 +396,10 @@ pub(super) fn gather_captured_context<'h>(
     walker.push_scope(func.body().loc);
     walker.walk_args(func.args());
     walker.walk_stmts(func.body().stmts.slice());
+    if walker.is_out_of_stack {
+        return Err(super::nested_too_deeply());
+    }
 
-    let module_scope = host.module_scope();
     let symbols = host.symbols();
 
     // Collect the earliest (lowest source position) reference location for each
@@ -427,10 +430,8 @@ pub(super) fn gather_captured_context<'h>(
         ) {
             continue;
         }
-        if let Some(member) = module_scope.members.get(sym.original_name.slice()) {
-            if member.ref_ == ref_ {
-                continue;
-            }
+        if host.is_module_level(ref_) {
+            continue;
         }
         let pos = ref_loc.start;
         let loc = convert_loc(ref_loc);
@@ -450,20 +451,27 @@ pub(super) fn gather_captured_context<'h>(
     let mut sorted: Vec<_> = captured.into_iter().collect();
     sorted.sort_unstable_by_key(|(_, (pos, _))| *pos);
 
-    sorted
+    Ok(sorted
         .into_iter()
         .map(|(ref_, (_, loc))| (ref_, loc))
-        .collect()
+        .collect())
 }
 
 struct CaptureWalker<'h> {
     host: &'h dyn Host,
+    stack: bun_core::StackCheck,
+    is_out_of_stack: bool,
     scope_stack: Vec<&'h ast::Scope>,
     declared: RefSet,
     referenced: Vec<(Ref, Loc)>,
 }
 
 impl<'h> CaptureWalker<'h> {
+    fn has_stack(&mut self) -> bool {
+        self.is_out_of_stack |= !self.stack.is_safe_to_recurse();
+        !self.is_out_of_stack
+    }
+
     fn push_scope(&mut self, loc: Loc) {
         let next = self
             .host
@@ -510,6 +518,9 @@ impl<'h> CaptureWalker<'h> {
     }
 
     fn walk_binding_decl(&mut self, binding: &ast::Binding) {
+        if !self.has_stack() {
+            return;
+        }
         match &binding.data {
             b::B::BIdentifier(id) => self.record_decl(id.r#ref),
             b::B::BArray(arr) => {
@@ -566,6 +577,9 @@ impl<'h> CaptureWalker<'h> {
     }
 
     fn walk_stmt(&mut self, stmt: &Stmt) {
+        if !self.has_stack() {
+            return;
+        }
         let stmt_loc = stmt.loc;
         match &stmt.data {
             StmtData::SBlock(b) => {
@@ -689,6 +703,9 @@ impl<'h> CaptureWalker<'h> {
     }
 
     fn walk_expr(&mut self, e: &Expr) {
+        if !self.has_stack() {
+            return;
+        }
         match &e.data {
             ExprData::EIdentifier(id) => self.record_ref(id.ref_, e.loc),
             ExprData::EImportIdentifier(id) => self.record_ref(id.ref_, e.loc),

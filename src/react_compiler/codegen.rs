@@ -578,6 +578,7 @@ fn codegen_block_no_reset(
     cx: &mut Context,
     block: &ReactiveBlock,
 ) -> Result<Vec<Stmt>, CompilerError> {
+    debug_assert!(cx.env.has_stack(), "took more stack than the builder");
     let mut statements: Vec<Stmt> = Vec::new();
     for item in block {
         match item {
@@ -657,6 +658,7 @@ fn codegen_reactive_scope(
     let mut cache_load_exprs: Vec<Expr> = Vec::new();
     let mut cache_loads: Vec<(Ref, u32, Expr)> = Vec::new();
     let mut change_exprs: Vec<Expr> = Vec::new();
+    let mut values_before: Vec<Expr> = Vec::new();
 
     let mut deps = scope_deps;
     deps.sort_unstable_by(|a, b| compare_scope_dependency(a, b, cx.env));
@@ -690,7 +692,24 @@ fn codegen_reactive_scope(
         );
         change_exprs.push(comparison);
 
-        let dep_value = codegen_dependency(cx, dep)?;
+        let mut dep_value = codegen_dependency(cx, dep)?;
+        let declaration = cx.env.identifiers[dep.identifier.0 as usize].declaration_id;
+        // Not in upstream: the scope assigns it, so it is kept as it was. Not stored at once: the scope may throw.
+        if scope_reassignments
+            .iter()
+            .any(|id| cx.env.identifiers[id.0 as usize].declaration_id == declaration)
+        {
+            let before = cx.alloc_cache_index();
+            values_before.push(Expr::init(
+                E::Binary {
+                    op: OpCode::BinAssign,
+                    left: cache_slot(before),
+                    right: dep_value,
+                },
+                loc,
+            ));
+            dep_value = cache_slot(before);
+        }
         cache_store_exprs.push(Expr::init(
             E::Binary {
                 op: OpCode::BinAssign,
@@ -784,6 +803,9 @@ fn codegen_reactive_scope(
     };
 
     let mut computation_block = codegen_block(cx, block)?;
+    if !values_before.is_empty() {
+        computation_block.insert(0, expr_stmt(comma_seq(values_before, loc), loc));
+    }
 
     for (name_ref, index, value) in &cache_loads {
         cache_store_exprs.push(Expr::init(

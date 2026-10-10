@@ -1,0 +1,12 @@
+function first() {
+  if (second) {
+    reason = (
+      // prettier-ignore
+      <>Only <B>some</B> things can be added to a group of other things</>
+    )
+    const third = (
+      // prettier-ignore
+      <a   b="c" />
+    )
+  }
+}

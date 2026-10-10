@@ -213,7 +213,7 @@ impl<'a> Context<'a> {
         let last = self
             .control_flow_stack
             .pop()
-            .expect("Can only unschedule the last target");
+            .ok_or_else(|| cold_invariant("Can only unschedule the last target", None, None))?;
         if last.id() != schedule_id {
             return Err(cold_invariant("Can only unschedule the last target", None, None).into());
         }
@@ -332,6 +332,10 @@ impl<'a, 'b> Driver<'a, 'b> {
         mut block_id: BlockId,
         block_value: &mut ReactiveBlock,
     ) -> Result<(), CompilerDiagnostic> {
+        // Bounds the tree for its walkers (the two visitor traits, codegen, `Clone`, drop): they take less stack a level.
+        if !self.env.has_stack() {
+            return Err(crate::lowering::nested_too_deeply());
+        }
         // Use a loop to avoid deep recursion for fallthrough chains.
         // Each terminal that would tail-call visit_block(fallthrough, block_value)
         // instead sets next_block and continues the loop.
@@ -1111,6 +1115,10 @@ impl<'a, 'b> Driver<'a, 'b> {
         loc: Option<SourceLocation>,
         fallthrough: Option<BlockId>,
     ) -> Result<ValueBlockResult, CompilerDiagnostic> {
+        // As in `visit_block`, for a value in a value.
+        if !self.env.has_stack() {
+            return Err(crate::lowering::nested_too_deeply());
+        }
         let block = &self.hir.body.blocks[&block_id];
         let block_id_val = block.id;
         let terminal = block.terminal.clone();
@@ -1145,14 +1153,14 @@ impl<'a, 'b> Driver<'a, 'b> {
                         id: *term_id,
                     })
                 } else {
-                    Ok(self.extract_value_block_result(&instructions, block_id_val, loc))
+                    self.extract_value_block_result(&instructions, block_id_val, loc)
                 }
             }
             Terminal::Goto { .. } => {
                 if instructions.is_empty() {
                     return Err(empty_goto_invariant(block_id, loc));
                 }
-                Ok(self.extract_value_block_result(&instructions, block_id_val, loc))
+                self.extract_value_block_result(&instructions, block_id_val, loc)
             }
             Terminal::MaybeThrow { continuation, .. } => {
                 let continuation_id = *continuation;
@@ -1162,7 +1170,7 @@ impl<'a, 'b> Driver<'a, 'b> {
                 let cont_block_id = continuation_block.id;
 
                 if cont_instructions_empty && cont_is_goto {
-                    Ok(self.extract_value_block_result(&instructions, cont_block_id, loc))
+                    self.extract_value_block_result(&instructions, cont_block_id, loc)
                 } else {
                     let continuation = self.visit_value_block(continuation_id, loc, fallthrough)?;
                     Ok(self.wrap_with_sequence(&instructions, continuation, loc))
@@ -1382,10 +1390,10 @@ impl<'a, 'b> Driver<'a, 'b> {
         instructions: &[crate::hir::InstructionId],
         block_id: BlockId,
         loc: Option<SourceLocation>,
-    ) -> ValueBlockResult {
+    ) -> Result<ValueBlockResult, CompilerDiagnostic> {
         let last_id = instructions
             .last()
-            .expect("Expected non-empty instructions");
+            .ok_or_else(|| cold_invariant("Expected non-empty instructions", None, loc))?;
         let last_instr = &self.hir.instructions[last_id.0 as usize];
 
         let remaining: Vec<ReactiveInstruction> = instructions[..instructions.len() - 1]
@@ -1433,7 +1441,7 @@ impl<'a, 'b> Driver<'a, 'b> {
         };
         let id = last_instr.id;
 
-        if remaining.is_empty() {
+        Ok(if remaining.is_empty() {
             ValueBlockResult {
                 block: block_id,
                 place,
@@ -1452,7 +1460,7 @@ impl<'a, 'b> Driver<'a, 'b> {
                 },
                 id,
             }
-        }
+        })
     }
 
     fn wrap_with_sequence(

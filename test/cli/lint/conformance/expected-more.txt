@@ -1,0 +1,9 @@
+FAIL more/reviews/eslint/no-func-assign#146 messages differ
+FAIL more/reviews/eslint/no-param-reassign#335 messages differ
+FAIL more/reviews/eslint/no-param-reassign#336 messages differ
+FAIL more/reviews/typescript-eslint/no-unused-vars#2174 messages differ
+
+0 cases have their messages in another order
+
+718 rules, 715 without failures, 0 not implemented
+87791 cases passed, 4 failed, 295 skipped

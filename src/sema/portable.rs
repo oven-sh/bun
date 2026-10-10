@@ -12,10 +12,10 @@ use crate::bind::{
 };
 use crate::hir::{
     Alias, ArenaFew, Call, Class, Enum, EnumMember, Export, ExportSpec, Expr, ExprKind, File,
-    FileBuilder, FileIn, Func, Import, ImportEquals, ImportEqualsTarget, ImportSpec, Interface,
-    JsxPragmas, Lazy, Member, Module, ModuleName, Name, Pat, PatKind, PatProp, Prop, PropKey,
-    ReferenceKind, ResolutionMode, SpecifierUse, Stmt, StmtKind, Storage, TupleElem, TypeNode,
-    TypeNodeKind, TypeParam,
+    FileBuilder, FileIn, Fixed, Func, Import, ImportEquals, ImportEqualsTarget, ImportSpec,
+    Interface, JsxPragmas, Lazy, LazyCells, Member, Module, ModuleName, Name, Pat, PatKind,
+    PatProp, Prop, PropKey, ReferenceKind, ResolutionMode, SpecifierUse, Stmt, StmtKind, Storage,
+    TupleElem, TypeNode, TypeNodeKind, TypeParam,
 };
 use crate::session::{Arena, ArenaVec};
 use crate::util::{FxBuild, FxHashMap};
@@ -27,12 +27,13 @@ macro_rules! file_fields {
     ($with:ident) => {
         $with! {
             plain: [
-                kind is_js check_directive is_module_by_decree has_module_syntax
-                has_errors ran_out_of_stack legacy_decorators has_parse_diagnostics
+                kind is_js is_flow check_directive is_module_by_decree has_module_syntax
+                has_errors ran_out_of_stack legacy_decorators may_bind_a_parameter_twice
+                has_parse_diagnostics
                 syntax_errors error_pos source_len body jsx_pragmas bases
             ]
             lists: [
-                body_starts modifiers_of_params specifier_uses parens
+                comments mentioned body_starts modifiers_of_params specifier_uses parens
                 jsx_expressions ids numbers exprs stmts types pats pat_props
                 pat_elems fns params type_params classes interfaces aliases members
                 props var_decls calls cases imports import_specs exports
@@ -55,8 +56,8 @@ macro_rules! file_fields {
     };
 }
 
-/// The same for a `BoundIn`, except `symbols`, and `large_tables` and `nested_names`, which are
-/// computed from the numbers of the atoms.
+/// The same for a `BoundIn`, except `symbols` and `this_in_type_literal`, and `large_tables` and
+/// `nested_names`, which are computed from the numbers of the atoms.
 macro_rules! bound_fields {
     ($with:ident) => {
         $with! {
@@ -73,7 +74,7 @@ macro_rules! bound_fields {
                 interface_symbol interface_scope interface_contains_this
                 alias_symbol alias_scope var_stmt assignments case_stmt stmt_flow
                 case_fallthrough import_scope export_scope free_idents alias_idents
-                flow flow_edges flow_shared
+                flow flow_edges flow_shared expr_kinds expr_kind_counts
             ]
             few: [
                 export_stars ambient_modules pattern_ambient_modules
@@ -156,11 +157,8 @@ impl SharedFile {
     }
 }
 
-fn list_in_arena<'s, T: Copy>(list: &[T], arena: &'s Arena) -> ArenaVec<'s, T> {
-    let mut exact = ArenaVec::new_in(arena);
-    exact.reserve_exact(list.len());
-    exact.extend_from_slice(list);
-    exact
+fn list_in_arena<'s, T: Copy>(list: &[T], arena: &'s Arena) -> Fixed<'s, T> {
+    Fixed::copied_in(arena, list)
 }
 
 fn file_on_the_heap(file: &File) -> FileBuilder {
@@ -172,7 +170,7 @@ fn file_on_the_heap(file: &File) -> FileBuilder {
                 $($f: file.$f.to_vec(),)*
                 $($k: file.$k.to_vec(),)*
                 text: Cow::default(),
-                lazy: (),
+                lazy: LazyCells::default(),
             }
         };
     }
@@ -188,7 +186,7 @@ fn file_in_arena<'s>(file: &FileBuilder, arena: &'s Arena, atoms: &Interner<'s>)
                 $($f: ArenaFew::from_iter_in(file.$f.iter().copied(), arena),)*
                 $($k: Cow::Owned(file.$k.clone()),)*
                 text: Cow::default(),
-                lazy: Lazy::new(atoms.session()),
+                lazy: Lazy::new(arena, atoms.session()),
             }
         };
     }
@@ -267,7 +265,7 @@ fn bound_in_arena<'s>(bound: &BoundBuilder, arena: &'s Arena) -> Bound<'s> {
                 },
                 symbols,
                 large_tables: hashbrown::HashMap::with_hasher_in(FxBuild, arena),
-                nested_names: ArenaVec::new_in(arena),
+                nested_names: Fixed::default(),
             }
         };
     }
@@ -525,7 +523,7 @@ fn each_atom_of_lists(file: &mut ListsWithAtoms, f: &mut dyn FnMut(Atom) -> Atom
     }
 }
 
-/// The name of a field in which the two files or their side tables differ.
+/// The name of a field in which the two files or their side tables differ. Both have the atoms of one interner.
 #[cfg(any(debug_assertions, feature = "baselines"))]
 pub fn first_difference(a: (&File, &Bound), b: (&File, &Bound)) -> Option<&'static str> {
     macro_rules! same {
@@ -537,6 +535,8 @@ pub fn first_difference(a: (&File, &Bound), b: (&File, &Bound)) -> Option<&'stat
     }
     macro_rules! files {
         (plain: [$($p:ident)*] lists: [$($l:ident)*] few: [$($f:ident)*] kept: [$($k:ident)*]) => {
+            // A field that is not listed is a compile error.
+            let FileIn { $($p: _,)* $($l: _,)* $($f: _,)* $($k: _,)* text: _, lazy: _ } = a.0;
             $(same!(a.0.$p, b.0.$p, stringify!($p));)*
             $(same!(&a.0.$l[..], &b.0.$l[..], stringify!($l));)*
             $(same!(&a.0.$f[..], &b.0.$f[..], stringify!($f));)*
@@ -546,6 +546,10 @@ pub fn first_difference(a: (&File, &Bound), b: (&File, &Bound)) -> Option<&'stat
     file_fields!(files);
     macro_rules! bounds {
         (plain: [$($p:ident)*] lists: [$($l:ident)*] few: [$($f:ident)*] maps: [$($m:ident)*]) => {
+            let BoundIn {
+                $($p: _,)* $($l: _,)* $($f: _,)* $($m: _,)*
+                symbols: _, large_tables: _, nested_names: _, this_in_type_literal: _,
+            } = a.1;
             $(same!(a.1.$p, b.1.$p, stringify!($p));)*
             $(same!(&a.1.$l[..], &b.1.$l[..], stringify!($l));)*
             $(same!(&a.1.$f[..], &b.1.$f[..], stringify!($f));)*

@@ -1,0 +1,9 @@
+// prettier-ignore
+const a = /** @type {string} */ (x);
+const b = /** @type {string} */ (y);
+f(
+  // prettier-ignore
+  /** @type {A} */ (x  +  1),
+  /** @type {B} */ (y),
+);
+var c = /** @type {D} */ (s.replace(/\)/g, ""));

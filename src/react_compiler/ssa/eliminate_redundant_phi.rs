@@ -50,6 +50,7 @@ fn eliminate_redundant_phi_impl(
             // Matches TS behavior: each phi's operands are rewritten before checking redundancy,
             // so that rewrites from earlier phis in the same block are visible to later phis.
             let block = ir.blocks.get_mut(&block_id).unwrap();
+            let mut has_empty_phi = false;
             block.phis.retain_mut(|phi| {
                 // Remap phis in case operands are from eliminated phis
                 for (_, operand) in phi.operands.iter_mut() {
@@ -71,14 +72,19 @@ fn eliminate_redundant_phi_impl(
                         same = Some(operand.identifier);
                     }
                 }
-                if is_redundant {
-                    let same = same.expect("Expected phis to be non-empty");
+                if let (true, Some(same)) = (is_redundant, same) {
                     rewrites.insert(phi.place.identifier, same);
                     false // remove this phi
                 } else {
+                    has_empty_phi |= is_redundant;
                     true // keep this phi
                 }
             });
+            if has_empty_phi {
+                let invariant =
+                    crate::diagnostics::cold_invariant("Expected phis to be non-empty", None, None);
+                return env.record_diagnostic(invariant.into());
+            }
 
             // Rewrite instructions
             let instruction_ids: HirVec<InstructionId> =

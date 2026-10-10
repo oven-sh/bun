@@ -1,0 +1,7 @@
+
+1 messages lack the help that oxlint has
+
+2 cases have their messages in another order
+
+573 rules, 573 without failures, 0 not implemented
+29880 cases passed, 0 failed, 101 skipped

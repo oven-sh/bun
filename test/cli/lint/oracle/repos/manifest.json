@@ -1,0 +1,8694 @@
+[
+  {
+    "repo": "1111mp/nvm-desktop",
+    "sha": "9adb3849b12faa0e6023b3b6ec54895562716eef",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.86.0",
+      "oxfmt": "0.72.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "src",
+          "scripts"
+        ],
+        "from": "scripts.oxlint:fix (CI runs scripts.oxlint, which adds --type-aware: not run)"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "src"
+        ],
+        "from": "scripts.format:check (frontend-check.yml)"
+      }
+    ],
+    "notes": "Tauri application"
+  },
+  {
+    "repo": "3kh0/hcbscan",
+    "sha": "9e28486ace2855e739392183e824d5f921f04aa1",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.82.0",
+      "oxfmt": "0.67.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "Nuxt application"
+  },
+  {
+    "repo": "Achilng/floral-notepaper",
+    "sha": "69a43aef87d2d8fa90c7a7d929cd113941f1fde3",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.66.0",
+      "oxfmt": "0.51.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.fmt"
+      }
+    ],
+    "notes": "Tauri application; no oxlint configuration file"
+  },
+  {
+    "repo": "actualbudget/actual",
+    "sha": "38de5cadbe8ba14576f10752b9e214fcc6be70c6",
+    "install": "yarn",
+    "pinned": {
+      "oxlint": "1.74.0",
+      "oxfmt": "0.59.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--type-aware",
+          "--quiet"
+        ],
+        "from": "scripts.lint",
+        "notes": "jsPlugins: ./packages/eslint-plugin-actual, typescript-paths, perfectionist, storybook"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "akazwz/smail",
+    "sha": "f1e4946908416a94b2171a16d81440a7f8970551",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.87.0",
+      "oxfmt": "0.72.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--deny-warnings"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "Cloudflare Workers application"
+  },
+  {
+    "repo": "Alice39s/kuma-mieru",
+    "sha": "ffc567919efbd4af3566e1f52b40f6ca27daa9da",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.86.0",
+      "oxfmt": "0.71.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "alii/website",
+    "sha": "d451623596493c6838291656f659afae87c02b40",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [],
+        "from": ".github/workflows/lint.yml, which already runs `bun lint`; eslint is still installed"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": ".github/workflows/lint.yml, which already runs `bun format --check`"
+      }
+    ],
+    "notes": "eslint-config-next; prettier.config.js spreads a shared config; plugin: prettier-plugin-tailwindcss"
+  },
+  {
+    "repo": "AmanVarshney01/create-better-t-stack",
+    "sha": "d36bab454416f4f2e024adb92eca0cbdb2815e60",
+    "install": "bun",
+    "pinned": {
+      "oxlint": "1.81.0",
+      "oxfmt": "0.67.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.check",
+        "notes": "jsPlugins: ./tools/oxlint/anti-slop/index.ts"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "-c",
+          ".oxlintrc.json",
+          "."
+        ],
+        "from": "ours, to look past L1 (nested ESLint configs): -c switches the search for configuration files off in both",
+        "notes": "not their command"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.check"
+      }
+    ]
+  },
+  {
+    "repo": "angular/angular-cli",
+    "sha": "dcf906a6261a00f95cfbdb18cf9065e1c966e182",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "--max-warnings=0"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "ng-dev format (prettier: true in .ng-dev/format.mjs) formats the changed files"
+      }
+    ],
+    "notes": "CI generates the schema types with bazel before linting; not done here: both tools see the same unresolved imports"
+  },
+  {
+    "repo": "antfu-collective/ni",
+    "sha": "2d8c88e9f0d302da75eda36e1a158141714a351e",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "antfu/eslint-config",
+    "sha": "df4d896ed9b493ca0562fdf2c8c0fcd92fd16f6e",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "apify/actor-scraper",
+    "sha": "69ae52e0eee1cd1894bc6f5589281da1c814af50",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.72.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "oxlint.config.ts imports @apify/oxlint-config: not run"
+  },
+  {
+    "repo": "apollographql/apollo-client",
+    "sha": "4be5c07a42265b91e1a427cf0710f426b57d4a59",
+    "install": "bun",
+    "installArgs": [
+      "--no-verify"
+    ],
+    "prepare": [
+      [
+        "bash",
+        "-c",
+        "mkdir -p docs/public && echo '[]' > docs/public/canonical-references.json"
+      ]
+    ],
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "--max-warnings",
+          "0",
+          "src",
+          "--rule",
+          "local-rules/no-internal-import-official-export: off"
+        ],
+        "env": {
+          "EXTENDED_RULES": "1"
+        },
+        "from": "scripts.lint:src",
+        "notes": "that rule starts `node` in ./dist, the build, which is not there: ESLint itself ends with exit 2. Off for both"
+      },
+      {
+        "tool": "eslint",
+        "args": [
+          "--max-warnings",
+          "0",
+          "docs"
+        ],
+        "env": {
+          "EXTENDED_RULES": "1"
+        },
+        "from": "scripts.lint:docs"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format",
+        "notes": "two local plugins: config/prettier/format-jsdoc.js, format-mdx3.js, with parsers of their own"
+      }
+    ],
+    "notes": "eslint.config.mjs imports eslint-local-rules/canonical-references.ts, which imports docs/public/canonical-references.json: generated by `npm run docmodel` (a whole build + api-extractor). None of their scripts is run: `prepare` writes an empty list, so local-rules/valid-inherit-doc reports every reference, for both tools. --no-verify: bun install fails the integrity check of the tarball of github:actions/github-script"
+  },
+  {
+    "repo": "arcjet/arcjet-js",
+    "sha": "d76c7e6e38fbc7b4b490995e8d57ff5533ed0e0a",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint",
+        "notes": "options.typeAware"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "arkham-build/arkham.build",
+    "sha": "a2f42343eb2a47fa36530bb33fb83b24265da53d",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--deny-warnings",
+          "--report-unused-disable-directives",
+          "."
+        ],
+        "from": "scripts.lint",
+        "notes": "options.typeAware, maxWarnings 10"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "askides/aurora",
+    "sha": "dcaa52f5b23ffd7377a8c9830100158b6736db6a",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.77.0",
+      "oxfmt": "0.62.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format:check"
+      }
+    ]
+  },
+  {
+    "repo": "Automattic/mongoose",
+    "sha": "754c8a73e3a086408bac4ab3dc9bef0eb364f5dd",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint (CI runs lint-js and lint-ts: the same with --ext .js --ext .cjs / --ext .ts)"
+      }
+    ]
+  },
+  {
+    "repo": "aws-samples/serverless-full-stack-webapp-starter-kit",
+    "sha": "b31ecae48cea891a43c77cbbbc5e0d1a594c66ef",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.71.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "lint-staged (oxfmt --write <files>)"
+      }
+    ],
+    "notes": "oxlint --config oxlintrc.json: typeAware + typeCheck: not run"
+  },
+  {
+    "repo": "axios/axios",
+    "sha": "1a94bdbdf0518f3adbeada510b747aff80847ed7",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "lib/**/*.js"
+        ],
+        "shell": true,
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "lint-staged runs prettier --write on each file"
+      }
+    ]
+  },
+  {
+    "repo": "bbplayer-app/BBPlayer",
+    "sha": "7b98d8841449547a98588657279f28065477ec79",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.68.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ],
+    "notes": "React Native application; oxlint --type-aware: not run"
+  },
+  {
+    "repo": "BearStudio/start-ui-web",
+    "sha": "a390eefb5f2683e25a5b47138e92cf197d083918",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.36.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format"
+      }
+    ],
+    "notes": "oxlint: six jsPlugins: not run"
+  },
+  {
+    "repo": "bernaferrari/FigmaToCode",
+    "sha": "f5c4831d5de6cffc19a73fe2823c56b4bb551281",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.77.0",
+      "oxfmt": "0.62.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint (test.yml)"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "an .eslintrc.js is left at the root"
+  },
+  {
+    "repo": "bitsocialnet/seedit",
+    "sha": "eaed0a6d7676b70089873e6707b5e7959031b4f2",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.39.0",
+      "oxfmt": "0.24.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--deny-warnings",
+          "src",
+          "electron"
+        ],
+        "from": "scripts.lint, first command"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "src/**/*.{js,ts,tsx} electron/**/*.{js,mjs}"
+        ],
+        "from": "scripts.prettier (the patterns are not quoted)",
+        "shell": true
+      }
+    ],
+    "notes": "React + Electron application"
+  },
+  {
+    "repo": "Blazity/next-enterprise",
+    "sha": "97c4f3ed6be0a5b255d0e71606c7b355138281a9",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint is `next lint`"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "**/*.{js,jsx,ts,tsx}"
+        ],
+        "from": "scripts.prettier"
+      }
+    ],
+    "notes": "plugin: prettier-plugin-tailwindcss"
+  },
+  {
+    "repo": "blopker/alic",
+    "sha": "863f2f52f70e53b9b8f7f45cc8bafd6504360893",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.54.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format-check"
+      }
+    ],
+    "notes": "oxlint: jsPlugins eslint-plugin-solid: not run"
+  },
+  {
+    "repo": "bootstrap-vue-next/bootstrap-vue-next",
+    "sha": "07767892df7f178d502e64562fb562234647651e",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.78.0",
+      "oxfmt": "0.58.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "src"
+        ],
+        "from": "packages/bootstrap-vue-next scripts.test:lint:oxlint",
+        "cwd": "packages/bootstrap-vue-next"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "src",
+          "tests"
+        ],
+        "from": "apps/docs scripts.test:lint:oxlint",
+        "cwd": "apps/docs"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "src"
+        ],
+        "from": "the same, past ox2 A6",
+        "cwd": "packages/bootstrap-vue-next",
+        "ourArgs": [
+          "-c",
+          ".oxlintrc.json"
+        ],
+        "notes": "ours gets -c .oxlintrc.json: what is behind ox2 A6"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "src",
+          "tests"
+        ],
+        "from": "the same, past ox2 A6",
+        "cwd": "apps/docs",
+        "ourArgs": [
+          "-c",
+          ".oxlintrc.json"
+        ],
+        "notes": "ours gets -c .oxlintrc.json: what is behind ox2 A6"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "src/"
+        ],
+        "from": "packages/bootstrap-vue-next scripts.format",
+        "cwd": "packages/bootstrap-vue-next"
+      },
+      {
+        "tool": "oxfmt",
+        "args": [
+          "src/"
+        ],
+        "from": "apps/docs scripts.format",
+        "cwd": "apps/docs"
+      }
+    ],
+    "notes": "eslint.config.ts next to each .oxlintrc.json"
+  },
+  {
+    "repo": "boxyhq/saas-starter-kit",
+    "sha": "abc9b686823cbfb4973c79bc36fea37a3244be6c",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "-c",
+          "eslint.config.cjs",
+          "./"
+        ],
+        "from": "scripts.check-lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "brocoders/nestjs-boilerplate",
+    "sha": "9620f159eefe38f47747d02ab162852367c5472c",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "{src,apps,libs,test}/**/*.ts"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "src/**/*.ts",
+          "test/**/*.ts"
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "castmill/castmill",
+    "sha": "ee3b347c721b798bc1ddd285e541e944a6081c2d",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.80.0",
+      "oxfmt": "0.65.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "packages/dashboard scripts.lint",
+        "cwd": "packages/dashboard"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "packages/device scripts.lint",
+        "cwd": "packages/device"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "packages/platforms/legacy-adapter-player scripts.lint (its own .oxlintrc.json)",
+        "cwd": "packages/platforms/legacy-adapter-player"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "packages/dashboard scripts.format:check",
+        "cwd": "packages/dashboard"
+      },
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "packages/device scripts.format:check",
+        "cwd": "packages/device"
+      }
+    ]
+  },
+  {
+    "repo": "chakra-ui/chakra-ui",
+    "sha": "f799e4d478d31fdae1311fad6c6de7cca47b9d3e",
+    "install": "pnpm",
+    "installArgs": [
+      "--filter",
+      "chakra-ui",
+      "--filter",
+      "@chakra-ui/react"
+    ],
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "packages",
+          "--ext",
+          ".ts,.tsx"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "packages"
+        ],
+        "from": "scripts.format:write"
+      }
+    ],
+    "notes": "DISK: only the dependencies of these workspace packages are installed (--filter), so imports of the others do not resolve, for both tools alike"
+  },
+  {
+    "repo": "chartjs/Chart.js",
+    "sha": "7169e65147a47f3720957a6f156a33c838ab9f57",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "src/**/*.{js,ts}",
+          "test/**/*.js",
+          "docs/**/*.js"
+        ],
+        "from": "scripts.lint-js"
+      },
+      {
+        "tool": "eslint",
+        "args": [
+          "**/*.md"
+        ],
+        "from": "scripts.lint-md"
+      }
+    ],
+    "notes": ".eslintrc.yml, ESLint 8"
+  },
+  {
+    "repo": "CherryHQ/cherry-studio",
+    "sha": "0587b73570de87e26ce0d3094d265993316146c5",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.61.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "oxlint: typeAware, then eslint: not run"
+  },
+  {
+    "repo": "CherryHQ/cherry-studio-app",
+    "sha": "6d60485a73a593fcccd2d8fc4374829193e5ab38",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.76.0",
+      "oxfmt": "0.61.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint, first command (then `expo lint`)"
+      },
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "the same, past ox2 A6",
+        "ourArgs": [
+          "-c",
+          ".oxlintrc.json"
+        ],
+        "notes": "ours gets -c .oxlintrc.json: what is behind ox2 A6"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "Expo application; eslint.config.js next to .oxlintrc.json"
+  },
+  {
+    "repo": "chhoumann/PodNotes",
+    "sha": "d3121d5a60e6b50e162d1abb61973fa15f4b295e",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.68.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "src",
+          "tests",
+          "scripts",
+          ".github",
+          "package.json",
+          "manifest.json",
+          "versions.json",
+          "tsconfig.base.json",
+          "tsconfig.json",
+          "tsconfig.test.json",
+          ".oxlintrc.json",
+          ".oxfmtrc.json",
+          "svelte.config.mjs",
+          "vite.config.ts",
+          "vitest.config.ts",
+          "vitest.e2e.config.ts",
+          "vitest.setup.ts",
+          "obsidian-e2e.config.mjs",
+          "wrangler.jsonc",
+          "docs/mkdocs.yml"
+        ],
+        "from": "scripts.format"
+      }
+    ],
+    "notes": "Obsidian plugin in Svelte; `svelte` in .oxfmtrc.json; oxlint: jsPlugins eslint-plugin-obsidianmd: not run"
+  },
+  {
+    "repo": "CircuitVerse/cv-frontend-vue",
+    "sha": "3caa7e8272dcb023a9f9d93effab881e7b93c595",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.73.0",
+      "oxfmt": "0.32.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "$(find . -name \"*.ts\" -not -path \"*/node_modules/*\") --ignore-path .gitignore"
+        ],
+        "from": "scripts.lint:ci (lint.yml): find .. | xargs oxlint --ignore-path .gitignore",
+        "shell": true
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "$(find v1 -name \"*.ts\") --deny-warnings"
+        ],
+        "from": "scripts.lint:v1:ci (lint.yml): find v1 .. | xargs oxlint --deny-warnings",
+        "shell": true
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "**/*.ts"
+        ],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "no configuration file of either tool; `find | xargs` is written as $(find ..)"
+  },
+  {
+    "repo": "cloudflare/agents",
+    "sha": "661495532b69e64affad5e7bcd6373b4ee6ad3c5",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.71.0",
+      "oxfmt": "0.56.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "cloudflare/ai",
+    "sha": "0e5bc3b2f489e4b8215905812a36fe69d37afb8d",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.71.0",
+      "oxfmt": "0.56.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ],
+    "notes": "32 nested .oxlintrc.json, 26 nested .oxfmtrc.json (one per demo)"
+  },
+  {
+    "repo": "cloudflare/partykit",
+    "sha": "f0a2e97d233f24545b2648aec2ed6a191e11074e",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.62.0",
+      "oxfmt": "0.47.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.check:lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "cloudflare/workers-sdk",
+    "sha": "daae4351fb517f8a93106a00c6a2a5b31600242a",
+    "install": "pnpm",
+    "pinned": {
+      "oxlint": "1.56.0",
+      "oxfmt": "0.68.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--deny-warnings",
+          "--type-aware"
+        ],
+        "from": "scripts.check:lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.prettify"
+      }
+    ]
+  },
+  {
+    "repo": "Comfy-Org/ComfyUI_frontend",
+    "sha": "ef9481abcec3f45b73396568818fc0ba976657a4",
+    "install": "pnpm",
+    "pinned": {
+      "oxlint": "1.77.0",
+      "oxfmt": "0.59.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          ".",
+          "--type-aware"
+        ],
+        "from": "scripts.oxlint"
+      },
+      {
+        "tool": "eslint",
+        "args": [
+          "--concurrency",
+          "auto"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "!apps/**",
+          "!packages/**",
+          "!tools/test-recorder/**"
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "cpvalente/ontime",
+    "sha": "2b5f017c14c36cc109256196c2286c9a9206ea0a",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.63.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format:check (test.yml)"
+      }
+    ],
+    "notes": "oxlint --quiet --type-aware in each package: not run"
+  },
+  {
+    "repo": "d3/d3",
+    "sha": "ca958d45217b4c15332d971b935451a6d4c978f4",
+    "install": "yarn1",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "src",
+          "test"
+        ],
+        "from": "scripts.test"
+      }
+    ],
+    "notes": ".eslintrc.json, ESLint 8"
+  },
+  {
+    "repo": "date-fns/date-fns",
+    "sha": "717ce0a807ea4c6b540d015b5c408723175b2838",
+    "install": "pnpm",
+    "pinned": {
+      "oxlint": "1.85.0",
+      "oxfmt": "0.70.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "mise.toml tasks.lint (CI: mise //:lint)",
+        "notes": "options.typeAware: true, but no typed rule is on"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "mise.toml tasks.format"
+      }
+    ],
+    "notes": "oxlint 1.85.0 is newer than the judge: theirs is the judge"
+  },
+  {
+    "repo": "destruc7i0n/crafting",
+    "sha": "f2a96ff9bad1351c05cade82680be09d5c0349d4",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.60.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ],
+    "notes": "oxlint: typeAware + typeCheck: not run"
+  },
+  {
+    "repo": "devlikeapro/waha",
+    "sha": "90ba445a0e765701c8910f0fac08176250c3e0fd",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.13.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--deny-warnings"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "notes": "NestJS server; Prettier 1.19: not run"
+  },
+  {
+    "repo": "diced/zipline",
+    "sha": "a8b0ff1e50b8830c933c67271eab808cdc063755",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.78.0",
+      "oxfmt": "0.63.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "scripts/lint.ts (scripts.validate)"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts/validate.ts (scripts.validate)"
+      }
+    ],
+    "notes": "Next.js / Fastify server"
+  },
+  {
+    "repo": "digirati-co-uk/iiif-manifest-editor",
+    "sha": "1a6a3ffbd9adcdb10995eda3cae3643cd139528f",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.77.0",
+      "oxfmt": "0.62.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          ".",
+          "--deny-warnings"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "digitalservicebund/ris-search",
+    "sha": "dbdee2451ba821740cd89702651f33603a7d54e3",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.86.0",
+      "oxfmt": "0.71.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--max-warnings=0"
+        ],
+        "from": "frontend scripts.style:check, second command",
+        "cwd": "frontend"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "--max-warnings=0"
+        ],
+        "from": "api-docs scripts.style:check, second command",
+        "cwd": "api-docs"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "frontend scripts.style:check, first command",
+        "cwd": "frontend"
+      },
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "api-docs scripts.style:check, first command",
+        "cwd": "api-docs"
+      }
+    ],
+    "notes": "Nuxt application"
+  },
+  {
+    "repo": "directus/directus",
+    "sha": "d3c9a8bb0c0096148c4740ce908e76c24f2413a0",
+    "install": "pnpm",
+    "installArgs": [
+      "--filter",
+      "directus-monorepo"
+    ],
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ],
+    "notes": "DISK: only the dependencies of these workspace packages are installed (--filter), so imports of the others do not resolve, for both tools alike"
+  },
+  {
+    "repo": "discordjs/discord.js",
+    "sha": "4dc1acc60497c21292ae68bdbb0a83a79d9004fe",
+    "install": "pnpm",
+    "installArgs": [
+      "--filter",
+      "@discordjs/discord.js",
+      "--filter",
+      "discord.js",
+      "--filter",
+      "@discordjs/builders",
+      "--filter",
+      "@discordjs/rest",
+      "--filter",
+      "@discordjs/collection"
+    ],
+    "lint": [
+      {
+        "tool": "eslint",
+        "cwd": "packages/discord.js",
+        "args": [
+          "scripts",
+          "src",
+          "typings"
+        ],
+        "env": {
+          "TIMING": "1"
+        },
+        "from": "packages/discord.js scripts.lint"
+      },
+      {
+        "tool": "eslint",
+        "cwd": "packages/builders",
+        "args": [
+          "src",
+          "__tests__"
+        ],
+        "env": {
+          "TIMING": "1"
+        },
+        "from": "packages/builders scripts.lint"
+      },
+      {
+        "tool": "eslint",
+        "cwd": "packages/rest",
+        "args": [
+          "src",
+          "__tests__"
+        ],
+        "env": {
+          "TIMING": "1"
+        },
+        "from": "packages/rest scripts.lint"
+      },
+      {
+        "tool": "eslint",
+        "cwd": "packages/collection",
+        "args": [
+          "src",
+          "__tests__"
+        ],
+        "env": {
+          "TIMING": "1"
+        },
+        "from": "packages/collection scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "cwd": "packages/discord.js",
+        "args": [
+          "."
+        ],
+        "from": "packages/discord.js scripts.format"
+      },
+      {
+        "tool": "prettier",
+        "cwd": "packages/builders",
+        "args": [
+          "."
+        ],
+        "from": "packages/builders scripts.format"
+      }
+    ],
+    "notes": "turbo runs lint of each package; five of them here. Their --format=pretty is eslint-formatter-pretty; ours is another format of the same name. DISK: only the dependencies of these workspace packages are installed (--filter), so imports of the others do not resolve, for both tools alike"
+  },
+  {
+    "repo": "DIYgod/RSSHub",
+    "sha": "095aa71d8b31a6430c5b80b0111e0443f5db8dac",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--type-aware",
+          "."
+        ],
+        "from": "scripts.lint",
+        "notes": "8 jsPlugins; eslint.config.mjs next to .oxlintrc.json"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "--type-aware",
+          "-c",
+          ".oxlintrc.json",
+          "."
+        ],
+        "from": "scripts.lint + `-c .oxlintrc.json` on both sides: `bun lint` prefers eslint.config.* to .oxlintrc.json in one directory"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "Doist/todoist-mcp",
+    "sha": "c9bcda17a6d8fac13997813a6223b8974d7178ab",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.70.0",
+      "oxfmt": "0.55.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "src",
+          "scripts"
+        ],
+        "from": "scripts.check, first command"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.check, second command"
+      }
+    ],
+    "notes": "server"
+  },
+  {
+    "repo": "drawdb-io/drawdb",
+    "sha": "d9c0d39c6ae85d30058f3c32fc1af571dc25e456",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          ".",
+          "--ext",
+          "js,jsx",
+          "--report-unused-disable-directives",
+          "--max-warnings",
+          "0"
+        ],
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "dubinc/dub",
+    "sha": "9f7ee5d7bb84a97feef9dd56503090dd2390f00c",
+    "install": "pnpm",
+    "installArgs": [
+      "--filter",
+      "dub-monorepo"
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "**/*.{ts,tsx,md}"
+        ],
+        "from": "scripts.prettier-check"
+      }
+    ],
+    "notes": "plugins: prettier-plugin-organize-imports, prettier-plugin-tailwindcss. Only the dependencies of the root package are installed"
+  },
+  {
+    "repo": "dyad-sh/dyad",
+    "sha": "a191e7cafb97f88f5fa934723ff7e102eacdfdb8",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.41.0",
+      "oxfmt": "0.26.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint (npx oxlint --fix)"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "-c",
+          ".oxlintrc.json",
+          "."
+        ],
+        "from": "ours, to look past L1 (nested ESLint configs): -c switches the search for configuration files off in both",
+        "notes": "not their command"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.fmt"
+      }
+    ]
+  },
+  {
+    "repo": "eggjs/egg",
+    "sha": "e9cc326c1a1b6f2d953162747e37dd3a7a7088dc",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.87.0",
+      "oxfmt": "0.72.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--quiet"
+        ],
+        "from": "scripts.lint without --type-aware --type-check",
+        "notes": "their script: oxlint --type-aware --type-check --quiet. Not installed: no lock file (utoo), disk"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.fmtcheck"
+      }
+    ],
+    "notes": "no lock file (utoo; .utoo.toml catalog: oxfmt ^0.70.0, oxlint ^1.60.0, oxlint-tsgolint ^7.0.2003)"
+  },
+  {
+    "repo": "eikowagenknecht/lootscraper",
+    "sha": "5f45c99a196689f9924b8d6b8869f92267dfb704",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.82.0",
+      "oxfmt": "0.67.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint:oxlint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "./src",
+          "./tests"
+        ],
+        "from": "scripts.lint:oxfmt"
+      }
+    ]
+  },
+  {
+    "repo": "electron-userland/electron-builder",
+    "sha": "4b6e63f3490a50806839fa44fb790612cf5da1a2",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.68.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "packages/**/*.{ts,js}",
+          "website/{docs,scripts,src}/**/*.{ts,js}",
+          "test/{vitest-scripts,src}/**/*.ts"
+        ],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "oxlint --type-aware: not run"
+  },
+  {
+    "repo": "electron/apps",
+    "sha": "2b91c1f05789ce87239cf11f558a00d434eddf4f",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.59.0",
+      "oxfmt": "0.44.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint, second command"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint, first command"
+      }
+    ]
+  },
+  {
+    "repo": "electron/asar",
+    "sha": "020f64eccfe60bf7865db60d2b9a4b9f56469eff",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.44.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint, first command"
+      }
+    ],
+    "notes": "oxlint: typeAware: not run"
+  },
+  {
+    "repo": "electron/electron",
+    "sha": "69ac0e1ed1fdb872dd0b74e625f51306612fb489",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.80.0",
+      "oxfmt": "0.42.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "build",
+          "default_app",
+          "lib",
+          "npm",
+          "script",
+          "spec"
+        ],
+        "from": "script/lint.js --js: the .js .ts .mjs .mts files of these roots, by name",
+        "notes": "theirs passes file names in chunks; we pass the roots"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "docs/fiddles"
+        ],
+        "from": "scripts.lint:docs-fiddles"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "{lib,spec,script,build,default_app,npm,typings}/**/*.{js,ts,mjs,mts,cjs}"
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "electron/fiddle",
+    "sha": "a63225b53664fd750828c29aa35de4b4d0eb0b28",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.81.0",
+      "prettier": "3.6.2"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint:js"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "src",
+          "static/**/*.js"
+        ],
+        "from": "scripts.format",
+        "theirArgs": [
+          "--experimental-cli"
+        ],
+        "notes": "`--experimental-cli` only for theirs: bun format refuses the flag (exit 2): this run compares the bytes"
+      }
+    ]
+  },
+  {
+    "repo": "electron/fiddle-core",
+    "sha": "19f2e095dcb3318abb760664671582dc70748e6b",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.44.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint, first command"
+      }
+    ],
+    "notes": "oxlint: typeAware: not run"
+  },
+  {
+    "repo": "electron/forge",
+    "sha": "3f9d754a8ffbd4cc2ea0a26fc2dcfa0070d67764",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.82.0",
+      "oxfmt": "0.41.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint:js"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint:js"
+      }
+    ]
+  },
+  {
+    "repo": "electron/packager",
+    "sha": "b313e1a9a2029f29d7704fc025c80c2907367658",
+    "install": "yarn",
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint",
+        "notes": "options.typeAware"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "electron/rebuild",
+    "sha": "d62d5a2c9dbee5dd27234490f695412d36ca65e2",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.42.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.lint, second command"
+      }
+    ],
+    "notes": "oxlint: typeAware: not run"
+  },
+  {
+    "repo": "electron/update.electronjs.org",
+    "sha": "cfb156bc2516c3008c494d8a55f4043aa07dbe2a",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.44.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint, first command"
+      }
+    ],
+    "notes": "server; oxlint: typeAware: not run"
+  },
+  {
+    "repo": "electron/website",
+    "sha": "d884397e65a256acbb541a01a3aab07e3e0b1c09",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.57.0",
+      "oxfmt": "0.42.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "docusaurus.config.ts",
+          "src",
+          "scripts"
+        ],
+        "from": "scripts.lint:oxlint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint:fmt"
+      }
+    ]
+  },
+  {
+    "repo": "element-plus/element-plus",
+    "sha": "ed31f8d95ae36279c46fafd1c4c0744e57faa9fa",
+    "install": "pnpm",
+    "installArgs": [
+      "--filter",
+      ".",
+      "--filter",
+      "@element-plus/eslint-config"
+    ],
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          ".",
+          "--ext",
+          ".vue,.js,.ts,.jsx,.tsx,.md,.json",
+          "--max-warnings",
+          "0",
+          "--concurrency=auto"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format",
+        "notes": "their script has --experimental-cli, which bun format refuses (exit 2): left out for both"
+      }
+    ],
+    "notes": "DISK: only the dependencies of these workspace packages are installed (--filter), so imports of the others do not resolve, for both tools alike"
+  },
+  {
+    "repo": "elysiajs/elysia",
+    "sha": "e037eca710e7ad193be09cc6615ab0dbe54af914",
+    "install": "bun",
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "no script; .prettierrc"
+      }
+    ]
+  },
+  {
+    "repo": "emdash-cms/emdash",
+    "sha": "c16e2a6ad84e42201477954fac0ee283616e4259",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.59.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "--ignore-path",
+          ".gitignore"
+        ],
+        "from": "scripts.format:check, first command (format.yml)"
+      }
+    ],
+    "notes": "oxlint: jsPlugins @e18e/eslint-plugin, --type-aware: not run"
+  },
+  {
+    "repo": "epicweb-dev/epic-stack",
+    "sha": "64ca647630e15f71e6782b622ab0112c4b428f1f",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "eslint-stylistic/eslint-stylistic",
+    "sha": "7736997ad57cf9c6e4b324c37534cfb47d187003",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "eslint/eslint",
+    "sha": "b92decf8ead7cc4082a18a4a0ab28f3c7c589887",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "bin": "bin/eslint.js",
+        "args": [
+          "--ignore-pattern",
+          "docs/**"
+        ],
+        "from": "Makefile.js target.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.fmt"
+      }
+    ]
+  },
+  {
+    "repo": "excalidraw/excalidraw",
+    "sha": "4c00f31ddcc20086bac1020428819fe0b9a30bce",
+    "install": "yarn1",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "--max-warnings=0",
+          "--ext",
+          ".js,.ts,.tsx",
+          "."
+        ],
+        "from": "scripts.test:code"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "**/*.{css,scss,json,md,html,yml}",
+          "--ignore-path=.eslintignore"
+        ],
+        "from": "scripts.prettier"
+      }
+    ],
+    "notes": ".eslintrc.json that extends packages, ESLint 7, Prettier 2"
+  },
+  {
+    "repo": "expressjs/express",
+    "sha": "9efc29e280018dafc1f0617f3a3d28f4e463b7be",
+    "install": "bun",
+    "installArgs": [
+      "--no-save"
+    ],
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "facebook/docusaurus",
+    "sha": "26d988c76b1d2b2005dfde4063be807491d601d8",
+    "install": "pnpm",
+    "pinned": {
+      "oxfmt": "0.47.0"
+    },
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "--report-unused-disable-directives",
+          "**/*.{js,jsx,ts,tsx,mjs}"
+        ],
+        "from": "scripts.lint:js"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "fastify/fastify",
+    "sha": "5c081d4b7237f0eb2db9f1204dc6400e3aa1325e",
+    "install": "bun",
+    "installArgs": [
+      "--no-save"
+    ],
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [],
+        "from": "scripts.lint:eslint"
+      }
+    ]
+  },
+  {
+    "repo": "fastify/fastify-vite",
+    "sha": "7aae5953c628af5a0fb9ce28485540a854503423",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.74.0",
+      "oxfmt": "0.55.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "-c",
+          ".oxlintrc.json",
+          "."
+        ],
+        "from": "ours, to look past L1 (nested ESLint configs): -c switches the search for configuration files off in both",
+        "notes": "not their command"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "Flowm/satvis",
+    "sha": "32e8cadff1f6ca68be0204db3080c376875206e0",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.86.0",
+      "oxfmt": "0.71.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--disable-nested-config"
+        ],
+        "from": "scripts.lint:web, first command"
+      },
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "worker scripts.lint",
+        "cwd": "worker"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "--disable-nested-config"
+        ],
+        "from": "scripts.lint:web, second command"
+      },
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "worker scripts.lint",
+        "cwd": "worker"
+      }
+    ],
+    "notes": "Vue application + worker"
+  },
+  {
+    "repo": "formatjs/formatjs",
+    "sha": "dbf3c805152de7c04539334b75dabd44886e36eb",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.86.0",
+      "oxfmt": "0.71.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "-c",
+          ".oxlintrc.json"
+        ],
+        "from": "oxlint-ecosystem-ci; theirs: bazel run //:oxlint -- --config .oxlintrc.json on staged files (lefthook.yml)"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "oxlint-ecosystem-ci; theirs: bazel run //:oxfmt on staged files (lefthook.yml)"
+      }
+    ]
+  },
+  {
+    "repo": "formbricks/formbricks",
+    "sha": "27ca48e29e45150e4582470e468a0e37a7c42d57",
+    "install": "pnpm",
+    "installArgs": [
+      "--filter",
+      "formbricks"
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "plugins: @trivago/prettier-plugin-sort-imports, prettier-plugin-sort-json, prettier-plugin-tailwindcss. Only the dependencies of the root package are installed"
+  },
+  {
+    "repo": "franciscoBSalgueiro/en-croissant",
+    "sha": "23f83142fcbd4d3af60a524855defe8c9a5703fe",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.55.0",
+      "oxfmt": "0.40.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint:ci (test.yml), without --format=github"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.lint:ci (test.yml)"
+      }
+    ],
+    "notes": "Tauri application"
+  },
+  {
+    "repo": "fuma-nama/fumadocs",
+    "sha": "3bf99285a95234aa2fdbea08101ac87b7a0d1625",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.86.0",
+      "oxfmt": "0.71.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "packages/core scripts.lint (turbo run lint)",
+        "cwd": "packages/core"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "packages/radix-ui scripts.lint",
+        "cwd": "packages/radix-ui"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "packages/openapi scripts.lint",
+        "cwd": "packages/openapi"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "packages/mdx scripts.lint",
+        "cwd": "packages/mdx"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "generalaction/emdash",
+    "sha": "89107c10164daac009614bc10a226eeceb9afd70",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.51.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "apps/emdash-desktop scripts.format:check",
+        "cwd": "apps/emdash-desktop"
+      },
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "apps/workspace-server scripts.format:check",
+        "cwd": "apps/workspace-server"
+      }
+    ],
+    "notes": "Electron application; oxlint: typeAware + a jsPlugin of theirs: not run"
+  },
+  {
+    "repo": "geoman-io/leaflet-geoman",
+    "sha": "df1591cf4b298607125db33ffb73b19012ebc5ef",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.82.0",
+      "oxfmt": "0.67.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "src",
+          "demo",
+          "cypress",
+          "test",
+          "test-page.ts",
+          "bundle.mts",
+          "vitest.config.ts",
+          "cypress.config.ts"
+        ],
+        "from": "scripts.lint:check, first command"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "src",
+          "demo",
+          "cypress",
+          "test",
+          "test-page.ts",
+          "bundle.mts",
+          "vitest.config.ts",
+          "cypress.config.ts"
+        ],
+        "from": "scripts.lint:check, second command"
+      }
+    ]
+  },
+  {
+    "repo": "getpaseo/paseo",
+    "sha": "29db2b79809fc032860ff4e8ee360fbe0073c3e9",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.46.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "oxlint: typeAware: not run"
+  },
+  {
+    "repo": "getsentry/sentry-electron",
+    "sha": "a09e5efba931dd1713c83567eac29748e217adc4",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.32.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "{scripts,src,test,examples}/**/*.{ts,js}"
+        ],
+        "from": "scripts.lint:oxfmt"
+      }
+    ],
+    "notes": "oxlint: options.typeAware + jsPlugins @sentry/eslint-plugin-sdk: needs an installation: not run"
+  },
+  {
+    "repo": "getsentry/sentry-javascript",
+    "sha": "1dffc6e27dbcad96ff62c1a8c264d4d00504c44f",
+    "install": "yarn1",
+    "pinned": {
+      "oxlint": "1.75.0",
+      "oxfmt": "0.70.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "getsentry/sentry-javascript-bundler-plugins",
+    "sha": "3785f8c3ada1472182d81084a6b4f0f221453c35",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.33.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.check:formatting"
+      }
+    ],
+    "notes": "oxlint: typeAware + jsPlugins: not run"
+  },
+  {
+    "repo": "getsentry/warden",
+    "sha": "1ee135e791273f3c38ef88439d76af1850cd4ba3",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.66.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "GitbookIO/gitbook",
+    "sha": "d685660e1d5a459fc53587ae28b0c63b96c0cffd",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.78.0",
+      "oxfmt": "0.62.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--quiet"
+        ],
+        "from": "scripts.lint (ci.yaml)"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format:check (ci.yaml)"
+      }
+    ],
+    "notes": "Next.js application; sortTailwindcss, sortImports"
+  },
+  {
+    "repo": "glide-browser/glide",
+    "sha": "c11e9e6a6f0c878507bb429c92b9a21ea7172b1e",
+    "install": "pnpm",
+    "pinned": {
+      "oxlint": "1.46.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts/lint.mts",
+        "notes": "jsPlugins: eslint-plugin-mozilla, ./.oxlint-plugin.mjs"
+      }
+    ],
+    "format": []
+  },
+  {
+    "repo": "golevelup/nestjs",
+    "sha": "503972ed78192ced08d8d5b16fa3f99ab6210736",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.77.0",
+      "oxfmt": "0.42.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format:check"
+      }
+    ]
+  },
+  {
+    "repo": "Grafikart/Grafikart.fr",
+    "sha": "990714b6722afb41cbed2187263c7ab1f88f873d",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.48.0",
+      "oxfmt": "0.33.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.check"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "graphql/graphql-js",
+    "sha": "ee5ce41d4b68d1852306d3b56dba2cbbb6c43fea",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "--max-warnings",
+          "0",
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.prettier"
+      }
+    ]
+  },
+  {
+    "repo": "H4ad/serverless-adapter",
+    "sha": "f602f4d6fcb7481de833f12ac3e6011d0ee7f1b0",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.68.0",
+      "oxfmt": "0.53.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "./src/",
+          "./test/"
+        ],
+        "from": "scripts.lint, first command"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "./src/",
+          "./test/"
+        ],
+        "from": "scripts.lint, second command"
+      }
+    ]
+  },
+  {
+    "repo": "hackclub/workshops",
+    "sha": "8334d6f5beb02b401afa427c486405826dfe0be1",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.85.0",
+      "oxfmt": "0.70.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.fmt:check"
+      }
+    ],
+    "notes": "Next.js application"
+  },
+  {
+    "repo": "hantsy/nestjs-rest-sample",
+    "sha": "3ba6dadac9360668f3f9ae81534384c62a1615f1",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.86.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "src",
+          "test"
+        ],
+        "from": "scripts.lint (`oxlint src test --fix`)"
+      }
+    ],
+    "notes": "no oxlint configuration file; Prettier for the format"
+  },
+  {
+    "repo": "HarperFast/harper",
+    "sha": "b6b5edd12c094099c1442616b6c9d63eb16ae2ab",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.86.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--deny-warnings",
+          "."
+        ],
+        "from": "scripts.lint"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "--quiet",
+          "."
+        ],
+        "from": "scripts.lint:required"
+      }
+    ],
+    "notes": "prettier.config.mjs imports @harperfast/code-guidelines/prettier: needs an installation: not run"
+  },
+  {
+    "repo": "hedgedoc/hedgedoc",
+    "sha": "5dd94d5449e52835ab034d4da21773cad08ebf51",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.65.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "src",
+          "test"
+        ],
+        "from": "backend scripts.format (lint.yml: turbo run format)",
+        "cwd": "backend"
+      },
+      {
+        "tool": "oxfmt",
+        "args": [
+          "src",
+          "cypress",
+          "oxlint-rules"
+        ],
+        "from": "frontend scripts.format",
+        "cwd": "frontend"
+      },
+      {
+        "tool": "oxfmt",
+        "args": [
+          "src"
+        ],
+        "from": "commons scripts.format",
+        "cwd": "commons"
+      }
+    ],
+    "notes": "oxlint: typeAware + typeCheck in each package: not run"
+  },
+  {
+    "repo": "hexlet-basics/hexlet-basics",
+    "sha": "6a91bef2164ee188863f5a6326a4521009ca7092",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.70.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format"
+      }
+    ],
+    "notes": "oxlint.config.ts, typeAware: not run"
+  },
+  {
+    "repo": "heyhuynhgiabuu/proxypal",
+    "sha": "7b9331e1b6c145397014407c33cfb220b2a2b7a5",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.34.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "Tauri + Solid; oxlint.config.mjs imports @nkzw/oxlint-config: not run"
+  },
+  {
+    "repo": "highlightjs/highlight.js",
+    "sha": "fc3f06392f189354eed922973635ab9e9268b983",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "src/*.js",
+          "src/lib/*.js",
+          "demo/*.js",
+          "tools/**/*.js",
+          "--ignore-pattern",
+          "vendor"
+        ],
+        "shell": true,
+        "from": "scripts.lint"
+      }
+    ],
+    "notes": ".eslintrc.js, ESLint 8"
+  },
+  {
+    "repo": "homarr-labs/homarr",
+    "sha": "ad15cfc3bf391f7152035d263926265c28f6631c",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.73.0",
+      "oxfmt": "0.58.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "apps/nextjs scripts.lint (ci.yml: turbo run lint)",
+        "cwd": "apps/nextjs"
+      },
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "packages/api scripts.lint",
+        "cwd": "packages/api"
+      },
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "packages/widgets scripts.lint",
+        "cwd": "packages/widgets"
+      },
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "apps/docs scripts.lint (its own .oxlintrc.json)",
+        "cwd": "apps/docs"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "apps/nextjs scripts.format (turbo format -- --check)",
+        "cwd": "apps/nextjs"
+      },
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "packages/api scripts.format",
+        "cwd": "packages/api"
+      },
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "packages/widgets scripts.format",
+        "cwd": "packages/widgets"
+      }
+    ],
+    "notes": "Next.js application, turbo: the same scripts in ~50 packages"
+  },
+  {
+    "repo": "HoshinoSuzumi/chronoframe",
+    "sha": "ef47a5bbdf2d0e4b062cae032d3b7c365ae55f63",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.69.0",
+      "oxfmt": "0.54.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "-c",
+          "../../.oxlintrc.json",
+          "src"
+        ],
+        "from": "packages/webgl-image scripts.lint",
+        "cwd": "packages/webgl-image"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.fmt:check"
+      }
+    ],
+    "notes": "Nuxt application"
+  },
+  {
+    "repo": "huggingface/huggingface.js",
+    "sha": "8da22fbde428e965ff381d833716dd8db8d9d562",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.26.0"
+    },
+    "lint": [],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "package.json",
+          ".vscode",
+          ".eslintrc.cjs",
+          "e2e",
+          ".github",
+          "*.md",
+          ".devcontainer",
+          ".oxfmtrc.json"
+        ],
+        "from": "scripts.format",
+        "shell": true
+      },
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "packages/hub scripts.format",
+        "cwd": "packages/hub"
+      },
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "packages/inference scripts.format",
+        "cwd": "packages/inference"
+      },
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "packages/tasks scripts.format",
+        "cwd": "packages/tasks"
+      }
+    ],
+    "notes": "ESLint 8 with .eslintrc.cjs: not run"
+  },
+  {
+    "repo": "huozhi/bunchee",
+    "sha": "e89ab62c23642b7a2787a49633aa4776614dd316",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.60.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "hyperlane-xyz/hyperlane-explorer",
+    "sha": "2f30510c55a092b731222e9af9906cdf9d8d6bce",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.77.0",
+      "oxfmt": "0.62.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "./src"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "./src"
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "ietf-tools/purple",
+    "sha": "845ccbc54207d4bc0ff898a64c73151d843a281b",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.67.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "test.yml: client/node_modules/.bin/oxfmt --check . (at the root; the only .oxfmtrc.json is client/.oxfmtrc.json)"
+      }
+    ],
+    "notes": "Django + Nuxt; oxlint: typeAware: not run"
+  },
+  {
+    "repo": "immerjs/immer",
+    "sha": "8848a5b16938e5681a890d73de7bda24b5080498",
+    "install": "yarn1",
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "pretty-quick on commit; .prettierrc"
+      }
+    ]
+  },
+  {
+    "repo": "InBrowserApp/InBrowserApp",
+    "sha": "8ea79e56ff986cf4369da35d6a73f990c049efc3",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.58.0",
+      "oxfmt": "0.56.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "irsyadadl/intentui",
+    "sha": "148acd77308d4a13b31b2ae2846d243b486c1f60",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.87.0",
+      "oxfmt": "0.72.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint (ci.yml)"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format, second command"
+      }
+    ]
+  },
+  {
+    "repo": "ixartz/Next-js-Boilerplate",
+    "sha": "b83157a8018f55b926a3c25a4b7a7e14b0dfbc35",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--type-aware",
+          "--type-check",
+          "."
+        ],
+        "from": "scripts.lint: `ultracite check --type-aware --type-check`, which runs oxlint and oxfmt on `.`",
+        "notes": "oxlint.config.ts imports ultracite/oxlint/{core,react,next,vitest}"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint (ultracite check)",
+        "notes": "oxfmt.config.ts extends ultracite/oxfmt; sortImports, sortTailwindcss {stylesheet}"
+      }
+    ]
+  },
+  {
+    "repo": "jakejarvis/jarv.is",
+    "sha": "3baffbbd293ff3d054275fee083f006897c4d7d0",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.71.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.fmt"
+      }
+    ],
+    "notes": "`next typegen && oxlint`, typeAware + typeCheck: needs an installation and generated types: not run"
+  },
+  {
+    "repo": "Jazee6/cloudflare-ai-web",
+    "sha": "29a32e05bc2bf65609bc6af1d1181d6cd5091f53",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.81.0",
+      "oxfmt": "0.66.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.fmt:check"
+      }
+    ],
+    "notes": "no configuration file of either tool"
+  },
+  {
+    "repo": "jestjs/jest",
+    "sha": "61050e9323e742539dc2360236671110e37329e6",
+    "install": "yarn",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          ".",
+          "--ext",
+          "js,jsx,cjs,mjs,ts,tsx,md",
+          "--concurrency",
+          "auto"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          ".",
+          "!**/*.{js,jsx,cjs,mjs,ts,tsx}"
+        ],
+        "from": "scripts.lint:prettier-script"
+      }
+    ]
+  },
+  {
+    "repo": "jonluca/mimessage",
+    "sha": "d4dff855bce6519bd2d0ba82dab7f659fd02a045",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.80.0",
+      "oxfmt": "0.65.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--deny-warnings"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "Electron + Next.js application"
+  },
+  {
+    "repo": "jpedroschmitz/typescript-nextjs-starter",
+    "sha": "e48ee85c23948f9e90225845afab4a86aec55421",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.87.0",
+      "oxfmt": "0.72.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "lint-staged (`oxlint --fix`); scripts.lint adds --type-aware: not run"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format:ci"
+      }
+    ],
+    "notes": "sortTailwindcss, sortImports"
+  },
+  {
+    "repo": "jquery/jquery",
+    "sha": "c2f27864e4ffc2d1409c289fcb9a42b6165dfeaf",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint:dev"
+      }
+    ]
+  },
+  {
+    "repo": "jumpserver/luna",
+    "sha": "607c51c58f114a23da0e28e5f57d1f4125ff4f4a",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.79.0",
+      "oxfmt": "0.61.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint:oxlint (build.yml: lint:check)"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "the same, past ox2 A6",
+        "ourArgs": [
+          "-c",
+          ".oxlintrc.json"
+        ],
+        "notes": "ours gets -c .oxlintrc.json: what is behind ox2 A6"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "{ui,packages,electron,applets}/**/*.{js,ts,tsx,jsx,vue,css,scss,less,html,md,json,yml,yaml}"
+        ],
+        "from": "scripts.fmt:check"
+      }
+    ],
+    "notes": "oxlint && eslint \"**/*.vue\": eslint.config.mjs (@antfu/eslint-config) next to .oxlintrc.json"
+  },
+  {
+    "repo": "kailong321200875/vue-element-plus-admin",
+    "sha": "9047610a7ba478174a528916bff1ca44dcadc119",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.78.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "notes": "Vue application; Prettier for the format: not mine"
+  },
+  {
+    "repo": "karakeep-app/karakeep",
+    "sha": "75aeaaa4eb71b1d3143d7bdc6b88c66fbcfb5fea",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.60.0",
+      "oxfmt": "0.45.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--ignore-path=../../.gitignore",
+          "."
+        ],
+        "from": "apps/web scripts.lint (turbo lint)",
+        "cwd": "apps/web"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "--ignore-path=../../.gitignore",
+          "."
+        ],
+        "from": "apps/workers scripts.lint (turbo lint)",
+        "cwd": "apps/workers"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "--ignore-path=../../.gitignore",
+          "."
+        ],
+        "from": "apps/mobile scripts.lint (turbo lint)",
+        "cwd": "apps/mobile"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "--ignore-path=../../.gitignore",
+          "."
+        ],
+        "from": "apps/browser-extension scripts.lint (turbo lint)",
+        "cwd": "apps/browser-extension"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "--ignore-path=../../.gitignore",
+          "."
+        ],
+        "from": "packages/trpc scripts.lint (turbo lint)",
+        "cwd": "packages/trpc"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "--ignore-path=../../.gitignore",
+          "."
+        ],
+        "from": "packages/shared scripts.lint (turbo lint)",
+        "cwd": "packages/shared"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "--ignore-path=../../.gitignore",
+          "."
+        ],
+        "from": "apps/web scripts.format",
+        "cwd": "apps/web"
+      },
+      {
+        "tool": "oxfmt",
+        "args": [
+          "--ignore-path=../../.gitignore",
+          "."
+        ],
+        "from": "apps/workers scripts.format",
+        "cwd": "apps/workers"
+      },
+      {
+        "tool": "oxfmt",
+        "args": [
+          "--ignore-path=../../.gitignore",
+          "."
+        ],
+        "from": "packages/trpc scripts.format",
+        "cwd": "packages/trpc"
+      }
+    ],
+    "notes": "20 nested .oxlintrc.json that extend ../../tooling/oxlint/*.json; .oxfmtrc.json keeps importOrder* keys of a Prettier plugin, sortTailwindcss {config, functions}"
+  },
+  {
+    "repo": "kareemmahlees/tablex",
+    "sha": "bb435f6132c60585d761c958579d733c362f2c65",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.63.0",
+      "oxfmt": "0.48.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.fmt:fix"
+      }
+    ],
+    "notes": "sortTailwindcss: {}"
+  },
+  {
+    "repo": "Kilo-Org/cloud",
+    "sha": "2084412d43e8acf90ed4bfdc4f30ce7cd31aa8df",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.40.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "oxlint: options.typeAware + jsPlugins (local and eslint-plugin-sonarjs, oxlint-plugin-react-native): needs an installation: not run"
+  },
+  {
+    "repo": "Kiranism/next-shadcn-dashboard-starter",
+    "sha": "7705dfc0d13889e45c26a55ad5908da6a7a9a605",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.65.0",
+      "oxfmt": "0.42.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "--deny-warnings"
+        ],
+        "from": "scripts.lint:strict"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          ".",
+          "!**/*.md",
+          "!**/*.mdc",
+          "!**/*.mdx",
+          "!**/*.yml",
+          "!**/*.yaml"
+        ],
+        "from": "scripts.format"
+      }
+    ],
+    "notes": "experimentalSortTailwindcss: true"
+  },
+  {
+    "repo": "Kiranism/tanstack-start-dashboard",
+    "sha": "f3375fcce5d2b2fbc35caef776e5a1c61b030439",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.59.0",
+      "oxfmt": "0.44.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "sortTailwindcss"
+  },
+  {
+    "repo": "knex/knex",
+    "sha": "e25d54bcb707714a17f5a5744eba5c4246bb4d1d",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": ".eslintrc.js, ESLint 8, Prettier 2"
+  },
+  {
+    "repo": "kriasoft/react-starter-kit",
+    "sha": "dbdb0d4991bbaae1671ff62180089f2733dd406a",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.82.0",
+      "oxfmt": "0.67.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--deny-warnings",
+          "--report-unused-disable-directives"
+        ],
+        "from": "scripts.lint (ci.yml: bun lint)"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format:check (ci.yml)"
+      }
+    ]
+  },
+  {
+    "repo": "leaderboardsgg/leaderboard-site",
+    "sha": "75dd1c6a2086d4079d7bc227153d0681adec910b",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.70.0",
+      "oxfmt": "0.55.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint:all"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "Nuxt application"
+  },
+  {
+    "repo": "Leaflet/Leaflet",
+    "sha": "125bda1e24d74d6f06f4075b0dab7ac10f3b5c10",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "lerna/lerna",
+    "sha": "6791258846dd6d2ad5b8a491784febd116223788",
+    "install": "bun",
+    "pinned": {
+      "oxlint": "1.86.0",
+      "oxfmt": "0.71.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "nx run-many -t lint (@nx/oxlint): oxlint in each project; here once at the root"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "nx format:check --all: oxfmt on all files"
+      }
+    ]
+  },
+  {
+    "repo": "lichess-org/lila",
+    "sha": "f5b261e3d8ece6f511484e398cb8d81e37735bea",
+    "install": "pnpm",
+    "pinned": {
+      "oxlint": "1.85.0",
+      "oxfmt": "0.68.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--type-aware"
+        ],
+        "from": "scripts.lint:code"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "lightpohl/podcast-dl",
+    "sha": "1029cb82ac06ce0081dccb2283e57fa55a6ac805",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.56.0",
+      "oxfmt": "0.41.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "./bin"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "CLI"
+  },
+  {
+    "repo": "lihbr/lihbr-apex",
+    "sha": "47079ac466a5e8193559710cdf9046e2b853ab57",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.86.0",
+      "oxfmt": "0.71.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--deny-warnings"
+        ],
+        "from": "scripts.lint, first command"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.lint, second command"
+      }
+    ]
+  },
+  {
+    "repo": "litestar-org/litestar-vite",
+    "sha": "5c49ec501d854e337452203b05c300a8e3c5e819",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.86.0",
+      "oxfmt": "0.56.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "src/js/src",
+          "src/js/tests"
+        ],
+        "from": "scripts.lint"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "examples"
+        ],
+        "from": "scripts.lint:examples"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "src/js/src",
+          "src/js/tests"
+        ],
+        "from": "scripts.fmt:check"
+      }
+    ]
+  },
+  {
+    "repo": "lone-cloud/gerbil",
+    "sha": "6afbab64f43e116ae19a40dc5f2e602005fd29df",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.68.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.check, second command"
+      }
+    ],
+    "notes": "Electron application; oxlint: typeAware + typeCheck: not run"
+  },
+  {
+    "repo": "longbridge/developers",
+    "sha": "aa699234c02c16c251c69aa069191d2f73b38c04",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.80.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "Luligu/matterbridge",
+    "sha": "857fd9b1e087a4fcfeedd1bcbbe901471f125851",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.71.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format:check"
+      },
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "apps/frontend scripts.format:check",
+        "cwd": "apps/frontend"
+      }
+    ],
+    "notes": "oxlint: typeAware + typeCheck: not run"
+  },
+  {
+    "repo": "Lxns-Network/maimai-prober-frontend",
+    "sha": "9d4134c56a205da199c1424270aa9303275a5445",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.82.0",
+      "oxfmt": "0.53.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "src",
+          "packages",
+          "tests",
+          "vite.config.ts",
+          "vitest.config.ts",
+          "--deny-warnings",
+          "--report-unused-disable-directives"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "Vite + React application"
+  },
+  {
+    "repo": "makeplane/plane",
+    "sha": "bab49bb978ccb56af1d78dec6c6d54dfe8d03c1c",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.51.0",
+      "oxfmt": "0.35.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--max-warnings=11957",
+          "."
+        ],
+        "from": "apps/web scripts.check:lint (turbo run check:lint)",
+        "cwd": "apps/web"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "--max-warnings=759",
+          "."
+        ],
+        "from": "apps/admin scripts.check:lint (turbo run check:lint)",
+        "cwd": "apps/admin"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "--max-warnings=676",
+          "."
+        ],
+        "from": "apps/space scripts.check:lint (turbo run check:lint)",
+        "cwd": "apps/space"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "--max-warnings=119",
+          "."
+        ],
+        "from": "apps/live scripts.check:lint (turbo run check:lint)",
+        "cwd": "apps/live"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "--max-warnings=416",
+          "."
+        ],
+        "from": "packages/editor scripts.check:lint (turbo run check:lint)",
+        "cwd": "packages/editor"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "--max-warnings=38",
+          "."
+        ],
+        "from": "packages/utils scripts.check:lint (turbo run check:lint)",
+        "cwd": "packages/utils"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "apps/web scripts.check:format",
+        "cwd": "apps/web"
+      },
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "apps/live scripts.check:format",
+        "cwd": "apps/live"
+      },
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "packages/editor scripts.check:format",
+        "cwd": "packages/editor"
+      },
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "packages/utils scripts.check:format",
+        "cwd": "packages/utils"
+      }
+    ],
+    "notes": "their scripts have --max-warnings=<N>, a different N in each package; sortTailwindcss {stylesheet, functions}"
+  },
+  {
+    "repo": "markdown-it/markdown-it",
+    "sha": "3c51991c32aaa2b002a52c009334ebe5752c84b3",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "mastodon/mastodon",
+    "sha": "07b4fd202198db6e603cff876de2dcf1c179f6b7",
+    "install": "yarn",
+    "pinned": {
+      "oxfmt": "0.70.0"
+    },
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "--report-unused-disable-directives"
+        ],
+        "from": "scripts.lint:js"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "mathiasbynens/he",
+    "sha": "e5658eccfecf6dfccee8797ca5126a3f22855609",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.71.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format:check"
+      }
+    ]
+  },
+  {
+    "repo": "matter-js/matter.js",
+    "sha": "6066b749987e3feee926a91138f72f52e55818b9",
+    "install": "bun",
+    "pinned": {
+      "oxlint": "1.87.0",
+      "oxfmt": "0.72.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--type-aware",
+          "--tsconfig",
+          "tsconfig.json",
+          "examples",
+          "packages",
+          "support"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "packages/**/*.ts",
+          "examples/**/*.ts",
+          "support/**/*.ts"
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "mattzcarey/shippie",
+    "sha": "23e91d0c3ed12950c5de591e9e11d9b0c6dbf3f8",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.71.0",
+      "oxfmt": "0.56.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.check, first command"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.check, second command"
+      }
+    ]
+  },
+  {
+    "repo": "MaximeHeckel/blog.maximeheckel.com",
+    "sha": "ccbb3def76870a1b8feaa4506c5877d24fd7bdfd",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.36.0",
+      "oxfmt": "0.21.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.check-format"
+      }
+    ],
+    "notes": "Next.js application"
+  },
+  {
+    "repo": "mckaywrigley/chatbot-ui",
+    "sha": "81328b61d2a4ab597a7a057be70e785cf756d9f8",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "--ext",
+          ".js,.jsx,.ts,.tsx",
+          "app",
+          "components",
+          "lib"
+        ],
+        "from": "scripts.lint is `next lint`"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "{app,lib,db,components,context,types}/**/*.{ts,tsx}"
+        ],
+        "from": "scripts.format:write"
+      }
+    ],
+    "notes": ".eslintrc.json; ESLint 8"
+  },
+  {
+    "repo": "mediago-dev/mediago",
+    "sha": "c3c943b2df7c6e81fe546d2857efc10ccbbaae46",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.80.0",
+      "oxfmt": "0.65.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "apps/electron scripts.lint",
+        "cwd": "apps/electron"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format:check"
+      }
+    ]
+  },
+  {
+    "repo": "mengxi-ream/read-frog",
+    "sha": "56f29eddb13ff5b8b31b17667cbcf862144a507d",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.70.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.fmt:check"
+      }
+    ],
+    "notes": "oxlint --type-aware --type-check, jsPlugins: not run"
+  },
+  {
+    "repo": "mermaid-js/mermaid",
+    "sha": "86414301de566aba6f836f886b98b114a1343092",
+    "install": "pnpm",
+    "installArgs": [
+      "--filter",
+      "mermaid-monorepo",
+      "--filter",
+      "mermaid"
+    ],
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "--quiet",
+          "--stats",
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "notes": "DISK: only the dependencies of these workspace packages are installed (--filter), so imports of the others do not resolve, for both tools alike"
+  },
+  {
+    "repo": "mickasmt/next-saas-stripe-starter",
+    "sha": "c6df229ae73c207e87356d5e592779c511a9b56d",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "**/*.{ts,tsx}"
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "microsoft/playwright",
+    "sha": "2fd57cbd300fac9e4a07dc056c233c5fccce015d",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [],
+        "from": "scripts.eslint"
+      }
+    ]
+  },
+  {
+    "repo": "microsoft/vscode-eslint",
+    "sha": "a13360268098e5c56272c73355e69e19d542bd09",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "cwd": "client",
+        "args": [
+          "--ext",
+          "ts",
+          "src"
+        ],
+        "from": "client/package.json scripts.lint"
+      },
+      {
+        "tool": "eslint",
+        "cwd": "server",
+        "args": [
+          "--ext",
+          "ts",
+          "src"
+        ],
+        "from": "server/package.json scripts.lint"
+      }
+    ],
+    "notes": "client/ and server/ have lock files of their own, which are not installed: imports of vscode-languageclient etc. do not resolve, for both tools alike"
+  },
+  {
+    "repo": "mikro-orm/mikro-orm",
+    "sha": "bc9e15345780273b2d0e4779b5d56fb088e68ab6",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.87.0",
+      "oxfmt": "0.72.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "packages",
+          "tests"
+        ],
+        "from": "lint-staged (oxlint --fix <files>)",
+        "notes": "scripts.lint adds --tsconfig=tsconfig.json --type-aware --type-check: needs an installation. jsPlugins: ./scripts/oxlint-no-unused-imports.mjs (imports nothing)"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "packages",
+          "tests"
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "mikro-orm/nestjs-realworld-example-app",
+    "sha": "a6818d84b6a019cf2df4ef391dc87cea7d02c6a9",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.72.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ],
+    "notes": "oxlint --type-aware: not run"
+  },
+  {
+    "repo": "Milkdown/milkdown",
+    "sha": "bbb8bcbbb8ce0aa16f92567c23f6236747be9b3b",
+    "install": "pnpm",
+    "pinned": {
+      "oxlint": "1.77.0",
+      "oxfmt": "0.68.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "-c",
+          ".oxlintrc.json",
+          "--deny-warnings"
+        ],
+        "from": "scripts.test:lint",
+        "notes": "options.typeAware: true"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.fix"
+      }
+    ]
+  },
+  {
+    "repo": "Milkshiift/GoofCord",
+    "sha": "5925c5eb82a456b8f33273b90c52c5360decd188",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.71.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.fmt"
+      }
+    ],
+    "notes": "oxlint --type-aware: not run"
+  },
+  {
+    "repo": "mmazzarolo/breathly-app",
+    "sha": "3b86b698c59cf99e7aa834ddfde117b29c0c442d",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.61.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "oxlint: typeAware: not run"
+  },
+  {
+    "repo": "mmazzarolo/ordinary-puzzles-app",
+    "sha": "ee4c9d169ec65a2aad34a3856529a542ff583508",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.61.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "oxlint --type-aware: not run"
+  },
+  {
+    "repo": "mobxjs/mobx",
+    "sha": "38b4c8a46a40d6a3ae6f03ac358f1d6de0a23b29",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "packages/*/src/**/*",
+          "--ext",
+          ".js,.ts,.tsx"
+        ],
+        "shell": true,
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "**/*.{js,ts,md}"
+        ],
+        "shell": true,
+        "from": "scripts.prettier"
+      }
+    ],
+    "notes": ".eslintrc.js, ESLint 6, Prettier 2"
+  },
+  {
+    "repo": "mochajs/mocha",
+    "sha": "2c2b89600e3ba8225bf11d7919e698060a55c86e",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          ".",
+          "--max-warnings",
+          "0"
+        ],
+        "from": "scripts.lint:code"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format:fix"
+      }
+    ]
+  },
+  {
+    "repo": "mohebifar/tooscut",
+    "sha": "16c995bc371e9250d440ef599f1c3a826b35bb75",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.61.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "apps",
+          "packages",
+          "--no-error-on-unmatched-pattern"
+        ],
+        "from": "scripts.format"
+      }
+    ],
+    "notes": "oxlint --type-aware -D correctness: not run"
+  },
+  {
+    "repo": "moment/moment",
+    "sha": "c2a703a4d84aa57ee2722ff8fb4a8016279fb3c4",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "scripts",
+          "src"
+        ],
+        "from": "scripts.lint:eslint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "monkeytypegame/monkeytype",
+    "sha": "cbaa65cce81a95eb753308cece40ea8c34a20787",
+    "install": "pnpm",
+    "installArgs": [
+      "--config.engine-strict=false"
+    ],
+    "pinned": {
+      "oxlint": "1.77.0",
+      "oxfmt": "0.62.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          ".",
+          "--type-aware",
+          "--type-check"
+        ],
+        "from": "backend scripts.lint",
+        "cwd": "backend"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          ".",
+          "--type-aware",
+          "--type-check"
+        ],
+        "from": "frontend scripts.lint",
+        "cwd": "frontend"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          ".",
+          "--type-aware",
+          "--type-check"
+        ],
+        "from": "packages/schemas scripts.lint",
+        "cwd": "packages/schemas"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          ".",
+          "--type-aware",
+          "--type-check"
+        ],
+        "from": "packages/util scripts.lint",
+        "cwd": "packages/util"
+      },
+      {
+        "tool": "eslint",
+        "args": [
+          "static/**/*.json"
+        ],
+        "from": "frontend scripts.lint-json",
+        "cwd": "frontend",
+        "shell": true
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format-fix"
+      }
+    ],
+    "notes": "engines.node is >=24 <25 and engine-strict is on: switched off for the installation."
+  },
+  {
+    "repo": "MoonshotAI/kimi-code",
+    "sha": "5b936697670ed15444bcb4720bd91e6ee776a941",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.59.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--quiet"
+        ],
+        "from": "lint-staged, first command (`oxlint --fix --quiet`); CI runs `oxlint --type-aware`: not run"
+      }
+    ],
+    "notes": "an .oxfmtrc.json, but oxfmt is in no package.json or lock file"
+  },
+  {
+    "repo": "mosch/react-avatar-editor",
+    "sha": "ead690a942035faf99d01cf8e8bd8b62ba3d59ff",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.56.0",
+      "oxfmt": "0.41.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.fmt:check"
+      }
+    ]
+  },
+  {
+    "repo": "namespace-ee/upcount",
+    "sha": "077ee63a5c0ef6e0281e697b987a281de13e5079",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.43.0",
+      "oxfmt": "0.28.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "src/"
+        ],
+        "from": "scripts.lint, second command"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "src/"
+        ],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "Tauri application"
+  },
+  {
+    "repo": "napi-rs/napi-rs",
+    "sha": "64431ee125657d51d01b26ebf867489c8128a5b4",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.86.0",
+      "oxfmt": "0.72.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--import-plugin",
+          "--ignore-path=./.oxlintignore",
+          "--deny-warnings",
+          "-c",
+          "oxlint.json"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format:oxfmt"
+      }
+    ],
+    "notes": "oxc's ecosystem CI runs `oxlint --deny-warnings --ignore-path=.oxlintignore --import-plugin -D correctness -A no-export` (no -c; there is no .oxlintrc.json), for which bun lint prints ESLint's JSON. Here: their script, with -c."
+  },
+  {
+    "repo": "NarHakobyan/awesome-nest-boilerplate",
+    "sha": "8f1c0a8cded54a198ddbc23922aa755922d2b155",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "NeoTavern/NeoTavern-Frontend",
+    "sha": "86ca3333ad120646608c9814e260e9acad98e52f",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.72.0",
+      "oxfmt": "0.57.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--deny-warnings",
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "nestjs/nest",
+    "sha": "b6295c7994890a82dbeaaccd69530bc66194181a",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.87.0",
+      "prettier": "3.9.9"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "packages",
+          "integration"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "**/*.ts",
+          "packages/**/*.json",
+          "--ignore-path",
+          "./.prettierignore"
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "nestjs/swagger",
+    "sha": "a799c9fa9b2d2d0331e569085721d61bb5aebd4d",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.86.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "lib/"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "notes": "Prettier for the format: not mine"
+  },
+  {
+    "repo": "nestjs/typescript-starter",
+    "sha": "a122dea65cd0610ee205d7765ed46f9d73629141",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.80.0",
+      "prettier": "3.9.6"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "src/",
+          "test/"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "src/**/*.ts",
+          "test/**/*.ts"
+        ],
+        "from": "scripts.format"
+      }
+    ],
+    "notes": "What `nest new` makes."
+  },
+  {
+    "repo": "nextauthjs/next-auth",
+    "sha": "a1a16a5a7780488c7449feece410033f445d0b31",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ],
+    "notes": "plugins: prettier-plugin-svelte, prettier-plugin-tailwindcss"
+  },
+  {
+    "repo": "nkzw-tech/athena-crisis",
+    "sha": "1d7033db46ebf0e5435368673faf05764f66f256",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.66.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint:format"
+      }
+    ],
+    "notes": "oxlint.config.ts: presets and plugins from packages, typeAware: not run"
+  },
+  {
+    "repo": "nock/nock",
+    "sha": "d91282e041ecafb97d2ab89ac5d39e4cdc93d0e2",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "**/*.{js,ts}"
+        ],
+        "from": "scripts.lint:js"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "**/*.{js,json,md,ts,yml,yaml}"
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "nodejs/node",
+    "sha": "dd9777b284b05a0c4864ae9543e0b4d2020721db",
+    "install": "bun",
+    "installCwd": "tools/eslint",
+    "lint": [
+      {
+        "tool": "eslint",
+        "bin": "tools/eslint/node_modules/eslint/bin/eslint.js",
+        "args": [
+          "--max-warnings=0",
+          "--report-unused-disable-directives",
+          "--concurrency",
+          "auto",
+          "eslint.config.mjs",
+          "benchmark",
+          "doc",
+          "lib",
+          "test",
+          "tools"
+        ],
+        "from": "Makefile run-lint-js"
+      }
+    ]
+  },
+  {
+    "repo": "nodetec/comet",
+    "sha": "9aab0d38926b2bc5b2d448f4ec6c1534e6c4d9eb",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.44.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "three nested .oxfmtrc.json; sortTailwindcss; oxlint: typeAware: not run"
+  },
+  {
+    "repo": "notiz-dev/nestjs-prisma-starter",
+    "sha": "225e5a906865df237a681c1ad228a3ecf2909326",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "{src,apps,libs,test}/**/*.ts"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "src/**/*.ts",
+          "test/**/*.ts"
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "nrwl/nx",
+    "sha": "2989ece2ac76f5507cf8fa3be38d455273b89178",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.77.0",
+      "oxfmt": "0.72.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "no script calls oxfmt: `nx format:check --all` (scripts.check-format) picks the formatter; .oxfmtrc.json is at the root",
+        "notes": "sortTailwindcss: {}"
+      }
+    ]
+  },
+  {
+    "repo": "nuxt-modules/prismic",
+    "sha": "29138d84408c549fab47d7226918ef050d2724f7",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.80.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--deny-warnings"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "notes": "an .oxfmtrc.json, but scripts.format still calls prettier"
+  },
+  {
+    "repo": "nuxt/nuxt",
+    "sha": "0f9809c99291e9b634c6f0ef4b496b47af6da8a4",
+    "install": "pnpm",
+    "installArgs": [
+      "--filter",
+      "nuxt-framework"
+    ],
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint, without `nuxt prepare`"
+      }
+    ],
+    "notes": "Only the dependencies of the root package are installed"
+  },
+  {
+    "repo": "oliverschwendener/ueli",
+    "sha": "7543c1f76c37e6a60741ab5ed429e2afa3207712",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.82.0",
+      "oxfmt": "0.67.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint (build.yml)"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "src/**/*",
+          "docs/**/*.md"
+        ],
+        "from": "scripts.format:check (build.yml)"
+      }
+    ],
+    "notes": "oxfmt.config.mts imports defineConfig from oxfmt"
+  },
+  {
+    "repo": "olton/metroui",
+    "sha": "d7524f4ee31b715c8a7ea2b587d6a3e0d73d0450",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.42.0",
+      "oxfmt": "0.27.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "ontola/atomic-server",
+    "sha": "806695904f04da0872d62480948ebafde81ff40f",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.51.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "-c",
+          "../.oxfmtrc.json",
+          "./src"
+        ],
+        "from": "browser/data-browser scripts.format-check",
+        "cwd": "browser/data-browser"
+      },
+      {
+        "tool": "oxfmt",
+        "args": [
+          "-c",
+          "../.oxfmtrc.json",
+          "./src"
+        ],
+        "from": "browser/cli scripts.format-check",
+        "cwd": "browser/cli"
+      }
+    ],
+    "notes": "oxlint: jsPlugins @stylistic/eslint-plugin: not run"
+  },
+  {
+    "repo": "open-pencil/open-pencil",
+    "sha": "551a9e602c12ace23300bf4de5dd6c53b88e40e2",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.67.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          ".oxfmtrc.json",
+          "commitlint.config.ts",
+          "vite.config.ts",
+          "vite/",
+          ".storybook/",
+          "src/",
+          "packages/scene-graph/src/",
+          "packages/scene-graph/scripts/",
+          "packages/core/src/",
+          "packages/cli/src/",
+          "packages/mcp/src/",
+          "packages/harness/src/",
+          "packages/harness/tests/",
+          "packages/vue/src/",
+          "packages/dom-css/src/",
+          "packages/dom-css/tests/",
+          "packages/dom-css/scripts/",
+          "packages/pen/src/",
+          "packages/pen/scripts/",
+          "packages/design-jsx/src/",
+          "packages/design-jsx/tests/",
+          "packages/design-jsx/scripts/",
+          "packages/emit/src/",
+          "packages/emit/tests/",
+          "packages/emit/scripts/",
+          "packages/kiwi/src/",
+          "packages/kiwi/tests/",
+          "packages/kiwi/scripts/",
+          "packages/fig/src/",
+          "packages/fig/tests/",
+          "packages/fig/scripts/",
+          "tests",
+          "scripts/",
+          "tools/"
+        ],
+        "from": "scripts.format (ci.yml: format:check runs it and asks git)"
+      }
+    ],
+    "notes": "oxlint: jsPlugins ./lint/plugin.js + eslint-plugin-compat: not run"
+  },
+  {
+    "repo": "openclaw/clawhub",
+    "sha": "d044664a7636ec74b0092aa13fc0fcad1e660121",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--type-aware",
+          "--tsconfig",
+          "./tsconfig.oxlint.json",
+          "./src",
+          "./convex",
+          "./packages/clawhub/src",
+          "./packages/clawhub-admin/src",
+          "./packages/schema/src"
+        ],
+        "from": "scripts.lint:oxlint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "openclaw/clawsweeper",
+    "sha": "8347e80179015163c469491e47badb09f31b7157",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.82.0",
+      "oxfmt": "0.67.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "src/repair",
+          "--tsconfig",
+          "tsconfig.repair.json",
+          "--deny-warnings",
+          "--report-unused-disable-directives",
+          "-D",
+          "correctness",
+          "-D",
+          "preserve-caught-error"
+        ],
+        "from": "scripts.lint:repair"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "scripts",
+          "test",
+          "--deny-warnings",
+          "--report-unused-disable-directives",
+          "-D",
+          "correctness",
+          "-D",
+          "preserve-caught-error"
+        ],
+        "from": "scripts.lint:scripts"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "src",
+          "scripts",
+          "test",
+          "dashboard",
+          "package.json",
+          "tsconfig.json",
+          "tsconfig.repair.json",
+          "tsconfig.dashboard.json",
+          "tsconfig.dashboard-strict.json",
+          ".oxfmtrc.json",
+          "config",
+          "schema",
+          ".github/actions",
+          ".github/workflows"
+        ],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "no oxlint configuration file: everything is in flags; scripts.lint:src adds --type-aware: not run"
+  },
+  {
+    "repo": "openclaw/openclaw",
+    "sha": "28af40f432feb51ae517493e80036e6f1681b69d",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.83.0",
+      "oxfmt": "0.68.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "NOT their command: scripts.lint:all = scripts/run-oxlint.mts, which adds --type-aware and a --tsconfig per shard (needs an installation). Plain `oxlint` with their .oxlintrc.json: the untyped rules"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format:check"
+      }
+    ]
+  },
+  {
+    "repo": "openlayers/openlayers",
+    "sha": "93e4d43242da31b7a7740768c21a45edb1b95ad1",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "config",
+          "examples",
+          "site",
+          "src/ol",
+          "tasks",
+          "test"
+        ],
+        "from": "scripts.lint, without `npm run transpile`"
+      }
+    ]
+  },
+  {
+    "repo": "openreview/openreview-web",
+    "sha": "d3d1d3c53685f0fe772497b04fe369964411db48",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.51.0",
+      "oxfmt": "0.36.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--report-unused-disable-directives",
+          "--quiet"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.fmt"
+      }
+    ]
+  },
+  {
+    "repo": "openstory-so/openstory",
+    "sha": "503446598b5c525bec1d8b6b5ec9a76588ef5877",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.71.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "oxlint --type-aware, two jsPlugins of theirs in TypeScript: not run"
+  },
+  {
+    "repo": "organization/lyrs",
+    "sha": "5da447b474a3ca14be7e0bae62d6b5c63c811a99",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.57.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "oxlint: four jsPlugins, types: not run"
+  },
+  {
+    "repo": "outline/outline",
+    "sha": "62ef10d6296e35b87fa013597f53c48dcfa713df",
+    "install": "yarn",
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--type-aware",
+          "app",
+          "server",
+          "shared",
+          "plugins"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "app",
+          "server",
+          "shared",
+          "plugins"
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "oxidecomputer/console",
+    "sha": "00cc6bf65be08c5d06e10c4d01ba1e51ea9d44b0",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--type-aware"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.fmt"
+      }
+    ]
+  },
+  {
+    "repo": "pastelsky/bundlephobia",
+    "sha": "976fec2956a48c9d942decf7c88452e0ea17bf28",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.63.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "oxlint --type-aware, jsPlugins in TypeScript: not run"
+  },
+  {
+    "repo": "Pawn-Appetit/pawn-appetit",
+    "sha": "5d132b8f532adff075a7eb3da8c6b0b1272c5870",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.77.0",
+      "oxfmt": "0.62.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.fmt:check"
+      }
+    ],
+    "notes": "Tauri application"
+  },
+  {
+    "repo": "payloadcms/payload",
+    "sha": "58fe76533cd67265f4b7d02f4eb9f837c2626f00",
+    "install": "pnpm",
+    "installArgs": [
+      "--filter",
+      "payload-monorepo"
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "lint-staged; .prettierrc.json"
+      }
+    ],
+    "notes": "Only the dependencies of the root package are installed; their ESLint config is a package of the workspace that has to be built"
+  },
+  {
+    "repo": "pear-devs/pear-desktop",
+    "sha": "03e7fd6ccdc31f47987afceb3da4e26e08830397",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.56.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "src"
+        ],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "oxlint: four jsPlugins, --type-aware: not run"
+  },
+  {
+    "repo": "petyosi/react-virtuoso",
+    "sha": "b2a02d01de488dbf1e747c7a91151eeca6e13c72",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--type-aware",
+          "--type-check"
+        ],
+        "from": "packages/react-virtuoso scripts.lint",
+        "cwd": "packages/react-virtuoso"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "--type-aware",
+          "--type-check"
+        ],
+        "from": "packages/gurx scripts.lint",
+        "cwd": "packages/gurx"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "--type-aware",
+          "--type-check"
+        ],
+        "from": "packages/masonry scripts.lint",
+        "cwd": "packages/masonry"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "--type-aware",
+          "--type-check"
+        ],
+        "from": "apps/virtuoso.dev scripts.lint",
+        "cwd": "apps/virtuoso.dev"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "Phalcode/gamevault-backend",
+    "sha": "859d71ef46f3a1f00a236e5d4c7dbde1eeba02b3",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.80.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "src"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "notes": "NestJS server; Prettier with two plugins: not run"
+  },
+  {
+    "repo": "pinojs/pino",
+    "sha": "b29dbe97820630e7128e464c50263b427965ec99",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "pixijs/pixijs",
+    "sha": "2f01671aa654edefb8a6a8013d3b28c1a65c1813",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "--max-warnings",
+          "0",
+          "."
+        ],
+        "from": "scripts/test.mts lint; lint-staged"
+      }
+    ]
+  },
+  {
+    "repo": "pmndrs/jotai",
+    "sha": "dceab08751320d2bfd707e7a54a880db73d7a069",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.test:lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.test:format"
+      }
+    ]
+  },
+  {
+    "repo": "pmndrs/react-spring",
+    "sha": "ea91c9d3415b519e085a0bf39b7d0bb6492e1929",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.86.0",
+      "oxfmt": "0.71.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "packages/*/src",
+          "targets/*/src",
+          "docs/app",
+          "docs/scripts",
+          "demo/src"
+        ],
+        "from": "scripts.lint",
+        "shell": true
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "**/*.{ts,tsx,md}"
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "pmndrs/zustand",
+    "sha": "d7a5583cffd80af515f7dfb69583c95cbdc9e2ce",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.test:lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.test:format"
+      }
+    ]
+  },
+  {
+    "repo": "postcss/postcss",
+    "sha": "1fd8f881875330b284d65961c2c158f61d4e3bab",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.test:lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "no script: oxfmt.config.ts (imports @logux/oxc-configs/fmt) is for the editor; oxfmt is not in the lock file, so the judge 0.72.0 runs",
+        "notes": "package.json#prettier is there too"
+      }
+    ]
+  },
+  {
+    "repo": "PostHog/posthog",
+    "sha": "ae6700906529791196d931ecb7120c3f5a0eb227",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.72.0",
+      "oxfmt": "0.57.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--quiet"
+        ],
+        "from": "scripts.lint:js"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "{products,frontend/src,docs}/**/*.{js,mjs,ts,tsx,json,yaml,yml,css,scss}"
+        ],
+        "from": "scripts.format:frontend"
+      }
+    ]
+  },
+  {
+    "repo": "posva/pinia-colada",
+    "sha": "e7cc343627a3a1ccf39b2ff673061c5186a041f7",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.71.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.fmt"
+      }
+    ],
+    "notes": "oxlint: jsPlugins oxlint-plugin-posva: not run"
+  },
+  {
+    "repo": "preactjs/preact",
+    "sha": "04074e2162c85852797b09a1d220f9483182fdce",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.8.0",
+      "oxfmt": "0.32.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "src",
+          "test/browser",
+          "test/node",
+          "test/shared",
+          "debug",
+          "compat",
+          "hooks",
+          "test-utils"
+        ],
+        "from": "scripts.oxlint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "prettier/prettier",
+    "sha": "765aeba7cbf22277acadd0ab24a7a99744c9dd97",
+    "install": "yarn",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint:eslint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint:prettier"
+      }
+    ]
+  },
+  {
+    "repo": "PrismJS/prism",
+    "sha": "ab7c882a446f555798dbe7902c4b88dffc0607b2",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          ".",
+          "--max-warnings",
+          "0"
+        ],
+        "from": "scripts.lint:ci"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "src",
+          "scripts",
+          "tests/*.js"
+        ],
+        "from": "no script: .prettierrc.js is for editors",
+        "notes": "plugins: @ianvs sort-imports, brace-style, space-before-function-paren, merge"
+      }
+    ]
+  },
+  {
+    "repo": "productdevbook/hucre",
+    "sha": "d5fbbcf125fce1e37d228e05cd3d27aa84325488",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.76.0",
+      "oxfmt": "0.61.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint, first command"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint, second command"
+      }
+    ]
+  },
+  {
+    "repo": "PulseSync-LLC/PulseSync-client",
+    "sha": "8e54296fb4996b17a61cf7f439332936ddc6fd4d",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.71.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ],
+    "notes": "Electron application; oxlint: jsPlugins eslint-plugin-simple-import-sort: not run"
+  },
+  {
+    "repo": "puppeteer/puppeteer",
+    "sha": "7005ffa3f185c0cfc2dce9b96852f45a03ed4cf1",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "wireit lint:eslint, without its dependency build:tools"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint:prettier"
+      }
+    ]
+  },
+  {
+    "repo": "radix-ui/primitives",
+    "sha": "01259a024d82ab3892d1e5938b1a50bb352c6df5",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.67.0",
+      "oxfmt": "0.52.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--max-warnings",
+          "0",
+          "."
+        ],
+        "from": "apps/storybook scripts.lint (build.yml: pnpm lint)",
+        "cwd": "apps/storybook"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "--max-warnings",
+          "0",
+          "src"
+        ],
+        "from": "packages/react/select scripts.lint",
+        "cwd": "packages/react/select"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "--max-warnings",
+          "0",
+          "src"
+        ],
+        "from": "packages/react/menu scripts.lint",
+        "cwd": "packages/react/menu"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "--max-warnings",
+          "0",
+          "src"
+        ],
+        "from": "packages/react/dialog scripts.lint",
+        "cwd": "packages/react/dialog"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "the same lint script in ~70 packages: four of them"
+  },
+  {
+    "repo": "react-cosmos/react-cosmos",
+    "sha": "aae77c654b9b437ea5f6e635e6df7fc28924e606",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.77.0",
+      "oxfmt": "0.62.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint (test.yml)"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format:check (test.yml)"
+      }
+    ]
+  },
+  {
+    "repo": "react-hook-form/react-hook-form",
+    "sha": "e76876b02550b3ad48a351c638845d9dc1aaa3c8",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "--config",
+          ".prettierrc",
+          "."
+        ],
+        "from": "scripts.prettier:fix"
+      }
+    ]
+  },
+  {
+    "repo": "react-native-community/directory",
+    "sha": "0ba4b05f4abf8cd811f78cf46ace54dfeb8afaee",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.72.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.lint, second command"
+      }
+    ],
+    "notes": "oxlint --type-aware, two jsPlugins: not run"
+  },
+  {
+    "repo": "Redocly/redocly-cli",
+    "sha": "f31823ac512e52eb33ba85204c9eb887cb80ff47",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.72.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "oxlint: jsPlugins eslint-plugin-sonarjs: not run"
+  },
+  {
+    "repo": "reduxjs/redux",
+    "sha": "56abca4749921d68f40cda20afd2043af9751f72",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.81.0",
+      "oxfmt": "0.63.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "src",
+          "test"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "{src,test}/**/*.{js,ts}",
+          "docs/**/*.md"
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "reduxjs/redux-templates",
+    "sha": "37f05cfd6e9ec235c202e816e083aeee578135bb",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.83.0",
+      "oxfmt": "0.68.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format-check"
+      }
+    ],
+    "notes": "nested configuration files of both tools in the templates"
+  },
+  {
+    "repo": "reduxjs/redux-toolkit",
+    "sha": "0fd611cc79d44990ac9a040dec4d5cb446233440",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.78.0",
+      "oxfmt": "0.63.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "packages/toolkit/src"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "remix-run/react-router",
+    "sha": "4fbf6076d44bd832f14bee4b4b1ccfcbc2f5aee6",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "--ignore-path",
+          ".prettierignore",
+          "."
+        ],
+        "from": "scripts.format:check"
+      }
+    ]
+  },
+  {
+    "repo": "remnawave/backend",
+    "sha": "010b365ab1fabea01192b5e6ade4e98e66ee1dbd",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.82.0",
+      "oxfmt": "0.67.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format"
+      }
+    ],
+    "notes": "NestJS server"
+  },
+  {
+    "repo": "remnawave/frontend",
+    "sha": "36df977a8d985be2c35a586529250506c749c354",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.64.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format"
+      }
+    ],
+    "notes": "oxlint: jsPlugins eslint-plugin-react-hooks: not run"
+  },
+  {
+    "repo": "remnawave/node",
+    "sha": "ea7a835485af81ec464ebbf7acaaa7d6dd486a05",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.79.0",
+      "oxfmt": "0.64.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format"
+      }
+    ],
+    "notes": "NestJS server; \"jsPlugins\": []"
+  },
+  {
+    "repo": "renovatebot/renovate",
+    "sha": "ee5cfdccdec2860e16ecc31b417ed0db405137aa",
+    "install": "pnpm",
+    "prepare": [
+      [
+        "node",
+        "tools/generate-imports.mjs"
+      ]
+    ],
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "-c",
+          ".oxlintrc.json"
+        ],
+        "from": "scripts.oxlint",
+        "notes": "options.typeAware, jsPlugins: ./tools/lint/rules.ts"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "**/*.{ts,js,mjs,json,md,yml}"
+        ],
+        "env": {
+          "PRETTIER_EXPERIMENTAL_CLI": "1"
+        },
+        "from": "scripts.prettier"
+      }
+    ],
+    "notes": "prepare: their script generate:imports (`node tools/generate-imports.mjs`), in the sandbox, without a network: the jsPlugin ./tools/lint/rules.ts imports tools/lint/rules/templatable-fields.generated.ts, which only that script writes; without it neither oxlint (exit 1) nor bun lint (exit 2) can load .oxlintrc.json"
+  },
+  {
+    "repo": "reserve-protocol/register",
+    "sha": "f6f08a20fb7bd072b0865c2b7643e4164dd12992",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.70.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "reshaped-ui/reshaped",
+    "sha": "6150f4fc37306e8d27b28eb8df56dd4cfe1f8ae9",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.73.0",
+      "oxfmt": "0.53.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--deny-warnings"
+        ],
+        "from": "scripts.lint:js"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.lint:format"
+      }
+    ]
+  },
+  {
+    "repo": "RetroAchievements/RAWeb",
+    "sha": "8e55139c079539fe8db179fefaf84fad015ce85f",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.59.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "resources/js",
+          "README.md",
+          "docs/**/*.md"
+        ],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "Laravel + Inertia + React; oxlint: five jsPlugins: not run"
+  },
+  {
+    "repo": "riipandi/tauri-start-solid",
+    "sha": "5840faef1ae2b2c29bc70dbb46728bbe0f3a02f8",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.56.0",
+      "oxfmt": "0.41.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.check, second command"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.check, first command"
+      }
+    ]
+  },
+  {
+    "repo": "RobinTail/express-zod-api",
+    "sha": "eb8413f73738061e1b6e5ab37ef1a5a51c6ec661",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.71.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.lint, second command"
+      }
+    ],
+    "notes": "oxlint.config.ts: jsPlugins from packages: not run"
+  },
+  {
+    "repo": "RocketChat/Rocket.Chat.ReactNative",
+    "sha": "d70066c6d8cb27cccc0e67b569b49999aff65e5d",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.60.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format-lint, first command"
+      }
+    ],
+    "notes": "oxlint: two jsPlugins from packages: not run"
+  },
+  {
+    "repo": "rollup/rollup",
+    "sha": "89fb3b6217281411cc0c5a88e5ac39849ef398cf",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          ".",
+          "--concurrency",
+          "auto"
+        ],
+        "from": "scripts.lint:js:nofix"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "**/*.md"
+        ],
+        "from": "scripts.lint:markdown:nofix"
+      }
+    ]
+  },
+  {
+    "repo": "rubiin/ultimate-nest",
+    "sha": "cab59814c75b42f8aee443fac101d5fe2d2079e3",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.87.0",
+      "oxfmt": "0.72.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "NestJS server"
+  },
+  {
+    "repo": "s00d/nuxt-i18n-micro",
+    "sha": "0664dea2bb97ce56ab149acfa16b5f45a48b0247",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.85.0",
+      "oxfmt": "0.70.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "src",
+          "packages",
+          "test",
+          "client",
+          "playground",
+          "scripts/src",
+          "build.config.ts"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "src",
+          "packages",
+          "test",
+          "client",
+          "playground",
+          "scripts/src",
+          "build.config.ts"
+        ],
+        "from": "scripts.format:check"
+      }
+    ]
+  },
+  {
+    "repo": "SableClient/Sable",
+    "sha": "98416a99282b6b0c28efdeb55c873fd9a1801904",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.63.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.fmt:check"
+      }
+    ],
+    "notes": "oxfmt.config.ts with `import type` only; oxlint.config.ts: typeAware: not run"
+  },
+  {
+    "repo": "sadmann7/skateshop",
+    "sha": "e954d54379a7a6f798d3f49ffc6664449220adfc",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "--ext",
+          ".js,.jsx,.ts,.tsx",
+          "src"
+        ],
+        "from": "scripts.lint is `next lint`"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "**/*.{ts,tsx,mdx}"
+        ],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": ".eslintrc.cjs; ESLint 8; plugins: @ianvs/prettier-plugin-sort-imports, prettier-plugin-tailwindcss"
+  },
+  {
+    "repo": "sadmann7/tablecn",
+    "sha": "4d02ea105767d7175b3bc18e4d2b3cf923f442a9",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.68.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "oxlint: typeAware: not run"
+  },
+  {
+    "repo": "sahat/hackathon-starter",
+    "sha": "64458393d8f246a08fd9734ae4470b58400f263c",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "**/*.js"
+        ],
+        "from": "scripts.lint-check"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint-check"
+      }
+    ]
+  },
+  {
+    "repo": "salsita/node-pg-migrate",
+    "sha": "896feabb8380a9c9a810ffde92c795cae233aa27",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.70.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "oxlint: typeAware + typeCheck: not run"
+  },
+  {
+    "repo": "Sandakan/Nora",
+    "sha": "5c2b5ab3767e886d9cbce0d15a4a2c5673a1c7e8",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.77.0",
+      "oxfmt": "0.61.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint (lint.yml: `npm run lint --deny-warnings`: npm eats the flag)"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format (lint.yml)"
+      }
+    ],
+    "notes": "Electron application; sortTailwindcss, sortImports"
+  },
+  {
+    "repo": "sanity-io/next-sanity",
+    "sha": "d24a814573456bdf815c05d810875b9d3939e0b1",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--type-check",
+          "--type-aware",
+          "--report-unused-disable-directives",
+          "--deny-warnings"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "sanity-io/sanity",
+    "sha": "73980e64ac34a0da69e5e88ab5f6c7909155b39e",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.72.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ],
+    "notes": "oxlint --disable-nested-config --quiet: typeAware + typeCheck + 6 jsPlugins (tsdoc, i18next, @sanity/i18n, @repo/oxlint-plugin-i18n, boundaries, testing-library): a full installation of the monorepo: not run"
+  },
+  {
+    "repo": "sanity-io/template-nextjs-personal-website",
+    "sha": "2edf1be91b86e2081d8c4e0d582e69bdb43f0cb1",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.67.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format"
+      }
+    ],
+    "notes": "oxlint: typeAware + typeCheck: not run"
+  },
+  {
+    "repo": "satnaing/shadcn-admin",
+    "sha": "e16c87f213a5ba5e45964e9b67c792105ec74d26",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "SeaLantern-Studio/SeaLantern",
+    "sha": "904634337c86cbf50851867fd8add331e5984184",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.55.0",
+      "oxfmt": "0.35.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.fmt:check"
+      }
+    ],
+    "notes": "Tauri + Vue application"
+  },
+  {
+    "repo": "sequelize/sequelize",
+    "sha": "d191d5be03ada90f934e161a4527f2b2533aeb68",
+    "install": "yarn",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          ".",
+          "--quiet",
+          "--report-unused-disable-directives"
+        ],
+        "from": "scripts.test:format:eslint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.test:format:prettier"
+      }
+    ]
+  },
+  {
+    "repo": "SFTtech/abrechnung",
+    "sha": "e805622c783b214fc33f45fce162290329ee7f2b",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.64.0",
+      "oxfmt": "0.49.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "frontend.yaml: pnpm exec oxlint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "frontend.yaml: npx oxfmt --check ."
+      }
+    ]
+  },
+  {
+    "repo": "shadcn-ui/taxonomy",
+    "sha": "298a8857c7128a0d121e7f699dfd729f23b3966d",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "--ext",
+          ".js,.jsx,.ts,.tsx",
+          "app",
+          "components",
+          "lib",
+          "pages"
+        ],
+        "from": "scripts.lint is `next lint`"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "no script; prettier.config.js"
+      }
+    ],
+    "notes": ".eslintrc.json that extends next/core-web-vitals, prettier, plugin:tailwindcss/recommended; ESLint 8; Prettier 2; plugins: @ianvs/prettier-plugin-sort-imports, prettier-plugin-tailwindcss"
+  },
+  {
+    "repo": "shadcn-ui/ui",
+    "sha": "6ea090075cd537d3b792c6c1a625e2448b6ede26",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "cwd": "apps/v4",
+        "args": [
+          "."
+        ],
+        "from": "apps/v4 scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "cwd": "apps/v4",
+        "args": [
+          "**/*.{ts,tsx,mdx}"
+        ],
+        "from": "apps/v4 scripts.format:check",
+        "notes": "prettier-plugin-tailwindcss cannot resolve `shadcn/tailwind.css`, which a build makes: theirs fails on each JavaScript file"
+      },
+      {
+        "tool": "prettier",
+        "cwd": "packages/shadcn",
+        "args": [
+          "**/*.{ts,tsx,mdx}"
+        ],
+        "from": "packages/shadcn scripts.format:check",
+        "notes": "prettier-plugin-tailwindcss cannot resolve `shadcn/tailwind.css`, which a build makes: theirs fails on each JavaScript file"
+      }
+    ],
+    "notes": "plugins: @ianvs/prettier-plugin-sort-imports, prettier-plugin-tailwindcss"
+  },
+  {
+    "repo": "shellscape/jsx-email",
+    "sha": "2d4f1a585976e85f19b2727bbdabb543437264c3",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.62.0",
+      "oxfmt": "0.47.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--tsconfig",
+          "tsconfig.json",
+          "apps",
+          "infra",
+          "packages",
+          "scripts",
+          "services"
+        ],
+        "from": "moon.yml lint.js"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          ".github/**/*.md",
+          "**/README.md",
+          "docs/**/*.md",
+          "--no-error-on-unmatched-pattern"
+        ],
+        "from": "moon.yml lint.docs",
+        "shell": true
+      }
+    ]
+  },
+  {
+    "repo": "ShieldBattery/ShieldBattery",
+    "sha": "61797e9f6d7b97c67c788ccf373e34d7888c09aa",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.70.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "**/*.{js,jsx,mjs,cjs,ts,tsx}"
+        ],
+        "from": "scripts.format:check (scripts.lint)"
+      }
+    ],
+    "notes": "oxlint: jsPlugins, typeAware: not run"
+  },
+  {
+    "repo": "shopware/frontends",
+    "sha": "4f0f33b9fcb66c5a6bacf86400fa6d82f68e064f",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.80.0",
+      "oxfmt": "0.65.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "packages",
+          "templates",
+          "examples",
+          "apps/e2e-tests"
+        ],
+        "from": "scripts.lint (code-check.yml)"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "packages",
+          "templates",
+          "examples",
+          "apps/e2e-tests"
+        ],
+        "from": "scripts.lint, second command (code-check.yml)"
+      }
+    ],
+    "notes": "Nuxt / Vue"
+  },
+  {
+    "repo": "sidebase/nuxt-auth",
+    "sha": "9fcc5f68029454882e4c1128ef439bf9074e9a5a",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--deny-warnings",
+          "-D",
+          "correctness",
+          "-D",
+          "suspicious",
+          "-D",
+          "perf",
+          "-D",
+          "no-unused-vars",
+          "-A",
+          "no-underscore-dangle"
+        ],
+        "from": "scripts.lint"
+      },
+      {
+        "tool": "eslint",
+        "args": [
+          ".",
+          "--max-warnings=0"
+        ],
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "signalfx/splunk-otel-js",
+    "sha": "35af62d6b176922d5e46faa6ba028cb3418f7f62",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.79.0",
+      "oxfmt": "0.64.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--deny-warnings"
+        ],
+        "from": "scripts.lint, first command"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.fmt:check"
+      }
+    ],
+    "notes": "one jsPlugin of theirs, ./scripts/lint-check-header.js, which imports nothing"
+  },
+  {
+    "repo": "sindresorhus/eslint-plugin-unicorn",
+    "sha": "2bcc7be6dc5f57108f3ea76199cb79cd4b4f8182",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [],
+        "from": "scripts.lint:js"
+      },
+      {
+        "tool": "eslint",
+        "args": [
+          "--config=./eslint.dogfooding.config.js"
+        ],
+        "from": "scripts.run-rules-on-codebase"
+      }
+    ]
+  },
+  {
+    "repo": "sinonjs/sinon",
+    "sha": "84e91a491b5d88b81e6a80e5dd3f77520577f9e8",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "--max-warnings",
+          "0",
+          "**/*.{js,cjs,mjs}"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "**/*.{js,css,md}"
+        ],
+        "from": "scripts.prettier:check"
+      }
+    ]
+  },
+  {
+    "repo": "socketio/socket.io",
+    "sha": "1eaa582d3b453e3e6f522300ed05b10da0a0799b",
+    "install": "bun",
+    "format": [
+      {
+        "tool": "prettier",
+        "cwd": "packages/socket.io",
+        "args": [
+          "lib/**/*.ts",
+          "test/**/*.ts"
+        ],
+        "from": "packages/socket.io scripts.format:check"
+      },
+      {
+        "tool": "prettier",
+        "cwd": "packages/engine.io",
+        "args": [
+          "wrapper.mjs",
+          "lib/**/*.ts",
+          "test/**/*.js",
+          "test/webtransport.mjs"
+        ],
+        "from": "packages/engine.io scripts.format:check"
+      }
+    ]
+  },
+  {
+    "repo": "soruly/trace.moe-www",
+    "sha": "7b13ca61a09432b20846e5afd1a573ba2b0cb8a0",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.86.0",
+      "oxfmt": "0.71.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format"
+      }
+    ],
+    "notes": "Next.js application; no oxlint configuration file"
+  },
+  {
+    "repo": "soybeanjs/soybean-admin",
+    "sha": "379772fc7217cfb63c2573bb090a64768cf8856b",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint (oxlint --fix && eslint --fix .)"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "-c",
+          ".oxlintrc.json"
+        ],
+        "from": "scripts.lint + `-c .oxlintrc.json` on both sides: `bun lint` prefers eslint.config.* to .oxlintrc.json in one directory"
+      },
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint (oxlint --fix && eslint --fix .)"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.fmt"
+      }
+    ],
+    "notes": "eslint.config.js next to .oxlintrc.json"
+  },
+  {
+    "repo": "steven-tey/precedent",
+    "sha": "3be40205d7cdf56082cd284f07f12251b9208f79",
+    "install": "pnpm",
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "**/*.{css,js,json,jsx,ts,tsx}"
+        ],
+        "from": "scripts.format:write"
+      }
+    ],
+    "notes": "scripts.lint is `next lint`: not run. Prettier 2 loads prettier-plugin-tailwindcss by itself."
+  },
+  {
+    "repo": "storybookjs/storybook",
+    "sha": "73de94c207c76761e14361b1ac3dd2f0e9462442",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.85.0",
+      "oxfmt": "0.70.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.fmt:write"
+      }
+    ]
+  },
+  {
+    "repo": "stx-labs/stacks.js",
+    "sha": "e6084a52140b2ad010a9d1a0f1b87d527c3a8870",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.82.0",
+      "oxfmt": "0.42.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "packages/**/src/"
+        ],
+        "from": "scripts.lint:check (not quoted)",
+        "shell": true
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "packages/**/src/"
+        ],
+        "from": "scripts.fmt:check (not quoted)",
+        "shell": true
+      }
+    ]
+  },
+  {
+    "repo": "styled-components/styled-components-website",
+    "sha": "e893ef4e3fa495ebb88f123b5c5bdf0f142002b4",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.59.0",
+      "oxfmt": "0.44.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "supabase/cli",
+    "sha": "18186749d762e1ae02aa910f1720a6bc0c13bcba",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.65.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "--config",
+          ".oxfmtrc.json"
+        ],
+        "from": "scripts.fmt:fix"
+      }
+    ],
+    "notes": "oxlint: options.typeAware, and `effect-tsgo patch --oxlint` patches the oxlint binary in `prepare`: not run"
+  },
+  {
+    "repo": "sveltejs/kit",
+    "sha": "a06817e90049f15465eca140a07c5218d439dc37",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "packages/**/*.{js,d.ts}"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint",
+        "notes": "\"svelte\": {} in .oxfmtrc.json: oxfmt formats .svelte files with the installed svelte"
+      }
+    ]
+  },
+  {
+    "repo": "sveltejs/svelte",
+    "sha": "707c28146b0f0a6d5404a1bd4769874c3c24851a",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "Swetrix/swetrix",
+    "sha": "321a9ba4694a1bb17515e59250f41964b5494fd8",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.77.0",
+      "oxfmt": "0.62.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "web scripts.lint (pull_request.yml)",
+        "cwd": "web"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "apps/cloud/src",
+          "apps/community/src"
+        ],
+        "from": "backend scripts.lint (pull_request.yml)",
+        "cwd": "backend"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "./app"
+        ],
+        "from": "web scripts.format:check (pull_request.yml)",
+        "cwd": "web"
+      },
+      {
+        "tool": "oxfmt",
+        "args": [
+          "apps/community/src",
+          "apps/cloud/src"
+        ],
+        "from": "backend scripts.format:check (pull_request.yml)",
+        "cwd": "backend"
+      }
+    ],
+    "notes": "docs has oxfmt 0.68.0 in its own lock file: not run (one pinned version for each entry)"
+  },
+  {
+    "repo": "t3-oss/create-t3-app",
+    "sha": "4709861f7e67a15564c0460c13e7b4b6cfcae40d",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "cwd": "cli",
+        "args": [],
+        "from": "cli scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "cwd": "cli",
+        "args": [
+          "**/*.{cjs,mjs,ts,tsx,md,json}",
+          "--ignore-path",
+          "../.gitignore",
+          "--ignore-unknown",
+          "--no-error-on-unmatched-pattern"
+        ],
+        "from": "cli scripts.format:check"
+      }
+    ],
+    "notes": "plugin: @ianvs/prettier-plugin-sort-imports"
+  },
+  {
+    "repo": "t3-oss/create-t3-turbo",
+    "sha": "8f945b7bb3bfb3ca8358d48b1ff0214079bc11ee",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "cwd": "apps/nextjs",
+        "args": [
+          "--flag",
+          "unstable_native_nodejs_ts_config"
+        ],
+        "from": "apps/nextjs scripts.lint"
+      },
+      {
+        "tool": "eslint",
+        "cwd": "packages/api",
+        "args": [
+          "--flag",
+          "unstable_native_nodejs_ts_config"
+        ],
+        "from": "packages/api scripts.lint"
+      },
+      {
+        "tool": "eslint",
+        "cwd": "packages/ui",
+        "args": [
+          "--flag",
+          "unstable_native_nodejs_ts_config"
+        ],
+        "from": "packages/ui scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "cwd": "apps/nextjs",
+        "args": [
+          ".",
+          "--ignore-path",
+          "../../.gitignore"
+        ],
+        "from": "apps/nextjs scripts.format"
+      },
+      {
+        "tool": "prettier",
+        "cwd": "packages/ui",
+        "args": [
+          ".",
+          "--ignore-path",
+          "../../.gitignore"
+        ],
+        "from": "packages/ui scripts.format"
+      }
+    ],
+    "notes": "turbo runs lint and format of each package; three of them here."
+  },
+  {
+    "repo": "tailwindlabs/tailwindcss",
+    "sha": "fa81d697fe572a10ac150d18964a093a7a874081",
+    "install": "pnpm",
+    "installArgs": [
+      "--filter",
+      "@tailwindcss/root"
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "notes": "plugins: prettier-plugin-embed, prettier-plugin-organize-imports. Only the dependencies of the root package are installed"
+  },
+  {
+    "repo": "tale/headplane",
+    "sha": "19767541439e077d145cfb1705a4ffc39bfb5620",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.86.0",
+      "oxfmt": "0.71.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint",
+        "notes": "typed rules are in `rules`, oxlint-tsgolint is a dependency, but neither --type-aware nor options.typeAware: oxlint does not run them"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format",
+        "notes": "experimentalSortImports: {}, experimentalTailwindcss: {}"
+      }
+    ]
+  },
+  {
+    "repo": "TaloDev/backend",
+    "sha": "d031da69f9e9214d4023ca85b719e5e834c00772",
+    "install": "pnpm",
+    "installArgs": [
+      "--pm-on-fail=ignore"
+    ],
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint",
+        "notes": "options.typeAware + typeCheck"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.fmt:fix"
+      }
+    ],
+    "notes": "devEngines asks for pnpm 12.0.0 exactly: --pm-on-fail=ignore"
+  },
+  {
+    "repo": "TanStack/query",
+    "sha": "aab352876a01f76fd0e00b0b500a85907ec7c8b4",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "cwd": "packages/query-core",
+        "args": [
+          "--concurrency=auto",
+          "./src"
+        ],
+        "from": "packages/query-core scripts.test:eslint"
+      },
+      {
+        "tool": "eslint",
+        "cwd": "packages/react-query",
+        "args": [
+          "--concurrency=auto",
+          "./src"
+        ],
+        "from": "packages/react-query scripts.test:eslint"
+      },
+      {
+        "tool": "eslint",
+        "cwd": "packages/vue-query",
+        "args": [
+          "--concurrency=auto",
+          "./src"
+        ],
+        "from": "packages/vue-query scripts.test:eslint"
+      },
+      {
+        "tool": "eslint",
+        "cwd": "packages/svelte-query",
+        "args": [
+          "--concurrency=auto",
+          "./src",
+          "./tests"
+        ],
+        "from": "packages/svelte-query scripts.test:eslint"
+      },
+      {
+        "tool": "eslint",
+        "cwd": "packages/eslint-plugin-query",
+        "args": [
+          "--concurrency=auto",
+          "./src"
+        ],
+        "from": "packages/eslint-plugin-query scripts.test:eslint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "--ignore-unknown",
+          "**/*"
+        ],
+        "from": "scripts.format",
+        "notes": "their script has --experimental-cli, which bun format refuses (exit 2): left out for both, since the judge's list of files is read from the output of the classic CLI. Plugin: prettier-plugin-svelte"
+      }
+    ],
+    "notes": "nx runs test:eslint of each package; five of them here. The packages import each other's build output, which is not there: for both tools alike"
+  },
+  {
+    "repo": "TanStack/router",
+    "sha": "17a3121ff494a481518d54732cdb939c7f61eb2c",
+    "install": "pnpm",
+    "installArgs": [
+      "--filter",
+      "root",
+      "--filter",
+      "@tanstack/router-core",
+      "--filter",
+      "@tanstack/react-router",
+      "--filter",
+      "@tanstack/history",
+      "--filter",
+      "@tanstack/router-generator"
+    ],
+    "lint": [
+      {
+        "tool": "eslint",
+        "cwd": "packages/router-core",
+        "args": [
+          "./src"
+        ],
+        "from": "packages/router-core scripts.test:eslint"
+      },
+      {
+        "tool": "eslint",
+        "cwd": "packages/react-router",
+        "args": [],
+        "from": "packages/react-router scripts.test:eslint (eslint.config.ts)"
+      },
+      {
+        "tool": "eslint",
+        "cwd": "packages/router-generator",
+        "args": [
+          "./src"
+        ],
+        "from": "packages/router-generator scripts.test:eslint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "--ignore-unknown",
+          "**/*"
+        ],
+        "from": "scripts.format",
+        "notes": "their script has --experimental-cli, which bun format refuses (exit 2): left out for both"
+      }
+    ],
+    "notes": "nx runs test:eslint of each package; five of them here. DISK: only the dependencies of these workspace packages are installed (--filter), so imports of the others do not resolve, for both tools alike"
+  },
+  {
+    "repo": "tbxark/mail2telegram",
+    "sha": "cea86d352a95c544a42772931080dfbfb401a2bc",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.82.0",
+      "oxfmt": "0.67.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format:check"
+      }
+    ]
+  },
+  {
+    "repo": "team-reflect/reflect-open",
+    "sha": "fd3bd5bdd4e22e27e2464f824dbaeb4978e86861",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.82.0",
+      "oxfmt": "0.71.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--max-warnings",
+          "0",
+          "apps",
+          "packages"
+        ],
+        "from": "scripts.lint:oxlint"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "--max-warnings",
+          "0",
+          "apps",
+          "packages"
+        ],
+        "from": "the same, past ox2 A6",
+        "ourArgs": [
+          "-c",
+          ".oxlintrc.json"
+        ],
+        "notes": "ours gets -c .oxlintrc.json: what is behind ox2 A6"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.lint:oxfmt"
+      }
+    ],
+    "notes": "oxfmt, oxlint, then eslint: eslint.config.js next to .oxlintrc.json"
+  },
+  {
+    "repo": "theodorusclarence/ts-nextjs-tailwind-starter",
+    "sha": "9a47d33ff5a329f38b9e1b923d881cbbf6b21345",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "--max-warnings=0",
+          "src"
+        ],
+        "from": "scripts.lint:strict"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": ".eslintrc.js; ESLint 8; Prettier 2; plugin: prettier-plugin-tailwindcss"
+  },
+  {
+    "repo": "ThinkInAIXYZ/deepchat",
+    "sha": "4eb60622c67611ea43b1a571e63a3d9ed1d8ee12",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.82.0",
+      "oxfmt": "0.56.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint, last command (prcheck.yml)"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format:check (prcheck.yml)"
+      }
+    ],
+    "notes": "Electron + Vue application; sortTailwindcss"
+  },
+  {
+    "repo": "timlrx/tailwind-nextjs-starter-blog",
+    "sha": "b45bef66b40c63b6f57c15ee8cd090682238df4c",
+    "install": "yarn",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "pages",
+          "app",
+          "components",
+          "lib",
+          "layouts",
+          "scripts",
+          "--no-error-on-unmatched-pattern"
+        ],
+        "from": "scripts.lint is `next lint --dir ..`"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "lint-staged"
+      }
+    ],
+    "notes": "plugin: prettier-plugin-tailwindcss"
+  },
+  {
+    "repo": "tj/commander.js",
+    "sha": "ba6d13ddb4243e5913367734f8c159089ffe7834",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.check:lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.check:format"
+      }
+    ]
+  },
+  {
+    "repo": "tldraw/tldraw",
+    "sha": "035b741dc331bf76a4cb9af27c346be10bba2a88",
+    "install": "pnpm",
+    "installArgs": [
+      "--filter",
+      "@tldraw/monorepo"
+    ],
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "internal/scripts/lint.ts (scripts.lint)",
+        "notes": "options.typeAware, jsPlugins: ./internal/scripts/oxlint/tldraw-plugin.mjs"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "--no-error-on-unmatched-pattern",
+          "**/*.{js,jsx,ts,tsx,cjs,mjs,css,md,mdx,html,yml,yaml}"
+        ],
+        "from": "internal/scripts/lint.ts (scripts.lint)"
+      }
+    ],
+    "notes": "only the dependencies of the root package are installed (disk): oxlint, oxlint-tsgolint, oxfmt. The typed rules run without the types of the packages' dependencies, for both tools alike"
+  },
+  {
+    "repo": "tloncorp/tlon-apps",
+    "sha": "d0be5d6efe1ee8bc8761e3d872fe5a66684f29df",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.79.0",
+      "oxfmt": "0.58.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint",
+        "notes": "jsPlugins: ./oxlint/tlon-plugin.cjs (requires only node:path and a JSON file next to it)"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format",
+        "notes": "proseWrap: always; importOrder* keys of a Prettier plugin are left in the file; 315 ignorePatterns"
+      }
+    ]
+  },
+  {
+    "repo": "toeverything/AFFiNE",
+    "sha": "2d4f191e679a1eb95f96fe12b95060deb35668ae",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.78.0",
+      "oxfmt": "0.63.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint:format"
+      }
+    ]
+  },
+  {
+    "repo": "tremorlabs/tremor",
+    "sha": "ca4d588f47820ff3d514d37fa4ee08a4222dec11",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          ".",
+          "--ext",
+          "ts,tsx",
+          "--report-unused-disable-directives",
+          "--max-warnings",
+          "0"
+        ],
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "trpc/trpc",
+    "sha": "d756e591a5e37ef20b8d75ecd4d736c195497289",
+    "install": "pnpm",
+    "installArgs": [
+      "--filter",
+      "root",
+      "--filter",
+      "@trpc/client...",
+      "--filter",
+      "@trpc/server..."
+    ],
+    "lint": [
+      {
+        "tool": "eslint",
+        "cwd": "packages/client",
+        "args": [
+          "src"
+        ],
+        "from": "packages/client scripts.lint"
+      },
+      {
+        "tool": "eslint",
+        "cwd": "packages/server",
+        "args": [
+          "src"
+        ],
+        "from": "packages/server scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "**/*",
+          "--ignore-unknown"
+        ],
+        "from": "scripts.format",
+        "notes": "prettier-plugin-tailwindcss cannot load www/tailwind.config.ts without the packages of `www`, which are not installed: theirs fails on each JavaScript file"
+      }
+    ],
+    "notes": "plugins: @ianvs/prettier-plugin-sort-imports, prettier-plugin-tailwindcss. Only the root package, @trpc/client, @trpc/server and what they depend on are installed"
+  },
+  {
+    "repo": "TryGhost/framework",
+    "sha": "97f5b9e5992e128c7e4889592d618d17d34956a6",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.86.0",
+      "oxfmt": "0.71.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "-c",
+          ".oxlintrc.json",
+          "packages"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "-c",
+          ".oxfmtrc.json",
+          "packages/**/*.{js,ts,json,md}"
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "TryGhost/Ghost-CLI",
+    "sha": "6fc00887b09da7206cf003972e2d1fc0c3dbfcf9",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.86.0",
+      "oxfmt": "0.71.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--quiet"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "twentyhq/twenty",
+    "sha": "c168183b17e89fbc8747f8ed333d90466ebf85f4",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.53.0",
+      "oxfmt": "0.50.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "-c",
+          ".oxlintrc.json",
+          "."
+        ],
+        "from": "nx.json targetDefaults.lint, packages/create-twenty-app",
+        "cwd": "packages/create-twenty-app"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "-c",
+          ".oxlintrc.json",
+          "."
+        ],
+        "from": "nx.json targetDefaults.lint, packages/twenty-client-sdk",
+        "cwd": "packages/twenty-client-sdk"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "-c",
+          ".oxlintrc.json",
+          "."
+        ],
+        "from": "nx.json targetDefaults.lint, packages/twenty-docs",
+        "cwd": "packages/twenty-docs"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "nx.json targetDefaults.lint, packages/twenty-front",
+        "cwd": "packages/twenty-front"
+      },
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "nx.json targetDefaults.lint, packages/twenty-server",
+        "cwd": "packages/twenty-server"
+      },
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "nx.json targetDefaults.lint, packages/twenty-shared",
+        "cwd": "packages/twenty-shared"
+      }
+    ],
+    "notes": "39 .oxlintrc.json. twenty-front, twenty-server, twenty-ui, twenty-shared .. have jsPlugins ../twenty-oxlint-rules/dist/oxlint-plugin.mjs: the output of a BUILD (nx: dependsOn twenty-oxlint-rules:build): not run (no build scripts). The three packages without it run"
+  },
+  {
+    "repo": "typeorm/typeorm",
+    "sha": "9f5a345d23b87e4ffdc282b441f6ff15c426c130",
+    "install": "pnpm",
+    "installArgs": [
+      "--filter",
+      "typeorm-monorepo"
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format:ci"
+      }
+    ],
+    "notes": "plugins: prettier-plugin-packagejson, prettier-plugin-toml. Only the dependencies of the root package are installed"
+  },
+  {
+    "repo": "unjs/h3",
+    "sha": "66cfb8a357b6285451bad498c2c40002601fae98",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.87.0",
+      "oxfmt": "0.72.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "unjs/nitro",
+    "sha": "cef5305050325a36601ff118b9651d43a0f9ba58",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.87.0",
+      "oxfmt": "0.72.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "vercel/ai",
+    "sha": "e00b1b14e99b9f0fcb5e49848b26ff84613ea067",
+    "install": "pnpm",
+    "installArgs": [
+      "--filter",
+      "ai-repo"
+    ],
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.check: `ultracite check` (ci.yml)",
+        "notes": "extends ./node_modules/ultracite/config/oxlint/{core,react,next}; jsPlugins ./tools/oxlint-plugin-ai-sdk/index.mjs"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.check (ultracite check)"
+      }
+    ],
+    "notes": "only the dependencies of the root package are installed"
+  },
+  {
+    "repo": "vercel/ai-elements",
+    "sha": "6a9d5b1822ffb10bba4bd97175f01edd7d8651cd",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.28.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "ultracite (scripts.check)"
+      }
+    ],
+    "notes": ".oxlintrc.json extends ./node_modules/ultracite/config/oxlint/*: not run"
+  },
+  {
+    "repo": "vercel/commerce",
+    "sha": "3761e52e60df9c6a316e067dbfd7032e494d3634",
+    "install": "pnpm",
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "--ignore-unknown",
+          "."
+        ],
+        "from": "scripts.prettier:check"
+      }
+    ],
+    "notes": "plugin: prettier-plugin-tailwindcss"
+  },
+  {
+    "repo": "vercel/next.js",
+    "sha": "f55fdb55b0d0f956c0d74b3c4a70b9a611c6d703",
+    "install": "pnpm",
+    "installArgs": [
+      "--filter",
+      "nextjs-project"
+    ],
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "--config",
+          "eslint.cli.config.mjs",
+          "."
+        ],
+        "env": {
+          "NODE_OPTIONS": "--max-old-space-size=8192"
+        },
+        "from": "scripts.lint-eslint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.prettier-check"
+      }
+    ],
+    "notes": "NODE_OPTIONS as in their script. Only the dependencies of the root package are installed"
+  },
+  {
+    "repo": "vercel/nextjs-subscription-payments",
+    "sha": "bdd0813206e47e6b218d42f15a7976c8a0d3c3eb",
+    "install": "pnpm",
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.prettier-fix"
+      }
+    ],
+    "notes": "plugin: prettier-plugin-tailwindcss"
+  },
+  {
+    "repo": "vercel/swr",
+    "sha": "9ed1240a4cf799e316a793c22c6800cc6482d389",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.72.0",
+      "oxfmt": "0.57.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "**/*.ts",
+          "**/*.tsx"
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "vercel/turborepo",
+    "sha": "39404a1b82c1a116499cdc93e86e2467fff72d36",
+    "install": "bun",
+    "installArgs": [
+      "--filter",
+      "turbo-monorepo"
+    ],
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--deny-warnings",
+          "."
+        ],
+        "from": "turbo.json //#lint",
+        "notes": "extends ./node_modules/ultracite/config/oxlint/core/.oxlintrc.json"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "turbo.json //#format"
+      }
+    ],
+    "notes": "install: bun, root package only: their pnpm 12.0.0 cannot start without its install script (its bin is a placeholder); only ultracite (the config that .oxlintrc.json extends), oxlint and oxfmt are needed"
+  },
+  {
+    "repo": "vitejs/vite",
+    "sha": "b6c20f6a8126d8561891e5fb9368e8fc9da37538",
+    "install": "pnpm",
+    "installArgs": [
+      "--filter",
+      "@vitejs/vite-monorepo"
+    ],
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          ".",
+          "--concurrency",
+          "auto"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format"
+      }
+    ],
+    "notes": "only the dependencies of the root package are installed (disk): ESLint, its plugins and oxfmt are devDependencies of the root; typed rules see no types of the packages' own dependencies, for both tools alike"
+  },
+  {
+    "repo": "vitejs/vite-ecosystem-ci",
+    "sha": "ab213640052f34b7b2ae76d2774002962683dd5d",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.71.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format"
+      }
+    ],
+    "notes": "oxlint: typeAware + eslint-plugin-n: not run"
+  },
+  {
+    "repo": "vitest-dev/vitest",
+    "sha": "3e3624c5e5ecf77b20065da1aeb60f1182db0ccd",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.86.0",
+      "oxfmt": "0.71.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "VladSez/easy-invoice-pdf",
+    "sha": "19f688d05e1c3bbe25ec7003c823c9f9f658c38c",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.64.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "Next.js application; oxlint: typeAware, typeCheck, jsPlugins: not run"
+  },
+  {
+    "repo": "Voxelum/x-minecraft-launcher",
+    "sha": "0379941d1997e92b079fdc21e8692c8e45cd8cd7",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.63.0",
+      "oxfmt": "0.48.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "-c",
+          "./.oxlintrc.json",
+          "packages"
+        ],
+        "from": "scripts.lint, first command (validate.yml)"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "-c",
+          "../oxlint-config/oxlintrc.json",
+          "."
+        ],
+        "from": "packages/multiplayer-core scripts.lint",
+        "cwd": "packages/multiplayer-core"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "-c",
+          "./.oxfmtrc.json",
+          "packages"
+        ],
+        "from": "scripts.format"
+      },
+      {
+        "tool": "oxfmt",
+        "args": [
+          "-c",
+          "../.oxfmtrc.json",
+          "."
+        ],
+        "from": "xmcl-electron-app scripts.fmt",
+        "cwd": "xmcl-electron-app"
+      }
+    ],
+    "notes": "the applications' lint scripts take the config from ./node_modules/@xmcl/oxlint-config (a package of the workspace): not run"
+  },
+  {
+    "repo": "vuejs/core",
+    "sha": "4ab865a848a1da3d10fb674f857e5fff13094644",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "vuejs/eslint-plugin-vue",
+    "sha": "bf8d798f9116d0c3666e1e309616bc73ebcee4bd",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "."
+        ],
+        "from": "no script: eslint-plugin-prettier runs it; .prettierrc"
+      }
+    ]
+  },
+  {
+    "repo": "vuejs/pinia",
+    "sha": "a1581860ec76a924875f65efefa5f63006b67be9",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.65.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.fmt"
+      }
+    ]
+  },
+  {
+    "repo": "vuejs/router",
+    "sha": "42462bd1925abd6f663474f996c5a85a6b301122",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.87.0",
+      "oxfmt": "0.72.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "vuejs/test-utils",
+    "sha": "807d2c99e2fb9f16451aa6eb908e4c8de095d180",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.86.0",
+      "oxfmt": "0.71.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format"
+      }
+    ]
+  },
+  {
+    "repo": "vuejs/vue",
+    "sha": "9e88707940088cb1f4cd7dd210c9168a50dc347c",
+    "install": "pnpm",
+    "installArgs": [
+      "--filter",
+      "vue"
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "--parser",
+          "typescript",
+          "(src|test|packages|types)/**/*.ts"
+        ],
+        "from": "scripts.format"
+      }
+    ],
+    "notes": "Prettier 2"
+  },
+  {
+    "repo": "Vuepic/vue-datepicker",
+    "sha": "f1a5c11028885e02e81ed379ff04107a7d99d964",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.68.0",
+      "oxfmt": "0.53.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "src"
+        ],
+        "from": "packages/lib scripts.lint:oxlint",
+        "cwd": "packages/lib"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "src"
+        ],
+        "from": "the same, past ox2 A6",
+        "cwd": "packages/lib",
+        "ourArgs": [
+          "-c",
+          "../../.oxlintrc.json"
+        ],
+        "notes": "ours gets -c ../../.oxlintrc.json: what is behind ox2 A6"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "packages/lib scripts.fmt:check",
+        "cwd": "packages/lib"
+      }
+    ],
+    "notes": "the configuration files are at the root, next to an eslint.config.ts"
+  },
+  {
+    "repo": "vueuse/vueuse",
+    "sha": "ad2822b3854347f9eeb1c738fd2b90b773381c4a",
+    "install": "pnpm",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "vvo/iron-session",
+    "sha": "e8faf1a60a25cf2a881adccd0ebc8b1638804280",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.65.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "no oxfmt configuration file; oxlint --type-aware: not run"
+  },
+  {
+    "repo": "walterlow/freecut",
+    "sha": "4d62e8082c5eb387a96275bcbd323d28f6e41a62",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.72.0",
+      "oxfmt": "0.57.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "src",
+          "headless",
+          "vite.config.ts"
+        ],
+        "from": "scripts.lint: `vp lint src headless vite.config.ts` (Vite+ 0.2.4, with .oxlintrc.json)"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "src",
+          "headless",
+          "vite.config.ts",
+          "package.json",
+          ".oxlintrc.json",
+          ".oxfmtrc.json"
+        ],
+        "from": "scripts.format:check: `vp fmt ..` (Vite+ 0.2.4, with .oxfmtrc.json)"
+      }
+    ],
+    "notes": "Vite+ as the front end, but the configuration is in .oxlintrc.json / .oxfmtrc.json; the versions are those that vite-plus 0.2.4 has in their lock file"
+  },
+  {
+    "repo": "webpack/webpack",
+    "sha": "fe1b6f74a0db794a05d9ac55c6a4191d9a039f48",
+    "install": "yarn1",
+    "lint": [
+      {
+        "tool": "eslint",
+        "bin": "node_modules/eslint/bin/eslint.js",
+        "args": [
+          "--concurrency",
+          "auto",
+          "."
+        ],
+        "from": "scripts.lint:code"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "bin": "node_modules/prettier/bin/prettier.cjs",
+        "args": [
+          "--ignore-unknown",
+          "."
+        ],
+        "from": "scripts.fmt:base"
+      }
+    ]
+  },
+  {
+    "repo": "webstonehq/seaquel",
+    "sha": "80ea15452f3562d3b35b24ebf5b2c7b4e171a2d9",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.70.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format"
+      }
+    ],
+    "notes": "oxlint --type-aware --type-check: not run"
+  },
+  {
+    "repo": "webtorrent/webtorrent",
+    "sha": "bbcd95c0c0fa4dcf7c9a432e2ecd04a52f245996",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "."
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "notes": ".eslintrc.cjs, ESLint 8"
+  },
+  {
+    "repo": "whitphx/stlite",
+    "sha": "f7b7d78472e47f23eb62549cf1a3807fcb6a1335",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.60.0",
+      "oxfmt": "0.45.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "src",
+          "electron",
+          "bin-src"
+        ],
+        "from": "packages/desktop scripts.check:lint",
+        "cwd": "packages/desktop"
+      },
+      {
+        "tool": "oxlint",
+        "args": [
+          "src"
+        ],
+        "from": "packages/cli scripts.check:lint",
+        "cwd": "packages/cli"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "packages/desktop scripts.check:format",
+        "cwd": "packages/desktop"
+      },
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "packages/cli scripts.check:format",
+        "cwd": "packages/cli"
+      }
+    ],
+    "notes": "two versions of each tool in yarn.lock; test-build.yml speaks of oxfmt 0.45.0"
+  },
+  {
+    "repo": "winstonjs/winston",
+    "sha": "ff0b79de8562bb322c390fbc82fe71c11f373428",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "lib/*.js",
+          "lib/winston/*.js",
+          "lib/winston/**/*.js"
+        ],
+        "shell": true,
+        "from": "scripts.lint"
+      }
+    ]
+  },
+  {
+    "repo": "withastro/astro",
+    "sha": "5f8082b9173b38027ea39fc59d9cf5a9bed718ea",
+    "install": "pnpm",
+    "installArgs": [
+      "--filter",
+      "root"
+    ],
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          "--concurrency=auto"
+        ],
+        "env": {
+          "NODE_OPTIONS": "--max-old-space-size=8192"
+        },
+        "from": "scripts.eslint:ci"
+      }
+    ],
+    "format": [
+      {
+        "tool": "prettier",
+        "args": [
+          "**/*",
+          "--ignore-unknown"
+        ],
+        "from": "scripts.format:code:ci"
+      }
+    ],
+    "notes": "plugin: prettier-plugin-astro; biome formats most files. NODE_OPTIONS as in their script. Only the dependencies of the root package are installed, so the typed rules see fewer types, on both sides"
+  },
+  {
+    "repo": "workos/authkit-nextjs",
+    "sha": "13938bea1f7bb15e48e637dfee140b4a54f3c9fb",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.57.0",
+      "oxfmt": "0.42.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "an .eslintrc.cjs and an .eslintignore are left at the root"
+  },
+  {
+    "repo": "yargs/yargs",
+    "sha": "b2dbcc538062829bd720f8cbfb6b4765bae6b4b8",
+    "install": "bun",
+    "lint": [
+      {
+        "tool": "eslint",
+        "args": [
+          ".",
+          "--ext",
+          "mjs",
+          "--ext",
+          "js"
+        ],
+        "from": "scripts.check:js"
+      }
+    ],
+    "notes": ".eslintrc.json + .eslintignore, ESLint 8"
+  },
+  {
+    "repo": "yoshiko-pg/difit",
+    "sha": "82a765c037ec28fe7fe90ab2f1e4b5748032b4fa",
+    "install": "none",
+    "pinned": {
+      "oxfmt": "0.55.0"
+    },
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "."
+        ],
+        "from": "scripts.format"
+      }
+    ],
+    "notes": "oxlint: jsPlugins, --type-aware --type-check: not run"
+  },
+  {
+    "repo": "zazuko/trifid",
+    "sha": "370eb493310c9cd2e97250a59ae2c2cc62aa43bf",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.86.0",
+      "oxfmt": "0.71.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.format:check"
+      }
+    ],
+    "notes": "server"
+  },
+  {
+    "repo": "zeitword/zeitword",
+    "sha": "ee72c3d5c6221e8bf9e05008a24e3130c4909723",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.59.0",
+      "oxfmt": "0.36.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [],
+        "from": "scripts.fmt"
+      }
+    ],
+    "notes": "Nuxt application; no oxlint configuration file"
+  },
+  {
+    "repo": "zendeskgarden/react-components",
+    "sha": "d0ecea894c24a01d13d46c3652be1fb7ed033bf2",
+    "install": "none",
+    "pinned": {
+      "oxlint": "1.56.0",
+      "oxfmt": "0.41.0"
+    },
+    "lint": [
+      {
+        "tool": "oxlint",
+        "args": [
+          "--config",
+          "config/oxlintrc.json"
+        ],
+        "from": "scripts.lint"
+      }
+    ],
+    "format": [
+      {
+        "tool": "oxfmt",
+        "args": [
+          "--config",
+          "config/oxfmtrc.json"
+        ],
+        "from": "scripts.format"
+      }
+    ]
+  }
+]

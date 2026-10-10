@@ -128,6 +128,15 @@ function expression). The bundler's renamer then numbers the new symbols like
 the locals of any other function. `Host::new_generated` is for a name declared
 at module level, such as an outlined `_temp`.
 
+### The compiler as a linter
+
+`bun lint` has the validations as rules (`react/refs`, `react-hooks/refs`, ...). `lint.rs` is upstream's
+`outputMode: 'lint'` for one function: lowering, the passes, all validations, no codegen, and every
+error that upstream would log. The function comes from `src/lint/react_compiler/convert.rs`, which
+makes a `bun_ast` tree of the linter's own syntax tree, without a visit pass. In that tree a `Loc` is
+an index into a table of ranges, so that what is reported has an end, and
+`Host::is_module_level` says what is bound outside of the function.
+
 ### Bail-out semantics
 
 Any `bun_ast` node the port cannot lower (bundler-only synthetics: `ESpecial`,
@@ -135,6 +144,12 @@ Any `bun_ast` node the port cannot lower (bundler-only synthetics: `ESpecial`,
 with category `Unsupported`. `program.rs` catches that per-function, leaves the
 original `G::Fn` untouched, and logs a `CompileSkip` event — exactly what
 upstream does for its own unsupported cases.
+
+A function that is nested too deeply bails out the same way, with the Todo "Support functions of this
+size". The first walk of the lowering (`find_context_identifiers`) counts the statements, expressions
+and patterns around each node, what only wraps apart (blocks, object and array literals, property accesses), and stops above `MAX_NESTING` (256) levels, on every platform. Every
+function of the lowering that calls itself also asks `Environment::has_stack()`, which says no earlier
+in a build with large frames.
 
 ## Hook placement
 

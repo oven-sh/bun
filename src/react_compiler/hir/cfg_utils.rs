@@ -26,21 +26,26 @@ use super::{
 pub fn get_reverse_postordered_blocks(
     hir: &HIR,
     _instructions: &[Instruction],
-) -> IndexMap<BlockId, BasicBlock> {
+) -> Result<IndexMap<BlockId, BasicBlock>, crate::diagnostics::CompilerDiagnostic> {
     let mut visited: IndexSet<BlockId> = IndexSet::new();
     let mut used: IndexSet<BlockId> = IndexSet::new();
     let mut used_fallthroughs: IndexSet<BlockId> = IndexSet::new();
-    let mut postorder: Vec<BlockId> = Vec::new();
+    let mut postorder: Vec<BlockId> = Vec::with_capacity(hir.blocks.len());
 
-    fn visit(
-        hir: &HIR,
-        block_id: BlockId,
-        is_used: bool,
-        visited: &mut IndexSet<BlockId>,
-        used: &mut IndexSet<BlockId>,
-        used_fallthroughs: &mut IndexSet<BlockId>,
-        postorder: &mut Vec<BlockId>,
-    ) {
+    enum Step {
+        Enter(BlockId, bool),
+        Exit(BlockId),
+    }
+    let mut stack = Vec::with_capacity(32);
+    stack.push(Step::Enter(hir.entry, true));
+    while let Some(step) = stack.pop() {
+        let (block_id, is_used) = match step {
+            Step::Enter(block_id, is_used) => (block_id, is_used),
+            Step::Exit(block_id) => {
+                postorder.push(block_id);
+                continue;
+            }
+        };
         let was_used = used.contains(&block_id);
         let was_visited = visited.contains(&block_id);
         visited.insert(block_id);
@@ -48,55 +53,36 @@ pub fn get_reverse_postordered_blocks(
             used.insert(block_id);
         }
         if was_visited && (was_used || !is_used) {
-            return;
+            continue;
+        }
+        if !was_visited {
+            stack.push(Step::Exit(block_id));
         }
 
-        let block = hir
-            .blocks
-            .get(&block_id)
-            .unwrap_or_else(|| panic!("[HIRBuilder] expected block {:?} to exist", block_id));
+        let Some(block) = hir.blocks.get(&block_id) else {
+            return Err(crate::diagnostics::cold_invariant(
+                "[HIRBuilder] Unexpected null block",
+                Some(format!("expected block bb{} to exist", block_id.0)),
+                None,
+            )
+            .into());
+        };
 
         // Visit successors in reverse order so that when we reverse the
         // postorder list, sibling edges come out in program order.
-        let mut successors = each_terminal_successor(&block.terminal);
-        successors.reverse();
-
-        let fallthrough = terminal_fallthrough(&block.terminal);
+        for successor in each_terminal_successor(&block.terminal) {
+            stack.push(Step::Enter(successor, is_used));
+        }
 
         // Visit fallthrough first (marking as not-yet-used) to ensure its
         // block ID is emitted in the correct position.
-        if let Some(ft) = fallthrough {
+        if let Some(ft) = terminal_fallthrough(&block.terminal) {
             if is_used {
                 used_fallthroughs.insert(ft);
             }
-            visit(hir, ft, false, visited, used, used_fallthroughs, postorder);
-        }
-        for successor in successors {
-            visit(
-                hir,
-                successor,
-                is_used,
-                visited,
-                used,
-                used_fallthroughs,
-                postorder,
-            );
-        }
-
-        if !was_visited {
-            postorder.push(block_id);
+            stack.push(Step::Enter(ft, false));
         }
     }
-
-    visit(
-        hir,
-        hir.entry,
-        true,
-        &mut visited,
-        &mut used,
-        &mut used_fallthroughs,
-        &mut postorder,
-    );
 
     let mut blocks = IndexMap::new();
     for block_id in postorder.into_iter().rev() {
@@ -122,7 +108,7 @@ pub fn get_reverse_postordered_blocks(
         // otherwise this block is unreachable and is dropped
     }
 
-    blocks
+    Ok(blocks)
 }
 
 /// For each block with a `For` terminal whose update block is not in the
@@ -252,41 +238,26 @@ pub fn mark_predecessors(hir: &mut HIR) {
         block.preds.clear();
     }
 
-    let mut visited: IndexSet<BlockId> = IndexSet::new();
-
-    fn visit(
-        hir: &mut HIR,
-        block_id: BlockId,
-        prev_block_id: Option<BlockId>,
-        visited: &mut IndexSet<BlockId>,
-    ) {
-        // Add predecessor
+    let mut stack = Vec::with_capacity(32);
+    stack.push((hir.entry, None));
+    while let Some((block_id, prev_block_id)) = stack.pop() {
+        let Some(block) = hir.blocks.get_mut(&block_id) else {
+            continue;
+        };
         if let Some(prev_id) = prev_block_id {
-            if let Some(block) = hir.blocks.get_mut(&block_id) {
-                block.preds.insert(prev_id);
-            } else {
-                return;
+            // Each visit but the first of the entry leaves a predecessor.
+            let was_visited = block_id == hir.entry || !block.preds.is_empty();
+            block.preds.insert(prev_id);
+            if was_visited {
+                continue;
             }
         }
 
-        if visited.contains(&block_id) {
-            return;
-        }
-        visited.insert(block_id);
-
-        // Get successors before mutating
-        let successors = if let Some(block) = hir.blocks.get(&block_id) {
-            each_terminal_successor(&block.terminal)
-        } else {
-            return;
-        };
-
-        for successor in successors {
-            visit(hir, successor, Some(block_id), visited);
+        let successors = each_terminal_successor(&block.terminal);
+        for successor in successors.into_iter().rev() {
+            stack.push((successor, Some(block_id)));
         }
     }
-
-    visit(hir, hir.entry, None, &mut visited);
 }
 
 /// Create a temporary Place with a fresh identifier allocated in the arena.

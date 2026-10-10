@@ -1,0 +1,4244 @@
+{
+ "oxlint": "1.87.0",
+ "cases": {
+  "capitalized-calls/01.valid.tsx": "\nfunction Component(props) {\n  return <div>{props.text}</div>;\n}\n",
+  "capitalized-calls/02.invalid.tsx": "\nimport Child from './Child';\nfunction Component() {\n  return <>\n    {Child()}\n  </>;\n}\n",
+  "capitalized-calls/03.invalid.tsx": "\nimport myModule from './MyModule';\nfunction Component() {\n  return <>\n    {myModule.Child()}\n  </>;\n}\n",
+  "capitalized-calls/04.invalid.tsx": "\nimport Child1 from './Child1';\nimport MyModule from './MyModule';\nfunction Component() {\n  return <>\n    {Child1()}\n    {MyModule.Child2()}\n  </>;\n}",
+  "error-boundaries/01.valid.tsx": "\nfunction Component(props) {\n  return <div>{props.text}</div>;\n}\n",
+  "error-boundaries/02.invalid.tsx": "\nfunction Component(props) {\n  let el;\n  try {\n    el = <Child />;\n  } catch {\n    return null;\n  }\n  return el;\n}\n",
+  "exhaustive-effect-dependencies/01.valid.tsx": "\nfunction Component(props) {\n  return <div>{props.text}</div>;\n}\n",
+  "exhaustive-effect-dependencies/02.valid.tsx": "\nimport {useEffect} from 'react';\nfunction Component({value}) {\n  useEffect(() => {\n    log(value);\n  }, [value]);\n}\n",
+  "exhaustive-effect-dependencies/03.invalid.tsx": "\nimport {useEffect} from 'react';\nfunction Component({value}) {\n  useEffect(() => {\n    log(value);\n  }, []);\n}\n",
+  "exhaustive-effect-dependencies/04.invalid.tsx": "\nimport {useEffect} from 'react';\nfunction Component({value, extra}) {\n  useEffect(() => {\n    log(value);\n  }, [value, extra]);\n}\n",
+  "globals/01.valid.tsx": "\nimport {useEffect} from 'react';\nlet someGlobal = false;\nfunction Component() {\n  useEffect(() => {\n    someGlobal = true;\n  }, []);\n  return <div />;\n}\n",
+  "globals/02.invalid.tsx": "\nlet someGlobal = false;\nfunction Component() {\n  const setGlobal = () => {\n    someGlobal = true;\n  };\n  setGlobal();\n  return <div>{String(someGlobal)}</div>;\n}\n",
+  "hooks/01.valid.tsx": "\nfunction Component() {\n  useHook();\n  return <div>Hello world</div>;\n}\n",
+  "hooks/02.invalid.tsx": "\nfunction useConditional() {\n  if (cond) {\n    useConditionalHook();\n  }\n}\n",
+  "immutability/01.valid.tsx": "\nimport {useState} from 'react';\nfunction Component(props) {\n  const [state, setState] = useState({a: 0});\n  return <div onClick={() => setState({a: state.a + 1})}>{props.foo}</div>;\n}\n",
+  "immutability/02.invalid.tsx": "\n        import { useState } from 'react';\n        function Component(props) {\n          // typescript syntax that hermes-parser doesn't understand yet\n          const x: `foo${1}` = 'foo1';\n          const [state, setState] = useState({a: 0});\n          state.a = 1;\n          return <div>{props.foo}</div>;\n        }\n      ",
+  "immutability/03.invalid.tsx": "\n        import { useCallback } from 'react';\n        function Component() {\n          const applyFilter = useCallback(() => {\n            setTimeout(() => {\n              applyFilter();\n            });\n          }, []);\n          return null;\n        }\n      ",
+  "immutability/04.invalid.tsx": "\n        function Component({model}) {\n          model.value = 'next';\n          return <div>{model.value}</div>;\n        }\n      ",
+  "incompatible-library/01.valid.tsx": "\nfunction Component(props) {\n  return <div>{props.text}</div>;\n}\n",
+  "incompatible-library/02.invalid.tsx": "\nimport {useReactTable} from '@tanstack/react-table';\nfunction Component({columns, data}) {\n  const table = useReactTable({columns, data});\n  return <div>{table.getRowModel().rows.length}</div>;\n}\n",
+  "invariant/01.valid.tsx": "export const ExportedName = function Node() { return <Tree renderItem={() => <Node />} />; };",
+  "invariant/02.valid.tsx": "export const ExportedName = function Node({ value }) { return <Tree renderItem={() => () => <Node value={value} />} />; };",
+  "invariant/03.valid.tsx": "\nfunction Component(props) {\n  let y = function () {\n    m(x);\n  };\n\n  let x = { a };\n  m(x);\n  return y;\n}\n",
+  "memo-dependencies/01.valid.tsx": "\nfunction Component(props) {\n  return <div>{props.text}</div>;\n}\n",
+  "memo-dependencies/02.valid.tsx": "\nimport {useMemo} from 'react';\nfunction Component({value}) {\n  return useMemo(() => value, [value]);\n}\n",
+  "memo-dependencies/03.invalid.tsx": "\nimport {useMemo} from 'react';\nfunction Component({value}) {\n  return useMemo(() => value, []);\n}\n",
+  "memo-dependencies/04.invalid.tsx": "\nimport {useMemo} from 'react';\nfunction Component({value, extra}) {\n  return useMemo(() => value, [value, extra]);\n}\n",
+  "no-deriving-state-in-effects/01.valid.tsx": "\nfunction Component({firstName, lastName}) {\n  const fullName = firstName + ' ' + lastName;\n  return <div>{fullName}</div>;\n}\n",
+  "no-deriving-state-in-effects/02.invalid.tsx": "\nimport {useEffect, useState} from 'react';\nfunction Component() {\n  const [firstName] = useState('Taylor');\n  const [lastName] = useState('Swift');\n  const [fullName, setFullName] = useState('');\n  useEffect(() => {\n    setFullName(firstName + ' ' + lastName);\n  }, [firstName, lastName]);\n  return <div>{fullName}</div>;\n}\n",
+  "preserve-manual-memoization/01.valid.tsx": "\nimport {useMemo} from 'react';\nfunction Component({propA}) {\n  return useMemo(() => propA.x, [propA]);\n}\n",
+  "preserve-manual-memoization/02.invalid.tsx": "\nimport {useCallback} from 'react';\nfunction useFoo(props) {\n  const x = [];\n  useHook();\n  x.push(props);\n  return useCallback(() => {\n    doSomething();\n    doSomethingElse();\n    return [x];\n  }, [x]);\n}\n",
+  "purity/01.valid.tsx": "\nfunction Component({ timestamp }) {\n  const date = new Date(timestamp);\n  return <Foo date={date} />;\n}\n",
+  "purity/02.valid.tsx": "\nfunction Component(props) {\n  return <div>{props.text}</div>;\n}\n",
+  "purity/03.invalid.tsx": "\nfunction Component() {\n  const date = Date.now();\n  const now = performance.now();\n  const rand = Math.random();\n  return <Foo date={date} now={now} rand={rand} />;\n}\n",
+  "purity/04.invalid.tsx": "\nfunction Component() {\n  const date = new Date();\n  const time = new Date().getTime();\n  const year = new Date().getFullYear();\n  return <Foo date={date} time={time} year={year} />;\n}\n",
+  "purity/node_modules/package/05.valid.tsx": "function Component() { return <div>{Date.now()}</div>; }",
+  "refs/01.valid.tsx": "\nfunction Button(props) {\n  const scrollview = React.useRef<ScrollView>(null);\n  return <Button thing={scrollview} />;\n}\n",
+  "refs/02.invalid.tsx": "\nfunction Component(props) {\n  const ref = useRef(null);\n  const value = ref.current;\n  return value;\n}\n",
+  "refs/03.invalid.tsx": "\nfunction Component() {\n  const ref = useRef(null);\n  ref.current = 1;\n  return null;\n}\n",
+  "refs/04.invalid.tsx": "\nfunction Component() {\n  const ref = useRef({inner: null});\n  ref.current.inner = 1;\n  return null;\n}\n",
+  "rule-suppression/01.valid.tsx": "\nfunction Component({value}) {\n  const doubled = value * 2;\n  return <div>{doubled}</div>;\n}\n",
+  "rule-suppression/02.valid.tsx": "\nfunction Component({value}) {\n  // eslint-disable-next-line no-console\n  console.log(value);\n  return <div>{value}</div>;\n}\n",
+  "rule-suppression/03.invalid.tsx": "\nfunction Component({value}) {\n  // eslint-disable-next-line react-hooks/exhaustive-deps\n  const doubled = value * 2;\n  return <div>{doubled}</div>;\n}\n",
+  "set-state-in-effect/01.valid.tsx": "\nimport {useEffect, useState} from 'react';\nfunction Component({onChange}) {\n  const [state, setState] = useState(0);\n  useEffect(() => {\n    onChange(state);\n  }, [onChange, state]);\n  return <div onClick={() => setState(state + 1)}>{state}</div>;\n}\n",
+  "set-state-in-effect/02.invalid.tsx": "\nimport {useEffect, useState} from 'react';\nfunction Component() {\n  const [state, setState] = useState(0);\n  useEffect(() => {\n    setState(s => s + 1);\n  });\n  return state;\n}\n",
+  "set-state-in-render/01.valid.tsx": "\nimport {useState} from 'react';\nfunction Component(props) {\n  const [state, setState] = useState(0);\n  return <div onClick={() => setState(state + 1)}>{state}</div>;\n}\n",
+  "set-state-in-render/02.invalid.tsx": "\nimport {useState} from 'react';\nfunction Component() {\n  const [state, setState] = useState(0);\n  setState(1);\n  return state;\n}",
+  "static-components/01.valid.tsx": "\nfunction Inner(props) {\n  return <div>{props.text}</div>;\n}\nfunction Outer() {\n  return <Inner text='hello' />;\n}\n",
+  "static-components/02.invalid.tsx": "\nfunction Example(props) {\n  const Component = createComponent();\n  return <Component />;\n}\n",
+  "syntax/01.valid.tsx": "\nclass Foo {\n  #bar() {}\n}\n",
+  "syntax/02.invalid.tsx": "\nfunction Component() {\n  const x = 0;\n  x = 1;\n  return <div>{x}</div>;\n}\n",
+  "todo/01.valid.tsx": "\nfunction Component(props) {\n  return <div>{props.text}</div>;\n}\n",
+  "todo/02.invalid.tsx": "function Component() {\n                const fbt = 'span';\n                return <fbt desc='label'>Hello</fbt>;\n            }",
+  "todo/03.invalid.tsx": "import { useEffect } from 'react';\n            function Component() {\n                useEffect(() => {\n                    try {\n                        doSomething();\n                    } finally {\n                        cleanup();\n                    }\n                }, []);\n                return <div />;\n            }",
+  "unsupported-syntax/01.valid.tsx": "\nfunction Component(props) {\n  return <div>{props.text}</div>;\n}\n",
+  "unsupported-syntax/02.invalid.tsx": "\nfunction Component(props) {\n  eval('props.x = true');\n  return <div />;\n}\n",
+  "use-memo/01.valid.tsx": "\nimport {useMemo} from 'react';\nfunction Component({a}) {\n  const x = useMemo(() => a + 1, [a]);\n  return <div>{x}</div>;\n}\n",
+  "use-memo/02.invalid.tsx": "\nimport {useMemo} from 'react';\nfunction Component({a}) {\n  const x = useMemo(async () => {\n    await a;\n  }, [a]);\n  return <div>{x}</div>;\n}\n",
+  "void-use-memo/01.valid.tsx": "\nimport {useMemo} from 'react';\nfunction Component({a}) {\n  const x = useMemo(() => a + 1, [a]);\n  return <div>{x}</div>;\n}\n",
+  "void-use-memo/02.invalid.tsx": "\nimport {useMemo} from 'react';\nfunction Component() {\n  const value = useMemo(() => {}, []);\n  return <div>{value}</div>;\n}"
+ },
+ "fixtures": {
+  "allow-global-reassignment-in-effect.js": "import {useEffect, useState} from 'react';\n\nlet someGlobal = false;\n\nfunction Component() {\n  const [state, setState] = useState(someGlobal);\n\n  useEffect(() => {\n    someGlobal = true;\n  }, []);\n\n  useEffect(() => {\n    setState(someGlobal);\n  }, [someGlobal]);\n\n  return <div>{String(state)}</div>;\n}\n\nexport const FIXTURE_ENTRYPOINT = {\n  fn: Component,\n  params: [{}],\n};\n",
+  "context-variable-as-jsx-element-tag.js": "// @enablePreserveExistingMemoizationGuarantees:false\nimport {useMemo} from 'react';\nimport {Stringify} from 'shared-runtime';\n\nfunction Component(props) {\n  let Component = Stringify;\n\n  Component = useMemo(() => {\n    return Component;\n  }, [Component]);\n\n  return <Component {...props} />;\n}\n\nexport const FIXTURE_ENTRYPOINT = {\n  fn: Component,\n  params: [{name: 'Sathya'}],\n};\n",
+  "effect-derived-computations/derived-state-from-prop-setter-call-outside-effect-no-error.js": "// @validateNoDerivedComputationsInEffects_exp @loggerTestOnly @outputMode:\"lint\"\nimport {useEffect, useState} from 'react';\n\nfunction Component({initialName}) {\n  const [name, setName] = useState('');\n\n  useEffect(() => {\n    setName(initialName);\n  }, [initialName]);\n\n  return (\n    <div>\n      <input value={name} onChange={e => setName(e.target.value)} />\n    </div>\n  );\n}\n\nexport const FIXTURE_ENTRYPOINT = {\n  fn: Component,\n  params: [{initialName: 'John'}],\n};\n",
+  "effect-derived-computations/effect-with-global-function-call-no-error.js": "// @validateNoDerivedComputationsInEffects_exp @loggerTestOnly @outputMode:\"lint\"\nimport {useEffect, useState} from 'react';\n\nfunction Component({propValue}) {\n  const [value, setValue] = useState(null);\n  useEffect(() => {\n    setValue(propValue);\n    globalCall();\n  }, [propValue]);\n\n  return <div>{value}</div>;\n}\n\nexport const FIXTURE_ENTRYPOINT = {\n  fn: Component,\n  params: [{propValue: 'test'}],\n};\n",
+  "error.assign-global-in-component-tag-function.js": "function Component() {\n  const Foo = () => {\n    someGlobal = true;\n  };\n  return <Foo />;\n}\n",
+  "error.bug-invariant-couldnt-find-binding-for-decl.js": "import {useEffect} from 'react';\n\nexport function Foo() {\n  useEffect(() => {\n    try {\n      // do something\n    } catch ({status}) {\n      // do something\n    }\n  }, []);\n}\n",
+  "error.bug-invariant-expected-consistent-destructuring.js": "import {useMemo} from 'react';\nimport {useFoo, formatB, Baz} from './lib';\n\nexport const Example = ({data}) => {\n  let a;\n  let b;\n\n  if (data) {\n    ({a, b} = data);\n  }\n\n  const foo = useFoo(a);\n  const bar = useMemo(() => formatB(b), [b]);\n\n  return <Baz foo={foo} bar={bar} />;\n};\n",
+  "error.function-expression-references-variable-its-assigned-to.js": "function Component() {\n  let callback = () => {\n    callback = null;\n  };\n  return <div onClick={callback} />;\n}\n",
+  "error.hoist-optional-member-expression-with-conditional.js": "// @validatePreserveExistingMemoizationGuarantees @enableOptionalDependencies\nimport {ValidateMemoization} from 'shared-runtime';\nfunction Component(props) {\n  const data = useMemo(() => {\n    const x = [];\n    x.push(props?.items);\n    if (props.cond) {\n      x.push(props.items);\n    }\n    return x;\n  }, [props?.items, props.cond]);\n  return (\n    <ValidateMemoization inputs={[props?.items, props.cond]} output={data} />\n  );\n}\n",
+  "error.invalid-array-push-frozen.js": "function Component(props) {\n  const x = [];\n  <div>{x}</div>;\n  x.push(props.value);\n  return x;\n}\n",
+  "error.invalid-disallow-mutating-ref-in-render.js": "// @validateRefAccessDuringRender\nfunction Component() {\n  const ref = useRef(null);\n  ref.current = false;\n\n  return <button ref={ref} />;\n}\n",
+  "error.invalid-eval-unsupported.js": "function Component(props) {\n  eval('props.x = true');\n  return <div />;\n}\n",
+  "error.invalid-impure-functions-in-render.js": "// @validateNoImpureFunctionsInRender\n\nfunction Component() {\n  const date = Date.now();\n  const now = performance.now();\n  const rand = Math.random();\n  return <Foo date={date} now={now} rand={rand} />;\n}\n",
+  "error.invalid-optional-member-expression-as-memo-dep-non-optional-in-body.js": "// @validatePreserveExistingMemoizationGuarantees\nfunction Component(props) {\n  const data = useMemo(() => {\n    // actual code is non-optional\n    return props.items.edges.nodes ?? [];\n    // deps are optional\n  }, [props.items?.edges?.nodes]);\n  return <Foo data={data} />;\n}\n",
+  "error.invalid-pass-hook-as-prop.js": "function Component(props) {\n  return <Child foo={useFoo} />;\n}\n",
+  "error.invalid-props-mutation-in-effect-indirect.js": "function Component(props) {\n  const mutateProps = () => {\n    props.value = true;\n  };\n  const indirectMutateProps = () => {\n    mutateProps();\n  };\n  useEffect(() => indirectMutateProps(), []);\n}\n",
+  "error.invalid-reassign-variable-in-usememo.js": "function Component() {\n  let x;\n  const y = useMemo(() => {\n    let z;\n    x = [];\n    z = true;\n    return z;\n  }, []);\n  return [x, y];\n}\n",
+  "error.invalid-ref-value-as-props.js": "// @validateRefAccessDuringRender\nfunction Component(props) {\n  const ref = useRef(null);\n  return <Foo ref={ref.current} />;\n}\n",
+  "error.invalid-setState-in-useMemo.js": "function useKeyedState({key, init}) {\n  const [prevKey, setPrevKey] = useState(key);\n  const [state, setState] = useState(init);\n\n  useMemo(() => {\n    setPrevKey(key);\n    setState(init);\n  }, [key, init]);\n\n  return state;\n}\n",
+  "error.invalid-sketchy-code-use-forget.js": "// @validateExhaustiveMemoizationDependencies:false\n/* eslint-disable react-hooks/rules-of-hooks */\nfunction lowercasecomponent() {\n  'use forget';\n  const x = [];\n  // eslint-disable-next-line react-hooks/rules-of-hooks\n  return <div>{x}</div>;\n}\n/* eslint-enable react-hooks/rules-of-hooks */\n",
+  "error.invalid-unconditional-set-state-in-render.js": "// @validateNoSetStateInRender\nfunction Component(props) {\n  const [x, setX] = useState(0);\n  const aliased = setX;\n\n  setX(1);\n  aliased(2);\n\n  return x;\n}\n",
+  "error.mutate-global-increment-op-invalid-react.js": "let renderCount = 0;\n\nfunction NoHooks() {\n  renderCount++;\n  return <div />;\n}\n",
+  "error.todo-invalid-jsx-in-try-with-finally.js": "// @validateNoJSXInTryStatements @outputMode:\"lint\"\nfunction Component(props) {\n  let el;\n  try {\n    el = <div />;\n  } finally {\n    console.log(el);\n  }\n  return el;\n}\n",
+  "error.useMemo-non-literal-depslist.ts": "import {useMemo} from 'react';\n\n// react-hooks-deps would error on this code (complex expression in depslist),\n// so Forget could bailout here\nfunction App({text, hasDeps}) {\n  const resolvedText = useMemo(\n    () => {\n      return text.toUpperCase();\n    },\n    hasDeps ? null : [text], // should be DCE'd\n  );\n  return resolvedText;\n}\n\nexport const FIXTURE_ENTRYPOINT = {\n  fn: App,\n  params: ['TodoAdd'],\n  isComponent: 'TodoAdd',\n};\n",
+  "exhaustive-deps/error.invalid-dep-on-ref-current-value.js": "// @validateExhaustiveMemoizationDependencies\n\nfunction Component() {\n  const ref = useRef(null);\n  const onChange = useCallback(() => {\n    return ref.current.value;\n  }, [ref.current.value]);\n\n  return <input ref={ref} onChange={onChange} />;\n}\n",
+  "exhaustive-deps/error.invalid-exhaustive-effect-deps.js": "// @validateExhaustiveEffectDependencies:\"all\"\nimport {useEffect} from 'react';\n\nfunction Component({x, y, z}) {\n  // error: missing dep - x\n  useEffect(() => {\n    log(x);\n  }, []);\n\n  // error: extra dep - y\n  useEffect(() => {\n    log(x);\n  }, [x, y]);\n\n  // error: missing dep - z; extra dep - y\n  useEffect(() => {\n    log(x, z);\n  }, [x, y]);\n\n  // error: missing dep x\n  useEffect(() => {\n    log(x);\n  }, [x.y]);\n}\n",
+  "fbt/error.todo-locally-require-fbt.js": "function Component(props) {\n  const fbt = require('fbt');\n\n  return <fbt desc=\"Description\">{'Text'}</fbt>;\n}\n",
+  "invalid-jsx-in-catch-in-outer-try-with-catch.js": "// @loggerTestOnly @validateNoJSXInTryStatements @outputMode:\"lint\"\nimport {identity} from 'shared-runtime';\n\nfunction Component(props) {\n  let el;\n  try {\n    let value;\n    try {\n      value = identity(props.foo);\n    } catch {\n      el = <div value={value} />;\n    }\n  } catch {\n    return null;\n  }\n  return el;\n}\n",
+  "invalid-jsx-in-try-with-catch.js": "// @loggerTestOnly @validateNoJSXInTryStatements @outputMode:\"lint\"\nfunction Component(props) {\n  let el;\n  try {\n    el = <div />;\n  } catch {\n    return null;\n  }\n  return el;\n}\n",
+  "invalid-set-state-in-effect-verbose-non-local-derived.js": "// @validateNoSetStateInEffects @enableVerboseNoSetStateInEffect\nimport {useState, useEffect} from 'react';\n\nfunction Child({firstName, lastName}) {\n  const [fullName, setFullName] = useState('');\n  useEffect(() => {\n    setFullName(firstName + ' ' + lastName);\n  }, [firstName, lastName]);\n  return <div>{fullName}</div>;\n}\n\nexport const FIXTURE_ENTRYPOINT = {\n  fn: Child,\n  params: [{firstName: 'John', lastName: 'Doe'}],\n};\n",
+  "invalid-unused-usememo.js": "// @validateNoVoidUseMemo @loggerTestOnly\nfunction Component() {\n  useMemo(() => {\n    return [];\n  }, []);\n  return <div />;\n}\n",
+  "preserve-memo-validation/error.useMemo-property-call-dep.ts": "// @validatePreserveExistingMemoizationGuarantees @validateExhaustiveMemoizationDependencies:false\nimport {useMemo} from 'react';\n\nfunction Component({propA}) {\n  return useMemo(() => {\n    return propA.x();\n  }, [propA.x]);\n}\n",
+  "rules-of-hooks/error.invalid-conditionally-call-prop-named-like-hook.js": "function Component({cond, useFoo}) {\n  if (cond) {\n    useFoo();\n  }\n}\n",
+  "rules-of-hooks/error.invalid-hook-as-prop.js": "function Component({useFoo}) {\n  useFoo();\n}\n",
+  "rules-of-hooks/error.invalid-hook-for.js": "function Component(props) {\n  let i = 0;\n  for (let x = 0; useHook(x) < 10; useHook(i), x++) {\n    i += useHook(x);\n  }\n  return i;\n}\n",
+  "should-bailout-without-compilation-infer-mode.js": "// @gating @panicThreshold:\"none\" @compilationMode:\"infer\"\nlet someGlobal = 'joe';\n\nfunction Component() {\n  someGlobal = 'wat';\n  return <div>{someGlobal}</div>;\n}\n\nexport const FIXTURE_ENTRYPOINT = {\n  fn: Component,\n  params: [],\n};\n",
+  "static-components/invalid-dynamically-constructed-component-method-call.js": "// @loggerTestOnly @validateStaticComponents @outputMode:\"lint\"\nfunction Example(props) {\n  const Component = props.foo.bar();\n  return <Component />;\n}\n",
+  "timers.js": "function Component(props) {\n  const start = performance.now();\n  const now = Date.now();\n  const time = performance.now() - start;\n  return (\n    <div>\n      rendering took {time} at {now}\n    </div>\n  );\n}\n",
+  "use-no-forget-with-eslint-suppression.js": "import {useRef} from 'react';\n\nfunction Component() {\n  'use no forget';\n  const ref = useRef(null);\n  // eslint-disable-next-line react-hooks/rules-of-hooks\n  ref.current = 'bad';\n  return <button ref={ref} />;\n}\n\nexport const FIXTURE_ENTRYPOINT = {\n  fn: Component,\n  params: [],\n};\n",
+  "useMemo-if-else-multiple-return.js": "// @validateExhaustiveMemoizationDependencies:false\nfunction Component(props) {\n  const x = useMemo(() => {\n    if (props.cond) {\n      return makeObject(props.a);\n    }\n    return makeObject(props.b);\n  });\n  return x;\n}\n",
+  "useMemo-named-function.ts": "// @validateNoSetStateInRender:false @enablePreserveExistingMemoizationGuarantees:false\nimport {useMemo} from 'react';\nimport {makeArray} from 'shared-runtime';\n\nfunction Component() {\n  const x = useMemo(makeArray, []);\n  return x;\n}\n\nexport const FIXTURE_ENTRYPOINT = {\n  fn: Component,\n  params: [{}],\n};\n"
+ },
+ "reports": {
+  "cases": {
+   "exit": 1,
+   "files": 60,
+   "diagnostics": {
+    "capitalized-calls/02.invalid.tsx": [
+     {
+      "code": "react(capitalized-calls)",
+      "help": "Render `Child` with JSX if it is a component; otherwise rename it to start with a lowercase letter or allowlist it in the compiler configuration",
+      "labels": [
+       {
+        "label": "`Child` may be a component",
+        "span": {
+         "column": 6,
+         "length": 5,
+         "line": 5,
+         "offset": 70
+        }
+       }
+      ],
+      "message": "Capitalized function called without JSX",
+      "note": "`Child` is treated as a component because it begins with an uppercase letter; React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/static-components",
+      "severity": "error"
+     }
+    ],
+    "capitalized-calls/03.invalid.tsx": [
+     {
+      "code": "react(capitalized-calls)",
+      "help": "Render `Child` with JSX if it is a component; otherwise rename it to start with a lowercase letter or allowlist it in the compiler configuration",
+      "labels": [
+       {
+        "label": "`Child` may be a component",
+        "span": {
+         "column": 15,
+         "length": 5,
+         "line": 5,
+         "offset": 85
+        }
+       }
+      ],
+      "message": "Capitalized function called without JSX",
+      "note": "`Child` is treated as a component because it begins with an uppercase letter; React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/static-components",
+      "severity": "error"
+     }
+    ],
+    "capitalized-calls/04.invalid.tsx": [
+     {
+      "code": "react(capitalized-calls)",
+      "help": "Render `Child1` with JSX if it is a component; otherwise rename it to start with a lowercase letter or allowlist it in the compiler configuration",
+      "labels": [
+       {
+        "label": "`Child1` may be a component",
+        "span": {
+         "column": 6,
+         "length": 6,
+         "line": 6,
+         "offset": 107
+        }
+       }
+      ],
+      "message": "Capitalized function called without JSX",
+      "note": "`Child1` is treated as a component because it begins with an uppercase letter; React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/static-components",
+      "severity": "error"
+     },
+     {
+      "code": "react(capitalized-calls)",
+      "help": "Render `Child2` with JSX if it is a component; otherwise rename it to start with a lowercase letter or allowlist it in the compiler configuration",
+      "labels": [
+       {
+        "label": "`Child2` may be a component",
+        "span": {
+         "column": 15,
+         "length": 6,
+         "line": 7,
+         "offset": 131
+        }
+       }
+      ],
+      "message": "Capitalized function called without JSX",
+      "note": "`Child2` is treated as a component because it begins with an uppercase letter; React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/static-components",
+      "severity": "error"
+     }
+    ],
+    "error-boundaries/02.invalid.tsx": [
+     {
+      "code": "react(error-boundaries)",
+      "help": "React does not immediately render components when JSX is constructed, so rendering errors will not be caught by the try/catch. Wrap the component in an error boundary instead",
+      "labels": [
+       {
+        "label": "Avoid constructing JSX within try/catch",
+        "span": {
+         "column": 11,
+         "length": 5,
+         "line": 5,
+         "offset": 57
+        }
+       }
+      ],
+      "message": "Avoid constructing JSX within try/catch",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/error-boundaries",
+      "severity": "error"
+     }
+    ],
+    "exhaustive-effect-dependencies/03.invalid.tsx": [
+     {
+      "code": "react(exhaustive-effect-dependencies)",
+      "help": "Missing dependencies can cause an effect to fire less often than it should",
+      "labels": [
+       {
+        "label": "This dependency list is missing values used by the callback",
+        "span": {
+         "column": 6,
+         "length": 2,
+         "line": 6,
+         "offset": 105
+        }
+       },
+       {
+        "label": "Missing dependency `value`",
+        "span": {
+         "column": 9,
+         "length": 5,
+         "line": 5,
+         "offset": 92
+        }
+       }
+      ],
+      "message": "Found missing effect dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     }
+    ],
+    "exhaustive-effect-dependencies/04.invalid.tsx": [
+     {
+      "code": "react(exhaustive-effect-dependencies)",
+      "help": "Extra dependencies can cause an effect to fire more often than it should, resulting in performance problems such as excessive renders and side effects",
+      "labels": [
+       {
+        "label": "Unnecessary dependency `extra`",
+        "span": {
+         "column": 14,
+         "length": 5,
+         "line": 6,
+         "offset": 120
+        }
+       }
+      ],
+      "message": "Found extra effect dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     }
+    ],
+    "globals/02.invalid.tsx": [
+     {
+      "code": "react(globals)",
+      "help": "Variable `someGlobal` is declared outside of the component/hook. Reassigning this value during render is a side effect which can cause unpredictable behavior. If this variable is used in rendering, use useState instead. Otherwise, update it in an effect",
+      "labels": [
+       {
+        "label": "`someGlobal` cannot be reassigned",
+        "span": {
+         "column": 5,
+         "length": 10,
+         "line": 5,
+         "offset": 80
+        }
+       }
+      ],
+      "message": "Cannot reassign variables declared outside of the component/hook",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/globals",
+      "severity": "error"
+     }
+    ],
+    "hooks/02.invalid.tsx": [
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 5,
+         "length": 18,
+         "line": 4,
+         "offset": 47
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     }
+    ],
+    "immutability/02.invalid.tsx": [
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value returned from 'useState()', which should not be modified directly. Use the setter function to update instead",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 11,
+         "length": 5,
+         "line": 7,
+         "offset": 255
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     }
+    ],
+    "immutability/03.invalid.tsx": [
+     {
+      "code": "react(immutability)",
+      "help": "`applyFilter` is read while its declaration is still being initialized. Move the access after initialization. For a recursive callback, use a named function expression or restructure the callback so it does not capture itself during initialization",
+      "labels": [
+       {
+        "label": "`applyFilter` is read during its own initialization",
+        "span": {
+         "column": 15,
+         "length": 11,
+         "line": 6,
+         "offset": 172
+        }
+       }
+      ],
+      "message": "Cannot access variable while it is being initialized",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(memo-dependencies)",
+      "help": "Missing dependencies can cause a value to update less often than it should, resulting in stale UI",
+      "labels": [
+       {
+        "label": "This dependency list is missing values used by the callback",
+        "span": {
+         "column": 14,
+         "length": 2,
+         "line": 8,
+         "offset": 216
+        }
+       },
+       {
+        "label": "Missing dependency `applyFilter`",
+        "span": {
+         "column": 15,
+         "length": 11,
+         "line": 6,
+         "offset": 172
+        }
+       }
+      ],
+      "message": "Found missing memoization dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     }
+    ],
+    "immutability/04.invalid.tsx": [
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 11,
+         "length": 5,
+         "line": 3,
+         "offset": 49
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     }
+    ],
+    "incompatible-library/02.invalid.tsx": [
+     {
+      "code": "react(incompatible-library)",
+      "help": "This API returns functions which cannot be memoized without leading to stale UI. To prevent this, by default React Compiler will skip memoizing this component/hook. However, you may see issues if values from this API are passed to other components/hooks that are memoized",
+      "labels": [
+       {
+        "label": "TanStack Table's `useReactTable()` API returns functions that cannot be memoized safely",
+        "span": {
+         "column": 17,
+         "length": 13,
+         "line": 4,
+         "offset": 108
+        }
+       }
+      ],
+      "message": "Use of incompatible library",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/incompatible-library",
+      "severity": "error"
+     }
+    ],
+    "memo-dependencies/03.invalid.tsx": [
+     {
+      "code": "react(memo-dependencies)",
+      "help": "Missing dependencies can cause a value to update less often than it should, resulting in stale UI",
+      "labels": [
+       {
+        "label": "This dependency list is missing values used by the callback",
+        "span": {
+         "column": 31,
+         "length": 2,
+         "line": 4,
+         "offset": 92
+        }
+       },
+       {
+        "label": "Missing dependency `value`",
+        "span": {
+         "column": 24,
+         "length": 5,
+         "line": 4,
+         "offset": 85
+        }
+       }
+      ],
+      "message": "Found missing memoization dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     }
+    ],
+    "memo-dependencies/04.invalid.tsx": [
+     {
+      "code": "react(memo-dependencies)",
+      "help": "Extra dependencies can cause a value to update more often than it should, resulting in performance problems such as excessive renders or effects firing too often",
+      "labels": [
+       {
+        "label": "Unnecessary dependency `extra`",
+        "span": {
+         "column": 39,
+         "length": 5,
+         "line": 4,
+         "offset": 107
+        }
+       }
+      ],
+      "message": "Found extra memoization dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     }
+    ],
+    "no-deriving-state-in-effects/02.invalid.tsx": [
+     {
+      "code": "react(no-deriving-state-in-effects)",
+      "help": "This effect derives state from the reactive values `firstName`, `lastName`, causing an extra render and potentially showing a stale value. Calculate the derived value during render, then remove the redundant state and effect.",
+      "labels": [
+       {
+        "label": "This state update stores a value that can be calculated during render",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 8,
+         "offset": 221
+        }
+       },
+       {
+        "label": "These reactive values contribute to the derived state",
+        "span": {
+         "column": 7,
+         "length": 9,
+         "line": 9,
+         "offset": 268
+        }
+       },
+       {
+        "span": {
+         "column": 18,
+         "length": 8,
+         "line": 9,
+         "offset": 279
+        }
+       }
+      ],
+      "message": "Values derived from props and state should be calculated during render, not in an effect",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 8,
+         "offset": 221
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 9,
+         "line": 7,
+         "offset": 199
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     }
+    ],
+    "preserve-manual-memoization/02.invalid.tsx": [
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler could not prove that this useMemo/useCallback remains memoized. Fix related React Compiler errors inside the callback first. If manual memoization is not required for semantics, remove it; otherwise restructure the callback to avoid values that invalidate memoization",
+      "labels": [
+       {
+        "label": "Manual memoization is not preserved here",
+        "span": {
+         "column": 10,
+         "length": 11,
+         "line": 7,
+         "offset": 116
+        }
+       },
+       {
+        "label": "Manual memoization callback starts here",
+        "span": {
+         "column": 22,
+         "length": 1,
+         "line": 7,
+         "offset": 128
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     }
+    ],
+    "purity/03.invalid.tsx": [
+     {
+      "code": "react(purity)",
+      "help": "`Date.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component re-renders",
+      "labels": [
+       {
+        "label": "Cannot call impure function",
+        "span": {
+         "column": 16,
+         "length": 10,
+         "line": 3,
+         "offset": 39
+        }
+       }
+      ],
+      "message": "Cannot call impure function during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/purity",
+      "severity": "error"
+     },
+     {
+      "code": "react(purity)",
+      "help": "`Math.random` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component re-renders",
+      "labels": [
+       {
+        "label": "Cannot call impure function",
+        "span": {
+         "column": 16,
+         "length": 13,
+         "line": 5,
+         "offset": 99
+        }
+       }
+      ],
+      "message": "Cannot call impure function during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/purity",
+      "severity": "error"
+     },
+     {
+      "code": "react(purity)",
+      "help": "`performance.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component re-renders",
+      "labels": [
+       {
+        "label": "Cannot call impure function",
+        "span": {
+         "column": 15,
+         "length": 17,
+         "line": 4,
+         "offset": 65
+        }
+       }
+      ],
+      "message": "Cannot call impure function during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/purity",
+      "severity": "error"
+     }
+    ],
+    "purity/04.invalid.tsx": [
+     {
+      "code": "react(purity)",
+      "help": "`Date` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component re-renders",
+      "labels": [
+       {
+        "label": "Cannot call impure function",
+        "span": {
+         "column": 16,
+         "length": 10,
+         "line": 3,
+         "offset": 39
+        }
+       }
+      ],
+      "message": "Cannot call impure function during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/purity",
+      "severity": "error"
+     },
+     {
+      "code": "react(purity)",
+      "help": "`Date` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component re-renders",
+      "labels": [
+       {
+        "label": "Cannot call impure function",
+        "span": {
+         "column": 16,
+         "length": 10,
+         "line": 4,
+         "offset": 66
+        }
+       }
+      ],
+      "message": "Cannot call impure function during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/purity",
+      "severity": "error"
+     },
+     {
+      "code": "react(purity)",
+      "help": "`Date` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component re-renders",
+      "labels": [
+       {
+        "label": "Cannot call impure function",
+        "span": {
+         "column": 16,
+         "length": 10,
+         "line": 5,
+         "offset": 103
+        }
+       }
+      ],
+      "message": "Cannot call impure function during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/purity",
+      "severity": "error"
+     }
+    ],
+    "refs/02.invalid.tsx": [
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 17,
+         "length": 11,
+         "line": 4,
+         "offset": 73
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
+    "refs/03.invalid.tsx": [
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot update ref value during render",
+        "span": {
+         "column": 6,
+         "length": 8,
+         "line": 4,
+         "offset": 57
+        }
+       },
+       {
+        "label": "This value is a ref",
+        "span": {
+         "column": 3,
+         "length": 3,
+         "line": 4,
+         "offset": 54
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
+    "refs/04.invalid.tsx": [
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot update ref value during render",
+        "span": {
+         "column": 6,
+         "length": 8,
+         "line": 4,
+         "offset": 66
+        }
+       },
+       {
+        "label": "This value is a ref",
+        "span": {
+         "column": 3,
+         "length": 3,
+         "line": 4,
+         "offset": 63
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
+    "rule-suppression/03.invalid.tsx": [
+     {
+      "code": "react(rule-suppression)",
+      "help": "Remove the suppression and address the reported React rule violation",
+      "labels": [
+       {
+        "label": "Found React rule suppression",
+        "span": {
+         "column": 3,
+         "length": 55,
+         "line": 3,
+         "offset": 33
+        }
+       }
+      ],
+      "message": "React rule suppression prevents optimization",
+      "note": "React Compiler has skipped optimizing this component because one or more React ESLint rules were disabled. React Compiler only works when your components follow all the rules of React, disabling them may result in unexpected or incorrect behavior. Found suppression `eslint-disable-next-line react-hooks/exhaustive-deps`. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks",
+      "severity": "error"
+     }
+    ],
+    "set-state-in-effect/02.invalid.tsx": [
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 6,
+         "offset": 132
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 9,
+         "line": 5,
+         "offset": 110
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     }
+    ],
+    "set-state-in-render/02.invalid.tsx": [
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 3,
+         "length": 8,
+         "line": 5,
+         "offset": 99
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     }
+    ],
+    "static-components/02.invalid.tsx": [
+     {
+      "code": "react(static-components)",
+      "help": "Components created during render will reset their state each time they are created. Declare components outside of render",
+      "labels": [
+       {
+        "label": "This component is created during render",
+        "span": {
+         "column": 11,
+         "length": 9,
+         "line": 4,
+         "offset": 76
+        }
+       },
+       {
+        "label": "The component is created during render here",
+        "span": {
+         "column": 21,
+         "length": 15,
+         "line": 3,
+         "offset": 47
+        }
+       }
+      ],
+      "message": "Cannot create components during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/static-components",
+      "severity": "error"
+     }
+    ],
+    "syntax/02.invalid.tsx": [
+     {
+      "code": "react(syntax)",
+      "help": "`x` is declared as const",
+      "labels": [
+       {
+        "label": "Cannot reassign `x`",
+        "span": {
+         "column": 3,
+         "length": 1,
+         "line": 4,
+         "offset": 41
+        }
+       },
+       {
+        "label": "`x` is declared here",
+        "span": {
+         "column": 9,
+         "length": 1,
+         "line": 3,
+         "offset": 32
+        }
+       }
+      ],
+      "message": "Cannot reassign a `const` variable",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "todo/02.invalid.tsx": [
+     {
+      "code": "react(todo)",
+      "help": "Local variables named `fbt` may conflict with the fbt plugin and are not yet supported",
+      "labels": [
+       {
+        "label": "Local variables named `fbt` are not supported",
+        "span": {
+         "column": 23,
+         "length": 3,
+         "line": 2,
+         "offset": 45
+        }
+       }
+      ],
+      "message": "Support local variables named `fbt`",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "todo/03.invalid.tsx": [
+     {
+      "code": "react(todo)",
+      "help": "React Compiler cannot analyze this control flow. Refactor the cleanup to avoid `finally`, or suppress this warning if this function should remain uncompiled",
+      "labels": [
+       {
+        "label": "Unsupported `try` starts here",
+        "span": {
+         "column": 21,
+         "length": 3,
+         "line": 4,
+         "offset": 124
+        }
+       },
+       {
+        "label": "This `finally` clause requires unsupported control flow",
+        "span": {
+         "column": 22,
+         "length": 9,
+         "line": 6,
+         "offset": 190
+        }
+       }
+      ],
+      "message": "`try`/`finally` without `catch` is not supported by React Compiler",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "unsupported-syntax/02.invalid.tsx": [
+     {
+      "code": "react(unsupported-syntax)",
+      "help": "Eval is an anti-pattern in JavaScript, and the code executed cannot be evaluated by React Compiler",
+      "labels": [
+       {
+        "label": "`eval` cannot be analyzed by React Compiler",
+        "span": {
+         "column": 3,
+         "length": 4,
+         "line": 3,
+         "offset": 31
+        }
+       }
+      ],
+      "message": "The 'eval' function is not supported",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "use-memo/02.invalid.tsx": [
+     {
+      "code": "react(use-memo)",
+      "help": "useMemo() callbacks are called once and must synchronously return a value",
+      "labels": [
+       {
+        "label": "Async and generator functions are not supported",
+        "span": {
+         "column": 21,
+         "length": 13,
+         "line": 4,
+         "offset": 78
+        }
+       }
+      ],
+      "message": "useMemo() callbacks may not be async or generator functions",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/use-memo",
+      "severity": "error"
+     },
+     {
+      "code": "react(void-use-memo)",
+      "help": "This useMemo() callback doesn't return a value. useMemo() is for computing and caching values, not for arbitrary side effects",
+      "labels": [
+       {
+        "label": "useMemo() callbacks must return a value",
+        "span": {
+         "column": 21,
+         "length": 13,
+         "line": 4,
+         "offset": 78
+        }
+       }
+      ],
+      "message": "useMemo() callbacks must return a value",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/use-memo",
+      "severity": "error"
+     }
+    ],
+    "void-use-memo/02.invalid.tsx": [
+     {
+      "code": "react(void-use-memo)",
+      "help": "This useMemo() callback doesn't return a value. useMemo() is for computing and caching values, not for arbitrary side effects",
+      "labels": [
+       {
+        "label": "useMemo() callbacks must return a value",
+        "span": {
+         "column": 25,
+         "length": 7,
+         "line": 4,
+         "offset": 79
+        }
+       }
+      ],
+      "message": "useMemo() callbacks must return a value",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/use-memo",
+      "severity": "error"
+     }
+    ]
+   }
+  },
+  "fixtures": {
+   "exit": 1,
+   "files": 41,
+   "diagnostics": {
+    "allow-global-reassignment-in-effect.js": [
+     {
+      "code": "react(exhaustive-effect-dependencies)",
+      "help": "Extra dependencies can cause an effect to fire more often than it should, resulting in performance problems such as excessive renders and side effects",
+      "labels": [
+       {
+        "label": "Unnecessary dependency `someGlobal`. Values declared outside of a component/hook should not be listed as dependencies as the component will not re-render if they change",
+        "span": {
+         "column": 6,
+         "length": 12,
+         "line": 14,
+         "offset": 248
+        }
+       }
+      ],
+      "message": "Found extra effect dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 13,
+         "offset": 221
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 9,
+         "line": 12,
+         "offset": 199
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     }
+    ],
+    "context-variable-as-jsx-element-tag.js": [
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value previously passed as an argument to a hook is not allowed. Consider moving the modification before calling the hook",
+      "labels": [
+       {
+        "label": "`Component` cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 9,
+         "line": 8,
+         "offset": 188
+        }
+       },
+       {
+        "label": "`Component` originates here",
+        "span": {
+         "column": 7,
+         "length": 9,
+         "line": 6,
+         "offset": 162
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler could not prove that this useMemo/useCallback remains memoized. Fix related React Compiler errors inside the callback first. If manual memoization is not required for semantics, remove it; otherwise restructure the callback to avoid values that invalidate memoization",
+      "labels": [
+       {
+        "label": "Manual memoization is not preserved here",
+        "span": {
+         "column": 15,
+         "length": 7,
+         "line": 8,
+         "offset": 200
+        }
+       },
+       {
+        "label": "Manual memoization callback starts here",
+        "span": {
+         "column": 23,
+         "length": 1,
+         "line": 8,
+         "offset": 208
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     }
+    ],
+    "effect-derived-computations/derived-state-from-prop-setter-call-outside-effect-no-error.js": [
+     {
+      "code": "react(no-deriving-state-in-effects)",
+      "help": "This effect derives state from the reactive value `initialName`, causing an extra render and potentially showing a stale value. Calculate the derived value during render, then remove the redundant state and effect.",
+      "labels": [
+       {
+        "label": "This state update stores a value that can be calculated during render",
+        "span": {
+         "column": 5,
+         "length": 7,
+         "line": 8,
+         "offset": 227
+        }
+       },
+       {
+        "label": "This reactive value contributes to the derived state",
+        "span": {
+         "column": 7,
+         "length": 11,
+         "line": 9,
+         "offset": 255
+        }
+       }
+      ],
+      "message": "Values derived from props and state should be calculated during render, not in an effect",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 7,
+         "line": 8,
+         "offset": 227
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 9,
+         "line": 7,
+         "offset": 205
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     }
+    ],
+    "effect-derived-computations/effect-with-global-function-call-no-error.js": [
+     {
+      "code": "react(no-deriving-state-in-effects)",
+      "help": "This effect derives state from the reactive value `propValue`, causing an extra render and potentially showing a stale value. Calculate the derived value during render, then remove the redundant state and effect.",
+      "labels": [
+       {
+        "label": "This state update stores a value that can be calculated during render",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 7,
+         "offset": 228
+        }
+       },
+       {
+        "label": "This reactive value contributes to the derived state",
+        "span": {
+         "column": 7,
+         "length": 9,
+         "line": 9,
+         "offset": 273
+        }
+       }
+      ],
+      "message": "Values derived from props and state should be calculated during render, not in an effect",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 7,
+         "offset": 228
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 9,
+         "line": 6,
+         "offset": 206
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     }
+    ],
+    "error.assign-global-in-component-tag-function.js": [
+     {
+      "code": "react(globals)",
+      "help": "Variable `someGlobal` is declared outside of the component/hook. Reassigning this value during render is a side effect which can cause unpredictable behavior. If this variable is used in rendering, use useState instead. Otherwise, update it in an effect",
+      "labels": [
+       {
+        "label": "`someGlobal` cannot be reassigned",
+        "span": {
+         "column": 5,
+         "length": 10,
+         "line": 3,
+         "offset": 49
+        }
+       }
+      ],
+      "message": "Cannot reassign variables declared outside of the component/hook",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/globals",
+      "severity": "error"
+     },
+     {
+      "code": "react(static-components)",
+      "help": "Components created during render will reset their state each time they are created. Declare components outside of render",
+      "labels": [
+       {
+        "label": "This component is created during render",
+        "span": {
+         "column": 11,
+         "length": 3,
+         "line": 5,
+         "offset": 83
+        }
+       },
+       {
+        "label": "The component is created during render here",
+        "span": {
+         "column": 15,
+         "length": 7,
+         "line": 2,
+         "offset": 37
+        }
+       }
+      ],
+      "message": "Cannot create components during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/static-components",
+      "severity": "error"
+     }
+    ],
+    "error.bug-invariant-couldnt-find-binding-for-decl.js": [
+     {
+      "code": "react(invariant)",
+      "help": "Please report this internal React Compiler error to Oxc with a minimal reproduction",
+      "labels": [
+       {
+        "span": {
+         "column": 15,
+         "length": 6,
+         "line": 7,
+         "offset": 124
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerAssignment) Could not find binding for declaration.",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     }
+    ],
+    "error.bug-invariant-expected-consistent-destructuring.js": [
+     {
+      "code": "react(invariant)",
+      "help": "Other places were `Reassign` but 'mutate? #t8$46[7:9]{reactive}' is const",
+      "labels": [
+       {
+        "label": "Expected consistent kind for destructuring",
+        "span": {
+         "column": 10,
+         "length": 1,
+         "line": 9,
+         "offset": 155
+        }
+       }
+      ],
+      "message": "Expected consistent kind for destructuring",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     }
+    ],
+    "error.function-expression-references-variable-its-assigned-to.js": [
+     {
+      "code": "react(immutability)",
+      "help": "Reassigning `callback` after render has completed can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "Cannot reassign `callback` after render completes",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 3,
+         "offset": 52
+        }
+       },
+       {
+        "label": "`callback` is declared here",
+        "span": {
+         "column": 7,
+         "length": 8,
+         "line": 2,
+         "offset": 29
+        }
+       }
+      ],
+      "message": "Cannot reassign variable after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     }
+    ],
+    "error.hoist-optional-member-expression-with-conditional.js": [
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `props.items`, but the source dependencies were [props?.items, props.cond]. Inferred different dependency than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 26,
+         "line": 11,
+         "offset": 307
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 19,
+         "length": 5,
+         "line": 6,
+         "offset": 225
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     }
+    ],
+    "error.invalid-array-push-frozen.js": [
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value used previously in JSX is not allowed. Consider moving the modification before the JSX",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 1,
+         "line": 4,
+         "offset": 64
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     }
+    ],
+    "error.invalid-disallow-mutating-ref-in-render.js": [
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot update ref value during render",
+        "span": {
+         "column": 6,
+         "length": 8,
+         "line": 4,
+         "offset": 90
+        }
+       },
+       {
+        "label": "This value is a ref",
+        "span": {
+         "column": 3,
+         "length": 3,
+         "line": 4,
+         "offset": 87
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
+    "error.invalid-eval-unsupported.js": [
+     {
+      "code": "react(unsupported-syntax)",
+      "help": "Eval is an anti-pattern in JavaScript, and the code executed cannot be evaluated by React Compiler",
+      "labels": [
+       {
+        "label": "`eval` cannot be analyzed by React Compiler",
+        "span": {
+         "column": 3,
+         "length": 4,
+         "line": 2,
+         "offset": 30
+        }
+       }
+      ],
+      "message": "The 'eval' function is not supported",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "error.invalid-impure-functions-in-render.js": [
+     {
+      "code": "react(purity)",
+      "help": "`Date.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component re-renders",
+      "labels": [
+       {
+        "label": "Cannot call impure function",
+        "span": {
+         "column": 16,
+         "length": 10,
+         "line": 4,
+         "offset": 77
+        }
+       }
+      ],
+      "message": "Cannot call impure function during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/purity",
+      "severity": "error"
+     },
+     {
+      "code": "react(purity)",
+      "help": "`Math.random` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component re-renders",
+      "labels": [
+       {
+        "label": "Cannot call impure function",
+        "span": {
+         "column": 16,
+         "length": 13,
+         "line": 6,
+         "offset": 137
+        }
+       }
+      ],
+      "message": "Cannot call impure function during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/purity",
+      "severity": "error"
+     },
+     {
+      "code": "react(purity)",
+      "help": "`performance.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component re-renders",
+      "labels": [
+       {
+        "label": "Cannot call impure function",
+        "span": {
+         "column": 15,
+         "length": 17,
+         "line": 5,
+         "offset": 103
+        }
+       }
+      ],
+      "message": "Cannot call impure function during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/purity",
+      "severity": "error"
+     }
+    ],
+    "error.invalid-optional-member-expression-as-memo-dep-non-optional-in-body.js": [
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler has skipped optimizing this component because the existing manual memoization could not be preserved. The inferred dependencies did not match the manually specified dependencies, which could cause the value to change more or less frequently than expected. The inferred dependency was `props.items.edges.nodes`, but the source dependencies were [props.items?.edges?.nodes]. Inferred different dependency than source",
+      "labels": [
+       {
+        "label": "This dependency list does not match the dependencies inferred from the callback",
+        "span": {
+         "column": 6,
+         "length": 27,
+         "line": 7,
+         "offset": 216
+        }
+       },
+       {
+        "label": "This dependency is inferred here",
+        "span": {
+         "column": 30,
+         "length": 5,
+         "line": 5,
+         "offset": 173
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     }
+    ],
+    "error.invalid-pass-hook-as-prop.js": [
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 22,
+         "length": 6,
+         "line": 2,
+         "offset": 49
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     }
+    ],
+    "error.invalid-props-mutation-in-effect-indirect.js": [
+     {
+      "code": "react(exhaustive-effect-dependencies)",
+      "help": "Missing dependencies can cause an effect to fire less often than it should",
+      "labels": [
+       {
+        "label": "This dependency list is missing values used by the callback",
+        "span": {
+         "column": 42,
+         "length": 2,
+         "line": 8,
+         "offset": 190
+        }
+       },
+       {
+        "label": "Missing dependency `indirectMutateProps`",
+        "span": {
+         "column": 19,
+         "length": 19,
+         "line": 8,
+         "offset": 167
+        }
+       }
+      ],
+      "message": "Found missing effect dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "`props` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 5,
+         "line": 3,
+         "offset": 62
+        }
+       },
+       {
+        "label": "`props` originates here",
+        "span": {
+         "column": 20,
+         "length": 5,
+         "line": 1,
+         "offset": 19
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     }
+    ],
+    "error.invalid-reassign-variable-in-usememo.js": [
+     {
+      "code": "react(use-memo)",
+      "help": "useMemo() callbacks must be pure functions and cannot reassign variables defined outside of the callback function",
+      "labels": [
+       {
+        "label": "Cannot reassign variable",
+        "span": {
+         "column": 5,
+         "length": 1,
+         "line": 5,
+         "offset": 75
+        }
+       },
+       {
+        "label": "This variable is captured from outside the callback",
+        "span": {
+         "column": 7,
+         "length": 1,
+         "line": 2,
+         "offset": 29
+        }
+       }
+      ],
+      "message": "useMemo() callbacks may not reassign variables declared outside of the callback",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/use-memo",
+      "severity": "error"
+     }
+    ],
+    "error.invalid-ref-value-as-props.js": [
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 20,
+         "length": 11,
+         "line": 4,
+         "offset": 109
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
+    "error.invalid-setState-in-useMemo.js": [
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Each time the memo callback is evaluated it will change state. This can cause a memoization dependency to change, running the memo function again and causing an infinite loop. Instead of setting state in useMemo(), prefer deriving the value during render",
+      "labels": [
+       {
+        "label": "Found setState() within useMemo()",
+        "span": {
+         "column": 5,
+         "length": 10,
+         "line": 6,
+         "offset": 152
+        }
+       }
+      ],
+      "message": "Calling setState from useMemo may trigger an infinite loop",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Each time the memo callback is evaluated it will change state. This can cause a memoization dependency to change, running the memo function again and causing an infinite loop. Instead of setting state in useMemo(), prefer deriving the value during render",
+      "labels": [
+       {
+        "label": "Found setState() within useMemo()",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 7,
+         "offset": 173
+        }
+       }
+      ],
+      "message": "Calling setState from useMemo may trigger an infinite loop",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(void-use-memo)",
+      "help": "This useMemo() callback doesn't return a value. useMemo() is for computing and caching values, not for arbitrary side effects",
+      "labels": [
+       {
+        "label": "useMemo() callbacks must return a value",
+        "span": {
+         "column": 11,
+         "length": 7,
+         "line": 5,
+         "offset": 140
+        }
+       }
+      ],
+      "message": "useMemo() callbacks must return a value",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/use-memo",
+      "severity": "error"
+     }
+    ],
+    "error.invalid-sketchy-code-use-forget.js": [
+     {
+      "code": "react(rule-suppression)",
+      "help": "Remove the suppression and address the reported React rule violation",
+      "labels": [
+       {
+        "label": "Found React rule suppression",
+        "span": {
+         "column": 1,
+         "length": 47,
+         "line": 2,
+         "offset": 52
+        }
+       }
+      ],
+      "message": "React rule suppression prevents optimization",
+      "note": "React Compiler has skipped optimizing this component because one or more React ESLint rules were disabled. React Compiler only works when your components follow all the rules of React, disabling them may result in unexpected or incorrect behavior. Found suppression `eslint-disable react-hooks/rules-of-hooks`. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(rule-suppression)",
+      "help": "Remove the suppression and address the reported React rule violation",
+      "labels": [
+       {
+        "label": "Found React rule suppression",
+        "span": {
+         "column": 3,
+         "length": 54,
+         "line": 6,
+         "offset": 166
+        }
+       }
+      ],
+      "message": "React rule suppression prevents optimization",
+      "note": "React Compiler has skipped optimizing this component because one or more React ESLint rules were disabled. React Compiler only works when your components follow all the rules of React, disabling them may result in unexpected or incorrect behavior. Found suppression `eslint-disable-next-line react-hooks/rules-of-hooks`. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks",
+      "severity": "error"
+     }
+    ],
+    "error.invalid-unconditional-set-state-in-render.js": [
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 3,
+         "length": 4,
+         "line": 6,
+         "offset": 119
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 3,
+         "length": 7,
+         "line": 7,
+         "offset": 130
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     }
+    ],
+    "error.mutate-global-increment-op-invalid-react.js": [
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 13,
+         "line": 4,
+         "offset": 45
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerExpression) Support UpdateExpression where argument is a global",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "error.todo-invalid-jsx-in-try-with-finally.js": [
+     {
+      "code": "react(todo)",
+      "help": "React Compiler cannot analyze this control flow. Refactor the cleanup to avoid `finally`, or suppress this warning if this function should remain uncompiled",
+      "labels": [
+       {
+        "label": "Unsupported `try` starts here",
+        "span": {
+         "column": 3,
+         "length": 3,
+         "line": 4,
+         "offset": 92
+        }
+       },
+       {
+        "label": "This `finally` clause requires unsupported control flow",
+        "span": {
+         "column": 4,
+         "length": 9,
+         "line": 6,
+         "offset": 119
+        }
+       }
+      ],
+      "message": "`try`/`finally` without `catch` is not supported by React Compiler",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "error.useMemo-non-literal-depslist.ts": [
+     {
+      "code": "react(use-memo)",
+      "help": "Pass an array literal as the dependency list for useMemo",
+      "labels": [
+       {
+        "label": "Expected the dependency list for useMemo to be an array literal",
+        "span": {
+         "column": 5,
+         "length": 23,
+         "line": 10,
+         "offset": 263
+        }
+       }
+      ],
+      "message": "Expected the dependency list for useMemo to be an array literal",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/use-memo",
+      "severity": "error"
+     }
+    ],
+    "exhaustive-deps/error.invalid-dep-on-ref-current-value.js": [
+     {
+      "code": "react(memo-dependencies)",
+      "help": "Extra dependencies can cause a value to update more often than it should, resulting in performance problems such as excessive renders or effects firing too often",
+      "labels": [
+       {
+        "label": "Unnecessary dependency `ref.current.value`",
+        "span": {
+         "column": 7,
+         "length": 17,
+         "line": 7,
+         "offset": 173
+        }
+       }
+      ],
+      "message": "Found extra memoization dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     }
+    ],
+    "exhaustive-deps/error.invalid-exhaustive-effect-deps.js": [
+     {
+      "code": "react(exhaustive-effect-dependencies)",
+      "help": "Extra dependencies can cause an effect to fire more often than it should, resulting in performance problems such as excessive renders and side effects",
+      "labels": [
+       {
+        "label": "Unnecessary dependency `y`",
+        "span": {
+         "column": 10,
+         "length": 1,
+         "line": 13,
+         "offset": 251
+        }
+       }
+      ],
+      "message": "Found extra effect dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     },
+     {
+      "code": "react(exhaustive-effect-dependencies)",
+      "help": "Missing dependencies can cause an effect to fire less often than it should",
+      "labels": [
+       {
+        "label": "This dependency list is missing values used by the callback",
+        "span": {
+         "column": 6,
+         "length": 2,
+         "line": 8,
+         "offset": 178
+        }
+       },
+       {
+        "label": "Missing dependency `x`",
+        "span": {
+         "column": 9,
+         "length": 1,
+         "line": 7,
+         "offset": 169
+        }
+       }
+      ],
+      "message": "Found missing effect dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     },
+     {
+      "code": "react(exhaustive-effect-dependencies)",
+      "help": "Missing dependencies can cause an effect to fire less often than it should. Extra dependencies can cause an effect to fire more often than it should, resulting in performance problems such as excessive renders and side effects",
+      "labels": [
+       {
+        "label": "Missing dependency `x`",
+        "span": {
+         "column": 9,
+         "length": 1,
+         "line": 22,
+         "offset": 404
+        }
+       },
+       {
+        "label": "Overly precise dependency `x.y`, use `x` instead",
+        "span": {
+         "column": 7,
+         "length": 3,
+         "line": 23,
+         "offset": 414
+        }
+       }
+      ],
+      "message": "Found missing/extra effect dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     },
+     {
+      "code": "react(exhaustive-effect-dependencies)",
+      "help": "Missing dependencies can cause an effect to fire less often than it should. Extra dependencies can cause an effect to fire more often than it should, resulting in performance problems such as excessive renders and side effects",
+      "labels": [
+       {
+        "label": "Missing dependency `z`",
+        "span": {
+         "column": 12,
+         "length": 1,
+         "line": 17,
+         "offset": 331
+        }
+       },
+       {
+        "label": "Unnecessary dependency `y`",
+        "span": {
+         "column": 10,
+         "length": 1,
+         "line": 18,
+         "offset": 344
+        }
+       }
+      ],
+      "message": "Found missing/extra effect dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     }
+    ],
+    "fbt/error.todo-locally-require-fbt.js": [
+     {
+      "code": "react(todo)",
+      "help": "Local variables named `fbt` may conflict with the fbt plugin and are not yet supported",
+      "labels": [
+       {
+        "label": "Local variables named `fbt` are not supported",
+        "span": {
+         "column": 9,
+         "length": 3,
+         "line": 2,
+         "offset": 36
+        }
+       }
+      ],
+      "message": "Support local variables named `fbt`",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "invalid-jsx-in-catch-in-outer-try-with-catch.js": [
+     {
+      "code": "react(error-boundaries)",
+      "help": "React does not immediately render components when JSX is constructed, so rendering errors will not be caught by the try/catch. Wrap the component in an error boundary instead",
+      "labels": [
+       {
+        "label": "Avoid constructing JSX within try/catch",
+        "span": {
+         "column": 13,
+         "length": 3,
+         "line": 11,
+         "offset": 242
+        }
+       }
+      ],
+      "message": "Avoid constructing JSX within try/catch",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/error-boundaries",
+      "severity": "error"
+     }
+    ],
+    "invalid-jsx-in-try-with-catch.js": [
+     {
+      "code": "react(error-boundaries)",
+      "help": "React does not immediately render components when JSX is constructed, so rendering errors will not be caught by the try/catch. Wrap the component in an error boundary instead",
+      "labels": [
+       {
+        "label": "Avoid constructing JSX within try/catch",
+        "span": {
+         "column": 11,
+         "length": 3,
+         "line": 5,
+         "offset": 124
+        }
+       }
+      ],
+      "message": "Avoid constructing JSX within try/catch",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/error-boundaries",
+      "severity": "error"
+     }
+    ],
+    "invalid-set-state-in-effect-verbose-non-local-derived.js": [
+     {
+      "code": "react(no-deriving-state-in-effects)",
+      "help": "This effect derives state from the reactive values `firstName`, `lastName`, causing an extra render and potentially showing a stale value. Calculate the derived value during render, then remove the redundant state and effect.",
+      "labels": [
+       {
+        "label": "This state update stores a value that can be calculated during render",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 7,
+         "offset": 221
+        }
+       },
+       {
+        "label": "These reactive values contribute to the derived state",
+        "span": {
+         "column": 7,
+         "length": 9,
+         "line": 8,
+         "offset": 268
+        }
+       },
+       {
+        "span": {
+         "column": 18,
+         "length": 8,
+         "line": 8,
+         "offset": 279
+        }
+       }
+      ],
+      "message": "Values derived from props and state should be calculated during render, not in an effect",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 11,
+         "line": 7,
+         "offset": 221
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 9,
+         "line": 6,
+         "offset": 199
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     }
+    ],
+    "invalid-unused-usememo.js": [
+     {
+      "code": "react(void-use-memo)",
+      "help": "This useMemo() value is unused. useMemo() is for computing and caching values, not for arbitrary side effects",
+      "labels": [
+       {
+        "label": "useMemo() result is unused",
+        "span": {
+         "column": 3,
+         "length": 7,
+         "line": 3,
+         "offset": 67
+        }
+       }
+      ],
+      "message": "useMemo() result is unused",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/use-memo",
+      "severity": "error"
+     }
+    ],
+    "preserve-memo-validation/error.useMemo-property-call-dep.ts": [
+     {
+      "code": "react(memo-dependencies)",
+      "help": "Missing dependencies can cause a value to update less often than it should, resulting in stale UI. Extra dependencies can cause a value to update more often than it should, resulting in performance problems such as excessive renders or effects firing too often",
+      "labels": [
+       {
+        "label": "Missing dependency `propA`",
+        "span": {
+         "column": 12,
+         "length": 5,
+         "line": 6,
+         "offset": 197
+        }
+       },
+       {
+        "label": "Overly precise dependency `propA.x`, use `propA` instead",
+        "span": {
+         "column": 7,
+         "length": 7,
+         "line": 7,
+         "offset": 214
+        }
+       }
+      ],
+      "message": "Found missing/extra memoization dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     }
+    ],
+    "rules-of-hooks/error.invalid-conditionally-call-prop-named-like-hook.js": [
+     {
+      "code": "react(hooks)",
+      "help": "Call Hooks unconditionally at the top level of the component or custom Hook",
+      "labels": [
+       {
+        "label": "This Hook is called conditionally",
+        "span": {
+         "column": 5,
+         "length": 6,
+         "line": 3,
+         "offset": 55
+        }
+       }
+      ],
+      "message": "Hooks must always be called in a consistent order and may not be called conditionally",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     }
+    ],
+    "rules-of-hooks/error.invalid-hook-as-prop.js": [
+     {
+      "code": "react(hooks)",
+      "help": "Call a statically known Hook instead of selecting a Hook dynamically",
+      "labels": [
+       {
+        "label": "This Hook may change between renders",
+        "span": {
+         "column": 3,
+         "length": 6,
+         "line": 2,
+         "offset": 33
+        }
+       },
+       {
+        "label": "This dynamic Hook value originates here",
+        "span": {
+         "column": 21,
+         "length": 6,
+         "line": 1,
+         "offset": 20
+        }
+       }
+      ],
+      "message": "Hooks must be the same function on every render, but this value may change over time",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     }
+    ],
+    "rules-of-hooks/error.invalid-hook-for.js": [
+     {
+      "code": "react(invariant)",
+      "help": "Block bb5 is empty",
+      "labels": [
+       {
+        "label": "Unexpected empty block with `goto` terminal",
+        "span": {
+         "column": 10,
+         "length": 9,
+         "line": 1,
+         "offset": 9
+        }
+       }
+      ],
+      "message": "Unexpected empty block with `goto` terminal",
+      "note": "This is an internal React Compiler error; the component or hook was not optimized. Additional guidance: https://github.com/oxc-project/oxc/issues/new/choose",
+      "severity": "error"
+     }
+    ],
+    "should-bailout-without-compilation-infer-mode.js": [
+     {
+      "code": "react(globals)",
+      "help": "Variable `someGlobal` is declared outside of the component/hook. Reassigning this value during render is a side effect which can cause unpredictable behavior. If this variable is used in rendering, use useState instead. Otherwise, update it in an effect",
+      "labels": [
+       {
+        "label": "`someGlobal` cannot be reassigned",
+        "span": {
+         "column": 3,
+         "length": 10,
+         "line": 5,
+         "offset": 109
+        }
+       }
+      ],
+      "message": "Cannot reassign variables declared outside of the component/hook",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/globals",
+      "severity": "error"
+     }
+    ],
+    "static-components/invalid-dynamically-constructed-component-method-call.js": [
+     {
+      "code": "react(static-components)",
+      "help": "Components created during render will reset their state each time they are created. Declare components outside of render",
+      "labels": [
+       {
+        "label": "This component is created during render",
+        "span": {
+         "column": 11,
+         "length": 9,
+         "line": 4,
+         "offset": 137
+        }
+       },
+       {
+        "label": "The component is created during render here",
+        "span": {
+         "column": 21,
+         "length": 13,
+         "line": 3,
+         "offset": 110
+        }
+       }
+      ],
+      "message": "Cannot create components during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/static-components",
+      "severity": "error"
+     }
+    ],
+    "timers.js": [
+     {
+      "code": "react(purity)",
+      "help": "`Date.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component re-renders",
+      "labels": [
+       {
+        "label": "Cannot call impure function",
+        "span": {
+         "column": 15,
+         "length": 10,
+         "line": 3,
+         "offset": 77
+        }
+       }
+      ],
+      "message": "Cannot call impure function during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/purity",
+      "severity": "error"
+     },
+     {
+      "code": "react(purity)",
+      "help": "`performance.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component re-renders",
+      "labels": [
+       {
+        "label": "Cannot call impure function",
+        "span": {
+         "column": 16,
+         "length": 17,
+         "line": 4,
+         "offset": 104
+        }
+       }
+      ],
+      "message": "Cannot call impure function during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/purity",
+      "severity": "error"
+     },
+     {
+      "code": "react(purity)",
+      "help": "`performance.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component re-renders",
+      "labels": [
+       {
+        "label": "Cannot call impure function",
+        "span": {
+         "column": 17,
+         "length": 17,
+         "line": 2,
+         "offset": 44
+        }
+       }
+      ],
+      "message": "Cannot call impure function during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/purity",
+      "severity": "error"
+     }
+    ],
+    "use-no-forget-with-eslint-suppression.js": [
+     {
+      "code": "react(rule-suppression)",
+      "help": "Remove the suppression and address the reported React rule violation",
+      "labels": [
+       {
+        "label": "Found React rule suppression",
+        "span": {
+         "column": 3,
+         "length": 54,
+         "line": 6,
+         "offset": 103
+        }
+       }
+      ],
+      "message": "React rule suppression prevents optimization",
+      "note": "React Compiler has skipped optimizing this component because one or more React ESLint rules were disabled. React Compiler only works when your components follow all the rules of React, disabling them may result in unexpected or incorrect behavior. Found suppression `eslint-disable-next-line react-hooks/rules-of-hooks`. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks",
+      "severity": "error"
+     }
+    ],
+    "useMemo-if-else-multiple-return.js": [
+     {
+      "code": "react(memo-dependencies)",
+      "help": "Missing dependencies can cause a value to update less often than it should, resulting in stale UI",
+      "labels": [
+       {
+        "label": "Missing dependency `props.a`",
+        "span": {
+         "column": 25,
+         "length": 7,
+         "line": 5,
+         "offset": 154
+        }
+       },
+       {
+        "label": "Missing dependency `props.b`",
+        "span": {
+         "column": 23,
+         "length": 7,
+         "line": 7,
+         "offset": 192
+        }
+       },
+       {
+        "label": "Missing dependency `props.cond`",
+        "span": {
+         "column": 9,
+         "length": 10,
+         "line": 4,
+         "offset": 116
+        }
+       }
+      ],
+      "message": "Found missing memoization dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     }
+    ],
+    "useMemo-named-function.ts": [
+     {
+      "code": "react(use-memo)",
+      "help": "Pass an inline function expression as the first argument",
+      "labels": [
+       {
+        "label": "Expected the first argument to be an inline function expression",
+        "span": {
+         "column": 21,
+         "length": 9,
+         "line": 6,
+         "offset": 205
+        }
+       }
+      ],
+      "message": "Expected the first argument to be an inline function expression",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/use-memo",
+      "severity": "error"
+     }
+    ]
+   }
+  },
+  "comments": {
+   "exit": 1,
+   "files": 16,
+   "diagnostics": {
+    "before-the-second-label.jsx": [
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 5,
+         "length": 8,
+         "line": 5,
+         "offset": 144
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 9,
+         "line": 4,
+         "offset": 122
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     }
+    ],
+    "eslint/react.purity.jsx": [
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 17,
+         "length": 11,
+         "line": 4,
+         "offset": 110
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
+    "oxlint/react.purity.jsx": [
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 17,
+         "length": 11,
+         "line": 4,
+         "offset": 110
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
+    "until-enabled.jsx": [
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 17,
+         "length": 11,
+         "line": 12,
+         "offset": 255
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ]
+   }
+  },
+  "not React": {
+   "exit": 1,
+   "files": 3,
+   "diagnostics": {
+    "asked-for.js": [
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 5,
+         "line": 3,
+         "offset": 49
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(purity)",
+      "help": "`Date.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component re-renders",
+      "labels": [
+       {
+        "label": "Cannot call impure function",
+        "span": {
+         "column": 17,
+         "length": 10,
+         "line": 3,
+         "offset": 63
+        }
+       }
+      ],
+      "message": "Cannot call impure function during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/purity",
+      "severity": "error"
+     },
+     {
+      "code": "react(purity)",
+      "help": "`Math.random` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component re-renders",
+      "labels": [
+       {
+        "label": "Cannot call impure function",
+        "span": {
+         "column": 24,
+         "length": 13,
+         "line": 4,
+         "offset": 98
+        }
+       }
+      ],
+      "message": "Cannot call impure function during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/purity",
+      "severity": "error"
+     }
+    ]
+   }
+  },
+  "todo": {
+   "exit": 1,
+   "files": 3,
+   "diagnostics": {
+    "alone/a.jsx": [
+     {
+      "code": "react(todo)",
+      "help": "React Compiler cannot analyze this control flow. Refactor the cleanup to avoid `finally`, or suppress this warning if this function should remain uncompiled",
+      "labels": [
+       {
+        "label": "Unsupported `try` starts here",
+        "span": {
+         "column": 3,
+         "length": 3,
+         "line": 3,
+         "offset": 58
+        }
+       },
+       {
+        "label": "This `finally` clause requires unsupported control flow",
+        "span": {
+         "column": 4,
+         "length": 9,
+         "line": 5,
+         "offset": 85
+        }
+       }
+      ],
+      "message": "`try`/`finally` without `catch` is not supported by React Compiler",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 12,
+         "length": 5,
+         "line": 18,
+         "offset": 304
+        }
+       }
+      ],
+      "message": "Support functions with unreachable code that may contain hoisted declarations",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "off/a.jsx": [
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 5,
+         "line": 14,
+         "offset": 228
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 5,
+         "line": 9,
+         "offset": 149
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(purity)",
+      "help": "`Date.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component re-renders",
+      "labels": [
+       {
+        "label": "Cannot call impure function",
+        "span": {
+         "column": 16,
+         "length": 10,
+         "line": 24,
+         "offset": 369
+        }
+       }
+      ],
+      "message": "Cannot call impure function during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/purity",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 17,
+         "length": 11,
+         "line": 8,
+         "offset": 134
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
+    "on/a.jsx": [
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 5,
+         "line": 14,
+         "offset": 228
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 5,
+         "line": 9,
+         "offset": 149
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(purity)",
+      "help": "`Date.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component re-renders",
+      "labels": [
+       {
+        "label": "Cannot call impure function",
+        "span": {
+         "column": 16,
+         "length": 10,
+         "line": 24,
+         "offset": 369
+        }
+       }
+      ],
+      "message": "Cannot call impure function during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/purity",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 17,
+         "length": 11,
+         "line": 8,
+         "offset": 134
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "React Compiler cannot analyze this control flow. Refactor the cleanup to avoid `finally`, or suppress this warning if this function should remain uncompiled",
+      "labels": [
+       {
+        "label": "Unsupported `try` starts here",
+        "span": {
+         "column": 3,
+         "length": 3,
+         "line": 3,
+         "offset": 58
+        }
+       },
+       {
+        "label": "This `finally` clause requires unsupported control flow",
+        "span": {
+         "column": 4,
+         "length": 9,
+         "line": 5,
+         "offset": 85
+        }
+       }
+      ],
+      "message": "`try`/`finally` without `catch` is not supported by React Compiler",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 12,
+         "length": 5,
+         "line": 18,
+         "offset": 304
+        }
+       }
+      ],
+      "message": "Support functions with unreachable code that may contain hoisted declarations",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ]
+   }
+  },
+  "fork": {
+   "exit": 1,
+   "files": 12,
+   "diagnostics": {
+    "arguments.jsx": [
+     {
+      "code": "react(unsupported-syntax)",
+      "help": "React Compiler does not support compiling functions that reference the implicit arguments object",
+      "labels": [
+       {
+        "label": "Implicit 'arguments' is not supported",
+        "span": {
+         "column": 16,
+         "length": 9,
+         "line": 2,
+         "offset": 38
+        }
+       }
+      ],
+      "message": "Implicit 'arguments' is not supported",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "catch.jsx": [
+     {
+      "code": "react(set-state-in-effect)",
+      "help": "Effects should synchronize React with external systems. Calling setState synchronously inside an effect starts another render and is usually unnecessary. Derive the value during render, initialize state directly, or update it from the event that caused the change. Use an effect only when synchronizing with an external system.",
+      "labels": [
+       {
+        "label": "Avoid calling setState() directly within an effect",
+        "span": {
+         "column": 7,
+         "length": 8,
+         "line": 7,
+         "offset": 151
+        }
+       },
+       {
+        "label": "This is the containing effect",
+        "span": {
+         "column": 3,
+         "length": 9,
+         "line": 3,
+         "offset": 74
+        }
+       }
+      ],
+      "message": "Calling setState synchronously within an effect can trigger cascading renders",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-effect",
+      "severity": "error"
+     }
+    ],
+    "clock.jsx": [
+     {
+      "code": "react(purity)",
+      "help": "`Date` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component re-renders",
+      "labels": [
+       {
+        "label": "Cannot call impure function",
+        "span": {
+         "column": 15,
+         "length": 10,
+         "line": 2,
+         "offset": 37
+        }
+       }
+      ],
+      "message": "Cannot call impure function during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/purity",
+      "severity": "error"
+     },
+     {
+      "code": "react(purity)",
+      "help": "`Date` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component re-renders",
+      "labels": [
+       {
+        "label": "Cannot call impure function",
+        "span": {
+         "column": 16,
+         "length": 6,
+         "line": 3,
+         "offset": 64
+        }
+       }
+      ],
+      "message": "Cannot call impure function during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/purity",
+      "severity": "error"
+     }
+    ],
+    "default.jsx": [
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "label": "`JSXElement` cannot be safely reordered",
+        "span": {
+         "column": 29,
+         "length": 8,
+         "line": 1,
+         "offset": 28
+        }
+       }
+      ],
+      "message": "(BuildHIR::node.lowerReorderableExpression) Expression type `JSXElement` cannot be safely reordered",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "label": "`JSXFragment` cannot be safely reordered",
+        "span": {
+         "column": 47,
+         "length": 5,
+         "line": 1,
+         "offset": 46
+        }
+       }
+      ],
+      "message": "(BuildHIR::node.lowerReorderableExpression) Expression type `JSXFragment` cannot be safely reordered",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "import.jsx": [
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 26,
+         "length": 6,
+         "line": 5,
+         "offset": 95
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerExpression) Handle Import expressions",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 5,
+         "length": 28,
+         "line": 6,
+         "offset": 119
+        }
+       }
+      ],
+      "message": "Logical assignment operators (||=, &&=, ??=) are not yet supported",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "ref-in-memo.jsx": [
+     {
+      "code": "react(memo-dependencies)",
+      "help": "Extra dependencies can cause a value to update more often than it should, resulting in performance problems such as excessive renders or effects firing too often",
+      "labels": [
+       {
+        "label": "Unnecessary dependency `props.a`",
+        "span": {
+         "column": 46,
+         "length": 7,
+         "line": 3,
+         "offset": 101
+        }
+       }
+      ],
+      "message": "Found extra memoization dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Passing a ref to a function may read its value during render",
+        "span": {
+         "column": 32,
+         "length": 3,
+         "line": 4,
+         "offset": 143
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Passing a ref to a function may read its value during render",
+        "span": {
+         "column": 39,
+         "length": 3,
+         "line": 3,
+         "offset": 94
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
+    "update.jsx": [
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 5,
+         "length": 7,
+         "line": 7,
+         "offset": 102
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerExpression) Support UpdateExpression where argument is a global",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 5,
+         "length": 9,
+         "line": 6,
+         "offset": 87
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerExpression) Handle UpdateExpression to variables captured within lambdas.",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "virtual.jsx": [
+     {
+      "code": "react(incompatible-library)",
+      "help": "This API returns functions which cannot be memoized without leading to stale UI. To prevent this, by default React Compiler will skip memoizing this component/hook. However, you may see issues if values from this API are passed to other components/hooks that are memoized",
+      "labels": [
+       {
+        "label": "TanStack Virtual's `useWindowVirtualizer()` API returns functions that cannot be memoized safely",
+        "span": {
+         "column": 23,
+         "length": 20,
+         "line": 4,
+         "offset": 115
+        }
+       }
+      ],
+      "message": "Use of incompatible library",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/incompatible-library",
+      "severity": "error"
+     }
+    ]
+   }
+  },
+  "casts": {
+   "exit": 1,
+   "files": 1,
+   "diagnostics": {
+    "casts.tsx": [
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 11,
+         "line": 35,
+         "offset": 731
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 4,
+         "length": 12,
+         "line": 13,
+         "offset": 235
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 4,
+         "length": 29,
+         "line": 30,
+         "offset": 633
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(memo-dependencies)",
+      "help": "Missing dependencies can cause a value to update less often than it should, resulting in stale UI",
+      "labels": [
+       {
+        "label": "This dependency list is missing values used by the callback",
+        "span": {
+         "column": 49,
+         "length": 18,
+         "line": 25,
+         "offset": 546
+        }
+       },
+       {
+        "label": "Missing dependency `props.a`",
+        "span": {
+         "column": 39,
+         "length": 7,
+         "line": 25,
+         "offset": 536
+        }
+       }
+      ],
+      "message": "Found missing memoization dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 19,
+         "length": 11,
+         "line": 20,
+         "offset": 401
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Passing a ref to a function may read its value during render",
+        "span": {
+         "column": 22,
+         "length": 18,
+         "line": 19,
+         "offset": 362
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(static-components)",
+      "help": "Components created during render will reset their state each time they are created. Declare components outside of render",
+      "labels": [
+       {
+        "label": "This component is created during render",
+        "span": {
+         "column": 8,
+         "length": 5,
+         "line": 7,
+         "offset": 171
+        }
+       },
+       {
+        "label": "The component is created during render here",
+        "span": {
+         "column": 17,
+         "length": 12,
+         "line": 3,
+         "offset": 99
+        }
+       }
+      ],
+      "message": "Cannot create components during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/static-components",
+      "severity": "error"
+     },
+     {
+      "code": "react(use-memo)",
+      "help": "Use an array literal containing identifiers or property access expressions",
+      "labels": [
+       {
+        "label": "Expected the dependency list to be an array of simple expressions (e.g. `x`, `x.y.z`, `x?.y?.z`)",
+        "span": {
+         "column": 50,
+         "length": 16,
+         "line": 25,
+         "offset": 547
+        }
+       }
+      ],
+      "message": "Expected the dependency list to be an array of simple expressions (e.g. `x`, `x.y.z`, `x?.y?.z`)",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/use-memo",
+      "severity": "error"
+     }
+    ]
+   }
+  },
+  "long": {
+   "exit": 1,
+   "files": 4,
+   "diagnostics": {
+    "callbacks.tsx": [
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 15,
+         "length": 11,
+         "line": 5,
+         "offset": 140
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
+    "children.tsx": [
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 15,
+         "length": 11,
+         "line": 5,
+         "offset": 140
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
+    "statements.tsx": [
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 15,
+         "length": 11,
+         "line": 5,
+         "offset": 140
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
+    "states.tsx": [
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 15,
+         "length": 11,
+         "line": 5,
+         "offset": 140
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ]
+   }
+  },
+  "order": {
+   "exit": 1,
+   "files": 1,
+   "diagnostics": {
+    "order.jsx": [
+     {
+      "code": "react(globals)",
+      "help": "Variable `v6` is declared outside of the component/hook. Reassigning this value during render is a side effect which can cause unpredictable behavior. If this variable is used in rendering, use useState instead. Otherwise, update it in an effect",
+      "labels": [
+       {
+        "label": "`v6` cannot be reassigned",
+        "span": {
+         "column": 7,
+         "length": 2,
+         "line": 27,
+         "offset": 417
+        }
+       }
+      ],
+      "message": "Cannot reassign variables declared outside of the component/hook",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/globals",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value used previously in JSX is not allowed. Consider moving the modification before the JSX",
+      "labels": [
+       {
+        "label": "`a` cannot be modified",
+        "span": {
+         "column": 17,
+         "length": 1,
+         "line": 50,
+         "offset": 849
+        }
+       },
+       {
+        "label": "`a` originates here",
+        "span": {
+         "column": 7,
+         "length": 1,
+         "line": 2,
+         "offset": 49
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Reassigning `b` after render has completed can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "Cannot reassign `b` after render completes",
+        "span": {
+         "column": 23,
+         "length": 1,
+         "line": 11,
+         "offset": 203
+        }
+       },
+       {
+        "label": "`b` is declared here",
+        "span": {
+         "column": 5,
+         "length": 1,
+         "line": 3,
+         "offset": 66
+        }
+       }
+      ],
+      "message": "Cannot reassign variable after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `b` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `b`",
+        "span": {
+         "column": 23,
+         "length": 1,
+         "line": 11,
+         "offset": 203
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `b` after render",
+        "span": {
+         "column": 14,
+         "length": 9,
+         "line": 9,
+         "offset": 144
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     }
+    ]
+   }
+  },
+  "lowering": {
+   "exit": 1,
+   "files": 2,
+   "diagnostics": {
+    "defaults.tsx": [
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 10,
+         "length": 8,
+         "line": 21,
+         "offset": 568
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 11,
+         "length": 26,
+         "line": 25,
+         "offset": 657
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 13,
+         "length": 8,
+         "line": 8,
+         "offset": 224
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 14,
+         "length": 8,
+         "line": 13,
+         "offset": 370
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 14,
+         "length": 8,
+         "line": 26,
+         "offset": 708
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 22,
+         "length": 15,
+         "line": 25,
+         "offset": 668
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 30,
+         "length": 26,
+         "line": 20,
+         "offset": 529
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 34,
+         "length": 26,
+         "line": 12,
+         "offset": 300
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 37,
+         "length": 26,
+         "line": 7,
+         "offset": 136
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 41,
+         "length": 15,
+         "line": 20,
+         "offset": 540
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 45,
+         "length": 15,
+         "line": 12,
+         "offset": 311
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 48,
+         "length": 15,
+         "line": 7,
+         "offset": 147
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     }
+    ],
+    "forever.tsx": [
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 5,
+         "line": 18,
+         "offset": 342
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 15,
+         "length": 11,
+         "line": 5,
+         "offset": 120
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ]
+   }
+  },
+  "node_modules": {
+   "exit": 1,
+   "files": 4,
+   "diagnostics": {
+    "a.jsx": [
+     {
+      "code": "react(purity)",
+      "help": "`Date.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component re-renders",
+      "labels": [
+       {
+        "label": "Cannot call impure function",
+        "span": {
+         "column": 16,
+         "length": 10,
+         "line": 2,
+         "offset": 38
+        }
+       }
+      ],
+      "message": "Cannot call impure function during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/purity",
+      "severity": "error"
+     }
+    ]
+   }
+  }
+ },
+ "eslint": {
+  "eslint": "10.12.0",
+  "plugin": "7.1.1",
+  "without": [
+   "todo/02.invalid.tsx",
+   "fbt/error.todo-locally-require-fbt.js"
+  ],
+  "cases": {
+   "capitalized-calls/02.invalid.tsx": [
+    "react-hooks/capitalized-calls 5:6-5:13 Error: Capitalized functions are reserved for components, which must be invoked with JSX. If this is a component, render it with JSX. Otherwise, ensure that it has no hook calls and rename it to begin with a lowercase letter. Alternatively, if you know for a fact that this function is not a component, you can allowlist it via the compiler config"
+   ],
+   "capitalized-calls/03.invalid.tsx": [
+    "react-hooks/capitalized-calls 5:6-5:22 Error: Capitalized functions are reserved for components, which must be invoked with JSX. If this is a component, render it with JSX. Otherwise, ensure that it has no hook calls and rename it to begin with a lowercase letter. Alternatively, if you know for a fact that this function is not a component, you can allowlist it via the compiler config"
+   ],
+   "capitalized-calls/04.invalid.tsx": [
+    "react-hooks/capitalized-calls 6:6-6:14 Error: Capitalized functions are reserved for components, which must be invoked with JSX. If this is a component, render it with JSX. Otherwise, ensure that it has no hook calls and rename it to begin with a lowercase letter. Alternatively, if you know for a fact that this function is not a component, you can allowlist it via the compiler config",
+    "react-hooks/capitalized-calls 7:6-7:23 Error: Capitalized functions are reserved for components, which must be invoked with JSX. If this is a component, render it with JSX. Otherwise, ensure that it has no hook calls and rename it to begin with a lowercase letter. Alternatively, if you know for a fact that this function is not a component, you can allowlist it via the compiler config"
+   ],
+   "error-boundaries/02.invalid.tsx": [
+    "react-hooks/error-boundaries 5:10-5:19 Error: Avoid constructing JSX within try/catch"
+   ],
+   "globals/02.invalid.tsx": [
+    "react-hooks/globals 5:5-5:15 Error: Cannot reassign variables declared outside of the component/hook"
+   ],
+   "hooks/02.invalid.tsx": [
+    "react-hooks/hooks 4:5-4:23 Error: Hooks must always be called in a consistent order, and may not be called conditionally. See the Rules of Hooks (https://react.dev/warnings/invalid-hook-call-warning)"
+   ],
+   "immutability/02.invalid.tsx": [
+    "react-hooks/immutability 7:11-7:16 Error: This value cannot be modified"
+   ],
+   "immutability/03.invalid.tsx": [
+    "react-hooks/immutability 6:15-6:26 Error: Cannot access variable before it is declared",
+    "react-hooks/memo-dependencies 6:15-6:26 Error: Found missing memoization dependencies"
+   ],
+   "immutability/04.invalid.tsx": [
+    "react-hooks/immutability 3:11-3:16 Error: This value cannot be modified"
+   ],
+   "incompatible-library/02.invalid.tsx": [
+    "react-hooks/incompatible-library 4:17-4:30 Compilation Skipped: Use of incompatible library"
+   ],
+   "memo-dependencies/03.invalid.tsx": [
+    "react-hooks/memo-dependencies 4:24-4:29 Error: Found missing memoization dependencies"
+   ],
+   "memo-dependencies/04.invalid.tsx": [
+    "react-hooks/memo-dependencies 4:39-4:44 Error: Found extra memoization dependencies"
+   ],
+   "no-deriving-state-in-effects/02.invalid.tsx": [
+    "react-hooks/no-deriving-state-in-effects 8:5-8:16 Error: Values derived from props and state should be calculated during render, not in an effect. (https://react.dev/learn/you-might-not-need-an-effect#updating-state-based-on-props-or-state)",
+    "react-hooks/set-state-in-effect 8:5-8:16 Error: Calling setState synchronously within an effect can trigger cascading renders"
+   ],
+   "preserve-manual-memoization/02.invalid.tsx": [
+    "react-hooks/preserve-manual-memoization 7:22-11:4 Compilation Skipped: Existing memoization could not be preserved"
+   ],
+   "purity/03.invalid.tsx": [
+    "react-hooks/purity 3:16-3:26 Error: Cannot call impure function during render",
+    "react-hooks/purity 4:15-4:32 Error: Cannot call impure function during render",
+    "react-hooks/purity 5:16-5:29 Error: Cannot call impure function during render"
+   ],
+   "refs/02.invalid.tsx": [
+    "react-hooks/refs 4:17-4:28 Error: Cannot access refs during render"
+   ],
+   "refs/03.invalid.tsx": [
+    "react-hooks/refs 4:3-4:14 Error: Cannot access refs during render"
+   ],
+   "refs/04.invalid.tsx": [
+    "react-hooks/refs 4:3-4:14 Error: Cannot access refs during render"
+   ],
+   "set-state-in-effect/02.invalid.tsx": [
+    "react-hooks/set-state-in-effect 6:5-6:13 Error: Calling setState synchronously within an effect can trigger cascading renders"
+   ],
+   "set-state-in-render/02.invalid.tsx": [
+    "react-hooks/set-state-in-render 5:3-5:11 Error: Cannot call setState during render"
+   ],
+   "static-components/02.invalid.tsx": [
+    "react-hooks/static-components 4:11-4:20 Error: Cannot create components during render"
+   ],
+   "syntax/02.invalid.tsx": [
+    "react-hooks/syntax 4:3-4:4 Error: Cannot reassign a `const` variable"
+   ],
+   "todo/03.invalid.tsx": [
+    "react-hooks/todo 4:21-8:22 Todo: (BuildHIR::lowerStatement) Handle TryStatement without a catch clause"
+   ],
+   "unsupported-syntax/02.invalid.tsx": [
+    "react-hooks/unsupported-syntax 3:3-3:7 Compilation Skipped: The 'eval' function is not supported"
+   ],
+   "use-memo/02.invalid.tsx": [
+    "react-hooks/use-memo 4:21-6:4 Error: useMemo() callbacks may not be async or generator functions",
+    "react-hooks/void-use-memo 4:21-6:4 Error: useMemo() callbacks must return a value"
+   ],
+   "void-use-memo/02.invalid.tsx": [
+    "react-hooks/void-use-memo 4:25-4:33 Error: useMemo() callbacks must return a value"
+   ]
+  },
+  "fixtures": {
+   "allow-global-reassignment-in-effect.js": [
+    "react-hooks/set-state-in-effect 13:5-13:13 Error: Calling setState synchronously within an effect can trigger cascading renders"
+   ],
+   "context-variable-as-jsx-element-tag.js": [
+    "react-hooks/immutability 8:3-8:12 Error: This value cannot be modified",
+    "react-hooks/preserve-manual-memoization 8:15-10:18 Compilation Skipped: Existing memoization could not be preserved"
+   ],
+   "effect-derived-computations/derived-state-from-prop-setter-call-outside-effect-no-error.js": [
+    "react-hooks/no-deriving-state-in-effects 8:5-8:12 Error: Values derived from props and state should be calculated during render, not in an effect. (https://react.dev/learn/you-might-not-need-an-effect#updating-state-based-on-props-or-state)",
+    "react-hooks/set-state-in-effect 8:5-8:12 Error: Calling setState synchronously within an effect can trigger cascading renders"
+   ],
+   "effect-derived-computations/effect-with-global-function-call-no-error.js": [
+    "react-hooks/no-deriving-state-in-effects 7:5-7:13 Error: Values derived from props and state should be calculated during render, not in an effect. (https://react.dev/learn/you-might-not-need-an-effect#updating-state-based-on-props-or-state)",
+    "react-hooks/set-state-in-effect 7:5-7:13 Error: Calling setState synchronously within an effect can trigger cascading renders"
+   ],
+   "error.assign-global-in-component-tag-function.js": [
+    "react-hooks/globals 3:5-3:15 Error: Cannot reassign variables declared outside of the component/hook",
+    "react-hooks/static-components 5:11-5:14 Error: Cannot create components during render"
+   ],
+   "error.bug-invariant-couldnt-find-binding-for-decl.js": [
+    "react-hooks/invariant 7:15-7:21 Invariant: (BuildHIR::lowerAssignment) Could not find binding for declaration."
+   ],
+   "error.bug-invariant-expected-consistent-destructuring.js": [
+    "react-hooks/invariant 9:10-9:11 Invariant: Expected consistent kind for destructuring"
+   ],
+   "error.function-expression-references-variable-its-assigned-to.js": [
+    "react-hooks/immutability 3:5-3:13 Error: Cannot reassign variable after render completes"
+   ],
+   "error.hoist-optional-member-expression-with-conditional.js": [
+    "react-hooks/preserve-manual-memoization 4:24-11:4 Compilation Skipped: Existing memoization could not be preserved"
+   ],
+   "error.invalid-array-push-frozen.js": [
+    "react-hooks/immutability 4:3-4:4 Error: This value cannot be modified"
+   ],
+   "error.invalid-disallow-mutating-ref-in-render.js": [
+    "react-hooks/refs 4:3-4:14 Error: Cannot access refs during render"
+   ],
+   "error.invalid-eval-unsupported.js": [
+    "react-hooks/unsupported-syntax 2:3-2:7 Compilation Skipped: The 'eval' function is not supported"
+   ],
+   "error.invalid-impure-functions-in-render.js": [
+    "react-hooks/purity 4:16-4:26 Error: Cannot call impure function during render",
+    "react-hooks/purity 5:15-5:32 Error: Cannot call impure function during render",
+    "react-hooks/purity 6:16-6:29 Error: Cannot call impure function during render"
+   ],
+   "error.invalid-optional-member-expression-as-memo-dep-non-optional-in-body.js": [
+    "react-hooks/preserve-manual-memoization 3:24-7:4 Compilation Skipped: Existing memoization could not be preserved"
+   ],
+   "error.invalid-pass-hook-as-prop.js": [
+    "react-hooks/hooks 2:22-2:28 Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values"
+   ],
+   "error.invalid-props-mutation-in-effect-indirect.js": [
+    "react-hooks/immutability 3:5-3:10 Error: This value cannot be modified"
+   ],
+   "error.invalid-reassign-variable-in-usememo.js": [
+    "react-hooks/use-memo 5:5-5:6 Error: useMemo() callbacks may not reassign variables declared outside of the callback"
+   ],
+   "error.invalid-ref-value-as-props.js": [
+    "react-hooks/refs 4:20-4:31 Error: Cannot access refs during render"
+   ],
+   "error.invalid-setState-in-useMemo.js": [
+    "react-hooks/void-use-memo 5:11-8:4 Error: useMemo() callbacks must return a value",
+    "react-hooks/set-state-in-render 6:5-6:15 Error: Calling setState from useMemo may trigger an infinite loop",
+    "react-hooks/set-state-in-render 7:5-7:13 Error: Calling setState from useMemo may trigger an infinite loop"
+   ],
+   "error.invalid-unconditional-set-state-in-render.js": [
+    "react-hooks/set-state-in-render 6:3-6:7 Error: Cannot call setState during render",
+    "react-hooks/set-state-in-render 7:3-7:10 Error: Cannot call setState during render"
+   ],
+   "error.mutate-global-increment-op-invalid-react.js": [
+    "react-hooks/todo 4:3-4:16 Todo: (BuildHIR::lowerExpression) Support UpdateExpression where argument is a global"
+   ],
+   "error.todo-invalid-jsx-in-try-with-finally.js": [
+    "react-hooks/todo 4:3-8:4 Todo: (BuildHIR::lowerStatement) Handle TryStatement without a catch clause"
+   ],
+   "error.useMemo-non-literal-depslist.ts": [
+    "react-hooks/use-memo 10:5-10:28 Error: Expected the dependency list for useMemo to be an array literal"
+   ],
+   "exhaustive-deps/error.invalid-dep-on-ref-current-value.js": [
+    "react-hooks/memo-dependencies 7:7-7:24 Error: Found extra memoization dependencies"
+   ],
+   "invalid-jsx-in-catch-in-outer-try-with-catch.js": [
+    "react-hooks/error-boundaries 11:12-11:33 Error: Avoid constructing JSX within try/catch"
+   ],
+   "invalid-jsx-in-try-with-catch.js": [
+    "react-hooks/error-boundaries 5:10-5:17 Error: Avoid constructing JSX within try/catch"
+   ],
+   "invalid-set-state-in-effect-verbose-non-local-derived.js": [
+    "react-hooks/no-deriving-state-in-effects 7:5-7:16 Error: Values derived from props and state should be calculated during render, not in an effect. (https://react.dev/learn/you-might-not-need-an-effect#updating-state-based-on-props-or-state)",
+    "react-hooks/set-state-in-effect 7:5-7:16 Error: Calling setState synchronously within an effect can trigger cascading renders"
+   ],
+   "invalid-unused-usememo.js": [
+    "react-hooks/void-use-memo 3:3-3:10 Error: useMemo() result is unused"
+   ],
+   "preserve-memo-validation/error.useMemo-property-call-dep.ts": [
+    "react-hooks/memo-dependencies 6:12-6:17 Error: Found missing/extra memoization dependencies"
+   ],
+   "rules-of-hooks/error.invalid-conditionally-call-prop-named-like-hook.js": [
+    "react-hooks/hooks 3:5-3:11 Error: Hooks must always be called in a consistent order, and may not be called conditionally. See the Rules of Hooks (https://react.dev/warnings/invalid-hook-call-warning)"
+   ],
+   "rules-of-hooks/error.invalid-hook-as-prop.js": [
+    "react-hooks/hooks 2:3-2:9 Error: Hooks must be the same function on every render, but this value may change over time to a different function. See https://react.dev/reference/rules/react-calls-components-and-hooks#dont-dynamically-use-hooks"
+   ],
+   "rules-of-hooks/error.invalid-hook-for.js": [
+    "react-hooks/invariant 3:3-5:4 Invariant: Unexpected empty block with `goto` terminal"
+   ],
+   "should-bailout-without-compilation-infer-mode.js": [
+    "react-hooks/globals 5:3-5:13 Error: Cannot reassign variables declared outside of the component/hook"
+   ],
+   "static-components/invalid-dynamically-constructed-component-method-call.js": [
+    "react-hooks/static-components 4:11-4:20 Error: Cannot create components during render"
+   ],
+   "timers.js": [
+    "react-hooks/purity 2:17-2:34 Error: Cannot call impure function during render",
+    "react-hooks/purity 3:15-3:25 Error: Cannot call impure function during render",
+    "react-hooks/purity 4:16-4:33 Error: Cannot call impure function during render"
+   ],
+   "use-no-forget-with-eslint-suppression.js": [
+    "react-hooks/refs 7:3-7:14 Error: Cannot access refs during render"
+   ],
+   "useMemo-if-else-multiple-return.js": [
+    "react-hooks/memo-dependencies 5:25-5:32 Error: Found missing memoization dependencies"
+   ],
+   "useMemo-named-function.ts": [
+    "react-hooks/use-memo 6:21-6:30 Error: Expected the first argument to be an inline function expression"
+   ]
+  },
+  "small": {
+   "casts.tsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/static-components",
+      "severity": 2,
+      "message": "Error: Cannot create components during render\n\nComponents created during render will reset their state each time they are created. Declare components outside of render.\n\n<dir>/casts.tsx:7:8\n   5 |     <div>\n   6 |       <Dynamic />\n>  7 |       <Plain />\n     |        ^^^^^ This component is created during render\n   8 |     </div>\n   9 |   );\n  10 | }\n\n<dir>/casts.tsx:3:17\n  1 | function Hidden(props: Props) {\n  2 |   const Dynamic = useComponent(props.kind) as any;\n> 3 |   const Plain = useComponent(props.kind);\n    |                 ^^^^^^^^^^^^^^^^^^^^^^^^ The component is created during render here\n  4 |   return (\n  5 |     <div>\n  6 |       <Dynamic />",
+      "line": 7,
+      "column": 8,
+      "endLine": 7,
+      "endColumn": 13,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/immutability",
+      "severity": 2,
+      "message": "Error: This value cannot be modified\n\nModifying component props or hook arguments is not allowed. Consider using a local variable instead.\n\n<dir>/casts.tsx:13:4\n  11 |\n  12 | function Mutates(props: Props) {\n> 13 |   (props as any).value = 1;\n     |    ^^^^^^^^^^^^ value cannot be modified\n  14 |   return <div />;\n  15 | }\n  16 |",
+      "line": 13,
+      "column": 4,
+      "endLine": 13,
+      "endColumn": 16,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/refs",
+      "severity": 2,
+      "message": "Error: Cannot access refs during render\n\nReact refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected (https://react.dev/reference/react/useRef).\n\n<dir>/casts.tsx:19:22\n  17 | function Passes(props: Props) {\n  18 |   const ref = useRef(null);\n> 19 |   const value = read({ ref } as Options);\n     |                      ^^^^^^^^^^^^^^^^^^ Passing a ref to a function may read its value during render\n  20 |   const current = ref.current as number;\n  21 |   return <div>{value}{current}</div>;\n  22 | }",
+      "line": 19,
+      "column": 22,
+      "endLine": 19,
+      "endColumn": 40,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/refs",
+      "severity": 2,
+      "message": "Error: Cannot access refs during render\n\nReact refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected (https://react.dev/reference/react/useRef).\n\n<dir>/casts.tsx:20:19\n  18 |   const ref = useRef(null);\n  19 |   const value = read({ ref } as Options);\n> 20 |   const current = ref.current as number;\n     |                   ^^^^^^^^^^^ Cannot access ref value during render\n  21 |   return <div>{value}{current}</div>;\n  22 | }\n  23 |",
+      "line": 20,
+      "column": 19,
+      "endLine": 20,
+      "endColumn": 30,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/memo-dependencies",
+      "severity": 2,
+      "message": "Error: Found missing memoization dependencies\n\nMissing dependencies can cause a value to update less often than it should, resulting in stale UI.\n\n<dir>/casts.tsx:25:39\n  23 |\n  24 | function Depends(props: Props) {\n> 25 |   const value = useMemo(() => compute(props.a), [(props as any).a]);\n     |                                       ^^^^^^^ Missing dependency `props.a`\n  26 |   return <div>{value}</div>;\n  27 | }\n  28 |\n\nInferred dependencies: `[props.a]`",
+      "line": 25,
+      "column": 39,
+      "endLine": 25,
+      "endColumn": 46,
+      "suggestions": [
+       {
+        "desc": "Update dependencies",
+        "range": [
+         546,
+         564
+        ],
+        "text": "[props.a]"
+       }
+      ]
+     },
+     {
+      "ruleId": "react-hooks/use-memo",
+      "severity": 2,
+      "message": "Error: Expected the dependency list to be an array of simple expressions (e.g. `x`, `x.y.z`, `x?.y?.z`)\n\nExpected the dependency list to be an array of simple expressions (e.g. `x`, `x.y.z`, `x?.y?.z`).\n\n<dir>/casts.tsx:25:50\n  23 |\n  24 | function Depends(props: Props) {\n> 25 |   const value = useMemo(() => compute(props.a), [(props as any).a]);\n     |                                                  ^^^^^^^^^^^^^^^^ Expected the dependency list to be an array of simple expressions (e.g. `x`, `x.y.z`, `x?.y?.z`)\n  26 |   return <div>{value}</div>;\n  27 | }\n  28 |",
+      "line": 25,
+      "column": 50,
+      "endLine": 25,
+      "endColumn": 66,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/immutability",
+      "severity": 2,
+      "message": "Error: This value cannot be modified\n\nModifying component props or hook arguments is not allowed. Consider using a local variable instead.\n\n<dir>/casts.tsx:30:4\n  28 |\n  29 | function Twice(props: Props) {\n> 30 |   ((props as unknown) as Mutable).value = 1;\n     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ value cannot be modified\n  31 |   return <div />;\n  32 | }\n  33 |",
+      "line": 30,
+      "column": 4,
+      "endLine": 30,
+      "endColumn": 33,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/immutability",
+      "severity": 2,
+      "message": "Error: This value cannot be modified\n\nModifying component props or hook arguments is not allowed. Consider using a local variable instead.\n\n<dir>/casts.tsx:35:3\n  33 |\n  34 | function NotNull(props: Props) {\n> 35 |   props.other!.value = 2;\n     |   ^^^^^^^^^^^ value cannot be modified\n  36 |   return <div />;\n  37 | }\n  38 |",
+      "line": 35,
+      "column": 3,
+      "endLine": 35,
+      "endColumn": 14,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   },
+   "defaults.tsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/hooks",
+      "severity": 2,
+      "message": "Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n\n<dir>/defaults.tsx:7:37\n   5 | }\n   6 |\n>  7 | export function InAnObject({ label, useThing = useDefaultThing }: { label: string; useThing?: () => number }) {\n     |                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^ Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n   8 |   const v = useThing();\n   9 |   return <p>{label}{v}</p>;\n  10 | }\n\n",
+      "line": 7,
+      "column": 37,
+      "endLine": 7,
+      "endColumn": 63,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/hooks",
+      "severity": 2,
+      "message": "Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n\n<dir>/defaults.tsx:7:48\n   5 | }\n   6 |\n>  7 | export function InAnObject({ label, useThing = useDefaultThing }: { label: string; useThing?: () => number }) {\n     |                                                ^^^^^^^^^^^^^^^ Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n   8 |   const v = useThing();\n   9 |   return <p>{label}{v}</p>;\n  10 | }\n\n",
+      "line": 7,
+      "column": 48,
+      "endLine": 7,
+      "endColumn": 63,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/hooks",
+      "severity": 2,
+      "message": "Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n\n<dir>/defaults.tsx:8:13\n   6 |\n   7 | export function InAnObject({ label, useThing = useDefaultThing }: { label: string; useThing?: () => number }) {\n>  8 |   const v = useThing();\n     |             ^^^^^^^^ Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n   9 |   return <p>{label}{v}</p>;\n  10 | }\n  11 |\n\n",
+      "line": 8,
+      "column": 13,
+      "endLine": 8,
+      "endColumn": 21,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/hooks",
+      "severity": 2,
+      "message": "Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n\n<dir>/defaults.tsx:12:34\n  10 | }\n  11 |\n> 12 | export function WithAKey({ hook: useThing = useDefaultThing }: { hook?: () => number }) {\n     |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^ Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n  13 |   return <p>{useThing()}</p>;\n  14 | }\n  15 |\n\n",
+      "line": 12,
+      "column": 34,
+      "endLine": 12,
+      "endColumn": 60,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/hooks",
+      "severity": 2,
+      "message": "Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n\n<dir>/defaults.tsx:12:45\n  10 | }\n  11 |\n> 12 | export function WithAKey({ hook: useThing = useDefaultThing }: { hook?: () => number }) {\n     |                                             ^^^^^^^^^^^^^^^ Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n  13 |   return <p>{useThing()}</p>;\n  14 | }\n  15 |\n\n",
+      "line": 12,
+      "column": 45,
+      "endLine": 12,
+      "endColumn": 60,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/hooks",
+      "severity": 2,
+      "message": "Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n\n<dir>/defaults.tsx:13:14\n  11 |\n  12 | export function WithAKey({ hook: useThing = useDefaultThing }: { hook?: () => number }) {\n> 13 |   return <p>{useThing()}</p>;\n     |              ^^^^^^^^ Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n  14 | }\n  15 |\n  16 | export function InAnArray([useThing = useDefaultThing]: [(() => number)?]) {\n\n",
+      "line": 13,
+      "column": 14,
+      "endLine": 13,
+      "endColumn": 22,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/hooks",
+      "severity": 2,
+      "message": "Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n\n<dir>/defaults.tsx:20:30\n  18 | }\n  19 |\n> 20 | export function useParameter(useThing = useDefaultThing) {\n     |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^ Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n  21 |   return useThing();\n  22 | }\n  23 |\n\n",
+      "line": 20,
+      "column": 30,
+      "endLine": 20,
+      "endColumn": 56,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/hooks",
+      "severity": 2,
+      "message": "Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n\n<dir>/defaults.tsx:20:41\n  18 | }\n  19 |\n> 20 | export function useParameter(useThing = useDefaultThing) {\n     |                                         ^^^^^^^^^^^^^^^ Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n  21 |   return useThing();\n  22 | }\n  23 |\n\n",
+      "line": 20,
+      "column": 41,
+      "endLine": 20,
+      "endColumn": 56,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/hooks",
+      "severity": 2,
+      "message": "Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n\n<dir>/defaults.tsx:21:10\n  19 |\n  20 | export function useParameter(useThing = useDefaultThing) {\n> 21 |   return useThing();\n     |          ^^^^^^^^ Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n  22 | }\n  23 |\n  24 | export function InTheBody(props: { useThing?: () => number }) {\n\n",
+      "line": 21,
+      "column": 10,
+      "endLine": 21,
+      "endColumn": 18,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/hooks",
+      "severity": 2,
+      "message": "Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n\n<dir>/defaults.tsx:25:11\n  23 |\n  24 | export function InTheBody(props: { useThing?: () => number }) {\n> 25 |   const { useThing = useDefaultThing } = props;\n     |           ^^^^^^^^^^^^^^^^^^^^^^^^^^ Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n  26 |   return <p>{useThing()}</p>;\n  27 | }\n  28 |\n\n",
+      "line": 25,
+      "column": 11,
+      "endLine": 25,
+      "endColumn": 37,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/hooks",
+      "severity": 2,
+      "message": "Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n\n<dir>/defaults.tsx:25:22\n  23 |\n  24 | export function InTheBody(props: { useThing?: () => number }) {\n> 25 |   const { useThing = useDefaultThing } = props;\n     |                      ^^^^^^^^^^^^^^^ Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n  26 |   return <p>{useThing()}</p>;\n  27 | }\n  28 |\n\n",
+      "line": 25,
+      "column": 22,
+      "endLine": 25,
+      "endColumn": 37,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/hooks",
+      "severity": 2,
+      "message": "Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n\n<dir>/defaults.tsx:26:14\n  24 | export function InTheBody(props: { useThing?: () => number }) {\n  25 |   const { useThing = useDefaultThing } = props;\n> 26 |   return <p>{useThing()}</p>;\n     |              ^^^^^^^^ Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n  27 | }\n  28 |\n\n",
+      "line": 26,
+      "column": 14,
+      "endLine": 26,
+      "endColumn": 22,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   },
+   "disabled.jsx": {
+    "messages": [],
+    "suppressed": [
+     {
+      "ruleId": "react-hooks/refs",
+      "severity": 2,
+      "message": "Error: Cannot access refs during render\n\nReact refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected (https://react.dev/reference/react/useRef).\n\n  2 |   const ref = useRef(null);\n  3 |   // eslint-disable-next-line react-hooks/refs\n> 4 |   const value = ref.current;\n    |                 ^^^^^^^^^^^ Cannot access ref value during render\n  5 |   return <div>{value}</div>;\n  6 | }\n  7 |",
+      "line": 4,
+      "column": 17,
+      "endLine": 4,
+      "endColumn": 28,
+      "suggestions": []
+     }
+    ]
+   },
+   "flow-other.jsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/refs",
+      "severity": 2,
+      "message": "Error: Cannot access refs during render\n\nReact refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected (https://react.dev/reference/react/useRef).\n\n  2 |   const ref = useRef(null);\n  3 |   // $FlowFixMe[other]\n> 4 |   const value = ref.current;\n    |                 ^^^^^^^^^^^ Cannot access ref value during render\n  5 |   return <div>{value}</div>;\n  6 | }\n  7 |",
+      "line": 4,
+      "column": 17,
+      "endLine": 4,
+      "endColumn": 28,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   },
+   "javascript.jsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/memo-dependencies",
+      "severity": 2,
+      "message": "Error: Found extra memoization dependencies\n\nExtra dependencies can cause a value to update more often than it should, resulting in performance problems such as excessive renders or effects firing too often.\n\n  1 | function Component({ a, b }) {\n> 2 |   const value = useMemo(() => [a], [a, b]);\n    |                                        ^ Unnecessary dependency `b`\n  3 |   return <div>{value}</div>;\n  4 | }\n  5 |",
+      "line": 2,
+      "column": 40,
+      "endLine": 2,
+      "endColumn": 41,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   },
+   "long.jsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/todo",
+      "severity": 2,
+      "message": "Todo: (BuildHIR::lowerStatement) Handle TryStatement without a catch clause\n\n   1 | function Component(props) {\n   2 |   let value = 0;\n>  3 |   try {\n     |   ^^^^^\n>  4 |     value += props.a;\n     | ^^^^^^^^^^^^^^^^^^^^^\n>  5 |     value += props.b;\n     …\n     | ^^^^^^^^^^^^^^^^^^^^^\n> 14 |     props.done();\n     | ^^^^^^^^^^^^^^^^^^^^^\n> 15 |   }\n     | ^^^^ (BuildHIR::lowerStatement) Handle TryStatement without a catch clause\n  16 |   return <div>{value}</div>;\n  17 | }\n  18 |\n\n",
+      "line": 3,
+      "column": 3,
+      "endLine": 15,
+      "endColumn": 4,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   },
+   "typescript.tsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/memo-dependencies",
+      "severity": 2,
+      "message": "Error: Found extra memoization dependencies\n\nExtra dependencies can cause a value to update more often than it should, resulting in performance problems such as excessive renders or effects firing too often.\n\n<dir>/typescript.tsx:2:40\n  1 | function Component({ a, b }: { a: number; b: number }) {\n> 2 |   const value = useMemo(() => [a], [a, b]);\n    |                                        ^ Unnecessary dependency `b`\n  3 |   return <div>{value}</div>;\n  4 | }\n  5 |\n\nInferred dependencies: `[a]`",
+      "line": 2,
+      "column": 40,
+      "endLine": 2,
+      "endColumn": 41,
+      "suggestions": [
+       {
+        "desc": "Update dependencies",
+        "range": [
+         92,
+         98
+        ],
+        "text": "[a]"
+       }
+      ]
+     }
+    ],
+    "suppressed": []
+   }
+  }
+ }
+}

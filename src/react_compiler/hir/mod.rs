@@ -33,6 +33,7 @@
     reason = "ported verbatim from facebook/react upstream; not maintained for Rust idioms"
 )]
 
+pub(crate) mod assert_terminal_blocks_exist;
 pub mod cfg_utils;
 pub mod default_module_type_provider;
 pub mod dominator;
@@ -43,6 +44,8 @@ pub mod object_shape;
 pub mod reactive;
 pub mod type_config;
 pub mod visitors;
+
+use std::sync::Arc;
 
 use crate::collections::IndexMap;
 use crate::collections::IndexSet;
@@ -172,92 +175,8 @@ impl std::hash::Hash for FloatValue {
 
 impl std::fmt::Display for FloatValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write_js_number(f, self.value())
-    }
-}
-
-/// Write an f64 the way JavaScript's `Number.prototype.toString()` does.
-///
-/// Key differences from Rust's default `Display`:
-/// - Uses scientific notation for |x| >= 1e21 (e.g. `1e+21`, `2.18739127891275e+22`)
-/// - Uses scientific notation for 0 < |x| < 1e-6 (e.g. `1e-7`, `1.5e-8`)
-/// - Uses minimal significant digits that round-trip to the same f64
-/// - Formats -0 as "0"
-pub fn write_js_number(w: &mut impl core::fmt::Write, n: f64) -> core::fmt::Result {
-    if n.is_nan() {
-        return w.write_str("NaN");
-    }
-    if n.is_infinite() {
-        return w.write_str(if n > 0.0 { "Infinity" } else { "-Infinity" });
-    }
-    if n == 0.0 {
-        return w.write_str("0");
-    }
-
-    let abs = n.abs();
-    let sign = if n < 0.0 { "-" } else { "" };
-
-    if abs >= 1e21 || (abs > 0.0 && abs < 1e-6) {
-        // Use scientific notation matching JS format: coefficient + "e+" or "e-" + exponent
-        // Rust's {:e} uses "e" (lowercase) like JS, but formats as e.g. "1.5e21" not "1.5e+21".
-        // Render the LowerExp form into a small stack buffer to split coefficient/exponent
-        // without a heap allocation (longest f64 {:e} form is well under 32 bytes).
-        use core::fmt::Write as _;
-        let mut buf = [0u8; 32];
-        let mut cursor = StackCursor {
-            buf: &mut buf,
-            len: 0,
-        };
-        write!(cursor, "{:e}", abs)?;
-        let formatted = cursor.as_str();
-        // Split into coefficient and exponent parts
-        let (coeff, exp_str) = formatted.split_once('e').unwrap();
-        let exp: i32 = exp_str.parse().unwrap();
-        // JS uses e+N for positive exponents, e-N for negative
-        if exp >= 0 {
-            write!(w, "{}{}e+{}", sign, coeff, exp)
-        } else {
-            write!(w, "{}{}e-{}", sign, coeff, exp.unsigned_abs())
-        }
-    } else if abs.fract() == 0.0 && abs < (i64::MAX as f64) {
-        // Integer that fits in i64 — format without decimal point
-        write!(w, "{}{}", sign, abs as i64)
-    } else {
-        // Regular float: Rust's default Display gives us the right digits
-        write!(w, "{}", n)
-    }
-}
-
-/// Allocating wrapper around [`write_js_number`]. Prefer the writer form on
-/// hot paths; this exists for callers that need an owned `String` (e.g.
-/// constant folding `String(n)`).
-pub fn format_js_number(n: f64) -> String {
-    let mut s = String::new();
-    write_js_number(&mut s, n).unwrap();
-    s
-}
-
-struct StackCursor<'a> {
-    buf: &'a mut [u8],
-    len: usize,
-}
-impl StackCursor<'_> {
-    #[inline]
-    fn as_str(&self) -> &str {
-        // SAFETY: `core::fmt::LowerExp` for f64 emits only ASCII.
-        unsafe { core::str::from_utf8_unchecked(&self.buf[..self.len]) }
-    }
-}
-impl core::fmt::Write for StackCursor<'_> {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        let bytes = s.as_bytes();
-        let dst = self
-            .buf
-            .get_mut(self.len..self.len + bytes.len())
-            .ok_or(core::fmt::Error)?;
-        dst.copy_from_slice(bytes);
-        self.len += bytes.len();
-        Ok(())
+        // `String(n)`
+        std::fmt::Display::fmt(&bun_core::fmt::double(self.value()), f)
     }
 }
 
@@ -1524,8 +1443,7 @@ impl NonLocalBinding {
 /// after `Store::reset()`. The leak hazard described on [`HirVec`] does not
 /// apply because `Type` is stored in `Drop`-running containers (registry
 /// `HashMap`s, the unifier's substitution map) rather than bulk-freed arena
-/// slabs; the one arena-backed holder, `Phi::operands`, is dropped normally
-/// at the end of type inference before any arena reset.
+/// slabs.
 #[derive(Debug, Clone)]
 pub enum Type {
     Primitive,
@@ -1542,7 +1460,8 @@ pub enum Type {
     },
     Poly,
     Phi {
-        operands: HirVec<Type>,
+        /// Shared: a phi is an operand of many, and type inference puts each in the place of its type variable.
+        operands: Arc<[Type]>,
     },
     Property {
         object_type: Box<Type>,
@@ -1825,6 +1744,7 @@ mod tests {
 
     #[test]
     fn test_format_js_number() {
+        let format_js_number = |n: f64| FloatValue::new(n).to_string();
         // Scientific notation for large numbers (>= 1e21)
         assert_eq!(format_js_number(1e21), "1e+21");
         assert_eq!(format_js_number(1.5e21), "1.5e+21");

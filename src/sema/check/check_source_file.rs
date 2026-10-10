@@ -17,6 +17,7 @@ use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent};
 use crate::types::LinkCounts;
 use crate::util::InParallel;
+use crate::util::SharedSort;
 use smallvec::SmallVec;
 
 /// How much native stack a checker may use, measured from `Checker::begin_stack_budget`. One
@@ -191,7 +192,7 @@ impl<'s> Checker<'_, 's> {
             .flat_map(|&tag| index.of(tag).iter().copied())
             .filter(|&e| (self.p.deferred_nodes.get(&self.task, &(file, e))).is_some())
             .collect();
-        earlier.sort_unstable_by_key(|&e| hir[e].pos);
+        earlier.shared_sort_unstable_by_key(|&e| hir[e].pos);
         for e in earlier {
             self.check_node_deferred(file, e);
         }

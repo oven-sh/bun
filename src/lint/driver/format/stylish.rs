@@ -1,0 +1,360 @@
+//! ESLint's `stylish` formatter, byte for byte, and what oxlint calls `stylish`.
+
+use super::Meta;
+use super::info::Source;
+use super::oxlint::is_error;
+use crate::results::{Counts, FileResult};
+use crate::{fs, paths};
+use bun_core::strings;
+use bun_lint::context::Severity;
+use bun_lint::linter::LintMessage;
+use bun_lint::regex::Regex;
+use std::io::Write;
+use std::sync::LazyLock;
+
+/// `util.styleText(format, text)`
+struct Style {
+    open: &'static [u8],
+    close: &'static [u8],
+}
+
+const UNDERLINE: Style = Style {
+    open: b"\x1b[4m",
+    close: b"\x1b[24m",
+};
+const RED: Style = Style {
+    open: b"\x1b[31m",
+    close: b"\x1b[39m",
+};
+const YELLOW: Style = Style {
+    open: b"\x1b[33m",
+    close: b"\x1b[39m",
+};
+const DIM: Style = Style {
+    open: b"\x1b[2m",
+    close: b"\x1b[22m",
+};
+const BOLD: Style = Style {
+    open: b"\x1b[1m",
+    close: b"\x1b[22m",
+};
+const RESET: Style = Style {
+    open: b"\x1b[0m",
+    close: b"\x1b[0m",
+};
+
+fn styled(out: &mut Vec<u8>, color: bool, style: &Style, text: &[u8]) {
+    if color {
+        out.extend_from_slice(style.open);
+    }
+    out.extend_from_slice(text);
+    if color {
+        out.extend_from_slice(style.close);
+    }
+}
+
+/// What `util.stripVTControlCharacters` removes.
+static CONTROL_SEQUENCE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::literal(concat!(
+        r"/[\u001B\u009B][[\]()#;?]*",
+        r"(?:(?:(?:(?:;[-a-zA-Z\d\/\#&.:=?%@~_]+)*",
+        r"|[a-zA-Z\d]+(?:;[-a-zA-Z\d\/\#&.:=?%@~_]*)*)?",
+        r"(?:\u0007|\u001B\|\u009C))",
+        r"|(?:(?:\d{1,4}(?:;\d{0,4})*)?",
+        r"[\dA-PR-TZcf-nq-uy=><~]))/g"
+    ))
+});
+
+/// `stringLength`
+fn visible_len(text: &[u8]) -> usize {
+    if strings::contains_char(text, 0x1B) || strings::contains(text, "\u{9b}".as_bytes()) {
+        return bun_core::strings::utf8_lossy_len_utf16(&CONTROL_SEQUENCE.replace(text, b""))
+            as usize;
+    }
+    bun_core::strings::utf8_lossy_len_utf16(text) as usize
+}
+
+/// `line.replace(/(\d+)\s+(\d+)/u, (m, p1, p2) => styleText("dim", `${p1}:${p2}`))`
+fn write_line_with_position(out: &mut Vec<u8>, color: bool, line: &[u8]) {
+    let digits = |from: usize| {
+        line[from..]
+            .iter()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count()
+    };
+    let mut at = 0;
+    while at < line.len() {
+        let first = digits(at);
+        if first == 0 {
+            at += 1;
+            continue;
+        }
+        let mut second = at + first;
+        while let n @ 1.. = strings::js_whitespace_len(&line[second..]) {
+            second += n;
+        }
+        let second_len = digits(second);
+        if second == at + first || second_len == 0 {
+            at += first;
+            continue;
+        }
+        out.extend_from_slice(&line[..at]);
+        let position = [
+            &line[at..at + first],
+            b":",
+            &line[second..second + second_len],
+        ]
+        .concat();
+        styled(out, color, &DIM, &position);
+        out.extend_from_slice(&line[second + second_len..]);
+        return;
+    }
+    out.extend_from_slice(line);
+}
+
+struct Row {
+    line: Vec<u8>,
+    column: Vec<u8>,
+    is_error: bool,
+    message: Vec<u8>,
+    message_len: usize,
+    rule: Vec<u8>,
+}
+
+fn number(n: u32) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4);
+    let _ = write!(out, "{n}");
+    out
+}
+
+fn pad(out: &mut Vec<u8>, count: usize) {
+    out.resize(out.len() + count, b' ');
+}
+
+pub(super) fn plural(count: usize) -> &'static str {
+    if count == 1 { "" } else { "s" }
+}
+
+pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], color: bool) {
+    let mut counts = Counts::default();
+    let mut has_errors = false;
+    let mut padded = 0usize;
+    let start = out.len();
+    if color {
+        out.extend_from_slice(RESET.open);
+    }
+    out.push(b'\n');
+    for result in results.iter().filter(|it| !it.messages.is_empty()) {
+        counts.add(result.counts);
+        styled(out, color, &UNDERLINE, &result.path);
+        out.push(b'\n');
+        let rows: Vec<Row> = (result.messages.iter())
+            .map(|message| {
+                let text = match &message.message[..] {
+                    [.., before, b'.'] if *before != b' ' => {
+                        &message.message[..message.message.len() - 1]
+                    }
+                    text => text,
+                };
+                Row {
+                    line: number(message.line),
+                    column: number(message.column),
+                    is_error: message.is_fatal || message.severity == Severity::Error,
+                    message: text.to_vec(),
+                    message_len: visible_len(text),
+                    rule: message
+                        .rule_id
+                        .as_ref()
+                        .map(|id| id.to_vec())
+                        .unwrap_or_default(),
+                }
+            })
+            .collect();
+        let widest = |len: &dyn Fn(&Row) -> usize| rows.iter().map(len).max().unwrap_or(0);
+        let kind_len = |row: &Row| if row.is_error { 5 } else { 7 };
+        let (lines, columns) = (
+            widest(&|row| row.line.len()),
+            widest(&|row| row.column.len()),
+        );
+        let (kinds, messages) = (widest(&kind_len), widest(&|row| row.message_len));
+        let rules = widest(&|row| visible_len(&row.rule));
+        // Every row is as wide as the widest. Where that is more than ESLint can print ("Invalid string length"), none is.
+        padded = padded.saturating_add(rows.len().saturating_mul(messages));
+        let is_padded = padded as u64 <= bun_lint::fix::MAX_STRING_LENGTH;
+        let mut text = Vec::new();
+        for (i, row) in rows.iter().enumerate() {
+            has_errors |= row.is_error;
+            text.clear();
+            text.extend_from_slice(b"  ");
+            pad(&mut text, lines - row.line.len());
+            text.extend_from_slice(&row.line);
+            text.extend_from_slice(b"  ");
+            text.extend_from_slice(&row.column);
+            pad(&mut text, columns - row.column.len() + 2);
+            match row.is_error {
+                true => styled(&mut text, color, &RED, b"error"),
+                false => styled(&mut text, color, &YELLOW, b"warning"),
+            }
+            pad(&mut text, kinds - kind_len(row) + 2);
+            text.extend_from_slice(&row.message);
+            let gap = if is_padded {
+                messages - row.message_len
+            } else {
+                0
+            };
+            pad(&mut text, gap + 2);
+            if !row.rule.is_empty() {
+                styled(&mut text, color, &DIM, &row.rule);
+            }
+            pad(&mut text, rules - visible_len(&row.rule));
+            text.truncate(strings::trim_js_whitespace_end(&text).len());
+            if i > 0 {
+                out.push(b'\n');
+            }
+            for (j, line) in strings::split(&text, b"\n").enumerate() {
+                if j > 0 {
+                    out.push(b'\n');
+                }
+                write_line_with_position(out, color, line);
+            }
+        }
+        out.extend_from_slice(b"\n\n");
+    }
+    let total = counts.errors + counts.warnings;
+    if total == 0 {
+        out.truncate(start);
+        return;
+    }
+    let summary = if has_errors { &RED } else { &YELLOW };
+    let mut line = |text: &[u8]| {
+        let mut bold = Vec::with_capacity(text.len() + 16);
+        styled(&mut bold, color, &BOLD, text);
+        styled(out, color, summary, &bold);
+        out.push(b'\n');
+    };
+    let mut text = Vec::new();
+    let _ = write!(
+        text,
+        "\u{2716} {total} problem{} ({} error{}, {} warning{})",
+        plural(total),
+        counts.errors,
+        plural(counts.errors),
+        counts.warnings,
+        plural(counts.warnings),
+    );
+    line(&text);
+    if counts.fixable_errors > 0 || counts.fixable_warnings > 0 {
+        text.clear();
+        let _ = write!(
+            text,
+            "  {} error{} and {} warning{} potentially fixable with the `--fix` option.",
+            counts.fixable_errors,
+            plural(counts.fixable_errors),
+            counts.fixable_warnings,
+            plural(counts.fixable_warnings),
+        );
+        line(&text);
+    }
+    if color {
+        out.extend_from_slice(RESET.close);
+    }
+}
+
+/// As oxlint styles a text: whatever it starts with, it ends with a reset.
+fn styled_until_reset(out: &mut Vec<u8>, color: bool, style: &Style, text: &[u8]) {
+    let style = Style {
+        open: style.open,
+        close: RESET.close,
+    };
+    styled(out, color, &style, text);
+}
+
+/// A row of oxlint's.
+struct Placed<'r> {
+    line: usize,
+    /// `line:column`
+    position: Vec<u8>,
+    message: &'r LintMessage,
+    code: Vec<u8>,
+}
+
+/// `filename`: what oxlint calls the file. Empty for the problems without a place, which it puts under the working directory.
+fn write_file_as_oxlint(
+    out: &mut Vec<u8>,
+    color: bool,
+    cwd: &[u8],
+    filename: &[u8],
+    rows: &mut [Placed],
+) {
+    if rows.is_empty() {
+        return;
+    }
+    bun_lint::utils::sort::sort_by_key(rows, |it| it.line);
+    let path = fs::real_path(&paths::resolve(cwd, filename))
+        .map_or_else(|| filename.to_vec(), paths::to_native);
+    out.push(b'\n');
+    styled_until_reset(out, color, &UNDERLINE, &path);
+    out.push(b'\n');
+    let width = rows.iter().map(|it| it.position.len()).max().unwrap_or(0);
+    for row in rows {
+        row.position.resize(width, b' ');
+        out.extend_from_slice(b"  ");
+        styled_until_reset(out, color, &DIM, &row.position);
+        out.extend_from_slice(b"  ");
+        match is_error(row.message) {
+            true => styled_until_reset(out, color, &RED, b"error"),
+            false => styled_until_reset(out, color, &YELLOW, b"warning"),
+        }
+        out.extend_from_slice(b"  ");
+        out.extend_from_slice(&row.message.message);
+        out.extend_from_slice(b"  ");
+        styled_until_reset(out, color, &DIM, &row.code);
+        out.push(b'\n');
+    }
+}
+
+/// With the end of the last line.
+pub(super) fn write_as_oxlint(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
+    // oxlint asks for nothing else: not whether it writes to a terminal, not for `FORCE_COLOR`.
+    let has_no_color = bun_core::getenv_z(&bun_core::ZBox::from_bytes(b"NO_COLOR")).is_some();
+    let color = meta.color_option.unwrap_or(!has_no_color);
+    let (mut total, mut errors) = (0, 0);
+    let mut without_place = Vec::new();
+    for result in results.iter().filter(|it| !it.messages.is_empty()) {
+        let source = Source::new(result, meta);
+        let mut rows = Vec::new();
+        for message in &result.messages {
+            total += 1;
+            errors += usize::from(is_error(message));
+            let info = source.info(message);
+            let group = if info.filename.is_empty() {
+                &mut without_place
+            } else {
+                &mut rows
+            };
+            group.push(Placed {
+                line: info.start.line,
+                position: format!("{}:{}", info.start.line, info.start.column).into_bytes(),
+                message,
+                code: info.code.unwrap_or_default(),
+            });
+        }
+        write_file_as_oxlint(out, color, meta.cwd, &source.name, &mut rows);
+    }
+    write_file_as_oxlint(out, color, meta.cwd, b"", &mut without_place);
+    if total == 0 {
+        return;
+    }
+    let mut text = Vec::new();
+    let _ = write!(
+        text,
+        "\u{2716} {total} problem{} ({errors} error{}, {} warning{})",
+        plural(total),
+        plural(errors),
+        total - errors,
+        plural(total - errors),
+    );
+    out.push(b'\n');
+    styled_until_reset(out, color, if errors > 0 { &RED } else { &YELLOW }, &text);
+    out.push(b'\n');
+}

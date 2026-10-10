@@ -1,0 +1,21 @@
+------------------
+{ printWidth: 80 }
+------------------
+foo; // first
+// second
+bar; // third
+// fourth
+// fifth
+baz;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+foo; // first
+// second
+bar; // third
+// fourth
+// fifth
+baz;
+
+===================== End =====================

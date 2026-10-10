@@ -3902,6 +3902,22 @@ struct Taken<V> {
     joined: Vec<(u32, V)>,
 }
 
+impl<V> Taken<V> {
+    fn map<U>(self, mut of: impl FnMut(V) -> U) -> Taken<U> {
+        let records = self.records.into_iter();
+        let joined = self.joined.into_iter();
+        Taken {
+            len: self.len,
+            records: records
+                .map(|(index, hash, record)| (index, hash, of(record)))
+                .collect(),
+            positions: self.positions,
+            parts: self.parts,
+            joined: joined.map(|(id, record)| (id, of(record))).collect(),
+        }
+    }
+}
+
 impl<V> Default for Taken<V> {
     fn default() -> Self {
         Taken {
@@ -4336,7 +4352,8 @@ impl<'s> TypeStore<'s> {
         let (mut texts, mut components, mut mappers, mut sigs, mut types) =
             (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for (task, link) in tasks.into_iter().zip(&links) {
-            texts.push((task.atoms, link));
+            // The texts of the interner are not in an arena: see `atom::Tables`.
+            texts.push((task.atoms.map(|text| crate::atom::Text::from(&*text)), link));
             components.push((task.components, link));
             mappers.push((task.mappers, link));
             sigs.push((task.sigs, link));
@@ -4346,7 +4363,7 @@ impl<'s> TypeStore<'s> {
             let spread = crate::atom::hash_of(&text);
             Placed::Indexed(text, spread)
         });
-        check_joined(atoms.halves().1, joined, |a, b| a == b);
+        check_joined(atoms.halves().1, joined, |a, b| **a == **b);
         let (_, joined) = put(
             self.components.halves(),
             components,

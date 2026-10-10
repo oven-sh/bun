@@ -1,17 +1,37 @@
 #![warn(unused_must_use)]
+mod braces;
+mod class;
 #[path = "GlobWalker.rs"]
 pub mod glob_walker;
+pub mod ignore;
+mod linear;
 pub mod matcher;
+mod node;
+pub mod pattern;
+mod read_ignore;
+mod read_minimatch;
+mod read_minimatch3;
+mod read_picomatch;
+pub mod scan;
+mod segments;
+mod sets;
+mod unit;
 
 // `match` is a Rust keyword; re-export with raw identifier.
 pub use crate::glob_walker as walk;
 pub use crate::matcher::{MatchResult, r#match};
+pub use crate::pattern::{Candidate, How, Options, Pattern, Syntax};
 pub use walk::GlobWalker;
 
 // `ignore_filter_fn` is a runtime fn-pointer field supplied at `init()` rather than a type
 // parameter (const-generic fn ptrs are unstable).
 pub type BunGlobWalker = walk::GlobWalker<walk::SyscallAccessor, false>;
 pub type BunGlobWalkerZ = walk::GlobWalker<walk::SyscallAccessor, true>;
+
+/// For `bun-lint glob`.
+pub mod testing {
+    pub use crate::braces::expand as expand_braces;
+}
 
 /// Returns true if the given string contains glob syntax,
 /// excluding those escaped with backslashes

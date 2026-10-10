@@ -292,7 +292,9 @@ fn collect_reactive_identifiers(
 // findOptionalPlaces
 // =============================================================================
 
-fn find_optional_places(func: &HirFunction) -> IdMap<IdentifierId, bool> {
+fn find_optional_places(
+    func: &HirFunction,
+) -> Result<IdMap<IdentifierId, bool>, CompilerDiagnostic> {
     let mut optionals: IdMap<IdentifierId, bool> = IdMap::new();
     let mut visited: HashSet<BlockId> = HashSet::new();
 
@@ -321,9 +323,13 @@ fn find_optional_places(func: &HirFunction) -> IdMap<IdentifierId, bool> {
                         fallthrough,
                         ..
                     } => {
-                        let is_optional = queue
-                            .pop()
-                            .expect("Expected an optional value for each optional test condition");
+                        let is_optional = queue.pop().ok_or_else(|| {
+                            crate::diagnostics::cold_invariant(
+                                "Expected an optional value for each optional test condition",
+                                None,
+                                None,
+                            )
+                        })?;
                         if let Some(opt) = is_optional {
                             optionals.insert(test_place.identifier, opt);
                         }
@@ -381,7 +387,7 @@ fn find_optional_places(func: &HirFunction) -> IdMap<IdentifierId, bool> {
         }
     }
 
-    optionals
+    Ok(optionals)
 }
 
 // =============================================================================
@@ -470,7 +476,7 @@ fn collect_dependencies(
     callbacks: &mut Option<&mut Callbacks<'_>>,
     is_function_expression: bool,
 ) -> Result<Temporary, CompilerDiagnostic> {
-    let optionals = find_optional_places(func);
+    let optionals = find_optional_places(func)?;
     let mut locals: HashSet<IdentifierId> = HashSet::new();
 
     if is_function_expression {
@@ -674,6 +680,9 @@ fn collect_dependencies(
                             loc: decl_lv.place.loc,
                         },
                     );
+                    // Upstream leaves this out, and takes a variable that a closure in the
+                    // callback reads before its declaration for a dependency of the callback.
+                    locals.insert(decl_lv.place.identifier);
                 }
                 InstructionValue::StoreContext {
                     lvalue: store_lv,
@@ -799,10 +808,10 @@ fn collect_dependencies(
                         // onFinishMemoize — mirrors TS behavior
                         let sm = cb.start_memo.take();
                         if let Some(sm) = sm {
-                            assert_eq!(
-                                sm.manual_memo_id, *manual_memo_id,
-                                "Found FinishMemoize without corresponding StartMemoize"
-                            );
+                            crate::diagnostics::invariant(
+                                sm.manual_memo_id == *manual_memo_id,
+                                "Found FinishMemoize without corresponding StartMemoize",
+                            )?;
 
                             if cb.validate_memo {
                                 // Visit the decl to add it as a dependency candidate

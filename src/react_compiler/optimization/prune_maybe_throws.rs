@@ -9,14 +9,19 @@
 //! array/object literals. Even a variable reference could throw due to TDZ.
 //!
 //! Analogous to TS `Optimization/PruneMaybeThrows.ts`.
+//! What may throw: https://github.com/oxc-project/oxc (Copyright VoidZero Inc. and contributors, MIT License).
 
 use crate::collections::IdMap;
 use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
+use crate::hir::assert_terminal_blocks_exist::assert_terminal_successors_exist;
 use crate::hir::cfg_utils::{
     get_reverse_postordered_blocks, mark_instruction_ids, remove_dead_do_while_statements,
     remove_unnecessary_try_catch, remove_unreachable_for_updates,
 };
-use crate::hir::{BlockId, HirFunction, Instruction, InstructionValue, Terminal};
+use crate::hir::{
+    ArrayElement, BlockId, HirFunction, InstructionKind, InstructionValue, ObjectPropertyKey,
+    ObjectPropertyOrSpread, Terminal,
+};
 
 use crate::optimization::merge_consecutive_blocks::merge_consecutive_blocks;
 
@@ -29,12 +34,12 @@ pub(crate) fn prune_maybe_throws(
     if let Some(terminal_mapping) = terminal_mapping {
         // If terminals have changed then blocks may have become newly unreachable.
         // Re-run minification of the graph (incl reordering instruction ids).
-        func.body.blocks = get_reverse_postordered_blocks(&func.body, &func.instructions);
+        func.body.blocks = get_reverse_postordered_blocks(&func.body, &func.instructions)?;
         remove_unreachable_for_updates(&mut func.body);
         remove_dead_do_while_statements(&mut func.body);
         remove_unnecessary_try_catch(&mut func.body);
         mark_instruction_ids(&mut func.body, &mut func.instructions);
-        merge_consecutive_blocks(func, functions);
+        merge_consecutive_blocks(func, functions)?;
 
         // Rewrite phi operands to reference the updated predecessor blocks
         for block in func.body.blocks.values_mut() {
@@ -74,6 +79,7 @@ pub(crate) fn prune_maybe_throws(
                 }
             }
         }
+        assert_terminal_successors_exist(func)?;
     }
     Ok(())
 }
@@ -91,7 +97,7 @@ fn prune_maybe_throws_impl(func: &mut HirFunction) -> Option<IdMap<BlockId, Bloc
         let can_throw = block
             .instructions
             .iter()
-            .any(|instr_id| instruction_may_throw(&instructions[instr_id.0 as usize]));
+            .any(|instr_id| value_may_throw_when_pruning(&instructions[instr_id.0 as usize].value));
 
         if !can_throw {
             let source = terminal_mapping.get(block.id).copied().unwrap_or(block.id);
@@ -113,11 +119,69 @@ fn prune_maybe_throws_impl(func: &mut HirFunction) -> Option<IdMap<BlockId, Bloc
     }
 }
 
-fn instruction_may_throw(instr: &Instruction) -> bool {
-    match &instr.value {
-        InstructionValue::Primitive { .. }
-        | InstructionValue::ArrayExpression { .. }
-        | InstructionValue::ObjectExpression { .. } => false,
-        _ => true,
+/// A store cannot throw. But a value block ends with one, and its edge keeps the handler behind the fallthrough.
+fn value_may_throw_when_pruning(value: &InstructionValue) -> bool {
+    matches!(
+        value,
+        InstructionValue::StoreLocal { .. } | InstructionValue::StoreContext { .. }
+    ) || value_may_throw(value)
+}
+
+/// Operands are instructions of their own. A spread or a computed key is part of the making, and runs the user's code.
+pub(crate) fn value_may_throw(value: &InstructionValue) -> bool {
+    match value {
+        InstructionValue::DeclareLocal { .. }
+        | InstructionValue::DeclareContext { .. }
+        | InstructionValue::Primitive { .. }
+        | InstructionValue::JSXText { .. }
+        | InstructionValue::TypeCastExpression { .. }
+        | InstructionValue::ObjectMethod { .. }
+        | InstructionValue::FunctionExpression { .. }
+        | InstructionValue::RegExpLiteral { .. }
+        | InstructionValue::MetaProperty { .. }
+        | InstructionValue::Debugger { .. }
+        | InstructionValue::StartMemoize { .. }
+        | InstructionValue::FinishMemoize { .. } => false,
+        // To a `const`, or before the declaration.
+        InstructionValue::StoreLocal { lvalue, .. }
+        | InstructionValue::StoreContext { lvalue, .. } => lvalue.kind == InstructionKind::Reassign,
+        InstructionValue::ArrayExpression { elements, .. } => elements
+            .iter()
+            .any(|element| matches!(element, ArrayElement::Spread(_))),
+        InstructionValue::ObjectExpression { properties, .. } => {
+            properties.iter().any(|property| match property {
+                ObjectPropertyOrSpread::Property(property) => {
+                    matches!(property.key, ObjectPropertyKey::Computed { .. })
+                }
+                ObjectPropertyOrSpread::Spread(_) => true,
+            })
+        }
+        InstructionValue::LoadLocal { .. }
+        | InstructionValue::LoadContext { .. }
+        | InstructionValue::Destructure { .. }
+        | InstructionValue::BinaryExpression { .. }
+        | InstructionValue::NewExpression { .. }
+        | InstructionValue::CallExpression { .. }
+        | InstructionValue::MethodCall { .. }
+        | InstructionValue::UnaryExpression { .. }
+        | InstructionValue::JsxExpression { .. }
+        | InstructionValue::JsxFragment { .. }
+        | InstructionValue::PropertyStore { .. }
+        | InstructionValue::PropertyLoad { .. }
+        | InstructionValue::PropertyDelete { .. }
+        | InstructionValue::ComputedStore { .. }
+        | InstructionValue::ComputedLoad { .. }
+        | InstructionValue::ComputedDelete { .. }
+        | InstructionValue::LoadGlobal { .. }
+        | InstructionValue::StoreGlobal { .. }
+        | InstructionValue::TaggedTemplateExpression { .. }
+        | InstructionValue::TemplateLiteral { .. }
+        | InstructionValue::Await { .. }
+        | InstructionValue::GetIterator { .. }
+        | InstructionValue::IteratorNext { .. }
+        | InstructionValue::NextPropertyOf { .. }
+        | InstructionValue::PrefixUpdate { .. }
+        | InstructionValue::PostfixUpdate { .. }
+        | InstructionValue::UnsupportedNode { .. } => true,
     }
 }

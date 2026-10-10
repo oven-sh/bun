@@ -1,0 +1,31 @@
+------------------
+{ printWidth: 80 }
+------------------
+a = <number>b | 0;
+c = d | (<number>e | 0);
+f = /* x */ <number>g | 0;
+h = <number>i + 1;
+j = (<number>k).l;
+m = <number>n & 1;
+o = <number>p >> 1;
+q = (<number>r) << 1;
+s = 1 << (<number>t);
+u = 2 ** <number>v;
+w = <number>x ^ 1;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+a = <number>b | 0;
+c = d | (<number>e | 0);
+f = /* x */ <number>g | 0;
+h = <number>i + 1;
+j = (<number>k).l;
+m = <number>n & 1;
+o = <number>p >> 1;
+q = (<number>r) << 1;
+s = 1 << (<number>t);
+u = 2 ** <number>v;
+w = <number>x ^ 1;
+
+===================== End =====================

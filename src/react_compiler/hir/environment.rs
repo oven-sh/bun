@@ -39,6 +39,9 @@ pub enum OutputMode {
     Lint,
 }
 
+/// For time and memory where a thread has a large stack: nested `try` costs n^2.5. The stack has `has_stack`.
+const MAX_NESTING: u32 = 256;
+
 pub struct Environment {
     // Counters
     pub next_block_id_counter: u32,
@@ -46,13 +49,17 @@ pub struct Environment {
     next_mutable_range_id_counter: u32,
 
     // Arenas (use direct field access for sliced borrows)
-    pub identifiers: HirVec<Identifier>,
-    pub types: HirVec<Type>,
+    pub identifiers: Vec<Identifier>,
+    pub types: Vec<Type>,
     pub scopes: HirVec<ReactiveScope>,
     pub functions: HirVec<HirFunction>,
 
     // Error accumulation
     pub errors: CompilerError,
+
+    /// For what calls itself along the nesting of the source: [`Environment::has_stack`].
+    stack: bun_core::StackCheck,
+    is_out_of_stack: std::cell::Cell<bool>,
 
     // Function type classification (Component, Hook, Other)
     pub fn_type: ReactFunctionType,
@@ -75,6 +82,9 @@ pub struct Environment {
     // Renames: tracks variable renames from lowering (original_name → new_name)
     // keyed by binding declaration position, for applying back to the Babel AST.
     pub renames: HirVec<BindingRename>,
+
+    // Binding name -> next `_N` to try. Valid because an error in a nested function ends all lowering.
+    pub(crate) binding_names: HashMap<StoreStr, u32>,
 
     // Node IDs of identifiers that are actual references to bindings.
     // Used by codegen to filter type annotation renames — only rename identifiers
@@ -177,11 +187,13 @@ impl Environment {
             next_block_id_counter: 0,
             next_scope_id_counter: 0,
             next_mutable_range_id_counter: 0,
-            identifiers: AstAlloc::vec(),
-            types: AstAlloc::vec(),
+            identifiers: Vec::new(),
+            types: Vec::new(),
             scopes: AstAlloc::vec(),
             functions: AstAlloc::vec(),
             errors: CompilerError::new(),
+            stack: bun_core::StackCheck::init(),
+            is_out_of_stack: std::cell::Cell::new(false),
             fn_type: ReactFunctionType::Other,
             output_mode: OutputMode::Client,
             code: None,
@@ -190,6 +202,7 @@ impl Environment {
             instrument_gating_name: None,
             hook_guard_name: None,
             renames: AstAlloc::vec(),
+            binding_names: HashMap::new(),
             reference_node_ids: HashSet::new(),
             hoisted_identifiers: HashSet::new(),
             validate_preserve_existing_memoization_guarantees: config
@@ -207,6 +220,23 @@ impl Environment {
             uid_known_names: None,
             config,
         }
+    }
+
+    /// Whether the thread has the stack for one more level of the source. Once it had not, the
+    /// answer stays no: something was left out, and `lower` fails.
+    pub(crate) fn has_stack(&self) -> bool {
+        if !self.stack.is_safe_to_recurse() {
+            self.is_out_of_stack.set(true);
+        }
+        !self.is_out_of_stack.get()
+    }
+
+    /// [`Environment::has_stack`], and `level` is within [`MAX_NESTING`], which is the same on every platform.
+    pub(crate) fn can_nest(&self, level: u32) -> bool {
+        if level > MAX_NESTING {
+            self.is_out_of_stack.set(true);
+        }
+        self.has_stack()
     }
 
     pub fn next_block_id(&mut self) -> BlockId {

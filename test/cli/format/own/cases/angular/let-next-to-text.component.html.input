@@ -1,0 +1,3 @@
+<div>@if (test) { text@let    foo     =  'Hello'   + ', World'; 
+text}</div>
+&#35;@let a = 1;

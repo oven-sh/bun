@@ -563,25 +563,3 @@ impl<K: std::hash::Hash + Eq, V, A: Allocator + Clone> ShardedMap<K, V, A> {
         &shard.entries.get(index).1
     }
 }
-
-impl<K: std::hash::Hash + Eq, V: Clone, A: Allocator + Clone> ShardedMap<K, V, A> {
-    /// Does not overwrite an existing value. Returns the stored value.
-    #[inline]
-    pub fn insert(&self, key: K, value: V) -> V {
-        let spread = spread_hash(&key);
-        let shard = &self.shards[shard_of(spread)];
-        // Read until it is inserted, which is its last use.
-        let entry = std::cell::RefCell::new(Some((key, value)));
-        let index = shard.places.find_or_add(
-            spread,
-            |i| {
-                entry
-                    .borrow()
-                    .as_ref()
-                    .is_some_and(|e| shard.entries.get(i).0 == e.0)
-            },
-            || shard.entries.push(entry.borrow_mut().take().unwrap()),
-        );
-        shard.entries.get(index).1.clone()
-    }
-}

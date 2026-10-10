@@ -649,7 +649,7 @@ pub(crate) mod on_unhandled_rejection {
         let exception_list = jsc_vm
             .on_unhandled_rejection_exception_list
             .map(|p| unsafe { &mut *p.as_ptr() });
-        jsc_vm.run_error_handler(rejection, exception_list);
+        bun_test::print_error(jsc_vm, global_object, rejection, exception_list);
     }
 }
 

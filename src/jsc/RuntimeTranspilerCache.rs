@@ -555,7 +555,7 @@ impl Entry {
 
 /// What a lookup found when the header of the entry on disk matches.
 pub(crate) enum Found {
-    Hit(Entry),
+    Hit(Box<Entry>),
     /// An ES-module entry without an ESM record, for a reader that requires one.
     MissingEsmRecord {
         output_hash: u64,
@@ -570,7 +570,7 @@ pub struct RuntimeTranspilerCache {
     pub(crate) exports_kind: ExportsKind,
     pub(crate) esm_record_use: EsmRecordUse,
     pub(crate) refused_entry_hashes: Option<(u64, u64)>,
-    pub(crate) entry: Option<Entry>,
+    pub(crate) entry: Option<Box<Entry>>,
     // `sourcemap` / `esm_record` are owned `Box<[u8]>` (global mimalloc).
     // The per-call arena that once backed the output code is gone: the UTF-8
     // load arm preads straight into WTF storage (see `Entry::load`), so no
@@ -832,7 +832,7 @@ impl RuntimeTranspilerCache {
         );
 
         let _ = scopeguard::ScopeGuard::into_inner(unlink_guard);
-        Ok(Found::Hit(entry))
+        Ok(Found::Hit(Box::new(entry)))
     }
 
     pub(crate) fn to_file(
@@ -1031,7 +1031,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             this.exports_kind = jsc.exports_kind;
             this.refused_entry_hashes = jsc.refused_entry_hashes;
             if let Some(entry) = jsc.entry {
-                this.entry = Some(bun_core::heap::into_raw(Box::new(entry)).cast::<()>());
+                this.entry = Some(bun_core::heap::into_raw(entry).cast::<()>());
             }
             hit
         },

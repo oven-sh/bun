@@ -1892,8 +1892,13 @@ interface ClientRequestOptions {
   silent?: boolean;
   weight?: number;
 }
-type Socket = import("node:net").Socket & { servername?: undefined; alpnProtocol?: undefined };
-type TLSSocket = import("node:tls").TLSSocket;
+type Socket = import("node:net").Socket & {
+  servername?: undefined;
+  alpnProtocol?: undefined;
+  secureConnecting?: undefined;
+};
+// secureConnecting is true from the TCP connect until the TLS handshake completes.
+type TLSSocket = import("node:tls").TLSSocket & { secureConnecting?: boolean };
 
 abstract class Http2Session extends EventEmitter {
   declare timeout: number | undefined;
@@ -2550,7 +2555,13 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     // push, regardless of the server-settings default.
     const session = this[bunHTTP2Session];
     return (
-      session != null && session.type === 0 && !!session.remoteSettings?.enablePush && !this.destroyed && !this.closed
+      session != null &&
+      session.type === 0 &&
+      !session.closed &&
+      !session.destroyed &&
+      !!session.remoteSettings?.enablePush &&
+      !this.destroyed &&
+      !this.closed
     );
   }
   close(code?, callback?) {
@@ -3254,7 +3265,7 @@ class ServerHttp2Stream extends Http2Stream {
     }
     {
       const session = this[bunHTTP2Session];
-      if (session == null || session.destroyed) {
+      if (session == null || session.destroyed || session.closed) {
         throw $ERR_HTTP2_PUSH_DISABLED();
       }
     }
@@ -4634,6 +4645,11 @@ class ServerHttp2Session extends Http2Session {
     validateFunction(callback, "callback");
 
     const cb = makeHttp2Ping(callback);
+    // node cancels a ping issued while connecting or after close().
+    if (this.connecting || this.closed) {
+      process.nextTick(cb, $ERR_HTTP2_PING_CANCEL(), 0, payload);
+      return;
+    }
     const parser = this.#parser;
     if (!parser || !this[bunHTTP2Socket]) {
       process.nextTick(cb, $ERR_HTTP2_PING_CANCEL(), 0, payload);
@@ -5502,10 +5518,11 @@ class ClientHttp2Session extends Http2Session {
     if (!socket) {
       return false;
     }
-    return socket.connecting || false;
+    // node stays connecting until the TLS handshake completes.
+    return socket.connecting || socket.secureConnecting || false;
   }
   get connected() {
-    return this[bunHTTP2Socket]?.connecting === false;
+    return this[bunHTTP2Socket] != null && !this.connecting;
   }
   get destroyed() {
     return this[bunHTTP2Socket] === null;
@@ -5568,6 +5585,11 @@ class ClientHttp2Session extends Http2Session {
     validateFunction(callback, "callback");
 
     const cb = makeHttp2Ping(callback);
+    // node cancels a ping issued while connecting or after close().
+    if (this.connecting || this.closed) {
+      process.nextTick(cb, $ERR_HTTP2_PING_CANCEL(), 0, payload);
+      return;
+    }
     const parser = this.#parser;
     if (!parser || !this[bunHTTP2Socket]) {
       process.nextTick(cb, $ERR_HTTP2_PING_CANCEL(), 0, payload);

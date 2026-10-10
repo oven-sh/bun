@@ -455,7 +455,6 @@ impl Length {
         let res = Length::add_internal(a, b);
         if let Self::Calc(c) = res {
             match *c {
-                Calc::Value(v) => return *v,
                 Calc::Function(f) if !matches!(*f, MathFunction::Calc(_)) => {
                     return Self::Calc(Box::new(Calc::Function(f)));
                 }
@@ -469,11 +468,8 @@ impl Length {
         res
     }
 
-    pub(crate) fn add_internal(mut self, mut other: Length) -> Length {
-        if let Some(r) = self.try_add(&mut other) {
-            return r;
-        }
-        self.add__(other)
+    pub(crate) fn add_internal(self, other: Length) -> Length {
+        Calc::add_values(self, other, Self::Calc)
     }
 
     pub(crate) fn into_calc(self) -> Calc<Length> {
@@ -483,59 +479,10 @@ impl Length {
         }
     }
 
-    fn add__(self, other: Length) -> Length {
-        let mut a = self;
-        let mut b = other;
-
-        if a.is_zero() {
-            return b;
-        }
-
-        if b.is_zero() {
-            return a;
-        }
-
-        if a.is_sign_negative() && b.is_sign_positive() {
-            core::mem::swap(&mut a, &mut b);
-        }
-
-        match (a, b) {
-            (Self::Calc(ca), b) if matches!(*ca, Calc::Value(_)) && !matches!(b, Self::Calc(_)) => {
-                let Calc::Value(v) = *ca else { unreachable!() };
-                v.add__(b)
-            }
-            (a, Self::Calc(cb)) if matches!(*cb, Calc::Value(_)) && !matches!(a, Self::Calc(_)) => {
-                let Calc::Value(v) = *cb else { unreachable!() };
-                a.add__(*v)
-            }
-            (a, b) => Self::Calc(Box::new(Calc::Sum {
-                left: Box::new(a.into_calc()),
-                right: Box::new(b.into_calc()),
-            })),
-        }
-        // For borrowck this needs
-        // to move out of the Box, so the conditions are folded into match guards.
-    }
-
-    /// A hit takes what it needs out of both operands. A miss leaves them as they were.
-    fn try_add(&mut self, other: &mut Length) -> Option<Length> {
+    /// The sum of two values of like units, when neither is a `calc()`.
+    pub(crate) fn try_add(&self, other: &Length) -> Option<Length> {
         match (self, other) {
             (Self::Value(a), Self::Value(b)) => a.try_add(*b).map(Self::Value),
-            (Self::Calc(calc), value) | (value, Self::Calc(calc)) => Self::try_add_in(calc, value),
-        }
-    }
-
-    /// `try_add` with one operand given as its calc node.
-    fn try_add_in(calc: &mut Calc<Length>, value: &mut Length) -> Option<Length> {
-        match calc {
-            Calc::Value(v) => v.try_add(value),
-            Calc::Sum { left, right } => {
-                if let Some(res) = Self::try_add_in(left, value) {
-                    return Some(res.add__(Self::Calc(Calc::take_boxed(right))));
-                }
-                let res = Self::try_add_in(right, value)?;
-                Some(Self::Calc(Calc::take_boxed(left)).add__(res))
-            }
             _ => None,
         }
     }
@@ -561,20 +508,6 @@ impl Length {
         }
     }
 
-    fn is_sign_negative(&self) -> bool {
-        let Some(s) = self.try_sign() else {
-            return false;
-        };
-        s.is_sign_negative()
-    }
-
-    fn is_sign_positive(&self) -> bool {
-        let Some(s) = self.try_sign() else {
-            return false;
-        };
-        s.is_sign_positive()
-    }
-
     pub(crate) fn partial_cmp(&self, other: &Length) -> Option<Ordering> {
         if let (Self::Value(a), Self::Value(b)) = (self, other) {
             return LengthValue::partial_cmp(*a, *b);
@@ -589,7 +522,7 @@ impl Length {
         }
     }
 
-    fn is_zero(&self) -> bool {
+    pub(crate) fn is_zero(&self) -> bool {
         match self {
             Self::Value(v) => v.is_zero(),
             _ => false,

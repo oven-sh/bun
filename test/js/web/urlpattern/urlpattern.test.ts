@@ -161,6 +161,80 @@ describe("URLPattern", () => {
     });
   });
 
+  // With a non-special protocol, a dictionary or pattern pathname is canonicalized by parsing it
+  // behind a dummy scheme. A value that starts with "/" takes the URL parser's path state there, like
+  // the pathname of "foo://h/b", so it has to be parsed behind a host as well: otherwise a leading
+  // "//" is read as an authority and a leading "/." is dropped.
+  describe("non-special protocol pathname canonicalization", () => {
+    test("dictionary input keeps a pathname that starts with //", () => {
+      const any = new URLPattern({ pathname: "*" });
+      expect(any.exec({ protocol: "foo", pathname: "//a" })!.pathname.input).toBe("//a");
+      expect(any.exec({ pathname: "//a", baseURL: "about:blank" })!.pathname.input).toBe("//a");
+      // The URL parser removes tabs and newlines before it looks at the first character.
+      expect(any.exec({ protocol: "foo", pathname: "\t//a" })!.pathname.input).toBe("//a");
+      // The string form of the same URL already reported "//a".
+      expect(any.exec("foo://h//a")!.pathname.input).toBe("//a");
+    });
+
+    test("dictionary and string forms of the same URL match alike", () => {
+      const pattern = new URLPattern({ pathname: "/{/*}+" });
+      expect(pattern.test({ protocol: "foo", hostname: "[::1]", port: "8080", pathname: "//a/b/c" })).toBe(true);
+      expect(pattern.test("foo://[::1]:8080//a/b/c")).toBe(true);
+    });
+
+    test("constructor string keeps // in the pathname", () => {
+      const pattern = new URLPattern("foo://h//:x");
+      expect(pattern.pathname).toBe("//:x");
+      expect(pattern.exec("foo://h//y")!.pathname).toEqual({ input: "//y", groups: { x: "y" } });
+      expect(pattern.test("foo://h/y")).toBe(false);
+      expect(new URLPattern("foo://h/:a//:b").exec("foo://h/x//y")!.pathname.groups).toEqual({ a: "x", b: "y" });
+    });
+
+    test("a first segment that starts with a dot is kept", () => {
+      const pattern = new URLPattern("myapp://host/.well-known/:file");
+      expect(pattern.pathname).toBe("/.well-known/:file");
+      expect(pattern.exec("myapp://host/.well-known/assetlinks.json")!.pathname).toEqual({
+        input: "/.well-known/assetlinks.json",
+        groups: { file: "assetlinks.json" },
+      });
+      expect(new URLPattern({ protocol: "foo", pathname: "/.a" }).pathname).toBe("/.a");
+      expect(new URLPattern({ protocol: "foo", pathname: "/..a" }).pathname).toBe("/..a");
+      // "/." is a single-dot segment here, so only "//a" is left.
+      expect(new URLPattern({ protocol: "foo", pathname: "/.//a" }).pathname).toBe("//a");
+    });
+
+    test("a pathname that starts with / is canonicalized like the same pathname in a URL string", () => {
+      const any = new URLPattern({ pathname: "*" });
+      expect(any.exec({ protocol: "foo", pathname: "/z/../a" })!.pathname.input).toBe("/a");
+      expect(any.exec("foo://h/z/../a")!.pathname.input).toBe("/a");
+      expect(any.exec({ protocol: "foo", pathname: "/a b/{c}/\\/caf\u00e9" })!.pathname.input).toBe(
+        "/a%20b/%7Bc%7D/\\/caf%C3%A9",
+      );
+      expect(any.exec("foo://h/a b/{c}/\\/caf\u00e9")!.pathname.input).toBe("/a%20b/%7Bc%7D/\\/caf%C3%A9");
+      expect(new URLPattern({ protocol: "vscode", pathname: "/a b" }).test("vscode://ext/a b")).toBe(true);
+      expect(new URLPattern("./c", "app://h/a/b").pathname).toBe("/a/c");
+      expect(new URLPattern("./c", "app://h/a/b").test("app://h/a/c")).toBe(true);
+      expect(new URLPattern("../c", "app://h/a/b/").test("app://h/a/c")).toBe(true);
+    });
+
+    test("a pathname that does not start with / stays opaque", () => {
+      const any = new URLPattern({ pathname: "*" });
+      expect(any.exec({ protocol: "foo", pathname: "z/../a b" })!.pathname.input).toBe("z/../a b");
+      expect(any.exec({ protocol: "data", pathname: "text/plain,a b" })!.pathname.input).toBe("text/plain,a b");
+      expect(new URLPattern("mailto\\::user@:host").exec("mailto:me@example.com")!.pathname.groups).toEqual({
+        user: "me",
+        host: "example.com",
+      });
+    });
+
+    test("special schemes and protocol-less dictionaries are unchanged", () => {
+      const any = new URLPattern({ pathname: "*" });
+      expect(any.exec({ pathname: "//a" })!.pathname.input).toBe("//a");
+      expect(any.exec({ pathname: "/z/../a" })!.pathname.input).toBe("/a");
+      expect(any.exec({ protocol: "https", pathname: "/z/../a" })!.pathname.input).toBe("/a");
+    });
+  });
+
   describe("hasRegExpGroups", () => {
     test("match-everything pattern", () => {
       expect(new URLPattern({}).hasRegExpGroups).toBe(false);

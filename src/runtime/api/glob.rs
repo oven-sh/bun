@@ -6,12 +6,15 @@ use bun_glob::BunGlobWalker as GlobWalker;
 use bun_glob::walk;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    ArgumentsSlice, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, Job, JobContext, JsPtr,
-    JsResult, JsThread, StringJsc as _, SysErrorJsc as _,
+    ArgumentsSlice, CallFrame, DOMURL, JSGlobalObject, JSPromiseStrong, JSValue, Job, JobContext,
+    JsPtr, JsResult, JsThread, StringJsc as _, SysErrorJsc as _,
 };
 use bun_paths::resolve_path::join_string_buf;
 use bun_paths::{self as resolve_path, MAX_PATH_BYTES, platform};
 use bun_sys as syscall;
+use bun_sys_jsc::SystemErrorJsc as _;
+
+use crate::node::types::Valid;
 
 // Codegen hooks (JSGlob): toJS / fromJS / fromJSDirect are provided by the
 // generated C++ wrapper. See PORTING.md §JSC ".classes.ts-backed types".
@@ -38,35 +41,50 @@ impl ScanOpts {
         absolute: bool,
         fn_name: &'static str,
     ) -> JsResult<Box<[u8]>> {
-        let cwd_string = BunString::from_js(cwd_val, global_this)?;
+        let cwd_string = if let Some(url) = DOMURL::cast(cwd_val) {
+            url.file_system_path_for_js(global_this)?
+        } else if cwd_val.is_string() {
+            BunString::from_js(cwd_val, global_this)?
+        } else {
+            return Err(global_this.throw(format_args!(
+                "{}: invalid `cwd`, not a string or URL",
+                fn_name
+            )));
+        };
         if cwd_string.is_empty() {
             return Ok(Box::default());
         }
 
-        let cwd_str: Box<[u8]> = 'cwd_str: {
-            let cwd_utf8 = cwd_string.to_utf8();
+        let cwd_utf8 = cwd_string.to_utf8();
+        let cwd = cwd_utf8.slice();
+        // The walker opens `cwd` as a C string; an interior NUL would scan a different directory.
+        if bun_core::strings::contains_char(cwd, 0) {
+            return Err(global_this
+                .err(
+                    bun_jsc::ErrorCode::INVALID_ARG_VALUE,
+                    format_args!(
+                        "The argument 'cwd' must be a string or URL without null bytes. Received {}",
+                        bun_core::fmt::quote(cwd)
+                    ),
+                )
+                .throw());
+        }
+        let too_long = |path: &[u8]| {
+            Valid::path_too_long(path)
+                .map(|err| global_this.throw_value(err.to_error_instance(global_this)))
+        };
+        if let Some(err) = too_long(cwd) {
+            return Err(err);
+        }
 
-            if cwd_utf8.slice().len() > MAX_PATH_BYTES {
-                return Err(global_this.throw(format_args!(
-                    "{}: invalid `cwd`, longer than {} bytes",
-                    fn_name, MAX_PATH_BYTES
-                )));
-            }
+        if resolve_path::Platform::AUTO.is_absolute(cwd) {
+            return Ok(Box::from(cwd));
+        }
 
-            // If its absolute return as is
-            if resolve_path::Platform::AUTO.is_absolute(cwd_utf8.slice()) {
-                break 'cwd_str Box::<[u8]>::from(cwd_utf8.slice());
-            }
-
-            // `cwd_utf8` drops at scope exit.
-            let mut path_buf2 = [0u8; MAX_PATH_BYTES * 2];
-
-            if !absolute {
-                let parts: &[&[u8]] = &[cwd_utf8.slice()];
-                let cwd_str = join_string_buf::<platform::Auto>(&mut path_buf2, parts);
-                break 'cwd_str Box::<[u8]>::from(cwd_str);
-            }
-
+        let mut path_buf2 = [0u8; MAX_PATH_BYTES * 2];
+        let cwd_str = if !absolute {
+            join_string_buf::<platform::Auto>(&mut path_buf2, &[cwd])
+        } else {
             // Convert to an absolute path
             let mut path_buf = bun_paths::path_buffer_pool::get();
             let cwd_len = match bun_sys::getcwd(&mut path_buf[..]) {
@@ -76,22 +94,12 @@ impl ScanOpts {
                     return Err(global_this.throw_value(err_js));
                 }
             };
-
-            let cwd_str = join_string_buf::<platform::Auto>(
-                &mut path_buf2,
-                &[&path_buf[..cwd_len], cwd_utf8.slice()],
-            );
-            break 'cwd_str Box::<[u8]>::from(cwd_str);
+            join_string_buf::<platform::Auto>(&mut path_buf2, &[&path_buf[..cwd_len], cwd])
         };
-
-        if cwd_str.len() > MAX_PATH_BYTES {
-            return Err(global_this.throw(format_args!(
-                "{}: invalid `cwd`, longer than {} bytes",
-                fn_name, MAX_PATH_BYTES
-            )));
+        if let Some(err) = too_long(cwd_str) {
+            return Err(err);
         }
-
-        Ok(cwd_str)
+        Ok(Box::from(cwd_str))
     }
 
     fn from_js(
@@ -114,19 +122,19 @@ impl ScanOpts {
         if opts_obj.is_undefined_or_null() {
             return Ok(Some(out));
         }
-        if !opts_obj.is_object() {
-            if opts_obj.is_string() {
-                {
-                    let result =
-                        Self::parse_cwd(global_this, arena, opts_obj, out.absolute, fn_name)?;
-                    if !result.is_empty() {
-                        out.cwd = Some(result);
-                    }
-                }
-                return Ok(Some(out));
+        // `scan(cwd)`: a string or a `file:` URL in the options slot is the cwd.
+        if opts_obj.is_string() || DOMURL::cast(opts_obj).is_some() {
+            let result = Self::parse_cwd(global_this, arena, opts_obj, out.absolute, fn_name)?;
+            if !result.is_empty() {
+                out.cwd = Some(result);
             }
+            return Ok(Some(out));
+        }
+        // A Buffer, DataView or array is never an options bag; reading it as one would scan `process.cwd()`.
+        let ty = opts_obj.js_type();
+        if !ty.is_object() || ty.is_array_like() || ty == bun_jsc::JSType::DataView {
             return Err(global_this.throw(format_args!(
-                "{}: expected first argument to be an object",
+                "{}: expected first argument to be a string, URL, or options object",
                 fn_name
             )));
         }
@@ -166,17 +174,9 @@ impl ScanOpts {
         }
 
         if let Some(cwd_val) = opts_obj.get_truthy(global_this, "cwd")? {
-            if !cwd_val.is_string() {
-                return Err(
-                    global_this.throw(format_args!("{}: invalid `cwd`, not a string", fn_name))
-                );
-            }
-
-            {
-                let result = Self::parse_cwd(global_this, arena, cwd_val, out.absolute, fn_name)?;
-                if !result.is_empty() {
-                    out.cwd = Some(result);
-                }
+            let result = Self::parse_cwd(global_this, arena, cwd_val, out.absolute, fn_name)?;
+            if !result.is_empty() {
+                out.cwd = Some(result);
             }
         }
 

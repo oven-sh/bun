@@ -9254,9 +9254,10 @@ declare module "bun" {
 
   interface GlobScanOptions {
     /**
-     * The root directory to start matching from. Defaults to `process.cwd()`
+     * The root directory to start matching from, as a path or a `file:` URL.
+     * Defaults to `process.cwd()`
      */
-    cwd?: string;
+    cwd?: string | URL;
 
     /**
      * Allow patterns to match entries that begin with a period (`.`).
@@ -9350,7 +9351,7 @@ declare module "bun" {
      * }
      * ```
      */
-    scan(optionsOrCwd?: string | GlobScanOptions): AsyncIterableIterator<string>;
+    scan(optionsOrCwd?: string | URL | GlobScanOptions): AsyncIterableIterator<string>;
 
     /**
      * Synchronously scan a root directory recursively for files that match this glob pattern. Returns an iterator.
@@ -9371,7 +9372,7 @@ declare module "bun" {
      * }
      * ```
      */
-    scanSync(optionsOrCwd?: string | GlobScanOptions): IterableIterator<string>;
+    scanSync(optionsOrCwd?: string | URL | GlobScanOptions): IterableIterator<string>;
 
     /**
      * Match the glob against a string

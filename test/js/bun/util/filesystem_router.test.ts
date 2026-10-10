@@ -1,7 +1,17 @@
 import { FileSystemRouter } from "bun";
 import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  expectRssDeltaBelow,
+  isASAN,
+  isMacOS,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import path, { dirname } from "path";
 
 function createTree(basedir: string, paths: string[]) {
@@ -425,6 +435,70 @@ it("reload() works with new dirs/files", () => {
   createTree(dir, ["test/test2/index.ts"]);
   router.reload();
   expect(router.match("/test/test2")!.name).toBe("/test/test2");
+});
+
+// reload() reads each directory again and keeps what it knows about every name
+// that is still listed. It finds a name by its lowercased form.
+it("reload() works with a file renamed to another case", () => {
+  const { dir } = make(["About.tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+  expect(Object.entries(router.routes).map(([name, file]) => [name, path.basename(file)])).toEqual([
+    ["/About", "About.tsx"],
+  ]);
+
+  fs.renameSync(`${dir}/About.tsx`, `${dir}/about.tsx`);
+  router.reload();
+  expect(Object.entries(router.routes).map(([name, file]) => [name, path.basename(file)])).toEqual([
+    ["/about", "about.tsx"],
+  ]);
+});
+
+it.skipIf(isWindows)("reload() works with a symlink that points somewhere else", () => {
+  const { dir } = make(["first/about.tsx", "second/about.tsx", "pages/index.tsx"]);
+  fs.symlinkSync(`${dir}/first/about.tsx`, `${dir}/pages/about.tsx`);
+  const router = new Bun.FileSystemRouter({ dir: `${dir}/pages`, style: "nextjs" });
+  expect(router.routes["/about"]).toBe(`${dir}/first/about.tsx`);
+
+  fs.unlinkSync(`${dir}/pages/about.tsx`);
+  fs.symlinkSync(`${dir}/second/about.tsx`, `${dir}/pages/about.tsx`);
+  router.reload();
+  expect(router.routes["/about"]).toBe(`${dir}/second/about.tsx`);
+
+  fs.unlinkSync(`${dir}/pages/about.tsx`);
+  fs.writeFileSync(`${dir}/pages/about.tsx`, "export default 1;\n");
+  router.reload();
+  expect(router.routes["/about"]).toBe(`${dir}/pages/about.tsx`);
+
+  fs.unlinkSync(`${dir}/pages/about.tsx`);
+  fs.symlinkSync(`${dir}/first/about.tsx`, `${dir}/pages/about.tsx`);
+  router.reload();
+  expect(router.routes["/about"]).toBe(`${dir}/first/about.tsx`);
+});
+
+// Each reload() dropped the cached listing of every directory of the router
+// and could not free it: about 200 KB per call for these 500 files.
+it("reload() does not keep the directory listings it drops", async () => {
+  const files: Record<string, string> = { "index.tsx": "export default 1;\n" };
+  for (let i = 0; i < 250; i++) {
+    files[`a/file-${i}.txt`] = "";
+    files[`b/file-${i}.txt`] = "";
+  }
+  using dir = tempDir("fsr-reload-listings", files);
+  await expectRssDeltaBelow(
+    [
+      "-e",
+      `
+        const router = new Bun.FileSystemRouter({ dir: ${JSON.stringify(String(dir))}, style: "nextjs" });
+        for (let i = 0; i < 10; i++) router.reload();
+        Bun.gc(true);
+        const before = process.memoryUsage.rss();
+        for (let i = 0; i < 60; i++) router.reload();
+        Bun.gc(true);
+        console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+      `,
+    ],
+    { release: 5, debug: 6 },
+  );
 });
 
 it(".query works with dynamic routes, including params", () => {

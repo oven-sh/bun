@@ -22,6 +22,17 @@ The commits of eslint and typescript-eslint are `main`, a few commits after the 
 recorded is what the release reports: `lib` of eslint 10.12.0 and the rules of typescript-eslint 8.71.1 as they are published. The cases of a plugin's rule are those of the plugin, of eslint-plugin-import-x for `import`, and
 of oxlint's port of the rule: see `extract-plugins.ts`.
 
+The suites of eslint-plugin-import, -react, -regexp and -prettier are recorded with the packages as they are published, and a
+rule's suite comes into the bundle when the rule here passes all of it. Some of their cases are files of a project:
+
+- `import-project/` is `tests/files` and `package.json` of eslint-plugin-import, and what of `node_modules` the rules look at.
+- `prettier-project/` has the configuration files that the cases of `prettier/prettier` are below, and a `package.json` of
+  `prettier` and of `eslint-plugin-prettier`, by whose versions the rule decides whether it answers. The cases are those of the
+  plugin's own tests, cases that are written here, and the inputs of Prettier's tests, as they are and formatted and then damaged.
+- `/__project__` in a fixture (in the name of a file, an option, a setting, a message, the code) stands for the directory of its
+  project. The runner puts `<--projects>/<project>` there when it reads the fixture.
+- `a/b.symlink` is the symbolic link `a/b`: what it has is where the link leads. `--extract` makes it.
+
 `more/` has cases from elsewhere in the same format, each with what the same ESLint reports for it:
 
 | directory                | cases | what                                                                                                                 |

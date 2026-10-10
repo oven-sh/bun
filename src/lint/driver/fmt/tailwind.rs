@@ -89,7 +89,11 @@ fn find(directory: &[u8]) -> Option<Found> {
 pub(crate) fn version_of_package(name: &[u8], directory: &[u8]) -> Option<[u64; 3]> {
     let file = [b"node_modules/", name, b"/package.json"].concat();
     let package = paths::ancestors(directory).find_map(|it| fs::read(&paths::join(it, &file)).ok());
-    let package = bun_lint::json::parse(&package?)?;
+    version_in(&bun_lint::json::parse(&package?)?)
+}
+
+/// `version` in a `package.json`.
+pub(crate) fn version_in(package: &Json) -> Option<[u64; 3]> {
     let parsed = bun_semver::Version::parse_utf8(package.get(b"version")?.as_str()?);
     let version = parsed.version.min();
     parsed

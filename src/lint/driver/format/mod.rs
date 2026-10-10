@@ -204,10 +204,25 @@ pub(crate) fn format(format: Format, results: &[FileResult], meta: &Meta) -> Vec
         Format::OxlintGitlab => oxlint_gitlab_sarif::write_gitlab(&mut out, results, meta),
         Format::OxlintSarif => oxlint_gitlab_sarif::write_sarif(&mut out, results, meta),
     }
-    let is_for_people = matches!(format, Format::Stylish | Format::Pretty | Format::Unix);
-    if meta.github_annotations && is_for_people && results.iter().any(|it| !it.messages.is_empty())
-    {
-        out.push(b'\n');
+    out
+}
+
+/// What GitHub Actions gets besides the report: a workflow command for each problem. Empty: nothing.
+/// `is_alone`: the report is not on standard output, where they go.
+pub(crate) fn annotations(
+    format: Format,
+    results: &[FileResult],
+    meta: &Meta,
+    is_alone: bool,
+) -> Vec<u8> {
+    let mut out = Vec::new();
+    // Not among what a program reads, and not twice.
+    let fits = match format {
+        Format::Stylish | Format::Pretty => true,
+        Format::Github => false,
+        _ => is_alone,
+    };
+    if meta.github_annotations && fits && results.iter().any(|it| !it.messages.is_empty()) {
         excerpt::write_github(&mut out, results, meta);
     }
     out

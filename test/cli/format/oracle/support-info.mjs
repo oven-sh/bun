@@ -4,7 +4,7 @@
 //   bun support-info.mjs --prettier=<directory with node_modules/prettier> --oxfmt=<path of oxfmt> --bin="<bun> format" --scratch=<directory> [--show]
 //
 // Each name gets texts that are not formatted, in the languages of its family, each in a directory of its own. The tools write. What
-// is compared is the bytes afterwards, and whether the file is named in an error. The next version of Prettier shows here what moved.
+// is compared is the bytes afterwards, and for Prettier whether the file is named in an error. The next version of Prettier shows here what moved.
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { createRequire } from "node:module";
@@ -17,16 +17,16 @@ const prettier = createRequire(withPrettier + "/")("prettier");
 const show = process.argv.includes("--show");
 
 const script = ["const  a = 1\n", "const  a: number = 1\n", "// @flow\ntype  A = {| a: 1 |};\n", "const a = <b   />\n"];
-const style = ["a{color:RED}\n", "a{b:c;// d\n}\n", "@a: 1;\n.b{.c;}\n", "$a:1;\n@mixin b{c:d}\n"];
-const data = ['{"a":1,   "b":[]}\n', '{"a":1,\'b\':[1,\n2],/* c */"d":{},}\n', "{a:   1}\n"];
+const style = ["a{color:RED}\n"];
+const data = ['{"a":1,   "b":[]}\n', '{"a":1,\'b\':[1,\n2],"d":{},}\n', '// c\n{"a":   1}\n', "{a:   1}\n"];
 const markup = ['<div   a="b"><template><p   >x</p></template>{{  a  }}</div>\n'];
 const texts = {
   "babel": script,
   "flow": script,
   "typescript": script,
   "css": style,
-  "less": style,
-  "scss": style,
+  "less": [...style, "a{b:c;// d\n}\n", "@a: 1;\n.b{.c;}\n"],
+  "scss": [...style, "a{b:c;// d\n}\n", "$a:1;\n@mixin b{c:d}\n"],
   "json": data,
   "json5": data,
   "jsonc": data,
@@ -49,7 +49,9 @@ const configurations = { ".prettierrc": ["semi:    true\n"], "package.json": ['{
 
 /** name -> texts */
 const asked = new Map();
-const ask = (name, family) => asked.has(name) || asked.set(name, configurations[name] ?? family);
+// Of what is no TOML oxfmt makes something else that is no TOML.
+const toml = name => (/toml|^Pipfile$/i.test(name) ? ["a   = 1\n"] : undefined);
+const ask = (name, family) => asked.has(name) || asked.set(name, configurations[name] ?? toml(name) ?? family);
 const swapped = text => text.replace(/[a-z]/gi, it => (it === it.toLowerCase() ? it.toUpperCase() : it.toLowerCase()));
 const { languages } = await prettier.getSupportInfo();
 for (const language of languages) {
@@ -78,6 +80,31 @@ for (const interpreter of interpreters) {
     );
   }
 }
+// What linguist has under JSON and YAML and Prettier leaves out, and other files that tools write.
+for (const name of [
+  ...[
+    "composer.lock",
+    "Pipfile.lock",
+    "flake.lock",
+    "deno.lock",
+    "mcmod.info",
+    "MODULE.bazel.lock",
+    ".tern-config",
+    ".watchmanconfig",
+  ],
+  ...["yarn.lock", "bun.lock", "pnpm-lock.yaml", "Cargo.lock", "poetry.lock", "uv.lock", "go.sum", "Gemfile.lock"],
+  ...[
+    "tsconfig.json",
+    "jsconfig.json",
+    "tslint.json",
+    ".eslintrc",
+    ".eslintrc.json",
+    "devcontainer.json",
+    "api-extractor.json",
+  ],
+]) {
+  ask(name, all);
+}
 // What `bun format` has in its tables, whatever it is there for.
 const source = path.resolve(import.meta.dirname, "../../../../src");
 const tables = [
@@ -94,7 +121,7 @@ for (const file of [...tables, "format/html/mod.rs", "format/graphql/mod.rs", "f
 }
 
 const cases = [...asked].flatMap(([name, family]) => family.map(text => ({ name, text })));
-function run(tool, command, configuration) {
+function run(tool, command, configuration, namesWhatItRefuses) {
   const root = path.join(scratch, tool);
   fs.rmSync(root, { recursive: true, force: true });
   for (const [index, { name, text }] of cases.entries()) {
@@ -108,11 +135,12 @@ function run(tool, command, configuration) {
     maxBuffer: 1 << 30,
     env: { ...process.env, NO_COLOR: "1" },
   });
-  const errors = `${result.stdout}${result.stderr}`.replace(/\x1b\[[0-9;]*m/g, "");
+  const errors = result.stderr.replace(/\x1b\[[0-9;]*m/g, "");
   return cases.map(({ name, text }, index) => {
     const after = fs.readFileSync(path.join(root, String(index), name), "utf8");
     if (after !== text) return after;
-    return errors.includes(`${index}/${name}`) ? "(refused)" : "(not read)";
+    // oxfmt does not always say which file it refuses.
+    return namesWhatItRefuses && errors.includes(`[error] ${index}/${name}`) ? "(refused)" : "(as it was)";
   });
 }
 
@@ -122,19 +150,18 @@ for (const [flavor, theirs, configuration] of [
   ["Prettier", ["node", path.join(withPrettier, "node_modules/prettier/bin/prettier.cjs"), "--write"], {}],
   ["oxfmt", [path.resolve(flag("oxfmt")), "--threads=1"], { ".oxfmtrc.json": "{}\n" }],
 ]) {
-  const [expected, actual] = [
-    run(`${flavor}-theirs`, theirs, configuration),
-    run(`${flavor}-ours`, bin, configuration),
-  ];
+  const isPrettier = flavor === "Prettier";
+  const expected = run(`${flavor}-theirs`, theirs, configuration, isPrettier);
+  const actual = run(`${flavor}-ours`, bin, configuration, isPrettier);
   const names = new Map();
   for (const [index, { name, text }] of cases.entries()) {
     if (expected[index] === actual[index]) continue;
     names.set(name, [...(names.get(name) ?? []), { text, expected: expected[index], actual: actual[index] }]);
   }
   differences += names.size;
-  const read = expected.filter(it => it !== "(not read)").length;
+  const touched = expected.filter(it => it !== "(as it was)").length;
   console.log(
-    `${flavor}: ${asked.size} names, ${cases.length} files, of which it reads ${read}: ${names.size} names differ`,
+    `${flavor}: ${asked.size} names, ${cases.length} files, ${touched} written or refused: ${names.size} names differ`,
   );
   for (const [name, all] of names) {
     console.log(`  ${name}: ${all.length} of its texts`);

@@ -754,15 +754,6 @@ impl NodeTags {
         self
     }
 
-    pub const fn types(mut self, kinds: &[TypeTag]) -> NodeTags {
-        let mut at = 0;
-        while at < kinds.len() {
-            self.0 |= 1 << (TYPES + kinds[at] as u32);
-            at += 1;
-        }
-        self
-    }
-
     #[inline]
     pub const fn is_empty(self) -> bool {
         self.0 == 0

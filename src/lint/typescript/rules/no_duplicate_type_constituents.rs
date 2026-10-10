@@ -387,7 +387,10 @@ fn report<'a>(
             true => file.slice(Span::new(file.end_of_token_before(outer.start), outer.end)),
             false => previous.text(),
         };
-        report = report.data("type", union_or_intersection).data("previous", text);
+        report = report.data("type", union_or_intersection).data("previous", text).labels_with(|labels| {
+            labels.first(format!("Type '{}' is first declared here.", bstr::BStr::new(file.slice(outer))));
+            labels.push(constituent_node.outer_span(), "");
+        });
     }
     report.fix(|fixer| removed.iter().map(|&span| fixer.remove(span)).collect::<Vec<Fix>>());
 }

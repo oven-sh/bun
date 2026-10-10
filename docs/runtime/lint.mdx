@@ -909,7 +909,7 @@ jobs:
       - run: bun lint --max-warnings 0
 ```
 
-In GitHub Actions, `bun lint` also prints a workflow command for each problem. GitHub shows them as annotations on the lines of the pull request diff.
+In GitHub Actions, `bun lint` also prints a workflow command for each problem. GitHub shows them as annotations on the lines of the pull request diff. They go to stdout after a report for people (`stylish`, `pretty`), or alone if `--output-file` takes the report. They are never in that file, and never among the output of a format that programs read.
 
 ```txt
 ::error file=src/index.ts,line=3,col=7,endLine=3,endColumn=12,title=prefer-const::'count' is never reassigned. Use 'const' instead.

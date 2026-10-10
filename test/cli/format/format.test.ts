@@ -1829,6 +1829,22 @@ try {
     },
   );
 
+  // linguist has them under JSON. Prettier 3.9.9 leaves them out of its language: `prettier.getSupportInfo()`, and
+  // test/cli/format/oracle/support-info.mjs for all the names of all the languages.
+  test("what a tool has written and Prettier does not read", async () => {
+    const names = ["composer.lock", "Pipfile.lock", "flake.lock", "deno.lock", "mcmod.info", "MODULE.bazel.lock"];
+    const files = Object.fromEntries(names.map(name => [name, '{"a":   1}\n']));
+    const directory = await format({ ...files, "glide.lock": "a:   1\n" }, [], { reads: [...names, "glide.lock"] });
+    expect(directory.files).toEqual({ ...files, "glide.lock": "a: 1\n" });
+    expect(directory.exitCode).toBe(0);
+    const named = await format(files, names, { reads: names });
+    expect(named.files).toEqual(files);
+    expect(named.stderr.split("\n").filter(line => line.includes("No parser could be inferred")).length).toBe(
+      names.length,
+    );
+    expect(named.exitCode).toBe(2);
+  });
+
   // The exit codes of Prettier 3.9.9. `handleError` sets none under `--check`, and `formatFiles` counts the file as one with an
   // error all the same.
   test.each([

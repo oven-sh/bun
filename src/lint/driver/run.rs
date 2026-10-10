@@ -1207,6 +1207,10 @@ impl Run<'_> {
         } else {
             format::format(format, &results, &meta)
         };
+        let annotations = match has_no_files || options.silent {
+            true => Vec::new(),
+            false => format::annotations(format, &results, &meta, options.output_file.is_some()),
+        };
         phases.formatting = started.elapsed().as_secs_f64();
         if let Some(file) = &options.output_file {
             let path = paths::resolve(&environment.cwd, &paths::from_native(file));
@@ -1233,6 +1237,10 @@ impl Run<'_> {
             if !format.is_of_oxlint() {
                 self.out.stdout.push(b'\n');
             }
+        }
+        if !annotations.is_empty() {
+            self.out.stdout.extend_from_slice(&annotations);
+            self.out.stdout.push(b'\n');
         }
 
         if !is_oxlint && counts.errors == 0 && has_too_many_warnings {

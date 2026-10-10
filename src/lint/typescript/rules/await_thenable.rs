@@ -90,7 +90,11 @@ impl AwaitThenable {
         // oxlint points at what is awaited.
         let place = if cx.language().is_oxlint { argument.outer_span() } else { node.span() };
         let keyword = Span::new(node.span().start, node.span().start + "await".len() as u32);
-        cx.report(place, AWAIT).comments_apply_at(keyword).suggest(REMOVE_AWAIT, |fixer| {
+        let labels = |labels: &mut Details| {
+            labels.first("This expression is not Promise-like");
+            labels.push(keyword, "");
+        };
+        cx.report(place, AWAIT).comments_apply_at(keyword).labels_with(labels).suggest(REMOVE_AWAIT, |fixer| {
             let file = fixer.file();
             let await_keyword = file.tokens_in(node).find(is_await_keyword)?;
             let await_removal_fix = fixer.remove(get_await_token_removal_range(file, await_keyword));
@@ -121,13 +125,20 @@ impl AwaitThenable {
         if let ExprKind::Array(elements) = argument.kind() {
             for element in elements.iter().filter(|element| !element.is_missing()) {
                 if is_always_non_awaitable_type(get_constrained_type_at_location(element), element) {
-                    cx.report(element, INVALID_PROMISE_AGGREGATOR_INPUT);
+                    cx.report(element, INVALID_PROMISE_AGGREGATOR_INPUT).labels_with(|labels| {
+                        labels.first("This expression is not Promise-like");
+                        labels.push(argument.outer_span(), "Promise aggregator input");
+                        labels.push(element, "");
+                    });
                 }
             }
             return;
         }
         if is_invalid_promise_aggregator_input(argument, get_constrained_type_at_location(argument)) {
-            cx.report(argument, INVALID_PROMISE_AGGREGATOR_INPUT);
+            cx.report(argument, INVALID_PROMISE_AGGREGATOR_INPUT).labels_with(|labels| {
+                labels.first("This expression is not Promise-like");
+                labels.push(argument, "");
+            });
         }
     }
 
@@ -145,6 +156,10 @@ impl AwaitThenable {
         let head = get_for_statement_head_loc(node);
         cx.report(if cx.language().is_oxlint { right.outer_span() } else { head }, FOR_AWAIT_OF_NON_ASYNC_ITERABLE)
             .comments_apply_at(head)
+            .labels_with(|labels| {
+                labels.first("This value is not async iterable");
+                labels.push(head, "");
+            })
             .suggest(CONVERT_TO_ORDINARY_FOR, |fixer| remove_await_token(fixer, node.span()));
     }
 
@@ -169,7 +184,10 @@ impl AwaitThenable {
                 _ => FixOrSuggest::None,
             };
             get_fix_or_suggest(
-                cx.report(init, AWAIT_USING_OF_NON_ASYNC_DISPOSABLE),
+                cx.report(init, AWAIT_USING_OF_NON_ASYNC_DISPOSABLE).labels_with(|labels| {
+                    labels.first("This value is not async disposable");
+                    labels.push(init, "");
+                }),
                 fix_or_suggest,
                 REMOVE_AWAIT,
                 |fixer| remove_await_token(fixer, node.span()),

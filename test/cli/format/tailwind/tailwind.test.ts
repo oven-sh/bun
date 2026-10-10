@@ -4,8 +4,8 @@
 //
 // The order comes from the package `tailwindcss` of the project. Here that is a stand-in, which knows what is in order.json.
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { chmodSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { endChildren, spawn } from "../../children";
 import cases from "./cases.json";
@@ -92,6 +92,52 @@ describe.concurrent("sortTailwindcss", () => {
 
   const input = '<a className="p-4 flex m-2" />;\n';
   const [sorted, reversed] = ['<a className="m-2 flex p-4" />;\n', '<a className="p-4 flex m-2" />;\n'];
+
+  const listed = (root: string) => readdirSync(root, { recursive: true, encoding: "utf8" }).sort();
+
+  test("nothing is written into the project, not even while Tailwind is asked", async () => {
+    // The stand-in looks around when it is loaded, and refuses to answer if there is a file that the test has not made.
+    const looksAround = `const { readdirSync } = require("node:fs");
+const now = readdirSync(require("node:path").join(__dirname, "../.."), { recursive: true, encoding: "utf8" }).sort();
+const before = JSON.parse(process.env.FILES_OF_THE_TEST);
+if (now.join() !== before.join()) throw new Error("There is " + now.filter(it => !before.includes(it)).join(", "));
+`;
+    using dir = tempDir("bun-format-tailwind", {
+      ...version4,
+      "node_modules/tailwindcss/index.js": looksAround + version4["node_modules/tailwindcss/index.js"],
+      ".oxfmtrc.json": '{ "sortTailwindcss": {} }\n',
+      "a.jsx": input,
+    });
+    const before = listed(String(dir));
+    await using proc = spawn({
+      cmd: [bunExe(), "format", "--log-level=warn", "."],
+      env: { ...bunEnv, FILES_OF_THE_TEST: JSON.stringify(before) },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+    expect(stderr).toBe("");
+    expect(readFileSync(join(String(dir), "a.jsx"), "utf8")).toBe(sorted);
+    expect(listed(String(dir))).toEqual(before);
+    expect(exitCode).toBe(0);
+  });
+
+  // Nix, a layer of an image that belongs to root, a sandbox. Nothing is closed to root.
+  test.skipIf(isWindows || process.getuid?.() === 0)("the packages can be read-only", async () => {
+    using dir = tempDir("bun-format-tailwind", {
+      ...version4,
+      ".oxfmtrc.json": '{ "sortTailwindcss": {} }\n',
+      "a.jsx": input,
+    });
+    const directories = ["node_modules/tailwindcss", "node_modules"].map(it => join(String(dir), it));
+    for (const it of directories) chmodSync(it, 0o555);
+    try {
+      expect(await formatIn(String(dir), ["a.jsx"])).toMatchObject({ stderr: "", files: [sorted], exitCode: 0 });
+    } finally {
+      for (const it of directories.reverse()) chmodSync(it, 0o755);
+    }
+  });
 
   test("`stylesheet` is what Tailwind CSS 4 is loaded with, from the directory of the configuration file", async () => {
     const config = JSON.stringify({ sortTailwindcss: { stylesheet: "./css/app.css" } });

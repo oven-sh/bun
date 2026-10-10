@@ -355,6 +355,14 @@ impl Rule for KeySpacing {
         }
     }
 
+    fn narrow<'a>(&self, _: &'a File<'a>) -> bun_lint::rule::On {
+        let on = bun_lint::rule::On::new();
+        match self.align {
+            Some(_) => on.exprs(&[ExprTag::Object]),
+            None => on.props().pats(&[PatTag::Object]),
+        }
+    }
+
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let (ExprKind::Object(properties), Some(align)) = (e.kind(), &self.align) else {
             return;
@@ -384,18 +392,12 @@ impl Rule for KeySpacing {
     }
 
     fn prop<'a>(&self, property: Prop<'a>, cx: &mut Cx<'a, Self>) {
-        if self.align.is_some() {
-            return;
-        }
         if let Some((key, value)) = key_value(property) {
             self.verify_property(cx, key, value.span().start, || property.parent().span());
         }
     }
 
     fn pat<'a>(&self, pattern: Pat<'a>, cx: &mut Cx<'a, Self>) {
-        if self.align.is_some() {
-            return;
-        }
         let PatKind::Object(properties) = pattern.kind() else {
             return;
         };

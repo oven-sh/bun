@@ -110,6 +110,11 @@ impl RestrictPlusOperands {
 
         // oxlint points at the left side.
         let place = if cx.language().is_oxlint { left.outer_span() } else { node.span() };
+        let labels = |labels: &mut Details| {
+            labels.first(format!("Type: {}", bstr::BStr::new(&left_type.to_text())));
+            labels.push(right.outer_span(), format!("Type: {}", bstr::BStr::new(&right_type.to_text())));
+            labels.push(node, "");
+        };
         for (base_type, other_type) in [(left_type, right_type), (right_type, left_type)] {
             if !self.allow_number_and_string
                 && is_type_flag_set(base_type, TypeFlags::STRING_LIKE)
@@ -119,7 +124,8 @@ impl RestrictPlusOperands {
                     .comments_apply_at(node.span())
                     .data("left", left_type.to_text())
                     .data("right", right_type.to_text())
-                    .data("stringLike", self.string_like.clone());
+                    .data("stringLike", self.string_like.clone())
+                    .labels_with(labels);
                 return;
             }
             if is_type_flag_set(base_type, TypeFlags::NUMBER_LIKE)
@@ -128,7 +134,8 @@ impl RestrictPlusOperands {
                 cx.report(place, BIGINT_AND_NUMBER)
                     .comments_apply_at(node.span())
                     .data("left", left_type.to_text())
-                    .data("right", right_type.to_text());
+                    .data("right", right_type.to_text())
+                    .labels_with(labels);
                 return;
             }
         }

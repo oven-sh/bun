@@ -422,6 +422,11 @@ fn check_node<'a>(
             .data("name", type_parameter.name())
             .data("descriptor", descriptor)
             .data("uses", uses)
+            .labels_with(|labels| {
+                let name = bstr::BStr::new(type_parameter.name().bytes());
+                labels.first(format!("This is the only usage of type parameter {name} in the signature."));
+                labels.push(type_parameter.span(), "");
+            })
             .suggest(REPLACE_USAGES_WITH_CONSTRAINT, |fixer| {
                 replace_usages_with_constraint(fixer, type_parameters, type_parameter, variable)
             });

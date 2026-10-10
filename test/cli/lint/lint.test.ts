@@ -3162,6 +3162,25 @@ describe.concurrent("bun lint", () => {
       expect(detected.stdout).toEndWith(named.stdout);
     });
 
+    test.each(["stylish", "unix", "json"])(
+      "what GitHub Actions gets is not in the file of --output-file, nor among the lines of unix: %s",
+      async format => {
+        const inActions = { env: { GITHUB_ACTIONS: "true" }, reads: ["report.txt"] };
+        const [named, plain, toFile, toStdout] = await Promise.all([
+          lint(files, ["-f", "github", "--quiet"]),
+          lint(files, ["-f", format, "--quiet", "-o", "report.txt"], { reads: ["report.txt"] }),
+          lint(files, ["-f", format, "--quiet", "-o", "report.txt"], inActions),
+          lint(files, ["-f", format, "--quiet"], { env: { GITHUB_ACTIONS: "true" } }),
+        ]);
+        expect(toFile.files["report.txt"].replaceAll(/bun-lint_\w+/g, "")).toBe(
+          plain.files["report.txt"].replaceAll(/bun-lint_\w+/g, ""),
+        );
+        expect(toFile.files["report.txt"]).not.toContain("::error");
+        expect(toFile.stdout).toBe(named.stdout);
+        expect(toStdout.stdout.includes("::error")).toBe(format === "stylish");
+      },
+    );
+
     test("identical problems are grouped above 50, unless --all", async () => {
       const many = { "eslint.config.js": basic, "a.js": Buffer.alloc(10 * 60, "debugger;\n").toString() };
       const [grouped, all] = await Promise.all([lint(many, ["-f", "pretty"]), lint(many, ["-f", "pretty", "--all"])]);

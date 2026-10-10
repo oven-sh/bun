@@ -117,21 +117,34 @@ impl<'e> Set<'e> {
     }
 }
 
-/// Whether `eslint-plugin-prettier`, as it is found from `cwd`, and the `prettier` that it loads are of the versions
-/// that are followed here.
-fn check_packages(cwd: &[u8]) -> Result<(), Reason> {
+/// The directory of the `eslint-plugin-prettier` that the file at `module` is of, and its version.
+fn plugin_of(module: &[u8]) -> Option<(Vec<u8>, [u64; 3])> {
+    paths::ancestors(paths::dirname(module)).find_map(|directory| {
+        let package = fs::read(&paths::join(directory, b"package.json")).ok()?;
+        let package = bun_lint::json::parse(&package)?;
+        let is_the_plugin = package.get(b"name")?.as_str()? == b"eslint-plugin-prettier";
+        let version = tailwind::version_in(&package).filter(|_| is_the_plugin)?;
+        Some((directory.to_vec(), version))
+    })
+}
+
+/// The same for the one that is found from `cwd`.
+fn plugin_from(cwd: &[u8]) -> Option<(Vec<u8>, [u64; 3])> {
     let plugin = paths::ancestors(cwd)
         .map(|it| paths::join(it, b"node_modules/eslint-plugin-prettier"))
-        .find(|it| fs::is_file(&paths::join(it, b"package.json")))
-        .ok_or(Reason::VersionOfPlugin)?;
-    if !matches!(
-        tailwind::version_of_package(b"eslint-plugin-prettier", cwd),
-        Some([5, _, _])
-    ) {
-        return Err(Reason::VersionOfPlugin);
-    }
+        .find(|it| fs::is_file(&paths::join(it, b"package.json")))?;
+    let version = tailwind::version_of_package(b"eslint-plugin-prettier", cwd)?;
     // Where a package manager has linked it from, its dependencies are beside it.
-    let plugin = fs::real_path(&plugin).unwrap_or(plugin);
+    Some((fs::real_path(&plugin).unwrap_or(plugin), version))
+}
+
+/// Whether `eslint-plugin-prettier` and the `prettier` that it loads are of the versions that are followed here.
+/// `module`: [`Request::package_module`]. Without it the plugin is looked for from `cwd`.
+fn check_packages(cwd: &[u8], module: Option<&[u8]>) -> Result<(), Reason> {
+    let found = module.map_or_else(|| plugin_from(cwd), plugin_of);
+    let Some((plugin, [5, _, _])) = found else {
+        return Err(Reason::VersionOfPlugin);
+    };
     match tailwind::version_of_package(b"prettier", &plugin) {
         Some([3, 9, _]) => Ok(()),
         _ => Err(Reason::Version),
@@ -144,8 +157,8 @@ pub struct ForRules<'e> {
     /// There are one or two in a run.
     sets: Guarded<Vec<Arc<Set<'e>>>>,
     scratches: Guarded<Vec<Scratches>>,
-    /// See [`check_packages`]. `None`: nobody has asked yet.
-    packages: Guarded<Option<Result<(), Reason>>>,
+    /// See [`check_packages`], by [`Request::package_module`]. There is one in nearly every run.
+    packages: Guarded<Vec<(Option<Vec<u8>>, Result<(), Reason>)>>,
 }
 
 impl<'e> ForRules<'e> {
@@ -154,7 +167,7 @@ impl<'e> ForRules<'e> {
             environment,
             sets: Guarded::new(Vec::new()),
             scratches: Guarded::new(Vec::new()),
-            packages: Guarded::new(None),
+            packages: Guarded::new(Vec::new()),
         }
     }
 
@@ -171,11 +184,17 @@ impl<'e> ForRules<'e> {
     fn format(&self, request: &Request) -> Result<Formatted, Reason> {
         let is_prettier = request.like == Like::InstalledPrettier;
         if is_prettier {
-            let cwd = &self.environment.cwd;
-            (*self
-                .packages
-                .lock()
-                .get_or_insert_with(|| check_packages(cwd)))?;
+            let module = request.package_module;
+            let mut packages = self.packages.lock();
+            let known = packages
+                .iter()
+                .find(|it| it.0.as_deref() == module)
+                .map(|it| it.1);
+            known.unwrap_or_else(|| {
+                let checked = check_packages(&self.environment.cwd, module);
+                packages.push((module.map(<[u8]>::to_vec), checked));
+                checked
+            })?;
         }
         let set = self.set_for(request);
         let Read {

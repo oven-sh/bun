@@ -1,5 +1,5 @@
 use bun_lint::prelude::*;
-use bun_lint::types::TypeFlags;
+use bun_lint::types::{Type, TypeFlags};
 use bun_lint::types::tsutils::{
     CompilerOption, get_call_signatures_of_type, is_intrinsic_error_type,
     is_strict_compiler_option_enabled,
@@ -45,7 +45,26 @@ fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoU
         FnKind::Expr | FnKind::Arrow => get_contextual_type(function_node),
         _ => None,
     };
+    let uses_contextual_type = function_type.is_some();
     let function_type = function_type.unwrap_or_else(|| function_node.type_at_location());
+    // tsgolint says what is returned and, where that is written in the file, what is expected.
+    let labels = |labels: &mut Details| {
+        let render = |ty: Type| if is_intrinsic_error_type(ty) { b"error".to_vec() } else { ty.to_text() };
+        let returned = render(get_constrained_type_at_location(return_node));
+        labels.first(format!("Returned expression has type `{}`.", bstr::BStr::new(&returned)));
+        let expected = match function_node.return_type() {
+            Some(ty) => Some((ty.outer_span(), ty.ty())),
+            None if uses_contextual_type => get_call_signatures_of_type(function_type).iter().find_map(|signature| {
+                let ty = signature.declaration()?.type_node().filter(|it| it.is_in_linted_file())?;
+                Some((ty.span(), signature.get_return_type()))
+            }),
+            None => None,
+        };
+        if let Some((at, ty)) = expected {
+            labels.push(at, format!("Function expects return type `{}`.", bstr::BStr::new(&render(ty))));
+        }
+        labels.push(keyword, "");
+    };
     let has_return_type = function_node.return_type().is_some();
     let call_signatures = match has_return_type || any_type != AnyType::Safe {
         true => get_call_signatures_of_type(function_type),
@@ -104,7 +123,7 @@ fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoU
             AnyType::PromiseAny => "`Promise<any>`",
             _ => "`any[]`",
         };
-        cx.report(reporting_node, message).comments_apply_at(keyword).data("type", ty);
+        cx.report(reporting_node, message).comments_apply_at(keyword).data("type", ty).labels_with(labels);
         return;
     }
 
@@ -118,7 +137,8 @@ fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoU
     cx.report(reporting_node, UNSAFE_RETURN_ASSIGNMENT)
         .comments_apply_at(keyword)
         .data("receiver", result.receiver.to_text())
-        .data("sender", result.sender.to_text());
+        .data("sender", result.sender.to_text())
+        .labels_with(labels);
 }
 
 impl Rule for NoUnsafeReturn {

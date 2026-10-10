@@ -101,6 +101,10 @@ pub fn parse_error<'a>(file: &'a File<'a>) -> Option<LintMessage> {
             },
         )
     });
+    // What oxc labels: see `Diagnostic::end`.
+    let end_of_parser = (of_parser.as_ref())
+        .filter(|_| !file.language().refuses_what_parser_refuses)
+        .map(|it| it.0.map_or(0, |diagnostic| diagnostic.end));
     let error = match (parser, of_parser) {
         (_, of_parser) if !file.language().refuses_what_parser_refuses => {
             let of_oxlint = || match file.path() {
@@ -125,6 +129,15 @@ pub fn parse_error<'a>(file: &'a File<'a>) -> Option<LintMessage> {
         (_, of_parser) => of_parser.map(|it| it.1),
     }?;
     let at = file.position(error.at);
+    let end = end_of_parser.map(|end| {
+        let rest = file.text().get(error.at as usize..).unwrap_or_default();
+        let end = file.position(match end {
+            Diagnostic::NO_LENGTH => error.at,
+            0 => error.at + token_len(rest) as u32,
+            end => end,
+        });
+        (end.line, end.column + 1)
+    });
     Some(LintMessage {
         rule_id: None,
         severity: Severity::Error,
@@ -133,7 +146,7 @@ pub fn parse_error<'a>(file: &'a File<'a>) -> Option<LintMessage> {
         line: at.line,
         // typescript-estree counts the column of an error from 0, espree from 1.
         column: at.column + u32::from(parser != Parser::TypeScript),
-        end: None,
+        end,
         is_fatal: true,
         fix: None,
         suggestions: Vec::new(),

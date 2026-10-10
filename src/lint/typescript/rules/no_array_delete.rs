@@ -82,7 +82,11 @@ impl Rule for NoArrayDelete {
         let keyword = Span::new(node.span().start, node.span().start + "delete".len() as u32);
         let report = cx
             .report(if is_oxlint { object.outer_span() } else { node.span() }, NO_ARRAY_DELETE)
-            .comments_apply_at(keyword);
+            .comments_apply_at(keyword)
+            .labels_with(|labels| {
+                labels.first("This expression evaluates to an array.");
+                labels.push(keyword, "");
+            });
         match is_oxlint {
             true => report.suggest(USE_SPLICE, |fixer| use_splice_as_tsgolint(fixer, keyword, object, argument)),
             false => report.suggest(USE_SPLICE, |fixer| use_splice(fixer, node, object, key, is_sequence)),

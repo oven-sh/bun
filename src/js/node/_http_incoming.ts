@@ -15,6 +15,7 @@ const {
   noBodySymbol,
   emitErrorNextTickIfErrorListenerNT,
   NodeHTTPBodyReadState,
+  NodeHTTPResponseAbortEvent,
   emitEOFIncomingMessage,
   onDataIncomingMessage,
   kAbortController,
@@ -350,6 +351,15 @@ IncomingMessage.prototype._read = function _read(_n) {
   }
 };
 
+// Like Node's parserOnMessageComplete: the connection outlives this request, and the last chunk of its body completes the message and brings the trailers.
+function onDataDestroyedIncomingMessage(this: any, handle, _chunk, isLast, event) {
+  if (!isLast || event !== NodeHTTPResponseAbortEvent.none) return;
+  this.complete = true;
+  // The stream destroyer cleared req.socket, and req.client is the same connection.
+  const rawTrailers = handle.takeRequestTrailers(this.client?.server?.insecureHTTPParser === true);
+  if (rawTrailers !== undefined) this._addHeaderLines(rawTrailers, rawTrailers.length);
+}
+
 // It's possible that the socket will be destroyed, and removed from
 // any messages, before ever calling this.  In that case, just skip
 // it, since something else is destroying this connection anyway.
@@ -368,7 +378,12 @@ IncomingMessage.prototype._destroy = function _destroy(err, cb) {
     // connection must outlive the request so the response can still reply
     // (node's _destroy null-socket check).
     this[kHandle] = undefined;
-    handle.onabort = handle.ondata = undefined;
+    if (!this.socket && !this.complete) {
+      handle.ondata = onDataDestroyedIncomingMessage.bind(this, handle);
+      handle.onabort = undefined;
+    } else {
+      handle.onabort = handle.ondata = undefined;
+    }
     if (!handle.finished && shouldEmitAborted && this.socket) {
       handle.abort();
     }

@@ -63,6 +63,8 @@ pub mod override_map;
 pub(crate) mod override_selector;
 #[path = "lockfile/Package.rs"]
 pub mod package;
+#[path = "lockfile/package_extensions.rs"]
+pub(crate) mod package_extensions;
 #[path = "lockfile/pruned_workspaces.rs"]
 pub(crate) mod pruned_workspaces;
 #[path = "lockfile/reachable.rs"]

@@ -774,6 +774,22 @@ minimumReleaseAge = 259200
 minimumReleaseAgeExcludes = ["@types/bun", "typescript"]
 ```
 
+### `install.packageExtensions`
+
+Add `dependencies`, `optionalDependencies` or `peerDependencies` (with `peerDependenciesMeta`) to third-party packages that forgot to declare them. One table per package, keyed by the package name optionally followed by `@` and a semver range. Merged with the `packageExtensions` field of the root `package.json`. Default: none.
+
+```toml title="bunfig.toml" icon="settings"
+[install.packageExtensions."react-redux@7"]
+peerDependencies = { react = "*" }
+
+[install.packageExtensions.legacy-plugin]
+dependencies = { lodash = "^4.17.21" }
+peerDependencies = { webpack = "*" }
+peerDependenciesMeta = { webpack = { optional = true } }
+```
+
+See [Package extensions](/pm/package-extensions).
+
 ## `bun run`
 
 The `[run]` section configures the `bun run` command. These settings also apply to the `bun` command when running a file, script, or executable.

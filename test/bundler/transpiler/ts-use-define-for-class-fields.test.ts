@@ -97,6 +97,22 @@ describe("tsconfig compilerOptions.useDefineForClassFields", () => {
     expect(exitCode).toBe(0);
   });
 
+  // `new.target` is the class in the constructor and undefined in a field initializer.
+  test.concurrent("false: new.target in a field initializer stays undefined", async () => {
+    using dir = tempDir("udfcf-new-target", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { useDefineForClassFields: false } }),
+      "index.ts": `
+        class C { x = typeof new.target; y = () => typeof new.target; constructor(public z = typeof new.target) {} }
+        const c = new C();
+        process.stdout.write(JSON.stringify({ x: c.x, y: c.y(), z: c.z }));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir));
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ x: "undefined", y: "undefined", z: "function" });
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("false: computed literal keys use [[Set]] semantics", async () => {
     using dir = tempDir("udfcf-computed", {
       "tsconfig.json": JSON.stringify({ compilerOptions: { useDefineForClassFields: false } }),

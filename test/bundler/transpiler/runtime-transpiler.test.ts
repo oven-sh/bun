@@ -210,6 +210,86 @@ test("math.pow", () => {
   expect(20.4 ** -0.5 + "").toEqual("0.22140372138502384");
 });
 
+// A class field initializer and a class static block run as a method call, so
+// `new.target` is undefined in them. JavaScriptCore throws
+// "ReferenceError: Can't find private variable: PrivateSymbol.newTargetLocal"
+// on entry to an arrow function that contains such a class and has no function
+// around it.
+test("new.target in a class field initializer or a class static block is undefined", async () => {
+  using dir = tempDir("transpiler-new-target-class-field", {
+    "index.mjs": `
+      const results = {};
+      async function t(name, f) {
+        try {
+          results[name] = await f();
+        } catch (e) {
+          results[name] = "throws " + e;
+        }
+      }
+
+      // The class is inside an arrow function with no function around it.
+      await t("instance field", () => { class A { x = typeof new.target; } return new A().x; });
+      await t("static field", () => { class A { static x = typeof new.target; } return A.x; });
+      await t("static block", () => { let r; class A { static { r = typeof new.target; } } return r; });
+      await t("private field", () => { class A { #x = typeof new.target; get x() { return this.#x; } } return new A().x; });
+      await t("class expression", () => new (class { x = typeof new.target; })().x);
+      await t("derived class", () => { class B {} class A extends B { x = typeof new.target; } return new A().x; });
+      await t("arrow in arrow", () => (() => { class A { x = typeof new.target; } return new A().x; })());
+      await t("arrow in field", () => { class A { x = (() => typeof new.target)(); } return new A().x; });
+      await t("key of a class in a field", () => { class A { x = class { static [typeof new.target] = 1; }; } return Object.keys(new A().x)[0]; });
+      await t("async arrow", async () => { class A { x = typeof new.target; } return new A().x; });
+
+      // A static block in an arrow function throws with a function around the arrow function too.
+      await t("static block, arrow in function", function () { return (() => { let r; class A { static { r = typeof new.target; } } return r; })(); });
+
+      // The transpiler moves the initializer of an auto-accessor into the constructor.
+      await t("auto-accessor", function () { class A { accessor x = typeof new.target; } return new A().x; });
+
+      // These see the new.target of a function, and keep it.
+      await t("function in field", () => { class A { f = function () { return new.target; }; } const f = new A().f; return new f() === f; });
+      await t("function in static block", () => { let f; class A { static { f = function () { return new.target; }; } } return new f() === f; });
+      await t("constructor", () => { class A { constructor() { this.x = new.target; } } return new A().x === A; });
+      await t("field key", () => { let k; function F() { class A { [new.target.name] = 1; } k = Object.keys(new A())[0]; } new F(); return k; });
+      await t("extends clause", () => { let ok; function F() { class A extends new.target.Base {} ok = new A() instanceof F.Base; } F.Base = class {}; new F(); return ok; });
+
+      console.log(JSON.stringify(results));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Debug builds print an ASAN warning here.
+  expect(stderr.split("\n").filter(line => line && !line.startsWith("WARNING: ASAN"))).toEqual([]);
+  expect(JSON.parse(stdout)).toEqual({
+    "instance field": "undefined",
+    "static field": "undefined",
+    "static block": "undefined",
+    "private field": "undefined",
+    "class expression": "undefined",
+    "derived class": "undefined",
+    "arrow in arrow": "undefined",
+    "arrow in field": "undefined",
+    "key of a class in a field": "undefined",
+    "async arrow": "undefined",
+    "static block, arrow in function": "undefined",
+    "auto-accessor": "undefined",
+    "function in field": true,
+    "function in static block": true,
+    "constructor": true,
+    "field key": "F",
+    "extends clause": true,
+  });
+  expect(exitCode).toBe(0);
+});
+
 describe("unterminated string literals in large files", () => {
   test("reports an unterminated string literal at the end of a large JavaScript file", async () => {
     using dir = tempDir("transpiler-long-unterminated-js", {

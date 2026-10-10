@@ -1067,7 +1067,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     self.fn_or_arrow_data_visit = FnOrArrowDataVisit::default();
                     self.fn_only_data_visit = FnOnlyDataVisit {
                         is_this_nested: true,
-                        ..Default::default()
+                        is_new_target_undefined: true,
                     };
                     // PropertyKind::ClassStaticBlock guarantees `Some`; arena-owned for 'a.
                     let csb = property.class_static_block_mut().unwrap();
@@ -1198,6 +1198,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 if let Some(val) = property.initializer {
                     let class_body = self.current_scope;
                     self.field_init_class_bodies.push(class_body);
+                    let old_is_new_target_undefined =
+                        self.fn_only_data_visit.is_new_target_undefined;
+                    self.fn_only_data_visit.is_new_target_undefined = true;
                     if let Some(name) = name_to_keep {
                         let was_anon = val.is_anonymous_named();
                         let prev_dcn2 = self.decorator_class_name;
@@ -1216,6 +1219,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     } else {
                         self.visit_expr(property.initializer.as_mut().unwrap());
                     }
+                    self.fn_only_data_visit.is_new_target_undefined = old_is_new_target_undefined;
                     self.field_init_class_bodies.pop();
                 }
 
@@ -1905,8 +1909,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             // Ignore declarations if the scope is shadowed by a direct "eval" call.
             // The eval'd code may indirectly reference this symbol and the actual
             // use count may be greater than 1.
+            //
+            // Ignore declarations inside a switch case body: every case in a switch
+            // shares one lexical scope but we visit one case at a time, so
+            // `use_count_estimate` for a decl in case 0 has not yet seen references
+            // from later cases and may spuriously read as 1 — inlining then would
+            // delete the decl out from under those later references (issue #30932).
+            // `is_inside_switch` resets at function boundaries (it lives on
+            // `FnOrArrowDataVisit`), so nested functions inside a case body still
+            // get the optimization. Unlike `StmtsKind::SwitchStmt`, using this
+            // flag keeps the using-lowering path in this function independent
+            // from the case-body guard here.
             // SAFETY: current_scope is a valid arena ptr for the parse.
-            if p.current_scope != p.module_scope && !p.current_scope().contains_direct_eval {
+            if !p.fn_or_arrow_data_visit.is_inside_switch
+                && p.current_scope != p.module_scope
+                && !p.current_scope().contains_direct_eval
+            {
                 // Keep inlining variables until a failure or until there are none left.
                 // That handles cases like this:
                 //

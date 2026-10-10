@@ -89,9 +89,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     // Private associated fns on this impl so they can see the const-generic
     // feature params.
 
-    fn e_new_target(_: &mut Self, _e: &mut Expr, _: ExprIn) {
+    fn e_new_target(p: &mut Self, e: &mut Expr, _: ExprIn) {
         // The "Cannot use \"new.target\" here" range error is intentionally
         // not emitted: it is not necessary and it was causing breakages.
+
+        // JavaScriptCore can throw for it here: https://github.com/oven-sh/WebKit/pull/647
+        if p.fn_only_data_visit.is_new_target_undefined {
+            *e = p.new_expr(E::Undefined {}, e.loc);
+        }
     }
 
     fn e_string(_: &mut Self, _e: &mut Expr, _: ExprIn) {
@@ -252,8 +257,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             p.record_assignment(result.r#ref);
         }
 
-        let mut original_name: Option<&[u8]> = None;
-
         // Substitute user-specified defines for unbound symbols
         if p.symbols[e_.ref_.inner_index() as usize].kind == js_ast::symbol::Kind::Unbound
             && !result.is_inside_with_scope
@@ -277,8 +280,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         *e = newvalue;
                         return;
                     }
-
-                    original_name = def.original_name();
                 }
 
                 // Copy the side effect flags over in case this expression is unused
@@ -323,7 +324,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         *e = p.handle_identifier(
             expr.loc,
             e_,
-            original_name,
+            None,
             IdentifierOpts::default()
                 .with_assign_target(in_.assign_target)
                 .with_is_delete_target(is_delete_target)
@@ -1043,8 +1044,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let target = e_.target.unwrap_inlined();
         let index = e_.index.unwrap_inlined();
 
-        // `[x][0] = v` writes into the temporary, not `x`.
-        if p.options.features.minify_syntax && in_.assign_target == js_ast::AssignTarget::None {
+        // `[x][0] = v` and `delete [x][0]` act on the temporary, not on `x`.
+        if p.options.features.minify_syntax
+            && !is_delete_target
+            && in_.assign_target == js_ast::AssignTarget::None
+        {
             if let Some(number) = index.data.as_e_number() {
                 if number.value() >= 0.0
                     && number.value() < (usize::MAX as f64)
@@ -1071,7 +1075,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                 return;
                             }
                         }
-                    } else if let Some(array) = target.data.as_e_array() {
+                    } else if !is_call_target && let Some(array) = target.data.as_e_array() {
+                        // `[x][0]()` calls `x` with `this` bound to the array
+                        // literal itself (GetThisValue of the Reference), which
+                        // neither `x()` nor `(0, x)()` reproduces, so the fold
+                        // must not fire for call targets.
                         let int: usize = number.value() as usize;
                         // [x][0] -> x
                         // ['a', 'b', 'c'][1] -> 'b'
@@ -1091,13 +1099,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                 return;
                             }
                             if inlined.can_be_inlined_from_property_access() {
-                                // "[obj.m][0]()" => "(0, obj.m)()"
-                                *e = if is_call_target && inlined.has_value_for_this_in_call() {
-                                    p.new_expr(E::Number::new(0.0), expr.loc)
-                                        .join_with_comma(inlined)
-                                } else {
-                                    inlined
-                                };
+                                *e = inlined;
                                 return;
                             }
                         }

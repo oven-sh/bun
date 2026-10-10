@@ -81,6 +81,17 @@ describe("assigning to an imported binding", () => {
       `import * as ns from "./m.mjs"; const k = "x"; ns[k] = 5;\n`,
       'Cannot assign to property on import "ns"',
     ],
+    ["delete namespace property", `import * as ns from "./m.mjs"; delete ns.x;\n`, 'Cannot assign to import "x"'],
+    [
+      "delete string-index namespace property",
+      `import * as ns from "./m.mjs"; delete ns["x"];\n`,
+      'Cannot assign to import "x"',
+    ],
+    [
+      "delete computed namespace property",
+      `import * as ns from "./m.mjs"; const k = "x"; delete ns[k];\n`,
+      'Cannot assign to property on import "ns"',
+    ],
   ])("bun build still rejects it: %s", async (_name, entry, diagnostic) => {
     using dir = tempDir("assign-to-import-build", {
       "m.mjs": mod,

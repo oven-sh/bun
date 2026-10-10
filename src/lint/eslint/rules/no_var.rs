@@ -245,9 +245,17 @@ fn oxlint_is_written_to(pat: Pat) -> bool {
     false
 }
 
+/// `statement` with `keyword` in place of `var`. All of the declaration is replaced, so that no other fix changes it in the
+/// same pass: `one-var` would join a `var` that has to stay one to what becomes `let` (eslint/eslint#21389).
+fn with_keyword<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, var: Span, keyword: &[u8]) -> Fix {
+    let (file, span) = (fixer.file(), statement.span_without_export());
+    let before = file.slice(Span::before(span.start, var));
+    let after = file.slice(Span::after(var, span.end));
+    fixer.replace(span, [before, keyword, after].concat())
+}
+
 /// The fix of oxlint 1.87. There is none if a variable is referred to outside of what the declaration is in. It is
-/// `const` if nothing is assigned later and all have a value. All of the declaration is replaced, so that no other fix
-/// changes it in the same pass.
+/// `const` if nothing is assigned later and all have a value.
 fn fix_as_oxlint<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, declarations: List<'a, VarDecl<'a>>) -> Option<Fix> {
     let var = var_keyword(statement)?;
     // A variable does not leave the function or the file.
@@ -270,11 +278,8 @@ fn fix_as_oxlint<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, declarations: List<'
     }
     let is_let = statement.flags().contains(Flags::AMBIENT)
         || declarations.iter().any(|it| it.init().is_none() || oxlint_is_written_to(it.pat()));
-    let (file, span) = (fixer.file(), statement.span_without_export());
-    let before = file.slice(Span::before(span.start, var));
-    let after = file.slice(Span::after(var, span.end));
     let keyword: &[u8] = if is_let { b"let" } else { b"const" };
-    Some(fixer.replace(span, [before, keyword, after].concat()))
+    Some(with_keyword(fixer, statement, var, keyword))
 }
 
 impl Rule for NoVar {
@@ -318,7 +323,8 @@ impl Rule for NoVar {
                 return fix_as_oxlint(fixer, statement, declarations);
             }
             let var = var_keyword(statement)?;
-            cx.state.can_fix(statement, declarations).then(|| fixer.replace(var, "let"))
+            (cx.state.can_fix(statement, declarations))
+                .then(|| with_keyword(fixer, statement, var, b"let"))
         });
     }
 }

@@ -67,11 +67,11 @@ import { Database } from "bun:sqlite";
 const db = new Database("mydb.sqlite", { readonly: true });
 ```
 
-To create the database if the file doesn't exist:
+Bun creates the database file if it doesn't exist. To throw an error instead, set `create: false`:
 
 ```ts db.ts icon="/icons/typescript.svg" highlight={2}
 import { Database } from "bun:sqlite";
-const db = new Database("mydb.sqlite", { create: true });
+const db = new Database("mydb.sqlite", { create: false });
 ```
 
 ### Strict mode

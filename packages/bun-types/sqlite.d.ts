@@ -39,6 +39,10 @@ declare module "bun:sqlite" {
      * Allow creating a new database
      *
      * Equivalent to {@link constants.SQLITE_OPEN_CREATE}
+     *
+     * When `false`, Bun never creates the file. Opening a file that does not
+     * exist throws an error with the code `SQLITE_CANTOPEN`. The database still
+     * opens read-write, unless `readonly` is `true` or `readwrite` is `false`.
      */
     create?: boolean;
 
@@ -46,6 +50,12 @@ declare module "bun:sqlite" {
      * Open the database as read-write
      *
      * Equivalent to {@link constants.SQLITE_OPEN_READWRITE}
+     *
+     * `readwrite: true` without `create: true` does not create the file.
+     *
+     * When `false` and `create` is not `true`, the database opens read-only.
+     *
+     * `Bun.SQL` with the SQLite adapter does not read this option.
      */
     readwrite?: boolean;
 
@@ -119,7 +129,7 @@ declare module "bun:sqlite" {
      * Open or create a SQLite3 database
      *
      * @param filename The filename of the database to open. Pass an empty string (`""`) or `":memory:"` or undefined for an in-memory database.
-     * @param options defaults to `{readwrite: true, create: true}`. If a number, then it's treated as `SQLITE_OPEN_*` constant flags.
+     * @param options defaults to `{readwrite: true, create: true}`. An object that sets none of `readonly`, `create` and `readwrite` uses the same default. If a number, then it's treated as `SQLITE_OPEN_*` constant flags.
      */
     constructor(filename?: string, options?: number | DatabaseOptions);
 
@@ -127,7 +137,7 @@ declare module "bun:sqlite" {
      * Open or create a SQLite3 database
      *
      * @param filename The filename of the database to open. Pass an empty string (`""`) or `":memory:"` or undefined for an in-memory database.
-     * @param options defaults to `{readwrite: true, create: true}`. If a number, then it's treated as `SQLITE_OPEN_*` constant flags.
+     * @param options defaults to `{readwrite: true, create: true}`. An object that sets none of `readonly`, `create` and `readwrite` uses the same default. If a number, then it's treated as `SQLITE_OPEN_*` constant flags.
      *
      * This is an alias of `new Database()`
      *

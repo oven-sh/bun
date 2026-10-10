@@ -239,8 +239,9 @@ pub fn ignore_rules(group: &[&str], ignores_case: bool, syntax: IgnoreSyntax) ->
 enum Matcher {
     /// An element of `paths`.
     Path(Box<[u8]>),
-    /// `regex` of an element of `patterns`.
-    Regex(Box<Regex>),
+    /// `regex` of an element of `patterns`. And as oxlint has it, for which `caseSensitive` is about a `group` alone, if that is
+    /// another.
+    Regex(Box<Regex>, Option<Box<Regex>>),
     /// `group` of an element of `patterns`.
     Group(Box<IgnoreRules>, Globs),
 }
@@ -307,7 +308,7 @@ impl Restriction {
     fn applies_to(&self, source: &[u8]) -> bool {
         match &self.matcher {
             Matcher::Path(name) => **name == *source,
-            Matcher::Regex(regex) => regex.test(source),
+            Matcher::Regex(regex, _) => regex.test(source),
             Matcher::Group(ignore, _) => ignore.ignores(source),
         }
     }
@@ -677,7 +678,9 @@ impl Restrictions {
             let is_case_sensitive = object.bool_or("caseSensitive", false);
             let matcher = match object.str("regex") {
                 Some(regex) => {
-                    Regex::new(regex, if is_case_sensitive { "u" } else { "iu" }).ok().map(|it| Matcher::Regex(Box::new(it)))
+                    let with = |flags| Regex::new(regex, flags).ok().map(Box::new);
+                    let as_written = if is_case_sensitive { None } else { with("u") };
+                    with(if is_case_sensitive { "u" } else { "iu" }).map(|it| Matcher::Regex(it, as_written))
                 }
                 None => object.has("group").then(|| {
                     let group = object.strings("group");
@@ -721,15 +724,16 @@ impl Restrictions {
             return;
         }
         // oxlint's `report_side_effects`. It says nothing about `export {} from "m"`. A restriction of some names does
-        // not hold, but for a `group`, and of these only the last.
+        // not hold, but for a `group`, and of these only the last. That it is `import type {} from "m"` is not looked at.
         if statement.tag() != StmtTag::Import || !cx.state.insert(source) {
             return;
         }
+        let imported = Imported { is_type_only: false, ..imported };
         let last_group = applying.iter().rposition(|it| matches!(it.matcher, Matcher::Group(..)));
         for (i, restriction) in applying.iter().enumerate() {
             let holds = match restriction.matcher {
                 Matcher::Path(_) => restriction.import_names.is_none(),
-                Matcher::Regex(_) => restriction.import_names.is_none() && restriction.import_name_pattern.is_none(),
+                Matcher::Regex(..) => restriction.import_names.is_none() && restriction.import_name_pattern.is_none(),
                 Matcher::Group(..) => Some(i) == last_group,
             };
             if holds {
@@ -751,6 +755,7 @@ impl Restrictions {
                         break;
                     }
                 },
+                Matcher::Regex(_, Some(as_written)) if is_oxlint => as_written.test(source),
                 _ => restriction.applies_to(source),
             };
             if applies {

@@ -13,7 +13,7 @@ enum class TLSProtocolBound : bool {
 };
 
 // `TLSOptions.minVersion` / `maxVersion`: node's "TLSv1" .. "TLSv1.3", or the `TLS1_*_VERSION`
-// code node:tls passes. null and 0 mean unset. Same extern type as `IDLStrictInteger<int32_t>`.
+// code node:tls passes. 0 means unset. Same extern type as `IDLStrictInteger<int32_t>`.
 template<TLSProtocolBound Bound>
 struct IDLTLSProtocolVersion : WebCore::IDLType<std::int32_t> {};
 
@@ -32,8 +32,6 @@ inline std::optional<std::int32_t> tlsProtocolVersionFromJS(
         }
         return std::nullopt;
     }
-    if (value.isUndefinedOrNull())
-        return 0;
     if (!value.isString())
         return std::nullopt;
     auto name = JSC::asString(value)->view(&globalObject);

@@ -127,7 +127,15 @@ it("Bun.listen and Bun.connect take tls.minVersion and tls.maxVersion by name an
     connect: code(() =>
       Bun.connect({ hostname: "127.0.0.1", port: listener.port, tls: { maxVersion: 13 } as any, socket: handlers }),
     ),
-  }).toEqual({ listen: "ERR_TLS_INVALID_PROTOCOL_VERSION", connect: "ERR_TLS_INVALID_PROTOCOL_VERSION" });
+    // Not unset: a `tls` object with nothing set would connect without TLS.
+    connectNull: code(() =>
+      Bun.connect({ hostname: "127.0.0.1", port: listener.port, tls: { minVersion: null } as any, socket: handlers }),
+    ),
+  }).toEqual({
+    listen: "ERR_TLS_INVALID_PROTOCOL_VERSION",
+    connect: "ERR_TLS_INVALID_PROTOCOL_VERSION",
+    connectNull: "ERR_TLS_INVALID_PROTOCOL_VERSION",
+  });
 
   // The listener's cap, seen by a client without a cap.
   const viaListener = Promise.withResolvers<string | null>();
@@ -141,7 +149,7 @@ it("Bun.listen and Bun.connect take tls.minVersion and tls.maxVersion by name an
   // A bound as the only key is a TLS config with that bound: against the capped listener the
   // handshake fails on the version. With `tls: true` the handshake reaches the certificate.
   const handshakeFailure = (tlsOption: true | Bun.TLSOptions) => {
-    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const { promise, resolve, reject } = Promise.withResolvers<string | undefined>();
     Bun.connect({
       hostname: "127.0.0.1",
       port: listener.port,
@@ -149,7 +157,7 @@ it("Bun.listen and Bun.connect take tls.minVersion and tls.maxVersion by name an
       socket: {
         data() {},
         handshake(socket, _success, error: NodeJS.ErrnoException | null) {
-          resolve(!error ? "none" : error.code === "DEPTH_ZERO_SELF_SIGNED_CERT" ? "certificate" : "version");
+          resolve(error?.code);
           socket.end();
         },
         connectError(_socket, error) {
@@ -162,7 +170,7 @@ it("Bun.listen and Bun.connect take tls.minVersion and tls.maxVersion by name an
   expect({
     boundOnly: await handshakeFailure({ minVersion: "TLSv1.3" }),
     control: await handshakeFailure(true),
-  }).toEqual({ boundOnly: "version", control: "certificate" });
+  }).toEqual({ boundOnly: "EPROTO", control: "DEPTH_ZERO_SELF_SIGNED_CERT" });
 
   // A client capped at TLS 1.2, seen by a server without a cap.
   const server = tlsCreateServer({ key: tls.key, cert: tls.cert }, socket => {

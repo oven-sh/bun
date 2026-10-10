@@ -408,7 +408,6 @@ it("tls.minVersion and tls.maxVersion take node's names or a protocol code, and 
     "TLSv1.2",
     "TLSv1.3",
     concat("TLSv1", ".3"),
-    null,
     undefined,
     0,
     0x0301,
@@ -417,6 +416,8 @@ it("tls.minVersion and tls.maxVersion take node's names or a protocol code, and 
     0x0304,
   ];
   const rejected = [
+    // If null were unset, it alone would make the `tls` of Bun.connect, Bun.listen and Bun.serve empty: no TLS.
+    null,
     "TLSv9",
     "tlsv1.3",
     "",
@@ -533,8 +534,7 @@ it("fetch applies tls.minVersion and tls.maxVersion to the handshake", async () 
     } catch (e) {
       handshakeError = e;
     }
-    expect(handshakeError).toBeInstanceOf(Error);
-    expect(handshakeError.code).not.toBe("ERR_TLS_INVALID_PROTOCOL_VERSION");
+    expect(handshakeError?.code).toBe("EPROTO");
     expect(secureConnections).toBe(7);
 
     // A bound as the only key is a TLS config with that bound: the handshake fails on
@@ -545,13 +545,13 @@ it("fetch applies tls.minVersion and tls.maxVersion to the handshake", async () 
         await fetch(`https://127.0.0.1:${port}/`, { keepalive: false, tls: tlsOptions as any });
         return "no error";
       } catch (e: any) {
-        return e.code === "DEPTH_ZERO_SELF_SIGNED_CERT" ? "certificate" : "handshake";
+        return e.code;
       }
     };
     expect({
       boundOnly: await failure({ minVersion: "TLSv1.3" }),
       empty: await failure({}),
-    }).toEqual({ boundOnly: "handshake", empty: "certificate" });
+    }).toEqual({ boundOnly: "EPROTO", empty: "DEPTH_ZERO_SELF_SIGNED_CERT" });
 
     // A value that is not a version rejects before a connection is opened.
     const connectionsBefore = secureConnections;

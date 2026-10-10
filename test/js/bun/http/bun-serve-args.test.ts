@@ -821,6 +821,47 @@ describe("Bun.serve tls.minVersion and tls.maxVersion", () => {
     });
   });
 
+  // The TLS version is negotiated with the range of the first entry, before SNI selects an entry.
+  test("a later SNI entry cannot set a bound that differs from the first entry", async () => {
+    const start = (...entries: Bun.TLSOptions[]) => {
+      try {
+        serve({ port: 0, tls: entries, fetch }).stop(true);
+        return "served";
+      } catch (e: any) {
+        return e.message;
+      }
+    };
+    const a = { ...tls, serverName: "a.test" };
+    const b = { ...tls, serverName: "b.test" };
+    expect({
+      min: start(a, { ...b, minVersion: "TLSv1.3" }),
+      // The comparison is on what the entries set, so the default spelled out differs from no bound.
+      minDefault: start(a, { ...b, minVersion: "TLSv1.2" }),
+      max: start({ ...a, maxVersion: "TLSv1.3" }, { ...b, maxVersion: "TLSv1.2" }),
+      same: start({ ...a, minVersion: "TLSv1.3" }, { ...b, minVersion: "TLSv1.3" }),
+      unset: start({ ...a, maxVersion: "TLSv1.2" }, b),
+    }).toEqual({
+      min: "SNI tls object must have the same 'minVersion' as the first tls object",
+      minDefault: "SNI tls object must have the same 'minVersion' as the first tls object",
+      max: "SNI tls object must have the same 'maxVersion' as the first tls object",
+      same: "served",
+      unset: "served",
+    });
+
+    // An entry with no bound of its own uses the range of the first entry.
+    using server = serve({ port: 0, tls: [{ ...a, maxVersion: "TLSv1.2" }, b], fetch });
+    const { promise, resolve, reject } = Promise.withResolvers<string | null>();
+    const socket = nodeTls.connect(
+      { host: "127.0.0.1", port: server.port, servername: "b.test", rejectUnauthorized: false },
+      () => {
+        resolve(socket.getProtocol());
+        socket.end();
+      },
+    );
+    socket.on("error", reject);
+    expect(await promise).toBe("TLSv1.2");
+  });
+
   // QUIC has no TLS version below 1.3, so the cap could bind the TCP listener only.
   test("http3 with a maxVersion below TLSv1.3 throws", () => {
     expect(() => serve({ port: 0, http3: true, tls: { ...tls, maxVersion: "TLSv1.2" }, fetch })).toThrow(

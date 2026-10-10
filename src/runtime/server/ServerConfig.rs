@@ -1250,6 +1250,29 @@ impl ServerConfig {
                                     "SNI tls object must have a serverName",
                                 )));
                             }
+                            // The TLS version is negotiated with the range of the first
+                            // entry, before SNI selects this one. A bound of its own would
+                            // not be applied.
+                            if let Some(first) = &args.ssl_config {
+                                for (key, bound, first_bound) in [
+                                    (
+                                        "minVersion",
+                                        ssl_config.ssl_min_version,
+                                        first.ssl_min_version,
+                                    ),
+                                    (
+                                        "maxVersion",
+                                        ssl_config.ssl_max_version,
+                                        first.ssl_max_version,
+                                    ),
+                                ] {
+                                    if bound != 0 && bound != first_bound {
+                                        return Err(global.throw_invalid_arguments(format_args!(
+                                            "SNI tls object must have the same '{key}' as the first tls object"
+                                        )));
+                                    }
+                                }
+                            }
                             if args.sni.is_none() {
                                 args.sni = Some(Vec::with_capacity((value_iter.len - 1) as usize));
                             }

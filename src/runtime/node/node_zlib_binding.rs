@@ -731,7 +731,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // reset() destroys and re-creates the brotli/zstd encoder state (or
+        // reset() re-creates the brotli encoder state (or resets the zstd session, or
         // mutates the z_stream). Doing so while an async write is running on
         // the threadpool would be a use-after-free / data race, so node throws
         // a plain Error here rather than touching live state.

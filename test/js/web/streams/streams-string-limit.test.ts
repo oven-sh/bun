@@ -201,3 +201,19 @@ test.skipIf(!enoughMemory)("TextDecoderStream rejects a chunk too long to join w
   `);
   expect(result).toEqual(threw);
 });
+
+// The TypeError for an unknown underlying source `type` quotes the value. A value near 2^31-1
+// characters makes the message too long for a string, which used to abort in WTF::makeString.
+// "t".repeat(n) is a direct fill in JSC. Buffer.alloc(n, "t").toString() doubles the peak memory.
+test.skipIf(!enoughMemory)("an underlying source type too long to quote in the error message throws", async () => {
+  const result = await run(`
+    const type = "t".repeat(2 ** 31 - 40);
+    try {
+      new ReadableStream({ type });
+      console.log("constructed");
+    } catch (e) {
+      console.log("threw", e.name, e.message);
+    }
+  `);
+  expect(result).toEqual(threw);
+});

@@ -19,9 +19,6 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::collections::hash_map::Entry;
 
-/// Patterns nest no deeper than the parser lets them. This bounds the recursion all the same.
-const MAX_DEPTH: u32 = 256;
-
 /// Whether the string that is written as `written` has half of a surrogate pair. It can only be written as an escape.
 fn has_lone_surrogate(written: &[u8]) -> bool {
     let (mut at, mut is_after_high) = (0, false);
@@ -303,7 +300,7 @@ impl<'a> Checks<'a, '_> {
 
     /// `toAssignable`
     fn to_assignable(&mut self, target: Expr<'a>, depth: u32) {
-        if depth > MAX_DEPTH {
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
             return;
         }
         let is_simple = matches!(

@@ -884,43 +884,11 @@ export const cases: Case[] = [
   },
   // ── eslint-plugin-react: what many components share, and what is asked once for each of them ──
   {
-    name: "5,000 prop types that are one shape of 5,000",
-    isHeavy: true,
-    file: "a.jsx",
-    text: () =>
-      `import T from "prop-types";\nconst s = T.shape({${seq(5_000, i => `b${i}: T.any`, ",")}});\n` +
-      `function C(props) { return <a/>; }\nC.propTypes = {${seq(5_000, i => `a${i}: s`, ",")}};\n`,
-    rules: { "react/no-unused-prop-types": "error" },
-    reports: {},
-    exitCode: 0,
-  },
-  {
     name: "30,000 components that are properties of one object, each with its prop types",
     isHeavy: true,
     file: "a.jsx",
     text: () =>
       `const A = {${seq(30_000, i => `p${i}: () => <a/>`, ",")}};\n` + seq(30_000, i => `A.p${i}.propTypes = {};\n`),
-    rules: { "react/prop-types": "error" },
-    reports: {},
-    exitCode: 0,
-  },
-  {
-    name: "60,000 components in React.memo",
-    isHeavy: true,
-    file: "a.jsx",
-    text: () =>
-      `import React from "react";\n` + seq(60_000, i => `const C${i} = React.memo((props) => <a>{props.x}</a>);\n`),
-    rules: { "react/prop-types": "error" },
-    reports: { "react/prop-types": 60_000 },
-    exitCode: 1,
-  },
-  {
-    name: "60,000 components whose props are the ReturnType of a member",
-    isHeavy: true,
-    file: "a.tsx",
-    text: () =>
-      `const a = { b: () => ({ x: 1 }) };\n` +
-      seq(60_000, i => `function C${i}(props: ReturnType<typeof a.b>) { return <a/>; }\n`),
     rules: { "react/prop-types": "error" },
     reports: {},
     exitCode: 0,

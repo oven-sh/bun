@@ -165,9 +165,6 @@ enum Jump<'a> {
     Continue(Option<Name<'a>>),
 }
 
-/// Statements that are nested more deeply are not looked into.
-const MAX_DEPTH: u32 = 256;
-
 /// The way through a function that oxlint takes in its control flow graph: it does not go into a `catch` or a
 /// `finally`, nor past a `try` with a `finally`, and it goes on after every `while` and `for`.
 #[derive(Default)]
@@ -176,7 +173,6 @@ struct Walk<'a> {
     found: bool,
     /// The `break` and `continue` that it got to and whose statement it is still in.
     jumps: SmallVec<[Jump<'a>; 4]>,
-    depth: u32,
 }
 
 fn contains_return_statement(func: Func) -> bool {
@@ -212,14 +208,13 @@ impl<'a> Walk<'a> {
             return false;
         }
         // It is taken to return something.
-        if self.depth == MAX_DEPTH {
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
             self.found = true;
             return false;
         }
-        self.depth += 1;
         let from = self.jumps.len();
         let is_of_loop = |jump: Jump| matches!(jump, Jump::Break(None) | Jump::Continue(None));
-        let completes = match statement.kind() {
+        match statement.kind() {
             StmtKind::Return(Some(_)) => {
                 self.found = true;
                 false
@@ -275,8 +270,6 @@ impl<'a> Walk<'a> {
             }
             StmtKind::Try { block, finalizer, .. } => self.statement(block) & finalizer.is_none(),
             _ => true,
-        };
-        self.depth -= 1;
-        completes
+        }
     }
 }

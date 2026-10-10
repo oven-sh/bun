@@ -5,7 +5,7 @@
 // Wire bytes come from ./wire-frames.ts.
 import { SQL } from "bun";
 import { afterEach, describe, expect, jest, test } from "bun:test";
-import { bunEnv, bunExe, describeWithContainer, isDockerEnabled } from "harness";
+import { bunEnv, bunExe, describeWithContainer, isCI, isDockerEnabled } from "harness";
 import { once } from "node:events";
 import type net from "node:net";
 import { connect } from "node:net";
@@ -1292,7 +1292,7 @@ const servers = [
   {
     name: "PostgreSQL",
     image: "postgres_plain",
-    enabled: true,
+    provided: true,
     options: (host: string, port: number): Bun.SQL.Options => ({
       url: `postgres://bun_sql_test@${host}:${port}/bun_sql_test`,
     }),
@@ -1303,8 +1303,9 @@ const servers = [
     name: "MySQL",
     image: "mysql_plain",
     // These cases log in as root with an empty password over TCP. The container allows that.
-    // A local server that BUN_TEST_SERVICE_mysql_plain points at usually does not.
-    enabled: isDockerEnabled(),
+    // A local server that BUN_TEST_SERVICE_mysql_plain points at usually does not, so only
+    // the CI container counts.
+    provided: !!process.env.BUN_DOCKER_COORDINATOR || (isCI && isDockerEnabled()),
     options: (host: string, port: number): Bun.SQL.Options => ({
       url: `mysql://root:@${host}:${port}/bun_sql_test`,
       allowPublicKeyRetrieval: true,
@@ -1314,8 +1315,11 @@ const servers = [
   },
 ];
 
-for (const { name, image, enabled, options, sessionId, endSession } of servers) {
-  if (!enabled) continue;
+for (const { name, image, provided, options, sessionId, endSession } of servers) {
+  if (!provided) {
+    describe.todo(`${name}: queued callers`);
+    continue;
+  }
   describeWithContainer(`${name}: queued callers`, { image }, container => {
     const connect = (max: number) => new SQL({ ...options(container.host, container.port), max });
     const idOf = async (client: { unsafe: SQL["unsafe"] }) => Number((await client.unsafe(sessionId))[0].id);

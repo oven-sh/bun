@@ -613,9 +613,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
   flags: number = 0;
   /// queryCount is used to indicate the number of queries using the connection, if a connection is reserved or if its a transaction queryCount will be 1 independently of the number of queries
   queryCount: number = 0;
-  /// when the connect cycle started; 0 before the first dial and once
-  /// connected. Connect failures (server not yet accepting connections) are
-  /// retried until connectionTimeout elapses from this point.
+  /// when the connect cycle started (0 before the first dial and once connected); connect failures are retried until connectionTimeout elapses from this point
   connectStartedAt: number = 0;
   connectAttempts: number = 0;
   retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -789,8 +787,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     return this.connectStartedAt !== 0 && Date.now() - this.connectStartedAt < connectionTimeout;
   }
 
-  /// Returns true if a dial that had not started was cancelled; in that case
-  /// nothing is in flight and no onClose/onConnected callback will fire.
+  /// Returns true if a dial that had not started was cancelled: nothing is in flight, so no onClose/onConnected callback will fire.
   cancelRetry(): boolean {
     if (this.retryTimer !== null) {
       clearTimeout(this.retryTimer);
@@ -1262,8 +1259,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     for (let i = 0; i < reservedQueue.length; i++) {
       reservedQueue[i](storedError, connection);
     }
-    // draining the queues may have been the last pending work; a
-    // graceful close() is waiting on this callback
+    // these callers may have been the last pending work that a graceful close() waits for
     if (this.onAllQueriesFinished && !this.hasPendingQueries()) {
       this.onAllQueriesFinished();
     }
@@ -1344,9 +1340,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
         switch (connection?.state) {
           case PooledConnectionState.pending:
           case PooledConnectionState.connected: {
-            // cancelRetry only returns true while a dial waits for its turn
-            // (a backoff retry or a parked first dial); nothing is in flight
-            // then, so there is no onClose/onConnected to wait for
+            // a dial that waits for its turn (backoff retry or parked first dial) has nothing in flight: no onClose/onConnected to wait for
             if (connection.cancelRetry()) {
               connection.state = PooledConnectionState.closed;
               break;

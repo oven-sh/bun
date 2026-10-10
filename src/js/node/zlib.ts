@@ -126,7 +126,7 @@ function zlibBufferSync(engine, buffer) {
 function zlibOnError(message, errno, code) {
   const self = this[owner_symbol];
   // There is no way to cleanly recover. Continuing only obscures problems.
-  const error = new Error(message);
+  const error: ZlibError = new Error(message);
   error.errno = errno;
   error.code = code;
   self.destroy(error);
@@ -141,6 +141,42 @@ const FLUSH_BOUND = [
 const FLUSH_BOUND_IDX_NORMAL = 0;
 const FLUSH_BOUND_IDX_BROTLI = 1;
 const FLUSH_BOUND_IDX_ZSTD = 2;
+
+interface ZlibError extends Error {
+  errno?: number;
+}
+
+interface FlushOptions {
+  flush: number;
+  finishFlush: number;
+  fullFlush: number;
+}
+
+interface ZlibHandle {
+  [owner_symbol]: ZlibBase;
+  onerror: typeof zlibOnError;
+  reset(): void;
+  close(): void;
+}
+
+declare class ZlibBase extends Transform {
+  constructor(opts, mode: number, handle: ZlibHandle, flushOptions: FlushOptions);
+  [kError]: ZlibError | null;
+  bytesWritten: number;
+  _handle: ZlibHandle | null;
+  _outBuffer: Buffer;
+  _outOffset: number;
+  _chunkSize: number;
+  _defaultFlushFlag: number;
+  _finishFlushFlag: number;
+  _defaultFullFlushFlag: number;
+  _info: boolean | undefined;
+  _maxOutputLength: number;
+  reset(): void;
+  flush(kind?, callback?): void;
+  close(callback?: () => void): void;
+  _processChunk(chunk: Buffer, flushFlag: number, cb?: () => void): Buffer | undefined;
+}
 
 // The base class for all Zlib-style streams.
 function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
@@ -255,7 +291,7 @@ function maxFlush(a, b) {
 // Set up a list of 'special' buffers that can be written using .write()
 // from the .flush() code as a way of introducing flushing operations into the
 // write sequence.
-const kFlushBuffers: (typeof Buffer)[] = [];
+const kFlushBuffers: (Buffer & { [kFlushFlag]?: number })[] = [];
 {
   const dummyArrayBuffer = new ArrayBuffer();
   for (const flushFlag of kFlushFlagList) {
@@ -666,7 +702,7 @@ function Unzip(opts): void {
 }
 $toClass(Unzip, "Unzip", Zlib);
 
-function createConvenienceMethod(ctor, sync, methodName, isZstd) {
+function createConvenienceMethod(ctor, sync, methodName, isZstd?) {
   if (sync) {
     const fn = function (buffer, opts) {
       return zlibBufferSync(new ctor(opts), buffer);
@@ -729,7 +765,7 @@ function Brotli(opts, mode) {
       if (typeof value !== "number" && typeof value !== "boolean") {
         throw $ERR_INVALID_ARG_TYPE("options.params[key]", "number", opts.params[origKey]);
       }
-      brotliInitParamsArray[key] = value;
+      brotliInitParamsArray[key] = +value;
     });
   }
 
@@ -776,6 +812,8 @@ const zstdDefaultOpts = {
 };
 
 class Zstd extends ZlibBase {
+  declare _writeState: Uint32Array;
+
   constructor(opts, mode, initParamsArray, maxParam) {
     $assert(mode === ZSTD_COMPRESS || mode === ZSTD_DECOMPRESS);
 

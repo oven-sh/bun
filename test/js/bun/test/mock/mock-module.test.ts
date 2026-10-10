@@ -18,7 +18,7 @@ test("mock.module async", async () => {
     return { a: 123 };
   });
 
-  expect((await import("i-am-async-and-mocked")).a).toBe(123);
+  expect((await import("i-am-async-and-mocked" as string)).a).toBe(123);
 });
 
 test("mock.restore", () => {
@@ -134,7 +134,7 @@ test.todo("adding a default on a module with no default", async () => {
       default: 42,
     };
   });
-  expect((await import("./re-export-fixture")).default).toBe(42);
+  expect(((await import("./re-export-fixture")) as any).default).toBe(42);
 });
 
 test("mocking a package", async () => {
@@ -143,7 +143,7 @@ test("mocking a package", async () => {
       wow: () => 42,
     };
   });
-  const hahaha = await import("ha-ha-ha");
+  const hahaha = await import("ha-ha-ha" as string);
   expect(hahaha.wow()).toBe(42);
   expect(require("ha-ha-ha").wow()).toBe(42);
   mock.module("ha-ha-ha", () => {
@@ -174,7 +174,7 @@ test("a factory export getter that throws fails the import", async () => {
     },
     b: 2,
   }));
-  await expect(import("mock-module-getter-throws")).rejects.toThrow("export getter");
+  await expect(import("mock-module-getter-throws" as string)).rejects.toThrow("export getter");
 });
 
 test("a factory export getter that throws while patching an already-imported module throws from mock.module and leaves the namespace untouched", async () => {
@@ -497,3 +497,46 @@ test.concurrent(
     expect(exitCode).toBe(0);
   },
 );
+
+test.concurrent("mock.module() of a module whose import() is still loading its dependencies", async () => {
+  using dir = tempDir("mock-module-import-in-flight", {
+    "a.ts": `import "./dependency"; export const a = "real-a";`,
+    "dependency.ts": `export {};`,
+    "in-flight.test.ts": `
+      import { expect, mock, test } from "bun:test";
+
+      test("the import in flight gets the module it was loading, the next one gets the mock", async () => {
+        const dependencyRequested = Promise.withResolvers<void>();
+        const dependencyMayLoad = Promise.withResolvers<void>();
+        Bun.plugin({
+          name: "hold the dependency's load open",
+          setup(build) {
+            build.onLoad({ filter: /dependency\\.ts$/ }, async () => {
+              dependencyRequested.resolve();
+              await dependencyMayLoad.promise;
+              return { contents: "export {}", loader: "ts" };
+            });
+          },
+        });
+
+        const inFlight = import("./a");
+        await dependencyRequested.promise;
+        mock.module("./a", () => ({ a: "mocked-a" }));
+        dependencyMayLoad.resolve();
+
+        expect((await inFlight).a).toBe("real-a");
+        expect((await import("./a")).a).toBe("mocked-a");
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "./in-flight.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 1 pass");
+  expect(exitCode).toBe(0);
+});

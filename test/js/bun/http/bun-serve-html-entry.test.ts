@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
-async function getServerUrl(process: Subprocess) {
+async function getServerUrl(process: Subprocess<any, "pipe", any>) {
   // Read the port number from stdout
   const decoder = new TextDecoder();
   let serverUrl = "";

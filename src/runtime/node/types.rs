@@ -2,27 +2,31 @@ use bun_paths::strings;
 use core::ffi::c_int;
 
 use crate::jsc::{self, CallFrame, JSGlobalObject, JSValue, JsResult};
+#[cfg(windows)]
+use bun_core::WStr;
+use bun_core::ZStr;
 use bun_core::{self, Utf8Bytes, Utf8WithString, fmt as bun_fmt};
-use bun_core::{WStr, ZStr};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{StringJsc as _, Utf8WithStringJsc as _};
-use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer, WPathBuffer};
+#[cfg(windows)]
+use bun_paths::WPathBuffer;
+use bun_paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer};
 use bun_sys::{self, Fd, Mode, O};
 
 use crate::node::util::validators;
 use crate::webcore::{Blob, Request, Response};
 
-pub use jsc::MarkedArrayBuffer as Buffer;
+pub(crate) use jsc::MarkedArrayBuffer as Buffer;
 use jsc::PinnedArrayBuffer;
 
 // `jsc.ArgumentsSlice` — cursor over CallFrame args.
-pub use jsc::ArgumentsSlice;
+pub(crate) use jsc::ArgumentsSlice;
 
 // LAYERING: `Fd::{from_js,from_js_validated,to_js}` are provided by the
 // canonical `bun_sys_jsc::FdJsc` extension trait (full range/type
 // validation). Re-exported so existing
 // `crate::node::types::FdJsc` import paths keep resolving.
-pub use bun_sys_jsc::FdJsc;
+pub(crate) use bun_sys_jsc::FdJsc;
 
 /// `bun_runtime`-tier required-argument helper layered on `FdJsc`. Collapses
 /// the `next_eat → from_js_validated → ok_or_else(throw_invalid_fd_error)`
@@ -52,9 +56,9 @@ impl FdArgExt for Fd {}
 // LAYERING: `bun_sys::SystemError → JSValue` bridge (reshapes the T1 data
 // struct into the `#[repr(C)]` FFI layout and forwards to C++). Re-exported so
 // `system_error.to_error_instance(ctx)` resolves via the canonical impl.
-pub use bun_sys_jsc::SystemErrorJsc;
+pub(crate) use bun_sys_jsc::SystemErrorJsc;
 
-pub use bun_sys::PlatformIoVec;
+pub(crate) use bun_sys::PlatformIoVec;
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -65,7 +69,7 @@ pub use bun_sys::PlatformIoVec;
 /// strings are copied or re-referenced thread-safely, buffers are pinned and
 /// GC-rooted until the parsed value drops ([`PinnedArrayBuffer`]).
 #[derive(Copy, Clone, PartialEq, Eq, core::marker::ConstParamTy)]
-pub enum Flavor {
+pub(crate) enum Flavor {
     Sync,
     Async,
 }
@@ -74,7 +78,7 @@ pub enum Flavor {
 /// when parsing a string-or-buffer argument. Node's `fs.writeFile` family
 /// rejects wrapper objects; everything else unwraps them.
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum StringObjects {
+pub(crate) enum StringObjects {
     Allow,
     /// Only primitive strings match; a wrapper object parses as "not a string
     /// or buffer", so the caller throws its own type error.
@@ -86,7 +90,7 @@ pub enum StringObjects {
 /// as [`BlobOrStringOrBuffer::Blob`] like an in-memory blob, and its `slice()`
 /// is empty.
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum FileBlobs {
+pub(crate) enum FileBlobs {
     Allow,
     /// Throws "File blob cannot be used here".
     Reject,
@@ -94,7 +98,7 @@ pub enum FileBlobs {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub enum BlobOrStringOrBuffer {
+pub(crate) enum BlobOrStringOrBuffer {
     Blob(Box<Blob>),
     StringOrBuffer(StringOrBuffer<'static>),
 }
@@ -144,7 +148,7 @@ impl BlobOrStringOrBuffer {
         Ok(Some(Self::Blob(Box::new(blob.dupe()))))
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         global: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
@@ -238,11 +242,11 @@ impl BlobOrStringOrBuffer {
 /// As the type's `from_js_async` parser or owned constructor builds it — JS
 /// buffers pinned and GC-rooted, strings thread-isolated — nothing in it is
 /// thread-affine: a work-pool job may read it and the JS thread drops it.
-pub unsafe trait ThreadIsolatedArg {}
+pub(crate) unsafe trait ThreadIsolatedArg {}
 
 /// A `T` built by its `from_js_async` parser or owned constructor (see
 /// [`ThreadIsolatedArg`]); nothing else constructs one.
-pub struct ThreadIsolated<T>(T);
+pub(crate) struct ThreadIsolated<T>(T);
 
 impl<T: ThreadIsolatedArg> ThreadIsolated<T> {
     /// # Safety
@@ -274,7 +278,7 @@ impl<T> core::ops::DerefMut for ThreadIsolated<T> {
 
 /// Parsed from JS it is `StringOrBuffer<'static>`; `Utf8` may instead borrow
 /// Rust-side bytes for a synchronous call ([`StringOrBuffer::borrowed`]).
-pub enum StringOrBuffer<'a> {
+pub(crate) enum StringOrBuffer<'a> {
     String(Utf8WithString),
     ThreadIsolatedString(Utf8WithString),
     Utf8(Utf8Bytes<'a>),
@@ -315,7 +319,7 @@ impl<'a> StringOrBuffer<'a> {
 }
 
 impl StringOrBuffer<'_> {
-    pub fn into_js(self, ctx: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn into_js(self, ctx: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
             Self::ThreadIsolatedString(str) | Self::String(str) => str.into_js(ctx),
             Self::Utf8(utf8) => bun_string_jsc::create_utf8_for_js(ctx, &utf8),
@@ -450,7 +454,7 @@ impl StringOrBuffer<'static> {
     }
 
     #[inline]
-    pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
+    pub(crate) fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
         Self::from_js_maybe_async(global, value, Flavor::Sync, StringObjects::Allow)
     }
 
@@ -787,7 +791,7 @@ unsafe extern "C" {
 // and the `Store`/`Blob` constructors here share one type. This module
 // re-exports them and layers the JS-argument-parsing helpers via the
 // `PathLikeExt` / `PathOrFdExt` extension traits.
-pub use bun_jsc::node_path::{PathLike, PathOrFileDescriptor};
+pub(crate) use bun_jsc::node_path::{PathLike, PathOrFileDescriptor};
 
 /// Returned by [`PathLikeExt::slice_w`] / [`PathLikeExt::os_path`] /
 /// [`PathLikeExt::os_path_kernel32`] when the path's UTF-16 form would not
@@ -796,7 +800,7 @@ pub use bun_jsc::node_path::{PathLike, PathOrFileDescriptor};
 /// map this to `false`/`ENAMETOOLONG` as appropriate instead of letting the
 /// conversion overflow (oven-sh/bun#27775).
 #[derive(Debug, Clone, Copy)]
-pub struct NameTooLong;
+pub(crate) struct NameTooLong;
 
 /// `bun_runtime`-tier behaviour layered on `bun_jsc::node_path::PathLike`.
 ///
@@ -804,7 +808,7 @@ pub struct NameTooLong;
 /// inherent on the lower-tier type (see `bun_jsc::node_path`); this trait
 /// adds only the path-buffer slicers and JS-argument parsing that depend on
 /// `bun_runtime` types (`Valid`, `ArgumentsSlice` cursor flow).
-pub trait PathLikeExt {
+pub(crate) trait PathLikeExt {
     fn slice_z_with_force_copy<'a, const FORCE: bool>(
         &'a self,
         buf: &'a mut PathBuffer,
@@ -814,6 +818,7 @@ pub trait PathLikeExt {
     fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr
     where
         Self: Sized;
+    #[cfg(windows)]
     fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong>
     where
         Self: Sized;
@@ -980,6 +985,7 @@ impl PathLikeExt for PathLike<'_> {
         self.slice_z_with_force_copy::<false>(buf)
     }
 
+    #[cfg(windows)]
     #[inline]
     fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong> {
         let sliced = self.slice();
@@ -1231,7 +1237,7 @@ fn shared_or_utf8<T>(
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct Valid;
+pub(crate) struct Valid;
 
 impl Valid {
     /// The ENAMETOOLONG the syscall would return: no `PathBuffer` fits this path plus its NUL.
@@ -1293,7 +1299,7 @@ impl Valid {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct VectorArrayBuffer {
+pub(crate) struct VectorArrayBuffer {
     pub value: JSValue,
     pub(crate) buffers: Vec<PlatformIoVec>,
     /// The collected elements, in order. Rooted (and their backing stores
@@ -1361,7 +1367,7 @@ impl VectorArrayBuffer {
     /// `pin` is required when the spans outlive this call (async I/O): `val` and
     /// each element are rooted and each backing store is pinned against detach
     /// until the value drops.
-    pub fn from_js(
+    pub(crate) fn from_js(
         global_object: &JSGlobalObject,
         val: JSValue,
         pin: bool,
@@ -1410,7 +1416,7 @@ impl VectorArrayBuffer {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mode>> {
+pub(crate) fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mode>> {
     let mode_int: u32 = if value.is_number() {
         validators::validate_uint32(ctx, value, format_args!("mode"), false)?
     } else {
@@ -1469,7 +1475,7 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
 // live alongside the type in `bun_jsc::node_path` (orphan rules forbid the
 // foreign-type impl here). Re-export the tag so downstream
 // `crate::node::types::PathOrFileDescriptorSerializeTag` paths keep resolving.
-pub use bun_jsc::node_path::PathOrFileDescriptorSerializeTag;
+pub(crate) use bun_jsc::node_path::PathOrFileDescriptorSerializeTag;
 
 impl PathOrFdExt for PathOrFileDescriptor<'_> {
     fn from_js(
@@ -1501,10 +1507,10 @@ impl PathOrFdExt for PathOrFileDescriptor<'_> {
 /// Non-exhaustive set of flag values; newtype over c_int.
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub struct FileSystemFlags(c_int);
+pub(crate) struct FileSystemFlags(c_int);
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum FileSystemFlagsKind {
+pub(crate) enum FileSystemFlagsKind {
     Access,
     CopyFile,
 }
@@ -1527,7 +1533,7 @@ impl FileSystemFlags {
 }
 
 impl FileSystemFlags {
-    pub fn from_js(ctx: &JSGlobalObject, val: JSValue) -> JsResult<Option<FileSystemFlags>> {
+    pub(crate) fn from_js(ctx: &JSGlobalObject, val: JSValue) -> JsResult<Option<FileSystemFlags>> {
         if val.is_number() {
             // Match Node's stringToFlags, which runs validateInt32 on a numeric
             // `flags`: accept any integer-valued number in the int32 range,
@@ -1676,14 +1682,14 @@ bun_core::comptime_string_map! {
 /// When using the async iterator, the `fs.Dir` object will be automatically
 /// closed after the iterator exits.
 /// @since v12.12.0
-pub struct Dirent {
+pub(crate) struct Dirent {
     pub name: bun_core::String,
     pub path: bun_core::String,
     // not publicly exposed
     pub(crate) kind: DirentKind,
 }
 
-pub type DirentKind = bun_sys::FileKind;
+pub(crate) type DirentKind = bun_sys::FileKind;
 
 // Externs stay in this crate per PORTING.md §FFI: "If your file has externs
 // and isn't already *_sys, leave them in place".
@@ -1706,7 +1712,7 @@ impl Dirent {
         Bun__JSDirentObjectConstructor(global)
     }
 
-    pub fn into_js(
+    pub(crate) fn into_js(
         self,
         global_object: &JSGlobalObject,
         cached_previous_path_jsvalue: Option<&mut *mut jsc::JSString>,
@@ -1740,7 +1746,7 @@ impl Dirent {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub enum PathOrBlob {
+pub(crate) enum PathOrBlob {
     Path(PathOrFileDescriptor<'static>),
     Blob(Box<Blob>),
 }

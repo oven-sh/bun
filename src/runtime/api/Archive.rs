@@ -36,7 +36,7 @@ pub(crate) struct GzipOptions {
 // Hand-written JS class glue (not the `#[bun_jsc::JsClass]` derive): Archive
 // has no constructor, which the proc-macro does not expose.
 #[repr(C)]
-pub struct Archive {
+pub(crate) struct Archive {
     /// The underlying data for the archive - uses Blob.Store for thread-safe ref counting
     store: RefPtr<Store>,
     /// Compression settings for this archive
@@ -61,7 +61,7 @@ impl Archive {
     /// (`ArchiveClass__write`) resolves it as an associated item on the struct,
     /// so forward to the module-level [`write`] body below.
     #[inline]
-    pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         self::write(global, callframe)
     }
 
@@ -412,7 +412,7 @@ fn get_entry_data<'a>(
 /// Options:
 ///   - gzip: { level?: number } - Override compression settings
 #[bun_jsc::host_fn]
-pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let cx = global.js_thread_of_caller(callframe);
     let [path_arg, data_arg, options_arg] = callframe.arguments_as_array::<3>();
     if data_arg.is_empty() {
@@ -644,7 +644,7 @@ impl Archive {
 // Generic Async Task Infrastructure
 // ============================================================================
 
-pub enum PromiseResult {
+pub(crate) enum PromiseResult {
     Resolve(JSValue),
     Reject(JSValue),
 }
@@ -661,14 +661,14 @@ impl PromiseResult {
 /// One `Bun.Archive` operation's pool-side work: `run` on the thread pool
 /// stores its result on `self`; `run_from_js` turns it into the promise's
 /// value. It is the off-thread part of an `AsyncTask<C>` job.
-pub trait TaskContext: Send + 'static {
+pub(crate) trait TaskContext: Send + 'static {
     /// Runs on thread pool. Stores its result on `self`.
     fn run(&mut self);
     fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult>;
 }
 
 /// The job for a `TaskContext`: the context off-thread, its promise on the JS side.
-pub struct AsyncTask<C: TaskContext>(core::marker::PhantomData<C>);
+pub(crate) struct AsyncTask<C: TaskContext>(core::marker::PhantomData<C>);
 
 impl<C: TaskContext> bun_jsc::JobContext for AsyncTask<C> {
     type OffThread = C;
@@ -711,12 +711,12 @@ pub enum ExtractError {
     ReadError,
 }
 
-pub enum ExtractResult {
+pub(crate) enum ExtractResult {
     Success(u32),
     Err(ExtractError),
 }
 
-pub struct ExtractContext {
+pub(crate) struct ExtractContext {
     store: RefPtr<Store>,
     path: Box<[u8]>,
     glob_patterns: Option<Vec<Box<[u8]>>>,
@@ -812,7 +812,7 @@ enum BlobResult {
     Err(CompressError),
 }
 
-pub struct BlobContext {
+pub(crate) struct BlobContext {
     store: RefPtr<Store>,
     compress: Compression,
     output_type: BlobOutputType,
@@ -908,7 +908,7 @@ enum WriteData {
     Store(RefPtr<Store>),
 }
 
-pub struct WriteContext {
+pub(crate) struct WriteContext {
     data: WriteData,
     path: ZBox,
     compress: Compression,
@@ -1013,7 +1013,7 @@ enum FilesResult {
 
 // freeEntries deleted — Vec<FileEntry> drops each entry; FileEntry fields drop their boxes.
 
-pub struct FilesContext {
+pub(crate) struct FilesContext {
     store: RefPtr<Store>,
     glob_patterns: Option<Vec<Box<[u8]>>>,
     result: FilesResult,

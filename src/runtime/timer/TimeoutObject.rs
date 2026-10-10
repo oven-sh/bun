@@ -31,7 +31,11 @@ impl TimeoutObject {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn close(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn close(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
         this.internals.cancel(global.bun_vm_ptr());
         Ok(frame.this())
     }

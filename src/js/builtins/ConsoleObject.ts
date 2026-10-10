@@ -115,7 +115,11 @@ export function asyncIterator(this: Console) {
   return ConsoleAsyncIterator();
 }
 
-export function write(this: Console, input) {
+interface ConsoleWriter extends Bun.FileSink {
+  flush(wait?: boolean): number | Promise<number>;
+}
+
+export function write(this: Console & { $writer: ConsoleWriter | undefined }, input) {
   if (!$isObject(this)) throw $ERR_INVALID_THIS("Console");
 
   var writer = $getByIdDirectPrivate(this, "writer");
@@ -125,11 +129,11 @@ export function write(this: Console, input) {
     $putByIdDirectPrivate(this, "writer", writer);
   }
 
-  var wrote = writer.write(input);
+  var wrote = writer.write(input) as number;
 
   const count = $argumentCount();
   for (var i = 1; i < count; i++) {
-    wrote += writer.write(arguments[i]);
+    wrote += writer.write(arguments[i]) as number;
   }
 
   writer.flush(true);
@@ -258,6 +262,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const kUseStderr = Symbol("kUseStderr");
 
   const optionsMap = new WeakMap<any, any>();
+  function Console(this: any, ...args: unknown[]): void;
   function Console(this: any, options /* or: stdout, stderr, ignoreErrors = true */): void {
     // We have to test new.target here to see if this function is called
     // with new, because we need to define a custom instanceof to accommodate
@@ -458,8 +463,8 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
           if (
             e != null &&
             typeof e === "object" &&
-            e.name === "RangeError" &&
-            e.message === "Maximum call stack size exceeded."
+            (e as Partial<Error>).name === "RangeError" &&
+            (e as Partial<Error>).message === "Maximum call stack size exceeded."
           )
             throw e;
           // Sorry, there's no proper way to pass along the error here.

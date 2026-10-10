@@ -94,10 +94,10 @@ async function generateRegistryUser(username: string, password: string): Promise
   });
 
   if (response.ok) {
-    const data = await response.json();
+    const data: any = await response.json();
     return data.token;
   } else {
-    throw new Error("Failed to create user:", response.statusText);
+    throw new Error(`Failed to create user: ${response.status} ${response.statusText}`);
   }
 }
 
@@ -281,7 +281,7 @@ describe("certificate authority", () => {
 
   /** Runs `bun install <args>` with `HTTPS_PROXY` set, for a project whose one dependency is a tarball on `server`. */
   async function installThroughProxy(
-    server: { port: number },
+    server: { port?: number },
     proxyUrl: string,
     args: string[],
     extraEnv: Record<string, string> = {},
@@ -9725,7 +9725,7 @@ describe("outdated", () => {
 // test/cli/install/registry/bun-install-windowsshim.test.ts:
 //
 // This test is to verify that BinLinkingShim.zig creates correct shim files as
-// well as bun_shim_impl.exe works in various edge cases. There are many fast
+// well as bun-shim-impl.exe works in various edge cases. There are many fast
 // paths for many many cases.
 describe("windows bin linking shim should work", async () => {
   if (!isWindows) return;

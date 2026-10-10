@@ -419,29 +419,8 @@ JSPromise* invokeCallbackReturningPromiseFast(JSGlobalObject* globalObject, JSOb
         ASSERT(callData.type != JSC::CallData::Type::None);
         JSValue result = JSC::call(globalObject, callback, callData, thisValue, args);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        if (!result.isObject()) [[likely]]
-            return nullptr;
-        // A vanilla JSPromise with an unpatched .then needs no wrapper: callers use
-        // performPromiseThenWithContext (internal reactions), so skipping promiseResolvedWith's
-        // thenable adoption is unobservable. Subclasses / patched .then fall through.
-        if (auto* resultPromise = dynamicDowncast<JSC::JSPromise>(result); resultPromise && resultPromise->isThenFastAndNonObservable())
-            return resultPromise;
-        RELEASE_AND_RETURN(scope, promiseResolvedWith(globalObject, result));
+        RELEASE_AND_RETURN(scope, promiseResolvedWithFast(globalObject, result));
     });
-}
-
-bool errorCodeIs(VM& vm, JSValue error, ASCIILiteral code)
-{
-    // Own or inherited *data* property only (Bun's coded errors keep `code` on a per-code
-    // prototype); structures' stored prototypes are followed, so no getter or proxy trap runs.
-    JSValue codeValue;
-    for (JSObject* object = error ? error.getObject() : nullptr; object && !codeValue; object = object->getPrototypeDirect().getObject())
-        codeValue = object->getDirect(vm, WebCore::builtinNames(vm).codePublicName());
-    auto* codeString = codeValue ? dynamicDowncast<JSString>(codeValue) : nullptr;
-    if (!codeString)
-        return false;
-    auto value = codeString->tryGetValue();
-    return WTF::equal(value.data, StringView(code));
 }
 
 // Shared [bound-convention] wrapper: target(contextCell, ...callArgs).
@@ -469,6 +448,16 @@ JSPromise* promiseResolvedWith(JSGlobalObject* globalObject, JSValue value)
     auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
     promise->resolve(globalObject, vm, value);
     return promise;
+}
+
+JSPromise* promiseResolvedWithFast(JSGlobalObject* globalObject, JSValue value)
+{
+    if (!value.isObject()) [[likely]]
+        return nullptr;
+    // A vanilla JSPromise with an unpatched .then takes internal reactions as it is; a subclass or a patched .then is adopted.
+    if (auto* promise = dynamicDowncast<JSC::JSPromise>(value); promise && promise->isThenFastAndNonObservable())
+        return promise;
+    return promiseResolvedWith(globalObject, value);
 }
 
 JSPromise* promiseRejectedWith(JSGlobalObject* globalObject, JSValue reason)

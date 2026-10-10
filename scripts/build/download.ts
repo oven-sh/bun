@@ -52,6 +52,7 @@ import { basename, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeWebReadable } from "node:stream/web";
+import { locations } from "./ci-images/spec.ts";
 import { BuildError, assert, describeError } from "./error.ts";
 import { formatElapsed } from "./tty.ts";
 
@@ -66,7 +67,7 @@ const tarExe =
 
 /**
  * Read-only prefetch cache baked into CI images by `scripts/prefetch-deps.ts`
- * (run from bootstrap.{sh,ps1} at image-bake time). When set, downloads check
+ * (run by the `prefetch` tool of ci-images/spec.ts at image-bake time). When set, downloads check
  * here first and copy on hit instead of hitting the network.
  *
  * Layout:
@@ -88,7 +89,8 @@ const tarExe =
 export const prefetchDir: string | undefined = (() => {
   const env = process.env.BUN_BUILD_PREFETCH_DIR;
   if (env) return env;
-  const wellKnown = process.platform === "win32" ? "C:\\bun-prefetch" : "/opt/bun-prefetch";
+  // Where a CI image's bake put them.
+  const wellKnown = process.platform === "win32" ? locations.prefetch.windows : locations.prefetch.linux;
   return existsSync(wellKnown) ? wellKnown : undefined;
 })();
 
@@ -177,6 +179,8 @@ export async function downloadWithRetry(
   dest: string,
   logPrefix: string,
   retry: RetryPolicy = downloadRetry,
+  /** Gives the whole download up when it fires (an `AbortSignal.timeout`): for a caller that has a fallback. */
+  signal?: AbortSignal,
 ): Promise<void> {
   const prefetched = prefetchPathForUrl(url);
   if (prefetched !== undefined && existsSync(prefetched)) {
@@ -203,7 +207,7 @@ export async function downloadWithRetry(
 
     const tmpPath = `${dest}.${process.pid}.partial`;
     try {
-      const res = await fetch(url, { headers: { "User-Agent": "bun-build-system" } });
+      const res = await fetch(url, { headers: { "User-Agent": "bun-build-system" }, ...(signal ? { signal } : {}) });
       if (!res.ok || res.body === null) {
         lastError = new BuildError(`HTTP ${res.status} ${res.statusText} for ${url}`);
         // 4xx is deterministic (bad URL, missing artifact) and won't succeed

@@ -36,7 +36,7 @@ test("stream should not leak when creating a stream contained in another respons
     const response2 = new Response(response.body);
     // @ts-ignore
     stream.response = stream;
-    stream.response2 = response2;
+    (stream as any).response2 = response2;
   }
   for (let i = 0; i < 10000; i++) {
     leak();

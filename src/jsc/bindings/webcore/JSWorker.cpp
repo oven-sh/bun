@@ -20,6 +20,7 @@
 
 #include "config.h"
 #include "JSWorker.h"
+#include "CodeGenerationFromStrings.h"
 
 #include "ActiveDOMObject.h"
 #include "BunCPUProfiler.h"
@@ -156,6 +157,10 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
         return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "filename"_s, "string or an instance of URL"_s, argument0.value());
     }
     RETURN_IF_EXCEPTION(throwScope, {});
+    // node:worker_threads' `eval: true` arrives here as a blob: URL of the source.
+    if (Bun::isDataOrBlobURL(scriptUrl)) [[unlikely]] {
+        RETURN_IF_MAY_NOT_MAKE_SCRIPT_FROM_STRINGS(lexicalGlobalObject, throwScope, {});
+    }
     EnsureStillAliveScope argument1 = callFrame->argument(1);
 
     WorkerOptions options {};

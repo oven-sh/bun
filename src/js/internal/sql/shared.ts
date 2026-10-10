@@ -613,20 +613,23 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
   flags: number = 0;
   /// queryCount is used to indicate the number of queries using the connection, if a connection is reserved or if its a transaction queryCount will be 1 independently of the number of queries
   queryCount: number = 0;
-  /// when the current connect cycle started; 0 when not connecting. Connect
-  /// failures (server not yet accepting connections) are retried until
-  /// connectionTimeout elapses from this point.
+  /// when the connect cycle started (0 before the first dial and once connected); connect failures are retried until connectionTimeout elapses from this point
   connectStartedAt: number = 0;
   connectAttempts: number = 0;
   retryTimer: ReturnType<typeof setTimeout> | null = null;
+  /// the first dial after redial(), waiting for the next event loop turn
+  parkedDial: ReturnType<typeof setImmediate> | null = null;
 
   constructor(
     connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions,
     adapter: BaseSQLAdapter<any, any, any>,
+    dialLater?: boolean,
   ) {
     this.adapter = adapter;
     this.connectionInfo = connectionInfo;
-    this.#beginConnecting();
+    if (!dialLater) {
+      this.#beginConnecting();
+    }
   }
 
   /** Starts (or restarts) the driver-specific native connection. */
@@ -645,6 +648,31 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
   /// `method` bound to this slot for the native connection to call.
   protected nativeCallback(method: (...args: any[]) => void): (...args: any[]) => void {
     return this.adapter.ownerCallback(method.bind(this));
+  }
+
+  /// The first dial of a connection made with `dialLater`, once a pool slot holds it.
+  dial(onNextTurn?: boolean) {
+    if (onNextTurn) {
+      this.parkedDial = this.adapter.runAsOwner(this.#parkDial, this);
+    } else {
+      this.#beginConnecting();
+    }
+  }
+
+  /// An immediate, not a timer: jest.useFakeTimers() holds timers back.
+  #parkDial() {
+    return setImmediate(BasePooledConnection.#parkedDialFired, this);
+  }
+
+  static #parkedDialFired(self: BasePooledConnection) {
+    self.parkedDial = null;
+    if (self.#isDialWanted()) {
+      self.#beginConnecting();
+      return;
+    }
+    // no connection was opened, so there is no onclose to report
+    self.state = PooledConnectionState.closed;
+    self.adapter.connectionClosed(self, false);
   }
 
   async #beginConnecting() {
@@ -701,6 +729,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     if (err) {
       err = this.wrapError(err);
     }
+    const established = this.state === PooledConnectionState.connected;
     this.connection = null;
     this.storedError = err;
     if (this.#shouldRetryConnecting(err)) {
@@ -713,9 +742,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
       this.retryTimer = setTimeout(BasePooledConnection.#retryTimerFired, delay, this);
       return;
     }
-    // this connect cycle is over; a later retry() starts a fresh one
-    this.connectStartedAt = 0;
-    this.#finishClose(err);
+    this.#finishClose(err, established);
   }
 
   static #retryTimerFired(self: BasePooledConnection) {
@@ -725,7 +752,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     if (self.#canKeepRetrying()) {
       self.#beginConnecting();
     } else {
-      self.#finishClose(self.storedError);
+      self.#finishClose(self.storedError, false);
     }
   }
 
@@ -738,12 +765,17 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     return this.#canKeepRetrying();
   }
 
-  #canKeepRetrying(): boolean {
+  /// Whether a dial that waited for its turn (a backoff retry or a parked first dial) should still start.
+  #isDialWanted(): boolean {
     if (this.adapter.closed || this.onFinish !== null) {
       return false;
     }
-    // only retry while queries are actually waiting for a connection
-    if (this.adapter.waitingQueue.length === 0 && this.adapter.reservedQueue.length === 0) {
+    // only dial while queries are actually waiting for a connection
+    return this.adapter.waitingQueue.length !== 0 || this.adapter.reservedQueue.length !== 0;
+  }
+
+  #canKeepRetrying(): boolean {
+    if (!this.#isDialWanted()) {
       return false;
     }
     // an explicit connectionTimeout of 0 disables the connect timer, and with
@@ -755,18 +787,23 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     return this.connectStartedAt !== 0 && Date.now() - this.connectStartedAt < connectionTimeout;
   }
 
-  /// Returns true if a scheduled connect retry was cancelled; in that case
-  /// nothing is in flight and no onClose/onConnected callback will fire.
+  /// Returns true if a dial that had not started was cancelled: nothing is in flight, so no onClose/onConnected callback will fire.
   cancelRetry(): boolean {
     if (this.retryTimer !== null) {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
       return true;
     }
+    if (this.parkedDial !== null) {
+      clearImmediate(this.parkedDial);
+      this.parkedDial = null;
+      return true;
+    }
     return false;
   }
 
-  #finishClose(err: any) {
+  /// `established`: the connection had completed its handshake. Otherwise a connect cycle failed.
+  #finishClose(err: any, established: boolean) {
     const connectionInfo = this.connectionInfo;
     const poolClosedSlotBeforeOnconnect =
       this.onFinish !== null && !(this.flags & PooledConnectionFlags.onConnectFired);
@@ -795,6 +832,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
       }
 
       this.adapter.release(this, true);
+      this.adapter.connectionClosed(this, established);
     }
   }
 
@@ -807,18 +845,6 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     query.finally(onQueryFinish.bind(this, onClose));
   }
 
-  protected doRetry() {
-    if (this.adapter.closed) {
-      return;
-    }
-    // reset error and state; the new cycle has not fired onconnect yet
-    this.storedError = null;
-    this.connectStartedAt = 0;
-    this.state = PooledConnectionState.pending;
-    this.flags &= ~PooledConnectionFlags.onConnectFired;
-    // retry connection
-    this.#beginConnecting();
-  }
   close() {
     try {
       if (this.state === PooledConnectionState.connected) {
@@ -829,25 +855,12 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
   flush() {
     this.connection?.flush();
   }
-  retry() {
-    // if pool is closed, we can't retry
-    if (this.adapter.closed) {
-      return false;
-    }
-    // we need to reconnect
-    // lets use a retry strategy
-
-    // we can only retry if one day we are able to connect
-    if (this.flags & PooledConnectionFlags.canBeConnected) {
-      this.doRetry();
-    } else if (this.isNonRetryableError((this.storedError as any)?.code)) {
-      // we can't retry these are authentication errors
-      return false;
-    } else {
-      // we can retry
-      this.doRetry();
-    }
-    return true;
+  /// False after an authentication-class error on a slot that never connected: another dial cannot fix that.
+  canRedial(): boolean {
+    return (
+      (this.flags & PooledConnectionFlags.canBeConnected) !== 0 ||
+      !this.isNonRetryableError((this.storedError as any)?.code)
+    );
   }
 }
 
@@ -984,7 +997,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     this.connections = new Array(connectionInfo.max);
   }
 
-  protected abstract createPooledConnection(): PooledConnection;
+  protected abstract createPooledConnection(dialLater?: boolean): PooledConnection;
   abstract createQueryHandle(sql: string, values: unknown[], flags: number): QueryHandle;
   abstract array(values: any[], typeNameOrID?: number | ArrayType): SQLArrayParameter;
   abstract getTransactionCommands(options?: string): TransactionCommands;
@@ -1180,33 +1193,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     }
 
     if (connection.state !== PooledConnectionState.connected) {
-      // connection is not ready
-      const storedError = connection.storedError;
-      if (storedError) {
-        // this connection got a error but maybe we can wait for another
-
-        if (this.hasConnectionsAvailable()) {
-          return;
-        }
-
-        const waitingQueue = this.waitingQueue;
-        const reservedQueue = this.reservedQueue;
-
-        this.waitingQueue = [];
-        this.reservedQueue = [];
-        // we have no connections available so lets fails
-        for (const pending of waitingQueue) {
-          pending(storedError, connection);
-        }
-        for (const pending of reservedQueue) {
-          pending(storedError, connection);
-        }
-        // draining the queues may have been the last pending work; a
-        // graceful close() is waiting on this callback
-        if (this.onAllQueriesFinished && !this.hasPendingQueries()) {
-          this.onAllQueriesFinished();
-        }
-      }
+      // no connection to hand out; connectionClosed() settles the queued callers
       return;
     }
 
@@ -1229,14 +1216,62 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     this.flushConcurrentQueries();
   }
 
+  /// A new object per dial: what still holds the closed one (a reservation, a transaction, a late release()) cannot reach the new connection.
+  redial(connection: PooledConnection, onNextTurn?: boolean): boolean {
+    if (this.closed || !connection.canRedial()) {
+      return false;
+    }
+    const index = this.connections.indexOf(connection);
+    if (index === -1) {
+      return false;
+    }
+    const fresh = this.createPooledConnection(true);
+    fresh.flags |= connection.flags & PooledConnectionFlags.canBeConnected;
+    // in its slot before it dials: the dial can run user code (a function-valued `password`) that closes the pool
+    this.connections[index] = fresh;
+    fresh.dial(onNextTurn);
+    return true;
+  }
+
+  /// Besides #close(), the only place that fails the callers queued on the pool. They never used `connection`.
+  connectionClosed(connection: PooledConnection, established: boolean) {
+    if (this.waitingQueue.length === 0 && this.reservedQueue.length === 0) {
+      return;
+    }
+    // on the next turn: native code closes the old socket after the close event returns
+    if (established && this.redial(connection, true)) {
+      return;
+    }
+    if (this.hasConnectionsAvailable()) {
+      return;
+    }
+
+    // `||`: a `password` function can throw a falsy value, and the callers test `if (err)`
+    const storedError = connection.storedError || this.connectionClosedError();
+    const waitingQueue = this.waitingQueue;
+    const reservedQueue = this.reservedQueue;
+
+    this.waitingQueue = [];
+    this.reservedQueue = [];
+    for (let i = 0; i < waitingQueue.length; i++) {
+      waitingQueue[i](storedError, connection);
+    }
+    for (let i = 0; i < reservedQueue.length; i++) {
+      reservedQueue[i](storedError, connection);
+    }
+    // these callers may have been the last pending work that a graceful close() waits for
+    if (this.onAllQueriesFinished && !this.hasPendingQueries()) {
+      this.onAllQueriesFinished();
+    }
+  }
+
   hasConnectionsAvailable() {
     if (this.readyConnections?.size > 0) return true;
     if (this.poolStarted) {
       const pollSize = this.connections.length;
       for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
-        // The slot can still be an unassigned hole while the pool is starting
-        // and a synchronous creation failure re-enters via release().
+        // a slot is an unassigned hole while connect() creates the pool's connections, which can run user code
         if (connection && connection.state !== PooledConnectionState.closed) {
           // some connection is connecting or connected
           return true;
@@ -1305,9 +1340,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
         switch (connection?.state) {
           case PooledConnectionState.pending:
           case PooledConnectionState.connected: {
-            // cancelRetry only returns true while a connect retry is parked
-            // in a backoff timer; nothing is in flight then, so there is no
-            // onClose/onConnected to wait for
+            // a dial that waits for its turn (backoff retry or parked first dial) has nothing in flight: no onClose/onConnected to wait for
             if (connection.cancelRetry()) {
               connection.state = PooledConnectionState.closed;
               break;
@@ -1401,25 +1434,25 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 
     if (this.readyConnections.size === 0) {
       // no connection ready lets make some
-      let retry_in_progress = false;
+      let redial_in_progress = false;
       let all_closed = true;
       let storedError: Error | null = null;
 
       if (this.poolStarted) {
         // we already started the pool
-        // lets check if some connection is available to retry
+        // lets check if some closed slot can be dialed again
         const pollSize = this.connections.length;
         for (let i = 0; i < pollSize; i++) {
           const connection = this.connections[i];
-          // we need a new connection and we have some connections that can retry
+          // we need a new connection and we have some slots that can be dialed again
           // (an unassigned hole is a connection still being created, so it
           // lands in the "pending" branch below)
           if (connection?.state === PooledConnectionState.closed) {
-            if (connection.retry()) {
+            if (this.redial(connection)) {
               // lets wait for connection to be released
-              if (!retry_in_progress) {
-                // avoid adding to the queue twice, we wanna to retry every available pool connection
-                retry_in_progress = true;
+              if (!redial_in_progress) {
+                // avoid adding to the queue twice, we wanna to dial every closed slot again
+                redial_in_progress = true;
                 if (reserved) {
                   // we are not sure what connection will be available so we dont pre reserve
                   this.reservedQueue.push(onConnected);
@@ -1436,7 +1469,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
             all_closed = false;
           }
         }
-        if (!all_closed && !retry_in_progress) {
+        if (!all_closed && !redial_in_progress) {
           // is possible to connect because we have some working connections, or we are just without network for some reason
           // wait for connection to be released or fail
           if (reserved) {
@@ -1445,8 +1478,8 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
           } else {
             this.waitingQueue.push(onConnected);
           }
-        } else if (!retry_in_progress) {
-          // impossible to connect or retry
+        } else if (!redial_in_progress) {
+          // impossible to connect or to dial again
           onConnected(storedError ?? this.connectionClosedError(), null);
         }
         return;

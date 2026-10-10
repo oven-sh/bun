@@ -410,8 +410,8 @@ class PostgresAdapter
       $ZigGeneratedClasses.PostgresSQLQuery
     >
 {
-  protected createPooledConnection(): PooledPostgresConnection {
-    return new PooledPostgresConnection(this.connectionInfo, this);
+  protected createPooledConnection(dialLater?: boolean): PooledPostgresConnection {
+    return new PooledPostgresConnection(this.connectionInfo, this, dialLater);
   }
 
   escapeIdentifier(str: string) {

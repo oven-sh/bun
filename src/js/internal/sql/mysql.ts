@@ -187,8 +187,8 @@ class MySQLAdapter
   implements
     DatabaseAdapter<PooledMySQLConnection, $ZigGeneratedClasses.MySQLConnection, $ZigGeneratedClasses.MySQLQuery>
 {
-  protected createPooledConnection(): PooledMySQLConnection {
-    return new PooledMySQLConnection(this.connectionInfo, this);
+  protected createPooledConnection(dialLater?: boolean): PooledMySQLConnection {
+    return new PooledMySQLConnection(this.connectionInfo, this, dialLater);
   }
 
   escapeIdentifier(str: string) {

@@ -246,6 +246,11 @@ fn relative_workspace_path<'b>(
     &buf[..len]
 }
 
+/// On Windows `root_dir` uses `/` and a joined path uses `\`, so the two cannot be compared as bytes.
+fn is_root_package_json(buf: &mut [u8], root_dir: &[u8], abs_package_json_path: &[u8]) -> bool {
+    relative_workspace_path(buf, root_dir, workspace_dir_of(abs_package_json_path)).is_empty()
+}
+
 impl WorkspaceMap {
     pub(crate) fn process_names_array(
         &mut self,
@@ -304,12 +309,7 @@ impl WorkspaceMap {
             );
             let processed = match abs_package_json_path {
                 Some(abs_package_json_path) => {
-                    // skip root package.json
-                    if strings::eql_long(
-                        resolve_path::dirname::<path::platform::Auto>(abs_package_json_path),
-                        root_dir,
-                        true,
-                    ) {
+                    if is_root_package_json(&mut rel_path_buf.0, root_dir, abs_package_json_path) {
                         continue;
                     }
 
@@ -534,6 +534,15 @@ impl WorkspaceMap {
                         cwd, filepath_buf, &[entry_dir, b"package.json"]
                     ) {
                         Some(abs_package_json_path) => {
+                            // a pattern that leaves the root can match it again (`../*`)
+                            if is_root_package_json(
+                                &mut rel_path_buf.0,
+                                root_dir,
+                                abs_package_json_path,
+                            ) {
+                                continue;
+                            }
+
                             process_workspace_name(json_cache, abs_package_json_path, log)
                                 .map(|entry| (abs_package_json_path, entry))
                         }

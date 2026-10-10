@@ -8659,6 +8659,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         str_: &mut E::String,
         loc: bun_ast::Loc,
     ) -> Option<js_ast::ExprData> {
+        str_.resolve_rope_if_needed(self.arena);
         let _ = str_.to_utf8(self.arena);
         let specifier = str_.data;
 

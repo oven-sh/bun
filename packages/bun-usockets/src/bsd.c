@@ -57,6 +57,9 @@ static void init_debug_logging() {
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#ifdef __linux__
+#include <poll.h>
+#endif
 #else /* _WIN32 */
 #include <mstcpip.h>
 #endif
@@ -204,6 +207,20 @@ int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int fl
     }
 #endif
 }
+
+#if defined(__linux__)
+int bsd_udp_take_pending_error(LIBUS_SOCKET_DESCRIPTOR fd) {
+    int err = 0;
+    socklen_t len = sizeof(err);
+    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) != 0) return 0;
+    return err;
+}
+
+int bsd_udp_error_report_is_queued(LIBUS_SOCKET_DESCRIPTOR fd) {
+    struct pollfd pfd = { .fd = fd, .events = 0 };
+    return poll(&pfd, 1, 0) > 0 && (pfd.revents & POLLERR);
+}
+#endif
 
 void bsd_udp_setup_recvbuf(struct udp_recvbuf *recvbuf, void *databuf, size_t databuflen) {
 #if defined(_WIN32)

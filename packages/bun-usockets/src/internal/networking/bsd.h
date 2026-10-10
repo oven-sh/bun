@@ -167,6 +167,13 @@ int bsd_udp_packet_buffer_payload_length(struct udp_recvbuf *msgvec, int index);
 char *bsd_udp_packet_buffer_payload(struct udp_recvbuf *msgvec, int index);
 char *bsd_udp_packet_buffer_peer(struct udp_recvbuf *msgvec, int index);
 int bsd_udp_packet_buffer_truncated(struct udp_recvbuf *msgvec, int index);
+#if defined(__linux__)
+/* Returns the pending error of the socket (SO_ERROR) and clears it. */
+int bsd_udp_take_pending_error(LIBUS_SOCKET_DESCRIPTOR fd);
+/* Whether a report waits on the error queue of the socket. With the pending
+ * error cleared, POLLERR has no other cause. */
+int bsd_udp_error_report_is_queued(LIBUS_SOCKET_DESCRIPTOR fd);
+#endif
 
 LIBUS_SOCKET_DESCRIPTOR apple_no_sigpipe(LIBUS_SOCKET_DESCRIPTOR fd);
 LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd);

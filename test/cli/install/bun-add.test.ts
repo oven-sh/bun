@@ -2476,6 +2476,43 @@ it("should add dependency alongside peerDependencies", async () => {
   await access(join(package_dir, "bun.lockb"));
 });
 
+it("should add a local folder when package.json holds a number that overflows to Infinity", async () => {
+  // `1e400` is valid JSON and reads as Infinity. `bun add` prints the edited
+  // manifest and parses that text again, so the printer must not write the
+  // `Infinity` token.
+  await writeFile(join(add_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+  await writeFile(
+    join(package_dir, "package.json"),
+    `{
+  "name": "bar",
+  "version": "0.0.2",
+  "config": { "max": 1e400 }
+}`,
+  );
+  const add_path = relative(package_dir, add_dir);
+  const dep = `file:${add_path}`.replace(/\\/g, "\\\\");
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", dep],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err = await stderr.text();
+  expect(err).not.toContain("failed to parse");
+  expect(err).toContain("Saved lockfile");
+  const out = await stdout.text();
+  expect(out).toContain("installed foo@");
+  expect(await exited).toBe(0);
+  expect(JSON.parse(await file(join(package_dir, "package.json")).text())).toEqual({
+    name: "bar",
+    version: "0.0.2",
+    config: { max: null },
+    dependencies: { foo: dep.replace(/\\\\/g, "/") },
+  });
+});
+
 it("should add local tarball dependency", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));

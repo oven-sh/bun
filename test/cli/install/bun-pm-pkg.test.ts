@@ -175,6 +175,23 @@ describe.concurrent("bun pm pkg", () => {
       expect(code).toBe(0);
     });
 
+    it("should print a bare number with the same digits as the file writer", async () => {
+      // A separate formatter used to print the exact value of the double here
+      // (123456789012345683968). The file writer and npm print the shortest
+      // digits that read back as the same number.
+      using dir = tempDir("pm-pkg-get-number", {
+        "package.json": `{ "name": "n", "version": "1.0.0", "config": { "big": 123456789012345680000, "neg": -2.5 } }`,
+      });
+      const [big, neg, parent] = await Promise.all([
+        runPmPkg(["get", "config.big"], dir),
+        runPmPkg(["get", "config.neg"], dir),
+        runPmPkg(["get", "config"], dir),
+      ]);
+      expect(big.output.trim()).toBe("123456789012345680000");
+      expect(neg.output.trim()).toBe("-2.5");
+      expect(parent.output).toContain('"big": 123456789012345680000');
+    });
+
     it("should handle numeric property names on objects", async () => {
       using dir = makeTestDir();
       const { code: setCode } = await runPmPkg(["set", "config.123=test-value"], dir);

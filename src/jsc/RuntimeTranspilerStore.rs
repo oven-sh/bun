@@ -1027,10 +1027,8 @@ impl TranspilerJob {
                 continue;
             }
 
-            if strings::has_prefix_comptime(import_record.path.text, b"bun:") {
-                import_record.path =
-                    bun_paths::fs::Path::init(&import_record.path.text[b"bun:".len()..]);
-                import_record.path.namespace = b"bun";
+            if let Some(builtin) = HardcodedAlias::bun_prefixed_builtin(import_record.path.text) {
+                import_record.path = bun_paths::fs::Path::init(builtin);
                 import_record
                     .flags
                     .insert(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);

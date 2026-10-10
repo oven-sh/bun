@@ -9673,6 +9673,73 @@ describe("outdated", () => {
     expect(out).toContain("prereleases-1");
   });
 
+  test("sizes and pads a cell by its display width, not by its byte length", async () => {
+    // Verdaccio has no package with a name that is not ASCII. A private registry can have one.
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { origin, pathname } = new URL(req.url);
+        const name = decodeURIComponent(pathname.slice(1));
+        const versions = Object.fromEntries(
+          ["1.0.0", "2.0.0"].map(version => [
+            version,
+            { name, version, dist: { tarball: `${origin}/${version}.tgz` } },
+          ]),
+        );
+        return Response.json({ name, "dist-tags": { latest: "2.0.0" }, versions });
+      },
+    });
+    // 14 columns in 20 bytes: a CJK character or an emoji takes 2 columns.
+    const workspaceName = "工作区-文档-😀";
+    using dir = tempDir("outdated-display-width", {
+      "bunfig.toml": `[install]\nregistry = "http://localhost:${server.port}/"\n`,
+      "package.json": JSON.stringify({
+        name: "root",
+        workspaces: { packages: ["packages/*"], catalog: { dep: "1.0.0" } },
+      }),
+      "packages/a/package.json": JSON.stringify({ name: "plain", dependencies: { dep: "catalog:" } }),
+      "packages/b/package.json": JSON.stringify({
+        name: workspaceName,
+        dependencies: { dep: "catalog:", "日本語パッケージ": "1.0.0" },
+      }),
+    });
+    // The registry has no tarballs. `bun outdated` reads only the lockfile and the manifests.
+    await runBunInstall(env, String(dir), { packages: ["--lockfile-only"] });
+
+    async function table(...args: string[]) {
+      const out = await runBunOutdated(env, String(dir), "--recursive", ...args);
+      const lines = out.slice(out.indexOf("\n") + 1);
+      // Every line of the table takes the same number of terminal columns.
+      const widths = lines
+        .trim()
+        .split("\n")
+        .map(line => Bun.stringWidth(line));
+      expect(widths).toEqual(widths.map(() => widths[0]));
+      return lines;
+    }
+
+    // The widest Workspace cell is the list of the workspaces that use the catalog.
+    expect(await table()).toMatchInlineSnapshot(`
+      "|--------------------------------------------------------------------------------|
+      | Package          | Current | Update | Latest | Workspace                       |
+      |------------------|---------|--------|--------|---------------------------------|
+      | 日本語パッケージ | 1.0.0   | 1.0.0  | 2.0.0  | 工作区-文档-😀                  |
+      |------------------|---------|--------|--------|---------------------------------|
+      | dep              | 1.0.0   | 1.0.0  | 2.0.0  | catalog (plain, 工作区-文档-😀) |
+      |--------------------------------------------------------------------------------|
+      "
+    `);
+    // Without the catalog row, the widest Workspace cell is a workspace name.
+    expect(await table("!dep")).toMatchInlineSnapshot(`
+      "|---------------------------------------------------------------|
+      | Package          | Current | Update | Latest | Workspace      |
+      |------------------|---------|--------|--------|----------------|
+      | 日本語パッケージ | 1.0.0   | 1.0.0  | 2.0.0  | 工作区-文档-😀 |
+      |---------------------------------------------------------------|
+      "
+    `);
+  });
+
   test("catalog grouping with multiple workspaces", async () => {
     await Promise.all([
       write(

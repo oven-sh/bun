@@ -3,7 +3,22 @@
 
 #include "root.h"
 
+#if __has_include(<unicode/ucol.h>)
 #include <unicode/ucol.h>
+#else
+// macOS: libicucore has these, under these names, and the SDK has no header for them.
+#include <unicode/utypes.h>
+extern "C" {
+typedef struct UCollator UCollator;
+typedef enum { UCOL_NORMALIZATION_MODE = 4, UCOL_STRENGTH = 5, UCOL_NUMERIC_COLLATION = 7 } UColAttribute;
+typedef enum { UCOL_PRIMARY = 0, UCOL_ON = 17 } UColAttributeValue;
+typedef enum { UCOL_LESS = -1, UCOL_EQUAL = 0, UCOL_GREATER = 1 } UCollationResult;
+UCollator* ucol_open(const char* loc, UErrorCode* status);
+void ucol_setAttribute(UCollator* coll, UColAttribute attr, UColAttributeValue value, UErrorCode* status);
+UCollationResult ucol_strcoll(const UCollator* coll, const UChar* source, int32_t sourceLength, const UChar* target, int32_t targetLength);
+UCollationResult ucol_strcollUTF8(const UCollator* coll, const char* source, int32_t sourceLength, const char* target, int32_t targetLength, UErrorCode* status);
+}
+#endif
 
 namespace Bun {
 namespace ICUCollate {

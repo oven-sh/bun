@@ -1298,7 +1298,7 @@ fn spawn_maybe_sync(
         closed: Default::default(),
         this_value: Default::default(),
         weak_file_sink_stdin_ptr: Cell::new(None),
-        abort_handle: bun_jsc::AbortHandle::for_owner::<SubprocessT<'static>>(),
+        abort_handle: bun_jsc::SignalAbortHandle::for_owner::<SubprocessT<'static>>(),
         context: cx.context().id(),
         event_loop_timer_refd: Cell::new(false),
         event_loop_timer: JsCell::new(crate::timer::EventLoopTimer::init_paused(
@@ -1726,7 +1726,9 @@ fn spawn_maybe_sync(
         // returns, which re-enters via `subprocess_ptr`: hold no
         // `&mut Subprocess` across the call.
         // SAFETY: `subprocess_ptr` is live and heap-pinned.
-        unsafe { bun_jsc::AbortHandle::follow_owner(subprocess_ptr, signal) };
+        unsafe {
+            bun_jsc::SignalAbortHandle::follow(&raw mut (*subprocess_ptr).abort_handle, signal)
+        };
     }
 
     let Some(sync_loop) = &sync_loop else {

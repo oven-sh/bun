@@ -76,7 +76,7 @@ pub(crate) struct FSWatcher {
     current_task: JsCell<FSWatchTask>,
 
     /// Armed until `detach()`: the watcher closes with the context that started it.
-    abort_handle: bun_jsc::AbortHandle,
+    abort_handle: bun_jsc::SignalAbortHandle,
 }
 
 bun_jsc::impl_abort_handle_owner!(FSWatcher, abort_handle, |this, cause| {
@@ -816,7 +816,9 @@ impl FSWatcher {
                 this_ref.current_task.with_mut(|t| t.append_abort());
             } else {
                 // SAFETY: `this` is the live boxed FSWatcher; `detach()` disarms the handle.
-                unsafe { bun_jsc::AbortHandle::follow_owner(this, s.clone()) };
+                unsafe {
+                    bun_jsc::SignalAbortHandle::follow(&raw mut (*this).abort_handle, s.clone())
+                };
             }
         }
     }
@@ -1186,7 +1188,7 @@ impl FSWatcher {
             verbose: args.verbose,
             poll_ref: JsCell::new(KeepAlive::default()),
             pending_activity_count: AtomicU32::new(1),
-            abort_handle: bun_jsc::AbortHandle::for_owner::<FSWatcher>(),
+            abort_handle: bun_jsc::SignalAbortHandle::for_owner::<FSWatcher>(),
         }));
         // SAFETY: `ctx` is the freshly-boxed payload; uniquely owned here.
         // R-2: deref as shared; mutation goes through `JsCell`.

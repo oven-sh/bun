@@ -1,5 +1,6 @@
+use core::cell::Cell;
 use core::ffi::c_void;
-use core::ptr::NonNull;
+use core::ptr::{self, NonNull};
 use core::sync::atomic::Ordering;
 
 use crate::{CommonAbortReason, JSGlobalObject, JSValue, VirtualMachineRef as VirtualMachine};
@@ -28,18 +29,9 @@ bun_opaque::opaque_ffi! {
 // or out-param keep raw pointers and stay `unsafe fn`.
 unsafe extern "C" {
     safe fn WebCore__AbortSignal__aborted(arg0: &AbortSignal) -> bool;
-    // safe: `arg1` is an opaque round-trip pointer C++ stores into the listener
-    // entry and forwards to `arg_fn2` on abort (never dereferenced as Rust
-    // data) — same contract as `cleanNativeBindings` / `queueMicrotaskCallback`.
-    safe fn WebCore__AbortSignal__addListener(
-        arg0: &AbortSignal,
-        arg1: *mut c_void,
-        arg_fn2: Option<unsafe extern "C" fn(*mut c_void, JSValue)>,
-    ) -> *mut AbortSignal;
-    // safe: `arg1` is an opaque round-trip pointer used only for identity
-    // comparison on the C++ side (removes the listener entry whose `ctx == arg1`);
-    // never dereferenced, so no caller-side precondition beyond the `&AbortSignal`.
-    safe fn WebCore__AbortSignal__cleanNativeBindings(arg0: &AbortSignal, arg1: *mut c_void);
+    // Not `safe`: C++ writes the link words of `follower`.
+    fn WebCore__AbortSignal__addFollower(arg0: &AbortSignal, follower: *mut AbortSignalFollower);
+    fn WebCore__AbortSignal__removeFollower(arg0: &AbortSignal, follower: *mut AbortSignalFollower);
     safe fn WebCore__AbortSignal__create(arg0: &JSGlobalObject) -> JSValue;
     safe fn WebCore__AbortSignal__fromJS(value0: JSValue) -> *mut AbortSignal;
     safe fn WebCore__AbortSignal__ref(arg0: &AbortSignal) -> *mut AbortSignal;
@@ -68,22 +60,49 @@ unsafe extern "C" {
     safe fn Bun__wrapAbortError(global_object: &JSGlobalObject, cause: JSValue) -> JSValue;
 }
 
+/// `WebCore::AbortSignalFollower`: what a signal links for each native operation that follows it
+/// ([`SignalAbortHandle`](crate::SignalAbortHandle)). Only C++ reads and writes the two words;
+/// null is "not linked".
+#[repr(C)]
+pub(crate) struct AbortSignalFollower {
+    next: Cell<*mut AbortSignalFollower>,
+    prev: Cell<*mut AbortSignalFollower>,
+}
+
+const _: () = assert!(
+    size_of::<AbortSignalFollower>() == 2 * size_of::<*mut c_void>()
+        && align_of::<AbortSignalFollower>() == align_of::<*mut c_void>()
+);
+
+impl AbortSignalFollower {
+    pub(crate) const fn new() -> Self {
+        Self {
+            next: Cell::new(ptr::null_mut()),
+            prev: Cell::new(ptr::null_mut()),
+        }
+    }
+}
+
 impl AbortSignal {
-    /// For [`AbortHandle`](crate::AbortHandle), which removes `ctx` before it moves or drops.
-    pub(crate) fn add_listener(
-        &self,
-        ctx: *mut c_void,
-        callback: unsafe extern "C" fn(*mut c_void, JSValue),
-    ) -> &AbortSignal {
-        // C++ `addListener` returns `this` — discard the round-trip pointer and
-        // hand back the borrow we already hold instead of re-deriving it from
-        // the raw FFI return.
-        let _ = WebCore__AbortSignal__addListener(self, ctx, Some(callback));
-        self
+    /// Link `follower` at the end of the signal's followers. If the signal already aborted,
+    /// `Bun__AbortSignal__followerAborted(follower, reason)` runs before this returns and nothing
+    /// is linked.
+    ///
+    /// # Safety
+    /// `follower` is live and not linked, and stays where it is until
+    /// [`remove_follower`](Self::remove_follower). JS thread.
+    pub(crate) unsafe fn add_follower(&self, follower: *mut AbortSignalFollower) {
+        // SAFETY: fn contract.
+        unsafe { WebCore__AbortSignal__addFollower(self, follower) }
     }
 
-    pub(crate) fn clean_native_bindings(&self, ctx: *mut c_void) {
-        WebCore__AbortSignal__cleanNativeBindings(self, ctx)
+    /// Unlink `follower` if this signal still links it (a signal that aborted has unlinked it).
+    ///
+    /// # Safety
+    /// `follower` is live, and this is the signal it was last added to. JS thread.
+    pub(crate) unsafe fn remove_follower(&self, follower: *mut AbortSignalFollower) {
+        // SAFETY: fn contract.
+        unsafe { WebCore__AbortSignal__removeFollower(self, follower) }
     }
 
     pub fn signal(&self, global_object: &JSGlobalObject, reason: CommonAbortReason) {

@@ -5934,21 +5934,14 @@ extern "C" void WebCore__AbortSignal__unref(WebCore::AbortSignal* abortSignal)
     abortSignal->deref();
 }
 
-extern "C" void WebCore__AbortSignal__cleanNativeBindings(WebCore::AbortSignal* abortSignal, void* arg1)
+extern "C" void WebCore__AbortSignal__removeFollower(WebCore::AbortSignal* abortSignal, WebCore::AbortSignalFollower* follower)
 {
-    abortSignal->cleanNativeBindings(arg1);
+    abortSignal->removeFollower(*follower);
 }
 
-extern "C" WebCore::AbortSignal* WebCore__AbortSignal__addListener(WebCore::AbortSignal* abortSignal, void* ctx, void (*callback)(void* ctx, JSC::EncodedJSValue reason))
+extern "C" void WebCore__AbortSignal__addFollower(WebCore::AbortSignal* abortSignal, WebCore::AbortSignalFollower* follower)
 {
-    if (abortSignal->aborted()) {
-        auto* context = static_cast<WebCore::EventTarget*>(abortSignal)->scriptExecutionContext();
-        auto reason = context ? abortSignal->jsReason(*context->jsGlobalObject()) : abortSignal->reason().getValue(jsNull());
-        callback(ctx, JSC::JSValue::encode(reason));
-        return abortSignal;
-    }
-    abortSignal->addNativeCallback(std::make_tuple(ctx, callback));
-    return abortSignal;
+    abortSignal->addFollower(*follower);
 }
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__fromJS(JSC::EncodedJSValue value)
 {

@@ -1356,7 +1356,7 @@ pub(crate) struct Stream {
 }
 
 pub(crate) struct SignalRef {
-    abort_handle: bun_jsc::AbortHandle,
+    abort_handle: bun_jsc::SignalAbortHandle,
     // TODO: We should not need this ref counting here, since Parser owns Stream
     parser: RefPtr<H2FrameParser>,
     stream_id: u32,
@@ -1891,13 +1891,13 @@ impl Stream {
 
     pub(crate) fn attach_signal(&mut self, parser: &H2FrameParser, signal: &mut AbortSignal) {
         let signal_ref = bun_core::heap::into_raw(Box::new(SignalRef {
-            abort_handle: bun_jsc::AbortHandle::for_owner::<SignalRef>(),
+            abort_handle: bun_jsc::SignalAbortHandle::for_owner::<SignalRef>(),
             parser: parser.ref_guard(),
             stream_id: self.id,
         }));
         // SAFETY: `signal_ref` is a live heap allocation; both calls keep its provenance.
         let signal_ref = unsafe {
-            bun_jsc::AbortHandle::follow_owner(signal_ref, signal.ref_());
+            bun_jsc::SignalAbortHandle::follow(&raw mut (*signal_ref).abort_handle, signal.ref_());
             bun_core::heap::take(signal_ref)
         };
         self.signal = Some(signal_ref);

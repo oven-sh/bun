@@ -10,6 +10,7 @@
 
 use core::ptr;
 
+use crate::abort_signal::AbortSignalFollower;
 use crate::virtual_machine::SweepResult;
 use crate::{AbortSignal, AbortSignalRef, JSValue, JsCell};
 
@@ -276,9 +277,9 @@ impl ScriptExecutionContext {
 }
 
 /// The handle an owner of cancellable native work embeds: membership in the
-/// [`ScriptExecutionContext`] that started the work, and optionally the
-/// `AbortSignal` script passed for it. The owner's one callback runs when
-/// either fires.
+/// [`ScriptExecutionContext`] that started the work. The owner's one callback
+/// runs when that context stops. An owner that script can also pass an
+/// `AbortSignal` embeds a [`SignalAbortHandle`].
 ///
 /// Address-stable while armed: embed it in a heap-allocated owner.
 pub struct AbortHandle {
@@ -287,10 +288,12 @@ pub struct AbortHandle {
     /// The context this is linked into; null while disarmed.
     context: JsCell<*const ScriptExecutionContext>,
     on_abort: AbortFn,
-    signal: JsCell<Option<AbortSignalRef>>,
     /// Its context stopped it, or had already stopped when it was armed.
     context_stopped: core::cell::Cell<bool>,
 }
+
+// An owner that cannot follow a signal does not pay for the link to one.
+const _: () = assert!(size_of::<AbortHandle>() <= 5 * size_of::<usize>());
 
 impl AbortHandle {
     /// The handle `O` embeds (at the field [`AbortHandleOwner::abort_handle`] names).
@@ -300,7 +303,6 @@ impl AbortHandle {
             next: JsCell::new(ptr::null_mut()),
             context: JsCell::new(ptr::null()),
             on_abort: Self::owner_aborted::<O>,
-            signal: JsCell::new(None),
             context_stopped: core::cell::Cell::new(false),
         }
     }
@@ -331,14 +333,9 @@ impl AbortHandle {
         unsafe { self.context.get().as_ref() }
     }
 
-    #[inline]
-    pub fn signal(&self) -> Option<&AbortSignal> {
-        self.signal.get().as_deref()
-    }
-
     /// # Safety
     /// `this` is live, carries its owner's provenance, and does not move or
-    /// drop while armed other than through `disarm` / `Drop`.
+    /// drop while armed other than through `leave` / `Drop`.
     unsafe fn arm(this: *mut Self, context: &ScriptExecutionContext) {
         // SAFETY: fn contract.
         unsafe {
@@ -358,34 +355,6 @@ impl AbortHandle {
         }
     }
 
-    /// # Safety
-    /// As [`arm`](Self::arm).
-    unsafe fn follow(this: *mut Self, signal: AbortSignalRef) {
-        // SAFETY: fn contract.
-        let handle = unsafe { &*this };
-        handle.unfollow();
-        let raw = signal.get();
-        handle.signal.set(Some(signal));
-        // `AbortSignal` is an `opaque_ffi!` handle; the ref just stored keeps it live.
-        let signal = AbortSignal::opaque_ref(raw);
-        signal.add_listener(this.cast(), Self::signal_fired);
-    }
-
-    extern "C" fn signal_fired(this: *mut core::ffi::c_void, reason: JSValue) {
-        let this = this.cast::<AbortHandle>();
-        // SAFETY: registered in `follow` with the handle's address; the
-        // listener is removed (`unfollow`) before the handle moves or drops.
-        unsafe { ((*this).on_abort)(this, AbortCause::Signal(reason)) }
-    }
-
-    /// Stop following the signal and release it.
-    pub fn unfollow(&self) {
-        let Some(signal) = self.signal.take() else {
-            return;
-        };
-        signal.clean_native_bindings(ptr::from_ref(self).cast_mut().cast());
-    }
-
     /// Leave the context without being told to stop (the owner finished or
     /// closed on its own). Safe to call when not armed, and off the JS thread
     /// then (an owner released elsewhere has already disarmed).
@@ -393,6 +362,81 @@ impl AbortHandle {
         if let Some(context) = self.context() {
             context.unlink(self);
         }
+    }
+}
+
+impl Drop for AbortHandle {
+    fn drop(&mut self) {
+        self.leave();
+    }
+}
+
+/// An [`AbortHandle`] that can also follow the `AbortSignal` script passed for
+/// the work: the owner's one callback runs when the context stops or the
+/// signal fires.
+///
+/// The signal links `follower` and holds nothing else of the handle, so
+/// [`unfollow`](Self::unfollow) costs the same however many other operations
+/// follow that signal. Linked ⇒ `signal` holds a ref, so the signal is alive.
+///
+/// Address-stable while armed or following: embed it in a heap-allocated owner.
+#[repr(C)]
+pub struct SignalAbortHandle {
+    /// First: [`impl_abort_handle_owner!`] finds the owner from its address.
+    handle: AbortHandle,
+    follower: AbortSignalFollower,
+    signal: JsCell<Option<AbortSignalRef>>,
+}
+
+const _: () = assert!(core::mem::offset_of!(SignalAbortHandle, handle) == 0);
+
+impl SignalAbortHandle {
+    /// The handle `O` embeds (at the field [`AbortHandleOwner::abort_handle`] names).
+    pub const fn for_owner<O: AbortHandleOwner>() -> Self {
+        Self {
+            handle: AbortHandle::for_owner::<O>(),
+            follower: AbortSignalFollower::new(),
+            signal: JsCell::new(None),
+        }
+    }
+
+    /// The signal it follows. It stays after the signal has fired, until
+    /// [`unfollow`](Self::unfollow).
+    #[inline]
+    pub fn signal(&self) -> Option<&AbortSignal> {
+        self.signal.get().as_deref()
+    }
+
+    /// The owner's `on_abort` also runs when `signal` fires; before this
+    /// returns if it already has.
+    ///
+    /// # Safety
+    /// `this` is live, carries its owner's provenance, and does not move or
+    /// drop while it follows other than through `unfollow` / `disarm` / `Drop`.
+    pub unsafe fn follow(this: *mut Self, signal: AbortSignalRef) {
+        // SAFETY: fn contract.
+        let handle = unsafe { &*this };
+        handle.unfollow();
+        let raw = signal.get();
+        handle.signal.set(Some(signal));
+        // SAFETY: the ref just stored keeps the signal live; `follower` is not
+        // linked (`unfollow` above) and stays put while it is (fn contract).
+        unsafe { AbortSignal::opaque_ref(raw).add_follower(ptr::addr_of_mut!((*this).follower)) };
+    }
+
+    /// Stop following the signal and release it.
+    pub fn unfollow(&self) {
+        let Some(signal) = self.signal.take() else {
+            return;
+        };
+        // SAFETY: `signal` is the one `follower` was added to, and is alive
+        // until the ref drops below.
+        unsafe { signal.remove_follower(ptr::from_ref(&self.follower).cast_mut()) };
+    }
+
+    /// [`AbortHandle::leave`].
+    pub fn leave(&self) {
+        self.handle.leave();
     }
 
     /// [`leave`](Self::leave) and [`unfollow`](Self::unfollow).
@@ -402,15 +446,53 @@ impl AbortHandle {
     }
 }
 
-impl Drop for AbortHandle {
+impl Drop for SignalAbortHandle {
     fn drop(&mut self) {
-        self.disarm();
+        self.unfollow();
     }
 }
 
-/// Implemented by the owner that embeds an [`AbortHandle`]; gives it
-/// [`arm_owner`](AbortHandle::arm_owner) / [`follow_owner`](AbortHandle::follow_owner)
-/// with the container-of recovery written once. Use [`impl_abort_handle_owner!`].
+/// `AbortSignal::runAbortSteps`: the signal `follower` follows fired, and has
+/// unlinked it. Also `AbortSignal::addFollower` for a signal that had fired.
+///
+/// # Safety
+/// `follower` is the field of a live [`SignalAbortHandle`].
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__AbortSignal__followerAborted(
+    follower: *mut AbortSignalFollower,
+    reason: JSValue,
+) {
+    // SAFETY: fn contract. The callback may free the owner; nothing of the
+    // handle is touched after it.
+    unsafe {
+        let this = bun_core::from_field_ptr!(SignalAbortHandle, follower, follower);
+        let handle = ptr::addr_of_mut!((*this).handle);
+        ((*handle).on_abort)(handle, AbortCause::Signal(reason))
+    }
+}
+
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for super::AbortHandle {}
+    impl Sealed for super::SignalAbortHandle {}
+}
+
+/// What an owner embeds at the field it names to [`impl_abort_handle_owner!`]:
+/// an [`AbortHandle`], or a [`SignalAbortHandle`] (which starts with one).
+pub trait AbortHandleField: sealed::Sealed {}
+impl AbortHandleField for AbortHandle {}
+impl AbortHandleField for SignalAbortHandle {}
+
+/// For [`impl_abort_handle_owner!`].
+#[doc(hidden)]
+#[inline]
+pub fn abort_handle_of<F: AbortHandleField>(field: *mut F) -> *mut AbortHandle {
+    field.cast()
+}
+
+/// Implemented by the owner that embeds an [`AbortHandle`] or a
+/// [`SignalAbortHandle`]; gives it [`arm_owner`](AbortHandle::arm_owner) with
+/// the container-of recovery written once. Use [`impl_abort_handle_owner!`].
 pub trait AbortHandleOwner: Sized {
     /// What keeps the owner alive while [`on_abort`](Self::on_abort) runs.
     type KeepAlive;
@@ -435,7 +517,7 @@ pub trait AbortHandleOwner: Sized {
 
 impl AbortHandle {
     unsafe fn owner_aborted<O: AbortHandleOwner>(handle: *mut AbortHandle, cause: AbortCause) {
-        // SAFETY: armed/followed through `*_owner::<O>`, so `handle` is `O`'s field.
+        // SAFETY: made by `for_owner::<O>`, so `handle` is (the start of) `O`'s field.
         unsafe {
             let owner = O::from_abort_handle(handle);
             let _keep_alive = O::keep_alive(owner);
@@ -452,20 +534,11 @@ impl AbortHandle {
         // SAFETY: fn contract.
         unsafe { Self::arm(O::abort_handle(owner), context) }
     }
-
-    /// `O::on_abort(owner, ..)` also runs when `signal` fires; before this
-    /// returns if it already has.
-    ///
-    /// # Safety
-    /// As [`arm_owner`](Self::arm_owner).
-    pub unsafe fn follow_owner<O: AbortHandleOwner>(owner: *mut O, signal: AbortSignalRef) {
-        // SAFETY: fn contract.
-        unsafe { Self::follow(O::abort_handle(owner), signal) }
-    }
 }
 
 /// `impl_abort_handle_owner!(Owner, field, |this, cause| body)`: `Owner` embeds
-/// an [`AbortHandle`] at `field`; `body` is [`AbortHandleOwner::on_abort`].
+/// an [`AbortHandle`] or a [`SignalAbortHandle`] at `field`; `body` is
+/// [`AbortHandleOwner::on_abort`].
 /// Generic owners: `impl_abort_handle_owner!([const N: bool] Owner<N>, field, ..)`.
 #[macro_export]
 macro_rules! impl_abort_handle_owner {
@@ -477,7 +550,9 @@ macro_rules! impl_abort_handle_owner {
                 this: *mut Self,
             ) -> *mut $crate::script_execution_context::AbortHandle {
                 // SAFETY: caller contract — `this` is live.
-                unsafe { ::core::ptr::addr_of_mut!((*this).$field) }
+                $crate::script_execution_context::abort_handle_of(unsafe {
+                    ::core::ptr::addr_of_mut!((*this).$field)
+                })
             }
             #[inline]
             unsafe fn keep_alive($pinned: *mut Self) -> $KeepAlive $pin
@@ -485,7 +560,7 @@ macro_rules! impl_abort_handle_owner {
             unsafe fn from_abort_handle(
                 handle: *mut $crate::script_execution_context::AbortHandle,
             ) -> *mut Self {
-                // SAFETY: caller contract — `handle` addresses `Self.$field`.
+                // SAFETY: caller contract — `handle` addresses the start of `Self.$field`.
                 unsafe { ::bun_core::from_field_ptr!(Self, $field, handle) }
             }
             unsafe fn on_abort(

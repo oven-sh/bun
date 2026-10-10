@@ -116,7 +116,7 @@ impl Drop for HeadersRef {
 
 /// Errors the owning fetch `Response`'s body on abort (Fetch spec "abort a fetch" step 4).
 pub(crate) struct BodyAbortListener {
-    abort_handle: bun_jsc::AbortHandle,
+    abort_handle: bun_jsc::SignalAbortHandle,
     /// `Response` owns `Box<Self>`, so a ref-counted pointer here would cycle.
     response: bun_ptr::ParentRef<Response, bun_ptr::Mut>,
     global: GlobalRef,
@@ -491,7 +491,7 @@ impl Response {
         context: bun_jsc::ContextId,
     ) {
         let listener = bun_core::heap::into_raw(Box::new(BodyAbortListener {
-            abort_handle: bun_jsc::AbortHandle::for_owner::<BodyAbortListener>(),
+            abort_handle: bun_jsc::SignalAbortHandle::for_owner::<BodyAbortListener>(),
             // SAFETY: caller contract; `this` is live and owns the box.
             response: unsafe { bun_ptr::ParentRef::from_raw_mut(this) },
             global: GlobalRef::new(global),
@@ -499,7 +499,7 @@ impl Response {
         }));
         // SAFETY: `listener` is a live heap allocation; both calls keep its provenance.
         let listener = unsafe {
-            bun_jsc::AbortHandle::follow_owner(listener, signal.ref_());
+            bun_jsc::SignalAbortHandle::follow(&raw mut (*listener).abort_handle, signal.ref_());
             bun_core::heap::take(listener)
         };
         // SAFETY: caller contract; `this` is live.

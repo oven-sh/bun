@@ -143,7 +143,7 @@ pub struct Subprocess<'a> {
     /// Follows the `signal` option until `clear_abort_signal`; armed only in a
     /// `Bun.ModuleGraph` context, which kills it when disposed (children
     /// of the realm's own script are the process auto-killer's).
-    pub(crate) abort_handle: bun_jsc::AbortHandle,
+    pub(crate) abort_handle: bun_jsc::SignalAbortHandle,
     /// The context of the script that spawned the child: its exit is reported there.
     pub(crate) context: bun_jsc::ContextId,
 

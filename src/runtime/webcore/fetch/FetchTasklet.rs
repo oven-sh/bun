@@ -164,7 +164,7 @@ pub struct FetchTasklet {
     pub(crate) url_proxy_buffer: Box<[u8]>,
 
     /// The context whose script called `fetch()`, and its `signal` option.
-    pub(crate) abort_handle: jsc::AbortHandle,
+    pub(crate) abort_handle: jsc::SignalAbortHandle,
     /// That context's id: the handle forgets its context once that stops.
     pub(crate) context: jsc::ContextId,
     pub(crate) signals: Signals,
@@ -2011,7 +2011,7 @@ impl FetchTasklet {
             poll_ref: JsCell::new(KeepAlive::default()),
             body_size: http::BodySize::Unknown,
             url_proxy_buffer: fetch_options.url_proxy_buffer,
-            abort_handle: jsc::AbortHandle::for_owner::<FetchTasklet>(),
+            abort_handle: jsc::SignalAbortHandle::for_owner::<FetchTasklet>(),
             context: cx.context().id(),
             signals: Signals::default(),
             signal_store: http::signals::Store::unclaimed(),
@@ -2221,7 +2221,9 @@ impl FetchTasklet {
 
         if let Some(signal) = fetch_options.signal {
             // SAFETY: the tasklet is heap-allocated and drops its handle with itself.
-            unsafe { jsc::AbortHandle::follow_owner(fetch_tasklet_ptr, signal) };
+            unsafe {
+                jsc::SignalAbortHandle::follow(&raw mut (*fetch_tasklet_ptr).abort_handle, signal)
+            };
         }
         Ok(fetch_tasklet_ptr)
     }

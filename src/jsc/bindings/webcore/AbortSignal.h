@@ -61,6 +61,13 @@ JSC::JSValue toJS(JSC::JSGlobalObject*, CommonAbortReason);
 
 typedef void* AbortSignalTimeout;
 
+// What a native operation that follows a signal links into it: the `follower` field of a
+// SignalAbortHandle (src/jsc/ScriptExecutionContext.rs). Rust owns the memory, C++ the two link
+// words. Linked ⇒ the handle holds a ref to the signal.
+class AbortSignalFollower final : public BasicRawSentinelNode<AbortSignalFollower> {
+};
+static_assert(sizeof(AbortSignalFollower) == 2 * sizeof(void*) && alignof(AbortSignalFollower) == alignof(void*), "AbortSignalFollower layout is mirrored in src/jsc/AbortSignal.rs");
+
 class AbortSignal final : public RefCounted<AbortSignal>, public EventTargetWithInlineData, private ContextDestructionObserver {
     WTF_MAKE_TZONE_ALLOCATED(AbortSignal);
 
@@ -75,7 +82,6 @@ private:
 public:
     static Ref<AbortSignal> create(ScriptExecutionContext*);
     WEBCORE_EXPORT ~AbortSignal();
-    using NativeCallbackTuple = std::tuple<void*, void (*)(void*, JSC::EncodedJSValue)>;
 
     static Ref<AbortSignal> abort(ScriptExecutionContext&, JSC::JSValue reason);
     static Ref<AbortSignal> timeout(ScriptExecutionContext&, uint64_t milliseconds);
@@ -95,12 +101,11 @@ public:
     JSValue jsReason(JSC::JSGlobalObject& globalObject);
     CommonAbortReason commonReason() const { return m_commonReason; }
 
-    void cleanNativeBindings(void* ref);
-    void addNativeCallback(NativeCallbackTuple callback)
-    {
-        m_native_callbacks.append(callback);
-        eventListenersDidChange();
-    }
+    // Runs Bun__AbortSignal__followerAborted(follower, reason) when this signal aborts, in the
+    // order added and before the abort algorithms. If it already has, before this returns.
+    void addFollower(AbortSignalFollower&);
+    // A no-op for a follower the abort has already unlinked.
+    void removeFollower(AbortSignalFollower&);
 
     bool hasActiveTimeoutTimer() const { return m_timeout != nullptr; }
     // Frees the AbortSignal.timeout() timer and clears m_timeout. Also reached from the timer heap
@@ -217,8 +222,7 @@ private:
     AbortSignalSet m_dependentSignals;
     JSValueInWrappedObject m_reason;
     CommonAbortReason m_commonReason { CommonAbortReason::None };
-    Vector<NativeCallbackTuple, 2> m_native_callbacks;
-    Vector<NativeCallbackTuple, 2>* m_nativeCallbacksBeingDispatched { nullptr };
+    SentinelLinkedList<AbortSignalFollower, BasicRawSentinelNode<AbortSignalFollower>> m_followers;
     std::atomic<uint32_t> pendingActivityCount { 0 };
     // Everything hasTimeoutObserver() cares about in one counter: abort event
     // listeners (1 while any exist), pending activity, m_listenerAlgorithms,

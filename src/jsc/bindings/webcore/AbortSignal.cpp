@@ -46,6 +46,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(AbortSignal);
 
 extern "C" AbortSignalTimeout AbortSignal__Timeout__create(void* vm, AbortSignal* signal, uint64_t milliseconds);
 extern "C" void AbortSignal__Timeout__deinit(AbortSignalTimeout timeout);
+extern "C" void Bun__AbortSignal__followerAborted(AbortSignalFollower*, JSC::EncodedJSValue reason);
 
 Ref<AbortSignal> AbortSignal::create(ScriptExecutionContext* context)
 {
@@ -106,6 +107,7 @@ AbortSignal::~AbortSignal()
 {
     releaseSourceObserverCounts();
 
+    ASSERT(m_followers.isEmpty());
     // A listener reaches its signal through its linked algorithm, and the listeners outlive this
     // signal: those of other targets, and those of this signal itself until ~EventTarget().
     while (!m_listenerAlgorithms.isEmpty())
@@ -183,15 +185,13 @@ void AbortSignal::runAbortSteps()
     auto reason = m_reason.getValue();
     ASSERT(reason);
 
-    auto callbacks = std::exchange(m_native_callbacks, {});
-    m_nativeCallbacksBeingDispatched = &callbacks;
-    for (auto& callback : callbacks) {
-        const auto [ctx, func] = callback;
-        if (!func)
-            continue;
-        func(ctx, JSC::JSValue::encode(reason));
+    // Not a loop over the list: a follower's callback can free its handle and can unfollow the
+    // ones after it, and nothing follows an aborted signal.
+    while (!m_followers.isEmpty()) {
+        auto& follower = *m_followers.begin();
+        follower.remove();
+        Bun__AbortSignal__followerAborted(&follower, JSC::JSValue::encode(reason));
     }
-    m_nativeCallbacksBeingDispatched = nullptr;
 
     // 1. For each algorithm of signal's abort algorithms: run algorithm.
     //    2. Empty signal's abort algorithms.
@@ -265,30 +265,29 @@ void AbortSignal::signalAbort(JSC::JSGlobalObject* globalObject, CommonAbortReas
     signalAbort(toJS(globalObject, reason));
 }
 
-void AbortSignal::cleanNativeBindings(void* ref)
+void AbortSignal::addFollower(AbortSignalFollower& follower)
 {
-    if (m_nativeCallbacksBeingDispatched) {
-        for (auto& callback : *m_nativeCallbacksBeingDispatched) {
-            if (std::get<0>(callback) == ref)
-                std::get<1>(callback) = nullptr;
-        }
+    if (aborted()) {
+        auto* context = scriptExecutionContext();
+        auto reason = context ? jsReason(*context->jsGlobalObject()) : m_reason.getValue(jsNull());
+        Bun__AbortSignal__followerAborted(&follower, JSC::JSValue::encode(reason));
+        return;
     }
+    m_followers.append(&follower);
+    eventListenersDidChange();
+}
 
-    auto callbacks = std::exchange(m_native_callbacks, {});
-
-    callbacks.removeAllMatching([=](auto callback) {
-        const auto [ctx, func] = callback;
-        return ctx == ref;
-    });
-
-    m_native_callbacks = WTF::move(callbacks);
-    this->eventListenersDidChange();
+void AbortSignal::removeFollower(AbortSignalFollower& follower)
+{
+    if (follower.isOnList())
+        follower.remove();
+    eventListenersDidChange();
 }
 
 void AbortSignal::eventListenersDidChange()
 {
     bool hadListeners = hasAbortEventListener();
-    bool hasListeners = hasEventListeners(eventNames().abortEvent) or !m_native_callbacks.isEmpty();
+    bool hasListeners = hasEventListeners(eventNames().abortEvent) or !m_followers.isEmpty();
     setHasAbortEventListener(hasListeners);
     if (hasListeners != hadListeners) {
         if (hasListeners)
@@ -381,7 +380,7 @@ WebCoreOpaqueRoot root(AbortSignal* signal)
 
 size_t AbortSignal::memoryCost() const
 {
-    return sizeof(AbortSignal) + m_native_callbacks.sizeInBytes() + m_listenerAlgorithmCount * sizeof(EventListenerAbortAlgorithm) + m_abortAlgorithms.sizeInBytes() + m_sourceSignals.capacity() + m_dependentSignals.capacity();
+    return sizeof(AbortSignal) + m_listenerAlgorithmCount * sizeof(EventListenerAbortAlgorithm) + m_abortAlgorithms.sizeInBytes() + m_sourceSignals.capacity() + m_dependentSignals.capacity();
 }
 
 template<typename Visitor>

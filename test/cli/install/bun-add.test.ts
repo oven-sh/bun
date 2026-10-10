@@ -282,6 +282,44 @@ it("bun add --analyze should scan dependencies", async () => {
   }
 });
 
+it("bun add --analyze does not scan the rest of a bun: specifier as a dependency", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+    }),
+  );
+  // "#!/usr/bin/env bun" makes this a file for bun. The registry has a "boba" package: "bun:boba" is not it.
+  await writeFile(join(package_dir, "entry-point.ts"), `#!/usr/bin/env bun\nimport "bun:boba";\nimport "bar";\n`);
+  await using proc = spawn({
+    cmd: [bunExe(), "add", "./entry-point.ts", "--analyze"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [out, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun add v1."),
+    "",
+    "installed bar@0.0.2",
+    "",
+    "1 package installed",
+  ]);
+  expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: {
+      bar: "^0.0.2",
+    },
+  });
+  expect(exitCode).toBe(0);
+});
+
 for (const pathType of ["absolute", "relative"]) {
   it.each(["file:///", "file://", "file:/", "file:", "", "//////"])(
     `should accept ${pathType} file protocol with prefix "%s"`,

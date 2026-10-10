@@ -406,9 +406,10 @@ impl Linker {
                             continue;
                         }
 
-                        if strings::has_prefix_comptime(import_record.path.text, b"bun:") {
-                            import_record.path =
-                                PFs::Path::init(&import_record.path.text[b"bun:".len()..]);
+                        if let Some(rest) = import_record.path.text.strip_prefix(b"bun:")
+                            && bun_resolve_builtins::Alias::is_node_builtin_after_bun_prefix(rest)
+                        {
+                            import_record.path = PFs::Path::init(rest);
                             import_record.path.namespace = b"bun";
                         }
                     }

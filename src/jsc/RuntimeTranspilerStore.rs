@@ -1027,9 +1027,10 @@ impl TranspilerJob {
                 continue;
             }
 
-            if strings::has_prefix_comptime(import_record.path.text, b"bun:") {
-                import_record.path =
-                    bun_paths::fs::Path::init(&import_record.path.text[b"bun:".len()..]);
+            if let Some(rest) = import_record.path.text.strip_prefix(b"bun:")
+                && HardcodedAlias::is_node_builtin_after_bun_prefix(rest)
+            {
+                import_record.path = bun_paths::fs::Path::init(rest);
                 import_record.path.namespace = b"bun";
                 import_record
                     .flags

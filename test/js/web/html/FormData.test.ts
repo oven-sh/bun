@@ -525,6 +525,26 @@ describe("FormData", () => {
     });
   });
 
+  // A multipart name and filename are raw bytes of the body. A NUL byte does not end them.
+  it("keeps a NUL byte in a short multipart name and filename", async () => {
+    const boundary = "nulname";
+    const headers = { "Content-Type": `multipart/form-data; boundary=${boundary}` };
+    const body =
+      `--${boundary}\r\nContent-Disposition: form-data; name="a\0b"\r\n\r\nv\r\n` +
+      `--${boundary}\r\nContent-Disposition: form-data; name="c\0d"; filename="e\0f.txt"\r\n\r\nw\r\n` +
+      `--${boundary}--\r\n`;
+    const forms = [
+      await new Response(body, { headers }).formData(),
+      await new Request("http://localhost/", { method: "POST", body, headers }).formData(),
+    ];
+    for (const form of forms) {
+      expect([...form].map(([name, value]) => [name, typeof value === "string" ? value : value.name])).toEqual([
+        ["a\0b", "v"],
+        ["c\0d", "e\0f.txt"],
+      ]);
+    }
+  });
+
   it("file upload on HTTP server (receive)", async () => {
     using server = Bun.serve({
       port: 0,

@@ -634,10 +634,13 @@ fn search(
                             is_ignored_by_configuration,
                         });
                     }
-                } else if !is_ignored_by_configuration && matches(&relative) {
+                } else if !is_ignored_by_configuration
+                    && matches(&relative)
+                    && let Some(size) = listing.size_of(&entry.name)
+                {
                     files.push(Target {
                         path,
-                        size: listing.size_of(&entry.name),
+                        size,
                         scope: Arc::clone(&scope),
                         ignores_unknown: false,
                         is_named: false,

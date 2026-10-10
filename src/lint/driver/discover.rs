@@ -374,10 +374,12 @@ fn search(
                         is_matched.store(true, Ordering::Relaxed);
                     }
                 }
-                if let Some(FileConfig::Matched(config)) = selected.or(config) {
+                if let Some(FileConfig::Matched(config)) = selected.or(config)
+                    && let Some(size) = listing.size_of(&entry.name)
+                {
                     files.push(Target {
                         path,
-                        size: listing.size_of(&entry.name),
+                        size,
                         loaded: Arc::clone(&own),
                         status: Status::Matched(config),
                     });

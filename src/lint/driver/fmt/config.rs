@@ -889,8 +889,8 @@ impl<'c> Configs<'c> {
         } else if name.ends_with(b".json") || name.ends_with(b".jsonc") {
             json::parse(&read()?)
                 .ok_or_else(|| Fatal([b"JSON Error in \"", path, b"\""].concat()))?
-        } else if name == b".prettierrc" {
-            // YAML, which JSON is a part of.
+        } else if !name.iter().skip(1).any(|it| *it == b'.') {
+            // `.prettierrc`, and what `--config` names without an extension, like `/dev/null`: YAML, which JSON is a part of.
             let text = read()?;
             match json::parse(&text) {
                 Some(json @ Json::Object(_)) => json,

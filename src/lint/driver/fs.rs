@@ -129,10 +129,14 @@ pub(crate) struct Listing {
 }
 
 impl Listing {
-    /// The size of the file called `name` in the directory. 0 if it cannot be told.
-    pub(crate) fn size_of(&self, name: &[u8]) -> u64 {
+    /// The size of the file called `name` in the directory. 0 if it cannot be told. `None`: a link to what [`list`] leaves out.
+    pub(crate) fn size_of(&self, name: &[u8]) -> Option<u64> {
         let found = bun_sys::fstatat(self.directory.fd(), z(name, &mut path_buffer_pool::get()));
-        found.map_or(0, |found| found.st_size as u64)
+        let Ok(found) = found else { return Some(0) };
+        match bun_sys::kind_from_mode(found.st_mode as _) {
+            EntryKind::File | EntryKind::Directory => Some(found.st_size as u64),
+            _ => None,
+        }
     }
 }
 

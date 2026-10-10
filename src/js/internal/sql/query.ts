@@ -324,6 +324,11 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 }
 
+// Not `query.finally()`: it calls the replaceable `then()` of `Query`, which starts an async function for each query.
+function onQuerySettled(query: Query<any, any>, callback: () => void) {
+  $pokePromiseAsHandled(query.$then(callback, callback));
+}
+
 Object.defineProperty(Query, Symbol.species, { value: PublicPromise });
 Object.defineProperty(Query, Symbol.toStringTag, { value: "Query" });
 
@@ -353,6 +358,7 @@ const enum SQLQueryStatus {
 
 export default {
   Query,
+  onQuerySettled,
   SQLQueryFlags,
   SQLQueryResultMode,
 

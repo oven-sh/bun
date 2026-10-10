@@ -715,6 +715,58 @@ describe("error event", () => {
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/MessagePort \[EventTarget\] \{.*\}/s);
   });
+
+  test("uncaught output shows the worker stack when there is no 'error' listener", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+          const { Worker } = require("node:worker_threads");
+          new Worker(\`
+            function crashInWorkerFn() { throw new TypeError("WORKER-ORIGIN-9201"); }
+            crashInWorkerFn();
+          \`, { eval: true });
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("WORKER-ORIGIN-9201");
+    expect(stderr).toContain("crashInWorkerFn");
+    expect(stderr).not.toContain("node:events");
+    expect(stderr).not.toContain("node:worker_threads");
+    expect(exitCode).toBe(1);
+  });
+
+  test("uncaught output uses a structuredClone'd error's own stack, not the rethrow site", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+          const cloned = structuredClone(new TypeError("CLONED"));
+          cloned.stack = "TypeError: CLONED\\n    at workerSideFrame (fake.js:1:1)";
+          queueMicrotask(() => {
+            function rethrowIt(e) { throw e; }
+            rethrowIt(cloned);
+          });
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("CLONED");
+    expect(stderr).toContain("at workerSideFrame (fake.js");
+    expect(stderr).not.toContain("rethrowIt");
+    expect(exitCode).toBe(1);
+  });
 });
 
 describe("getHeapSnapshot", () => {

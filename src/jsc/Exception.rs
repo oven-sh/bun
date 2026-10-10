@@ -11,7 +11,6 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         stack: &mut ZigStackTrace,
     );
-    safe fn JSC__Exception__asJSValue(this: &Exception) -> JSValue;
 }
 
 impl Exception {
@@ -19,7 +18,8 @@ impl Exception {
         JSC__Exception__getStackTrace(self, global, stack);
     }
 
-    pub fn value(&self) -> JSValue {
-        JSC__Exception__asJSValue(self)
+    /// The `JSC::Exception` cell itself; `JSValue::to_error` unwraps it to the thrown value.
+    pub fn to_js(&self) -> JSValue {
+        JSValue::from_cell(self)
     }
 }

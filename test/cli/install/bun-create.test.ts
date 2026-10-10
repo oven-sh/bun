@@ -282,6 +282,60 @@ it("reports an error and exits when the template's package.json entry body is tr
   expect(exitCode).toBe(1);
 });
 
+it("does not size the package.json buffer from the size in the template tarball's header", async () => {
+  // The header declares 2 GiB. The archive holds 26 bytes.
+  const declared = 2 * 1024 * 1024 * 1024;
+  const body = Buffer.from('{"name":"lying-template"}\n');
+  const header = Buffer.alloc(512);
+  header.write("pkg/package.json");
+  header.write("0000644", 100);
+  header.write("0000000", 108);
+  header.write("0000000", 116);
+  header.write(declared.toString(8).padStart(11, "0"), 124);
+  header.write("00000000000", 136);
+  header.write("        ", 148);
+  header.write("0", 156);
+  header.write("ustar\0", 257);
+  header.write("00", 263);
+  let sum = 0;
+  for (const b of header) sum += b;
+  header.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
+  const gz = gzipSync(Buffer.concat([header, body, Buffer.alloc(512 - body.length), Buffer.alloc(1024)]));
+
+  using server = Bun.serve({
+    tls,
+    port: 0,
+    fetch() {
+      return new Response(gz, { headers: { "content-type": "application/x-gzip" } });
+    },
+  });
+
+  // The peak memory of a child is never reported below the peak of the
+  // process that spawned it. A child that does nothing gives that floor.
+  await using idle = spawn({ cmd: [bunExe(), "--version"], env, stdout: "ignore", stderr: "ignore" });
+  await idle.exited;
+  const floor = idle.resourceUsage()!.maxRSS;
+
+  await using proc = spawn({
+    cmd: [bunExe(), "create", "github.com/owner/lying-template", "dest", "--force", "--no-install", "--no-git"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...env,
+      NODE_TLS_REJECT_UNAUTHORIZED: "0",
+      GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+    },
+  });
+
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(err).toContain("Unexpected");
+  expect(out).not.toContain("Success!");
+  expect(proc.signalCode).toBeNull();
+  expect(proc.resourceUsage()!.maxRSS - floor).toBeLessThan(declared / 2);
+  expect(exitCode).toBe(1);
+});
+
 // GitHandler::wait() used Futex::wait(.., Some(1000)) (1us timeout) in a loop,
 // issuing ~18k futex syscalls/sec while the git thread ran. POSIX-only: stub
 // `git` is a shell script and ru_nvcsw is always 0 on Windows.

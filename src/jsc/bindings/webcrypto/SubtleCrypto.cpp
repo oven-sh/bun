@@ -694,9 +694,7 @@ static void rejectWithCause(Ref<DeferredPromise>&& promise, ExceptionCode ec, co
     });
 }
 
-// Rejects an import failure. The ML import paths leave the BoringSSL parse
-// failure in the error queue; attach it as the DOMException's cause like Node
-// does. Shared by importKey's and unwrapKey's inner-import exceptionCallbacks.
+// Rejects an import failure and drains the BoringSSL error the key parse left behind.
 static void rejectImportKeyException(Ref<DeferredPromise>&& promise, ExceptionCode ec, const String& msg, CryptoAlgorithmIdentifier identifier)
 {
     if (ec == DataError && isAkpAlgorithm(identifier)) {
@@ -715,6 +713,7 @@ static void rejectImportKeyException(Ref<DeferredPromise>&& promise, ExceptionCo
             return;
         }
     }
+    ERR_clear_error();
     rejectWithException(WTF::move(promise), ec, msg);
 }
 

@@ -248,13 +248,13 @@ impl EVP {
         &mut output[..outsize as usize]
     }
 
-    pub(crate) fn update(&mut self, input: &[u8]) {
-        // SAFETY: FFI into BoringSSL; ERR_clear_error has no preconditions. self.ctx is
-        // initialized; input.as_ptr() is valid for input.len() bytes.
+    /// Returns `false` when `EVP_DigestUpdate` fails.
+    #[must_use]
+    pub(crate) fn update(&mut self, input: &[u8]) -> bool {
+        // SAFETY: FFI into BoringSSL; self.ctx is initialized; input.as_ptr() is valid
+        // for input.len() bytes.
         unsafe {
-            boringssl::ERR_clear_error();
-            let _ =
-                boringssl::EVP_DigestUpdate(&raw mut self.ctx, input.as_ptr().cast(), input.len());
+            boringssl::EVP_DigestUpdate(&raw mut self.ctx, input.as_ptr().cast(), input.len()) == 1
         }
     }
 

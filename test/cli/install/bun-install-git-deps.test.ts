@@ -6,7 +6,7 @@
 // when an http URL is needed) or tarballs built in memory.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
 import { join } from "path";
 import { pathToFileURL } from "url";
 
@@ -185,14 +185,15 @@ function writeProject(root: string, dependencies: Record<string, string>): strin
   return project;
 }
 
-async function runInstall(cwd: string, cacheDir: string, extraEnv: Record<string, string>, ...args: string[]) {
+// Runs `bun <args>`. An `undefined` value in `extraEnv` removes that variable from its environment.
+async function runBun(cwd: string, cacheDir: string, extraEnv: Record<string, string | undefined>, ...args: string[]) {
   const env: NodeJS.Dict<string> = { ...gitEnv, ...extraEnv, BUN_INSTALL_CACHE_DIR: cacheDir };
   // Set on ASAN CI lanes; it arms a subreaper around internal git spawns that
   // SIGKILLs concurrent clone tasks (see #33982). This test exercises install
   // task bookkeeping, not orphan reaping.
   delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "install", ...args],
+    cmd: [bunExe(), ...args],
     cwd,
     env,
     stdout: "pipe",
@@ -200,6 +201,10 @@ async function runInstall(cwd: string, cacheDir: string, extraEnv: Record<string
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
+}
+
+function runInstall(cwd: string, cacheDir: string, extraEnv: Record<string, string | undefined>, ...args: string[]) {
+  return runBun(cwd, cacheDir, extraEnv, "install", ...args);
 }
 
 // What `bun install` printed, as lines: its version header, `+ <name>@<resolution>`
@@ -715,3 +720,394 @@ exit 1
     }
   },
 );
+
+// `bun install` loads the project's `.env*` files so that bunfig.toml can
+// reference `$VARIABLES`. Those files come with the repository being installed,
+// so they must not configure the install's own tooling: the git it spawns (git
+// runs whatever `GIT_SSH_COMMAND`, `GIT_EXEC_PATH` or a `GIT_CONFIG_*` entry
+// names) and the proxy and TLS settings of its HTTP client. Only the
+// environment `bun install` was started with configures those.
+//
+// The variables a test sets through `.env` are removed from the install's real
+// environment: a real one wins over `.env` in every build.
+const noGitTooling = {
+  GIT_SSH: undefined,
+  GIT_SSH_COMMAND: undefined,
+  GIT_CONFIG_COUNT: undefined,
+  GIT_CONFIG_GLOBAL: undefined,
+  SSH_AUTH_SOCK: undefined,
+  XDG_CONFIG_HOME: undefined,
+};
+const noProxy = {
+  http_proxy: undefined,
+  HTTP_PROXY: undefined,
+  https_proxy: undefined,
+  HTTPS_PROXY: undefined,
+  all_proxy: undefined,
+  ALL_PROXY: undefined,
+  no_proxy: undefined,
+  NO_PROXY: undefined,
+  NODE_TLS_REJECT_UNAUTHORIZED: undefined,
+};
+
+type SeenRequest = { path: string; auth: string | null };
+
+// A registry with `leaf@1.0.0`. It records each request with the token it
+// carried. `registryUrl()` is the registry the manifest names: a forward proxy
+// receives the absolute URL and, here, answers for that registry itself.
+function serveLeaf(tarball: Uint8Array, seen: SeenRequest[], registryUrl: () => string) {
+  return Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      const { pathname } = new URL(req.url);
+      seen.push({ path: pathname, auth: req.headers.get("authorization") });
+      if (pathname !== "/leaf") return new Response(tarball);
+      return Response.json({
+        name: "leaf",
+        "dist-tags": { latest: "1.0.0" },
+        versions: {
+          "1.0.0": { name: "leaf", version: "1.0.0", dist: { tarball: `${registryUrl()}leaf/-/leaf-1.0.0.tgz` } },
+        },
+      });
+    },
+  });
+}
+
+// A registry that closes every connection at once: a request to it fails, with
+// no DNS lookup and no race for a free port.
+function listenAndClose(onConnection: () => void = () => {}) {
+  return Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(socket) {
+        onConnection();
+        socket.end();
+      },
+      data() {},
+    },
+  });
+}
+
+// `<bun> <script> <args>` as git runs it: through `sh -c`. Forward slashes, so
+// that the sh of Git for Windows takes the paths too.
+function shCommand(script: string, ...args: string[]) {
+  return [bunExe(), script, ...args].map(arg => `"${arg.replaceAll("\\", "/")}"`).join(" ");
+}
+
+test.concurrent("a git config entry in the project's .env does not reach the git of the install", async () => {
+  using dir = tempDir("git-dep-dotenv-config", {
+    // git runs the `core.fsmonitor` command when it checks a commit out.
+    "fsmonitor.js": `
+      import { writeFileSync } from "node:fs";
+      writeFileSync(process.argv[2], "");
+    `,
+  });
+  const root = String(dir);
+  const repoUrl = `git+${pathToFileURL(sharedBare)}`;
+  const project = writeProject(root, { [nameOf("b")]: `${repoUrl}#pkg-b` });
+  const { resolutions } = expectedGitPackages(repoUrl, sharedCommits, ["b"]);
+  const ran = join(root, "fsmonitor-ran");
+  writeFileSync(
+    join(project, ".env"),
+    [
+      "GIT_CONFIG_COUNT=1",
+      "GIT_CONFIG_KEY_0=core.fsmonitor",
+      `GIT_CONFIG_VALUE_0='${shCommand(join(root, "fsmonitor.js"), ran)}'`,
+      "",
+    ].join("\n"),
+  );
+
+  const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache"), noGitTooling, "--ignore-scripts");
+  expect(existsSync(ran)).toBe(false);
+  expect(stderr).toContain("Saved lockfile");
+  // The install says what it left out only when a git command fails.
+  expect(stderr).not.toContain("from .env files");
+  expectInstalled(stdout, resolutions);
+  expect(await installedVersions(project, [nameOf("b")])).toEqual(markers(["b"]));
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a GIT_SSH_COMMAND in the project's .env does not replace the user's ssh command", async () => {
+  using dir = tempDir("git-dep-dotenv-ssh", {
+    // Stands in for ssh: records that git ran it and fails, so that the clone ends there.
+    "ssh.js": `
+      import { writeFileSync } from "node:fs";
+      writeFileSync(process.argv[2], "");
+      process.exit(255);
+    `,
+  });
+  const root = String(dir);
+  const project = writeProject(root, { "pkg": "git+ssh://git@localhost/scope/pkg.git" });
+  const ranFromDotenv = join(root, "ran-from-dotenv");
+  const ranFromGitconfig = join(root, "ran-from-gitconfig");
+  writeFileSync(
+    join(project, ".env"),
+    `GIT_SSH_COMMAND='${shCommand(join(root, "ssh.js"), ranFromDotenv)}'\nSSH_AUTH_SOCK=/agent-of-the-project\n`,
+  );
+  // The user's own ssh command, from their global git config.
+  const home = join(root, "home");
+  mkdirSync(home);
+  const sshCommand = shCommand(join(root, "ssh.js"), ranFromGitconfig).replaceAll('"', '\\"');
+  writeFileSync(join(home, ".gitconfig"), `[core]\n\tsshCommand = "${sshCommand}"\n`);
+
+  const { stderr, exitCode } = await runInstall(
+    project,
+    join(root, "cache"),
+    // The install tries the https form of the URL first. git refuses that
+    // protocol here, so nothing connects to port 443.
+    { ...noGitTooling, HOME: home, USERPROFILE: home, GIT_ALLOW_PROTOCOL: "ssh" },
+    "--ignore-scripts",
+  );
+  expect({ ranFromDotenv: existsSync(ranFromDotenv), ranFromGitconfig: existsSync(ranFromGitconfig) }).toEqual({
+    ranFromDotenv: false,
+    ranFromGitconfig: true,
+  });
+  expect(stderr).toContain('"git clone" for "pkg" failed');
+  expect(stderr).toContain(
+    "note: bun install reads GIT_SSH_COMMAND, SSH_AUTH_SOCK from the environment only, not from .env files.",
+  );
+  expect(exitCode).toBe(1);
+});
+
+// A host answers a clone of a private repository without credentials with "not
+// found". The install prints no git output for that answer, and still says
+// which variables its git did not get.
+test.concurrent("git credentials in the project's .env are not sent, and the failed clone names them", async () => {
+  const seen: SeenRequest[] = [];
+  await using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req) {
+      seen.push({ path: new URL(req.url).pathname, auth: req.headers.get("authorization") });
+      // git prints a text/plain error body as "remote: ..." lines.
+      return new Response("Repository not found.\n", { status: 404, headers: { "content-type": "text/plain" } });
+    },
+  });
+
+  using dir = tempDir("git-dep-dotenv-credentials", {});
+  const root = String(dir);
+  const project = writeProject(root, { "pkg": `git+http://127.0.0.1:${server.port}/scope/private.git` });
+  writeFileSync(
+    join(project, ".env"),
+    [
+      "GIT_CONFIG_COUNT=1",
+      "GIT_CONFIG_KEY_0=http.extraHeader",
+      "GIT_CONFIG_VALUE_0='Authorization: Basic dXNlcjpTRUNSRVQ='",
+      "",
+    ].join("\n"),
+  );
+  // No global git config of the machine: it can carry an `http.extraHeader` of its own.
+  const home = join(root, "home");
+  mkdirSync(home);
+
+  const { stderr, exitCode } = await runInstall(
+    project,
+    join(root, "cache"),
+    { ...noGitTooling, HOME: home, USERPROFILE: home },
+    "--ignore-scripts",
+  );
+  expect(seen.length).toBeGreaterThan(0);
+  expect(seen.map(request => request.auth)).toEqual(seen.map(() => null));
+  expect(stderr).toContain(
+    "note: bun install reads GIT_CONFIG_COUNT, GIT_CONFIG_KEY_0, GIT_CONFIG_VALUE_0 from the environment only, not from .env files.",
+  );
+  expect(stderr).toContain('"git clone" for "pkg" failed');
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent(
+  "an HTTP_PROXY in the project's .env does not receive the requests or the registry token of the install",
+  async () => {
+    const tarball = await tarballOf("package", packageFiles("leaf", "leaf"));
+    let registryUrl = "";
+    const direct: SeenRequest[] = [];
+    const proxied: SeenRequest[] = [];
+    await using registry = serveLeaf(tarball, direct, () => registryUrl);
+    await using proxy = serveLeaf(tarball, proxied, () => registryUrl);
+    registryUrl = `http://127.0.0.1:${registry.port}/`;
+    const proxyUrl = `http://127.0.0.1:${proxy.port}`;
+
+    using dir = tempDir("registry-dep-dotenv-proxy", {
+      // The user's own registry and the token they saved for it.
+      "home/.npmrc": `registry=${registryUrl}\n//127.0.0.1:${registry.port}/:_authToken=user-SECRET-token\n`,
+    });
+    const root = String(dir);
+    const project = writeProject(root, { leaf: "1.0.0" });
+    writeFileSync(join(project, ".env"), `HTTP_PROXY=${proxyUrl}\nhttp_proxy=${proxyUrl}\n`);
+    const home = { HOME: join(root, "home"), USERPROFILE: join(root, "home"), XDG_CONFIG_HOME: undefined };
+    const everyRequest = [
+      { path: "/leaf", auth: "Bearer user-SECRET-token" },
+      { path: "/leaf/-/leaf-1.0.0.tgz", auth: "Bearer user-SECRET-token" },
+    ];
+
+    const fromDotenv = await runInstall(
+      project,
+      join(root, "cache-dotenv"),
+      { ...noProxy, ...home },
+      "--ignore-scripts",
+    );
+    expect({ proxied, direct }).toEqual({ proxied: [], direct: everyRequest });
+    expect(fromDotenv.stderr).toContain("Saved lockfile");
+    expectInstalled(fromDotenv.stdout, { leaf: "1.0.0" });
+    expect(fromDotenv.exitCode).toBe(0);
+
+    // The same value in the real environment is the user's own setting.
+    rmSync(join(project, "node_modules"), { recursive: true, force: true });
+    rmSync(join(project, "bun.lock"), { force: true });
+    direct.length = 0;
+    const fromRealEnv = await runInstall(
+      project,
+      join(root, "cache-real-env"),
+      { ...noProxy, ...home, HTTP_PROXY: proxyUrl },
+      "--ignore-scripts",
+    );
+    expect({ proxied, direct }).toEqual({ proxied: everyRequest, direct: [] });
+    expectInstalled(fromRealEnv.stdout, { leaf: "1.0.0" });
+    expect(fromRealEnv.exitCode).toBe(0);
+  },
+);
+
+test.concurrent(
+  "NODE_TLS_REJECT_UNAUTHORIZED=0 in the project's .env does not turn off certificate checks",
+  async () => {
+    const tarball = await tarballOf("package", packageFiles("leaf", "leaf"));
+    const downloads: string[] = [];
+    // `tls` is self-signed, so a client that checks certificates rejects it.
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      fetch(req) {
+        downloads.push(new URL(req.url).pathname);
+        return new Response(tarball);
+      },
+    });
+    const leafUrl = `https://localhost:${server.port}/leaf.tgz`;
+
+    using dir = tempDir("tarball-dep-dotenv-tls", {});
+    const root = String(dir);
+    const project = writeProject(root, { leaf: leafUrl });
+    writeFileSync(join(project, ".env"), "NODE_TLS_REJECT_UNAUTHORIZED=0\n");
+
+    const fromDotenv = await runInstall(project, join(root, "cache-dotenv"), noProxy, "--ignore-scripts");
+    expect(downloads).toEqual([]);
+    expect(fromDotenv.stderr).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(fromDotenv.stderr).toContain(
+      "note: bun install reads NODE_TLS_REJECT_UNAUTHORIZED from the environment only, not from .env files.",
+    );
+    expect(fromDotenv.exitCode).toBe(1);
+
+    // The same value in the real environment is the user's own setting.
+    const fromRealEnv = await runInstall(
+      project,
+      join(root, "cache-real-env"),
+      { ...noProxy, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+      "--ignore-scripts",
+    );
+    expect(downloads).toEqual(["/leaf.tgz"]);
+    expectInstalled(fromRealEnv.stdout, { leaf: leafUrl });
+    expect(fromRealEnv.exitCode).toBe(0);
+  },
+);
+
+// `bun info`, `bun pm view`, `bun pm diff` and `bun audit` send their requests
+// with the proxy and TLS settings of `bun install`. Here the registry closes
+// every connection, and only the project's `.env` names a proxy that answers for
+// it: each command fails without a request to that proxy, and says which
+// variable it did not take from `.env`.
+test.concurrent("a command that fails without the ALL_PROXY of the project's .env names the variable", async () => {
+  const tarball = await tarballOf("package", packageFiles("leaf", "leaf"));
+  let closed = 0;
+  using down = listenAndClose(() => closed++);
+  const registryUrl = `http://127.0.0.1:${down.port}/`;
+  const proxied: SeenRequest[] = [];
+  await using proxy = serveLeaf(tarball, proxied, () => registryUrl);
+
+  const manifest = JSON.stringify({ name: "project", version: "1.0.0", dependencies: { leaf: "1.0.0" } });
+  const dotenv = `ALL_PROXY=http://127.0.0.1:${proxy.port}\n`;
+  using dir = tempDir("registry-down-dotenv-proxy", {
+    "project/package.json": manifest,
+    "project/.env": dotenv,
+    // `bun audit` reads the lockfile.
+    "locked/package.json": manifest,
+    "locked/.env": dotenv,
+    "locked/bun.lock": JSON.stringify({
+      lockfileVersion: 1,
+      configVersion: 1,
+      workspaces: { "": { name: "project", dependencies: { leaf: "1.0.0" } } },
+      packages: { leaf: ["leaf@1.0.0", "", {}, ""] },
+    }),
+  });
+  const root = String(dir);
+
+  const commands = [
+    { cwd: "project", args: ["install", "--ignore-scripts"] },
+    { cwd: "project", args: ["info", "leaf"] },
+    { cwd: "project", args: ["pm", "view", "leaf"] },
+    { cwd: "project", args: ["pm", "diff", "leaf@1.0.0", "1.0.0"] },
+    { cwd: "locked", args: ["audit"] },
+  ];
+  const results = await Promise.all(
+    commands.map(async ({ cwd, args }, i) => {
+      const { stderr, exitCode } = await runBun(
+        join(root, cwd),
+        join(root, `cache-${i}`),
+        { ...noProxy, BUN_CONFIG_REGISTRY: registryUrl },
+        ...args,
+      );
+      return { command: args.join(" "), note: /^note: .*$/m.exec(stderr)?.[0] ?? null, exitCode };
+    }),
+  );
+  const noteFor = (subcommand: string) =>
+    `note: bun ${subcommand} reads ALL_PROXY from the environment only, not from .env files.`;
+  expect(results).toEqual([
+    { command: "install --ignore-scripts", note: noteFor("install"), exitCode: 1 },
+    { command: "info leaf", note: noteFor("info"), exitCode: 1 },
+    { command: "pm view leaf", note: noteFor("pm"), exitCode: 1 },
+    { command: "pm diff leaf@1.0.0 1.0.0", note: noteFor("pm"), exitCode: 1 },
+    { command: "audit", note: noteFor("audit"), exitCode: 1 },
+  ]);
+  expect({ proxied, registryClosedAConnection: closed > 0 }).toEqual({
+    proxied: [],
+    registryClosedAConnection: true,
+  });
+});
+
+// The runtime's auto-install is not `bun install`: it loads no `.env*` file
+// itself, and the project's code runs in the same process. `fetch()` there takes
+// its proxy from the project's `.env` or from a `process.env` write, and
+// auto-install takes the same one.
+test.concurrent("auto-install takes its proxy from the environment of the runtime, as fetch() does", async () => {
+  const tarball = await tarballOf("package", packageFiles("leaf", "leaf"));
+  using down = listenAndClose();
+  const registryUrl = `http://127.0.0.1:${down.port}/`;
+  const proxied: SeenRequest[] = [];
+  await using proxy = serveLeaf(tarball, proxied, () => registryUrl);
+  const proxyUrl = `http://127.0.0.1:${proxy.port}`;
+
+  const app = `
+    if (process.argv[2]) process.env.HTTP_PROXY = process.argv[2];
+    const { status } = await fetch(${JSON.stringify(registryUrl + "leaf")});
+    const { default: leaf } = await import("leaf");
+    console.log(JSON.stringify({ status, leaf }));
+  `;
+  const manifest = JSON.stringify({ name: "app" });
+  using dir = tempDir("autoinstall-runtime-proxy", {
+    "dotenv/package.json": manifest,
+    "dotenv/app.mjs": app,
+    "dotenv/.env": `HTTP_PROXY=${proxyUrl}\n`,
+    "assigned/package.json": manifest,
+    "assigned/app.mjs": app,
+  });
+  const root = String(dir);
+
+  const env = { ...noProxy, BUN_CONFIG_REGISTRY: registryUrl };
+  const [fromDotenv, assigned] = await Promise.all([
+    runBun(join(root, "dotenv"), join(root, "cache-dotenv"), env, "app.mjs"),
+    runBun(join(root, "assigned"), join(root, "cache-assigned"), env, "app.mjs", proxyUrl),
+  ]);
+  const ok = JSON.stringify({ status: 200, leaf: "leaf" }) + "\n";
+  expect({ fromDotenv: fromDotenv.stdout, assigned: assigned.stdout }).toEqual({ fromDotenv: ok, assigned: ok });
+  expect([fromDotenv.exitCode, assigned.exitCode]).toEqual([0, 0]);
+});

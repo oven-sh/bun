@@ -117,7 +117,8 @@ struct Known<'h> {
     real_paths: ShardedMap<Vec<u8>, Vec<u8>>,
     /// The closest `package.json`, by directory.
     packages: ShardedMap<Vec<u8>, Option<Json>>,
-    /// [`Modules::record_exports`]: by the path, with symbolic links followed. `None`: it cannot be parsed.
+    /// [`Modules::record_exports`]: by the path, with symbolic links followed, and a `\0` behind it for a script that
+    /// is not the first of its file. `None`: it cannot be parsed.
     records: ShardedMap<Vec<u8>, Option<Record>>,
     /// [`Modules::facts`]: by the path and how it is parsed.
     facts: ShardedMap<Vec<u8>, Option<Box<dyn Any + Send + Sync>>>,
@@ -926,7 +927,10 @@ impl Modules for Graph<'_> {
 
     fn record_exports<'a>(&self, file: &'a File<'a>, make: MakeRecord) {
         let _ = self.record_maker.set(make);
-        let real = self.store.disk().realpath(&from_native(file.path()));
+        let mut real = self.store.disk().realpath(&from_native(file.path()));
+        if file.vue_script().is_second {
+            real.push(0);
+        }
         self.keep_record(real, file);
     }
 
@@ -935,7 +939,11 @@ impl Modules for Graph<'_> {
     }
 
     fn record_of(&self, module: ModuleId) -> Option<&Record> {
-        self.known().records.get_ref(self.path(module))?.as_ref()
+        let (path, records) = (self.path(module), &self.known().records);
+        // Of a file with several scripts oxlint knows the last that can be parsed.
+        let of_later_script = || records.get_ref(&[path, b"\0"].concat()[..])?.as_ref();
+        let has_scripts = ScriptKind::from_file_name(path).is_none();
+        (has_scripts.then(of_later_script).flatten()).or_else(|| records.get_ref(path)?.as_ref())
     }
 
     fn find(&self, path: &[u8]) -> Option<ModuleId> {

@@ -69,10 +69,10 @@ pub(super) struct Reader<'r> {
 }
 
 /// Whether the plugin that a configuration has as `prefix` is the one that is implemented here: it has the name that is usual
-/// for it. `name`: what the plugin says it is called, with its version, if it says so. Under another name, as `ts` or `node` in
+/// for it, and the rules here [answer for it](Registry::answers_for). `name`: what the plugin says it is called, with its version, if it says so. Under another name, as `ts` or `node` in
 /// `@antfu/eslint-config`, or if another plugin has the name, as `import-x` has `import` there, it runs as what it is:
 /// JavaScript. So its rules are called what the configuration calls them, in reports and in comments.
-fn is_built_in(prefix: &[u8], name: Option<&[u8]>) -> bool {
+fn is_built_in(registry: &Registry, prefix: &[u8], name: Option<&[u8]>) -> bool {
     let package = name.map(
         |name| match bun_core::strings::last_index_of_char(name, b'@') {
             Some(at) if at > 0 => &name[..at],
@@ -80,26 +80,34 @@ fn is_built_in(prefix: &[u8], name: Option<&[u8]>) -> bool {
         },
     );
     // ESLint has its own rules in a plugin that is called `@`.
-    prefix == b"@" || Plugin::answers_in_place_of(prefix, package)
+    prefix == b"@"
+        || registry.answers_for(prefix) && Plugin::answers_in_place_of(prefix, package)
 }
 
 /// Adds the names of the plugins in `json`, which is what a configuration file exports or a part of it, that are not
 /// [built in](is_built_in). An object can have the rules of a plugin that an object after it has.
-fn add_foreign_prefixes(json: &Json, depth: usize, into: &mut Vec<Box<[u8]>>) {
+fn add_foreign_prefixes(
+    registry: &Registry,
+    json: &Json,
+    depth: usize,
+    into: &mut Vec<Box<[u8]>>,
+) {
     if let Json::Array(items) = json {
         for item in items.iter().filter(|_| depth < 64) {
-            add_foreign_prefixes(item, depth + 1, into);
+            add_foreign_prefixes(registry, item, depth + 1, into);
         }
         return;
     }
     let plugins = json.get(b"plugins").and_then(Json::as_object);
     for (prefix, name) in plugins.unwrap_or_default() {
-        if !is_built_in(prefix, name.as_str()) && !into.iter().any(|it| **it == prefix[..]) {
+        if !is_built_in(registry, prefix, name.as_str())
+            && !into.iter().any(|it| **it == prefix[..])
+        {
             into.push(prefix[..].into());
         }
     }
     if let Some(extends) = json.get(b"extends") {
-        add_foreign_prefixes(extends, depth + 1, into);
+        add_foreign_prefixes(registry, extends, depth + 1, into);
     }
 }
 
@@ -493,7 +501,7 @@ impl Reader<'_> {
             .and_then(Json::as_object)
             .unwrap_or_default()
         {
-            match is_built_in(prefix, name.as_str()) {
+            match is_built_in(self.registry, prefix, name.as_str()) {
                 true => {
                     object.plugins.push(prefix[..].into());
                     if let Some(name) = name.as_str() {
@@ -724,7 +732,7 @@ impl Config {
             has_unknown_resolver: has_unknown_resolver(json, 0),
             handing_back: Vec::new(),
         };
-        add_foreign_prefixes(json, 0, &mut reader.foreign_prefixes);
+        add_foreign_prefixes(registry, json, 0, &mut reader.foreign_prefixes);
         let defaults = crate::json::parse(DEFAULT_CONFIG).unwrap_or(Json::Null);
         for object in defaults.as_array().unwrap_or_default() {
             reader.object_with_extends(object)?;

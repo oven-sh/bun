@@ -202,9 +202,10 @@ fn give(param: &'static Param, value: &Expr, set: &mut Set) -> Result<(), Refusa
     match (param.takes_value, &value.data) {
         (Values::None, Data::EBoolean(it)) => set(name, None, it.value).map_err(at(value)),
         (Values::None, _) => expected("boolean", value),
-        (Values::Many, Data::EArray(items)) => items.slice().iter().try_for_each(|item| {
-            set(name, Some(&text_of(param, item)?), true).map_err(at(item))
-        }),
+        (Values::Many, Data::EArray(items)) => items
+            .slice()
+            .iter()
+            .try_for_each(|item| set(name, Some(&text_of(param, item)?), true).map_err(at(item))),
         _ => set(name, Some(&text_of(param, value)?), true).map_err(at(value)),
     }
 }
@@ -388,7 +389,11 @@ const LINT: Table = Table {
     ],
     renamed: &[
         (b"ignorePatterns", b"ignore-pattern"),
-        (b"reportUnusedDisableDirectives", b"report-unused-disable-directives"),
+        (b"nativePluginRules", NATIVE_PLUGIN_RULES),
+        (
+            b"reportUnusedDisableDirectives",
+            b"report-unused-disable-directives",
+        ),
         (b"reportUnusedDisableDirectives", UNUSED_SEVERITY),
         (b"rules", b"rule"),
         (b"globals", b"global"),
@@ -430,6 +435,7 @@ const LINT: Table = Table {
         b"no-inline-config",
         b"no-error-on-unmatched-pattern",
         b"no-type-aware",
+        b"no-native-plugin-rules",
         b"parser",
         b"plugin",
         b"eslintrc",
@@ -462,6 +468,7 @@ const LINT: Table = Table {
 };
 
 const UNUSED_SEVERITY: &[u8] = b"report-unused-disable-directives-severity";
+const NATIVE_PLUGIN_RULES: &[u8] = b"native-plugin-rules";
 
 const _: () = assert!(LINT.only_has_flags());
 const _: () = assert!(
@@ -495,6 +502,24 @@ pub fn lint(section: &Expr) -> Result<crate::cli::Options, Refusal> {
             b"reportUnusedDisableDirectives" if !matches!(value.data, Data::EBoolean(_)) => {
                 give(LINT.param(UNUSED_SEVERITY), value, set)?;
             }
+            b"nativePluginRules" => {
+                let text = match &value.data {
+                    Data::EBoolean(it) if it.value => b"true".to_vec(),
+                    Data::EBoolean(_) => b"false".to_vec(),
+                    // With a comma at the end it is a list, whatever is in it.
+                    Data::EArray(items) => {
+                        let names = items.slice().iter();
+                        let names = names.map(|it| text_of(LINT.param(NATIVE_PLUGIN_RULES), it));
+                        [
+                            names.collect::<Result<Vec<_>, _>>()?.join(&b","[..]),
+                            b",".to_vec(),
+                        ]
+                        .concat()
+                    }
+                    _ => return expected("boolean or array", value),
+                };
+                set(NATIVE_PLUGIN_RULES, Some(&text), true).map_err(at(value))?;
+            }
             b"globals" => {
                 for (name, value) in entries(value)? {
                     let is_writable = match bun_lint::json::from_parsed(value) {
@@ -504,8 +529,12 @@ pub fn lint(section: &Expr) -> Result<crate::cli::Options, Refusal> {
                         _ => return expected("\"readonly\" or \"writable\"", value),
                     };
                     let suffix: &[u8] = if is_writable { b":true" } else { b"" };
-                    set(&b"global"[..], Some(&[&name.name[..], suffix].concat()), true)
-                        .map_err(at(value))?;
+                    set(
+                        &b"global"[..],
+                        Some(&[&name.name[..], suffix].concat()),
+                        true,
+                    )
+                    .map_err(at(value))?;
                 }
             }
             // oxlint goes through `-A`, `-W` and `-D` in their order, and `all` is about every other one.

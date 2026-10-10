@@ -59,7 +59,7 @@ pub use message::{
 };
 pub(crate) use per_file::PerFile;
 pub use registry::{
-    Registry, oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, parse_rule_id,
+    NativePlugins, Registry, oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, parse_rule_id,
     plugin_of_oxlint,
 };
 pub use resolved::{ConfiguredJsRule, ConfiguredRule, LinterOptions, ResolvedConfig, severity_of};
@@ -1144,7 +1144,10 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             // What `jsPlugins` names hides a plugin of the same name that is implemented here.
             Some(js)
                 if config.skips_unknown_rules
-                    && !config.prefers_native_rules_of(registry::parse_rule_id(id).0) =>
+                    && !config.prefers_native_rules_of(
+                        &self.linter.registry,
+                        registry::parse_rule_id(id).0,
+                    ) =>
             {
                 js.map(Named::Js)
             }

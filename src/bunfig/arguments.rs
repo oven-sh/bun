@@ -17,8 +17,7 @@ use crate::bunfig::Bunfig;
 
 /// Reads `[lint]` or `[format]` for the command that it is for, which knows its flags. `Err`: what is wrong with the
 /// section, and where.
-pub type SectionReader<'a> =
-    dyn FnMut(&bun_ast::Expr) -> Result<(), (bun_ast::Loc, Vec<u8>)> + 'a;
+pub type SectionReader<'a> = dyn FnMut(&bun_ast::Expr) -> Result<(), (bun_ast::Loc, Vec<u8>)> + 'a;
 
 /// What the process ends with if its bunfig cannot be used. For `bun lint` and `bun format` that is what ESLint and
 /// Prettier end with if their configuration cannot.

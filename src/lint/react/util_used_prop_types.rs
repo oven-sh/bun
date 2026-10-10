@@ -512,7 +512,12 @@ impl<'a> UsedPropTypesInstructions<'a> {
         // Of a declaration it is a block, the program or an `export`, which are no components.
         let parent = || {
             let written = node.owner().as_expr()?;
-            (written.jsx_container_span().is_none()).then(|| estree_parent(Node::Func(node)))
+            match estree_parent(Node::Func(node)) {
+                // It is in a `JSXExpressionContainer`, in a `Decorator`.
+                _ if written.jsx_container_span().is_some() => None,
+                Node::Class(class) if class.extends() != Some(written) => None,
+                parent => Some(parent),
+            }
         };
         if destructuring
             && (components.get(Node::Func(node)).is_some()

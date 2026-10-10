@@ -829,14 +829,15 @@ impl Run<'_> {
         if options.init {
             return self.write_initial_configuration();
         }
-        let linter = Linter::new(Registry::new(&[
+        let registry = Registry::new(&[
             bun_lint_eslint::RULES,
             bun_lint_typescript::RULES,
             bun_lint_plugins::RULES,
             bun_lint_unicorn::RULES,
             bun_lint_react::RULES,
             bun_lint_jest::RULES,
-        ]));
+        ]);
+        let linter = Linter::new(registry.answering_for(options.native_plugin_rules.clone()));
         bun_sema_driver::use_a_pool_of_their_own("Bun Lint");
         let pool = Pool::new(options.threads);
         // Nothing is started unless a configuration has a plugin in JavaScript.
@@ -968,6 +969,10 @@ impl Run<'_> {
                 noun,
                 b" in JavaScript did not run, only the built-in rules have types: ",
                 &ids.join(&b", "[..]),
+                match linter.registry().answers_for(b"@typescript-eslint") {
+                    true => &b""[..],
+                    false => b". With --native-plugin-rules=@typescript-eslint the built-in ones run",
+                },
             ]);
         }
         for (reason, files) in std::mem::take(&mut *handed_back.lock()) {

@@ -6,6 +6,7 @@ use crate::args::{Argument, Param, error};
 use bun_clap as clap;
 use bun_core::strings;
 use bun_lint::context::Severity;
+use bun_lint::linter::NativePlugins;
 use bun_lint::options::Json;
 
 /// A flag without a description is understood, and not listed in the help.
@@ -86,6 +87,12 @@ pub const PARAMS: &[Param] = &[
     clap::param!("--exit-on-fatal-error           Exit with 2 if a file cannot be parsed"),
     clap::param!(
         "--allow-unsupported             Only warn about rules and files of the configuration that cannot be linted yet"
+    ),
+    clap::param!(
+        "--native-plugin-rules <plugins>  The plugins whose built-in rules run in place of the installed package: <b>import,react-hooks<r> <d>(default: all)<r>"
+    ),
+    clap::param!(
+        "--no-native-plugin-rules        Run the rules of the installed plugins, in JavaScript, not the built-in ones"
     ),
     clap::param!(
         "--print-config <path>           Print the configuration of a file, and lint nothing"
@@ -326,6 +333,7 @@ pub struct Options {
     pub disable_nested_config: bool,
     /// What the configuration asks for and cannot be done is a warning, and not an error at the end.
     pub allow_unsupported: bool,
+    pub native_plugin_rules: NativePlugins,
     /// Not ESLint 8's `--no-eslintrc`: its configuration files are looked for.
     pub eslintrc: bool,
     /// ESLint 8's `--env`.
@@ -403,6 +411,7 @@ impl Default for Options {
             ignore_path: None,
             disable_nested_config: false,
             allow_unsupported: false,
+            native_plugin_rules: NativePlugins::All,
             eslintrc: true,
             env: Vec::new(),
             rulesdir: Vec::new(),
@@ -590,6 +599,16 @@ impl Options {
             b"ignore-path" => self.ignore_path = owned(),
             b"disable-nested-config" => self.disable_nested_config = is_on,
             b"allow-unsupported" => self.allow_unsupported = is_on,
+            b"native-plugin-rules" => match NativePlugins::parse(text) {
+                Ok(which) => self.native_plugin_rules = which,
+                Err(name) => {
+                    return error(&[
+                        b"Option native-plugin-rules: '",
+                        name,
+                        b"' is not a plugin with built-in rules.",
+                    ]);
+                }
+            },
             b"eslintrc" => self.eslintrc = is_on,
             b"env" => self.env.extend(list(text)),
             b"rulesdir" => self.rulesdir.extend(list(text)),
@@ -673,6 +692,8 @@ impl Options {
         for (at, arg) in args.iter().copied().enumerate() {
             match arg {
                 b"-V" => rewritten.push(b"--version"),
+                // The opposite of a flag that takes a value.
+                b"--no-native-plugin-rules" => rewritten.push(b"--native-plugin-rules=false"),
                 _ if arg.starts_with(b"--debug=") => {
                     let written = &arg[b"--debug=".len()..];
                     let cannot_parse = [b"couldn't parse `", written, b"`: "].concat();

@@ -700,9 +700,9 @@ fn validate_rule(id: &[u8], value: &Json, definition: Definition) -> Result<Seve
     fail(&kept)
 }
 
-/// Whether the plugin that ESLint calls `id` is implemented here, in whole or in part.
-fn is_implemented_here(id: &[u8]) -> bool {
-    crate::rule::Plugin::answers_in_place_of(id, None)
+/// Whether the plugin that ESLint calls `id` is implemented here, in whole or in part, and the rules here answer for it.
+fn is_implemented_here(registry: &Registry, id: &[u8]) -> bool {
+    registry.answers_for(id) && crate::rule::Plugin::answers_in_place_of(id, None)
 }
 
 /// Whether ESLint 8 has no definition of the rule called `id`. `has_plugin`: whether the elements have a plugin with that id.
@@ -1358,9 +1358,10 @@ impl<'c> Legacy<'_, '_, 'c> {
         }
         let mut settings = elements.iter().filter_map(|it| it.settings.as_ref());
         self.reader.has_unknown_resolver = settings.any(super::flat::names_unknown_resolver);
+        let registry = self.reader.registry;
         for &NamedPlugin { ref id, at } in &named.0 {
             let said = |key: &[u8]| self.answer(at)?.get(key)?.as_str();
-            if let Some(name) = said(b"name").filter(|_| is_implemented_here(id)) {
+            if let Some(name) = said(b"name").filter(|_| is_implemented_here(registry, id)) {
                 // That of typescript-eslint, which is not loaded.
                 let name = match said(b"version") {
                     Some(version) => [name, b"@", version].concat(),
@@ -1374,7 +1375,7 @@ impl<'c> Legacy<'_, '_, 'c> {
             let location = location.clone();
             self.reader.js_locations.push((id.clone(), location));
             // All rules of one that is not implemented here are in it, and a comment can switch them on.
-            if !is_implemented_here(id) {
+            if !is_implemented_here(registry, id) {
                 self.reader
                     .unknown_rules
                     .push([&id[..], b"/"].concat().into());
@@ -2111,8 +2112,8 @@ impl ResolvedConfig {
 
     /// Whether a rule of the plugin `prefix` that exists here runs in place of that of the package, as with an `eslint.config.js`:
     /// the configuration is one of ESLint 8, and the package is loaded for the rules that do not exist here.
-    pub(crate) fn prefers_native_rules_of(&self, prefix: &[u8]) -> bool {
-        self.language.eslint_8.is_some() && is_implemented_here(prefix)
+    pub(crate) fn prefers_native_rules_of(&self, registry: &Registry, prefix: &[u8]) -> bool {
+        self.language.eslint_8.is_some() && is_implemented_here(registry, prefix)
     }
 }
 

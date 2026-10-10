@@ -807,6 +807,60 @@ describe("bundler", () => {
     },
   });
 
+  // Whether `JSON.parse(props.text)` throws depends on a prop, but what was assigned in the `try` or in the handler, and
+  // what was caught, did not count as reactive: the first render's element was kept for ever. Upstream 1.0.0 does the same.
+  itBundled("react-compiler/WhatDependsOnAThrowIsReactive", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        const check = text => {
+          if (text.startsWith("!")) throw new Error(text);
+          return text;
+        };
+        function Valid(props) {
+          let valid = true;
+          try { JSON.parse(props.text); } catch { valid = false; }
+          return <div>{valid ? "yes" : "no"}</div>;
+        }
+        function Caught(props) {
+          let v;
+          try { v = check(props.text); } catch (e) { return <div>{e.message}</div>; }
+          return <b>{v}</b>;
+        }
+        function Where(props) {
+          let a = 1;
+          try { check(props.text); a = 2; check(props.more); } catch { return <div>{a}</div>; }
+          return <b>{a}</b>;
+        }
+        const render = (component, props) => {
+          globalThis.rendering = component;
+          const it = component(props);
+          return it.t + " " + it.p.children;
+        };
+        console.log(["1", "{", "2"].map(text => render(Valid, { text })).join(", "));
+        console.log(["!a", "!b", "c"].map(text => render(Caught, { text })).join(", "));
+        console.log([["!a", "b"], ["a", "!b"], ["a", "b"]].map(([text, more]) => render(Where, { text, more })).join(", "));
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `
+        const caches = new Map();
+        exports.c = n => {
+          if (!caches.has(globalThis.rendering))
+            caches.set(globalThis.rendering, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+          return caches.get(globalThis.rendering);
+        };
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "div yes, div no, div yes\ndiv !a, div !b, b c\ndiv 1, div 2, b 2" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
   // Sibling of the above: `WAS_ORIGINALLY_TYPEOF_IDENTIFIER` was also dropped,
   // so the printer wrapped `typeof undeclared` as `typeof (0, undeclared)`,
   // which throws ReferenceError instead of returning "undefined" — breaking

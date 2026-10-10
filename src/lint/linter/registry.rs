@@ -9,6 +9,38 @@ use bun_core::strings;
 pub struct Registry {
     /// Sorted by plugin and name.
     rules: Vec<&'static RuleEntry>,
+    native_plugins: NativePlugins,
+}
+
+/// For which of the plugins that a configuration of ESLint loads from a package the rules here answer, in place of those of
+/// the package.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub enum NativePlugins {
+    /// All that are implemented here.
+    #[default]
+    All,
+    None,
+    /// By the names that configurations have for them: `react-hooks`, `@typescript-eslint`.
+    Only(Vec<Box<[u8]>>),
+}
+
+impl NativePlugins {
+    /// `true`, `false`, or names with commas between them. `Err`: a name of no plugin that is implemented here in place of a
+    /// package.
+    pub fn parse(text: &[u8]) -> Result<NativePlugins, &[u8]> {
+        match text {
+            b"true" => return Ok(NativePlugins::All),
+            b"false" => return Ok(NativePlugins::None),
+            _ => {}
+        }
+        let names = strings::split(text, b",").map(<[u8]>::trim_ascii);
+        let names = names.filter(|name| !name.is_empty());
+        let names = names.map(|name| match Plugin::answers_in_place_of(name, None) {
+            true => Ok(Box::from(name)),
+            false => Err(name),
+        });
+        Ok(NativePlugins::Only(names.collect::<Result<_, _>>()?))
+    }
 }
 
 /// `conf/replacements.json`: rules that ESLint has removed, and what replaces them.
@@ -206,7 +238,26 @@ impl Registry {
     pub fn new(lists: &[&'static [RuleEntry]]) -> Registry {
         let mut rules: Vec<_> = lists.iter().flat_map(|list| list.iter()).collect();
         crate::utils::sort::sort_by_key(&mut rules, |it| (it.meta.plugin as u8, it.meta.name));
-        Registry { rules }
+        Registry {
+            rules,
+            native_plugins: NativePlugins::All,
+        }
+    }
+
+    pub fn answering_for(mut self, which: NativePlugins) -> Registry {
+        self.native_plugins = which;
+        self
+    }
+
+    /// Whether the rules here may answer for the plugin that a configuration of ESLint has as `prefix`, where it has the
+    /// package too. The rules of ESLint itself are of no package.
+    pub fn answers_for(&self, prefix: &[u8]) -> bool {
+        matches!(prefix, b"" | b"@")
+            || match &self.native_plugins {
+                NativePlugins::All => true,
+                NativePlugins::None => false,
+                NativePlugins::Only(names) => names.iter().any(|it| **it == *prefix),
+            }
     }
 
     pub fn all(&self) -> &[&'static RuleEntry] {

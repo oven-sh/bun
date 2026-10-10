@@ -1263,6 +1263,7 @@ impl<'l> Loader<'l> {
         let command_line = paths::join(cwd, b"__placeholder__.js");
         let mut modules = eslintrc::Modules {
             environment: self.environment,
+            registry: self.linter.registry(),
             plugins_from: plugins_from.clone(),
             command_line: (command_line.clone(), self.legacy_command_line()),
             printed: Vec::new(),

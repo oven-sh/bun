@@ -968,7 +968,7 @@ impl Config {
             let is_hidden = js.is_some()
                 && self.accepts_all_plugins
                 && !is_native_for_oxlint
-                && !config.prefers_native_rules_of(prefix);
+                && !config.prefers_native_rules_of(registry, prefix);
             let native = match is_hidden {
                 true => None,
                 false => config.find_rule(registry, &setting.id),

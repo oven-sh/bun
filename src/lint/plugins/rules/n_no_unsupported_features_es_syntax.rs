@@ -632,15 +632,30 @@ impl Rule for EsSyntax {
                 }
             }
         }
+        // Of what starts at one place: on entering a node the outer first, on leaving one the inner, at the end of the
+        // program as the features follow each other.
         let mut found = cx.state.found.take();
-        utils::sort::sort_by_key(&mut found, |it| it.rank);
+        utils::sort::sort_by_key(&mut found, |it| {
+            let depth = it.rank >> 40;
+            let end = match depth {
+                NODE_EXIT => it.at.end,
+                PROGRAM_EXIT => 0,
+                _ => u32::MAX - it.at.end,
+            };
+            (it.at.start, depth.max(INNER), end, it.rank)
+        });
+        // The linter puts the longer first, and then what is reported `on_exit`, the shorter first.
+        let (mut before, mut is_on_exit) = (Span::empty(u32::MAX), false);
         for it in found {
             let Some(data) = FEATURES.get(it.feature) else {
                 continue;
             };
+            is_on_exit = before.start == it.at.start && (is_on_exit || before.end < it.at.end);
+            before = it.at;
             let message = if data.supported().is_none() { NOT_SUPPORTED_YET } else { NOT_SUPPORTED_TILL };
             let report = if it.is_position { cx.report_at(it.at.start, message) } else { cx.report(it.at, message) };
-            report.data("featureName", data.name()).data("supported", it.supported).data("version", active.version.raw.clone());
+            let report = report.on_exit(is_on_exit).data("featureName", data.name()).data("supported", it.supported);
+            report.data("version", active.version.raw.clone());
         }
     }
 }

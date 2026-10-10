@@ -63,6 +63,7 @@ fn answer(entries: Vec<(&[u8], Json)>) -> Json {
 /// What only a program can load: a file that is one, a package. `evaluate-eslintrc.js` does, for a file and all that it names.
 pub(crate) struct Modules<'m> {
     pub(crate) environment: &'m Environment<'m>,
+    pub(crate) registry: &'m bun_lint::linter::Registry,
     /// `--resolve-plugins-relative-to`, absolute.
     pub(crate) plugins_from: Option<Vec<u8>>,
     /// What stands for a file and cannot be read: its path, and what it says.
@@ -408,7 +409,7 @@ pub(crate) fn load(
             let is_implemented_here = matches!(
                 short,
                 b"@typescript-eslint" | b"react-hooks" | b"import" | b"n"
-            );
+            ) && modules.registry.answers_for(short);
             match modules.loaded([b"plugins", &directory, request], from, entry) {
                 // What is installed comes before what is implemented here: it has configurations, too.
                 Err(failure) if failure.is_missing && is_implemented_here => Ok(built_in(request)),

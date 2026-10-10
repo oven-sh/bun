@@ -458,7 +458,8 @@ impl Ignored {
         }
         if !options.ignore_pattern.is_empty() {
             let lines = options.ignore_pattern.join(&b"\n"[..]);
-            files.extend(gitignore::with_text(None, cwd, &lines, flavor == Flavor::Oxfmt).map(Some));
+            files
+                .extend(gitignore::with_text(None, cwd, &lines, flavor == Flavor::Oxfmt).map(Some));
         }
         Ok(Ignored {
             directories,

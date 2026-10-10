@@ -91,10 +91,14 @@ const CONSOLE_LEVEL_MAP: Record<string, string> = {
   debug: "debug",
 };
 
+// JSC's FrontendRouter::sendResponse broadcasts every command response to every
+// connected frontend, so backend ids must be unique across adapters; each
+// adapter's handleBackendMessage drops ids its #pending does not know.
+let nextBackendId = 1;
+
 class InspectorCDPAdapter {
   #writeToBackend: (message: string) => void;
   #writeToClient: (message: string) => void;
-  #nextBackendId = 1;
   #nextExceptionId = 1;
   #pending = new Map<
     number,
@@ -176,7 +180,7 @@ class InspectorCDPAdapter {
     clientMethod = method,
     onResult?: (result: AnyObject, error?: AnyObject) => void,
   ): void {
-    const id = this.#nextBackendId++;
+    const id = nextBackendId++;
     this.#pending.$set(id, { clientId, method: clientMethod, onResult });
     this.#writeToBackend(JSON.stringify(params === undefined ? { id, method } : { id, method, params }));
   }

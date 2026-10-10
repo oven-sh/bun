@@ -39,10 +39,6 @@ const UNSAFE_ENUM_RETURN: Message = Message::new(
 
 const MAXIMUM_DEPTH: u32 = 5;
 
-/// How many types [`describe_enum_types`] looks into. Upstream has no bound, and does not return
-/// for a type whose members instantiate ever larger types.
-const MAXIMUM_DESCRIBED_TYPES: usize = 10_000;
-
 type Context<'a> = Cx<'a, NoUnsafeEnumAssignment>;
 
 #[derive(Default)]
@@ -276,7 +272,7 @@ fn describe_enum_types(types: &[Type]) -> Vec<u8> {
     let mut pending = types.to_vec();
     while let Some(ty) = pending.pop() {
         let constrained_type = get_constraint_type(ty);
-        if visited.len() >= MAXIMUM_DESCRIBED_TYPES || !visited.insert(constrained_type) {
+        if !visited.insert(constrained_type) {
             continue;
         }
         // One for each member of an enum.

@@ -14,9 +14,6 @@ const REPLACE_USAGES_WITH_CONSTRAINT: Message = Message::new(
 const SOLE: Message =
     Message::new("sole", "Type parameter {{name}} is {{uses}} in the {{descriptor}} signature.");
 
-/// How deep types are followed. Upstream has no bound.
-const MAX_DEPTH: u32 = 100;
-
 /// ESLint has a `TSClassImplements` or a `TSInterfaceHeritage` for it, not a `TSTypeReference`.
 fn is_heritage(ty: TypeNode) -> bool {
     match ty.parent() {
@@ -109,7 +106,6 @@ struct UsageCounter<'a, 'c> {
     type_usages: FxHashMap<Type<'a>, u32>,
     visited_constraints: FxHashSet<TsNode<'a>>,
     visited_default: bool,
-    depth: u32,
     without_type_parameters: &'c mut TypesWithoutTypeParameters<'a>,
     /// How many type parameters have been found, and how often something was not gone through.
     found_or_left_out: u32,
@@ -144,14 +140,12 @@ impl<'a> UsageCounter<'a, '_> {
         }
         let usages = self.type_usages.entry(ty).or_insert(0);
         *usages += 1;
-        if *usages > 9 || self.depth >= MAX_DEPTH {
+        if *usages > 9 || !bun_core::StackCheck::init().is_safe_to_recurse() {
             self.found_or_left_out += 1;
             return;
         }
         let before = self.found_or_left_out;
-        self.depth += 1;
         self.visit_parts(ty, uses, place);
-        self.depth -= 1;
         if self.found_or_left_out == before {
             self.without_type_parameters.insert(ty);
         }
@@ -314,7 +308,6 @@ fn collect_type_parameter_usage_counts<'a>(
         type_usages: FxHashMap::default(),
         visited_constraints: FxHashSet::default(),
         visited_default: false,
-        depth: 0,
         without_type_parameters,
         found_or_left_out: 0,
     };

@@ -1,6 +1,6 @@
 //! `TypeOrValueSpecifier.ts`, `typeOrValueSpecifiers/*.ts`
 
-use super::{MAX_DEPTH, Names};
+use super::{Names, has_room_on_the_stack};
 use crate::ast::{Expr, ExprKind, Ident, Node, Pat};
 use crate::options::Json;
 use crate::types::tsutils::{is_intersection_type, is_union_type};
@@ -257,25 +257,21 @@ fn type_declared_in_package_declaration_file<'a>(
 /// `typeMatchesSpecifier(type, specifier, program)`: whether the type has the name, and is declared
 /// where the specifier says. Every constituent of a union has to match, one of an intersection.
 pub fn type_matches_specifier(ty: Type, specifier: &TypeOrValueSpecifier) -> bool {
-    type_matches_specifier_at(ty, specifier, 0)
-}
-
-fn type_matches_specifier_at(ty: Type, specifier: &TypeOrValueSpecifier, depth: u32) -> bool {
-    if depth > MAX_DEPTH {
+    if !has_room_on_the_stack() {
         return false;
     }
     if is_union_type(ty) {
         return ty
             .types()
             .iter()
-            .all(|t| type_matches_specifier_at(t, specifier, depth + 1));
+            .all(|t| type_matches_specifier(t, specifier));
     }
     whole_type_matches(ty, specifier)
         || is_intersection_type(ty)
             && ty
                 .types()
                 .iter()
-                .any(|part| type_matches_specifier_at(part, specifier, depth + 1))
+                .any(|part| type_matches_specifier(part, specifier))
 }
 
 fn whole_type_matches(ty: Type, specifier: &TypeOrValueSpecifier) -> bool {

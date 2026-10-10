@@ -134,10 +134,13 @@ use crate::ast::{
     Stmt, TupleElem, TypeNode, TypeParam, VarDecl,
 };
 
-/// How deep a helper follows constituents, base types, constraints, type arguments and the types
-/// of properties. Upstream has no bound. Beyond it the answer is the one for which a rule reports
-/// nothing.
-pub(crate) const MAX_DEPTH: u32 = 100;
+/// Whether the stack has room for a helper to follow constituents, base types, constraints, type
+/// arguments and the types of properties further. Upstream overflows its stack. Where there is none
+/// the answer is the one for which a rule reports nothing.
+#[inline]
+pub(crate) fn has_room_on_the_stack() -> bool {
+    bun_core::StackCheck::init().is_safe_to_recurse()
+}
 
 /// A node that knows the file it is in, so that it can be asked for its type without `services`:
 /// every handle of [`ast`](crate::ast), [`NameOf`] one, and a [`TsNode`].

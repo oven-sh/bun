@@ -37,10 +37,6 @@ const UNNECESSARY_ASSERTION: Message = Message::new(
     "This assertion is unnecessary since it does not change the type of the expression.",
 );
 
-/// How deep [`type_contains`] looks. A type can be infinite: upstream runs out of stack, which ends the walk. To go on
-/// with the rest of each level instead would take exponential time.
-const MAX_DEPTH: u32 = 100;
-
 /// `expression as T`, `<T>expression`
 #[derive(Copy, Clone)]
 struct Assertion<'a> {
@@ -253,9 +249,10 @@ struct Met<'a> {
     active_signatures: SmallVec<[TsNode<'a>; 8]>,
 }
 
-/// `None`: the type is infinite.
-fn type_contains<'a>(ty: Type<'a>, predicate: fn(Type<'a>) -> bool, met: &mut Met<'a>, depth: u32) -> Option<bool> {
-    if depth > MAX_DEPTH {
+/// `None`: the type is infinite. Upstream runs out of stack, which ends the walk. To go on with the rest of each level
+/// instead would take exponential time.
+fn type_contains<'a>(ty: Type<'a>, predicate: fn(Type<'a>) -> bool, met: &mut Met<'a>) -> Option<bool> {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return None;
     }
     if !met.seen.insert(ty) {
@@ -266,14 +263,14 @@ fn type_contains<'a>(ty: Type<'a>, predicate: fn(Type<'a>) -> bool, met: &mut Me
     }
     if ty.is_union_or_intersection() {
         for part in ty.types() {
-            if type_contains(part, predicate, met, depth + 1)? {
+            if type_contains(part, predicate, met)? {
                 return Some(true);
             }
         }
         return Some(false);
     }
     for type_argument in get_type_arguments(ty) {
-        if type_contains(type_argument, predicate, met, depth + 1)? {
+        if type_contains(type_argument, predicate, met)? {
             return Some(true);
         }
     }
@@ -287,15 +284,15 @@ fn type_contains<'a>(ty: Type<'a>, predicate: fn(Type<'a>) -> bool, met: &mut Me
         }
         met.active_signatures.extend(declaration);
         // tsgolint begins with the parameters. What is met first matters: it is looked into once.
-        if !is_oxlint && type_contains(signature.get_return_type(), predicate, met, depth + 1)? {
+        if !is_oxlint && type_contains(signature.get_return_type(), predicate, met)? {
             return Some(true);
         }
         for parameter in signature.parameters() {
-            if type_contains(parameter.get_type(), predicate, met, depth + 1)? {
+            if type_contains(parameter.get_type(), predicate, met)? {
                 return Some(true);
             }
         }
-        if is_oxlint && type_contains(signature.get_return_type(), predicate, met, depth + 1)? {
+        if is_oxlint && type_contains(signature.get_return_type(), predicate, met)? {
             return Some(true);
         }
         if declaration.is_some() {
@@ -318,7 +315,7 @@ impl<'a> Contained<'a> {
         };
         // What upstream says of `any` in an infinite type, once it has run out of stack, changes with the rest of the
         // file. Mostly it is that there is one, which is also what reports nothing.
-        let ask = || type_contains(ty, predicate, &mut Met::default(), 0).unwrap_or(!is_about_type_variables);
+        let ask = || type_contains(ty, predicate, &mut Met::default()).unwrap_or(!is_about_type_variables);
         match ty.is_union_or_intersection() && ty.types().len() > 16 {
             true => *self.0.entry((ty, is_about_type_variables)).or_insert_with(ask),
             false => ask(),

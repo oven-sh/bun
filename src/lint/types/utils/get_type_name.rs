@@ -1,17 +1,19 @@
 //! `getTypeName.ts`
 
-use super::MAX_DEPTH;
+use super::has_room_on_the_stack;
 use crate::types::{SyntaxKind, Type, TypeFlags};
+use smallvec::SmallVec;
 
 /// `getTypeName(typeChecker, type)`: `string` for what is a string, which is also a string literal
 /// type, a union of those, an intersection with one, and a type parameter that extends one.
 /// For any other type, [`Type::to_text`].
 pub fn get_type_name(ty: Type) -> Vec<u8> {
-    get_type_name_at(ty, 0)
+    get_type_name_in(ty, &mut SmallVec::new())
 }
 
-fn get_type_name_at(ty: Type, depth: u32) -> Vec<u8> {
-    if depth > MAX_DEPTH {
+/// `on_the_way`: the type parameters whose constraints `ty` is in. `<T extends U, U extends T>` has no end.
+fn get_type_name_in<'a>(ty: Type<'a>, on_the_way: &mut SmallVec<[Type<'a>; 4]>) -> Vec<u8> {
+    if !has_room_on_the_stack() {
         return ty.to_text();
     }
     let flags = ty.flags();
@@ -19,12 +21,16 @@ fn get_type_name_at(ty: Type, depth: u32) -> Vec<u8> {
         return b"string".to_vec();
     }
     if flags.contains(TypeFlags::TYPE_PARAMETER)
+        && !on_the_way.contains(&ty)
         && let Some(constraint) = declared_constraint(ty)
     {
-        return get_type_name_at(constraint, depth + 1);
+        on_the_way.push(ty);
+        let name = get_type_name_in(constraint, on_the_way);
+        on_the_way.pop();
+        return name;
     }
-    let is_string = |value: Type| get_type_name_at(value, depth + 1) == b"string";
-    if flags.contains(TypeFlags::UNION) && ty.types().iter().all(is_string) {
+    let mut is_string = |value: Type<'a>| get_type_name_in(value, on_the_way) == b"string";
+    if flags.contains(TypeFlags::UNION) && ty.types().iter().all(&mut is_string) {
         return b"string".to_vec();
     }
     if flags.contains(TypeFlags::INTERSECTION) && ty.types().iter().any(is_string) {

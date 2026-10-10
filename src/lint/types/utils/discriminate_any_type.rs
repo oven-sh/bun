@@ -1,6 +1,6 @@
 //! `discriminateAnyType.ts`
 
-use super::{MAX_DEPTH, is_type_any_array_type, is_type_any_type};
+use super::{has_room_on_the_stack, is_type_any_array_type, is_type_any_type};
 use crate::types::tsutils::{is_thenable_type, type_constituents};
 use crate::types::{Locate, TsNode, Type};
 use smallvec::SmallVec;
@@ -27,7 +27,7 @@ fn discriminate_any_type_worker<'a>(
     ts_node: TsNode<'a>,
     visited: &mut SmallVec<[Type<'a>; 4]>,
 ) -> AnyType {
-    if visited.contains(&ty) || visited.len() > MAX_DEPTH as usize {
+    if visited.contains(&ty) || !has_room_on_the_stack() {
         return AnyType::Safe;
     }
     visited.push(ty);

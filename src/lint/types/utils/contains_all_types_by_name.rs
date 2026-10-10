@@ -1,7 +1,7 @@
 //! `containsAllTypesByName.ts`
 
 use super::builtin_symbol_likes::BaseTypeAnswers;
-use super::{MAX_DEPTH, Names, is_type_flag_set};
+use super::{Names, has_room_on_the_stack, is_type_flag_set};
 use crate::types::tsutils::{is_type_reference, is_union_or_intersection_type};
 use crate::types::{Type, TypeFlags};
 
@@ -18,14 +18,7 @@ pub fn contains_all_types_by_name(
     match_any_instead: bool,
 ) -> bool {
     let mut known = BaseTypeAnswers::default();
-    contains(
-        ty,
-        allow_any,
-        allowed_names,
-        match_any_instead,
-        0,
-        &mut known,
-    )
+    contains(ty, allow_any, allowed_names, match_any_instead, &mut known)
 }
 
 fn contains<'a>(
@@ -33,10 +26,9 @@ fn contains<'a>(
     allow_any: bool,
     allowed_names: impl Names,
     match_any_instead: bool,
-    depth: u32,
     known: &mut BaseTypeAnswers<'a>,
 ) -> bool {
-    if depth > MAX_DEPTH {
+    if !has_room_on_the_stack() {
         return false;
     }
     if is_type_flag_set(ty, TypeFlags::ANY | TypeFlags::UNKNOWN) {
@@ -57,23 +49,15 @@ fn contains<'a>(
         false => ty.get_base_types(),
     };
     let ask = |known: &mut BaseTypeAnswers<'a>| {
-        let predicate = |t: Type<'a>| {
-            contains(
-                t,
-                allow_any,
-                allowed_names,
-                match_any_instead,
-                depth + 1,
-                known,
-            )
-        };
+        let predicate =
+            |t: Type<'a>| contains(t, allow_any, allowed_names, match_any_instead, known);
         match match_any_instead {
             true => types.iter().any(predicate),
             false => (is_constituents || !types.is_empty()) && types.iter().all(predicate),
         }
     };
     match !is_constituents && types.len() > 1 {
-        true => known.get_or_ask(ty, depth, ask),
+        true => known.get_or_ask(ty, ask),
         false => ask(known),
     }
 }

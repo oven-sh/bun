@@ -18,15 +18,15 @@ fn is_loose(ty: Type) -> bool {
     is_type_flag_set(ty, TypeFlags::ANY | TypeFlags::UNKNOWN)
 }
 
-fn could_be_nullish(ty: Type, depth: u32) -> bool {
-    if depth > 100 {
+fn could_be_nullish(ty: Type) -> bool {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return true;
     }
     if is_type_flag_set(ty, TypeFlags::TYPE_PARAMETER) {
-        return ty.get_constraint().is_none_or(|constraint| could_be_nullish(constraint, depth + 1));
+        return ty.get_constraint().is_none_or(could_be_nullish);
     }
     if is_union_type(ty) {
-        return ty.types().iter().any(|part| could_be_nullish(part, depth + 1));
+        return ty.types().iter().any(could_be_nullish);
     }
     is_type_flag_set(ty, NULLISH)
 }
@@ -39,14 +39,14 @@ fn same_type_without_nullish<'a>(asserted: Type<'a>, original: Type<'a>) -> bool
     }
     if asserted_types.len() <= 16 || original_types.len() <= 16 {
         return asserted_types.iter().all(|asserted_type| {
-            !could_be_nullish(asserted_type, 0) && non_nullish_original_types().any(|ty| ty == asserted_type)
+            !could_be_nullish(asserted_type) && non_nullish_original_types().any(|ty| ty == asserted_type)
         }) && non_nullish_original_types().all(|original_type| asserted_types.contains(original_type));
     }
     let non_nullish_originals: FxHashSet<Type<'a>> = non_nullish_original_types().collect();
     let asserted_set: FxHashSet<Type<'a>> = asserted_types.iter().collect();
     asserted_types
         .iter()
-        .all(|asserted_type| !could_be_nullish(asserted_type, 0) && non_nullish_originals.contains(&asserted_type))
+        .all(|asserted_type| !could_be_nullish(asserted_type) && non_nullish_originals.contains(&asserted_type))
         && non_nullish_originals.iter().all(|original_type| asserted_set.contains(original_type))
 }
 

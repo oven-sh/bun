@@ -4,7 +4,7 @@ use bun_lint::types::utils::{
     parse_type_or_value_specifiers, type_matches_some_specifier,
 };
 use bun_lint::types::{Type, TypeFlags};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Enforce template literal expressions to be of `string` type.
 pub struct RestrictTemplateExpressions {
@@ -19,26 +19,31 @@ pub struct RestrictTemplateExpressions {
 const INVALID_TYPE: Message =
     Message::new("invalidType", "Invalid type \"{{type}}\" of template literal expression.");
 
-/// How deep the elements of arrays are followed: `type A = A[]` has no end.
-const MAX_DEPTH: u32 = 100;
-
 impl RestrictTemplateExpressions {
-    fn recursively_check_type(&self, inner_type: Type, depth: u32) -> bool {
-        if depth > MAX_DEPTH || inner_type.is_unresolved() {
+    /// `on_the_way`: the arrays that `inner_type` is in. `type A = A[]` has no end.
+    fn recursively_check_type<'a>(&self, inner_type: Type<'a>, on_the_way: &mut FxHashSet<Type<'a>>) -> bool {
+        if inner_type.is_unresolved() || !bun_core::StackCheck::init().is_safe_to_recurse() {
             return true;
         }
         if inner_type.is_union() {
-            return inner_type.types().iter().all(|it| self.recursively_check_type(it, depth + 1));
+            return inner_type.types().iter().all(|it| self.recursively_check_type(it, on_the_way));
         }
         if inner_type.is_intersection() {
-            return inner_type.types().iter().any(|it| self.recursively_check_type(it, depth + 1));
+            return inner_type.types().iter().any(|it| self.recursively_check_type(it, on_the_way));
         }
         inner_type.has_flags(self.allowed_flags)
             || !self.allow.is_empty()
                 && matches_type_or_base_type(|it| type_matches_some_specifier(it, &self.allow), inner_type)
             || self.allow_array
                 && inner_type.is_array_or_tuple_type()
-                && inner_type.get_number_index_type().is_some_and(|it| self.recursively_check_type(it, depth + 1))
+                && inner_type.get_number_index_type().is_some_and(|it| {
+                    if !on_the_way.insert(inner_type) {
+                        return true;
+                    }
+                    let is_allowed = self.recursively_check_type(it, on_the_way);
+                    on_the_way.remove(&inner_type);
+                    is_allowed
+                })
             || self.allow_reg_exp && get_type_name(inner_type) == b"RegExp"
     }
 }
@@ -93,7 +98,7 @@ impl Rule for RestrictTemplateExpressions {
         }
         for expression in template.exprs() {
             let expression_type = get_constrained_type_at_location(expression);
-            let is_allowed = || self.recursively_check_type(expression_type, 0);
+            let is_allowed = || self.recursively_check_type(expression_type, &mut FxHashSet::default());
             if !*cx.state.entry(expression_type).or_insert_with(is_allowed) {
                 cx.report(expression, INVALID_TYPE).data("type", expression_type.to_text()).labels_with(|labels| {
                     labels.first(format!("Type: {}", bstr::BStr::new(&expression_type.to_text())));

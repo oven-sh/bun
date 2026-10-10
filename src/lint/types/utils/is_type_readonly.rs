@@ -1,7 +1,7 @@
 //! `isTypeReadonly.ts`
 
 use super::{
-    MAX_DEPTH, Names, TypeOrValueSpecifier, get_type_of_property_of_type,
+    Names, TypeOrValueSpecifier, get_type_of_property_of_type, has_room_on_the_stack,
     parse_type_or_value_specifiers, type_matches_some_specifier,
 };
 use crate::options::Object;
@@ -65,17 +65,16 @@ fn branches_of_conditional_type(ty: Type<'_>) -> Option<[Type<'_>; 2]> {
 
 impl<'a> Recurser<'_, 'a> {
     /// `seenTypes.has(t) || isTypeReadonlyRecurser(..) === Readonlyness.Readonly`
-    fn is_seen_or_readonly(&mut self, t: Type<'a>, depth: u32) -> bool {
-        self.seen_types.contains(&t)
-            || self.is_type_readonly_recurser(t, depth) == Readonlyness::Readonly
+    fn is_seen_or_readonly(&mut self, t: Type<'a>) -> bool {
+        self.seen_types.contains(&t) || self.is_type_readonly_recurser(t) == Readonlyness::Readonly
     }
 
-    fn check_type_arguments(&mut self, array_type: Type<'a>, depth: u32) -> Readonlyness {
+    fn check_type_arguments(&mut self, array_type: Type<'a>) -> Readonlyness {
         // What has been looked into was not mutable, or this would not be asked. To look into it again for each path that leads
         // to it takes two to the power of the depth for a `[T, T]` of a `[U, U]` of ..
         let is_mutable = |type_arg: Type<'a>| {
             !self.seen_types.contains(&type_arg)
-                && self.is_type_readonly_recurser(type_arg, depth) == Readonlyness::Mutable
+                && self.is_type_readonly_recurser(type_arg) == Readonlyness::Mutable
         };
         match array_type.get_type_arguments().iter().any(is_mutable) {
             true => Readonlyness::Mutable,
@@ -83,7 +82,7 @@ impl<'a> Recurser<'_, 'a> {
         }
     }
 
-    fn is_type_readonly_array_or_tuple(&mut self, ty: Type<'a>, depth: u32) -> Readonlyness {
+    fn is_type_readonly_array_or_tuple(&mut self, ty: Type<'a>) -> Readonlyness {
         if ty.is_array_type() {
             if ty
                 .get_symbol()
@@ -91,18 +90,18 @@ impl<'a> Recurser<'_, 'a> {
             {
                 return Readonlyness::Mutable;
             }
-            return self.check_type_arguments(ty, depth);
+            return self.check_type_arguments(ty);
         }
         if let Some(target) = ty.tuple_target() {
             if !target.readonly() {
                 return Readonlyness::Mutable;
             }
-            return self.check_type_arguments(ty, depth);
+            return self.check_type_arguments(ty);
         }
         Readonlyness::UnknownType
     }
 
-    fn check_index_signature(&mut self, ty: Type<'a>, kind: IndexKind, depth: u32) -> Readonlyness {
+    fn check_index_signature(&mut self, ty: Type<'a>, kind: IndexKind) -> Readonlyness {
         let Some(index_info) = ty.get_index_info(kind) else {
             return Readonlyness::UnknownType;
         };
@@ -112,10 +111,10 @@ impl<'a> Recurser<'_, 'a> {
         if index_info.ty() == ty || self.seen_types.contains(&index_info.ty()) {
             return Readonlyness::Readonly;
         }
-        self.is_type_readonly_recurser(index_info.ty(), depth)
+        self.is_type_readonly_recurser(index_info.ty())
     }
 
-    fn is_type_readonly_object(&mut self, ty: Type<'a>, depth: u32) -> Readonlyness {
+    fn is_type_readonly_object(&mut self, ty: Type<'a>) -> Readonlyness {
         let properties = ty.get_properties();
         // The properties have to be marked as readonly.
         for property in properties {
@@ -153,12 +152,12 @@ impl<'a> Recurser<'_, 'a> {
             if self.seen_types.contains(&property_type) {
                 continue;
             }
-            if self.is_type_readonly_recurser(property_type, depth) == Readonlyness::Mutable {
+            if self.is_type_readonly_recurser(property_type) == Readonlyness::Mutable {
                 return Readonlyness::Mutable;
             }
         }
-        if self.check_index_signature(ty, IndexKind::String, depth) == Readonlyness::Mutable
-            || self.check_index_signature(ty, IndexKind::Number, depth) == Readonlyness::Mutable
+        if self.check_index_signature(ty, IndexKind::String) == Readonlyness::Mutable
+            || self.check_index_signature(ty, IndexKind::Number) == Readonlyness::Mutable
         {
             return Readonlyness::Mutable;
         }
@@ -166,11 +165,10 @@ impl<'a> Recurser<'_, 'a> {
     }
 
     /// `Mutable` or `Readonly`.
-    fn is_type_readonly_recurser(&mut self, ty: Type<'a>, depth: u32) -> Readonlyness {
-        if depth > MAX_DEPTH {
+    fn is_type_readonly_recurser(&mut self, ty: Type<'a>) -> Readonlyness {
+        if !has_room_on_the_stack() {
             return Readonlyness::Readonly;
         }
-        let depth = depth + 1;
         self.seen_types.insert(ty);
 
         let allow = &self.options.allow;
@@ -193,11 +191,7 @@ impl<'a> Recurser<'_, 'a> {
         };
 
         if is_union_type(ty) {
-            return readonly_if(
-                ty.types()
-                    .iter()
-                    .all(|t| self.is_seen_or_readonly(t, depth)),
-            );
+            return readonly_if(ty.types().iter().all(|t| self.is_seen_or_readonly(t)));
         }
 
         if is_intersection_type(ty) {
@@ -207,13 +201,9 @@ impl<'a> Recurser<'_, 'a> {
                 .iter()
                 .any(|t| t.is_array_type() || t.is_tuple_type())
             {
-                return readonly_if(
-                    ty.types()
-                        .iter()
-                        .all(|t| self.is_seen_or_readonly(t, depth)),
-                );
+                return readonly_if(ty.types().iter().all(|t| self.is_seen_or_readonly(t)));
             }
-            return self.is_type_readonly_object(ty, depth);
+            return self.is_type_readonly_object(ty);
         }
 
         // tsgolint 7.0 does not look into one: it is no object, so it is readonly.
@@ -221,11 +211,7 @@ impl<'a> Recurser<'_, 'a> {
             && !ty.file().language().is_oxlint
             && let Some(branches) = branches_of_conditional_type(ty)
         {
-            return readonly_if(
-                branches
-                    .into_iter()
-                    .all(|t| self.is_seen_or_readonly(t, depth)),
-            );
+            return readonly_if(branches.into_iter().all(|t| self.is_seen_or_readonly(t)));
         }
 
         // What is neither an object nor an intersection is a primitive.
@@ -238,8 +224,8 @@ impl<'a> Recurser<'_, 'a> {
             return Readonlyness::Readonly;
         }
 
-        match self.is_type_readonly_array_or_tuple(ty, depth) {
-            Readonlyness::UnknownType => self.is_type_readonly_object(ty, depth),
+        match self.is_type_readonly_array_or_tuple(ty) {
+            Readonlyness::UnknownType => self.is_type_readonly_object(ty),
             is_readonly_array => is_readonly_array,
         }
     }
@@ -252,5 +238,5 @@ pub fn is_type_readonly(ty: Type, options: &ReadonlynessOptions) -> bool {
         options,
         seen_types: FxHashSet::default(),
     };
-    recurser.is_type_readonly_recurser(ty, 0) == Readonlyness::Readonly
+    recurser.is_type_readonly_recurser(ty) == Readonlyness::Readonly
 }

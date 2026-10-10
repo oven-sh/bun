@@ -1,6 +1,6 @@
 //! `isUnsafeAssignment.ts`
 
-use super::{MAX_DEPTH, is_type_any_type, is_type_unknown_type};
+use super::{has_room_on_the_stack, is_type_any_type, is_type_unknown_type};
 use crate::ast::{Expr, ExprKind};
 use crate::types::Type;
 use crate::types::tsutils::is_type_reference;
@@ -24,7 +24,7 @@ pub fn is_unsafe_assignment<'a>(
     receiver: Type<'a>,
     sender_node: impl Into<Option<Expr<'a>>>,
 ) -> Option<UnsafeAssignment<'a>> {
-    is_unsafe_assignment_worker(ty, receiver, sender_node.into(), &mut SmallVec::new(), 0)
+    is_unsafe_assignment_worker(ty, receiver, sender_node.into(), &mut SmallVec::new())
 }
 
 fn is_unsafe_assignment_worker<'a>(
@@ -32,7 +32,6 @@ fn is_unsafe_assignment_worker<'a>(
     receiver: Type<'a>,
     sender_node: Option<Expr<'a>>,
     visited: &mut SmallVec<[(Type<'a>, Type<'a>); 8]>,
-    depth: u32,
 ) -> Option<UnsafeAssignment<'a>> {
     if is_type_any_type(ty) {
         // Allow assignment of any ==> unknown.
@@ -53,7 +52,7 @@ fn is_unsafe_assignment_worker<'a>(
         true => it.is_non_deferred_type_reference(),
         false => is_type_reference(it),
     };
-    if depth > MAX_DEPTH || !is_looked_into(ty) || !is_looked_into(receiver) {
+    if !has_room_on_the_stack() || !is_looked_into(ty) || !is_looked_into(receiver) {
         return None;
     }
     if visited.contains(&(ty, receiver)) {
@@ -74,8 +73,7 @@ fn is_unsafe_assignment_worker<'a>(
         let Some(receiver_arg) = receiver_type_arguments.get(i) else {
             break;
         };
-        if is_unsafe_assignment_worker(arg, receiver_arg, sender_node, visited, depth + 1).is_some()
-        {
+        if is_unsafe_assignment_worker(arg, receiver_arg, sender_node, visited).is_some() {
             return Some(UnsafeAssignment {
                 receiver,
                 sender: ty,

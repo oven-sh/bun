@@ -1,6 +1,6 @@
 //! `baseTypeUtils.ts`
 
-use super::MAX_DEPTH;
+use super::has_room_on_the_stack;
 use crate::types::tsutils::{
     intersection_constituents, is_object_type, is_type_reference, union_constituents,
 };
@@ -55,18 +55,17 @@ pub fn matches_type_or_base_type<'a>(
     mut matcher: impl FnMut(Type<'a>) -> bool,
     ty: Type<'a>,
 ) -> bool {
-    matches(&mut matcher, ty, &mut SmallVec::new(), 0)
+    matches(&mut matcher, ty, &mut SmallVec::new())
 }
 
 fn matches<'a>(
     matcher: &mut dyn FnMut(Type<'a>) -> bool,
     ty: Type<'a>,
     seen: &mut SmallVec<[Type<'a>; 8]>,
-    depth: u32,
 ) -> bool {
-    if depth > MAX_DEPTH || seen.contains(&ty) {
+    if !has_room_on_the_stack() || seen.contains(&ty) {
         return false;
     }
     seen.push(ty);
-    matcher(ty) || get_base_types_for_type(ty).any(|base| matches(matcher, base, seen, depth + 1))
+    matcher(ty) || get_base_types_for_type(ty).any(|base| matches(matcher, base, seen))
 }

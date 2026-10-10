@@ -1250,9 +1250,7 @@ impl ServerConfig {
                                     "SNI tls object must have a serverName",
                                 )));
                             }
-                            // The TLS version is negotiated with the range of the first
-                            // entry, before SNI selects this one. A bound of its own would
-                            // not be applied.
+                            // The first entry's range is negotiated before SNI selects this one.
                             if let Some(first) = &args.ssl_config {
                                 for (key, bound, first_bound) in [
                                     (

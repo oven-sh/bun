@@ -58,9 +58,7 @@ pub(crate) fn js_live_count(_global: &JSGlobalObject, _callframe: &CallFrame) ->
     Ok(JSValue::js_number(c::us_ssl_ctx_live_count() as f64))
 }
 
-/// Exposed via `bun:internal-for-testing`: builds and drops an `SSL_CTX` with
-/// raw `ssl_min_version` / `ssl_max_version`. No `TLSOptions` value carries an
-/// invalid bound this far, so this is the only way to reach the build's check.
+/// `bun:internal-for-testing`: builds and drops an `SSL_CTX` from raw protocol version bounds.
 #[bun_jsc::host_fn]
 pub(crate) fn js_build_with_protocol_versions(
     global: &JSGlobalObject,

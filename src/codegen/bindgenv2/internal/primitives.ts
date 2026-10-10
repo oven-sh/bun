@@ -175,10 +175,6 @@ const looseSignedTypes: { [width: number]: LooseIntegerType } = {
   64: LooseI64,
 };
 
-/**
- * `TLSOptions.minVersion` / `maxVersion`. An `i32` on the native side. The values it accepts are
- * in `BunIDLConvertTLSProtocolVersion.h`.
- */
 function makeTLSProtocolVersionType(bound: "Minimum" | "Maximum"): Type {
   return makeConvertedIntegerType(
     i32,

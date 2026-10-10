@@ -113,7 +113,7 @@ impl Rule for BraceStyle {
     const META: Meta = Meta::eslint("brace-style", Kind::Layout)
         .fixable(Fixable::Whitespace)
         .deprecated();
-    const ON: On = On::new().stmts(&[StmtTag::Block, StmtTag::Switch, StmtTag::Try]).funcs().classes().finish();
+    const ON: On = On::new().stmts(&[StmtTag::Block, StmtTag::Switch]).funcs().classes();
     no_state!();
 
     fn new(options: &Options) -> Self {
@@ -130,6 +130,17 @@ impl Rule for BraceStyle {
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         match statement.kind() {
             StmtKind::Block(_) => {
+                // ESLint comes to an `if` and a `try` before their blocks: what it says there about a `}` is first.
+                let is_before_keyword = match statement.parent().as_stmt().map(Stmt::kind) {
+                    Some(StmtKind::If { yes, no: Some(_), .. }) => yes == statement,
+                    Some(StmtKind::Try { block, handler, finalizer, .. }) => {
+                        block == statement || (handler == Some(statement) && finalizer.is_some())
+                    }
+                    _ => false,
+                };
+                if is_before_keyword {
+                    self.validate_curly_before_keyword(statement, cx);
+                }
                 if !ast_utils::is_statement_list_parent(statement.parent()) {
                     self.validate_braces_of(statement.span(), cx);
                 }
@@ -138,17 +149,6 @@ impl Rule for BraceStyle {
                 let close_paren = skip_trivia(cx.text(), expr.outer_span().end);
                 let open = skip_trivia(cx.text(), close_paren + 1);
                 self.validate_curly_pair(open, statement.span().end.saturating_sub(1), cx);
-            }
-            StmtKind::If { yes, no: Some(_), .. } => {
-                if matches!(yes.kind(), StmtKind::Block(_)) {
-                    self.validate_curly_before_keyword(yes, cx);
-                }
-            }
-            StmtKind::Try { block, handler, finalizer, .. } => {
-                self.validate_curly_before_keyword(block, cx);
-                if let (Some(handler), Some(_)) = (handler, finalizer) {
-                    self.validate_curly_before_keyword(handler, cx);
-                }
             }
             _ => {}
         }
@@ -163,12 +163,5 @@ impl Rule for BraceStyle {
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
         self.validate_braces_of(class.body_span(), cx);
-    }
-
-    // What an `if` reports at the `}` before its `else` comes after what the block reports there.
-    fn finish(&self, cx: &mut Cx<'_, Self>) {
-        for statement in cx.file().stmts_of_kind(StmtTag::If) {
-            self.stmt(statement, cx);
-        }
     }
 }

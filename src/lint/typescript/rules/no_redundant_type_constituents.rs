@@ -415,8 +415,9 @@ impl NoRedundantTypeConstituents {
             return;
         };
         let constituents = Constituents::of(types);
-        let (mut seen_literal_types, mut seen_primitive_types) =
-            (Primitives::default(), Primitives::default());
+        // In the order in which they are seen: two of them can be reported at one constituent.
+        let mut seen_literal_types = SmallVec::<[Primitive; 4]>::new();
+        let mut seen_primitive_types = Primitives::default();
 
         for (type_node, type_part_flags) in constituents.iter() {
             for &type_part in type_part_flags {
@@ -435,7 +436,9 @@ impl NoRedundantTypeConstituents {
                             .data("typeName", "never");
                     }
                 } else if let Some(primitive) = Primitive::of_literal(type_flags) {
-                    seen_literal_types.add(primitive);
+                    if !seen_literal_types.contains(&primitive) {
+                        seen_literal_types.push(primitive);
+                    }
                 } else {
                     for primitive in Primitive::ALL {
                         if type_flags.intersects(primitive.flag()) {
@@ -447,8 +450,8 @@ impl NoRedundantTypeConstituents {
         }
 
         // For each constituent, the literal types in it that a primitive type overrides.
-        for primitive in Primitive::ALL {
-            if !seen_primitive_types.has(primitive) || !seen_literal_types.has(primitive) {
+        for primitive in seen_literal_types {
+            if !seen_primitive_types.has(primitive) {
                 continue;
             }
             for (type_node, type_part_flags) in constituents.iter() {

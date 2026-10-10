@@ -179,6 +179,14 @@ impl<'n> NodeRef<'n> {
         }
     }
 
+    /// The `index`th of `alternatives` or `elements`.
+    pub(crate) fn child(self, index: usize) -> Option<NodeRef<'n>> {
+        match self {
+            NodeRef::Concatenation(node) => node.elements.get(index).map(NodeRef::from),
+            _ => self.alternatives()?.get(index).map(NodeRef::from),
+        }
+    }
+
     pub(crate) fn source(self) -> Option<SourceLocation> {
         match self {
             NodeRef::Expression(Expression { source, .. })
@@ -192,7 +200,21 @@ impl<'n> NodeRef<'n> {
     }
 }
 
-impl NodeMut<'_> {
+impl<'n> NodeMut<'n> {
+    /// The `index`th of `alternatives` or `elements`.
+    pub(crate) fn child(self, index: usize) -> Option<NodeMut<'n>> {
+        match self {
+            NodeMut::Concatenation(node) => node.elements.get_mut(index).map(NodeMut::from),
+            NodeMut::Expression(Expression { alternatives, .. })
+            | NodeMut::Alternation(Alternation { alternatives, .. })
+            | NodeMut::Assertion(Assertion { alternatives, .. })
+            | NodeMut::Quantifier(Quantifier { alternatives, .. }) => {
+                alternatives.get_mut(index).map(NodeMut::from)
+            }
+            NodeMut::CharacterClass(_) | NodeMut::Unknown(_) => None,
+        }
+    }
+
     fn source(&mut self) -> &mut Option<SourceLocation> {
         match self {
             NodeMut::Expression(Expression { source, .. })
@@ -203,6 +225,31 @@ impl NodeMut<'_> {
             | NodeMut::CharacterClass(CharacterClass { source, .. })
             | NodeMut::Unknown(Unknown { source, .. }) => source,
         }
+    }
+}
+
+/// A `path` says where a node is below the expression: at each step down the index of the child.
+impl Expression {
+    pub(crate) fn node(&self, path: &[usize]) -> Option<NodeRef<'_>> {
+        path.iter()
+            .try_fold(NodeRef::Expression(self), |node, &index| node.child(index))
+    }
+
+    pub(crate) fn node_mut(&mut self, path: &[usize]) -> Option<NodeMut<'_>> {
+        path.iter()
+            .try_fold(NodeMut::Expression(self), |node, &index| node.child(index))
+    }
+
+    /// All nodes on the way, from the expression to the node at `path`: for `stackPath`.
+    pub(crate) fn stack(&self, path: &[usize]) -> Option<Vec<NodeRef<'_>>> {
+        let mut node = NodeRef::Expression(self);
+        let mut stack = vec![node];
+        stack.reserve(path.len());
+        for &index in path {
+            node = node.child(index)?;
+            stack.push(node);
+        }
+        Some(stack)
     }
 }
 
@@ -228,6 +275,29 @@ pub(crate) fn visit_ast<'n>(node: NodeRef<'n>, visitor: &mut dyn FnMut(NodeRef<'
     }
 
     visitor(node, Visit::Leave);
+}
+
+/// upstream's `visitAst` with a visitor that reads the nodes above the one it is called for and
+/// changes that one, or what is below it. The node is the one at the path.
+pub(crate) fn visit_ast_mut(
+    ast: &mut Expression,
+    visitor: &mut dyn FnMut(&mut Expression, &[usize], Visit),
+) {
+    let mut path: Vec<usize> = Vec::new();
+    let mut next = 0;
+    visitor(ast, &path, Visit::Enter);
+    loop {
+        path.push(next);
+        if ast.node(&path).is_some() {
+            visitor(ast, &path, Visit::Enter);
+            next = 0;
+        } else {
+            path.pop();
+            visitor(ast, &path, Visit::Leave);
+            let Some(index) = path.pop() else { break };
+            next = index + 1;
+        }
+    }
 }
 
 /// It sees and changes nothing but the subtree that it is given. Always applied bottom-up.

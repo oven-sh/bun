@@ -828,8 +828,7 @@ impl Rule for IndentLegacy {
         ])
         .funcs()
         .classes()
-        .enter(NodeTags::new().stmts(&[StmtTag::Return]))
-        .exit(NodeTags::CASE)
+        .cases()
         .finish();
     type State<'a> = State<'a>;
 
@@ -874,8 +873,7 @@ impl Rule for IndentLegacy {
             ])
             .funcs()
             .classes()
-            .enter(NodeTags::new().stmts(&[StmtTag::Return]))
-            .exit(NodeTags::CASE)
+            .cases()
             .finish();
         if self.call_arguments.is_some() {
             on = on.exprs(&[ExprTag::Call]);
@@ -911,23 +909,17 @@ impl Rule for IndentLegacy {
         self.check_class_body(cx, class);
     }
 
-    // Two reports about one `return`, from here and from what it is a statement of, stay in the order they are made in: that
-    // of a function, a block, a loop or an `if` is first, that of a `case` or of the file is second.
-    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        if let Node::Stmt(statement) = node {
-            self.check_statement(cx, statement);
-        }
-    }
-
-    fn exit<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        if let Node::Case(case) = node {
-            self.check_switch_case(cx, case);
-        }
+    fn case<'a>(&self, case: Case<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_switch_case(cx, case);
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         // Root nodes should have no indent.
         let needed = self.good_char_at(cx.file(), cx.program_span().start);
         self.check_statements_indent(cx, cx.file().body(), needed);
+        // There can be two reports about one `return`: ESLint has that of what it is a statement of first.
+        for statement in cx.file().stmts_of_kind(StmtTag::Return) {
+            self.check_statement(cx, statement);
+        }
     }
 }

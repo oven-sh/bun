@@ -143,6 +143,7 @@ fn run(data: &[u8]) {
         run_script: &run_script,
         js_engine: &NoEngine,
         version: b"0.0.0-fuzz",
+        memory: 0,
     };
     let has_parsing_error = |it: &Outcome| [&it.stdout, &it.stderr].iter().any(|it| it.windows(13).any(|it| it == b"Parsing error"));
     // Whether all files are parsed before anything is fixed.

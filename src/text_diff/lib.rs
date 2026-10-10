@@ -2255,6 +2255,7 @@ mod tests {
             exhaustive_per_elem: 0,
             exhaustive_quota: 0,
             work: 200_000,
+            half_match: 0,
         };
         let mut m = Myers::new(&a[..], &b[..], &mut sc, policy);
         m.run(0..a.len(), 0..b.len(), &mut ca, &mut cb);

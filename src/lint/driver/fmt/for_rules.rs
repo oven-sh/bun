@@ -142,7 +142,7 @@ fn plugin_from(cwd: &[u8]) -> Option<(Vec<u8>, [u64; 3])> {
 /// `module`: [`Request::package_module`]. Without it the plugin is looked for from `cwd`.
 fn check_packages(cwd: &[u8], module: Option<&[u8]>) -> Result<(), Reason> {
     let found = module.map_or_else(|| plugin_from(cwd), plugin_of);
-    let Some((plugin, [5, _, _])) = found else {
+    let (plugin, [5, _, _]) = found.ok_or(Reason::PluginNotFound)? else {
         return Err(Reason::VersionOfPlugin);
     };
     match tailwind::version_of_package(b"prettier", &plugin) {

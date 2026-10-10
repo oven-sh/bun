@@ -243,11 +243,13 @@ fn write_through(real: &[u8], text: &[u8]) -> bun_sys::Result<()> {
     File::openat(Fd::cwd(), real, flags, 0)?.write_all(text)
 }
 
-/// The nearest directory from `cwd` upward that has a `.git`, or else `cwd`. Without links.
+/// The nearest directory from `cwd` upward that has a `.git` or a `.jj`, as for the ignore files, or else `cwd`. Without links.
 fn repository(cwd: &[u8]) -> Option<Vec<u8>> {
     let cwd = real_path(cwd)?;
-    let has_git = |it: &&[u8]| link_kind_and_size(&paths::join(it, b".git")).is_some();
-    let found = paths::ancestors(&cwd).find(has_git).map(<[u8]>::to_vec);
+    let is_root = |it: &&[u8]| {
+        [&b".git"[..], b".jj"].iter().any(|name| link_kind_and_size(&paths::join(it, name)).is_some())
+    };
+    let found = paths::ancestors(&cwd).find(is_root).map(<[u8]>::to_vec);
     Some(found.unwrap_or(cwd))
 }
 

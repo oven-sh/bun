@@ -182,7 +182,13 @@ fn check_destructure<'a>(
         if is_type_any_type(sender_type) {
             cx.report(place(part.span).shown, part.message)
                 .comments_apply_at(part.span)
-                .data("sender", describe_sender(sender_type, cx));
+                .data("sender", describe_sender(sender_type, cx))
+                .labels_with(|labels| {
+                    let ty = diagnostic_type_text(sender_type);
+                    labels.first(format!("Destructured source provides type `{ty}`."));
+                    labels.push(part.span, format!("This binding receives type `{ty}`."));
+                    labels.push(part.span, "");
+                });
         } else if !part.has_default {
             check_pattern(
                 cx,
@@ -227,7 +233,13 @@ fn check_array_destructure<'a>(
     if is_type_any_array_type(sender_type) {
         cx.report(receiver_span.shown, UNSAFE_ARRAY_PATTERN)
             .comments_apply_at(receiver_span.of_comments)
-            .data("sender", describe_sender(sender_type, cx));
+            .data("sender", describe_sender(sender_type, cx))
+            .labels_with(|labels| {
+                let ty = diagnostic_type_text(sender_type);
+                labels.first(format!("Destructured source provides type `{ty}`."));
+                labels.push(receiver_span.of_comments, "This binding receives type `any`.");
+                labels.push(receiver_span.of_comments, "");
+            });
         return;
     }
     if !sender_type.is_tuple_type() {
@@ -293,11 +305,23 @@ fn check_object_destructure<'a>(
     }
 }
 
+/// tsgolint's `diagnosticTypeText`
+fn diagnostic_type_text(ty: Type) -> String {
+    match is_intrinsic_error_type(ty) {
+        true => "error".to_owned(),
+        false => String::from_utf8_lossy(&ty.to_text()).into_owned(),
+    }
+}
+
+/// `target`: tsgolint's `localTargetRange`, the type annotation of what is assigned to, or that itself.
 fn report_any_assignment<'a>(
     cx: &Context<'a>,
     sender_node: Expr<'a>,
     sender_type: Type<'a>,
     reporting_node: Span,
+    receiver_type: Type<'a>,
+    target: Span,
+    compares: bool,
 ) {
     let options = cx.file().type_checker().compiler_options();
     // `var foo = this`
@@ -316,7 +340,18 @@ fn report_any_assignment<'a>(
     };
     cx.report(place, message)
         .comments_apply_at(relation_span(sender_node, reporting_node))
-        .data("sender", describe_sender(sender_type, cx));
+        .data("sender", describe_sender(sender_type, cx))
+        .labels_with(|labels| {
+            labels.first(match any_this {
+                Some(this) => {
+                    format!("`this` has type `{}`.", diagnostic_type_text(get_constrained_type_at_location(this)))
+                }
+                None => format!("Assigned value has type `{}`.", diagnostic_type_text(sender_type)),
+            });
+            let how = if compares { "Target expects type" } else { "Target is inferred as" };
+            labels.push(target, format!("{how} `{}`.", diagnostic_type_text(receiver_type)));
+            labels.push(relation_span(sender_node, reporting_node), "");
+        });
 }
 
 /// Whether it is reported. `compares`: upstream's `comparisonType !== ComparisonType.None`.
@@ -326,14 +361,16 @@ fn check_assignment_of_type<'a>(
     sender_node: Expr<'a>,
     sender_type: Type<'a>,
     reporting_node: Span,
+    target: Span,
     compares: bool,
 ) -> bool {
     if is_type_any_type(sender_type) {
         // any ==> unknown
-        if is_type_unknown_type(receiver_type()) {
+        let receiver_type = receiver_type();
+        if is_type_unknown_type(receiver_type) {
             return false;
         }
-        report_any_assignment(cx, sender_node, sender_type, reporting_node);
+        report_any_assignment(cx, sender_node, sender_type, reporting_node, receiver_type, target, compares);
         return true;
     }
     compares
@@ -343,6 +380,7 @@ fn check_assignment_of_type<'a>(
             sender_node,
             sender_type,
             reporting_node,
+            target,
         )
 }
 
@@ -353,6 +391,7 @@ fn report_unsafe_assignment<'a>(
     sender_node: Expr<'a>,
     sender_type: Type<'a>,
     reporting_node: Span,
+    target: Span,
 ) -> bool {
     let Some(result) = is_unsafe_assignment(sender_type, receiver_type, sender_node) else {
         return false;
@@ -365,7 +404,12 @@ fn report_unsafe_assignment<'a>(
     cx.report(place, UNSAFE_ASSIGNMENT)
         .comments_apply_at(relation_span(sender_node, reporting_node))
         .data("receiver", in_backticks(result.receiver))
-        .data("sender", in_backticks(result.sender));
+        .data("sender", in_backticks(result.sender))
+        .labels_with(|labels| {
+            labels.first(format!("Assigned value has type `{}`.", diagnostic_type_text(result.sender)));
+            labels.push(target, format!("Target expects type `{}`.", diagnostic_type_text(result.receiver)));
+            labels.push(relation_span(sender_node, reporting_node), "");
+        });
     true
 }
 
@@ -374,6 +418,7 @@ fn check_assignment<'a>(
     receiver_type: &dyn Fn() -> Type<'a>,
     sender_node: Expr<'a>,
     reporting_node: Span,
+    target: Span,
     compares: bool,
 ) -> bool {
     // Neither `any` nor a type with type arguments.
@@ -394,6 +439,7 @@ fn check_assignment<'a>(
         sender_node,
         sender_node.ty(),
         reporting_node,
+        target,
         compares,
     )
 }
@@ -406,13 +452,14 @@ fn check_assignment_to_target<'a>(
     left_span: Span,
     right: Expr<'a>,
     node: Span,
+    target: Span,
     compares: bool,
 ) {
     let receiver_type = || match left {
         Target::Pat(it) => it.ty(),
         Target::Expr(it) => it.ty(),
     };
-    if !check_assignment(cx, &receiver_type, right, node, compares)
+    if !check_assignment(cx, &receiver_type, right, node, target, compares)
         && matches!(left.kind(), TargetKind::Array | TargetKind::Object)
     {
         check_destructure(cx, left, left_span, right.ty(), right);
@@ -442,7 +489,8 @@ fn check_property<'a>(cx: &Context<'a>, node: Prop<'a>, value: Expr<'a>) {
                 };
                 contextual_type.unwrap_or_else(type_of_name)
             };
-            check_assignment(cx, &receiver_type, value, node.span(), true);
+            let target = key.map_or(node.span(), |it| it.span(file));
+            check_assignment(cx, &receiver_type, value, node.span(), target, true);
         }
         PropKind::Method | PropKind::Getter | PropKind::Setter => {
             if node.func().is_some_and(Func::has_body) {
@@ -453,6 +501,7 @@ fn check_property<'a>(cx: &Context<'a>, node: Prop<'a>, value: Expr<'a>) {
                     value,
                     node.type_at_location(),
                     node.span(),
+                    key.map_or(node.span(), |it| it.span(file)),
                     true,
                 );
             }
@@ -475,6 +524,7 @@ impl NoUnsafeAssignment {
                 target.span(),
                 value,
                 node.span(),
+                target.outer_span(),
                 true,
             );
         }
@@ -498,7 +548,11 @@ impl NoUnsafeAssignment {
             };
             cx.report(place, UNSAFE_ARRAY_SPREAD)
                 .comments_apply_at(node)
-                .data("sender", describe_sender(rest_type, cx));
+                .data("sender", describe_sender(rest_type, cx))
+                .labels_with(|labels| {
+                    labels.first(format!("Spread value has type `{}`.", diagnostic_type_text(rest_type)));
+                    labels.push(Span::new(node.span().start, node.span().start + 3), "");
+                });
         }
     }
 }
@@ -514,6 +568,7 @@ impl NoUnsafeAssignment {
                 node.binding_span(),
                 right,
                 node.span_without_modifiers(),
+                node.ty().map_or(node.pat().span(), |it| it.outer_span()),
                 true,
             );
         }
@@ -530,6 +585,7 @@ impl NoUnsafeAssignment {
                             left.span(),
                             right,
                             element.span(),
+                            left.span(),
                             true,
                         );
                     }
@@ -546,6 +602,7 @@ impl NoUnsafeAssignment {
                             left.span(),
                             right,
                             node,
+                            left.span(),
                             true,
                         );
                     }
@@ -566,6 +623,7 @@ impl NoUnsafeAssignment {
                 node.binding_span(),
                 init,
                 node.span(),
+                node.ty().map_or(node.pat().span(), |it| it.outer_span()),
                 compares,
             );
         }
@@ -616,7 +674,9 @@ impl Rule for NoUnsafeAssignment {
         }
         let file = cx.file();
         let receiver_type = || type_of_key(file, node.key(), || NameOf(node).ty());
-        check_assignment(cx, &receiver_type, value, node.span(), node.ty().is_some());
+        let name = || node.key().map_or(node.span(), |it| it.span(file));
+        let target = node.ty().map_or_else(name, |it| it.outer_span());
+        check_assignment(cx, &receiver_type, value, node.span(), target, node.ty().is_some());
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -665,7 +725,8 @@ impl Rule for NoUnsafeAssignment {
             && value.jsx_container_span().is_some()
             && !value.is_missing()
         {
-            check_assignment(cx, &|| NameOf(node).ty(), value, value.span(), true);
+            let target = node.key().map_or(node.span(), |it| it.span(cx.file()));
+            check_assignment(cx, &|| NameOf(node).ty(), value, value.span(), target, true);
         }
     }
 }

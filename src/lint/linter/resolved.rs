@@ -5,7 +5,7 @@ use super::registry::{Registry, parse_rule_id};
 use crate::context::Severity;
 use crate::js_plugin::{self, Route};
 use crate::language::{LanguageOptions, Parser};
-use crate::options::{Json, Options};
+use crate::options::Json;
 use crate::rule::{Meta, Plugin};
 use crate::runner::RuleEntry;
 use std::sync::{Arc, OnceLock};
@@ -63,8 +63,9 @@ pub struct ConfiguredRule {
     /// one.
     pub(super) instance: OnceLock<Instance>,
     /// What ESLint's rule throws for these options, which its schema accepts: [`Rule::validate`](crate::rule::Rule::validate).
-    /// ESLint stops at the first file on which the rule runs: [`LintResult::thrown`](super::LintResult::thrown).
-    refusal: Option<Arc<[u8]>>,
+    /// ESLint stops at the first file on which the rule runs: [`LintResult::thrown`](super::LintResult::thrown). A linter asks the
+    /// first time that it lints with it.
+    pub(super) refusal: OnceLock<Option<Arc<[u8]>>>,
     /// See [`ConfiguredRule::reported_as`].
     reported_as: &'static Meta,
     /// See [`ConfiguredRule::name`].
@@ -75,18 +76,12 @@ pub struct ConfiguredRule {
 
 impl ConfiguredRule {
     pub fn new(entry: &'static RuleEntry, severity: Severity, options: Arc<[Json]>) -> Self {
-        let refusal = match severity {
-            Severity::Off => None,
-            _ => (entry.validate)(&Options::new(&options))
-                .err()
-                .map(Arc::from),
-        };
         ConfiguredRule {
             entry,
             severity,
             options,
             instance: OnceLock::new(),
-            refusal,
+            refusal: OnceLock::new(),
             reported_as: entry.meta,
             name: None,
             or_else: None,
@@ -124,10 +119,6 @@ impl ConfiguredRule {
     pub(crate) fn or(mut self, rule: Option<ConfiguredJsRule>) -> Self {
         self.or_else = rule.map(Box::new);
         self
-    }
-
-    pub fn refusal(&self) -> Option<&[u8]> {
-        self.refusal.as_deref()
     }
 }
 

@@ -10,17 +10,27 @@ pub struct NoAccumulatingSpread;
 const REDUCE_SPREAD: Message = Message::new("reduceSpread", "Do not spread accumulators in Array.prototype.reduce()");
 const LOOP_SPREAD: Message = Message::new("loopSpread", "Do not spread accumulators in loops");
 
+/// A spread of an accumulator in a loop.
+struct InLoop<'a> {
+    spread: Span,
+    accumulator: Pat<'a>,
+    keyword: Span,
+    is_in_array: bool,
+}
+
 #[derive(Default)]
 pub struct State<'a> {
     /// What is first assigned to, for each variable that was asked about.
     first_assignments: FxHashMap<Symbol<'a>, Option<Expr<'a>>>,
     /// Whether something is in a call of `reduce` or in a loop.
     in_reduce_or_loop: AncestorMemo<'a, ()>,
+    /// All those of one accumulator are reported at the accumulator: oxlint has them in the order of the source.
+    in_loops: Vec<InLoop<'a>>,
 }
 
 impl Rule for NoAccumulatingSpread {
     const META: Meta = Meta::plugin(Plugin::Oxc, "no-accumulating-spread", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Spread, ExprTag::Object]);
+    const ON: On = On::new().exprs(&[ExprTag::Spread, ExprTag::Object]).finish();
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
@@ -58,6 +68,22 @@ impl Rule for NoAccumulatingSpread {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        cx.state.in_loops.sort_unstable_by_key(|it| it.spread.start);
+        for it in &cx.state.in_loops {
+            let report = cx
+                .report(it.accumulator, LOOP_SPREAD)
+                .first_label("From this accumulator")
+                .label(it.spread, "From this spread")
+                .label(it.keyword, "For this loop");
+            // The loop is the primary one.
+            report.comments_apply_at(it.keyword).help(match it.is_in_array {
+                true => "Consider using `Array.prototype.push()` to mutate the accumulator instead.",
+                false => "Consider using `Object.assign()` to mutate the accumulator instead.",
+            });
         }
     }
 }
@@ -177,16 +203,11 @@ fn check_loop_usage<'a>(spread: Node<'a>, pat: Pat<'a>, symbol: Symbol<'a>, cx: 
             _ => 3,
         };
         let start = stmt.span().start;
-        // The loop is the primary one.
-        let loop_span = Span::new(start, start + keyword);
-        let report = cx
-            .report(pat, LOOP_SPREAD)
-            .first_label("From this accumulator")
-            .label(spread.span(), "From this spread")
-            .label(loop_span, "For this loop");
-        report.comments_apply_at(loop_span).help(match value.tag() {
-            ExprTag::Array => "Consider using `Array.prototype.push()` to mutate the accumulator instead.",
-            _ => "Consider using `Object.assign()` to mutate the accumulator instead.",
+        cx.state.in_loops.push(InLoop {
+            spread: spread.span(),
+            accumulator: pat,
+            keyword: Span::new(start, start + keyword),
+            is_in_array: value.tag() == ExprTag::Array,
         });
     }
 }

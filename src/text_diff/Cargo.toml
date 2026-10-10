@@ -12,3 +12,6 @@ workspace = true
 [dependencies]
 bun_core.workspace = true
 bun_wyhash.workspace = true
+
+[dev-dependencies]
+bstr.workspace = true

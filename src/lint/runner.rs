@@ -7,7 +7,6 @@ use crate::ast::{
 };
 use crate::context::{Cx, CxBase, Diagnostic, Severity};
 use crate::literal::Literal;
-use crate::options::Options;
 use crate::rule::{Meta, NodeTags, On, Rule};
 use crate::rule_set::{RuleBits, RuleSet};
 use crate::span::Span;
@@ -830,16 +829,11 @@ impl<'a, R: Rule> Running<'a> for Later<'_, 'a, R> {
 #[derive(Copy, Clone)]
 pub struct RuleEntry {
     pub meta: &'static Meta,
-    /// [`Rule::validate`]
-    pub validate: fn(&Options) -> Result<(), Vec<u8>>,
 }
 
 impl RuleEntry {
     pub const fn of<R: Rule>() -> RuleEntry {
-        RuleEntry {
-            meta: &R::META,
-            validate: R::validate,
-        }
+        RuleEntry { meta: &R::META }
     }
 }
 

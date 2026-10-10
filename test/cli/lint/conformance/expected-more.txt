@@ -5,7 +5,7 @@ FAIL more/reviews/typescript-eslint/no-unsafe-argument#308 messages differ
 FAIL more/reviews/typescript-eslint/no-unsafe-argument#318 messages differ
 FAIL more/reviews/typescript-eslint/no-unused-vars#2174 messages differ
 
-33 cases have their messages in another order
+32 cases have their messages in another order
 
 714 rules, 710 without failures, 0 not implemented
 87661 cases passed, 6 failed, 273 skipped

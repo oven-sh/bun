@@ -337,6 +337,21 @@ impl<S: RuleSet> Linter<S> {
         S::build(*self.numbers.get(index)?, &Options::new(options))
     }
 
+    /// [`Rule::validate`](crate::rule::Rule::validate) of `entry`.
+    fn validate(&self, entry: &RuleEntry, options: &[Json]) -> Result<(), Vec<u8>> {
+        let index = self.registry.index_of(entry);
+        match index.and_then(|it| self.numbers.get(it)) {
+            Some(number) => S::validate(*number, &Options::new(options)),
+            None => Ok(()),
+        }
+    }
+
+    /// What `rule`, which is on, throws for its options.
+    fn refusal<'c>(&self, rule: &'c ConfiguredRule) -> Option<&'c [u8]> {
+        let ask = || Some(Arc::from(self.validate(rule.entry, &rule.options).err()?));
+        rule.refusal.get_or_init(ask).as_deref()
+    }
+
     /// `rule` made from its options. `None` if it is off.
     fn instance(&self, rule: &ConfiguredRule) -> Option<&S> {
         if rule.severity == Severity::Off {
@@ -395,7 +410,7 @@ impl<S: RuleSet> Linter<S> {
                     or_else: rule.or_else(),
                     severity: rule.severity,
                     rule: RuleRef::Shared(instance),
-                    refusal: rule.refusal().map(Cow::Borrowed),
+                    refusal: self.refusal(rule).map(Cow::Borrowed),
                 });
             }
         }
@@ -1268,12 +1283,10 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 .and_then(|it| linter.instance(it));
             let refusal = match shared {
                 Some(_) => existing
-                    .and_then(ConfiguredRule::refusal)
+                    .and_then(|it| linter.refusal(it))
                     .map(Cow::Borrowed),
                 None if severity == Severity::Off => None,
-                None => (entry.validate)(&Options::new(options))
-                    .err()
-                    .map(Cow::Owned),
+                None => linter.validate(entry, options).err().map(Cow::Owned),
             };
             let rule = match shared {
                 Some(rule) => RuleRef::Shared(rule),

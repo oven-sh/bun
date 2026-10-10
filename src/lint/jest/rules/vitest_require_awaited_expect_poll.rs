@@ -21,27 +21,28 @@ impl Rule for RequireAwaitedExpectPoll {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        jest::iter_possible_jest_call_node(cx.file()).for_each(|node| run(node, cx))
+        let file = cx.file();
+        let mut found: Vec<_> = jest::iter_possible_jest_call_node(file).filter_map(|it| unhandled(it, file)).collect();
+        // The calls of one chain begin at one place. oxlint comes to them from the inside.
+        utils::sort::sort_unstable_by_key(&mut found, |it| (it.0.span().start, it.0.span().end));
+        for (node, member_name) in found {
+            cx.report(node, REQUIRE_AWAITED_EXPECT_POLL).data("member_name", member_name);
+        }
     }
 }
 
-fn run<'a>(possible_jest_node: PossibleJestNode<'a>, cx: &Cx<'a, RequireAwaitedExpectPoll>) {
+/// The call, and the `poll` or the `element` of it, if what it returns is neither awaited nor returned.
+fn unhandled<'a>(possible_jest_node: PossibleJestNode<'a>, file: &'a File<'a>) -> Option<(Expr<'a>, &'a [u8])> {
     let node = possible_jest_node.node;
-    let Some(expect) = jest::parse_expect_and_typeof_vitest_fn_call(cx.file(), possible_jest_node) else {
-        return;
-    };
+    let expect = jest::parse_expect_and_typeof_vitest_fn_call(file, possible_jest_node)?;
     let member_name = expect.members.first().and_then(|it| it.name());
-    let Some(member_name) = member_name.filter(|it| matches!(*it, b"poll" | b"element")) else {
-        return;
-    };
+    let member_name = member_name.filter(|it| matches!(*it, b"poll" | b"element"))?;
     let is_returned_or_awaited = match skip_sequence_expressions(skip_matchers_and_modifiers(node)).parent() {
         AstKind::Stmt(statement) => statement.tag() == StmtTag::Return,
         AstKind::Expr(e) => e.tag() == ExprTag::Await,
         _ => false,
     };
-    if !is_returned_or_awaited {
-        cx.report(node, REQUIRE_AWAITED_EXPECT_POLL).data("member_name", member_name);
-    }
+    (!is_returned_or_awaited).then_some((node, member_name))
 }
 
 /// With the parentheses around it, and the sequences that it is the last of.

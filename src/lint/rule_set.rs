@@ -19,12 +19,6 @@ impl RuleBits {
     pub const EMPTY: RuleBits = RuleBits([0; RuleBits::WORDS]);
 
     #[inline]
-    pub const fn with(mut self, rule: u16) -> RuleBits {
-        self.0[rule as usize / 64] |= 1 << (rule % 64);
-        self
-    }
-
-    #[inline]
     pub const fn has(&self, rule: u16) -> bool {
         self.0[rule as usize / 64] & (1 << (rule % 64)) != 0
     }
@@ -57,26 +51,6 @@ impl RuleBits {
             word += 1;
         }
         any == 0
-    }
-
-    /// What is in this one and not in `other`.
-    #[inline]
-    pub const fn and_not(mut self, other: &RuleBits) -> RuleBits {
-        let mut word = 0;
-        while word < RuleBits::WORDS {
-            self.0[word] &= !other.0[word];
-            word += 1;
-        }
-        self
-    }
-
-    /// The numbers, from the lowest.
-    pub fn iter(&self) -> impl Iterator<Item = u16> {
-        let some = |word: u64| Some(word).filter(|it| *it != 0);
-        (0u16..).step_by(64).zip(self.0).flat_map(move |it| {
-            std::iter::successors(some(it.1), move |word| some(word & (word - 1)))
-                .map(move |word| it.0 + word.trailing_zeros() as u16)
-        })
     }
 }
 

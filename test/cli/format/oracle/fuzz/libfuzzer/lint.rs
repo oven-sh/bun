@@ -7,12 +7,14 @@ use bun_fuzz::{Input, Run, show, shows};
 use bun_lint::ast::File;
 use bun_lint::language::{Parser, SourceType};
 use bun_lint::context::Severity;
-use bun_lint::linter::{ConfiguredRule, LintOptions, LintResult, Linter, Registry, ResolvedConfig};
-use bun_lint::options::{Json, Options};
+use bun_lint::linter::{LintOptions, LintResult, Registry, ResolvedConfig};
+use bun_lint::options::Json;
 use bun_sema::atom::{Intern, Interner};
 use bun_sema::bind::{BindOptions, Recycled, bind_for_lint_in};
 use bun_sema::session::Session;
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
+
+type Linter = bun_lint::linter::Linter<bun_lint_driver::rules::Rules>;
 
 const VARIANTS: [(&str, Parser, SourceType); 20] = [
     ("a.js", Parser::Espree, SourceType::Module),
@@ -65,20 +67,16 @@ fn setup() -> &'static Setup {
         ];
         let linter = Linter::new(Registry::new(&all));
         // Not by their names: what a name stands for depends on whose configuration it is in.
-        let rules: Vec<ConfiguredRule> = (all.iter().flat_map(|it| it.iter()))
-            .filter(|it| !it.meta.requires_types && !it.meta.needs_modules)
-            .map(|it| {
-                let instance = Arc::from((it.build)(&Options::new(&[])));
-                ConfiguredRule::new(it, Severity::Error, Arc::from(Vec::new()), Some(instance))
-            })
-            .collect();
+        let rules = || (all.iter().flat_map(|it| it.iter())).filter(|it| !it.meta.requires_types && !it.meta.needs_modules);
         let configs = VARIANTS.map(|(path, parser, source_type)| {
             [0, 1, 2, 3].map(|which| {
                 let is_oxlint = which & 1 != 0;
                 let json = if which & 2 != 0 { bun_lint::json::parse(SETTINGS) } else { None };
                 let json = json.unwrap_or(Json::Null);
                 let mut config = ResolvedConfig::from_json(linter.registry(), &json, &mut Vec::new());
-                config.rules = rules.clone();
+                for rule in rules() {
+                    config.configure(rule, Severity::Error, &[]);
+                }
                 // How the comments of a text name rules.
                 config.prefers_typescript_rules = is_oxlint;
                 config.language.parser = parser;

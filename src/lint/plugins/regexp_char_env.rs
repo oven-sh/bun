@@ -276,9 +276,8 @@ pub(crate) fn get_char_env(flags: re::Flags) -> &'static CharEnv {
     })
 }
 
-/// What upstream's `getPropertyData` makes its `UnicodeSet` of: the characters of `\p{key=value}`
-/// or `\p{key}`, and of a property of strings the strings that are not one character. As it is
-/// without `i`. Both are empty for a property that JavaScriptCore does not have.
+/// upstream's `getPropertyData`, which is without `i`: the characters, and the strings that are not
+/// one character. Both are empty for a property that JavaScriptCore does not have.
 pub(crate) fn get_property_data(key: &[u8], value: Option<&[u8]>) -> (CharSet, Vec<Word>) {
     let empty = CharSet::empty(MAX_UNICODE);
     let Some(data) = property(key, value) else {

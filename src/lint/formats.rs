@@ -46,6 +46,8 @@ pub enum Reason {
     Version,
     /// `eslint-plugin-prettier` is of a version that decides otherwise what is formatted and how.
     VersionOfPlugin,
+    /// `eslint-plugin-prettier` is not to be found, so that nothing is known of its version.
+    PluginNotFound,
     /// A plugin of Prettier that is not built in may print the file.
     Plugin,
     /// `bun format` does not print the language itself.
@@ -70,6 +72,9 @@ impl Reason {
                 "the prettier that is installed is not 3.9, which bun format follows"
             }
             Reason::VersionOfPlugin => "the eslint-plugin-prettier that is installed is not 5",
+            Reason::PluginNotFound => {
+                "the eslint-plugin-prettier of the configuration is not found"
+            }
             Reason::Plugin => "a plugin of Prettier that bun format does not have may print them",
             Reason::Language => "bun format does not print their language itself",
             Reason::Option => "bun format does not know one of the options",

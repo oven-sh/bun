@@ -81,6 +81,14 @@ fn is_invalid_promise_aggregator_input<'a>(node: Expr<'a>, ty: Type<'a>) -> bool
 
 impl AwaitThenable {
     fn check_await<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        // `check_variable_declaration` sees to it: both can report at the same place, the declaration first.
+        let is_disposed = matches!(node.parent(), Node::VarDecl(it) if it.var_kind() == VarKind::AwaitUsing);
+        if !is_disposed {
+            self.check_await_expression(node, cx);
+        }
+    }
+
+    fn check_await_expression<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Await(argument) = node.kind() else {
             return;
         };
@@ -176,6 +184,7 @@ impl AwaitThenable {
             };
             let ty = init.ty();
             if is_type_any_type(ty) || ty.is_unresolved() || some_part_has_well_known_symbol(ty, "asyncDispose") {
+                self.check_await_expression(init, cx);
                 continue;
             }
             // With several declarators it is left to the user.
@@ -192,6 +201,7 @@ impl AwaitThenable {
                 REMOVE_AWAIT,
                 |fixer| remove_await_token(fixer, node.span()),
             );
+            self.check_await_expression(init, cx);
         }
     }
 }

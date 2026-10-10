@@ -2077,6 +2077,19 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
     }
 }
 
+#[cfg(unix)]
+impl bun_io::pipe_writer::PosixWriterParent for Terminal {
+    unsafe fn ref_(this: *mut Self) {
+        // SAFETY: BACKREF set via writer.parent. Through the raw pointer, as the
+        // Windows `WindowsWriterParent::ref_` below: a `&mut self.writer` is live.
+        unsafe { bun_ptr::RefCount::<Terminal>::ref_(this) };
+    }
+    unsafe fn deref(this: *mut Self) {
+        // SAFETY: see ref_. May free `this`.
+        unsafe { bun_ptr::RefCount::<Terminal>::deref(this) };
+    }
+}
+
 #[cfg(windows)]
 impl bun_io::pipe_writer::WindowsWriterParent for Terminal {
     unsafe fn loop_(this: *mut Self) -> *mut bun_libuv_sys::Loop {

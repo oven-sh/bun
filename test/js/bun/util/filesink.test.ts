@@ -1120,6 +1120,18 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
         c.close();
       },
     }`,
+    // pull() waits for the sink to write the whole chunk, so the sink holds a promise that
+    // it has to reject when the reader goes away.
+    directFlush: `{
+      type: "direct",
+      async pull(c) {
+        c.write(first);
+        const flushed = c.flush();
+        console.error("parked");
+        await flushed;
+        c.close();
+      },
+    }`,
   };
 
   function fixture(source: string, dest: string, countBeforeExit = false) {
@@ -1158,8 +1170,9 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
   }
 
   // read(2) in a poll on the non-blocking read end the test holds: it returns 0 once the
-  // writer is gone, on every POSIX, and needs no readiness notification.
-  async function drain(fd: number) {
+  // writer is gone, on every POSIX, and needs no readiness notification. With a `limit` it
+  // stops once that many bytes have arrived.
+  async function drain(fd: number, limit = Infinity) {
     const buffer = Buffer.alloc(64 * 1024);
     const parts: Buffer[] = [];
     let total = 0;
@@ -1180,6 +1193,7 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
       parts.push(Buffer.from(buffer.subarray(0, n)));
       total += n;
       progressAt = performance.now();
+      if (total >= limit) return Buffer.concat(parts);
     }
   }
 
@@ -1330,6 +1344,56 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
       fs.closeSync(readFd);
     }
   });
+
+  // The reader takes part of the stream and goes away while pull() awaits flush(). The child
+  // finds out in its poll of stdout, and the sink rejects the flush from that callback.
+  // pull() then fails, which closes the sink and drops the last refs on it, and the pipe
+  // writer, a field of the sink, still had a close of its own to make (ASAN:
+  // heap-use-after-free in PosixStreamingWriter::close).
+  //
+  // The flush that ends each turn of the child's loop writes too, and a failure there is
+  // reported from another place. So the read end has to close while the child waits in its
+  // poll, and no signal says when it does. The reader takes a few refills, which puts the
+  // child past the turn that printed "parked", and then gives it a moment to handle the last.
+  it.concurrent.skipIf(!isPosix)(
+    "a reader that goes away while pull() awaits flush() rejects the promise",
+    async () => {
+      using dir = tempDir("filesink-piped-reader-gone", {});
+      const path = join(String(dir), "stdout.fifo");
+      mkfifo(path, 0o666);
+      const readFd = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      let readFdOpen = true;
+      let writeFd: number | undefined;
+      try {
+        writeFd = fs.openSync(path, fs.constants.O_WRONLY);
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", fixture(sources.directFlush, "Bun.stdout")],
+          env: bunEnv,
+          stdout: writeFd,
+          stderr: "pipe",
+        });
+        // The child holds the only write end now: a read of 0 bytes means it is gone.
+        fs.closeSync(writeFd);
+        writeFd = undefined;
+
+        const rest = await parked(proc.stderr);
+        const received = await drain(readFd, 4 * 64 * 1024);
+        await Bun.sleep(10);
+        fs.closeSync(readFd);
+        readFdOpen = false;
+
+        const [stderr, exitCode] = await Promise.all([rest(), proc.exited]);
+        expect({ intact: expected.subarray(0, received.length).equals(received), stderr, exitCode }).toEqual({
+          intact: true,
+          stderr: "parked\n" + JSON.stringify({ settled: "rejected EPIPE: broken pipe, write", code: 0 }) + "\n",
+          exitCode: 0,
+        });
+      } finally {
+        if (writeFd !== undefined) fs.closeSync(writeFd);
+        if (readFdOpen) fs.closeSync(readFd);
+      }
+    },
+  );
 });
 
 // FileSink::on_close tells the owner of the sink that it closed, and a Subprocess then drops its ref

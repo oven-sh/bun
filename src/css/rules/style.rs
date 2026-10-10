@@ -53,16 +53,8 @@ impl<R> StyleRule<R> {
     }
 
     pub(crate) fn update_prefix(&mut self, context: &mut MinifyContext<'_, '_>) {
-        self.vendor_prefix = selector::get_prefix(&self.selectors);
-        if self.vendor_prefix.contains(VendorPrefix::NONE)
-            && context.targets.should_compile_selectors()
-        {
-            self.vendor_prefix = selector::downlevel_selectors(
-                context.arena,
-                self.selectors.v.slice_mut(),
-                context.targets,
-            );
-        }
+        self.vendor_prefix =
+            selector::update_prefix(context.arena, self.selectors.v.slice_mut(), context.targets);
     }
 
     pub(crate) fn is_compatible(&self, targets: &css::targets::Targets) -> bool {
@@ -426,7 +418,7 @@ impl<R> StyleRule<R> {
         // Mirrors the selector-compatibility branch in `minify_style_arm`
         // (rules/mod.rs): an incompatible selector list is either collapsed
         // into a single `:is()` selector (nothing cloned) or partitioned
-        // into one cloned rule per selector (fan-out = selector count).
+        // into cloned rules, at most one per selector (fan-out <= count).
         // Only the partition case multiplies on its own — but the `:is()`
         // wrap keeps one `&` reference per original selector, so when
         // nesting is compiled away the printed output still fans out per

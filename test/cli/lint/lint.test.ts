@@ -5416,6 +5416,127 @@ describe.concurrent("bun lint", () => {
   });
 });
 
+// What oxlint 1.87.0 reports.
+describe.concurrent("rules as oxlint has them", () => {
+  type Diagnostic = { message: string; filename: string; labels: { span: { line: number; column: number } }[] };
+  async function reports(files: Record<string, string>, names: string[]) {
+    const { diagnostics }: { diagnostics: Diagnostic[] } = JSON.parse(
+      (await lint(files, ["-f", "json", ...names])).raw,
+    );
+    const place = ({ labels: [{ span }] }: Diagnostic) => `${span.line}:${span.column}`;
+    const of = (name: string) => diagnostics.filter(it => basename(it.filename) === name);
+    return names.map(name =>
+      of(name)
+        .map(it => `${place(it)} ${it.message}`)
+        .sort(),
+    );
+  }
+
+  // What a callback reads it keeps in a hash table, where a parameter of a function in the callback and a variable of the component
+  // with its name are two. It names what is missing in the order of that table, and reports where the first is.
+  test("react/exhaustive-deps: a name that is another variable further in", async () => {
+    const rows: [code: string, reports: string[]][] = [
+      [
+        "function C({ x, items }) {\n  useEffect(() => {\n    items.map(x => x.id);\n    use(x.id);\n  }, [items]);\n}\n",
+        ["4:9 React Hook useEffect has a missing dependency: 'x.id'"],
+      ],
+      [
+        "function C({ x, items }) {\n  useEffect(() => {\n    items.map(x => use(x));\n    use(x);\n  }, [items]);\n}\n",
+        ["4:9 React Hook useEffect has a missing dependency: 'x'"],
+      ],
+      [
+        "function C({ x, items }) {\n  useEffect(() => {\n    use(x);\n    items.map(x => use(x));\n  }, [items]);\n}\n",
+        ["3:9 React Hook useEffect has a missing dependency: 'x'"],
+      ],
+      ["function C({ x, items }) {\n  useEffect(() => {\n    items.map(x => use(x));\n  }, [items]);\n}\n", []],
+      [
+        "function C({ x, items }) {\n  const f = () => {\n    items.map(x => x.id);\n    return x.id;\n  };\n  useEffect(() => {\n    f();\n  }, []);\n}\n",
+        ["7:5 React Hook useEffect has a missing dependency: 'f'"],
+      ],
+      [
+        "function C({ r, items }) {\n  useEffect(() => {\n    items.map(r => use(r));\n    use(r.current);\n  }, [items]);\n}\n",
+        ["4:9 React Hook useEffect has a missing dependency: 'r'"],
+      ],
+      [
+        "function C({ r, items }) {\n  useEffect(() => {\n    use(r);\n    items.map(r => use(r.current));\n  }, [items]);\n}\n",
+        ["3:9 React Hook useEffect has a missing dependency: 'r'"],
+      ],
+      [
+        "const p = 0;\nfunction C({ horizontal }) {\n  const baseline = g(1);\n  return useMemo(\n    () => ({\n      from: ({ x, y, color }) => ({ color: clean(color), x: horizontal ? baseline : x }),\n      update: ({ x, y, color }) => ({ x, y, color: clean(color), opacity: 1 }),\n    }),\n    [],\n  );\n}\n",
+        ["6:61 React Hook useMemo has missing dependencies: 'horizontal', and 'baseline'"],
+      ],
+      [
+        "function C({ a, b, c, d, list }) {\n  useEffect(() => {\n    list.map(a => a + 1);\n    list.map(b => b + 1);\n    list.map(c => c + 1);\n    use(a, b, c, d);\n  }, [list]);\n}\n",
+        ["6:9 React Hook useEffect has missing dependencies: 'a', 'd', 'c', and 'b'"],
+      ],
+    ];
+    const names = rows.map((_, at) => `r${at}.jsx`);
+    const files = {
+      ".oxlintrc.json": JSON.stringify({
+        plugins: ["react"],
+        categories: { correctness: "off" },
+        rules: { "react/exhaustive-deps": "error" },
+      }),
+      ...Object.fromEntries(rows.map(([code], at) => [names[at], code])),
+    };
+    expect(await reports(files, names)).toEqual(rows.map(row => row[1]));
+  });
+
+  // An import without names is one for its side effects, `import type {} from "m"` too. `caseSensitive` is about a `group` alone.
+  test("no-restricted-imports: an import of no names, and the case of a regex", async () => {
+    const rows: [options: unknown, code: string, reports: string[]][] = [
+      [
+        { "patterns": [{ "regex": "^@made/up/", "allowTypeImports": true }] },
+        'import type {} from "@made/up/a";\n',
+        ["1:1 '@made/up/a' import is restricted from being used by a pattern."],
+      ],
+      [
+        { "patterns": [{ "group": ["@made/up/*"], "allowTypeImports": true }] },
+        'import type {} from "@made/up/a";\n',
+        ["1:1 '@made/up/a' import is restricted from being used by a pattern."],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/a", "allowTypeImports": true }] },
+        'import type {} from "@made/up/a";\n',
+        ["1:1 '@made/up/a' import is restricted from being used."],
+      ],
+      [
+        { "patterns": [{ "regex": "^@made/up/", "allowTypeImports": true }] },
+        'import type {} from "@made/up/a";\nimport "@made/up/a";\nimport type { T } from "@made/up/a";\n',
+        ["1:1 '@made/up/a' import is restricted from being used by a pattern."],
+      ],
+      [
+        { "patterns": [{ "regex": "^@made/up/", "allowTypeImports": true }] },
+        'import type { T } from "@made/up/a";\nimport type U from "@made/up/a";\nimport { type V } from "@made/up/a";\nexport type {} from "@made/up/a";\n',
+        [],
+      ],
+      [{ "patterns": [{ "regex": "^@MADE/UP/" }] }, 'import a from "@made/up/a";\n', []],
+      [{ "patterns": [{ "regex": "^@MADE/UP/", "caseSensitive": false }] }, 'import a from "@made/up/a";\n', []],
+      [
+        { "patterns": [{ "regex": "^@made/up/", "caseSensitive": false }] },
+        'import a from "@made/up/a";\nimport b from "@MADE/up/a";\n',
+        ["1:1 '@made/up/a' import is restricted from being used by a pattern."],
+      ],
+      [
+        { "patterns": [{ "group": ["@MADE/UP/*"] }] },
+        'import a from "@made/up/a";\n',
+        ["1:1 '@made/up/a' import is restricted from being used by a pattern."],
+      ],
+      [{ "patterns": [{ "group": ["@MADE/UP/*"], "caseSensitive": true }] }, 'import a from "@made/up/a";\n', []],
+    ];
+    const names = rows.map((_, at) => `r${at}.ts`);
+    const overrides = rows.map(([options], at) => ({
+      files: [names[at]],
+      rules: { "no-restricted-imports": ["error", options] },
+    }));
+    const files = {
+      ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, overrides }),
+      ...Object.fromEntries(rows.map(([, code], at) => [names[at], code])),
+    };
+    expect(await reports(files, names)).toEqual(rows.map(row => row[2]));
+  });
+});
+
 describe.concurrent("regular expressions in a configuration", () => {
   test("are JavaScript's on text that is not ASCII", async () => {
     const { stdout, exitCode } = await lint(

@@ -11,6 +11,8 @@
 //! creation, aliasing, mutation, freezing, and error conditions for each
 //! instruction and terminal in the HIR.
 
+use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
@@ -67,8 +69,12 @@ pub(crate) fn infer_mutation_aliasing_effects(
 
     let mut initial_state = InferenceState::empty(is_function_expression, env.identifiers.len());
 
+    // Where each block is in the order of the blocks, by which the maps below are keyed.
+    let order: Vec<BlockId> = func.body.blocks.keys().copied().collect();
+    let position: HashMap<BlockId, usize> = order.iter().copied().zip(0..).collect();
+
     // Map of blocks to the last (merged) incoming state that was processed
-    let mut states_by_block: HashMap<BlockId, InferenceState> = HashMap::default();
+    let mut states_by_block: HashMap<usize, InferenceState> = HashMap::default();
 
     // Initialize context variables
     for ctx_place in &func.context {
@@ -126,34 +132,30 @@ pub(crate) fn infer_mutation_aliasing_effects(
         }
     }
 
-    let mut queued_states: crate::collections::IndexMap<BlockId, InferenceState> =
-        crate::collections::IndexMap::new();
+    let mut queued_states: BTreeMap<usize, InferenceState> = BTreeMap::new();
 
-    // Queue helper. Takes `state` by reference; clones only when actually inserting.
+    // Queue helper. A state that is lent is cloned only when it is inserted.
     fn queue(
-        queued_states: &mut crate::collections::IndexMap<BlockId, InferenceState>,
-        states_by_block: &HashMap<BlockId, InferenceState>,
-        block_id: BlockId,
-        state: &InferenceState,
+        queued_states: &mut BTreeMap<usize, InferenceState>,
+        states_by_block: &HashMap<usize, InferenceState>,
+        block: usize,
+        state: Cow<'_, InferenceState>,
     ) {
-        if let Some(queued_state) = queued_states.get_mut(&block_id) {
-            queued_state.merge_from(state);
-        } else if let Some(prev) = states_by_block.get(&block_id) {
+        if let Some(queued_state) = queued_states.get_mut(&block) {
+            queued_state.merge_from(&state);
+        } else if let Some(prev) = states_by_block.get(&block) {
             let mut next = prev.clone();
-            if next.merge_from(state) {
-                queued_states.insert(block_id, next);
+            if next.merge_from(&state) {
+                queued_states.insert(block, next);
             }
         } else {
-            queued_states.insert(block_id, state.clone());
+            queued_states.insert(block, state.into_owned());
         }
     }
 
-    queue(
-        &mut queued_states,
-        &states_by_block,
-        func.body.entry,
-        &initial_state,
-    );
+    if let Some(&entry) = position.get(&func.body.entry) {
+        queued_states.insert(entry, initial_state);
+    }
 
     let hoisted_context_declarations = find_hoisted_context_declarations(func, env);
     let non_mutating_spreads = find_non_mutated_destructure_spreads(func, env);
@@ -173,75 +175,82 @@ pub(crate) fn infer_mutation_aliasing_effects(
         fallback_value_ids: HashMap::default(),
     };
 
-    let revisitable = blocks_reachable_from_back_edges(func);
+    let revisitable = blocks_in_loops(func, &position);
+    let mut visits = vec![0u8; order.len()];
 
-    let mut iteration_count = 0;
-
-    while !queued_states.is_empty() {
-        iteration_count += 1;
-        if iteration_count > 100 {
+    // Not in sweeps over all blocks, as upstream: a loop is at its end before what is behind it begins.
+    while let Some((index, incoming_state)) = queued_states.pop_first() {
+        let block_id = order[index];
+        visits[index] += 1;
+        if visits[index] > 100 {
             return Err(CompilerDiagnostic::new(
                 ErrorCategory::Invariant,
                 "[InferMutationAliasingEffects] Potential infinite loop: \
-                 A value, temporary place, or effect was not cached properly",
+                     A value, temporary place, or effect was not cached properly",
                 None,
             ));
         }
 
-        // Collect block IDs to process in order
-        let block_ids: Vec<BlockId> = func.body.blocks.keys().copied().collect();
-        for block_id in block_ids {
-            let incoming_state = match queued_states.swap_remove(&block_id) {
-                Some(s) => s,
-                None => continue,
-            };
+        let mut state = if revisitable[index] {
+            let state = incoming_state.clone();
+            states_by_block.insert(index, incoming_state);
+            state
+        } else {
+            incoming_state
+        };
 
-            let mut state = if revisitable.contains(&block_id) {
-                let state = incoming_state.clone();
-                states_by_block.insert(block_id, incoming_state);
-                state
-            } else {
-                incoming_state
-            };
+        infer_block(&mut context, &mut state, block_id, func, env)?;
 
-            infer_block(&mut context, &mut state, block_id, func, env)?;
+        // Check for uninitialized identifier access (matches TS invariant:
+        // "Expected value kind to be initialized")
+        if let Some((uninitialized_id, usage_loc)) = state.uninitialized_access.get() {
+            let ident_info = env.identifiers.get(uninitialized_id.0 as usize);
+            let name = ident_info
+                .and_then(|ident| ident.name.as_ref())
+                .map(|n| bun_core::BStr::new(n.value()).to_string())
+                .unwrap_or_else(|| "".to_string());
+            // Use usage_loc if available, otherwise fall back to identifier's own loc
+            let error_loc = usage_loc.or_else(|| ident_info.and_then(|i| i.loc));
+            // Match TS printPlace format: "<unknown> name$id:type"
+            let type_str = ident_info
+                .map(|ident| {
+                    let ty = &env.types[ident.type_.0 as usize];
+                    format_type_for_print(ty)
+                })
+                .unwrap_or_default();
+            let description = format!("<unknown> {}${}{}", name, uninitialized_id.0, type_str);
+            let diag = CompilerDiagnostic::new(
+                ErrorCategory::Invariant,
+                "[InferMutationAliasingEffects] Expected value kind to be initialized",
+                Some(description),
+            )
+            .with_detail(CompilerDiagnosticDetail::Error {
+                loc: error_loc,
+                message: Some("this is uninitialized".to_string()),
+                identifier_name: None,
+            });
+            return Err(diag);
+        }
 
-            // Check for uninitialized identifier access (matches TS invariant:
-            // "Expected value kind to be initialized")
-            if let Some((uninitialized_id, usage_loc)) = state.uninitialized_access.get() {
-                let ident_info = env.identifiers.get(uninitialized_id.0 as usize);
-                let name = ident_info
-                    .and_then(|ident| ident.name.as_ref())
-                    .map(|n| bun_core::BStr::new(n.value()).to_string())
-                    .unwrap_or_else(|| "".to_string());
-                // Use usage_loc if available, otherwise fall back to identifier's own loc
-                let error_loc = usage_loc.or_else(|| ident_info.and_then(|i| i.loc));
-                // Match TS printPlace format: "<unknown> name$id:type"
-                let type_str = ident_info
-                    .map(|ident| {
-                        let ty = &env.types[ident.type_.0 as usize];
-                        format_type_for_print(ty)
-                    })
-                    .unwrap_or_default();
-                let description = format!("<unknown> {}${}{}", name, uninitialized_id.0, type_str);
-                let diag = CompilerDiagnostic::new(
-                    ErrorCategory::Invariant,
-                    "[InferMutationAliasingEffects] Expected value kind to be initialized",
-                    Some(description),
-                )
-                .with_detail(CompilerDiagnosticDetail::Error {
-                    loc: error_loc,
-                    message: Some("this is uninitialized".to_string()),
-                    identifier_name: None,
-                });
-                return Err(diag);
-            }
-
-            // Queue successors
-            let successors = terminal_successors(&func.body.blocks[&block_id].terminal);
-            for next_block_id in successors {
-                queue(&mut queued_states, &states_by_block, next_block_id, &state);
-            }
+        // Queue successors
+        let successors = terminal_successors(&func.body.blocks[&block_id].terminal);
+        let mut successors = successors.iter().filter_map(|it| position.get(it).copied());
+        let last = successors.next_back();
+        for next in successors {
+            queue(
+                &mut queued_states,
+                &states_by_block,
+                next,
+                Cow::Borrowed(&state),
+            );
+        }
+        if let Some(next) = last {
+            queue(
+                &mut queued_states,
+                &states_by_block,
+                next,
+                Cow::Owned(state),
+            );
         }
     }
 
@@ -251,41 +260,28 @@ pub(crate) fn infer_mutation_aliasing_effects(
     Ok(())
 }
 
-/// Blocks that the fixpoint loop can queue again after it processed them.
-///
-/// A block is queued only when one of its predecessors is processed, and each
-/// sweep processes blocks in `func.body.blocks` order. So a block is queued
-/// after its own turn only if it is the target of an edge from the same or a
-/// later block, or if such a target reaches it. Every other block is processed
-/// exactly once and `states_by_block` never reads its incoming state back. A
-/// dense state is `env.identifiers.len()` cells, so keeping one per block of a
-/// long loop-free function is quadratic.
-fn blocks_reachable_from_back_edges(func: &HirFunction) -> HashSet<BlockId> {
-    let position: HashMap<BlockId, usize> = func
-        .body
-        .blocks
-        .keys()
-        .enumerate()
-        .map(|(index, id)| (*id, index))
-        .collect();
-    let mut worklist: Vec<BlockId> = Vec::new();
-    for (index, block) in func.body.blocks.values().enumerate() {
+/// Whether each block, in their order, is between the target and the source of a back edge. No other is queued twice.
+fn blocks_in_loops(func: &HirFunction, position: &HashMap<BlockId, usize>) -> Vec<bool> {
+    let mut opened = vec![0i32; func.body.blocks.len() + 1];
+    for (source, block) in func.body.blocks.values().enumerate() {
         for successor in terminal_successors(&block.terminal) {
-            if position.get(&successor).is_some_and(|&p| p <= index) {
-                worklist.push(successor);
+            if let Some(&target) = position.get(&successor)
+                && target <= source
+            {
+                opened[target] += 1;
+                opened[source + 1] -= 1;
             }
         }
     }
-    let mut reachable: HashSet<BlockId> = HashSet::default();
-    while let Some(block_id) = worklist.pop() {
-        if !reachable.insert(block_id) {
-            continue;
-        }
-        if let Some(block) = func.body.blocks.get(&block_id) {
-            worklist.extend(terminal_successors(&block.terminal));
-        }
-    }
-    reachable
+    let mut open = 0;
+    opened.pop();
+    opened
+        .into_iter()
+        .map(|it| {
+            open += it;
+            open > 0
+        })
+        .collect()
 }
 
 // =============================================================================

@@ -10,12 +10,18 @@ pub(super) struct Analysis {
     pub(super) attribute_count: u32,
     /// The number of names of types.
     pub(super) identifier_count: u32,
+    /// So many combinators follow each other that the stack does not hold them: `esquery` throws when it matches.
+    pub(super) is_too_deep: bool,
 }
 
 impl Analysis {
     /// ESLint's `analyzeSelector`: the types of the nodes that the selector `id` can match. `None`:
     /// any.
     pub(super) fn analyze(&mut self, program: &Program, id: Id) -> Option<TypeSet> {
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
+            self.is_too_deep = true;
+            return None;
+        }
         match *program.ops.get(id as usize)? {
             Op::Identifier {
                 node_type,

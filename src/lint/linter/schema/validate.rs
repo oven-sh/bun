@@ -8,8 +8,6 @@ use crate::regex::Regex;
 use bun_core::strings;
 use rustc_hash::FxHashMap;
 
-const MAX_DEPTH: usize = 128;
-
 /// An error object of Ajv.
 #[derive(Clone, Debug)]
 pub(super) struct SchemaError {
@@ -32,7 +30,6 @@ struct Context {
     is_composite: bool,
     /// Inside `not`: no errors are made.
     makes_errors: bool,
-    depth: usize,
 }
 
 /// `!(value % 1) && !isNaN(value)`
@@ -118,13 +115,13 @@ fn uses_group(schema: &Json, keywords: &[&[u8]]) -> bool {
 }
 
 /// Whether there is a `$ref` anywhere in a schema.
-fn has_reference(schema: &Json, depth: usize) -> bool {
+fn has_reference(schema: &Json) -> bool {
     match schema {
-        _ if depth > MAX_DEPTH => false,
-        Json::Array(items) => items.iter().any(|it| has_reference(it, depth + 1)),
+        _ if !bun_core::StackCheck::init().is_safe_to_recurse() => false,
+        Json::Array(items) => items.iter().any(has_reference),
         Json::Object(entries) => entries
             .iter()
-            .any(|it| it.0 == b"$ref" || has_reference(&it.1, depth + 1)),
+            .any(|it| it.0 == b"$ref" || has_reference(&it.1)),
         _ => false,
     }
 }
@@ -195,19 +192,14 @@ impl<'s> Validator<'s> {
         let cx = Context {
             is_composite: false,
             makes_errors: true,
-            depth: 0,
         };
         self.check(schema, data, cx)
     }
 
     fn check(&mut self, schema: &'s Json, data: &mut Json, cx: Context) -> bool {
-        if cx.depth > MAX_DEPTH || schema.as_object().is_none() {
+        if !bun_core::StackCheck::init().is_safe_to_recurse() || schema.as_object().is_none() {
             return true;
         }
-        let cx = Context {
-            depth: cx.depth + 1,
-            ..cx
-        };
         // Next to `$ref`, other keywords are ignored.
         if let Some(reference) = schema.get(b"$ref").and_then(Json::as_str) {
             let Some(target) = self.resolve(reference) else {
@@ -215,7 +207,7 @@ impl<'s> Validator<'s> {
             };
             // What has references itself is compiled to a function of its own, which does not know
             // what it is called from.
-            let is_composite = cx.is_composite && !has_reference(target, 0);
+            let is_composite = cx.is_composite && !has_reference(target);
             return self.check(target, data, Context { is_composite, ..cx });
         }
         let types: Vec<&[u8]> = match schema.get(b"type") {

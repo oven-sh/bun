@@ -3,8 +3,6 @@
 
 use crate::options::Json;
 
-const MAX_DEPTH: usize = 128;
-
 fn is_special(byte: u8) -> bool {
     matches!(byte, b'[' | b']' | b'(' | b')' | b'}' | b'{' | b':' | b',')
 }
@@ -111,18 +109,18 @@ impl<'t> Tokens<'t> {
         self.maybe_consume(op).then_some(())
     }
 
-    fn list(&mut self, close: &[u8], until: &[&[u8]], depth: usize) -> Option<Node> {
+    fn list(&mut self, close: &[u8], until: &[&[u8]]) -> Option<Node> {
         self.at += 1;
         let mut items = Vec::new();
         while self.peek().is_some_and(|token| token != close) {
-            items.push(self.element(until, depth)?);
+            items.push(self.element(until)?);
             self.maybe_consume(b",");
         }
         self.consume(close)?;
         Some(Node::List(items))
     }
 
-    fn fields(&mut self, has_delimiters: bool, depth: usize) -> Option<Node> {
+    fn fields(&mut self, has_delimiters: bool) -> Option<Node> {
         if has_delimiters {
             self.consume(b"{")?;
         }
@@ -138,7 +136,7 @@ impl<'t> Tokens<'t> {
         {
             let key = self.value(&[b":"]);
             self.consume(b":")?;
-            let value = self.element(until, depth)?;
+            let value = self.element(until)?;
             match fields.iter_mut().find(|it| it.0 == key) {
                 Some(field) => field.1 = value,
                 None => fields.push((key, value)),
@@ -162,14 +160,14 @@ impl<'t> Tokens<'t> {
         out
     }
 
-    fn element(&mut self, until: &[&[u8]], depth: usize) -> Option<Node> {
-        if depth > MAX_DEPTH {
+    fn element(&mut self, until: &[&[u8]]) -> Option<Node> {
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
             return None;
         }
         match self.peek() {
-            Some(b"[") => self.list(b"]", &[b",", b"]"], depth + 1),
-            Some(b"(") => self.list(b")", &[b",", b")"], depth + 1),
-            Some(b"{") => self.fields(true, depth + 1),
+            Some(b"[") => self.list(b"]", &[b",", b"]"]),
+            Some(b"(") => self.list(b")", &[b",", b")"]),
+            Some(b"{") => self.fields(true),
             _ => Some(Node::Value(self.value(until))),
         }
     }
@@ -221,6 +219,9 @@ fn unquote(text: &[u8]) -> Vec<u8> {
 /// The `*` cast. `None` where levn throws, and for a regular expression, which JSON cannot
 /// express. A date stays a string.
 fn cast(node: Node) -> Option<Json> {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        return None;
+    }
     Some(match node {
         Node::List(items) => Json::Array(items.into_iter().map(cast).collect::<Option<_>>()?),
         Node::Fields(fields) => Json::Object(cast_fields(fields)?),
@@ -267,7 +268,7 @@ pub fn parse_object(text: &[u8]) -> Option<Vec<(Vec<u8>, Json)>> {
         at: 0,
     };
     let has_delimiters = tokens.peek() == Some(b"{");
-    let Node::Fields(fields) = tokens.fields(has_delimiters, 0)? else {
+    let Node::Fields(fields) = tokens.fields(has_delimiters)? else {
         return None;
     };
     // levn reads what has tokens left over as a tuple, which is no object.

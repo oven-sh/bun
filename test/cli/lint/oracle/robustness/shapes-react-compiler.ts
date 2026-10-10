@@ -196,6 +196,15 @@ const tooDeep = (name: string, text: () => string): Case => ({
   exitCode: 1,
 });
 
+/** Whether it is compiled depends on the stack that is left. */
+const deepOrNot = (name: string, text: () => string): Case => ({
+  name: `a component with ${name} ends by no signal`,
+  file: "a.jsx",
+  text,
+  rules,
+  exitCode: [0, 1],
+});
+
 export const cases: Case[] = [
   compiled("a call that has 48 arguments", () => wideShapes["rc-arguments-of-a-call.jsx"](48)),
   heavy(compiled("a variable that 250 ifs assign", () => wideShapes["rc-one-phi.jsx"](250))),
@@ -209,10 +218,10 @@ export const cases: Case[] = [
   // A debug build has frames ten times as large, and refuses what is a tenth as deep.
   compiled("ifs 8 deep", () => deepShapes["rc-ifs.jsx"](8)),
   heavy(compiled("ifs 60 deep", () => deepShapes["rc-ifs.jsx"](60))),
-  tooDeep("ifs 1,000 deep", () => deepShapes["rc-ifs.jsx"](1_000)),
+  deepOrNot("ifs 1,000 deep", () => deepShapes["rc-ifs.jsx"](1_000)),
   compiled("JSX 15 deep", () => deepShapes["rc-jsx.jsx"](15)),
   heavy(compiled("JSX 100 deep", () => deepShapes["rc-jsx.jsx"](100))),
-  tooDeep("JSX 1,000 deep", () => deepShapes["rc-jsx.jsx"](1_000)),
+  deepOrNot("JSX 1,000 deep", () => deepShapes["rc-jsx.jsx"](1_000)),
   heavy(compiled("a sum of 100", () => wideShapes["rc-binary.jsx"](100))),
   tooDeep("a sum of 20,000", () => wideShapes["rc-binary.jsx"](20_000)),
   heavy(compiled("a chain of 100 properties", () => wideShapes["rc-dots.jsx"](100))),

@@ -6,9 +6,6 @@ use super::{unicode, wtf8};
 use bun_core::strings;
 use rustc_hash::FxHashMap;
 
-/// How deep groups and classes may nest. regexpp has no limit of its own: it overflows the stack.
-const MAX_DEPTH: u32 = 250;
-
 /// The options of `RegExpValidator` and `RegExpParser`.
 #[derive(Copy, Clone, Debug)]
 pub struct Options {
@@ -270,7 +267,6 @@ struct Validator<'s, 'h> {
     last_str_value: Vec<u8>,
     last_assertion_is_quantifiable: bool,
     num_capturing_parens: i32,
-    depth: u32,
 
     /// Outermost first.
     disjunctions: Vec<Disjunction>,
@@ -457,7 +453,6 @@ impl<'s, 'h> Validator<'s, 'h> {
             last_str_value: Vec::new(),
             last_assertion_is_quantifiable: false,
             num_capturing_parens: 0,
-            depth: 0,
             disjunctions: Vec::new(),
             names: Vec::new(),
             group_names: Vec::new(),
@@ -712,9 +707,9 @@ impl<'s, 'h> Validator<'s, 'h> {
         self.raise(&message)
     }
 
+    /// Into a group or a class. regexpp overflows its stack.
     fn enter(&mut self) -> Consumed<()> {
-        self.depth += 1;
-        if self.depth > MAX_DEPTH {
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
             return self.raise("Regular expression too large");
         }
         Ok(())
@@ -850,7 +845,6 @@ impl<'s, 'h> Validator<'s, 'h> {
         let start = self.pos();
         self.num_capturing_parens = self.count_capturing_parens();
         self.clear_group_specifiers();
-        self.depth = 0;
 
         self.handler.on_pattern_enter(start);
         self.consume_disjunction()?;
@@ -928,7 +922,6 @@ impl<'s, 'h> Validator<'s, 'h> {
         }
         self.handler.on_disjunction_leave(start, self.pos());
         self.leave_disjunction();
-        self.depth -= 1;
         Ok(())
     }
 
@@ -1637,7 +1630,6 @@ impl<'s, 'h> Validator<'s, 'h> {
             }
             self.handler
                 .on_character_class_leave(start as u32, self.pos(), negate);
-            self.depth -= 1;
             return Ok(Some(result));
         }
         if self.eat(b'\\') {

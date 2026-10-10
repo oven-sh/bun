@@ -126,16 +126,10 @@ struct Parser<'s> {
     /// The furthest position at which a terminal did not match, and which ones did not there.
     max_fail_at: usize,
     expected: u64,
-    /// How many selectors the current one is in or to the right of.
-    depth: u32,
     /// What `esquery` throws from an action, which ends the parsing.
     error: Option<Error>,
     program: Program,
 }
-
-/// How deep selectors can nest and how many combinators can follow each other. Matching recurses as
-/// deep.
-const MAX_DEPTH: u32 = 200;
 
 /// The types of a class of ESLint's `matchesSelectorClass`, and whether an `Identifier` in a
 /// `MetaProperty` is left out.
@@ -347,7 +341,6 @@ impl<'s> Parser<'s> {
             true => this.has_selector(),
             false => this.selector().map(|it| it.0),
         };
-        self.depth += 1;
         let mut all = Ids::new();
         let mut next = one(self);
         while let Some(selector) = next.take() {
@@ -362,7 +355,6 @@ impl<'s> Parser<'s> {
                 self.reset::<()>(mark);
             }
         }
-        self.depth -= 1;
         (!all.is_empty()).then_some(all)
     }
 
@@ -384,7 +376,6 @@ impl<'s> Parser<'s> {
     /// With whether it is marked as the subject by a `!`.
     fn selector(&mut self) -> Option<(Id, bool)> {
         let mut memo = self.sequence()?;
-        let depth = self.depth;
         loop {
             let mark = self.mark();
             let right = self
@@ -392,11 +383,9 @@ impl<'s> Parser<'s> {
                 .and_then(|combinator| Some((combinator, self.sequence()?)));
             let Some((combinator, right)) = right else {
                 self.reset::<()>(mark);
-                self.depth = depth;
                 return Some(memo);
             };
             memo = (self.combine(combinator, memo, right), false);
-            self.depth += 1;
         }
     }
 
@@ -419,7 +408,7 @@ impl<'s> Parser<'s> {
     }
 
     fn atom(&mut self) -> Option<Id> {
-        if self.depth > MAX_DEPTH {
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
             self.error.get_or_insert_with(Error::too_deep);
         }
         if self.error.is_some() {
@@ -902,7 +891,6 @@ pub(super) fn parse(source: &[u8]) -> Result<(Program, Id), Error> {
         at: 0,
         max_fail_at: 0,
         expected: 0,
-        depth: 0,
         error: None,
         program: Program::default(),
     };

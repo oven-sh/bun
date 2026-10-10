@@ -29,15 +29,6 @@ use bun_lint::span::Span;
 use bun_react_compiler::hir::VariableBinding;
 use rustc_hash::FxHashMap;
 
-/// How much stack the compiler can take for a level of the tree: twice what its lowering, which
-/// takes the most, was seen to take. A build that is not optimized takes ten times as much. It calls itself
-/// along the nesting of what it is given, and along chains such as `a + b + c`, which the parser reads in a loop.
-const STACK_FOR_A_LEVEL: usize = if cfg!(any(debug_assertions, bun_asan)) {
-    80 << 10
-} else {
-    8 << 10
-};
-
 /// Why there is no tree.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Refusal {
@@ -118,9 +109,6 @@ pub(crate) struct Converter<'a, 'x> {
     casts: Vec<(Loc, Loc)>,
     defaults: Vec<(Loc, Loc)>,
     clock_reads: Vec<Span>,
-    depth: u32,
-    /// How many levels the thread has the stack for.
-    max_depth: u32,
     stack: bun_core::StackCheck,
 }
 
@@ -132,7 +120,6 @@ pub(crate) fn convert<'a>(
     flavor: Flavor,
 ) -> Converts<Converted> {
     let stack = bun_core::StackCheck::init();
-    let max_depth = (stack.remaining() / STACK_FOR_A_LEVEL) as u32;
     let mut converter = Converter {
         file,
         arena,
@@ -150,8 +137,6 @@ pub(crate) fn convert<'a>(
         casts: Vec::new(),
         defaults: Vec::new(),
         clock_reads: Vec::new(),
-        depth: 0,
-        max_depth,
         stack,
     };
     converter.create_element = converter.new_symbol(b"createElement", SymbolKind::Unbound, true);
@@ -196,13 +181,10 @@ impl<'a> Converter<'a, '_> {
 
     /// Calls `then` one level further down.
     fn nested<T>(&mut self, then: impl FnOnce(&mut Self) -> Converts<T>) -> Converts<T> {
-        if self.depth >= self.max_depth || !self.stack.is_safe_to_recurse() {
-            return Err(Refusal::TooDeep);
+        match self.stack.is_safe_to_recurse() {
+            true => then(self),
+            false => Err(Refusal::TooDeep),
         }
-        self.depth += 1;
-        let result = then(self);
-        self.depth -= 1;
-        result
     }
 
     // ───────────────────────────── symbols ─────────────────────────────

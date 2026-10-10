@@ -13,6 +13,7 @@ pub(super) struct Matcher<'s, 'a> {
     pub(super) dialect: Dialect,
     /// The node that a `:has()` is asked about. What is in the parentheses does not see above it.
     pub(super) limit: Option<VNode<'a>>,
+    pub(super) stack: bun_core::StackCheck,
 }
 
 #[derive(Copy, Clone)]
@@ -264,6 +265,7 @@ impl<'s, 'a> Matcher<'s, 'a> {
         let program = self.program;
         match program.ops.get(id as usize) {
             None => false,
+            _ if !self.stack.is_safe_to_recurse() => false,
             Some(Op::Wildcard) => true,
             Some(Op::Identifier {
                 node_type: wanted, ..

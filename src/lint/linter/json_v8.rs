@@ -3,7 +3,6 @@
 
 use crate::options::Json;
 
-const MAX_DEPTH: usize = 512;
 /// `kMaxContextCharacters`
 const CONTEXT: usize = 10;
 
@@ -256,8 +255,8 @@ impl Parser<'_> {
         }
     }
 
-    fn value(&mut self, depth: usize) -> Parsed<Json> {
-        if depth > MAX_DEPTH {
+    fn value(&mut self) -> Parsed<Json> {
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
             return Err(b"Maximum call stack size exceeded".to_vec());
         }
         self.skip_whitespace();
@@ -280,7 +279,7 @@ impl Parser<'_> {
                 loop {
                     let key = self.string()?;
                     self.expect_next(Token::Colon, "Expected ':' after property name in JSON")?;
-                    let value = self.value(depth + 1)?;
+                    let value = self.value()?;
                     match entries.iter_mut().find(|it| it.0 == key) {
                         Some(entry) => entry.1 = value,
                         None => entries.push((key, value)),
@@ -306,7 +305,7 @@ impl Parser<'_> {
                     return Ok(Json::Array(items));
                 }
                 loop {
-                    items.push(self.value(depth + 1)?);
+                    items.push(self.value()?);
                     if !self.check(Token::Comma) {
                         break;
                     }
@@ -340,7 +339,7 @@ pub fn parse(text: &[u8]) -> Result<Json, Vec<u8>> {
         text: &units,
         at: 0,
     };
-    let value = parser.value(0)?;
+    let value = parser.value()?;
     match parser.check(Token::Eos) {
         true => Ok(value),
         false => Err(parser.error_at("Unexpected non-whitespace character after JSON")),

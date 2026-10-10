@@ -58,10 +58,6 @@ struct ContextIdentifierVisitor<'a> {
     inner_references: Vec<(Ref, u32)>,
     inner_reassignments: Vec<(Ref, u32)>,
     error: Option<CompilerError>,
-    /// How many statements, expressions and patterns are around what is walked. After the first: blocks, object
-    /// literals, array literals and property accesses, each counted apart, so that `if (a) { .. }`, an element of
-    /// JSX and `.m()` are one level each, as a reader counts. Not functions: 4 MB of stack are enough for 230 of them.
-    levels: [u32; 5],
 }
 
 impl<'a> ContextIdentifierVisitor<'a> {
@@ -141,10 +137,9 @@ impl<'a> ContextIdentifierVisitor<'a> {
     }
 
     fn walk_binding_decl(&mut self, binding: &ast::Binding) {
-        if !self.env.can_nest(self.levels[0]) {
+        if !self.env.has_stack() {
             return;
         }
-        self.levels[0] += 1;
         match &binding.data {
             B::BIdentifier(id) => self.record_decl(id.r#ref),
             B::BArray(arr) => {
@@ -168,7 +163,6 @@ impl<'a> ContextIdentifierVisitor<'a> {
             }
             B::BMissing(_) => {}
         }
-        self.levels[0] -= 1;
     }
 
     fn walk_args(&mut self, args: &[G::Arg]) {
@@ -239,11 +233,9 @@ impl<'a> ContextIdentifierVisitor<'a> {
     }
 
     fn walk_stmt(&mut self, stmt: &Stmt) {
-        let kind = usize::from(matches!(stmt.data, StmtData::SBlock(_)));
-        if !self.env.can_nest(self.levels[kind]) {
+        if !self.env.has_stack() {
             return;
         }
-        self.levels[kind] += 1;
         let stmt_loc = stmt.loc;
         match &stmt.data {
             StmtData::SBlock(b) => {
@@ -389,7 +381,6 @@ impl<'a> ContextIdentifierVisitor<'a> {
             | StmtData::SExportFrom(_)
             | StmtData::SExportStar(_) => {}
         }
-        self.levels[kind] -= 1;
     }
 
     #[allow(
@@ -397,16 +388,9 @@ impl<'a> ContextIdentifierVisitor<'a> {
         reason = "expr::Data variants are arena-backed StoreRef; live residency is bounded"
     )]
     fn walk_expr(&mut self, e: &Expr) {
-        let kind = match &e.data {
-            Data::EObject(_) => 2,
-            Data::EArray(_) => 3,
-            Data::EDot(_) | Data::EIndex(_) => 4,
-            _ => 0,
-        };
-        if !self.env.can_nest(self.levels[kind]) {
+        if !self.env.has_stack() {
             return;
         }
-        self.levels[kind] += 1;
         match &e.data {
             Data::EObjectJSON(_) | Data::EArrayJSON(_) => {}
             Data::EIdentifier(id) => self.check_captured_reference(id.ref_),
@@ -563,7 +547,6 @@ impl<'a> ContextIdentifierVisitor<'a> {
             | Data::ESpecial(_)
             | Data::ENameOfSymbol(_) => {}
         }
-        self.levels[kind] -= 1;
     }
 }
 
@@ -692,7 +675,6 @@ pub(crate) fn find_context_identifiers(
         inner_references: Vec::new(),
         inner_reassignments: Vec::new(),
         error: None,
-        levels: [0; 5],
     };
 
     // Walk params and body (like Babel's func.traverse())

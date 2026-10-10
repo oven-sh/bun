@@ -11,9 +11,6 @@ use bun_lint::js_plugin::{self, Block, Processor, Refusal, Route, read_messages,
 use bun_lint::linter::{FileConfig, LintResult, ResolvedConfig, RuleId};
 use std::sync::Arc;
 
-/// A processor that finds a file for a processor in a file, and so on, is given up at this depth.
-const MAX_DEPTH: u8 = 8;
-
 /// Text to lint.
 #[derive(Copy, Clone)]
 struct Text<'t> {
@@ -24,8 +21,6 @@ struct Text<'t> {
     text: &'t [u8],
     /// ESLint's `disableFixes`.
     without_fixes: bool,
-    /// How many processors it has come through.
-    depth: u8,
 }
 
 fn thrown(message: Vec<u8>) -> LintResult {
@@ -148,7 +143,6 @@ impl Context<'_, '_> {
         let block = Text {
             path: &path,
             text,
-            depth: file.depth + 1,
             ..file
         };
         self.verify_routed(loaded, block, &own)
@@ -254,7 +248,10 @@ impl Context<'_, '_> {
         }
         match (route, &config.processor_location) {
             (Route::Native, _) => self.verify_natively(loaded, it, it.path, it.text, config),
-            (Route::Processor, _) if it.depth >= MAX_DEPTH => LintResult::default(),
+            // A processor that finds a file for a processor in a file, and so on without end. ESLint overflows its stack.
+            (Route::Processor, _) if !bun_core::StackCheck::init().is_safe_to_recurse() => {
+                LintResult::default()
+            }
             (Route::Processor, Some(processor)) => {
                 self.verify_with_processor(loaded, it, config, processor)
             }
@@ -282,7 +279,6 @@ impl Context<'_, '_> {
                 physical_path_len: path_to_verify.len(),
                 text,
                 without_fixes,
-                depth: 0,
             };
             if loaded.routes(config, path_to_verify) != Route::Eslint {
                 return self.verify_routed(loaded, it, config);

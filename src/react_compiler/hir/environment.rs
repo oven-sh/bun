@@ -39,9 +39,6 @@ pub enum OutputMode {
     Lint,
 }
 
-/// For time and memory where a thread has a large stack: nested `try` costs n^2.5. The stack has `has_stack`.
-const MAX_NESTING: u32 = 256;
-
 pub struct Environment {
     // Counters
     pub next_block_id_counter: u32,
@@ -242,14 +239,6 @@ impl Environment {
             true => Err(crate::lowering::nested_too_deeply().into()),
             false => Ok(()),
         }
-    }
-
-    /// [`Environment::has_stack`], and `level` is within [`MAX_NESTING`], which is the same on every platform.
-    pub(crate) fn can_nest(&self, level: u32) -> bool {
-        if level > MAX_NESTING {
-            self.is_out_of_stack.set(true);
-        }
-        self.has_stack()
     }
 
     pub fn next_block_id(&mut self) -> BlockId {

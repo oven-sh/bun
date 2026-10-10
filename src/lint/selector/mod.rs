@@ -192,10 +192,11 @@ impl Selector {
             return Err(Error::unknown_class(name.of(&program.bytes)));
         }
         let mut analysis = compile::Analysis::default();
-        let types = match (
-            analysis.analyze(&program, root),
-            compile::possible_types(&program, root),
-        ) {
+        let looked_up = analysis.analyze(&program, root);
+        if analysis.is_too_deep {
+            return Err(Error::too_deep());
+        }
+        let types = match (looked_up, compile::possible_types(&program, root)) {
             (Some(looked_up), Some(possible)) => Some(looked_up.intersection(possible)),
             (looked_up, possible) => looked_up.or(possible),
         };
@@ -270,6 +271,7 @@ impl Selector {
             program: &self.program,
             dialect: node.dialect,
             limit: None,
+            stack: bun_core::StackCheck::init(),
         };
         matcher.matches(self.root, node.node, node.node_type)
     }

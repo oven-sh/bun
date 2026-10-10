@@ -3906,9 +3906,8 @@ test("react-compiler compile time is not exponential in the function nesting dep
 // level of the source than the parser does, had none: `bun build --react-compiler`
 // died by SIGSEGV on 250 effects in each other, on 500 arrow functions, on 800
 // `if` statements or elements of JSX, and on a sum of 16,000 operands. With a check
-// in the lowering alone, 800 `switch` statements still overflowed in a later pass,
-// and where a thread has a larger stack 1,600 `try` statements took all the memory.
-// So a function that is nested more than 256 levels deep is not compiled anywhere.
+// in the lowering alone, 800 `switch` statements still overflowed in a later pass.
+// So every pass that calls itself along the nesting asks the stack.
 describe("react-compiler does not overflow the stack on a component that is nested deeply", () => {
   const nest = (n: number, open: (i: number) => string, inner: string, close: string) =>
     Array.from({ length: n }, (_, i) => open(i)).join("") + inner + close.repeat(n);
@@ -3926,11 +3925,9 @@ describe("react-compiler does not overflow the stack on a component that is nest
   const depthOf = (debug: number, releaseWithASAN: number, release: number) =>
     isDebug ? debug : isASAN ? releaseWithASAN : release;
   const flat = ["scopes that statements in a row nest", "variables that are each the one before"];
-  const within = ["if statements with blocks, within the limit", "JSX, within the limit", "methods, within the limit"];
+  const within = ["if statements with blocks, not deep", "JSX, not deep", "methods, not deep"];
   const shapes: [name: string, depth: number, source: (n: number) => string][] = [
-    // Blocks are counted apart, so these are 200 levels and not 400.
     [within[0], depthOf(10, 10, 200), n => component(nest(n, () => "if (props.a) {", "props.f(s);", "}"))],
-    // So are the call, the object and the array that an element of JSX is, and the property of a method call.
     [
       within[1],
       depthOf(10, 10, 200),
@@ -4036,9 +4033,8 @@ describe("react-compiler does not overflow the stack on a component that is nest
     expect(stderr).toBe("");
     const out = await Bun.file(join(String(dir), "out.js")).text();
     expect(out).toContain("useState(0)");
-    // In a debug build, and for what is not nested in the source, that depends on how much of the stack is left.
+    // Whether the others are compiled depends on how much of the stack is left.
     if (within.includes(name)) expect(out).toContain("react/compiler-runtime");
-    else if (!isDebug && !flat.includes(name)) expect(out).not.toContain("react/compiler-runtime");
     expect(exitCode).toBe(0);
   });
 });

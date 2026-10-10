@@ -145,11 +145,9 @@ with category `Unsupported`. `program.rs` catches that per-function, leaves the
 original `G::Fn` untouched, and logs a `CompileSkip` event — exactly what
 upstream does for its own unsupported cases.
 
-A function that is nested too deeply bails out the same way, with the Todo "Support functions of this
-size". The first walk of the lowering (`find_context_identifiers`) counts the statements, expressions
-and patterns around each node, what only wraps apart (blocks, object and array literals, property accesses), and stops above `MAX_NESTING` (256) levels, on every platform. Every
-function of the lowering that calls itself also asks `Environment::has_stack()`, which says no earlier
-in a build with large frames.
+A function that is nested more deeply than the thread has the stack for bails out the same way, with the
+Todo "Support functions of this size". Every function of the compiler that calls itself along the nesting
+of the source asks `Environment::has_stack()`, and the pipeline asks after each pass whether one has said no.
 
 ## Hook placement
 

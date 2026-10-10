@@ -12,9 +12,6 @@ use bun_parsers::json5::JSON5Parser;
 use bun_parsers::toml::TOML;
 use bun_parsers::yaml::{CyclicAliases, YAML};
 
-/// How deep arrays and objects can be nested.
-const MAX_DEPTH: usize = 512;
-
 /// `None` if `text` is not JSON.
 pub fn parse(text: &[u8]) -> Option<Json> {
     // Which the parser takes for `{}`.
@@ -34,11 +31,12 @@ pub fn parse(text: &[u8]) -> Option<Json> {
         Data::EObjectJSON(it) => JsonValue::Object(it),
         _ => return None,
     };
-    convert(&root, 0)
+    convert(&root)
 }
 
-fn convert(value: &JsonValue, depth: usize) -> Option<Json> {
-    if depth > MAX_DEPTH {
+/// `None`: it is nested too deeply.
+fn convert(value: &JsonValue) -> Option<Json> {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return None;
     }
     Some(match value {
@@ -48,17 +46,13 @@ fn convert(value: &JsonValue, depth: usize) -> Option<Json> {
         JsonValue::String(it) => Json::String(it.slice().to_vec()),
         JsonValue::Array(it) => {
             let items = it.get().items().iter();
-            Json::Array(
-                items
-                    .map(|item| convert(item, depth + 1))
-                    .collect::<Option<_>>()?,
-            )
+            Json::Array(items.map(convert).collect::<Option<_>>()?)
         }
         JsonValue::Object(it) => {
             let properties = it.get().properties().iter();
             Json::Object(
                 properties
-                    .map(|it| Some((it.key.slice().to_vec(), convert(&it.value, depth + 1)?)))
+                    .map(|it| Some((it.key.slice().to_vec(), convert(&it.value)?)))
                     .collect::<Option<_>>()?,
             )
         }
@@ -76,11 +70,7 @@ pub enum Notation {
 /// is `null`, a date of TOML is a string, as it is written. No document of YAML is `null`, several are
 /// an array. A repeated key is there as often as it is written. `Err`: what is wrong with `text`.
 pub fn parse_as(notation: Notation, text: &[u8]) -> Result<Json, Vec<u8>> {
-    // An alias of YAML is a value once more: a short text can stand for any number of them.
-    let length = bun_core::strings::without_utf8_bom(text).len();
-    let mut left = length.saturating_mul(64).clamp(1 << 10, 1 << 23);
-    with_parsed(notation, text, |root| from_expr(root, 0, &mut left))?
-        .ok_or_else(|| b"It has too many values".to_vec())
+    with_parsed(notation, text, from_parsed)?.ok_or_else(|| b"It is nested too deeply".to_vec())
 }
 
 /// Calls `read` with the value that `text` is in `notation` as Bun's parser makes it, where each part knows its place in
@@ -110,14 +100,7 @@ pub fn with_parsed<T>(
 
 /// A value of one of Bun's parsers, or a part of one, as [`parse_as`] returns it. `None`: it is nested too deep.
 pub fn from_parsed(expr: &Expr) -> Option<Json> {
-    let mut left = usize::MAX;
-    from_expr(expr, 0, &mut left)
-}
-
-/// `left`: how many more values there can be.
-fn from_expr(expr: &Expr, depth: usize, left: &mut usize) -> Option<Json> {
-    *left = left.checked_sub(1)?;
-    if depth > MAX_DEPTH {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return None;
     }
     Some(match &expr.data {
@@ -130,7 +113,7 @@ fn from_expr(expr: &Expr, depth: usize, left: &mut usize) -> Option<Json> {
         Data::EArray(it) => {
             let mut items = it.slice().iter();
             Json::Array(items.try_fold(Vec::new(), |mut items, item| {
-                items.push(from_expr(item, depth + 1, left)?);
+                items.push(from_parsed(item)?);
                 Some(items)
             })?)
         }
@@ -141,7 +124,7 @@ fn from_expr(expr: &Expr, depth: usize, left: &mut usize) -> Option<Json> {
                     continue;
                 };
                 // `String(key)`, but for a key that is an array or an object.
-                let key = match from_expr(key, depth + 1, left)? {
+                let key = match from_parsed(key)? {
                     Json::String(key) => key,
                     Json::Number(key) => number_to_string(key),
                     key => {
@@ -150,7 +133,7 @@ fn from_expr(expr: &Expr, depth: usize, left: &mut usize) -> Option<Json> {
                         text
                     }
                 };
-                entries.push((key, from_expr(value, depth + 1, left)?));
+                entries.push((key, from_parsed(value)?));
             }
             Json::Object(entries)
         }

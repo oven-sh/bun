@@ -97,6 +97,11 @@ impl us_socket_t {
         }
     }
 
+    pub(crate) fn close_now(&mut self) {
+        bun_core::scoped_log!(uws, "us_socket_close_now({:p})", self);
+        let _ = c::us_socket_close_now(self);
+    }
+
     pub fn shutdown(&mut self) {
         bun_core::scoped_log!(uws, "us_socket_shutdown({:p})", self);
         c::us_socket_shutdown(self);
@@ -307,6 +312,11 @@ impl us_socket_t {
     /// certificate goes out. No-op on a server socket or after the handshake.
     pub fn set_inline_reject(&mut self) {
         c::us_socket_set_inline_reject(self);
+    }
+
+    /// Drop the handshake flight that is held across the handshake callback.
+    pub fn release_held_flight(&mut self) {
+        c::us_socket_release_held_flight(self);
     }
 
     /// A shutdown before the first handshake step sends its FIN after that step.
@@ -558,6 +568,7 @@ mod c {
             code: CloseCode,
             reason: *mut c_void,
         ) -> *mut us_socket_t;
+        pub(super) safe fn us_socket_close_now(s: &mut us_socket_t) -> *mut us_socket_t;
         pub(super) safe fn us_socket_shutdown(s: &mut us_socket_t);
         pub(super) safe fn us_socket_is_closed(s: &us_socket_t) -> i32;
         pub(super) fn us_socket_write_check_error(
@@ -596,6 +607,7 @@ mod c {
         ) -> *mut us_socket_t;
         pub(super) safe fn us_socket_start_tls_handshake(s: &mut us_socket_t);
         pub(super) safe fn us_socket_set_inline_reject(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_release_held_flight(s: &mut us_socket_t);
         pub(super) safe fn us_socket_set_first_flight_before_fin(s: &mut us_socket_t);
     }
 }

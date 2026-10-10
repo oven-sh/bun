@@ -195,6 +195,36 @@ describe.skipIf(isWindows)("WebSocket over unix domain socket", () => {
     }
   });
 
+  test("wss+unix:// takes the SNI and the verified name from tls.serverName", async () => {
+    const unix = sockPath("name");
+    const seen: (string | null)[] = [];
+    const server = tls.createServer(
+      { ...tlsCert, SNICallback: (name, cb) => (seen.push(name), cb(null, undefined)) },
+      socket => {
+        socket.on("error", () => {});
+        socket.destroy();
+      },
+    );
+    server.listen(unix);
+    await once(server, "listening");
+    try {
+      const codes: number[] = [];
+      // The harness certificate names localhost.
+      for (const [host, serverName] of [
+        ["evil.test", "localhost"],
+        ["localhost", "evil.test"],
+      ]) {
+        const ws = new WebSocket(`wss+unix://${host}${unix}`, { tls: { ca: tlsCert.cert, serverName } });
+        const { promise, resolve } = Promise.withResolvers<number>();
+        ws.onclose = event => resolve(event.code);
+        codes.push(await promise);
+      }
+      expect({ seen, codes }).toEqual({ seen: ["localhost", "evil.test"], codes: [1006, 1015] });
+    } finally {
+      server.close();
+    }
+  });
+
   test("works from a subprocess", async () => {
     const unix = sockPath("sp");
     await using server = Bun.serve({

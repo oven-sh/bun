@@ -5,7 +5,9 @@ import { describe, expect, it } from "bun:test";
 
 import { bunEnv, bunExe, tempDir } from "harness";
 import { X509Certificate } from "node:crypto";
+import { once } from "node:events";
 import { readFileSync } from "node:fs";
+import http2 from "node:http2";
 import net, { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { Duplex } from "node:stream";
@@ -358,6 +360,91 @@ describe("tls.Server", () => {
       "chain.example.com",
     );
   });
+
+  // server.close() keeps the connections it already accepted. One that starts
+  // its handshake afterwards still selects its context by server name.
+  describe.each(["addContext", "SNICallback"] as const)("a handshake that starts after close() resolves %s", mode => {
+    it("like one that starts before it", async () => {
+      // agent1 chains to ca1, the client's agent3 to ca2: the default context
+      // authorizes the client, the a.example.com context does not.
+      const tenant = { key: agent1Key, cert: agent1Cert, ca: [ca1] };
+      const names: string[] = [];
+      const server = tls.createServer(
+        {
+          key: agent2Key,
+          cert: agent2Cert,
+          ca: [ca2],
+          requestCert: true,
+          rejectUnauthorized: false,
+          SNICallback:
+            mode === "SNICallback"
+              ? (name, cb) => {
+                  names.push(name);
+                  if (name === "a.example.com") cb(null, tls.createSecureContext(tenant));
+                  else cb(new Error("unknown tenant"));
+                }
+              : undefined,
+        },
+        socket => {
+          socket.on("error", () => {});
+          //@ts-ignore
+          socket.end(`${socket.servername} authorized=${socket.authorized}`);
+        },
+      );
+      server.on("tlsClientError", () => {});
+      if (mode === "addContext") server.addContext("a.example.com", tenant);
+
+      const servernames = ["a.example.com", "a.example.com", "a.example.com", "unknown.example.com"];
+      let accepted = 0;
+      const allAccepted = Promise.withResolvers<void>();
+      server.on("connection", () => {
+        if (++accepted === servernames.length) allAccepted.resolve();
+      });
+      server.on("error", allAccepted.reject);
+      const raws: net.Socket[] = [];
+      try {
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const port = (server.address() as AddressInfo).port;
+        for (const _ of servernames) raws.push(net.connect({ host: "127.0.0.1", port }));
+        for (const raw of raws) raw.on("error", () => {});
+        await Promise.all(raws.map(raw => once(raw, "connect")));
+        await allAccepted.promise;
+
+        // No TLS byte has been sent yet.
+        server.close();
+
+        const outcomes = await Promise.all(
+          raws.map((raw, i) => {
+            const { promise, resolve } = Promise.withResolvers<{ certificate: string; received: string }>();
+            let certificate = "no handshake";
+            let received = "";
+            const socket = tls.connect(
+              { socket: raw, servername: servernames[i], rejectUnauthorized: false, key: agent3Key, cert: agent3Cert },
+              () => (certificate = socket.getPeerCertificate().subject.CN as string),
+            );
+            socket.on("data", chunk => (received += chunk));
+            socket.on("error", () => {});
+            socket.on("close", () => resolve({ certificate, received }));
+            return promise;
+          }),
+        );
+
+        const tenantOutcome = { certificate: "agent1", received: "a.example.com authorized=false" };
+        expect(outcomes.slice(0, 3)).toEqual([tenantOutcome, tenantOutcome, tenantOutcome]);
+        if (mode === "SNICallback") {
+          // The callback is the allow-list: a name it rejects gets no session.
+          expect(outcomes[3]).toEqual({ certificate: "no handshake", received: "" });
+          expect(names.toSorted()).toEqual(servernames.toSorted());
+        } else {
+          expect(outcomes[3].certificate).toBe("agent2");
+        }
+      } finally {
+        if (server.listening) server.close();
+        for (const raw of raws) raw.destroy();
+      }
+    });
+  });
 });
 
 // A resumed handshake skips client authentication, so the server may only
@@ -637,6 +724,145 @@ describe.each(["TLSv1.3", "TLSv1.2"] as const)("session resumption across SNI co
   });
 });
 
+// Node negotiates ALPN per connection, whichever SecureContext SNI selected.
+// https://github.com/oven-sh/bun/issues/17932
+describe.each(["TLSv1.2", "TLSv1.3"] as const)("ALPN after SNI selected a SecureContext (%s)", version => {
+  const defaults = { key: agent2Key, cert: agent2Cert };
+  const selected = { key: agent1Key, cert: agent1Cert };
+  type SNICb = (err: Error | null, ctx?: any) => void;
+  const sync = (_: string, cb: SNICb) => cb(null, tls.createSecureContext(selected));
+  const deferred = (_: string, cb: SNICb) => void setImmediate(cb, null, tls.createSecureContext(selected));
+
+  // How the connection comes by its context. Each returns the port to dial.
+  type Start = (alpn: object, onSecure: (socket: tls.TLSSocket) => void, stack: DisposableStack) => Promise<number>;
+  const listening = async (server: net.Server, stack: DisposableStack) => {
+    stack.defer(() => void server.close());
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    return (server.address() as AddressInfo).port;
+  };
+  const accepted =
+    (options: object, setup?: (server: tls.Server) => void): Start =>
+    (alpn, onSecure, stack) => {
+      const server = tls.createServer({ ...defaults, ...options, ...alpn }, onSecure);
+      server.on("tlsClientError", () => {});
+      setup?.(server);
+      return listening(server, stack);
+    };
+  const addContext = (server: tls.Server) => server.addContext("alpn.sni.test", selected);
+  const paths: [string, Start][] = [
+    ["a synchronous SNICallback", accepted({ SNICallback: sync })],
+    ["an asynchronous SNICallback", accepted({ SNICallback: deferred })],
+    ["addContext()", accepted({}, addContext)],
+    // Bun only: in Node a user SNICallback replaces the addContext() entries.
+    [
+      "addContext() behind an SNICallback that selects nothing",
+      accepted({ SNICallback: (_: string, cb: SNICb) => void setImmediate(cb, null, null) }, addContext),
+    ],
+    [
+      "addContext() on an injected socket",
+      (alpn, onSecure, stack) => {
+        const server = tls.createServer({ ...defaults, ...alpn }, onSecure);
+        server.on("tlsClientError", () => {});
+        addContext(server);
+        return listening(
+          net.createServer(raw => server.emit("connection", raw)),
+          stack,
+        );
+      },
+    ],
+    [
+      "the SNICallback of a server-side TLSSocket",
+      (alpn, onSecure, stack) =>
+        listening(
+          net.createServer(raw => {
+            const socket = new tls.TLSSocket(raw, {
+              isServer: true,
+              secureContext: tls.createSecureContext(defaults),
+              SNICallback: sync,
+              ...alpn,
+            });
+            socket.on("error", () => {});
+            socket.on("secure", () => onSecure(socket));
+          }),
+          stack,
+        ),
+    ],
+  ];
+
+  function dial(port: number, ALPNProtocols: string[]) {
+    return tls.connect({
+      port,
+      host: "127.0.0.1",
+      servername: "alpn.sni.test",
+      ALPNProtocols,
+      rejectUnauthorized: false,
+      minVersion: version,
+      maxVersion: version,
+    });
+  }
+
+  describe.each(paths)("by %s", (_, start) => {
+    it("negotiates from ALPNProtocols", async () => {
+      using stack = new DisposableStack();
+      const serverSide = Promise.withResolvers<unknown>();
+      const port = await start({ ALPNProtocols: ["h2", "http/1.1"] }, s => serverSide.resolve(s.alpnProtocol), stack);
+      const client = dial(port, ["http/1.1", "h2"]);
+      stack.defer(() => void client.destroy());
+      await once(client, "secureConnect");
+      expect({
+        cn: client.getPeerCertificate().subject.CN,
+        client: client.alpnProtocol,
+        server: await serverSide.promise,
+      }).toEqual({ cn: "agent1", client: "h2", server: "h2" });
+    });
+
+    it("runs ALPNCallback", async () => {
+      using stack = new DisposableStack();
+      const seen: unknown[] = [];
+      const ALPNCallback = (offer: unknown) => (seen.push(offer), "h2");
+      const client = dial(await start({ ALPNCallback }, s => s.end(), stack), ["http/1.1", "h2"]);
+      stack.defer(() => void client.destroy());
+      await once(client, "secureConnect");
+      expect({ cn: client.getPeerCertificate().subject.CN, client: client.alpnProtocol, seen }).toEqual({
+        cn: "agent1",
+        client: "h2",
+        seen: [{ servername: "alpn.sni.test", protocols: ["http/1.1", "h2"] }],
+      });
+    });
+
+    // RFC 7301 section 3.2
+    it("refuses a client that offers none of ALPNProtocols", async () => {
+      using stack = new DisposableStack();
+      const client = dial(await start({ ALPNProtocols: ["h2"] }, s => s.end(), stack), ["spdy/3"]);
+      stack.defer(() => void client.destroy());
+      const outcome = Promise.withResolvers<unknown>();
+      client.on("error", err => outcome.resolve((err as NodeJS.ErrnoException).code));
+      client.on("secureConnect", () => outcome.resolve(`connected, alpnProtocol=${client.alpnProtocol}`));
+      expect(await outcome.promise).toBe("ERR_SSL_TLSV1_ALERT_NO_APPLICATION_PROTOCOL");
+    });
+  });
+
+  it("http2.createSecureServer() with an SNICallback speaks h2", async () => {
+    using stack = new DisposableStack();
+    const server = http2.createSecureServer({ ...defaults, SNICallback: sync }, (_, res) => res.end("over h2"));
+    const port = await listening(server, stack);
+    const session = http2.connect(`https://127.0.0.1:${port}`, {
+      servername: "alpn.sni.test",
+      rejectUnauthorized: false,
+      minVersion: version,
+      maxVersion: version,
+    });
+    stack.defer(() => session.destroy());
+    const failed = once(session, "error").then(([err]) => Promise.reject(err));
+    const request = session.request({ ":path": "/" }).setEncoding("utf8");
+    let body = "";
+    request.on("data", chunk => (body += chunk));
+    await Promise.race([once(request, "end"), failed]);
+    expect(body).toBe("over h2");
+  });
+});
+
 describe("Bun.serve SNI", () => {
   function doClientRequest(options: any) {
     return new Promise((resolve, reject) => {
@@ -777,6 +1003,136 @@ describe("Bun.serve SNI", () => {
         }),
       ).toBe(true);
     }
+  });
+});
+
+// Node v26.3.0 compares addContext() names case-sensitively; v26.4.0 and later compile them into /.../i.
+describe("SNI matching is case-insensitive", () => {
+  function servedCN(port: number, servername: string) {
+    const { promise, resolve, reject } = Promise.withResolvers<string | undefined>();
+    const socket = tls.connect({ host: "127.0.0.1", port, servername, rejectUnauthorized: false }, () => {
+      resolve(socket.getPeerCertificate()?.subject?.CN as string | undefined);
+      socket.end();
+    });
+    socket.on("error", reject);
+    return promise;
+  }
+
+  it("tls.Server addContext", async () => {
+    const server = tls.createServer({ key: agent2Key, cert: agent2Cert }, s => s.end());
+    server.addContext("a.example.com", SNIContexts["a.example.com"]); // agent1
+    server.addContext("UPPER.EXAMPLE.COM", SNIContexts["asterisk.test.com"]); // agent3
+    server.addContext("*.test.com", SNIContexts["asterisk.test.com"]); // agent3
+    server.addContext("Twice.example.com", SNIContexts["a.example.com"]); // agent1
+    server.addContext("twice.example.com", SNIContexts["asterisk.test.com"]); // agent3
+    try {
+      const listening = Promise.withResolvers<void>();
+      server.once("error", listening.reject);
+      server.listen(0, listening.resolve);
+      await listening.promise;
+      const port = (server.address() as AddressInfo).port;
+      expect({
+        exact: await servedCN(port, "a.example.com"),
+        upper: await servedCN(port, "A.EXAMPLE.COM"),
+        mixed: await servedCN(port, "A.Example.Com"),
+        registeredUpper: await servedCN(port, "upper.example.com"),
+        wildcardUpper: await servedCN(port, "B.TEST.COM"),
+        lastOfTwoSpellings: await servedCN(port, "Twice.example.com"),
+        noMatch: await servedCN(port, "other.example.org"),
+      }).toEqual({
+        exact: "agent1",
+        upper: "agent1",
+        mixed: "agent1",
+        registeredUpper: "agent3",
+        wildcardUpper: "agent3",
+        lastOfTwoSpellings: "agent3",
+        noMatch: "agent2",
+      });
+    } finally {
+      server.close();
+    }
+  });
+
+  // The context an SNI selects also decides which CA client certificates must chain to.
+  describe.each(["TLSv1.2", "TLSv1.3"] as const)("%s", version => {
+    const inAnyCase = ["strict.example.com", "STRICT.EXAMPLE.COM", "sTrIcT.eXaMpLe.CoM"];
+    const selectsNothing = (_: string, cb: Function) => cb(null, null);
+    it.each([
+      ["in any case", inAnyCase, undefined],
+      // Bun only: Node serves the default context for a name with the root dot.
+      ["with the root dot", ["strict.example.com.", "STRICT.EXAMPLE.COM."], undefined],
+      // Bun only: in Node a user SNICallback replaces the addContext() entries.
+      ["behind an SNICallback that selects nothing", inAnyCase, selectsNothing],
+    ])("a context's client CA applies to its name %s", async (_, spellings, SNICallback) => {
+      const server = tls.createServer({
+        key: agent2Key,
+        cert: agent2Cert,
+        ca: [ca1],
+        requestCert: true,
+        rejectUnauthorized: true,
+        SNICallback,
+      } as any);
+      server.addContext("Strict.Example.com", { key: agent1Key, cert: agent1Cert, ca: [loadPEM("ca5-cert.pem")] });
+      // agent1 chains to ca1, which only the default context trusts; ec10 chains to ca5.
+      const ec10 = [loadPEM("ec10-key.pem"), loadPEM("ec10-cert.pem")] as const;
+      async function verdict(servername: string, key: string, cert: string) {
+        const judged = Promise.race([
+          once(server, "secureConnection").then(() => "accepted"),
+          once(server, "tlsClientError").then(() => "refused"),
+        ]);
+        const socket = tls.connect({
+          host: "127.0.0.1",
+          port: (server.address() as AddressInfo).port,
+          servername,
+          key,
+          cert,
+          rejectUnauthorized: false,
+          minVersion: version,
+          maxVersion: version,
+        });
+        socket.on("error", () => {});
+        try {
+          return await judged;
+        } finally {
+          socket.destroy();
+        }
+      }
+      try {
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const verdicts: string[][] = [];
+        for (const name of spellings) {
+          verdicts.push([name, await verdict(name, agent1Key, agent1Cert), await verdict(name, ...ec10)]);
+        }
+        expect(verdicts).toEqual(spellings.map(name => [name, "refused", "accepted"]));
+        expect(await verdict("other.example.com", agent1Key, agent1Cert)).toBe("accepted");
+      } finally {
+        server.close();
+      }
+    });
+  });
+
+  it("Bun.serve tls array", async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls: [
+        { key: agent2Key, cert: agent2Cert },
+        { serverName: "a.example.com", ...SNIContexts["a.example.com"] },
+        { serverName: "*.test.com", ...SNIContexts["asterisk.test.com"] },
+      ],
+      fetch: () => new Response("OK"),
+    });
+    expect({
+      upper: await servedCN(server.port!, "A.EXAMPLE.COM"),
+      mixed: await servedCN(server.port!, "a.Example.com"),
+      wildcardUpper: await servedCN(server.port!, "B.TEST.COM"),
+      noMatch: await servedCN(server.port!, "other.example.org"),
+    }).toEqual({
+      upper: "agent1",
+      mixed: "agent1",
+      wildcardUpper: "agent3",
+      noMatch: "agent2",
+    });
   });
 });
 
@@ -1037,6 +1393,27 @@ it("validates crl the same way on both createSecureContext and Server.setSecureC
   }
 });
 
+it("only tls.Server counts a falsy crl as absent", () => {
+  // tls.Server#setSecureContext() stores undefined for a falsy crl. configSecureContext(),
+  // behind every other entry point, only skips null and undefined:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1471-L1474
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/secure-context.js#L261-L271
+  const server = tls.createServer({ key: agent1Key, cert: agent1Cert });
+  for (const [crl, code] of [
+    ["", "ERR_CRYPTO_OPERATION_FAILED"],
+    [false, "ERR_INVALID_ARG_TYPE"],
+    [0, "ERR_INVALID_ARG_TYPE"],
+  ] as [never, string][]) {
+    const rejected = expect.objectContaining({ code });
+    expect(() => tls.createSecureContext({ crl })).toThrow(rejected);
+    expect(() => server.addContext("example.com", { crl })).toThrow(rejected);
+    expect(() => tls.connect({ socket: new Duplex({ read() {} }), crl })).toThrow(rejected);
+    expect((tls.createServer({ crl }) as any).crl).toBeUndefined();
+  }
+  // An empty array is truthy. tls.Server keeps it, and it names no CRL.
+  expect((tls.createServer({ crl: [] }) as any).crl).toEqual([]);
+});
+
 it("accepts BoringSSL kCipherAliases selectors that are not literal suite names", () => {
   // vendor/boringssl/ssl/ssl_cipher.cc kCipherAliases: AES128, AES256, kPSK,
   // aPSK, FIPS all match a non-empty cipher list. Node built against BoringSSL
@@ -1054,4 +1431,131 @@ it("validates sigalgs on every secure context like Node's configSecureContext", 
   expect(() => tls.createSecureContext({ sigalgs: 42 as never })).toThrow(
     expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
   );
+});
+
+describe("sessionTimeout", () => {
+  // SSLSession ::= SEQUENCE { ..., timeout [2] INTEGER, ..., ticketLifetimeHint [9] INTEGER OPTIONAL, ... }
+  // BoringSSL folds a TLS 1.3 server's ticket lifetime into `timeout`; OpenSSL keeps it in the hint.
+  function sessionLifetime(der: Uint8Array) {
+    let pos = 0;
+    function readHeader() {
+      const tag = der[pos++];
+      let length = der[pos++];
+      if (length & 0x80) {
+        const lengthBytes = length & 0x7f;
+        length = 0;
+        for (let i = 0; i < lengthBytes; i++) length = length * 256 + der[pos++];
+      }
+      return { tag, end: pos + length };
+    }
+    function readInteger(end: number) {
+      const integer = readHeader();
+      expect(integer.tag).toBe(0x02);
+      expect(integer.end).toBe(end);
+      let value = 0;
+      for (; pos < integer.end; pos++) value = value * 256 + der[pos];
+      return value;
+    }
+    const sequence = readHeader();
+    expect(sequence.tag).toBe(0x30);
+    let timeout: number | undefined;
+    let ticketLifetimeHint: number | undefined;
+    while (pos < sequence.end) {
+      const element = readHeader();
+      if (element.tag === 0xa2) timeout = readInteger(element.end);
+      else if (element.tag === 0xa9) ticketLifetimeHint = readInteger(element.end);
+      pos = element.end;
+    }
+    return Math.min(timeout!, ticketLifetimeHint ?? Infinity);
+  }
+
+  // BoringSSL holds TLS 1.3 tickets back until the server's first write; `request` provokes it.
+  async function firstSessionFrom(port: number, clientOptions: tls.ConnectionOptions = {}, request?: string) {
+    const startedAt = Date.now();
+    const socket = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ...clientOptions });
+    try {
+      socket.resume();
+      if (request !== undefined) {
+        await once(socket, "secureConnect");
+        socket.write(request);
+      }
+      const session = await new Promise<Buffer>((resolve, reject) => {
+        socket.once("session", resolve);
+        socket.once("error", reject);
+        socket.once("close", () => reject(new Error("connection closed before the server issued a session")));
+      });
+      // A lifetime counts from ticket issuance: each second boundary crossed since then takes one off.
+      const skew = Math.ceil((Date.now() - startedAt) / 1000) + 1;
+      return { protocol: socket.getProtocol(), lifetime: sessionLifetime(session), skew };
+    } finally {
+      socket.destroy();
+    }
+  }
+
+  async function withTlsServer(options: tls.TlsOptions, clientOptions?: tls.ConnectionOptions) {
+    const server = tls.createServer({ key: agent1Key, cert: agent1Cert, ...options }, socket => socket.end("x"));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      return await firstSessionFrom((server.address() as AddressInfo).port, clientOptions);
+    } finally {
+      server.close();
+    }
+  }
+
+  it("tls.createServer({ sessionTimeout }) is the lifetime of the tickets it issues", async () => {
+    for (const maxVersion of ["TLSv1.3", "TLSv1.2"] as const) {
+      const { protocol, lifetime, skew } = await withTlsServer({ sessionTimeout: 7, maxVersion });
+      expect(protocol).toBe(maxVersion);
+      expect(lifetime).toBeWithin(7 - skew, 8);
+    }
+  });
+
+  it("tls.connect({ sessionTimeout }) caps the lifetime of the TLS 1.3 sessions the client keeps", async () => {
+    const { protocol, lifetime, skew } = await withTlsServer({}, { sessionTimeout: 9 } as tls.ConnectionOptions);
+    expect(protocol).toBe("TLSv1.3");
+    expect(lifetime).toBeWithin(9 - skew, 10);
+  });
+
+  it("Bun.serve({ tls: { sessionTimeout } }) is the lifetime of the TLS 1.3 tickets it issues", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      tls: { key: agent1Key, cert: agent1Cert, sessionTimeout: 7 } as Bun.TLSOptions,
+      fetch: () => new Response("ok"),
+    });
+    const request = "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+    const { protocol, lifetime, skew } = await firstSessionFrom(server.port!, {}, request);
+    expect(protocol).toBe("TLSv1.3");
+    expect(lifetime).toBeWithin(7 - skew, 8);
+  });
+});
+
+it("getCiphers() lists the supported cipher names, lower-cased and sorted", () => {
+  const ciphers = tls.getCiphers();
+  expect(ciphers).toEqual([...new Set(ciphers)].sort());
+  expect(ciphers).toEqual(ciphers.map(name => name.toLowerCase()));
+  expect(ciphers).toEqual(
+    expect.arrayContaining([
+      "aes256-sha",
+      "ecdhe-rsa-aes128-gcm-sha256",
+      "tls_aes_128_gcm_sha256",
+      "tls_aes_256_gcm_sha384",
+      "tls_chacha20_poly1305_sha256",
+    ]),
+  );
+  for (const name of ciphers) expect(() => tls.createSecureContext({ ciphers: name.toUpperCase() })).not.toThrow();
+
+  tls.getCiphers().length = 0;
+  expect(tls.getCiphers()).toEqual(ciphers);
+});
+
+it("tls.SecureContext is the class of what createSecureContext() returns", () => {
+  const context = tls.createSecureContext({});
+  expect(context).toBeInstanceOf((tls as any).SecureContext);
+  expect(context.constructor).toBe((tls as any).SecureContext);
+  expect(Object.keys((tls as any).SecureContext.prototype)).toEqual([]);
+  expect({}).not.toBeInstanceOf((tls as any).SecureContext);
+  expect(new (tls as any).SecureContext()).toBeInstanceOf((tls as any).SecureContext);
+  expect((tls as any).SecureContext()).toBeInstanceOf((tls as any).SecureContext);
 });

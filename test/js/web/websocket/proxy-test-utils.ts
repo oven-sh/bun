@@ -3,7 +3,8 @@
  * ws-proxy.test.ts and websocket-syscall-fault.test.ts.
  */
 
-import { tls as tlsCerts } from "harness";
+import { bunEnv, nodeExe, tls as tlsCerts } from "harness";
+import { createHash } from "crypto";
 import net from "net";
 import tls from "tls";
 
@@ -154,6 +155,23 @@ export async function startProxy(server: net.Server): Promise<number> {
   });
 }
 
+/** How a connection that a server accepted went away: after the peer's FIN or close_notify, with an error, or both. */
+export interface Departure {
+  fin: boolean;
+  error?: string;
+}
+
+export function departure(socket: net.Socket): Promise<Departure> {
+  const seen: Departure = { fin: false };
+  socket.on("end", () => {
+    seen.fin = true;
+  });
+  socket.on("error", (error: NodeJS.ErrnoException) => {
+    seen.error = error.code;
+  });
+  return new Promise(resolve => socket.on("close", () => resolve(seen)));
+}
+
 /**
  * Starts a CONNECT proxy for one test and records every connection it accepts
  * and every CONNECT request it reads, so a test can assert what the client
@@ -161,6 +179,8 @@ export async function startProxy(server: net.Server): Promise<number> {
  */
 export async function startRecordingProxy(options: ConnectProxyOptions = {}) {
   const requests: ConnectRequest[] = [];
+  const sni: (string | null)[] = [];
+  const departures: Promise<Departure>[] = [];
   let connections = 0;
   const proxy = createConnectProxy({
     ...options,
@@ -172,10 +192,20 @@ export async function startRecordingProxy(options: ConnectProxyOptions = {}) {
   proxy.on("connection", () => {
     connections++;
   });
+  proxy.on("secureConnection", (socket: tls.TLSSocket) => {
+    sni.push(socket.servername || null);
+  });
+  proxy.on(options.tls ? "secureConnection" : "connection", (socket: net.Socket) => {
+    departures.push(departure(socket));
+  });
   const port = await startProxy(proxy);
   return {
     port,
     requests,
+    /** With `tls: true`, the SNI of every handshake the proxy completed. `null` when the client sent none. */
+    sni,
+    /** One per connection the proxy accepted so far. Each resolves when that connection is gone. */
+    departures,
     get connections() {
       return connections;
     },
@@ -190,6 +220,108 @@ export function connectRequest(port: number, headers: Record<string, string> = {
   return {
     requestLine: `CONNECT 127.0.0.1:${port} HTTP/1.1`,
     headers: { host: `127.0.0.1:${port}`, "proxy-connection": "Keep-Alive", ...headers },
+  };
+}
+
+/**
+ * A wss:// server that answers the upgrade by hand and gives every later chunk
+ * to `onFrames`. It never ends a connection on its own.
+ */
+export async function startRawWssServer(
+  onFrames: (socket: tls.TLSSocket, chunk: Buffer) => void = () => {},
+  options: tls.TlsOptions = {},
+) {
+  const departures: Promise<Departure>[] = [];
+  const server = tls.createServer({ key: tlsCerts.key, cert: tlsCerts.cert, ...options }, socket => {
+    departures.push(departure(socket));
+    let request = "";
+    let upgraded = false;
+    socket.on("data", (chunk: Buffer) => {
+      if (upgraded) return onFrames(socket, chunk);
+      request += chunk.toString("latin1");
+      if (!request.includes("\r\n\r\n")) return;
+      upgraded = true;
+      const key = /^sec-websocket-key: (.*)\r$/im.exec(request)![1];
+      const accept = createHash("sha1")
+        .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+        .digest("base64");
+      socket.write(
+        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+          `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+      );
+    });
+  });
+  const port = await startProxy(server);
+  return {
+    port,
+    /** One per connection the server accepted so far. Each resolves when that connection is gone. */
+    departures,
+    [Symbol.dispose]() {
+      server.close();
+    },
+  };
+}
+
+/**
+ * A TLS 1.2 wss:// server that renegotiates once: before it answers the upgrade,
+ * when the upgrade client owns the connection, or on the client's first frame,
+ * when the connected client does. After the client's first frame (and that
+ * renegotiation) it sends "after renegotiation". It runs in real node because a
+ * BoringSSL server cannot renegotiate, so skip the test when `nodeExe()` is null.
+ */
+export async function startRenegotiatingWssServer(when: "before the 101" | "after the 101") {
+  const server = Bun.spawn({
+    cmd: [
+      nodeExe()!,
+      "-e",
+      `
+        const tls = require("tls");
+        const crypto = require("crypto");
+        const server = tls.createServer(
+          { cert: process.env.SERVER_CERT, key: process.env.SERVER_KEY, minVersion: "TLSv1.2", maxVersion: "TLSv1.2" },
+          socket => {
+            socket.on("error", () => {});
+            const renegotiate = then =>
+              socket.renegotiate({ rejectUnauthorized: false }, err => (err ? socket.destroy(err) : then()));
+            const greet = () => {
+              const payload = Buffer.from("after renegotiation");
+              socket.write(Buffer.concat([Buffer.from([0x81, payload.length]), payload]));
+            };
+            let head = "";
+            const onHead = chunk => {
+              head += chunk.toString("latin1");
+              if (!head.includes("\\r\\n\\r\\n")) return;
+              socket.off("data", onHead);
+              const key = /sec-websocket-key:\\s*(\\S+)/i.exec(head)[1];
+              const accept = crypto.createHash("sha1").update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
+              const answer = () =>
+                socket.write(
+                  "HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\n" +
+                    "Sec-WebSocket-Accept: " + accept + "\\r\\n\\r\\n",
+                );
+              if (process.env.WHEN === "before the 101") {
+                socket.once("data", greet);
+                renegotiate(answer);
+              } else {
+                socket.once("data", () => renegotiate(greet));
+                answer();
+              }
+            };
+            socket.on("data", onHead);
+          },
+        );
+        server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+      `,
+    ],
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+    env: { ...bunEnv, WHEN: when, SERVER_CERT: tlsCerts.cert, SERVER_KEY: tlsCerts.key },
+  });
+  const { value } = await server.stdout.getReader().read();
+  return {
+    port: Number(new TextDecoder().decode(value).trim()),
+    [Symbol.asyncDispose]: () => server[Symbol.asyncDispose](),
   };
 }
 

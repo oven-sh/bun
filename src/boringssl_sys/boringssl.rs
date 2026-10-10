@@ -514,6 +514,12 @@ impl SSL {
         }
     }
 
+    /// Client side: the SNI host name to send, set before the handshake. `false` if BoringSSL rejects it.
+    pub fn set_servername(&mut self, hostname: &core::ffi::CStr) -> bool {
+        // SAFETY: `self` is a live SSL; BoringSSL copies `hostname`.
+        unsafe { SSL_set_tlsext_host_name(self, hostname.as_ptr()) == 1 }
+    }
+
     /// The peer's leaf certificate, borrowed from this SSL's cert chain.
     pub fn peer_leaf_certificate(&mut self) -> Option<&mut X509> {
         // SAFETY: the chain and its entries are owned by this SSL and outlive
@@ -763,55 +769,27 @@ pub const SSL_OP_LEGACY_SERVER_CONNECT: u32 = 0;
 pub const RSA_PKCS1_OAEP_PADDING: c_int = 4;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// BIO — opaque-ish handle + method vtable
+// BIO
 // (`vendor/boringssl/include/openssl/bio.h`)
 // ═══════════════════════════════════════════════════════════════════════════
-
-/// `CRYPTO_refcount_t` (`openssl/thread.h`) — atomic-ish u32 in BoringSSL.
-pub(crate) type CRYPTO_refcount_t = u32;
 
 /// `ossl_ssize_t` — signed counterpart of `size_t` for BoringSSL "length or -1"
 /// parameters.
 pub(crate) type ossl_ssize_t = isize;
 
-/// `bio_info_cb` — callback type for `BIO_METHOD.callback_ctrl`.
-pub(crate) type bio_info_cb =
-    Option<unsafe extern "C" fn(*mut BIO, c_int, *const c_char, c_int, c_long, c_long) -> c_long>;
+opaque!(
+    /// `struct bio_method_st` (`typedef ... BIO_METHOD`).
+    BIO_METHOD
+);
+opaque!(
+    /// `struct bio_st` (`typedef ... BIO`).
+    BIO
+);
 
-/// `struct bio_method_st` — vtable for a BIO implementation. Laid out by-value
-/// so callers can construct custom BIO methods on the Rust side.
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct BIO_METHOD {
-    pub r#type: c_int,
-    pub name: *const c_char,
-    pub bwrite: Option<unsafe extern "C" fn(*mut BIO, *const c_char, c_int) -> c_int>,
-    pub bread: Option<unsafe extern "C" fn(*mut BIO, *mut c_char, c_int) -> c_int>,
-    pub bputs: Option<unsafe extern "C" fn(*mut BIO, *const c_char) -> c_int>,
-    pub bgets: Option<unsafe extern "C" fn(*mut BIO, *mut c_char, c_int) -> c_int>,
-    pub ctrl: Option<unsafe extern "C" fn(*mut BIO, c_int, c_long, *mut c_void) -> c_long>,
-    pub create: Option<unsafe extern "C" fn(*mut BIO) -> c_int>,
-    pub destroy: Option<unsafe extern "C" fn(*mut BIO) -> c_int>,
-    pub callback_ctrl: Option<unsafe extern "C" fn(*mut BIO, c_int, bio_info_cb) -> c_long>,
-}
-
-/// `struct bio_st` — exposed by-value because callers reach into
-/// `flags`/`num`/`ptr` directly when implementing custom BIO backends.
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct BIO {
-    pub method: *const BIO_METHOD,
-    pub init: c_int,
-    pub shutdown: c_int,
-    pub flags: c_int,
-    pub retry_reason: c_int,
-    pub num: c_int,
-    pub references: CRYPTO_refcount_t,
-    pub ptr: *mut c_void,
-    pub next_bio: *mut BIO,
-    pub num_read: usize,
-    pub num_write: usize,
-}
+/// `#define BIO_CTRL_FLUSH 11`
+pub const BIO_CTRL_FLUSH: c_int = 11;
+/// `#define BIO_TYPE_SOURCE_SINK 0x0400`
+pub const BIO_TYPE_SOURCE_SINK: c_int = 0x0400;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Additional opaque handles
@@ -878,8 +856,6 @@ unsafe extern "C" {
     pub fn SSL_set_connect_state(ssl: *mut SSL);
     pub fn SSL_set_accept_state(ssl: *mut SSL);
     pub fn SSL_set_bio(ssl: *mut SSL, rbio: *mut BIO, wbio: *mut BIO);
-    pub fn SSL_get_rbio(ssl: *const SSL) -> *mut BIO;
-    pub fn SSL_get_wbio(ssl: *const SSL) -> *mut BIO;
     pub fn SSL_do_handshake(ssl: *mut SSL) -> c_int;
     pub fn SSL_read(ssl: *mut SSL, buf: *mut c_void, num: c_int) -> c_int;
     pub fn SSL_pending(ssl: *const SSL) -> c_int;
@@ -963,13 +939,26 @@ unsafe extern "C" {
     // ── BIO ──────────────────────────────────────────────────────────────
     pub fn BIO_new(method: *const BIO_METHOD) -> *mut BIO;
     pub fn BIO_free(bio: *mut BIO) -> c_int;
-    pub fn BIO_read(bio: *mut BIO, data: *mut c_void, len: c_int) -> c_int;
-    pub fn BIO_write(bio: *mut BIO, data: *const c_void, len: c_int) -> c_int;
-    pub fn BIO_ctrl_pending(bio: *const BIO) -> usize;
-    pub fn BIO_reset(bio: *mut BIO) -> c_int;
-    pub safe fn BIO_s_mem() -> *const BIO_METHOD;
     pub fn BIO_new_mem_buf(buf: *const c_void, len: ossl_ssize_t) -> *mut BIO;
-    pub fn BIO_set_mem_eof_return(bio: *mut BIO, eof_value: c_int) -> c_int;
+    pub safe fn BIO_get_new_index() -> c_int;
+    pub fn BIO_meth_new(r#type: c_int, name: *const c_char) -> *mut BIO_METHOD;
+    pub fn BIO_meth_set_write(
+        method: *mut BIO_METHOD,
+        write_func: Option<unsafe extern "C" fn(*mut BIO, *const c_char, c_int) -> c_int>,
+    ) -> c_int;
+    pub fn BIO_meth_set_read(
+        method: *mut BIO_METHOD,
+        read_func: Option<unsafe extern "C" fn(*mut BIO, *mut c_char, c_int) -> c_int>,
+    ) -> c_int;
+    pub fn BIO_meth_set_ctrl(
+        method: *mut BIO_METHOD,
+        ctrl_func: Option<unsafe extern "C" fn(*mut BIO, c_int, c_long, *mut c_void) -> c_long>,
+    ) -> c_int;
+    pub fn BIO_set_data(bio: *mut BIO, ptr: *mut c_void);
+    pub fn BIO_get_data(bio: *mut BIO) -> *mut c_void;
+    pub fn BIO_set_init(bio: *mut BIO, init: c_int);
+    pub fn BIO_set_retry_read(bio: *mut BIO);
+    pub fn BIO_clear_retry_flags(bio: *mut BIO);
 
     // ── RAND ─────────────────────────────────────────────────────────────
     /// Fills `buf[0..len]` from BoringSSL's thread-local CTR-DRBG and returns 1.

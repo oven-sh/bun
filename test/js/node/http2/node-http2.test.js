@@ -1,8 +1,9 @@
 import { jscDescribe } from "bun:jsc";
-import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe, tempDir } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
+import { once } from "node:events";
 import fs from "node:fs";
 import http2 from "node:http2";
 import https from "node:https";
@@ -6447,13 +6448,62 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
       issue: sess => {
         const r = sess.request({ ":method": "POST", ":path": "/nested" }, { endStream: false });
         r.on("error", () => {});
-        r.end(nestedBody);
+        return r.end(nestedBody);
       },
     },
   };
   // outer "data": the nested call fires while the 16374-byte body's DATA frame overflows the cork
   // behind the corked ~11 KiB HEADERS. outer "continuation": it fires while a header block larger
   // than one frame (HEADERS + CONTINUATION) is being handed to the transport.
+  const body = Buffer.alloc(16374, 0x41);
+  // arm() runs right before the write the nested call has to fire in. Resolves once the session
+  // has serialized the body (the stream is corked until the tick after request()).
+  function sendOuterRequest(sess, outer, arm) {
+    // 15000 'p's HPACK-encode to ~11 KiB (one HEADERS frame); 30000 to ~22 KiB, which needs a
+    // CONTINUATION frame after a full 16384-byte HEADERS frame.
+    const pad = Buffer.alloc(outer === "continuation" ? 30000 : 15000, 0x70).toString();
+    if (outer === "continuation") arm();
+    const req = sess.request({ ":method": "POST", ":path": "/", "x-pad": pad }, { endStream: false });
+    req.on("error", () => {});
+    arm();
+    return new Promise(resolve => req.write(body, resolve));
+  }
+  function expectNestedAfterOuterUnit(parsed, kind, outer) {
+    // Every byte the transport received belongs to exactly one complete frame, and header
+    // blocks are never interleaved with other frames.
+    expect(parsed.complete).toBe(true);
+    expect(parsed.headerBlocksContiguous).toBe(true);
+    // One connection preface + SETTINGS (a second one mid-stream would not even parse), one
+    // request header block on stream 1, one DATA frame carrying exactly the body.
+    expect(parsed.frames.filter(f => f.type === FRAME.SETTINGS).length).toBe(kind === "settings" ? 2 : 1);
+    expect(parsed.frames.filter(f => f.type === FRAME.HEADERS && f.streamId === 1).length).toBe(1);
+    expect(parsed.frames.some(f => f.type === FRAME.CONTINUATION && f.streamId === 1)).toBe(outer === "continuation");
+    const dataFrames = parsed.frames.filter(f => f.type === FRAME.DATA && f.streamId === 1);
+    expect(dataFrames.length).toBe(1);
+    expect(dataFrames[0].payload.equals(body)).toBe(true);
+    // The nested frames are well-formed frames of their own, after the unit they were issued
+    // from: the stream-1 header block, and (when issued during the body write) its DATA frame.
+    const blockEnd = parsed.frames.findIndex(
+      f => [FRAME.HEADERS, FRAME.CONTINUATION].includes(f.type) && f.streamId === 1 && f.flags & END_HEADERS,
+    );
+    expect(blockEnd).toBeGreaterThanOrEqual(0);
+    const issuedAfter = outer === "continuation" ? blockEnd : parsed.frames.indexOf(dataFrames[0]);
+    const after = parsed.frames.slice(issuedAfter + 1);
+    const before = parsed.frames.slice(0, issuedAfter + 1);
+    expect(before.filter(f => f.streamId === 3).length).toBe(0);
+    if (kind === "request" || kind === "data") {
+      expect(after.filter(f => f.type === FRAME.HEADERS && f.streamId === 3).length).toBe(1);
+    } else {
+      expect(before.slice(1).filter(f => f.type === nested[kind].type).length).toBe(0);
+      expect(after.filter(f => f.type === nested[kind].type).length).toBe(1);
+    }
+    if (kind === "data") {
+      const nestedData = Buffer.concat(
+        after.filter(f => f.type === FRAME.DATA && f.streamId === 3).map(f => f.payload),
+      );
+      expect(nestedData.equals(nestedBody)).toBe(true);
+    }
+  }
   const cases = [];
   for (const kind of Object.keys(nested)) {
     cases.push(
@@ -6490,16 +6540,7 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
       sess.on("error", () => {});
       try {
         await new Promise(resolve => sess.once("connect", resolve));
-
-        const body = Buffer.alloc(16374, 0x41);
-        // 15000 'p's HPACK-encode to ~11 KiB (one HEADERS frame); 30000 to ~22 KiB, which needs a
-        // CONTINUATION frame after a full 16384-byte HEADERS frame.
-        const pad = Buffer.alloc(outer === "continuation" ? 30000 : 15000, 0x70).toString();
-        if (outer === "continuation") armed = true;
-        const req = sess.request({ ":method": "POST", ":path": "/", "x-pad": pad }, { endStream: false });
-        req.on("error", () => {});
-        armed = true;
-        req.write(body);
+        sendOuterRequest(sess, outer, () => (armed = true));
 
         // Wait (by condition, not time) until the outer frames and the nested frames are all out.
         const done = parsed => {
@@ -6524,44 +6565,118 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
         }
 
         expect(issued).toBe(true);
-        // Every byte the transport received belongs to exactly one complete frame, and header
-        // blocks are never interleaved with other frames.
-        expect(parsed.complete).toBe(true);
-        expect(parsed.headerBlocksContiguous).toBe(true);
-        // One connection preface + SETTINGS (a second one mid-stream would not even parse), one
-        // request header block on stream 1, one DATA frame carrying exactly the body.
-        expect(parsed.frames.filter(f => f.type === FRAME.SETTINGS).length).toBe(kind === "settings" ? 2 : 1);
-        expect(parsed.frames.filter(f => f.type === FRAME.HEADERS && f.streamId === 1).length).toBe(1);
-        expect(parsed.frames.some(f => f.type === FRAME.CONTINUATION && f.streamId === 1)).toBe(
-          outer === "continuation",
-        );
-        const dataFrames = parsed.frames.filter(f => f.type === FRAME.DATA && f.streamId === 1);
-        expect(dataFrames.length).toBe(1);
-        expect(dataFrames[0].payload.equals(body)).toBe(true);
-        // The nested frames are well-formed frames of their own, after the unit they were issued
-        // from: the stream-1 header block, and (when issued during the body write) its DATA frame.
-        const blockEnd = parsed.frames.findIndex(
-          f => [FRAME.HEADERS, FRAME.CONTINUATION].includes(f.type) && f.streamId === 1 && f.flags & END_HEADERS,
-        );
-        expect(blockEnd).toBeGreaterThanOrEqual(0);
-        const issuedAfter = outer === "continuation" ? blockEnd : parsed.frames.indexOf(dataFrames[0]);
-        const after = parsed.frames.slice(issuedAfter + 1);
-        const before = parsed.frames.slice(0, issuedAfter + 1);
-        expect(before.filter(f => f.streamId === 3).length).toBe(0);
-        if (kind === "request" || kind === "data") {
-          expect(after.filter(f => f.type === FRAME.HEADERS && f.streamId === 3).length).toBe(1);
-        } else {
-          expect(before.slice(1).filter(f => f.type === nested[kind].type).length).toBe(0);
-          expect(after.filter(f => f.type === nested[kind].type).length).toBe(1);
-        }
-        if (kind === "data") {
-          const nestedData = Buffer.concat(
-            after.filter(f => f.type === FRAME.DATA && f.streamId === 3).map(f => f.payload),
-          );
-          expect(nestedData.equals(nestedBody)).toBe(true);
-        }
+        expectNestedAfterOuterUnit(parsed, kind, outer);
       } finally {
         sess.destroy();
+      }
+    },
+  );
+
+  // The same transport under a TLS socket. tls.connect({ socket: duplex }) is a native socket to
+  // the session, but every write to it hands a TLS record to the Duplex, so it runs _write just
+  // as synchronously. The frames are read from what a TLS server decrypts.
+  // outer "connect": the nested call fires while the session hands the transport the bytes that
+  // waited for the connect (the connection preface and SETTINGS). The session used to keep them
+  // pending until that write returned, so a frame or a flush issued from inside it sent them again.
+  function expectNestedAfterConnectFlush(bytes, parsed, kind) {
+    expect(bytes.indexOf(PREFACE)).toBe(0);
+    expect(bytes.indexOf(PREFACE, 1)).toBe(-1);
+    expect(parsed.complete).toBe(true);
+    expect(parsed.headerBlocksContiguous).toBe(true);
+    expect(parsed.frames[0].type).toBe(FRAME.SETTINGS);
+    expect(parsed.frames.filter(f => f.type === FRAME.SETTINGS).length).toBe(kind === "settings" ? 2 : 1);
+    // The nested request is the session's first stream here.
+    const after = parsed.frames.slice(1);
+    if (kind === "request") {
+      expect(after.filter(f => f.type === FRAME.HEADERS && f.streamId === 1).length).toBe(1);
+    } else {
+      expect(after.filter(f => f.type === nested[kind].type).length).toBe(1);
+    }
+  }
+  const tlsCases = [
+    ...["ping", "settings", "request", "data"].flatMap(kind => [
+      [kind, "data"],
+      [kind, "continuation"],
+    ]),
+    ["settings", "connect"],
+    ["request", "connect"],
+    ["settings", "connect behind a corked frame"],
+  ];
+  it.each(tlsCases)(
+    "nested %s() issued during the outer %s write (transport under a TLSSocket)",
+    async (kind, outer) => {
+      const received = [];
+      // Sent once every other frame is serialized, so it is the session's last frame: when the
+      // server has it, it has them all. Nothing is held back, because this transport reports no
+      // backpressure and both bodies fit the default flow-control windows.
+      const lastPing = Buffer.from("LASTPING");
+      const receivedAll = Promise.withResolvers();
+      receivedAll.promise.catch(() => {});
+      const server = tls.createServer({ ...TLS_CERT, ALPNProtocols: ["h2"] }, socket => {
+        socket.on("error", () => {});
+        socket.on("data", chunk => {
+          received.push(chunk);
+          if (Buffer.concat(received).includes(lastPing)) receivedAll.resolve();
+        });
+      });
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      const raw = net.connect(server.address().port, "127.0.0.1");
+      raw.on("error", () => {});
+      let armed = false;
+      let issued = false;
+      let nestedResult;
+      let sess;
+      let socket;
+      const transport = new Duplex({
+        read() {},
+        write(chunk, enc, cb) {
+          if (armed && !issued) {
+            issued = true;
+            nestedResult = nested[kind].issue(sess);
+          }
+          raw.write(chunk, cb);
+        },
+      });
+      transport.on("error", () => {});
+      raw.on("data", chunk => transport.push(chunk));
+      try {
+        await once(raw, "connect");
+        socket = tls.connect({ socket: transport, ALPNProtocols: ["h2"], ...TLS_OPTIONS });
+        socket.on("error", () => {});
+        if (outer.startsWith("connect")) {
+          // Runs right before the session's own listener attaches the socket and flushes. Armed
+          // for that tick only: the nested call has to fire from inside that flush.
+          socket.once("secureConnect", () => {
+            // The flush then writes this frame, with the waiting bytes ahead of it.
+            if (outer !== "connect") sess.ping(Buffer.from("CORKPING"), () => {});
+            armed = true;
+            process.nextTick(() => (armed = false));
+          });
+        }
+        sess = http2.connect("https://localhost", { createConnection: () => socket });
+        sess.on("error", () => {});
+        sess.once("close", () => receivedAll.reject(new Error("the session closed before the server had every frame")));
+        await once(sess, "connect");
+        expect(socket._handle).toBeTruthy();
+
+        if (!outer.startsWith("connect")) await sendOuterRequest(sess, outer, () => (armed = true));
+        expect(issued).toBe(true);
+        // node sends a PING ahead of DATA frames that are still queued.
+        if (kind === "data" && !nestedResult.writableFinished) await once(nestedResult, "finish");
+        sess.ping(lastPing, () => {});
+        await receivedAll.promise;
+
+        const bytes = Buffer.concat(received);
+        const parsed = parseFrames(bytes);
+        parsed.frames = parsed.frames.filter(f => !(f.type === FRAME.PING && f.payload.equals(lastPing)));
+        if (outer.startsWith("connect")) expectNestedAfterConnectFlush(bytes, parsed, kind);
+        else expectNestedAfterOuterUnit(parsed, kind, outer);
+      } finally {
+        sess?.destroy();
+        socket?.destroy();
+        transport.destroy();
+        raw.destroy();
+        server.close();
       }
     },
   );
@@ -6587,6 +6702,113 @@ it("originSet is undefined on a destroyed TLS session that never read it", async
       destroyed: true,
       originSet: undefined,
     });
+  } finally {
+    server.close();
+  }
+});
+
+it("a session over TLS whose peer reset is first seen by a write ends without a hang", async () => {
+  // How the reset looks differs by kernel, in Node as well: a clean end on Linux (the failed send()
+  // consumed the socket's error), ECONNRESET on Windows. Never EBADF.
+  using dir = tempDir("h2-tls-write-sees-reset", {});
+  const resetDoneFile = path.join(String(dir), "reset-done");
+  const fixture = `
+    const http2 = require("node:http2");
+    const fs = require("node:fs");
+    const state = { requested: false, sawResponse: false, streamClosed: false, sessionClosed: false, errors: [] };
+    let reported = false;
+    function report() {
+      if (reported) return;
+      reported = true;
+      fs.writeSync(1, JSON.stringify(state) + "\\n");
+      process.exit(0);
+    }
+    function closed() {
+      if (state.streamClosed && state.sessionClosed) report();
+    }
+    const session = http2.connect("https://127.0.0.1:" + process.env.H2_PEER_PORT, { rejectUnauthorized: false });
+    session.on("error", err => state.errors.push(err.code));
+    session.on("close", () => {
+      state.sessionClosed = true;
+      closed();
+    });
+    session.on("remoteSettings", () => {
+      // Block the loop until the parent has reset the connection. Nothing is
+      // polled in between, so the request's write meets the reset first.
+      fs.writeSync(1, "busy\\n");
+      const cell = new Int32Array(new SharedArrayBuffer(4));
+      const deadline = Date.now() + 30000;
+      while (!fs.existsSync(process.env.RESET_DONE_FILE) && Date.now() < deadline) {
+        Atomics.wait(cell, 0, 0, 5);
+      }
+      const req = session.request({ ":path": "/" });
+      state.requested = true;
+      req.on("response", () => (state.sawResponse = true));
+      req.on("error", err => state.errors.push(err.code));
+      req.on("close", () => {
+        state.streamClosed = true;
+        closed();
+      });
+      req.resume();
+      req.end();
+    });
+    // Report whatever happened if the teardown never completes.
+    setTimeout(report, 20000);
+  `;
+  const frame = (type, flags) => Buffer.from([0, 0, 0, type, flags, 0, 0, 0, 0]);
+  // The raw TCP socket under the server's TLSSocket: resetting it sends the RST
+  // with no TLS alert in front of it.
+  let raw = null;
+  const server = tls.createServer({ ...TLS_CERT, ALPNProtocols: ["h2"] }, socket => {
+    socket.on("error", () => {});
+    socket.write(frame(4, 0)); // empty SETTINGS
+    socket.once("data", () => socket.write(frame(4, 1))); // ACK the client's SETTINGS
+  });
+  server.on("connection", socket => {
+    raw = socket;
+    socket.on("error", () => {});
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, H2_PEER_PORT: String(server.address().port), RESET_DONE_FILE: resetDoneFile },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stderrText = proc.stderr.text();
+    let stdout = "";
+    let reset = false;
+    for await (const chunk of proc.stdout) {
+      stdout += Buffer.from(chunk).toString();
+      if (!reset && stdout.includes("busy\n")) {
+        reset = true;
+        const rawClosed = new Promise(resolve => raw.once("close", resolve));
+        raw.resetAndDestroy();
+        await rawClosed;
+        fs.writeFileSync(resetDoneFile, "");
+      }
+    }
+    const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
+    const lines = stdout.trim().split("\n");
+    const state = JSON.parse(lines[lines.length - 1]);
+    // Debug builds may write benign diagnostics to stderr, so it is only shown
+    // when the fixture failed.
+    expect({
+      reset,
+      ...state,
+      errors: state.errors.filter(code => code !== "ECONNRESET" && code !== "EPIPE"),
+      failureDetail: exitCode === 0 ? "" : stderr,
+    }).toEqual({
+      reset: true,
+      requested: true,
+      sawResponse: false,
+      streamClosed: true,
+      sessionClosed: true,
+      errors: [],
+      failureDetail: "",
+    });
+    expect(exitCode).toBe(0);
   } finally {
     server.close();
   }

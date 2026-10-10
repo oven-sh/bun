@@ -407,7 +407,12 @@ impl SocketAddress {
                 };
                 if let Some(address_str) = options.address {
                     presentation = address_str;
-                    let slice = presentation.to_owned_slice_z();
+                    let mut slice = presentation.to_owned_slice_z();
+                    // As in libuv's `uv_inet_pton`, the address ends at a zone id.
+                    if let Some((address, _)) = strings::split_once_char(slice.as_bytes(), b'%') {
+                        slice = bun_core::ZBox::from_bytes(address);
+                        presentation = BunString::DEAD;
+                    }
                     pton(
                         global,
                         inet::AF_INET6,

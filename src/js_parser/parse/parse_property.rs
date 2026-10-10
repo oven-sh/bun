@@ -116,6 +116,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 is_constructor,
                 has_decorators: opts.ts_decorators.len() > 0
                     || (opts.has_class_decorators && is_constructor),
+                is_class_accessor: opts.is_class
+                    && matches!(kind, PropertyKind::Get | PropertyKind::Set),
 
                 // Only allow omitting the body if we're parsing TypeScript class
                 // (`parseFunctionBlockOrSemicolon` allows it in object literals too, and the checker objects.)

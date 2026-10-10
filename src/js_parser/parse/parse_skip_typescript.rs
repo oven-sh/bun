@@ -134,6 +134,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(result)
     }
 
+    /// The symbol a type annotation names, for decorator metadata. See
+    /// `ts_metadata_defer_usage`.
+    fn find_symbol_for_metadata(
+        &mut self,
+        ident: &'a [u8],
+    ) -> Result<crate::parser::FindSymbolResult, Error> {
+        if self.ts_metadata_defer_usage {
+            self.find_symbol_without_usage(bun_ast::Loc::EMPTY, ident)
+        } else {
+            self.find_symbol(bun_ast::Loc::EMPTY, ident)
+        }
+    }
+
     pub(crate) fn skip_type_script_binding(&mut self) -> Result<(), Error> {
         self.mark_type_script_only();
         // Nested destructuring patterns in skipped type positions recurse through
@@ -2347,7 +2360,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         TsIdentKind::Normal => {
                             if GET_METADATA {
                                 let ident = self.lexer.identifier;
-                                let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
+                                let find_result = self.find_symbol_for_metadata(ident)?;
                                 **result
                                     .as_mut()
                                     .expect("infallible: GET_METADATA implies Some") =
@@ -2862,14 +2875,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                 let id_ref = *id_ref;
                                 let mut dot: Vec<Ref> = Vec::with_capacity(2);
                                 dot.push(id_ref);
-                                let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
+                                let find_result = self.find_symbol_for_metadata(ident)?;
                                 dot.push(find_result.r#ref);
                                 *r = Metadata::MDot(dot);
                             }
                             Metadata::MDot(dot) => {
                                 if self.lexer.is_identifier_or_keyword() {
-                                    let find_result =
-                                        self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
+                                    let find_result = self.find_symbol_for_metadata(ident)?;
                                     dot.push(find_result.r#ref);
                                 }
                             }

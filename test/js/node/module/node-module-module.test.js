@@ -30,6 +30,32 @@ describe.concurrent("node-module-module", () => {
     expect(Array.isArray(require("module").globalPaths)).toBe(true);
   });
 
+  test("Object.entries(Module) passes exception check validation", async () => {
+    // jest-runtime copies Module's statics this way. It runs every lazy PropertyCallback builder of
+    // the module object back to back (JSObject::reifyAllStaticProperties); builds with exception
+    // scope verification (debug, ASAN) abort if one of them returns with an unchecked simulated
+    // throw. Release builds ignore the option, so there this only checks the copy is complete.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const Module = require("node:module");
+         const copy = Object.fromEntries(Object.entries(Module));
+         const missing = Object.keys(Module).filter(key => !(key in copy));
+         console.log(JSON.stringify({ missing, builtinModules: copy.builtinModules.length, globalPaths: Array.isArray(copy.globalPaths) }));`,
+      ],
+      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ missing: [], builtinModules: 76, globalPaths: true }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("Module._findPath propagates an error thrown by an onResolve plugin", async () => {
     // Plugins are process-global; run in a child so the throwing resolver can't affect other tests.
     await using proc = Bun.spawn({

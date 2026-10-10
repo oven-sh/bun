@@ -7,6 +7,7 @@ use bun_glob as glob;
 use bun_paths as path;
 use bun_paths::resolve_path;
 use bun_paths::{MAX_PATH_BYTES, SEP_STR};
+use bun_sys::FdExt as _;
 
 use crate::lockfile_real::{Lockfile, StringBuilder, pruned_workspaces};
 use crate::package_manager::workspace_package_json_cache::{
@@ -17,6 +18,8 @@ bun_output::declare_scope!(Lockfile, hidden);
 
 pub(crate) struct WorkspaceMap {
     map: Map,
+    /// `process_names_array` rejected an entry that is outside the workspace root.
+    pub(crate) rejected_outside_root: bool,
 }
 
 type Map = StringArrayHashMap<Entry>;
@@ -38,6 +41,7 @@ impl WorkspaceMap {
     pub(crate) fn init() -> WorkspaceMap {
         WorkspaceMap {
             map: Map::default(),
+            rejected_outside_root: false,
         }
     }
 
@@ -231,6 +235,143 @@ fn workspace_dir_of(abs_package_json_path: &[u8]) -> &[u8] {
     )
 }
 
+fn escapes_root(root_relative_dir: &[u8]) -> bool {
+    root_relative_dir == b".."
+        || root_relative_dir.starts_with(b"../")
+        // `relative` spells a different Windows drive as an absolute path.
+        || path::is_absolute(root_relative_dir)
+}
+
+fn real_dir_path<'b>(abs_dir: &[u8], buf: &'b mut path::PathBuffer) -> bun_sys::Maybe<&'b [u8]> {
+    let fd = bun_sys::open_dir_absolute(abs_dir)?;
+    let real = bun_sys::get_fd_path(fd, buf);
+    fd.close();
+    real.map(|real| &*real)
+}
+
+/// Every member gets a `node_modules`, so one outside the root is a write outside the project.
+struct WorkspaceRoot<'a> {
+    dir: &'a [u8],
+    /// `dir` with its symlinks resolved, on first use.
+    real_dir: Option<Box<[u8]>>,
+}
+
+/// A glob reports its first rejected match. The rest would repeat it.
+#[derive(Clone, Copy, PartialEq)]
+enum Report {
+    Error,
+    Silent,
+}
+
+impl WorkspaceRoot<'_> {
+    fn rejects_path(
+        &self,
+        abs_workspace_dir: &[u8],
+        entry: &[u8],
+        report: Report,
+        log: &mut bun_ast::Log,
+        source: &bun_ast::Source,
+        loc: bun_ast::Loc,
+    ) -> bool {
+        // Could be another spelling of a directory inside the root (`/tmp` on macOS).
+        if path::is_absolute(entry) {
+            return false;
+        }
+        let mut rel_path_buf = path::path_buffer_pool::get();
+        if !escapes_root(relative_workspace_path(
+            &mut rel_path_buf.0,
+            self.dir,
+            abs_workspace_dir,
+        )) {
+            return false;
+        }
+        if report == Report::Error {
+            log.add_error_fmt(
+                Some(source),
+                loc,
+                format_args!(
+                    "Workspace \"{}\" is outside the workspace root",
+                    BStr::new(entry)
+                ),
+            );
+        }
+        true
+    }
+
+    /// For a symlink that leaves the root: `link -> ../sibling`, or `up/*` with `up -> ..`.
+    fn rejects_real_path(
+        &mut self,
+        abs_workspace_dir: &[u8],
+        entry: &[u8],
+        report: Report,
+        log: &mut bun_ast::Log,
+        source: &bun_ast::Source,
+        loc: bun_ast::Loc,
+    ) -> bool {
+        let mut real_dir_buf = path::path_buffer_pool::get();
+        let resolved = real_dir_path(abs_workspace_dir, &mut real_dir_buf).and_then(|real_dir| {
+            let real_root = match &self.real_dir {
+                Some(real_root) => real_root,
+                None => {
+                    let mut real_root_buf = path::path_buffer_pool::get();
+                    let real_root = real_dir_path(self.dir, &mut real_root_buf)?;
+                    self.real_dir.insert(Box::from(real_root))
+                }
+            };
+            Ok((real_root, real_dir))
+        });
+        let (real_root, real_dir) = match resolved {
+            Ok(resolved) => resolved,
+            Err(err) => {
+                if report == Report::Error {
+                    log.add_error_fmt(
+                        Some(source),
+                        loc,
+                        format_args!(
+                            "{} resolving the directory of workspace package \"{}\"",
+                            crate::Error::from(err).name(),
+                            BStr::new(entry),
+                        ),
+                    );
+                }
+                return true;
+            }
+        };
+        let mut rel_path_buf = path::path_buffer_pool::get();
+        if !escapes_root(relative_workspace_path(
+            &mut rel_path_buf.0,
+            real_root,
+            real_dir,
+        )) {
+            return false;
+        }
+        if report == Report::Error {
+            // A `..` spelling, or an absolute entry outside the root, resolves to itself.
+            if real_dir == abs_workspace_dir {
+                log.add_error_fmt(
+                    Some(source),
+                    loc,
+                    format_args!(
+                        "Workspace \"{}\" is outside the workspace root",
+                        BStr::new(entry)
+                    ),
+                );
+            } else {
+                log.add_error_fmt(
+                    Some(source),
+                    loc,
+                    format_args!(
+                        "Workspace \"{}\" is outside the workspace root: it resolves to \"{}\"",
+                        BStr::new(entry),
+                        BStr::new(real_dir),
+                    ),
+                );
+            }
+        }
+        true
+    }
+}
+
 fn relative_workspace_path<'b>(
     buf: &'b mut [u8],
     root_dir: &[u8],
@@ -265,11 +406,18 @@ impl WorkspaceMap {
 
         let orig_msgs_len = log.msgs.len();
 
-        let mut workspace_globs: Vec<Box<[u8]>> = Vec::new();
+        let mut workspace_globs: Vec<(Box<[u8]>, bun_ast::Loc)> = Vec::new();
         let mut filepath_buf_os = path::path_buffer_pool::get();
         let filepath_buf: &mut [u8] = &mut filepath_buf_os.0[..];
         let mut rel_path_buf = path::path_buffer_pool::get();
         let root_dir: &[u8] = source.path.name().dir;
+        let mut root = WorkspaceRoot {
+            // Not `root_dir`: that is empty for a package.json at the filesystem root.
+            dir: path::dirname(source.path.text)
+                .filter(|dir| !dir.is_empty())
+                .unwrap_or_else(|| bun_resolver::fs::FileSystem::instance().top_level_dir()),
+            real_dir: None,
+        };
 
         let scratch = Arena::new();
 
@@ -293,7 +441,7 @@ impl WorkspaceMap {
             }
 
             if glob::detect_glob_syntax(input_path) {
-                workspace_globs.push(Box::<[u8]>::from(input_path));
+                workspace_globs.push((Box::<[u8]>::from(input_path), arr.item_loc(source, i)));
                 continue;
             }
 
@@ -310,6 +458,18 @@ impl WorkspaceMap {
                         root_dir,
                         true,
                     ) {
+                        continue;
+                    }
+
+                    if root.rejects_path(
+                        workspace_dir_of(abs_package_json_path),
+                        input_path,
+                        Report::Error,
+                        log,
+                        source,
+                        arr.item_loc(source, i),
+                    ) {
+                        workspace_names.rejected_outside_root = true;
                         continue;
                     }
 
@@ -382,6 +542,18 @@ impl WorkspaceMap {
                 continue;
             }
 
+            if root.rejects_real_path(
+                workspace_dir_of(abs_package_json_path),
+                input_path,
+                Report::Error,
+                log,
+                source,
+                arr.item_loc(source, i),
+            ) {
+                workspace_names.rejected_outside_root = true;
+                continue;
+            }
+
             let rel_input_path = relative_workspace_path(
                 &mut rel_path_buf.0,
                 root_dir,
@@ -411,7 +583,7 @@ impl WorkspaceMap {
 
         if workspace_globs.len() > 0 {
             let mut arena = Arena::new();
-            for (i, user_pattern) in workspace_globs.iter().enumerate() {
+            for (i, (user_pattern, pattern_loc)) in workspace_globs.iter().enumerate() {
                 // walker/iter borrow `&arena` and Drop at scope exit,
                 // so resetting here (top of next iter) ensures they drop before invalidation.
                 // Last iter's allocs are freed when `arena` itself drops after the loop.
@@ -474,6 +646,8 @@ impl WorkspaceMap {
                     return Err(crate::Error::GlobError);
                 }
 
+                // The pattern's other matches stay members, for `PackageManager::init`.
+                let mut report = Report::Error;
                 'next_match: loop {
                     let matched_path_owned = match iter.next()? {
                         Ok(Some(r)) => r,
@@ -506,7 +680,7 @@ impl WorkspaceMap {
                         );
 
                         // check if it's negated by any remaining patterns
-                        for next_pattern in &workspace_globs[i + 1..] {
+                        for (next_pattern, _) in &workspace_globs[i + 1..] {
                             let result =
                                 glob::r#match(next_pattern, matched_path_without_package_json);
                             if result.is_negated() && !result.matches() {
@@ -534,6 +708,19 @@ impl WorkspaceMap {
                         cwd, filepath_buf, &[entry_dir, b"package.json"]
                     ) {
                         Some(abs_package_json_path) => {
+                            if root.rejects_path(
+                                workspace_dir_of(abs_package_json_path),
+                                entry_dir,
+                                report,
+                                log,
+                                source,
+                                *pattern_loc,
+                            ) {
+                                workspace_names.rejected_outside_root = true;
+                                report = Report::Silent;
+                                continue;
+                            }
+
                             process_workspace_name(json_cache, abs_package_json_path, log)
                                 .map(|entry| (abs_package_json_path, entry))
                         }
@@ -575,6 +762,19 @@ impl WorkspaceMap {
                     };
 
                     if workspace_entry.name.len() == 0 {
+                        continue;
+                    }
+
+                    if root.rejects_real_path(
+                        workspace_dir_of(abs_package_json_path),
+                        entry_dir,
+                        report,
+                        log,
+                        source,
+                        *pattern_loc,
+                    ) {
+                        workspace_names.rejected_outside_root = true;
+                        report = Report::Silent;
                         continue;
                     }
 

@@ -32,9 +32,8 @@ Features include:
 
 The `bun:sqlite` module is roughly 3-6x faster than `better-sqlite3` and 8-9x faster than `deno.land/x/sqlite` for read queries. Each driver was benchmarked against the [Northwind Traders](https://github.com/jpwhite3/northwind-SQLite3/blob/46d5f8a64f396f87cd374d1600dbf521523980e8/Northwind_large.sqlite.zip) dataset. View and run the [benchmark source](https://github.com/oven-sh/bun/tree/main/bench/sqlite).
 
-<Frame caption="Benchmarked on an M1 MacBook Pro (64GB) running macOS 12.3.1">
-  ![SQLite benchmarks for Bun, better-sqlite3, and
-  deno.land/x/sqlite](https://user-images.githubusercontent.com/709451/168459263-8cd51ca3-a924-41e9-908d-cf3478a3b7f3.png)
+<Frame caption="SQLite read-query benchmark on M1 Max 64 GB — Bun's bun:sqlite vs better-sqlite3 vs deno.land/x/sqlite (Northwind dataset)">
+  ![Bar chart showing SQLite read-query throughput — Bun's bun:sqlite is 3 to 6 times faster than better-sqlite3 and 8 to 9 times faster than deno.land/x/sqlite](https://user-images.githubusercontent.com/709451/168459263-8cd51ca3-a924-41e9-908d-cf3478a3b7f3.png)
 </Frame>
 
 ---

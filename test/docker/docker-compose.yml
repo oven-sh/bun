@@ -153,16 +153,6 @@ services:
       start_interval: 1s
 
   # Redis/Valkey Services
-  redis_plain:
-    image: redis:7-alpine
-    command: redis-server --bind 0.0.0.0 --protected-mode no
-    ports:
-      - target: 6379
-        published: 0
-        protocol: tcp
-    tmpfs:
-      - /data
-
   redis_unified:
     build:
       context: ../js/valkey/docker-unified

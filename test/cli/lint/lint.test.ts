@@ -5282,15 +5282,22 @@ describe.concurrent("a lint script in package.json", () => {
   );
 
   // git keeps a link to `/dev/zero` as it is. `bun run` stops at such a file, and finds no script in it.
-  test.skipIf(isWindows)("a package.json that is a link to a device has no script, and the one above is not asked", async () => {
-    using dir = tempDir("bun-lint-name", { ...files, "sub/eslint.config.js": files["eslint.config.js"], "sub/b.js": "debugger;\n" });
-    symlinkSync("/dev/null", join(String(dir), "sub/package.json"));
-    const cmd = [bunExe(), "lint", "-f", "unix"];
-    await using proc = spawn({ cmd, env, cwd: join(String(dir), "sub"), stdout: "pipe", stderr: "pipe" });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toContain("b.js:1:1: ");
-    expect(exitCode).toBe(1);
-  });
+  test.skipIf(isWindows)(
+    "a package.json that is a link to a device has no script, and the one above is not asked",
+    async () => {
+      using dir = tempDir("bun-lint-name", {
+        ...files,
+        "sub/eslint.config.js": files["eslint.config.js"],
+        "sub/b.js": "debugger;\n",
+      });
+      symlinkSync("/dev/null", join(String(dir), "sub/package.json"));
+      const cmd = [bunExe(), "lint", "-f", "unix"];
+      await using proc = spawn({ cmd, env, cwd: join(String(dir), "sub"), stdout: "pipe", stderr: "pipe" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toContain("b.js:1:1: ");
+      expect(exitCode).toBe(1);
+    },
+  );
 
   test("--cwd lint lint: the first is a directory", async () => {
     const { "package.json": __, ...rest } = files;
@@ -6596,16 +6603,19 @@ describe.concurrent("[lint] in bunfig.toml", () => {
   });
 
   // 288 bytes for each: 19 GB, and more than there is to address.
-  test.each(["67108864", "9007199254740991", "9223372036854775808"])("%s threads are as many as there can be", async count => {
-    const [byKey, byFlag, few] = await Promise.all([
-      run({ ...eslint, "bunfig.toml": `[lint]\nthreads = ${count}\n` }, ["a.js"]),
-      run(eslint, [`--threads=${count}`, "a.js"]),
-      run(eslint, ["--threads=1", "a.js"]),
-    ]);
-    // Beyond 2^53 - 1 the file is refused before anybody asks for the key.
-    if (Number.isSafeInteger(Number(count))) expect(byKey).toEqual(few);
-    expect(byFlag).toEqual(few);
-  });
+  test.each(["67108864", "9007199254740991", "9223372036854775808"])(
+    "%s threads are as many as there can be",
+    async count => {
+      const [byKey, byFlag, few] = await Promise.all([
+        run({ ...eslint, "bunfig.toml": `[lint]\nthreads = ${count}\n` }, ["a.js"]),
+        run(eslint, [`--threads=${count}`, "a.js"]),
+        run(eslint, ["--threads=1", "a.js"]),
+      ]);
+      // Beyond 2^53 - 1 the file is refused before anybody asks for the key.
+      if (Number.isSafeInteger(Number(count))) expect(byKey).toEqual(few);
+      expect(byFlag).toEqual(few);
+    },
+  );
 
   // ESLint refuses the flag in a run that fixes nothing.
   test("fixType waits for a run that fixes", async () => {

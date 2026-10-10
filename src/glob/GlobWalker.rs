@@ -326,7 +326,6 @@ pub struct Directory<A: Accessor> {
     /// evaluates all of them instead of revisiting the directory.
     pub(crate) active: ComponentSet,
 
-    pub(crate) iter_closed: bool,
     pub(crate) at_cwd: bool,
 }
 
@@ -733,7 +732,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             path: dir_path_buf,
             dir_path_len,
             active,
-            iter_closed: false,
             at_cwd,
         });
 
@@ -994,9 +992,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             if !at_cwd {
                                 self.close_disallowing_cwd(dir_fd);
                             }
-                            if let IterState::Directory(d) = &mut self.iter_state {
-                                d.iter_closed = true;
-                            }
+                            self.iter_state = IterState::GetNext;
                             return Ok(Err(err));
                         }
                         Ok(ent) => ent,
@@ -1006,9 +1002,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                         let at_cwd = dir.at_cwd;
                         if !at_cwd {
                             self.close_disallowing_cwd(dir_fd);
-                        }
-                        if let IterState::Directory(d) = &mut self.iter_state {
-                            d.iter_closed = true;
                         }
                         self.iter_state = IterState::GetNext;
                         continue;
@@ -1210,10 +1203,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Drop for Iterator<'a, A, SENTINEL> {
     fn drop(&mut self) {
         self.close_cwd_fd();
         if let IterState::Directory(dir) = &self.iter_state {
-            if !dir.iter_closed {
-                let fd = dir.fd;
-                self.close_disallowing_cwd(fd);
-            }
+            let fd = dir.fd;
+            self.close_disallowing_cwd(fd);
         }
 
         while let Some(work_item) = self.walker.workbuf.pop() {
@@ -2322,5 +2313,171 @@ impl AccessorDirEntry for DirIterator::IteratorResult {
     }
     fn kind(&self) -> bun_sys::FileKind {
         self.kind
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bun_sys::FileKind;
+    use std::cell::{Cell, RefCell};
+
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    struct Handle(u8);
+    const ROOT: Handle = Handle(1);
+    const BAD: Handle = Handle(2);
+    const GOOD: Handle = Handle(3);
+
+    impl AccessorHandle for Handle {
+        const EMPTY: Self = Handle(0);
+        fn is_empty(self) -> bool {
+            self == Self::EMPTY
+        }
+        fn eql(self, other: Self) -> bool {
+            self == other
+        }
+    }
+
+    #[derive(PartialEq, Eq, Debug)]
+    enum Event {
+        Read(Handle),
+        Close(Handle),
+    }
+    thread_local! {
+        static EVENTS: RefCell<Vec<Event>> = const { RefCell::new(Vec::new()) };
+        /// The directory whose read fails: `BAD` at its first read, or `ROOT` after it reported `good`.
+        static FAILING: Cell<Handle> = const { Cell::new(BAD) };
+    }
+
+    struct Entry(&'static [u8], FileKind);
+    impl AccessorDirEntry for Entry {
+        fn name_slice(&self) -> &[u8] {
+            self.0
+        }
+        fn kind(&self) -> FileKind {
+            self.1
+        }
+    }
+
+    struct Reader {
+        dir: Handle,
+        reads: usize,
+    }
+    impl AccessorDirIter for Reader {
+        type Handle = Handle;
+        type Entry = Entry;
+        fn iterate(dir: Handle) -> Self {
+            Reader { dir, reads: 0 }
+        }
+        fn next(&mut self) -> Maybe<Option<Entry>> {
+            EVENTS.with_borrow_mut(|events| events.push(Event::Read(self.dir)));
+            self.reads += 1;
+            let eio = SysError::from_code(E::EIO, Syscall::Tag::getdents64);
+            match (self.dir, self.reads) {
+                (ROOT, 1) => Ok(Some(Entry(b"good", FileKind::Directory))),
+                (ROOT, 2) if FAILING.get() == ROOT => Err(eio),
+                (ROOT, 2) => Ok(Some(Entry(b"bad", FileKind::Directory))),
+                (BAD, 1) => Err(eio),
+                (GOOD, 1) => Ok(Some(Entry(b"file", FileKind::File))),
+                _ => Ok(None),
+            }
+        }
+    }
+
+    /// The directory `/tree` holds the directories `good` and `bad`. `good` holds `file`.
+    struct Tree;
+    impl Accessor for Tree {
+        const COUNT_FDS: bool = true;
+        type Handle = Handle;
+        type DirIter = Reader;
+
+        fn open(path: &ZStr) -> Result<Maybe<Handle>, Error> {
+            assert_eq!(path.as_bytes(), b"/tree");
+            Ok(Ok(ROOT))
+        }
+        fn openat(dir: Handle, path: &ZStr) -> Result<Maybe<Handle>, Error> {
+            assert_eq!(dir, ROOT);
+            Ok(Ok(match path.as_bytes() {
+                b"bad" => BAD,
+                b"good" => GOOD,
+                other => panic!("openat of {}", bstr::BStr::new(other)),
+            }))
+        }
+        fn statat(_dir: Handle, _path: &ZStr) -> Maybe<Stat> {
+            unreachable!("the pattern needs no stat")
+        }
+        fn lstatat(_dir: Handle, _path: &ZStr) -> Maybe<Stat> {
+            unreachable!("each entry has a kind")
+        }
+        fn close(handle: Handle) -> Option<SysError> {
+            EVENTS.with_borrow_mut(|events| events.push(Event::Close(handle)));
+            None
+        }
+    }
+
+    /// Walks `*/*` in `/tree` with `steps`, drops the iterator, and returns what the accessor did.
+    fn walk(failing: Handle, steps: impl FnOnce(&mut Iterator<'_, Tree, false>)) -> Vec<Event> {
+        EVENTS.take();
+        FAILING.set(failing);
+        let walker = GlobWalker::<Tree, false>::init_with_cwd(
+            b"*/*", b"/tree", false, false, false, false, true, None,
+        );
+        let mut walker = walker.unwrap().unwrap();
+        let mut iter = Iterator::new(&mut walker);
+        iter.init().unwrap().unwrap();
+        steps(&mut iter);
+        drop(iter);
+        EVENTS.take()
+    }
+
+    fn good_file() -> Option<MatchedPath> {
+        Some(bun_paths::join_sep_maybe_z::<false>(&[b"good", b"file"]))
+    }
+
+    fn reads(events: &[Event], dir: Handle) -> usize {
+        events.iter().filter(|e| **e == Event::Read(dir)).count()
+    }
+
+    fn closed(events: &[Event]) -> Vec<Handle> {
+        let closed = events.iter().filter_map(|e| match e {
+            Event::Close(handle) => Some(*handle),
+            Event::Read(_) => None,
+        });
+        closed.collect()
+    }
+
+    #[test]
+    fn a_read_error_skips_the_directory() {
+        let events = walk(BAD, |iter| {
+            let err = iter.next().unwrap().unwrap_err();
+            assert_eq!(err.get_errno(), E::EIO);
+            assert_eq!(&*err.path, b"bad");
+            // The walk continues with the next directory, as it does after an error from `openat`.
+            assert_eq!(iter.next().unwrap().unwrap(), good_file());
+            assert_eq!(iter.next().unwrap().unwrap(), None);
+        });
+        assert_eq!(reads(&events, BAD), 1);
+        assert_eq!(closed(&events), [BAD, GOOD, ROOT]);
+    }
+
+    #[test]
+    fn a_drop_closes_the_directory_that_the_walk_is_in() {
+        let events = walk(BAD, |iter| {
+            iter.next().unwrap().unwrap_err();
+            assert_eq!(iter.next().unwrap().unwrap(), good_file());
+        });
+        assert_eq!(closed(&events), [BAD, ROOT, GOOD]);
+    }
+
+    #[test]
+    fn a_read_error_in_the_root_leaves_its_fd_for_the_drop() {
+        let events = walk(ROOT, |iter| {
+            let err = iter.next().unwrap().unwrap_err();
+            assert_eq!(err.get_errno(), E::EIO);
+            assert_eq!(iter.next().unwrap().unwrap(), good_file());
+            assert_eq!(iter.next().unwrap().unwrap(), None);
+        });
+        assert_eq!(reads(&events, ROOT), 2);
+        assert_eq!(closed(&events), [GOOD, ROOT]);
     }
 }

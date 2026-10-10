@@ -2328,7 +2328,10 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
   [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
 
   rstCode: number | undefined = undefined;
+  // What this side sent: backs sentHeaders, undefined until a request/PUSH_PROMISE/response goes out.
   [bunHTTP2Headers]: any;
+  // The request this stream answers: the received request, or the PUSH_PROMISE block of a pushed stream.
+  [kRequestHeaders]: any;
   [kInfoHeaders]: any;
   #sentTrailers: any;
   [kSendingTrailers]: boolean = false;
@@ -2351,7 +2354,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
   }
 
   get scheme() {
-    const headers = this[bunHTTP2Headers];
+    const headers = this[kRequestHeaders] || this[bunHTTP2Headers];
     if (headers) return headers[":scheme"] || "https";
     return "https";
   }
@@ -3288,7 +3291,7 @@ class ServerHttp2Stream extends Http2Stream {
     }
     const sensitiveNames = buildSensitiveNames(headers, sensitives);
     // A PUSH_PROMISE carries a request; default the method/path/scheme/authority like node does.
-    const parentRequestHeaders = this[kRequestHeaders] || this[bunHTTP2Headers];
+    const parentRequestHeaders = this[kRequestHeaders];
     if (headers[HTTP2_HEADER_METHOD] === undefined) headers[HTTP2_HEADER_METHOD] = "GET";
     if (headers[HTTP2_HEADER_PATH] === undefined) headers[HTTP2_HEADER_PATH] = "/";
     if (headers[HTTP2_HEADER_SCHEME] === undefined) {
@@ -3304,7 +3307,9 @@ class ServerHttp2Stream extends Http2Stream {
     // getNextStream() created the pushed ServerHttp2Stream via the streamStart handler.
     const pushedStream = parser.getStreamContext(pushId);
     if (pushedStream && pushedStream[bunHTTP2Headers] == null) {
+      // The PUSH_PROMISE block is sent here and is also this stream's request (scheme reads it).
       pushedStream[bunHTTP2Headers] = headers;
+      pushedStream[kRequestHeaders] = headers;
     }
     if (pushedStream) endInboundHalf(pushedStream);
     if (onServerStreamCreatedChannel.hasSubscribers) {
@@ -4056,7 +4061,7 @@ class ServerHttp2Session extends Http2Session {
       }
       self.#connections++;
       if (stream_id % 2 === 1) self.#peerInitiatedStreams++;
-      const stream = new ServerHttp2Stream(stream_id, self, null);
+      const stream = new ServerHttp2Stream(stream_id, self, undefined);
       // Returned to the native caller, which stores it as the stream context — no
       // setStreamContext host call needed.
       return stream;
@@ -4174,14 +4179,9 @@ class ServerHttp2Session extends Http2Session {
           headers = toHeaderObject(filtered, headersTuple[2] || []);
         }
       }
-      // Remember the request headers on the stream (pushStream derives :scheme/:authority defaults
-      // from them). kRequestHeaders survives respond() overwriting the bunHTTP2Headers slot. Only
-      // the first HEADERS block counts - this handler also fires for trailers.
+      // Only the first HEADERS block is the request: this handler also fires for trailers.
       if (stream[kRequestHeaders] === undefined) {
         stream[kRequestHeaders] = headers;
-      }
-      if (stream[bunHTTP2Headers] == null) {
-        stream[bunHTTP2Headers] = headers;
       }
       if (headers[HTTP2_HEADER_METHOD] === HTTP2_METHOD_HEAD) {
         stream[kHeadRequest] = true;
@@ -5053,7 +5053,9 @@ class ClientHttp2Session extends Http2Session {
           headers = toHeaderObject(filtered, headersTuple[2] || []);
         }
       }
-      const pushedStream = new ClientHttp2Stream(pushId, self, headers);
+      // The PUSH_PROMISE headers were received, not sent: node leaves sentHeaders undefined here.
+      const pushedStream = new ClientHttp2Stream(pushId, self, undefined);
+      pushedStream[kRequestHeaders] = headers;
       pushedStream[kPush] = true;
       pushedStream.once("close", () => {
         self.#reservedStreamsCount--;
@@ -6598,9 +6600,7 @@ Http2Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, even
   switch (event) {
     case "stream": {
       const { 0: stream } = args;
-      // node checks sentHeaders here; Bun's server streams keep the request headers in that slot
-      // until respond(), so headersSent is the equivalent "has the response been sent" check.
-      if (stream.headersSent) {
+      if (stream.sentHeaders) {
         stream.destroy(err);
       } else {
         stream.respond({ [HTTP2_HEADER_STATUS]: 500 });

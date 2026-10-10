@@ -787,6 +787,66 @@ describe("bun", () => {
     expect(stderr).toContain("skipping this workspace package");
     expect(exitCode).toBe(0);
   });
+
+  // https://github.com/oven-sh/bun/issues/21670
+  describe("a workspace directory with an upper-case letter in its name", () => {
+    const member = (name: string) => ({
+      "package.json": JSON.stringify({ name, scripts: { build: `echo BUILD-${name}` } }),
+    });
+
+    test.concurrent.each([
+      {
+        entry: "a glob",
+        workspaces: ["packages/*"],
+        files: { packages: { Core: member("core"), lower: member("lower") } },
+      },
+      {
+        entry: "a literal path",
+        workspaces: ["packages/Core", "packages/lower"],
+        files: { packages: { Core: member("core"), lower: member("lower") } },
+      },
+      {
+        entry: "a nested glob",
+        workspaces: ["packages/*/*"],
+        files: { packages: { UPPER: { Inner: member("core") }, group: { lower: member("lower") } } },
+      },
+    ])("is found through $entry in workspaces", async ({ workspaces, files }) => {
+      using dir = tempDir("filter-upper-case-dir", {
+        ...files,
+        "package.json": JSON.stringify({ name: "root", private: true, workspaces }),
+      });
+
+      async function run(...selection: string[]) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "run", ...selection, "build"],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return {
+          ran: [...new Set(stdout.match(/BUILD-\w+/g))].sort(),
+          errors: stderr.split("\n").filter(line => line.startsWith("error")),
+          exitCode,
+        };
+      }
+
+      const [all, everyWorkspace, byName, byPath] = await Promise.all([
+        run("--filter", "*"),
+        run("--workspaces"),
+        run("--filter", "lower"),
+        run("--filter", "./packages/**"),
+      ]);
+      const both = { ran: ["BUILD-core", "BUILD-lower"], errors: [], exitCode: 0 };
+      expect({ all, everyWorkspace, byName, byPath }).toEqual({
+        all: both,
+        everyWorkspace: both,
+        byName: { ran: ["BUILD-lower"], errors: [], exitCode: 0 },
+        byPath: both,
+      });
+    });
+  });
 });
 
 describe("selectors", () => {

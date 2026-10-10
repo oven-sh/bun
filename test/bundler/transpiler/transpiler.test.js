@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, hideFromStackTrace, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, hideFromStackTrace, isDebug, tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -5411,6 +5411,258 @@ it("deeply nested expressions error instead of crashing the process", () => {
   expect(stdout.toString()).toBe("depth-ok\n");
   expect([exitCode, signalCode ?? undefined]).toEqual([0, undefined]);
 }, 60_000);
+
+// import(a ? b : c) becomes a ? import(b) : import(c), and the same for
+// require() and require.resolve().
+it("import() and require() of a conditional move into each branch", () => {
+  const transpiler = new Bun.Transpiler({ loader: "js", deadCodeElimination: true });
+  const branches = seat => `x = ${seat}(a ? "b" : c ? (d ? "e" : f) : "g");`;
+  const output = seat => `x = a ? ${seat}("b") : c ? d ? ${seat}("e") : ${seat}(f) : ${seat}("g");\n`;
+  for (const seat of ["import", "require", "require.resolve"]) {
+    expect(transpiler.transformSync(branches(seat))).toBe(output(seat));
+  }
+  expect(transpiler.scan(branches("import")).imports).toEqual([
+    { kind: "dynamic-import", path: "b" },
+    { kind: "dynamic-import", path: "e" },
+    { kind: "dynamic-import", path: "g" },
+  ]);
+});
+
+// The walk that does it runs after the visit pass. It had no stack check and
+// took a frame for each link of a chain, so it ended the process with a bare
+// SIGSEGV where the parser and the visit pass still had stack.
+//
+// The child scripts search for each depth: a fixed depth is past the limit of
+// one build and far under the limit of the next.
+const depthSearch = `
+  const repeat = (fill, count) => Buffer.alloc(fill.length * count, fill).toString();
+  // "ok", or the pass that ran out of stack. Any other error is a failure.
+  const outcome = async run => {
+    try {
+      await run();
+      return "ok";
+    } catch (e) {
+      const message = String(e?.message);
+      if (message === "Maximum call stack size exceeded") return "parser";
+      if (message.startsWith("StackOverflow")) return "printer";
+      throw e;
+    }
+  };
+  // The largest count that takes() accepts, to within 1%.
+  const largest = async takes => {
+    let ok = 0;
+    let bad = 256;
+    while (await takes(bad)) {
+      if (bad > 1 << 22) throw new Error("found no limit under " + bad);
+      [ok, bad] = [bad, bad * 2];
+    }
+    while (bad - ok > Math.max(1, ok / 100)) {
+      const mid = (ok + bad) >> 1;
+      if (await takes(mid)) ok = mid;
+      else bad = mid;
+    }
+    return ok;
+  };
+  const seats = ["import", "require", "require.resolve"];
+  const chain = (seat, links) => seat + "(" + repeat("a ? 'b' : ", links) + "'c')";
+  const nest = (depth, inner) => "x = " + repeat("g(", depth) + inner + repeat(")", depth);
+`;
+
+// A debug build has no such length: its visit pass takes a frame for each link
+// of the chain, and reports first.
+it.skipIf(isDebug)("a long conditional chain in import() does not crash the process", async () => {
+  const script = `
+    ${depthSearch}
+    const transpiler = new Bun.Transpiler({ loader: "js", deadCodeElimination: true });
+    // transform() runs on a pool thread, which has a smaller stack.
+    for (const door of ["scan", "transform"]) {
+      // A printer can still refuse what the parser and the visit pass took.
+      const parsed = async source => (await outcome(() => transpiler[door](source))) !== "parser";
+      const links = Math.floor((await largest(n => parsed("x = " + chain("f", n)))) * 0.98);
+      for (const seat of seats) {
+        if (!(await parsed("x = " + chain(seat, links)))) {
+          throw new Error(door + "(): " + seat + "() refuses a chain of " + links + " links that f() takes");
+        }
+      }
+    }
+    console.log("depth-ok");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "depth-ok\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
+it("a conditional chain in import() or require() in a deep nest does not crash the process", async () => {
+  const script = `
+    ${depthSearch}
+    const transpiler = new Bun.Transpiler({ loader: "js", deadCodeElimination: true });
+    const scan = source => outcome(() => transpiler.scan(source));
+    // true if the parser takes the source. The stray ")" is a syntax error, so
+    // the visit pass never runs.
+    const parses = source => {
+      try {
+        transpiler.scan(source + " )");
+      } catch (e) {
+        return e?.message !== "Maximum call stack size exceeded";
+      }
+      throw new Error("expected a syntax error");
+    };
+    // Leave the visit pass 2% of its depth, then add the longest chain that the
+    // parser takes there. That chain is far longer than the stack that is left.
+    const depth = Math.floor((await largest(async n => (await scan(nest(n, "1"))) === "ok")) * 0.98);
+    const links = Math.floor((await largest(n => parses(nest(depth, chain("f", n))))) * 0.97);
+    const expected = await scan(nest(depth, chain("f", links)));
+    for (const seat of seats) {
+      const got = await scan(nest(depth, chain(seat, links)));
+      if (got !== expected) {
+        throw new Error(seat + "(): " + got + ", f(): " + expected + ", at " + depth + " calls and " + links + " links");
+      }
+    }
+    console.log("depth-ok");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "depth-ok\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
+// "ok", or the pass that ran out of stack, from the errors that a build logs.
+// allowUnresolved: [] makes a specifier that is not a string literal an error.
+const buildOutcome = `
+  const build = async source => {
+    writeFileSync("entry.js", source);
+    const result = await Bun.build({ entrypoints: ["./entry.js"], allowUnresolved: [], throw: false });
+    const messages = result.logs.filter(log => log.level === "error").map(log => String(log.message));
+    if (messages.length === 0) return "ok";
+    if (messages.length === 1 && messages[0] === "Maximum call stack size exceeded") return "parser";
+    if (messages.length === 1 && messages[0].startsWith("Maximum call stack size exceeded while")) return "printer";
+    throw new Error(JSON.stringify(messages.map(message => message.slice(0, 100))));
+  };
+`;
+
+it("Bun.build logs only the stack overflow when the argument of require() is too deep", async () => {
+  using dir = tempDir("transpose-after-overflow", {
+    "a.js": "module.exports = 1;",
+    "build-fixture.ts": `
+      import { writeFileSync } from "node:fs";
+      ${buildOutcome}
+      // A member chain is parsed in a loop and visited by recursion, so the visit
+      // pass runs out of stack in one branch. The walk must not take the branches
+      // after that: each branch it could not visit would log an error of its own.
+      const deep = "z" + Buffer.alloc(2 * ${isDebug ? 20_000 : 100_000}, ".b").toString();
+      for (const seat of ["import", "require", "require.resolve"]) {
+        console.log(seat, await build("x = " + seat + "(a ? " + deep + ' : "./a");\\n'));
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build-fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "import parser\nrequire parser\nrequire.resolve parser\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
+// The bundler adds a walk of the same kind, for `const ns = c ? require("./a") : null`.
+// A debug build is too slow for the number of builds that the search takes.
+it.skipIf(isDebug)("Bun.build takes a conditional chain inside a deep nest", async () => {
+  using dir = tempDir("transpose-conditional-chain", {
+    "a.js": "module.exports = { foo: 1 };",
+    "build-fixture.ts": `
+      import { writeFileSync } from "node:fs";
+      ${depthSearch}
+      ${buildOutcome}
+      // The walk of the bundler runs when the value of ns is a conditional, and
+      // not when it is a call.
+      const namespace = (open, links, close) =>
+        "(() => { const ns = " + open + repeat('c ? require("./a") : ', links) + "null" + close + "; return ns && ns.foo; })()";
+      const parsed = async source => (await build(source)) !== "parser";
+      // The same search as for scan(), on the threads of the bundler.
+      const depth = Math.floor((await largest(n => parsed(nest(n, "1")))) * 0.98);
+      const links = Math.floor((await largest(n => parsed(nest(depth, namespace("f(", n, ")"))))) * 0.97);
+      const strings = repeat('c ? "./a" : ', links) + '"./a"';
+      for (const shape of [namespace("", links, ""), ...seats.map(seat => seat + "(" + strings + ")")]) {
+        if (!(await parsed(nest(depth, shape)))) throw new Error("refused " + shape.slice(0, 60));
+      }
+      console.log("build-ok");
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build-fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "build-ok\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
+// A define whose key is a member chain is matched by a walk along the chain.
+// No other pass bounds that walk, and it took a stack frame for each part.
+it("a define key of many parts is matched instead of crashing the process", async () => {
+  // The walk took 160 bytes a part on Linux x64. macOS and Windows give the
+  // main thread 18 MB, so it takes this many parts to run out of stack there.
+  const parts = isDebug ? 12_000 : 500_000;
+  const script = `
+    const key = "a" + Buffer.alloc(2 * ${parts}, ".b").toString();
+    // The matcher takes a link in the index form too.
+    const indexed = "a" + Buffer.alloc(7 * ${parts / 2}, '["b"].b').toString();
+    const transpiler = new Bun.Transpiler({ loader: "js", define: { [key]: "1" } });
+    const source = "x = " + key + "; y = " + indexed;
+    process.stdout.write(transpiler.transformSync(source) + (await transpiler.transform(source)));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "x = 1;\ny = 1;\nx = 1;\ny = 1;\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
 
 it("deeply nested TypeScript types error instead of crashing the process", () => {
   const script = `

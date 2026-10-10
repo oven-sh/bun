@@ -623,19 +623,27 @@ it("createServer registers the callback as a regular 'secureConnection' listener
 
 it("connectionListener should emit the right amount of times, and with alpnProtocol available", async () => {
   let count = 0;
+  let accepted = 0;
+  // What became of a connection that the listener never got.
+  const problems: string[] = [];
   const promises: Promise<unknown>[] = [];
-  const server: Server = createServer(
+  await using server: Server = createServer(
     {
       ...COMMON_CERT,
       ALPNProtocols: ["bun"],
     },
     socket => {
       count++;
+      socket.on("error", (err: NodeJS.ErrnoException) => problems.push(`server socket 'error': ${err.code}`));
       expect(socket.alpnProtocol).toBe("bun");
       socket.end();
     },
   );
   server.setMaxListeners(100);
+  server.on("connection", () => accepted++);
+  server.on("tlsClientError", (err: NodeJS.ErrnoException, socket: TLSSocket) =>
+    problems.push(`'tlsClientError' from port ${socket.remotePort}: ${err.message}`),
+  );
 
   server.listen(0);
   await once(server, "listening");
@@ -651,15 +659,24 @@ it("connectionListener should emit the right amount of times, and with alpnProto
         ALPNProtocols: ["bun"],
       },
       () => {
-        socket.on("close", resolve);
+        secured = true;
         socket.resume();
         socket.end();
       },
     );
+    let secured = false;
+    let port: number | undefined;
+    socket.on("connect", () => (port = socket.localPort));
+    socket.on("error", (err: NodeJS.ErrnoException) =>
+      problems.push(
+        `'error' of the client on port ${port}, ${secured ? "after" : "before"} 'secureConnect': ${err.message}`,
+      ),
+    );
+    socket.on("close", resolve);
   }
 
   await Promise.all(promises);
-  expect(count).toBe(50);
+  expect({ accepted, count, problems }).toEqual({ accepted: 50, count: 50, problems: [] });
 });
 
 it("destroying the socket from inside SNICallback or ALPNCallback does not crash the process", async () => {

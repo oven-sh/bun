@@ -583,24 +583,24 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                         return left;
                     }
                     self.next();
-                    let kind = if token == T::As && self.token() == T::Const && self.is_at_const_alone()
-                    {
-                        self.js_error((self.lx.start, self.lx.end), 8016, b"");
-                        self.const_assertion_type();
-                        ExprKind::AsConst(left)
-                    } else {
-                        let ty = match self.is_flow {
-                            true => self.flow_type(),
-                            false => self.ty(),
+                    let kind =
+                        if token == T::As && self.token() == T::Const && self.is_at_const_alone() {
+                            self.js_error((self.lx.start, self.lx.end), 8016, b"");
+                            self.const_assertion_type();
+                            ExprKind::AsConst(left)
+                        } else {
+                            let ty = match self.is_flow {
+                                true => self.flow_type(),
+                                false => self.ty(),
+                            };
+                            if self.options.is_javascript {
+                                self.js_error_at_type(ty, if token == T::As { 8016 } else { 8037 });
+                            }
+                            match token {
+                                T::As => ExprKind::As { expr: left, ty },
+                                _ => ExprKind::Satisfies { expr: left, ty },
+                            }
                         };
-                        if self.options.is_javascript {
-                            self.js_error_at_type(ty, if token == T::As { 8016 } else { 8037 });
-                        }
-                        match token {
-                            T::As => ExprKind::As { expr: left, ty },
-                            _ => ExprKind::Satisfies { expr: left, ty },
-                        }
-                    };
                     left = self.finish_expr(kind, start);
                     // "Stop if the precedence of the next operator is too high": in `a + b as T * c`
                     // the `as T` could not be erased.

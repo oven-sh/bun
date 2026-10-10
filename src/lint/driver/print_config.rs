@@ -1,7 +1,7 @@
 //! `--print-config`
 
-use bun_lint::language::{Global, Parser, SourceType};
 use bun_core::printer::json_stringify;
+use bun_lint::language::{Global, Parser, SourceType};
 use bun_lint::linter::{ResolvedConfig, RuleId, write_json};
 use bun_lint::options::Json;
 

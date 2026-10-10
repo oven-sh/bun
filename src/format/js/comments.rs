@@ -339,10 +339,8 @@ impl<'a> NodeFinder<'a> {
                 ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::NonNull(_) => true,
                 ExprKind::Call(call) => {
                     let callee = call.callee();
-                    matches!(
-                        callee.tag(),
-                        ExprTag::Dot | ExprTag::Index | ExprTag::Call
-                    ) && (self.has_tree_of_babel || !is_chain_root(callee))
+                    matches!(callee.tag(), ExprTag::Dot | ExprTag::Index | ExprTag::Call)
+                        && (self.has_tree_of_babel || !is_chain_root(callee))
                 }
                 _ => false,
             };

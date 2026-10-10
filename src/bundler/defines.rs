@@ -82,7 +82,10 @@ pub(crate) fn copy_env_for_define(
     use bun_dotenv::DotEnvBehavior;
     const PROCESS_ENV: &[u8] = b"process.env.";
 
-    if behavior == DotEnvBehavior::Disable || behavior == DotEnvBehavior::LoadAllWithoutInlining {
+    if behavior == DotEnvBehavior::Disable
+        || behavior == DotEnvBehavior::DisableWithoutInlining
+        || behavior == DotEnvBehavior::LoadAllWithoutInlining
+    {
         return Ok(());
     }
     if behavior == DotEnvBehavior::Prefix {

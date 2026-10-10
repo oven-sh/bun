@@ -1730,6 +1730,12 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
     true
 }
 
+/// Whether this process is `bun test --coverage`, which writes the coverage report.
+#[unsafe(no_mangle)]
+extern "C" fn BunTest__writesCoverageReport() -> bool {
+    jest::Jest::runner().is_some_and(|runner| runner.test_options.coverage.enabled)
+}
+
 pub(crate) struct TestCommand;
 
 impl TestCommand {

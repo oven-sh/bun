@@ -753,37 +753,6 @@ impl Lockfile {
         self.packages.items_dependencies()[0].contains(id)
     }
 
-    /// Is this a direct dependency of the workspace the install is taking place in?
-    pub(crate) fn is_root_dependency(
-        &self,
-        manager: &mut PackageManager,
-        id: DependencyID,
-    ) -> bool {
-        // `RootPackageId::get` caches into `manager`.
-        let root_id = manager
-            .root_package_id
-            .get(self, manager.workspace_name_hash);
-        self.packages.items_dependencies()[root_id as usize].contains(id)
-    }
-
-    /// Is `id` a direct dependency of one of the `targets` workspaces?
-    pub fn is_dependency_of_workspace_in(
-        &self,
-        targets: &[crate::package_manager::UpdateTargetWorkspace],
-        id: DependencyID,
-    ) -> bool {
-        let pkg_id = self.get_workspace_pkg_if_workspace_dep(id);
-        if pkg_id == invalid_package_id {
-            return false;
-        }
-        let is_root =
-            self.packages.items_resolution()[pkg_id as usize].tag == crate::resolution::Tag::Root;
-        let hash = self.packages.items_name_hash()[pkg_id as usize];
-        let name =
-            self.packages.items_name()[pkg_id as usize].slice(self.buffers.string_bytes.as_slice());
-        targets.iter().any(|t| t.matches(is_root, hash, name))
-    }
-
     /// Is this a direct dependency of any workspace (including workspace root)?
     /// TODO make this faster by caching the workspace package ids
     pub(crate) fn is_workspace_dependency(&self, id: DependencyID) -> bool {

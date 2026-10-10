@@ -1,7 +1,7 @@
 import { Archive, file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { appendFile, exists } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, normalizeBunSnapshot, runBunInstall } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, normalizeBunSnapshot, runBunInstall, tempDir } from "harness";
 import { join } from "path";
 
 // Registry: no-deps 1.0.0/1.0.1/1.1.0/2.0.0, @types/no-deps 1.0.0/2.0.0, a-dep 1.0.1..1.0.10, one-range-dep@1.0.0 -> no-deps ^1.0.0, dep-with-tags 1.0.0..3.0.1 (latest=3.0.0, pre-2=2.0.1).
@@ -163,6 +163,39 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     expect(JSON.stringify(ws)).not.toContain("latest");
     await expectInSync(dir);
   });
+
+  test.each(GROUPS.flatMap(group => [[], ["no-deps"], ["-r"]].map(args => [group, args] as const)))(
+    "bun update --latest moves a %s entry with args %j",
+    async (group, args) => {
+      const dir = await setup({ "package.json": root({ [group]: { "no-deps": "^1.0.0" } }) });
+      await run(dir, "update", ...args, "--latest");
+      expect((await pkg(dir))[group]).toStrictEqual({ "no-deps": "^2.0.0" });
+      expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@2.0.0"]);
+      await expectInSync(dir);
+    },
+  );
+
+  test.each([[[]], [["-r"]]])(
+    "bun update --latest %j leaves an optional dependency that does not resolve as written",
+    async args => {
+      // verdaccio takes seconds to answer for a package it does not have.
+      await using registry = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: () => new Response("not found", { status: 404 }),
+      });
+      const optionalDependencies = { "not-in-this-registry": "^1.0.0" };
+      using tmp = tempDir("update-latest-unresolved", {
+        "package.json": json(root({ optionalDependencies })),
+        "bunfig.toml": `[install]\nregistry = "${registry.url.href}"\nsaveTextLockfile = true\n`,
+      });
+      const dir = String(tmp);
+      await run(dir, "install");
+      await run(dir, "update", "--latest", ...args);
+      expect((await pkg(dir)).optionalDependencies).toStrictEqual(optionalDependencies);
+      expect((await lock(dir)).workspaces[""].optionalDependencies).toStrictEqual(optionalDependencies);
+    },
+  );
 
   test.each([
     ["*", "2.0.0"],
@@ -770,6 +803,38 @@ describe.concurrent("catalogs", () => {
     await expectInSync(dir, ["", PKG1]);
   });
 
+  // pkg1 uses `no-deps` and it is at `latest`; no dependency uses `a-dep`, whose `latest` is 1.0.10. No entry moves.
+  const SETTLED_REPO = MONOREPO(
+    { dependencies: { "no-deps": "catalog:" } },
+    { workspaces: { packages: ["packages/*"], catalog: { "no-deps": "2.0.0", "a-dep": "1.0.1" } } },
+  );
+
+  test.each([
+    [[], ""],
+    [["-r"], ""],
+    [["--filter", "*"], ""],
+    [[], PKG1],
+    [["-r"], PKG1],
+  ])("bun update --latest %j from '%s' leaves a catalog that does not move as written", async (flags, cwd) => {
+    const dir = await setup(SETTLED_REPO);
+    const [pkgBefore, lockBefore] = await Promise.all([pkgText(dir), lockText(dir)]);
+    await runIn(dir, cwd, "update", "--latest", ...flags);
+    expect(await pkgText(dir)).toBe(pkgBefore);
+    expect(await lockText(dir)).toBe(lockBefore);
+    await expectInSync(dir, ["", PKG1]);
+  });
+
+  test("a second bun update --latest -r changes nothing", async () => {
+    const dir = await setup(CATALOG_REPO({ "no-deps": "^1.0.0" }));
+    await run(dir, "update", "--latest", "-r");
+    await expectCatalog(dir, { "no-deps": "^2.0.0" });
+    const [pkgBefore, lockBefore] = await Promise.all([pkgText(dir), lockText(dir)]);
+    await run(dir, "update", "--latest", "-r");
+    expect(await pkgText(dir)).toBe(pkgBefore);
+    expect(await lockText(dir)).toBe(lockBefore);
+    await expectInSync(dir, ["", PKG1]);
+  });
+
   test("bun add --catalog --filter", async () => {
     const dir = await setup(CATALOG_REPO());
     await run(dir, "add", "a-dep", "--catalog", "--filter", "pkg1");
@@ -803,6 +868,108 @@ describe.concurrent("$ref overrides", () => {
     expect((await pkg(dir)).dependencies).toStrictEqual({ a1: "npm:no-deps@^1.1.0" });
     expect((await lock(dir)).overrides).toStrictEqual({ a1: "npm:no-deps@^1.1.0" });
     await expectInSync(dir);
+  });
+});
+
+// one-range-dep@1.0.0 (its only version) depends on no-deps@^1.0.0; the registry's `latest` no-deps is 2.0.0.
+describe.concurrent("bun update --latest keeps the version an override selects", () => {
+  const transitive = { "one-range-dep": "1.0.0" };
+  const catalog = (entry: string) => ({ packages: [], catalog: { "no-deps": entry } });
+  const selector = { dependencies: { "no-deps": "^1.0.0" }, overrides: { "no-deps@>=1.0.0": "1.0.0" } };
+  const byName = { dependencies: transitive, overrides: { "no-deps": "$one-range-dep" } };
+
+  test.each<[string, Json, string[], string]>([
+    [
+      "a catalog: override",
+      { workspaces: catalog("1.0.0"), dependencies: transitive, overrides: { "no-deps": "catalog:" } },
+      [],
+      "1.0.0",
+    ],
+    [
+      "a catalog: override whose entry is a range",
+      { workspaces: catalog("^1.0.0"), dependencies: transitive, overrides: { "no-deps": "catalog:" } },
+      [],
+      "1.1.0",
+    ],
+    [
+      "a catalog: resolution",
+      { workspaces: catalog("1.0.0"), dependencies: transitive, resolutions: { "no-deps": "catalog:" } },
+      [],
+      "1.0.0",
+    ],
+    [
+      "a catalog:<name> override",
+      {
+        workspaces: { packages: [], catalogs: { pins: { "no-deps": "1.0.0" } } },
+        dependencies: transitive,
+        overrides: { "no-deps": "catalog:pins" },
+      },
+      [],
+      "1.0.0",
+    ],
+    [
+      "a nested catalog: override",
+      {
+        workspaces: catalog("1.0.0"),
+        dependencies: transitive,
+        overrides: { "one-range-dep": { "no-deps": "catalog:" } },
+      },
+      [],
+      "1.0.0",
+    ],
+    ["a $name override", byName, [], "1.0.0"],
+    ["a $name override whose referent is named", byName, ["one-range-dep"], "1.0.0"],
+    ["a selector override on a direct dependency", selector, [], "1.0.0"],
+    ["a selector override on a direct dependency that is named", selector, ["no-deps"], "1.0.0"],
+    ["a literal override", { dependencies: transitive, overrides: { "no-deps": "1.0.0" } }, [], "1.0.0"],
+  ])("%s", async (_, fields, names, version) => {
+    const dir = await setup({ "package.json": root(fields) });
+    const [pkgBefore, lockBefore] = await Promise.all([pkgText(dir), lockText(dir)]);
+    expect(await resolutions(dir, "no-deps")).toStrictEqual([`no-deps@${version}`]);
+
+    await run(dir, "update", ...names, "--latest");
+    expect(await resolutions(dir, "no-deps")).toStrictEqual([`no-deps@${version}`]);
+    expect(await installed(dir, "no-deps")).toMatchObject({ version });
+    expect(await pkgText(dir)).toBe(pkgBefore);
+    expect(await lockText(dir)).toBe(lockBefore);
+    await runBunInstall(envFor(dir), dir, { frozenLockfile: true });
+  });
+
+  test("a catalog entry that a dependency uses moves, and a catalog: override follows it", async () => {
+    const dir = await setup({
+      "package.json": root({
+        workspaces: catalog("1.0.0"),
+        dependencies: { ...transitive, "no-deps": "catalog:" },
+        overrides: { "no-deps": "catalog:" },
+      }),
+    });
+    await run(dir, "update", "--latest");
+    expect((await pkg(dir)).workspaces.catalog).toStrictEqual({ "no-deps": "2.0.0" });
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@2.0.0"]);
+    await expectInSync(dir);
+  });
+
+  test.each([
+    [[], PKG1],
+    [["-r"], ""],
+    [["--filter", "*"], ""],
+  ])("a catalog: override holds under %j from '%s' while the member's own dependency moves", async (flags, cwd) => {
+    const dir = await setup(
+      MONOREPO(
+        { dependencies: { "a-dep": "1.0.1" } },
+        {
+          workspaces: { ...catalog("1.0.0"), packages: ["packages/*"] },
+          dependencies: transitive,
+          overrides: { "no-deps": "catalog:" },
+        },
+      ),
+    );
+    const rootBefore = await pkgText(dir);
+    await runIn(dir, cwd, "update", "--latest", ...flags);
+    expect(await resolutions(dir, "no-deps")).toStrictEqual(["no-deps@1.0.0"]);
+    expect(await pkgText(dir)).toBe(rootBefore);
+    expect((await pkg(dir, PKG1)).dependencies).toStrictEqual({ "a-dep": "1.0.10" });
+    await expectInSync(dir, ["", PKG1]);
   });
 });
 

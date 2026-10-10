@@ -30,12 +30,13 @@ Updated packages appear in the install summary as `↑ name old → new`, with `
 
 - `^1.1.0` → `^1.2.0`, `~1.1.0` → `~1.1.5`. Bun preserves the operator. With [`install.exact`](/runtime/bunfig#install-exact) or `--exact`, Bun writes an exact version instead.
 - Exact pins, dist-tags (`"latest"`, `"next"`), and other range forms (`*`, `1.x`, `>=1.0.0`) are left as written; only `bun.lock` moves. `--latest` rewrites them.
-- Bun never rewrites `catalog:` references; it updates the catalog entry in the root `package.json` instead.
+- Bun never rewrites `catalog:` references; it updates the catalog entry in the root `package.json` instead. An entry that no `catalog:` dependency uses stays as written.
 - `--no-save` updates `node_modules` only, leaving `package.json` and `bun.lock` untouched.
 
 ### What is held back
 
 - Bun never widens ranges. A package that depends on `foo@^1.0.0` never gets `foo@2.x`.
+- A package that an [`overrides`](/pm/overrides) rule sets stays on the version the rule selects. `--latest` does not move it.
 - Versions in `patchedDependencies` stay put as long as their range allows. Bun reports them as `kept name@version (patched, v1.2.3 available)`. `--latest` and [`bun audit fix`](/pm/cli/audit#bun-audit-fix) do move them; re-create the patch with [`bun patch`](/pm/cli/patch) afterwards.
 - If a registry request for a transitive package fails, that package keeps its locked version and Bun prints a warning. A failed request for a direct dependency is an error.
 

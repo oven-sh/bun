@@ -899,6 +899,15 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         dependency::version::Tag::DistTag
         | dependency::version::Tag::Folder
         | dependency::version::Tag::Npm => {
+            let pick = version_pick(
+                this,
+                dependency,
+                id,
+                name_hash,
+                name,
+                &version,
+                version_was_replaced,
+            );
             'retry_from_manifests_ptr: loop {
                 let mut resolve_result_ = get_or_put_resolved_package(
                     this,
@@ -906,7 +915,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     name,
                     dependency,
                     &version,
-                    version_was_replaced,
+                    pick,
                     dependency.behavior,
                     id,
                     resolution,
@@ -1172,7 +1181,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
 
                                         // If it's an exact package version already living in the cache
                                         // We can skip the network request, even if it's beyond the caching period
-                                        if version.tag == dependency::version::Tag::Npm
+                                        if pick == VersionPick::Declared
+                                            && version.tag == dependency::version::Tag::Npm
                                             && version.npm().version.is_exact()
                                         {
                                             if let Some(find_result) =
@@ -1232,6 +1242,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                         name,
                                                         dependency,
                                                         &version,
+                                                        pick,
                                                         id,
                                                         dependency.behavior,
                                                         manifest_ref.get(),
@@ -1603,7 +1614,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 name,
                 dependency,
                 &version,
-                version_was_replaced,
+                VersionPick::Declared,
                 dependency.behavior,
                 id,
                 resolution,
@@ -2290,6 +2301,7 @@ fn get_or_put_resolved_package_with_find_result(
     name: SemverString,
     dependency: &Dependency,
     version: &dependency::Version,
+    pick: VersionPick,
     dependency_id: DependencyID,
     behavior: Behavior,
     manifest: &Npm::PackageManifest,
@@ -2297,8 +2309,6 @@ fn get_or_put_resolved_package_with_find_result(
     install_peer: bool,
     success_fn: SuccessFn,
 ) -> crate::Result<Option<ResolvedPackageResult>> {
-    // reshaped for borrowck — `is_root_dependency(&self, &mut PackageManager, …)`
-    // borrows `this.lockfile` and `this` at once. Split via raw root.
     let should_update = this.to_update
         && if !this.update_requests.is_empty() {
             // bun update <name>: every in-scope <name> row (declared or `npm:<name>@…` aliased, see update_scope); other resolutions stay pinned.
@@ -2308,25 +2318,14 @@ fn get_or_put_resolved_package_with_find_result(
                     && this.is_update_request(name_hash, name.slice(string_buf))))
                 && crate::update_scope::UpdateScope::of(&*this)
                     .contains_dependency(&this.lockfile, dependency_id)
-        } else if let Some(targets) = this.update_target_workspaces.as_deref() {
-            // `bun update -r`/`--filter`: direct deps of the selected workspaces; catalogs are root-scoped.
-            dependency.version.tag == dependency::version::Tag::Catalog
-                || this
-                    .lockfile
-                    .is_dependency_of_workspace_in(targets, dependency_id)
         } else {
-            // Bare `bun update`: direct deps of the cwd workspace; catalogs are root-scoped.
-            let this_ptr: *mut PackageManager = this;
-            // SAFETY: `is_root_dependency` reads `manager.root_dependency_list` /
-            // `manager.workspace_package_json_cache` only — disjoint from
-            // `manager.lockfile`.
+            // Bare `bun update`: the rows the targeted workspaces declare; catalogs are root-scoped.
             dependency.version.tag == dependency::version::Tag::Catalog
-                || unsafe { &*(*this_ptr).lockfile }
-                    .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
+                || update_target_declares(this, dependency_id)
         };
 
-    // A patched package is held while the range still allows it (update_transitive holds the transitive rows the same way); audit fix does not set to_update and moves it.
-    if should_update && !behavior.is_peer() {
+    // A patched package is held while the range still allows it (update_transitive holds the transitive rows the same way); audit fix does not set to_update and moves it, and so does --latest.
+    if should_update && pick == VersionPick::Declared && !behavior.is_peer() {
         if let Some(id) = patched_package_satisfying(this, name_hash, version) {
             this.kept_patched.push(id);
             success_fn(this, dependency_id, id);
@@ -2531,14 +2530,14 @@ fn get_or_put_resolved_package(
     name: SemverString,
     dependency: &Dependency,
     version: &dependency::Version,
-    version_was_replaced: bool,
+    pick: VersionPick,
     behavior: Behavior,
     dependency_id: DependencyID,
     resolution: PackageID,
     install_peer: bool,
     success_fn: SuccessFn,
 ) -> crate::Result<Option<ResolvedPackageResult>> {
-    if install_peer && behavior.is_peer() {
+    if install_peer && behavior.is_peer() && pick == VersionPick::Declared {
         if let Some(index) = this.lockfile.package_index.get(&name_hash) {
             let resolutions = this.lockfile.packages.items_resolution();
             match index {
@@ -2716,25 +2715,8 @@ fn get_or_put_resolved_package(
             };
             let manifest: &Npm::PackageManifest = manifest;
 
-            // `bun update -r/--filter --latest`: resolve targeted workspaces' npm deps by dist-tag `latest`.
-            let latest_for_target = !version_was_replaced
-                && matches!(
-                    version.tag,
-                    dependency::version::Tag::Npm | dependency::version::Tag::DistTag
-                )
-                && this.to_update
-                && this.update_requests.is_empty()
-                && this
-                    .options
-                    .do_
-                    .contains(crate::package_manager::options::Do::UPDATE_TO_LATEST)
-                && this.update_target_workspaces.as_deref().is_some_and(|t| {
-                    this.lockfile
-                        .is_dependency_of_workspace_in(t, dependency_id)
-                });
-
             let version_result: Npm::FindVersionResult = match version.tag {
-                _ if latest_for_target => manifest.find_by_dist_tag_with_filter(
+                _ if pick == VersionPick::LatestTag => manifest.find_by_dist_tag_with_filter(
                     b"latest",
                     this.options.minimum_release_age_ms,
                     this.options.minimum_release_age_excludes,
@@ -2851,20 +2833,13 @@ fn get_or_put_resolved_package(
                 }
             };
 
-            let find_result = if version_was_replaced {
-                find_result
-            } else {
-                let locked = if latest_for_target {
-                    locked_version_in_lockfile(this, name_hash, version)
-                } else {
-                    locked_version_of_invoking_workspace_row(
-                        this,
-                        dependency,
-                        dependency_id,
-                        version,
-                    )
-                };
-                keep_locked_if_ahead(manifest, find_result, &locked)
+            let find_result = match pick {
+                VersionPick::Declared => find_result,
+                VersionPick::LatestTag => keep_locked_if_ahead(
+                    manifest,
+                    find_result,
+                    &locked_version_in_lockfile(this, name_hash, version),
+                ),
             };
 
             // reshaped for borrowck — `manifest`/`find_result`
@@ -2879,6 +2854,7 @@ fn get_or_put_resolved_package(
                 name,
                 dependency,
                 version,
+                pick,
                 dependency_id,
                 behavior,
                 manifest_ref.get(),
@@ -3090,38 +3066,97 @@ fn keep_locked_if_ahead<'m>(
     manifest.find_by_version(locked).unwrap_or(found)
 }
 
-/// Bare `bun update --latest` in a workspace: the row was rewritten to a dist-tag before install, so its locked version lives in `updating_packages`; rows that were dist-tag literals in package.json follow the tag.
-fn locked_version_of_invoking_workspace_row<'a>(
-    this: &'a PackageManager,
+/// What an npm row resolves: the version its specifier selects, or the registry's `latest` dist-tag.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum VersionPick {
+    Declared,
+    LatestTag,
+}
+
+/// `bun update --latest` moves the rows package.json declares in the workspaces it targets (with names: the entries a request names). The row keeps its declared specifier, so an override, a `$name` value and the workspace link read what the user wrote; a row whose specifier an override or a catalog replaced is not moved here.
+fn version_pick(
+    this: &mut PackageManager,
     dependency: &Dependency,
     dependency_id: DependencyID,
+    name_hash: PackageNameHash,
+    name: SemverString,
     version: &dependency::Version,
-) -> Option<(Semver::Version, &'a [u8])> {
-    if version.tag != dependency::version::Tag::DistTag
-        || !this.to_update
+    version_was_replaced: bool,
+) -> VersionPick {
+    if !this.to_update
+        || version_was_replaced
         || !this
             .options
             .do_
             .contains(crate::package_manager::options::Do::UPDATE_TO_LATEST)
+        || !matches!(
+            version.tag,
+            dependency::version::Tag::Npm | dependency::version::Tag::DistTag
+        )
     {
-        return None;
+        return VersionPick::Declared;
     }
-    let own_rows = this.root_package_id.id?;
-    if !this.lockfile.packages.items_dependencies()[own_rows as usize].contains(dependency_id) {
-        return None;
+    if !this.update_requests.is_empty() {
+        let buf = this.lockfile.buffers.string_bytes.as_slice();
+        let requested = this.is_update_request(dependency.name_hash, dependency.name.slice(buf))
+            || (name_hash != dependency.name_hash
+                && this.is_update_request(name_hash, name.slice(buf)));
+        if !requested {
+            return VersionPick::Declared;
+        }
     }
-    let entry = this
-        .updating_packages
-        .get(this.lockfile.str(&dependency.name))?;
-    if dependency::version::Tag::infer(&entry.original_version_literal)
-        == dependency::version::Tag::DistTag
-    {
-        return None;
+    if update_target_declares(this, dependency_id) {
+        VersionPick::LatestTag
+    } else {
+        VersionPick::Declared
     }
-    Some((entry.original_version?, &entry.original_version_string_buf))
 }
 
-/// `bun update -r/--filter --latest`: the row still carries its package.json range, so its locked version is the lockfile-loaded instance that range accepts (`package_index` lists highest first); dist-tag rows follow the tag.
+/// Does the package.json of a workspace `bun update` targets declare the row? The targets are the `-r` / `--filter` selection, else the workspace the command runs in. A member that is new to the lockfile has no package until its workspace row resolves.
+fn update_target_declares(this: &mut PackageManager, dependency_id: DependencyID) -> bool {
+    let lockfile: &Lockfile::Lockfile = &this.lockfile;
+    let rows = lockfile.packages.items_dependencies();
+    let declares = |id: PackageID| {
+        rows.get(id as usize)
+            .is_some_and(|rows| rows.contains(dependency_id))
+    };
+    let Some(targets) = this.update_target_workspaces.as_deref() else {
+        let in_member = this.workspace_name_hash.is_some();
+        let id = match this.root_package_id.id {
+            Some(id) if id != 0 || !in_member => id,
+            _ => {
+                let id = lockfile.get_workspace_package_id(this.workspace_name_hash);
+                if id == 0 && in_member {
+                    return false;
+                }
+                this.root_package_id.id = Some(id);
+                id
+            }
+        };
+        return declares(id);
+    };
+    let ids = &mut this.update_target_ids;
+    if ids.len() < targets.len() {
+        ids.clear();
+        let resolutions = lockfile.packages.items_resolution();
+        let name_hashes = lockfile.packages.items_name_hash();
+        let names = lockfile.packages.items_name();
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        for (id, resolution) in resolutions.iter().enumerate() {
+            let is_root = resolution.tag == ResolutionTag::Root;
+            if (is_root || resolution.tag == ResolutionTag::Workspace)
+                && targets
+                    .iter()
+                    .any(|target| target.matches(is_root, name_hashes[id], names[id].slice(buf)))
+            {
+                ids.push(id as PackageID);
+            }
+        }
+    }
+    ids.iter().any(|&id| declares(id))
+}
+
+/// The row still carries its package.json range, so its locked version is the lockfile-loaded instance that range accepts (`package_index` lists highest first); dist-tag rows follow the tag.
 fn locked_version_in_lockfile<'a>(
     this: &'a PackageManager,
     name_hash: PackageNameHash,

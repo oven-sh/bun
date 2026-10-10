@@ -434,6 +434,9 @@ pub struct PackageManager {
     // `bun update -r`/`--filter`: workspaces whose deps update. None = cwd only.
     pub update_target_workspaces: Option<Box<[UpdateTargetWorkspace]>>,
 
+    // `update_target_workspaces` as package ids of the lockfile being resolved; filled on first use.
+    pub(crate) update_target_ids: Vec<PackageID>,
+
     // `bun update <name>`: packages reachable from the workspaces in scope, see update_scope::plan_named.
     pub(crate) named_update_reachable: Option<bun_collections::DynamicBitSet>,
 
@@ -815,6 +818,7 @@ pub static ROOT_PACKAGE_JSON_PATH: bun_core::RacyCell<&ZStr> = bun_core::RacyCel
 impl PackageManager {
     pub(crate) fn clear_cached_items_depending_on_lockfile_buffer(&mut self) {
         self.root_package_id.id = None;
+        self.update_target_ids.clear();
     }
 
     /// Reshaped for borrowck — `Lockfile::load_from_cwd` takes the manager as
@@ -2132,6 +2136,7 @@ pub fn init(
         wr!(updating_packages, StringArrayHashMap::default());
         wr!(updating_catalogs, Vec::new());
         wr!(update_target_workspaces, None);
+        wr!(update_target_ids, Vec::new());
         wr!(named_update_reachable, None);
         wr!(kept_patched, Vec::new());
         wr!(kept_patched_text, Vec::new());
@@ -2599,6 +2604,7 @@ fn init_with_runtime_once(
         wr!(updating_packages, StringArrayHashMap::default());
         wr!(updating_catalogs, Vec::new());
         wr!(update_target_workspaces, None);
+        wr!(update_target_ids, Vec::new());
         wr!(named_update_reachable, None);
         wr!(kept_patched, Vec::new());
         wr!(kept_patched_text, Vec::new());

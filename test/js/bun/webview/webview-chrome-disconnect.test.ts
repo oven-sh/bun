@@ -244,8 +244,7 @@ const chromeInstalled =
         bunExe(),
         "-e",
         `
-        // --no-sandbox: Chrome refuses to start as root otherwise (containers).
-        const view = new Bun.WebView({ backend: { type: "chrome", url: false, argv: ["--no-sandbox"] }, width: 100, height: 100 });
+        const view = new Bun.WebView({ backend: { type: "chrome", url: false }, width: 100, height: 100 });
         await view.navigate("data:text/html,<body></body>");
 
         // The document commits, but its <img> request is never answered, so

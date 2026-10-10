@@ -1868,6 +1868,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             *e = p.maybe_transpose_if_import(e_.expr, &state);
             return;
         }
+        p.has_runtime_specifier = true;
         p.should_fold_typescript_constant_expressions =
             prev_should_fold_typescript_constant_expressions;
     }

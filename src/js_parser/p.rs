@@ -268,6 +268,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool
     pub(crate) has_top_level_return: bool,
     pub(crate) latest_return_had_semicolon: bool,
     pub(crate) has_import_meta: bool,
+    pub(crate) has_runtime_specifier: bool,
     pub(crate) has_es_module_syntax: bool,
     /// Tolerant mode: a list rejected `await` as an identifier in the top-level statement being
     /// parsed.
@@ -997,6 +998,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         loc: bun_ast::Loc,
         kind: &'static str,
     ) -> Result<(), crate::Error> {
+        self.has_runtime_specifier = true;
         if !self.options.bundle
             || matches!(
                 self.options.allow_unresolved,
@@ -9618,6 +9620,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             commonjs_named_exports: core::mem::take(&mut self.commonjs_named_exports),
             has_commonjs_export_names: self.has_commonjs_export_names,
             has_import_meta: self.has_import_meta,
+            has_runtime_specifier: self.has_runtime_specifier,
 
             hashbang: hashbang.into(),
             export_default_alias_of_import: self.export_default_alias_of_import,
@@ -9947,6 +9950,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             has_top_level_return: false,
             latest_return_had_semicolon: false,
             has_import_meta: false,
+            has_runtime_specifier: false,
             has_es_module_syntax: false,
             await_was_refused: false,
             reparses_rest_of_file: false,

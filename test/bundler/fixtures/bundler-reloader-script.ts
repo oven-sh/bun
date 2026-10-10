@@ -18,8 +18,6 @@ try {
 } catch (e) {}
 await Bun.write(input, "import value from './mutate.js';\n" + `export default value;` + "\n");
 
-await Bun.sleep(1000);
-
 try {
   await Bun.build({
     entrypoints: [input],
@@ -28,8 +26,6 @@ try {
   process.exit(1);
 } catch {}
 await Bun.write(mutate, "export default 1;\n");
-
-await Bun.sleep(1000);
 
 const maxfd = openSync(process.execPath, 0);
 closeSync(maxfd);

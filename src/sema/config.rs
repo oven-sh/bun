@@ -320,7 +320,7 @@ pub fn find_config(host: &dyn Host, dir: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// One configuration file with its extended configuration files merged in.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct Raw {
     /// `options`. Paths are absolute, or start with `${configDir}`. No value is `null`.
     compiler: Vec<(Vec<u8>, Json)>,
@@ -335,7 +335,7 @@ struct Raw {
 }
 
 /// `files`, `include`, `exclude` or `references`.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct List {
     /// `rawConfig.Has`: the property is there, whatever its value.
     is_specified: bool,
@@ -622,8 +622,23 @@ fn parse_config(
     stack.push(resolved_path);
     let mut inherited = Raw::default();
     for extended_path in &extended_config_path {
-        let Some(extended) = parse_config(host, session, extended_path, stack, errors) else {
-            continue;
+        let kept = host.extended_config(extended_path);
+        let reported = errors.len();
+        let extended = match kept.as_ref().and_then(|it| it.downcast_ref::<Raw>()) {
+            Some(kept) => kept.clone(),
+            None => {
+                let parsed = parse_config(host, session, extended_path, stack, errors);
+                let Some(extended) = parsed else {
+                    continue;
+                };
+                // What is wrong with it is said to each that extends it.
+                if errors.len() == reported {
+                    host.keep_extended_config(extended_path, &|| {
+                        std::sync::Arc::new(extended.clone())
+                    });
+                }
+                extended
+            }
         };
         // A property the extending file does not specify itself takes the value from the last of
         // the extended files, relative to that file's directory.

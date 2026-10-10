@@ -17,7 +17,7 @@ use bun_sema::hir;
 use bun_sema::json::Json;
 use bun_sema::portable::SharedFile;
 use bun_sema::resolve::{
-    Host, ModuleDetection, ParseOptions, Phase, ScriptKind, Spent, ancestors, inside,
+    Host, Kept, ModuleDetection, ParseOptions, Phase, ScriptKind, Spent, ancestors, inside,
     is_declaration_file_name, is_same_path, join, root_length, to_file_name_lower_case, to_path,
     typescript_path,
 };
@@ -1229,16 +1229,19 @@ impl Disk {
 /// The disk, for a few questions in many directories: each is a call of the system, and no directory is listed for it
 /// or kept. A `Disk` lists the directory of whatever it is asked about, which pays where most of it is asked for.
 #[derive(Copy, Clone)]
-pub(crate) struct Asking {
+pub(crate) struct Asking<'k> {
+    /// `Host::extended_config`
+    pub(crate) extended: Option<&'k bun_threading::Guarded<FxHashMap<Vec<u8>, Kept>>>,
     pub(crate) is_case_sensitive: bool,
     /// Or else every directory is empty: the `include` of a configuration file finds nothing.
     pub(crate) lists: bool,
 }
 
-impl Asking {
+impl Asking<'_> {
     /// `project`: a path in the project, in the checker's path format.
-    pub(crate) fn new(project: &[u8]) -> Asking {
+    pub(crate) fn new(project: &[u8]) -> Asking<'static> {
         Asking {
+            extended: None,
             is_case_sensitive: is_file_system_case_sensitive(project),
             lists: false,
         }
@@ -1249,9 +1252,17 @@ impl Asking {
     }
 }
 
-impl Host for Asking {
+impl Host for Asking<'_> {
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
         read_at(path, false)
+    }
+    fn extended_config(&self, path: &[u8]) -> Option<Kept> {
+        self.extended?.lock().get(path).cloned()
+    }
+    fn keep_extended_config(&self, path: &[u8], parsed: &dyn Fn() -> Kept) {
+        if let Some(extended) = self.extended {
+            extended.lock().insert(path.to_vec(), parsed());
+        }
     }
     fn is_file(&self, path: &[u8]) -> bool {
         Self::is_directory(path) == Some(false)

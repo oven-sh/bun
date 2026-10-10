@@ -840,8 +840,11 @@ fn defaults_of_the_installed_typescript(
 
 /// `resolve::INSTALLED_MAJOR`
 fn installed_major(host: &dyn Host, config: &[u8]) -> Option<(Vec<u8>, Json)> {
-    let package = installed_typescript(host, config)?;
-    let text = host.read(&inside(&package, b"package.json"))?;
+    major_of_typescript_at(host, &installed_typescript(host, config)?)
+}
+
+fn major_of_typescript_at(host: &dyn Host, package: &[u8]) -> Option<(Vec<u8>, Json)> {
+    let text = host.read(&inside(package, b"package.json"))?;
     let fields = host.parse_package_json(Session::new().arena(), &text)?;
     let version = fields.get(b"version")?.as_str()?;
     let major = &version[..strings::index_of_char_usize(version, b'.')?];

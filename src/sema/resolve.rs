@@ -67,6 +67,9 @@ impl Drop for Spent<'_> {
 }
 
 /// The file system, and the parser. The bundler has its own of both.
+/// What only who has made it can read.
+pub type Kept = std::sync::Arc<dyn std::any::Any + Send + Sync>;
+
 pub trait Host: Sync {
     /// One thread has spent `time` on `phase`. Only a host whose `times` is queried accumulates it.
     fn spent(&self, _phase: Phase, _time: Duration) {}
@@ -151,6 +154,13 @@ pub trait Host: Sync {
     /// comes the `Value` of a `map[string]string` that is not `Valid` and no object.
     /// What the parser leaves in `arena`, which belongs to the calling thread, is garbage.
     fn parse_package_json(&self, arena: &crate::session::Arena, text: &[u8]) -> Option<Json>;
+    /// `ExtendedConfigCache`, of a host through which many configuration files are read: what `keep_extended_config`
+    /// was given for the file at `path`.
+    fn extended_config(&self, _path: &[u8]) -> Option<Kept> {
+        None
+    }
+    /// `parsed` is called if the host keeps it.
+    fn keep_extended_config(&self, _path: &[u8], _parsed: &dyn Fn() -> Kept) {}
     /// Calls `work` with every index below `count`, on any number of threads.
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync));
     /// A program is loaded, and `parse` is not called again before it is checked: what the threads

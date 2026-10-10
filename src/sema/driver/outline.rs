@@ -6,12 +6,15 @@
 //! directory by directory, or of who has listed the directories; what a project includes by its patterns.
 
 use crate::host::{Asking, from_native};
-use crate::{installed_major, lacks_its_packages};
+use crate::{installed_typescript, lacks_its_packages, major_of_typescript_at};
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::config::{self, Asked, Roots};
+use bun_sema::json::Json;
 use bun_sema::program::libs_referenced_by;
-use bun_sema::resolve::{Host, Options, ancestors, contains_path, inside, is_same_path, join};
+use bun_sema::resolve::{
+    Host, Kept, Options, ancestors, contains_path, inside, is_same_path, join,
+};
 use bun_sema::session::Session;
 use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_threading::Guarded;
@@ -45,7 +48,11 @@ type Place = Arc<OnceLock<Option<Arc<Project>>>>;
 
 /// The outlines of the projects of a run. Each is made when a file of it is first asked about.
 pub struct Outlines {
-    host: Asking,
+    host: Asking<'static>,
+    /// `Host::extended_config`
+    extended: Guarded<FxHashMap<Vec<u8>, Kept>>,
+    /// By the directory of an installed TypeScript: `major_of_typescript_at`.
+    majors: Guarded<FxHashMap<Vec<u8>, Option<(Vec<u8>, Json)>>>,
     cwd: Vec<u8>,
     /// Every directory below one of these in which a file is asked about has been listed, and the directories between.
     listed_below: Vec<Vec<u8>>,
@@ -76,6 +83,8 @@ impl Outlines {
         };
         Outlines {
             host,
+            extended: Default::default(),
+            majors: Default::default(),
             cwd,
             listed_below: listed_below.iter().map(|it| from_native(it)).collect(),
             listed: listed.iter().map(as_it_is_asked_for).collect(),
@@ -137,8 +146,12 @@ impl Outlines {
         libs_referenced_by(&self.host, &inside(path, b"index.d.ts"))
     }
 
-    fn asking(&self, lists: bool) -> Asking {
-        Asking { lists, ..self.host }
+    fn asking(&self, lists: bool) -> Asking<'_> {
+        Asking {
+            lists,
+            extended: Some(&self.extended),
+            ..self.host
+        }
     }
 
     /// `config::find_config`
@@ -213,7 +226,15 @@ impl Outlines {
 
     fn read(&self, config: &[u8]) -> Option<Project> {
         let host = self.asking(false);
-        let over = |_: bool| -> Vec<_> { installed_major(&host, config).into_iter().collect() };
+        let major = installed_typescript(&host, config).and_then(|package| {
+            if let Some(known) = self.majors.lock().get(&package) {
+                return known.clone();
+            }
+            let major = major_of_typescript_at(&host, &package);
+            self.majors.lock().insert(package, major.clone());
+            major
+        });
+        let over = |_: bool| -> Vec<_> { major.clone().into_iter().collect() };
         let project = config::load_overriding(&host, &Session::new(), config, &over).ok()?;
         Some(Project {
             roots: project.roots(&host),

@@ -4871,6 +4871,20 @@ macro_rules! syslog {
     };
 }
 
+/// The user that owns what this process creates. The effective uid, not the
+/// real one: `open(2)` and `mkdir(2)` give a new entry to the euid. On
+/// Windows, a hash of the user name.
+pub fn owner_uid() -> u32 {
+    #[cfg(unix)]
+    {
+        c::geteuid()
+    }
+    #[cfg(windows)]
+    {
+        windows::user_unique_id()
+    }
+}
+
 // ── `bun.c` — raw libc surface (no `Maybe` wrapping). ──
 pub mod c {
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
@@ -4879,13 +4893,14 @@ pub mod c {
     use core::ffi::{c_char, c_void};
     #[cfg(unix)]
     pub use libc::fchmod;
-    // `getuid`/`getgid` take no args and read kernel
+    // `getuid`/`geteuid`/`getgid` take no args and read kernel
     // process state — no preconditions, never fail. Declared locally as
     // `safe fn` (instead of re-exporting the `libc` crate's raw decls) so
     // callers need no per-site proof.
     #[cfg(unix)]
     unsafe extern "C" {
         pub safe fn getuid() -> libc::uid_t;
+        pub safe fn geteuid() -> libc::uid_t;
         pub safe fn getgid() -> libc::gid_t;
     }
     #[cfg(unix)]

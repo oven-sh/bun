@@ -4553,7 +4553,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
     // `.bun-{uid}-{wyhash(contents)}.{ext}`: the hash dedupes; the uid keeps
     // users on a shared `/tmp` from colliding.
     let content_hash = bun_wyhash::hash(file_contents);
-    let uid = extract_owner_uid();
+    let uid = bun_sys::owner_uid();
     let mut canonical_name_buf = [0u8; 64];
     let canonical_name = bun_core::fmt::buf_print_z(
         &mut canonical_name_buf,
@@ -4623,19 +4623,6 @@ fn write_absolute(out_buf: &mut [u8], tmpdir: &[u8], name: &[u8]) -> Option<usiz
         &[name],
     );
     Some(result.len())
-}
-
-/// euid, not uid: `open(2)` sets the new file's owner to euid, so a
-/// `getuid()` check would never match in a setuid binary.
-#[cfg(unix)]
-fn extract_owner_uid() -> u32 {
-    // SAFETY: `geteuid` takes no arguments and cannot fail.
-    unsafe { libc::geteuid() as u32 }
-}
-
-#[cfg(windows)]
-fn extract_owner_uid() -> u32 {
-    bun_sys::windows::user_unique_id()
 }
 
 /// Support embedded .node files. `Dead` when `path` is not an embedded file.

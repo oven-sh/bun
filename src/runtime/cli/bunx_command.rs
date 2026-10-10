@@ -903,7 +903,7 @@ impl BunxCommand {
                 break 'brk path.clone();
             }
 
-            // Remove the cwd passed through BUN_WHICH_IGNORE_CWD from path. This prevents temp node-gyp script from finding and running itself
+            // Remove the cwd passed through BUN_WHICH_IGNORE_CWD from path. This prevents the node-gyp shim from finding and running itself
             let mut new_path: Vec<u8> = Vec::with_capacity(path.len());
             let mut path_iter = strings::tokenize(&path, &[DELIMITER]);
             if let Some(segment) = path_iter.next() {

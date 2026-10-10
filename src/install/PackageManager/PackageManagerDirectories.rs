@@ -132,11 +132,10 @@ pub struct TemporaryDirectory {
     pub(crate) handle: Dir,
     #[cfg(windows)]
     pub(crate) path: ZBox,
-    pub(crate) name: &'static [u8],
 }
 
-// `TemporaryDirectory` is auto-`Send + Sync`: `Dir` wraps `Fd` (an integer),
-// `ZBox` wraps `Box<[u8]>`, and `&'static [u8]` is `Sync`. No `unsafe impl`.
+// `TemporaryDirectory` is auto-`Send + Sync`: `Dir` wraps `Fd` (an integer)
+// and `ZBox` wraps `Box<[u8]>`. No `unsafe impl`.
 const _: fn() = || {
     fn assert<T: Send + Sync>() {}
     assert::<TemporaryDirectory>();
@@ -309,7 +308,6 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
 
     TemporaryDirectory {
         handle: tempdir,
-        name: temp_dir_name,
         #[cfg(windows)]
         path: ZBox::from_bytes(temp_dir_path.as_bytes()),
     }

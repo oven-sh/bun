@@ -2,7 +2,6 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::collections::VecDeque;
-use std::io::Write as _;
 
 use crate::Error;
 use crate::bun_fs as fs;
@@ -382,8 +381,6 @@ pub struct PackageManager {
     pub(crate) total_scripts: usize,
 
     pub(crate) root_lifecycle_scripts: Option<Package::scripts::List>,
-
-    pub(crate) node_gyp_tempdir_name: Box<[u8]>,
 
     pub lockfile: Box<Lockfile>, // OWNED
 
@@ -1000,16 +997,13 @@ impl PackageManager {
         };
     }
 
-    pub(crate) fn ensure_temp_node_gyp_script(&mut self) -> Result<(), Error> {
-        // The body is
-        // already idempotent (early-returns when `node_gyp_tempdir_name` is
-        // non-empty), so a simple `AtomicBool` ran-flag suffices.
+    pub(crate) fn ensure_node_gyp_shim(&mut self) -> Result<(), Error> {
         // NB: not `bun_core::run_once!` — body is fallible and the contract is
         // "2nd call = Ok(()) regardless of 1st outcome" (D006).
-        if ENSURE_TEMP_NODE_GYP_SCRIPT_ONCE.swap(true, Ordering::AcqRel) {
+        if ENSURE_NODE_GYP_SHIM_ONCE.swap(true, Ordering::AcqRel) {
             return Ok(());
         }
-        ensure_temp_node_gyp_script_run(self)
+        ensure_node_gyp_shim_run(self)
     }
 
     // Helper: deref env (set-once BackRef to process-singleton loader)
@@ -1140,67 +1134,21 @@ fn configure_env_for_scripts_run(
     Ok(this_transpiler)
 }
 
-static ENSURE_TEMP_NODE_GYP_SCRIPT_ONCE: AtomicBool = AtomicBool::new(false);
+static ENSURE_NODE_GYP_SHIM_ONCE: AtomicBool = AtomicBool::new(false);
 
-fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), Error> {
-    if !manager.node_gyp_tempdir_name.is_empty() {
-        return Ok(());
-    }
-
-    let tempdir = get_temporary_directory(manager);
-    let mut path_buf = bun_paths::path_buffer_pool::get();
-    let node_gyp_tempdir_name =
-        fs::FileSystem::tmpname(b"node-gyp", &mut path_buf.0, bun_core::fast_random())?;
-
-    // used later for adding to path for scripts
-    manager.node_gyp_tempdir_name = Box::<[u8]>::from(node_gyp_tempdir_name.as_ref());
-
-    let node_gyp_tempdir = match tempdir
-        .handle
-        .make_open_path(&manager.node_gyp_tempdir_name, Default::default())
-    {
-        Ok(d) => d,
-        Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
-            // it should not exist
-            bun_core::pretty_errorln!("<r><red>error<r>: node-gyp tempdir already exists");
-            Global::crash();
-        }
-        Err(e) => {
-            bun_core::pretty_errorln!(
-                "<r><red>error<r>: <b><red>{}<r> creating node-gyp tempdir",
-                bstr::BStr::new(e.name()),
-            );
-            Global::crash();
-        }
-    };
-
+/// Puts a `node-gyp` shim on the PATH of lifecycle scripts. The shim lives in
+/// one directory of the install cache per user and shim text. Once an install
+/// has written it there, later installs create nothing.
+fn ensure_node_gyp_shim_run(manager: &mut PackageManager) -> Result<(), Error> {
     #[cfg(windows)]
-    const FILE_NAME: &str = "node-gyp.cmd";
+    const FILE_NAME: &ZStr = bun_core::zstr!("node-gyp.cmd");
     #[cfg(not(windows))]
-    const FILE_NAME: &str = "node-gyp";
+    const FILE_NAME: &ZStr = bun_core::zstr!("node-gyp");
 
     #[cfg(windows)]
     const MODE: u32 = 0; // windows does not have an executable bit
     #[cfg(not(windows))]
     const MODE: u32 = 0o755;
-
-    // `bun_sys::Dir` has no `create_file`; route through `File::openat` with
-    // create-file flags (`O_WRONLY|O_CREAT|O_TRUNC`).
-    let node_gyp_file = match bun_sys::File::openat(
-        node_gyp_tempdir.fd,
-        FILE_NAME.as_bytes(),
-        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC,
-        MODE,
-    ) {
-        Ok(f) => f,
-        Err(e) => {
-            bun_core::pretty_errorln!(
-                "<r><red>error<r>: <b><red>{}<r> creating node-gyp tempdir",
-                bstr::BStr::new(e.name()),
-            );
-            Global::crash();
-        }
-    };
 
     #[cfg(windows)]
     const CONTENT: &str = "if not defined npm_config_node_gyp (\n  bun x --silent node-gyp %*\n) else (\n  node \"%npm_config_node_gyp%\" %*\n)\n";
@@ -1222,51 +1170,149 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         "  \"$npm_config_node_gyp\" $@\n",
         "fi\n"
     );
+    const CONTENT_HASH: u64 = bun_wyhash::hash_const(0, CONTENT.as_bytes());
 
-    if let Err(e) = node_gyp_file.write_all(CONTENT.as_bytes()) {
+    let cache_dir = get_cache_directory(manager);
+    let cache_path = strings::without_trailing_slash(manager.cache_directory_path.as_bytes());
+    let path_in_cache = |name: &ZStr| {
+        let mut path = Vec::with_capacity(cache_path.len() + 1 + name.len() + 1);
+        path.extend_from_slice(cache_path);
+        path.push(SEP);
+        path.extend_from_slice(name.as_bytes());
+        ZBox::from_vec(path)
+    };
+    let mkdir_in_cache = |name: &ZStr| bun_sys::mkdirat(cache_dir, name, 0o755);
+    let crash_on_mkdir = |e: bun_sys::Error, name: &ZStr| -> ! {
         bun_core::pretty_errorln!(
-            "<r><red>error<r>: <b><red>{}<r> writing to {} file",
+            "<r><red>error<r>: <b><red>{}<r> creating node-gyp directory {}",
             bstr::BStr::new(e.name()),
-            FILE_NAME,
+            bun_core::fmt::quote(path_in_cache(name).as_bytes()),
         );
         Global::crash();
+    };
+
+    // Named by user and shim text: users that share a cache do not share the
+    // directory, and a bun with another shim text gets its own.
+    let uid = bun_sys::owner_uid();
+    let mut shared_name_buf = [0u8; 48];
+    let shared_name = bun_core::fmt::buf_print_z_infallible(
+        &mut shared_name_buf,
+        format_args!(".node-gyp-{uid}-{CONTENT_HASH:x}"),
+    );
+    let shared_dir = path_in_cache(shared_name);
+
+    // Not `lstatat`: on Windows it reports a junction as a directory.
+    let mut shared_stat = bun_sys::lstat(shared_dir.as_zstr());
+    if matches!(&shared_stat, Err(e) if e.get_errno() == bun_sys::E::ENOENT) {
+        match mkdir_in_cache(shared_name) {
+            Ok(()) => {}
+            // An install that runs at the same time made it first.
+            Err(e) if e.get_errno() == bun_sys::E::EEXIST => {}
+            Err(e) => crash_on_mkdir(e, shared_name),
+        }
+        shared_stat = bun_sys::lstat(shared_dir.as_zstr());
+    }
+    // Another user must not be able to put a `node-gyp` on this PATH.
+    let shared_is_private = matches!(&shared_stat, Ok(st) if {
+        #[cfg(unix)]
+        let private = st.st_uid == uid && (st.st_mode as u32 & 0o022) == 0;
+        // Windows reports no owner or mode here.
+        #[cfg(windows)]
+        let private = true;
+        private && bun_sys::S::ISDIR(st.st_mode as u32)
+    });
+
+    let fresh_name;
+    let mut fresh_name_buf = [0u8; 48];
+    let (dir_name, dir) = if shared_is_private {
+        (shared_name, shared_dir)
+    } else {
+        // Fall back to a new directory under a name that nobody can guess.
+        if PackageManager::verbose_install() {
+            bun_core::pretty_errorln!(
+                "<r><yellow>warn<r>: {} is not a directory that only the current user can write to, using a new directory for node-gyp",
+                bun_core::fmt::quote(shared_dir.as_bytes()),
+            );
+        }
+        let mut collisions = 0;
+        fresh_name = loop {
+            let name =
+                fs::FileSystem::tmpname(b"node-gyp", &mut fresh_name_buf, bun_core::fast_random())?;
+            match mkdir_in_cache(name) {
+                Ok(()) => break ZBox::from_bytes(name.as_bytes()),
+                Err(e) if e.get_errno() == bun_sys::E::EEXIST && collisions < 8 => collisions += 1,
+                Err(e) => crash_on_mkdir(e, name),
+            }
+        };
+        (fresh_name.as_zstr(), path_in_cache(fresh_name.as_zstr()))
+    };
+
+    let shim_is_complete = shared_is_private && {
+        let mut shim_path_buf = [0u8; 64];
+        let shim_path = bun_core::fmt::buf_print_z_infallible(
+            &mut shim_path_buf,
+            format_args!(
+                "{}{}{}",
+                bstr::BStr::new(dir_name.as_bytes()),
+                SEP_STR,
+                bstr::BStr::new(FILE_NAME.as_bytes()),
+            ),
+        );
+        matches!(bun_sys::lstatat(cache_dir, shim_path), Ok(st) if {
+            #[cfg(unix)]
+            let executable = (st.st_mode as u32 & 0o100) != 0;
+            #[cfg(windows)]
+            let executable = true;
+            executable
+                && bun_sys::S::ISREG(st.st_mode as u32)
+                && st.st_size as usize == CONTENT.len()
+        })
+    };
+    if !shim_is_complete {
+        let mut scratch_buf = [0u8; 48];
+        let scratch_name: &ZStr =
+            fs::FileSystem::tmpname(b"node-gyp", &mut scratch_buf, bun_core::fast_random())?;
+        // Renamed into place from a scratch name, so a script that runs at the
+        // same time never reads a partial shim.
+        let published = bun_sys::Dir::borrow(&cache_dir)
+            .open_at_with(
+                dir_name.as_bytes(),
+                bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOFOLLOW,
+            )
+            .and_then(|dir| {
+                let mut scratch = bun_sys::Tmpfile::create_with_mode(dir.fd(), scratch_name, MODE)?;
+                let _close = bun_sys::CloseOnDrop::new(scratch.fd);
+                bun_sys::File::borrow(&scratch.fd)
+                    .write_all(CONTENT.as_bytes())
+                    .and_then(|()| scratch.finish(FILE_NAME))
+                    .inspect_err(|_| {
+                        let _ = bun_sys::unlinkat(dir.fd(), scratch_name);
+                    })
+            });
+        if let Err(e) = published {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: <b><red>{}<r> writing node-gyp to {}",
+                bstr::BStr::new(e.name()),
+                bun_core::fmt::quote(dir.as_bytes()),
+            );
+            Global::crash();
+        }
     }
 
-    // Add our node-gyp tempdir to the path
     let existing_path = manager.env().get(b"PATH").unwrap_or(b"");
-    let mut path_var: Vec<u8> = Vec::with_capacity(
-        existing_path.len() + 1 + tempdir.name.len() + 1 + manager.node_gyp_tempdir_name.len(),
-    );
+    let mut path_var: Vec<u8> = Vec::with_capacity(existing_path.len() + 1 + dir.len());
     path_var.extend_from_slice(existing_path);
     if !existing_path.is_empty() && existing_path[existing_path.len() - 1] != DELIMITER {
         path_var.push(DELIMITER);
     }
-    path_var.extend_from_slice(strings::without_trailing_slash(tempdir.name));
-    path_var.push(SEP);
-    path_var.extend_from_slice(&manager.node_gyp_tempdir_name);
+    path_var.extend_from_slice(dir.as_bytes());
     manager.env_mut().map.put(b"PATH", &path_var)?;
 
-    let path_buf_len = path_buf.len();
-    let mut cursor = &mut path_buf[..];
-    write!(
-        cursor,
-        "{}{}{}{}{}",
-        bstr::BStr::new(strings::without_trailing_slash(tempdir.name)),
-        SEP_STR,
-        bstr::BStr::new(strings::without_trailing_slash(
-            &manager.node_gyp_tempdir_name
-        )),
-        SEP_STR,
-        FILE_NAME
-    )?;
-    let written = path_buf_len - cursor.len();
-    let npm_config_node_gyp = &path_buf[..written];
-
-    let node_gyp_abs_dir = bun_core::dirname(npm_config_node_gyp).unwrap();
+    // `bun x` drops this PATH entry so the shim cannot find itself.
     manager
         .env_mut()
         .map
-        .put_alloc_key_and_value(b"BUN_WHICH_IGNORE_CWD", node_gyp_abs_dir)?;
+        .put_alloc_key_and_value(b"BUN_WHICH_IGNORE_CWD", dir.as_bytes())?;
 
     Ok(())
 }
@@ -2115,7 +2161,6 @@ pub fn init(
         wr!(finished_installing, AtomicBool::new(false));
         wr!(total_scripts, 0);
         wr!(root_lifecycle_scripts, None);
-        wr!(node_gyp_tempdir_name, Box::default());
         wr!(preinstall_state, Vec::new());
         wr!(postinstall_optimizer, Default::default());
         wr!(global_link_dir, None);
@@ -2577,7 +2622,6 @@ fn init_with_runtime_once(
         wr!(finished_installing, AtomicBool::new(false));
         wr!(total_scripts, 0);
         wr!(root_lifecycle_scripts, None);
-        wr!(node_gyp_tempdir_name, Box::default());
         wr!(preinstall_state, Vec::new());
         wr!(postinstall_optimizer, Default::default());
         wr!(global_link_dir, None);

@@ -1,8 +1,22 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import {
+  chmodSync,
+  chownSync,
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "fs";
 import { exists, mkdir, rm, writeFile } from "fs/promises";
 import {
-  VerdaccioRegistry,
   assertManifestsPopulated,
   bunEnv as baseEnv,
   bunExe,
@@ -10,9 +24,10 @@ import {
   isWindows,
   readdirSorted,
   runBunInstall,
+  VerdaccioRegistry,
 } from "harness";
-import { constants as osConstants } from "os";
-import { join, sep } from "path";
+import { constants as osConstants, tmpdir } from "os";
+import { basename, delimiter, join, sep } from "path";
 
 var verdaccio = new VerdaccioRegistry();
 
@@ -260,44 +275,639 @@ test.concurrent(
   },
 );
 
-test.concurrent("node-gyp shim directory added to lifecycle script PATH gets a randomized name", async () => {
-  using ctx = await setupTest();
-  const { packageDir, packageJson, env } = ctx;
+// bun puts a `node-gyp` script on the PATH of lifecycle scripts. It keeps the
+// script in a directory of the install cache that every install of the same
+// user shares: `.node-gyp-<uid>-<hash of the script>`. On Windows the uid is a
+// hash of the user name.
+const nodeGypShimFile = isWindows ? "node-gyp.cmd" : "node-gyp";
+const nodeGypShim = isWindows
+  ? 'if not defined npm_config_node_gyp (\n  bun x --silent node-gyp %*\n) else (\n  node "%npm_config_node_gyp%" %*\n)\n'
+  : '#!/bin/sh\nif [ "x$npm_config_node_gyp" = "x" ]; then\n  bun x --silent node-gyp $@\nelse\n  "$npm_config_node_gyp" $@\nfi\n';
+const sharedNodeGypDirName = new RegExp(
+  `^\\.node-gyp-${isWindows ? "\\d+" : process.geteuid!()}-${Bun.hash.wyhash(nodeGypShim).toString(16)}$`,
+);
+// When bun cannot trust the shared directory, it makes one under a random name.
+const freshNodeGypDirName = /^\.([0-9a-f]{1,16})-[0-9A-F]{1,8}\.node-gyp$/;
 
-  await writeFile(
-    packageJson,
-    JSON.stringify({
-      name: "foo",
-      version: "1.0.0",
-      dependencies: {
-        "no-deps": "1.0.0",
-      },
-      scripts: {
-        postinstall: `${bunExe()} -e 'await Bun.write("path.txt", String(process.env.PATH))'`,
-      },
-    }),
-  );
+async function nodeGypDirs(cacheDir: string): Promise<{ shared: string[]; fresh: string[] }> {
+  const entries = await readdirSorted(cacheDir);
+  return {
+    shared: entries.filter(name => name.startsWith(".node-gyp-")),
+    fresh: entries.filter(name => freshNodeGypDirName.test(name)),
+  };
+}
 
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
+// On Windows, bun puts its `node` executable in the temp directory when PATH
+// has none.
+async function tmpEntries(tmpDir: string): Promise<string[]> {
+  const entries = await readdirSorted(tmpDir);
+  return isWindows ? entries.filter(name => !name.startsWith("bun-node")) : entries;
+}
+
+// A lifecycle script that appends one line to env.jsonl in its cwd: its PATH,
+// and BUN_WHICH_IGNORE_CWD, the PATH entry that `bun x` skips so that the shim
+// does not find itself.
+const recordScriptEnv = `${bunExe().replace(/\\/g, "\\\\")} -e 'require("fs").appendFileSync("env.jsonl", JSON.stringify({ path: process.env.PATH, ignore: process.env.BUN_WHICH_IGNORE_CWD }) + "\\n")'`;
+
+async function readScriptEnv(dir: string): Promise<{ shimDirs: string[]; ignore: string | undefined }[]> {
+  const lines = (await file(join(dir, "env.jsonl")).text()).trim().split("\n");
+  return lines.map(line => {
+    const { path, ignore } = JSON.parse(line) as { path: string; ignore?: string };
+    return { shimDirs: path.split(delimiter).filter(entry => basename(entry).includes("node-gyp")), ignore };
+  });
+}
+
+async function install(cwd: string, env: Record<string, string | undefined>, ...args: string[]) {
+  await using proc = spawn({
+    cmd: [bunExe(), "install", ...args],
+    cwd,
     stdout: "pipe",
-    stdin: "ignore",
     stderr: "pipe",
+    stdin: "ignore",
     env,
   });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { out, err, exitCode };
+}
 
-  const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
-  expect(err).not.toContain("error:");
-  expect(exitCode).toBe(0);
+// https://github.com/oven-sh/bun/issues/38079 needs the temp directory and the
+// install cache on two filesystems. /dev/shm is another mount on Linux.
+const canPutTmpdirOnAnotherFilesystem =
+  isLinux &&
+  (() => {
+    try {
+      const probe = mkdtempSync("/dev/shm/bun-exdev-probe-");
+      rmSync(probe, { recursive: true, force: true });
+      return statSync("/dev/shm").dev !== statSync(tmpdir()).dev;
+    } catch {
+      return false;
+    }
+  })();
 
-  const pathVar = await file(join(packageDir, "path.txt")).text();
-  const match = pathVar.match(/\.([0-9a-f]{1,16})-[0-9A-F]{1,16}\.node-gyp/);
-  expect(match).not.toBeNull();
-  const derived = BigInt("0x" + match![1]) ^ 12345n;
-  const nowNs = BigInt(Date.now()) * 1_000_000n;
-  const distance = derived > nowNs ? derived - nowNs : nowNs - derived;
-  expect(distance > 21_600_000_000_000n).toBe(true);
+describe.concurrent("node-gyp shim", () => {
+  test("every install reuses one directory in the install cache and leaves nothing in the temp directory", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    const cacheDir = join(packageDir, ".bun-cache");
+    const tmpDir = join(packageDir, ".bun-tmp");
+    await Promise.all([
+      mkdir(tmpDir),
+      writeFile(
+        packageJson,
+        JSON.stringify({ name: "foo", version: "1.0.0", scripts: { postinstall: recordScriptEnv } }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(await tmpEntries(tmpDir)).toEqual([]);
+    const dirs = await nodeGypDirs(cacheDir);
+    expect(dirs).toEqual({ shared: [expect.stringMatching(sharedNodeGypDirName)], fresh: [] });
+    const shimDir = join(cacheDir, dirs.shared[0]);
+    const shim = join(shimDir, nodeGypShimFile);
+    expect(await readdirSorted(shimDir)).toEqual([nodeGypShimFile]);
+    expect(await file(shim).text()).toBe(nodeGypShim);
+
+    // A later install must not write the shim again. A write in place moves
+    // the mtime. A replacement by rename gives the path an inode other than
+    // the one the hard link keeps.
+    const longAgo = new Date("2001-02-03T04:05:06Z");
+    utimesSync(shim, longAgo, longAgo);
+    linkSync(shim, join(packageDir, "shim-hard-link"));
+    const { ino } = statSync(shim);
+
+    for (let run = 0; run < 2; run++) {
+      await runBunInstall(env, packageDir, { savesLockfile: false });
+      const stat = statSync(shim);
+      expect({
+        tmpEntries: await tmpEntries(tmpDir),
+        dirs: await nodeGypDirs(cacheDir),
+        shimDirEntries: await readdirSorted(shimDir),
+        shim: await file(shim).text(),
+        mtimeMs: stat.mtimeMs,
+        ino: stat.ino,
+      }).toEqual({
+        tmpEntries: [],
+        dirs,
+        shimDirEntries: [nodeGypShimFile],
+        shim: nodeGypShim,
+        mtimeMs: longAgo.getTime(),
+        ino,
+      });
+    }
+
+    const seen = { shimDirs: [shimDir], ignore: shimDir };
+    expect(await readScriptEnv(packageDir)).toEqual([seen, seen, seen]);
+  });
+
+  // With these bits in the mode, bun would not trust its own directory.
+  test.skipIf(isWindows)("its directory has no group or other write bit under umask 0", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    const cacheDir = join(packageDir, ".bun-cache");
+    await writeFile(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", scripts: { postinstall: "exit 0" } }));
+
+    for (let run = 0; run < 2; run++) {
+      await using proc = spawn({
+        cmd: ["sh", "-c", 'umask 0 && exec "$0" install', bunExe()],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+        env,
+      });
+      const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      const dirs = await nodeGypDirs(cacheDir);
+      expect(dirs).toEqual({ shared: [expect.stringMatching(sharedNodeGypDirName)], fresh: [] });
+      const shimDir = join(cacheDir, dirs.shared[0]);
+      expect({
+        dir: statSync(shimDir).mode & 0o7777,
+        shim: statSync(join(shimDir, nodeGypShimFile)).mode & 0o7777,
+      }).toEqual({ dir: 0o755, shim: 0o755 });
+    }
+  });
+
+  const endings: [string, string, number][] = [
+    ["exits with an error", "exit 3", 3],
+    // bun install then dies from the same signal, so no exit handler runs.
+    ...(isWindows
+      ? []
+      : ([["is killed by a signal", "kill -9 $$", 128 + osConstants.signals.SIGKILL]] as [string, string, number][])),
+  ];
+  test.each(endings)(
+    "leaves nothing in the temp directory when a lifecycle script %s",
+    async (_, script, expectedExitCode) => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const cacheDir = join(packageDir, ".bun-cache");
+      const tmpDir = join(packageDir, ".bun-tmp");
+      await Promise.all([
+        mkdir(tmpDir),
+        writeFile(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", scripts: { preinstall: script } })),
+      ]);
+
+      const { exitCode } = await install(packageDir, env);
+      expect(exitCode).toBe(expectedExitCode);
+      expect(await tmpEntries(tmpDir)).toEqual([]);
+      const dirs = await nodeGypDirs(cacheDir);
+      expect(dirs).toEqual({ shared: [expect.stringMatching(sharedNodeGypDirName)], fresh: [] });
+      expect(await file(join(cacheDir, dirs.shared[0], nodeGypShimFile)).text()).toBe(nodeGypShim);
+    },
+  );
+
+  // A fix that removes the shim when bun exits would break this script. On
+  // Windows, libuv puts a child process in a job that ends with bun.
+  test.skipIf(isWindows)("a lifecycle script that outlives a failed install keeps the shim", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    const surviving = join(packageDir, "packages", "surviving");
+    const exe = bunExe().replace(/\\/g, "\\\\");
+    // The deadline only keeps a script from staying forever if the test dies.
+    const waitFor = (path: string) =>
+      `const start = Date.now(); while (!fs.existsSync("${path}") && Date.now() - start < 60000) Bun.sleepSync(10);`;
+    await Promise.all([
+      writeFile(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", workspaces: ["packages/*"] })),
+      // Runs until the test writes `stop`. Then it reads the shim on its PATH.
+      write(
+        join(surviving, "package.json"),
+        JSON.stringify({
+          name: "surviving",
+          version: "1.0.0",
+          scripts: {
+            install: `${exe} -e 'const fs = require("fs"); fs.writeFileSync("started", ""); ${waitFor("../../stop")} fs.writeFileSync("shim.tmp", fs.readFileSync(require("path").join(process.env.BUN_WHICH_IGNORE_CWD, "${nodeGypShimFile}"))); fs.renameSync("shim.tmp", "shim");'`,
+          },
+        }),
+      ),
+      // Fails while `surviving` runs.
+      write(
+        join(packageDir, "packages", "failing", "package.json"),
+        JSON.stringify({
+          name: "failing",
+          version: "1.0.0",
+          scripts: {
+            install: `${exe} -e 'const fs = require("fs"); ${waitFor("../surviving/started")} process.exit(3);'`,
+          },
+        }),
+      ),
+    ]);
+
+    try {
+      // With this flag, bun ends the scripts that are still alive when it exits.
+      const { err, exitCode } = await install(packageDir, { ...env, BUN_FEATURE_FLAG_NO_ORPHANS: undefined });
+      expect(err).toContain('install script from "failing" exited with 3');
+      expect(exitCode).toBe(3);
+      expect(await exists(join(surviving, "shim"))).toBeFalse();
+    } finally {
+      await write(join(packageDir, "stop"), "");
+    }
+
+    const deadline = Date.now() + 30_000;
+    while (!(await exists(join(surviving, "shim"))) && Date.now() < deadline) await Bun.sleep(10);
+    expect(await file(join(surviving, "shim")).text()).toBe(nodeGypShim);
+  });
+
+  for (const linker of ["hoisted", "isolated"]) {
+    test(`the script of a trusted dependency gets the shim from the install cache (${linker})`, async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const cacheDir = join(packageDir, ".bun-cache");
+      const tmpDir = join(packageDir, ".bun-tmp");
+      await Promise.all([
+        mkdir(tmpDir),
+        writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            version: "1.0.0",
+            dependencies: { "uses-what-bin": "1.0.0" },
+            trustedDependencies: ["uses-what-bin"],
+          }),
+        ),
+      ]);
+
+      const { err, exitCode } = await install(packageDir, env, `--linker=${linker}`);
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("warn:");
+      expect(exitCode).toBe(0);
+      expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
+      expect(await tmpEntries(tmpDir)).toEqual([]);
+      const dirs = await nodeGypDirs(cacheDir);
+      expect(dirs).toEqual({ shared: [expect.stringMatching(sharedNodeGypDirName)], fresh: [] });
+      expect(await file(join(cacheDir, dirs.shared[0], nodeGypShimFile)).text()).toBe(nodeGypShim);
+    });
+  }
+
+  test("bun pm trust gets the shim from the install cache", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    const cacheDir = join(packageDir, ".bun-cache");
+    const tmpDir = join(packageDir, ".bun-tmp");
+    await Promise.all([
+      mkdir(tmpDir),
+      writeFile(
+        packageJson,
+        JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { "uses-what-bin": "1.0.0" } }),
+      ),
+    ]);
+
+    // The script of `uses-what-bin` is blocked. An install that runs no
+    // lifecycle script does not need the shim.
+    await runBunInstall(env, packageDir);
+    expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeFalse();
+    expect(await nodeGypDirs(cacheDir)).toEqual({ shared: [], fresh: [] });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "pm", "trust", "uses-what-bin"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+      env,
+    });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(err).not.toContain("warn:");
+    expect(exitCode).toBe(0);
+    expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
+    expect(await tmpEntries(tmpDir)).toEqual([]);
+    const dirs = await nodeGypDirs(cacheDir);
+    expect(dirs).toEqual({ shared: [expect.stringMatching(sharedNodeGypDirName)], fresh: [] });
+    expect(await file(join(cacheDir, dirs.shared[0], nodeGypShimFile)).text()).toBe(nodeGypShim);
+  });
+
+  // Another local user who can write to the cache directory must not be able
+  // to choose the `node-gyp` that lifecycle scripts run. bun uses the shared
+  // directory only when the current user alone can write to it. If not, it
+  // makes a directory under a name that nobody can guess.
+  const fakeNodeGyp = "#!/bin/sh\necho planted\n";
+  const plantDirectory = (mode: number) => (sharedDir: string) => {
+    mkdirSync(sharedDir);
+    writeFileSync(join(sharedDir, nodeGypShimFile), fakeNodeGyp, { mode: 0o755 });
+    chmodSync(sharedDir, mode);
+  };
+  const plants: [string, boolean, (sharedDir: string, elsewhere: string) => void][] = [
+    ["a regular file", true, sharedDir => writeFileSync(sharedDir, fakeNodeGyp)],
+    [
+      // A junction on Windows.
+      "a link to a directory",
+      true,
+      (sharedDir, elsewhere) => {
+        mkdirSync(elsewhere);
+        writeFileSync(join(elsewhere, nodeGypShimFile), fakeNodeGyp, { mode: 0o755 });
+        symlinkSync(elsewhere, sharedDir, "junction");
+      },
+    ],
+    ["a directory that its group can write to", !isWindows, plantDirectory(0o775)],
+    ["a directory that other users can write to", !isWindows, plantDirectory(0o757)],
+    [
+      "a directory of another user",
+      // Only root can give a directory to another user.
+      !isWindows && process.getuid!() === 0,
+      sharedDir => {
+        plantDirectory(0o755)(sharedDir);
+        chownSync(sharedDir, 65534, 65534);
+      },
+    ],
+  ];
+  for (const [what, canPlant, plant] of plants) {
+    test.skipIf(!canPlant)(`uses a new directory when the shared one is ${what}`, async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const cacheDir = join(packageDir, ".bun-cache");
+      await writeFile(
+        packageJson,
+        JSON.stringify({ name: "foo", version: "1.0.0", scripts: { postinstall: recordScriptEnv } }),
+      );
+
+      // The first install tells the test the name of the shared directory.
+      await runBunInstall(env, packageDir, { savesLockfile: false });
+      const { shared } = await nodeGypDirs(cacheDir);
+      expect(shared).toEqual([expect.stringMatching(sharedNodeGypDirName)]);
+      const sharedDir = join(cacheDir, shared[0]);
+      await Promise.all([rm(sharedDir, { recursive: true }), rm(join(packageDir, "env.jsonl"))]);
+
+      plant(sharedDir, join(packageDir, "planted"));
+      const planted = () => {
+        const stat = lstatSync(sharedDir);
+        return {
+          kind: stat.isSymbolicLink() ? "link" : stat.isDirectory() ? "directory" : "file",
+          mode: stat.mode,
+          uid: stat.uid,
+          content: stat.isFile()
+            ? readFileSync(sharedDir, "utf8")
+            : readdirSync(sharedDir).map(name => [name, readFileSync(join(sharedDir, name), "utf8")]),
+        };
+      };
+      const before = planted();
+
+      const { err } = await runBunInstall(env, packageDir, {
+        savesLockfile: false,
+        allowWarnings: true,
+        verbose: true,
+      });
+      expect(splitErrLines(err)).toContain(
+        `warn: "${sharedDir}" is not a directory that only the current user can write to, using a new directory for node-gyp`,
+      );
+      expect(planted()).toEqual(before);
+
+      const dirs = await nodeGypDirs(cacheDir);
+      expect(dirs).toEqual({ shared, fresh: [expect.stringMatching(freshNodeGypDirName)] });
+      const freshDir = join(cacheDir, dirs.fresh[0]);
+      expect(await readdirSorted(freshDir)).toEqual([nodeGypShimFile]);
+      expect(await file(join(freshDir, nodeGypShimFile)).text()).toBe(nodeGypShim);
+      expect(await readScriptEnv(packageDir)).toEqual([{ shimDirs: [freshDir], ignore: freshDir }]);
+
+      // The name is `<random ^ time in ns>`. With a fixed number in place of
+      // the random one, another user could guess it.
+      const derived = BigInt("0x" + dirs.fresh[0].match(freshNodeGypDirName)![1]) ^ 12345n;
+      const nowNs = BigInt(Date.now()) * 1_000_000n;
+      const distance = derived > nowNs ? derived - nowNs : nowNs - derived;
+      expect(distance > 21_600_000_000_000n).toBe(true);
+    });
+  }
+
+  test("is written again when it is missing or damaged", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    const cacheDir = join(packageDir, ".bun-cache");
+    await writeFile(
+      packageJson,
+      JSON.stringify({ name: "foo", version: "1.0.0", scripts: { postinstall: recordScriptEnv } }),
+    );
+
+    await runBunInstall(env, packageDir, { savesLockfile: false });
+    const dirs = await nodeGypDirs(cacheDir);
+    expect(dirs).toEqual({ shared: [expect.stringMatching(sharedNodeGypDirName)], fresh: [] });
+    const shimDir = join(cacheDir, dirs.shared[0]);
+    const shim = join(shimDir, nodeGypShimFile);
+
+    // The directory is there, the shim is not.
+    await rm(shim);
+    await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(await file(shim).text()).toBe(nodeGypShim);
+
+    // The shim is cut short. bun must not write into that file: a lifecycle
+    // script of another install can be reading it. The hard link shows that
+    // bun put a new file in its place.
+    const cutShort = nodeGypShim.slice(0, 20);
+    const hardLink = join(packageDir, "shim-hard-link");
+    await writeFile(shim, cutShort);
+    linkSync(shim, hardLink);
+    await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect({
+      shim: await file(shim).text(),
+      hardLink: await file(hardLink).text(),
+      shimDirEntries: await readdirSorted(shimDir),
+      dirs: await nodeGypDirs(cacheDir),
+    }).toEqual({ shim: nodeGypShim, hardLink: cutShort, shimDirEntries: [nodeGypShimFile], dirs });
+
+    let installs = 3;
+    if (!isWindows) {
+      // A script cannot run a shim without the execute bit.
+      chmodSync(shim, 0o644);
+      await runBunInstall(env, packageDir, { savesLockfile: false });
+      expect(statSync(shim).mode & 0o777).toBe(0o755 & ~process.umask());
+      expect(await file(shim).text()).toBe(nodeGypShim);
+      installs++;
+    }
+
+    const seen = { shimDirs: [shimDir], ignore: shimDir };
+    expect(await readScriptEnv(packageDir)).toEqual(Array.from({ length: installs }, () => seen));
+  });
+
+  test("the install stops when bun cannot write the shim", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    const cacheDir = join(packageDir, ".bun-cache");
+    await writeFile(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", scripts: { postinstall: "exit 0" } }));
+
+    await runBunInstall(env, packageDir, { savesLockfile: false });
+    const { shared } = await nodeGypDirs(cacheDir);
+    expect(shared).toEqual([expect.stringMatching(sharedNodeGypDirName)]);
+    const shimDir = join(cacheDir, shared[0]);
+    const shim = join(shimDir, nodeGypShimFile);
+
+    // A file cannot replace a directory that is not empty.
+    await rm(shim);
+    mkdirSync(shim);
+    writeFileSync(join(shim, "keep"), "");
+
+    const { err, exitCode } = await install(packageDir, env);
+    expect(err).toContain(`writing node-gyp to "${shimDir}"`);
+    expect(exitCode).toBe(1);
+    // The scratch file that bun wrote the shim to is gone.
+    expect(await readdirSorted(shimDir)).toEqual([nodeGypShimFile]);
+    expect(await readdirSorted(shim)).toEqual(["keep"]);
+  });
+
+  test("installs that start together on an empty cache share one complete shim", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    const cacheDir = join(packageDir, ".bun-cache");
+    const exe = bunExe().replace(/\\/g, "\\\\");
+    const projects = Array.from({ length: 6 }, (_, i) => join(packageDir, `project-${i}`));
+    await Promise.all(
+      projects.map(project =>
+        write(
+          join(project, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "1.0.0",
+            scripts: {
+              // Copies the shim that this script has on its PATH.
+              postinstall: `${exe} -e 'const fs = require("fs"); fs.writeFileSync("shim.txt", fs.readFileSync(require("path").join(process.env.BUN_WHICH_IGNORE_CWD, "${nodeGypShimFile}")));'`,
+            },
+          }),
+        ),
+      ),
+    );
+
+    const results = await Promise.all(projects.map(project => install(project, env)));
+    expect(results.map(result => result.exitCode)).toEqual(projects.map(() => 0));
+    expect(await Promise.all(projects.map(project => file(join(project, "shim.txt")).text()))).toEqual(
+      projects.map(() => nodeGypShim),
+    );
+    const dirs = await nodeGypDirs(cacheDir);
+    expect(dirs).toEqual({ shared: [expect.stringMatching(sharedNodeGypDirName)], fresh: [] });
+    expect(await readdirSorted(join(cacheDir, dirs.shared[0]))).toEqual([nodeGypShimFile]);
+  });
+
+  test("its PATH entry is the entry that bun x skips when the cache directory has a trailing separator", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    const cacheDir = join(packageDir, ".bun-cache");
+    await writeFile(
+      packageJson,
+      JSON.stringify({ name: "foo", version: "1.0.0", scripts: { postinstall: recordScriptEnv } }),
+    );
+
+    await runBunInstall({ ...env, BUN_INSTALL_CACHE_DIR: cacheDir + sep }, packageDir, { savesLockfile: false });
+    const dirs = await nodeGypDirs(cacheDir);
+    expect(dirs).toEqual({ shared: [expect.stringMatching(sharedNodeGypDirName)], fresh: [] });
+    const shimDir = join(cacheDir, dirs.shared[0]);
+    expect(await readScriptEnv(packageDir)).toEqual([{ shimDirs: [shimDir], ignore: shimDir }]);
+  });
+
+  test("is in node_modules/.cache when the install cache is disabled", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    const cacheDir = join(packageDir, "node_modules", ".cache");
+    await Promise.all([
+      write(join(packageDir, "bunfig.toml"), "[install.cache]\ndisable = true\n"),
+      writeFile(
+        packageJson,
+        JSON.stringify({ name: "foo", version: "1.0.0", scripts: { postinstall: recordScriptEnv } }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir, { savesLockfile: false });
+    const dirs = await nodeGypDirs(cacheDir);
+    expect(dirs).toEqual({ shared: [expect.stringMatching(sharedNodeGypDirName)], fresh: [] });
+    const shimDir = join(cacheDir, dirs.shared[0]);
+    expect(await file(join(shimDir, nodeGypShimFile)).text()).toBe(nodeGypShim);
+    expect(await readScriptEnv(packageDir)).toEqual([{ shimDirs: [shimDir], ignore: shimDir }]);
+  });
+
+  test("an install that a lifecycle script starts uses the same directory", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    const cacheDir = join(packageDir, ".bun-cache");
+    const inner = join(packageDir, "inner");
+    await Promise.all([
+      writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          scripts: { postinstall: `${bunExe().replace(/\\/g, "\\\\")} install --cwd inner` },
+        }),
+      ),
+      write(
+        join(inner, "package.json"),
+        JSON.stringify({ name: "inner", version: "1.0.0", scripts: { postinstall: recordScriptEnv } }),
+      ),
+    ]);
+
+    await runBunInstall(env, packageDir, { savesLockfile: false });
+    const dirs = await nodeGypDirs(cacheDir);
+    expect(dirs).toEqual({ shared: [expect.stringMatching(sharedNodeGypDirName)], fresh: [] });
+    const shimDir = join(cacheDir, dirs.shared[0]);
+    // `bun x` skips the PATH entries that equal BUN_WHICH_IGNORE_CWD. The
+    // entries of the outer and the inner install are the same, so the shim
+    // cannot find the shim of the outer install.
+    const [{ shimDirs, ignore }, ...rest] = await readScriptEnv(inner);
+    expect({ shimDirs: [...new Set(shimDirs)], ignore, rest }).toEqual({
+      shimDirs: [shimDir],
+      ignore: shimDir,
+      rest: [],
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/38079
+  test("is on PATH when bun cannot use the temp directory", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    const cacheDir = join(packageDir, ".bun-cache");
+    const notADirectory = join(packageDir, "not-a-directory");
+    const unusable = join(notADirectory, "tmp");
+    await Promise.all([
+      writeFile(notADirectory, ""),
+      writeFile(
+        packageJson,
+        JSON.stringify({ name: "foo", version: "1.0.0", scripts: { postinstall: recordScriptEnv } }),
+      ),
+    ]);
+
+    await runBunInstall({ ...env, BUN_TMPDIR: unusable, TMPDIR: unusable, TEMP: unusable }, packageDir, {
+      savesLockfile: false,
+    });
+    const dirs = await nodeGypDirs(cacheDir);
+    expect(dirs).toEqual({ shared: [expect.stringMatching(sharedNodeGypDirName)], fresh: [] });
+    const shimDir = join(cacheDir, dirs.shared[0]);
+    expect(await readScriptEnv(packageDir)).toEqual([{ shimDirs: [shimDir], ignore: shimDir }]);
+    expect(await file(join(shimDir, nodeGypShimFile)).text()).toBe(nodeGypShim);
+  });
+
+  // https://github.com/oven-sh/bun/issues/38079
+  test.skipIf(!canPutTmpdirOnAnotherFilesystem)(
+    "a lifecycle script can run it when the temp directory is on another filesystem",
+    async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+
+      const fakeNodeGyp = join(packageDir, "fake-node-gyp.sh");
+      await Promise.all([
+        writeFile(
+          packageJson,
+          JSON.stringify({ name: "foo", version: "1.0.0", scripts: { preinstall: "node-gyp --version" } }),
+        ),
+        writeFile(fakeNodeGyp, "#!/bin/sh\necho fake-node-gyp-ok\n", { mode: 0o755 }),
+      ]);
+
+      const shmTmp = mkdtempSync("/dev/shm/bun-exdev-");
+      try {
+        // Without two filesystems this test would pass for the wrong reason.
+        expect(statSync(shmTmp).dev).not.toBe(statSync(packageDir).dev);
+        const { out, err, exitCode } = await install(packageDir, {
+          ...env,
+          TMPDIR: shmTmp,
+          BUN_TMPDIR: shmTmp,
+          TEMP: shmTmp,
+          // Only the shim directory has a `node-gyp`. The shim runs
+          // $npm_config_node_gyp, so the test needs no registry.
+          PATH: "/usr/bin:/bin",
+          npm_config_node_gyp: fakeNodeGyp,
+        });
+        expect(err).not.toContain("command not found");
+        expect(out).toContain("fake-node-gyp-ok");
+        expect(exitCode).toBe(0);
+      } finally {
+        rmSync(shmTmp, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 test.concurrent("default trusted dependencies require the canonical registry tarball URL", async () => {

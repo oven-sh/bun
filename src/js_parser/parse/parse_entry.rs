@@ -251,7 +251,6 @@ impl<'a> Options<'a> {
                 minify_keep_names: f.minify_keep_names,
                 minify_whitespace: f.minify_whitespace,
                 dead_code_elimination: f.dead_code_elimination,
-                set_breakpoint_on_first_line: f.set_breakpoint_on_first_line,
                 trim_unused_imports: f.trim_unused_imports,
                 auto_polyfill_require: f.auto_polyfill_require,
                 replace_exports: Default::default(),
@@ -1168,18 +1167,6 @@ impl<'a> Parser<'a> {
             // The bundler requires a part for generated module wrappers. This
             // part must be at the start as it is referred to by index.
             before.push(js_ast::Part::default());
-        }
-
-        // --inspect-brk
-        if p.options.features.set_breakpoint_on_first_line {
-            let debugger_stmts = p.arena.alloc_slice_fill_with(1, |_| Stmt {
-                data: js_ast::StmtData::SDebugger(Default::default()),
-                loc: bun_ast::Loc::EMPTY,
-            });
-            before.push(js_ast::Part {
-                stmts: debugger_stmts.into(),
-                ..Default::default()
-            });
         }
 
         // When "using" declarations appear at the top level, we change all TDZ

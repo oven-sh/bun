@@ -878,7 +878,6 @@ pub struct ParseOptions<'a, 'b> {
     pub virtual_source: Option<&'b bun_ast::Source>,
     pub replace_exports: bun_collections::StringArrayHashMap<bun_ast::runtime::ReplaceableExport>,
     pub inject_jest_globals: bool,
-    pub set_breakpoint_on_first_line: bool,
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
     pub use_define_for_class_fields: bool,
@@ -1496,8 +1495,6 @@ impl<'a> Transpiler<'a> {
                 opts.features.standard_decorators = !loader.is_typescript()
                     || !(this_parse.experimental_decorators || this_parse.emit_decorator_metadata);
                 opts.features.allow_runtime = self.options.allow_runtime;
-                opts.features.set_breakpoint_on_first_line =
-                    this_parse.set_breakpoint_on_first_line;
                 opts.features.trim_unused_imports = self
                     .options
                     .trim_unused_imports
@@ -2861,7 +2858,6 @@ impl<'a> Transpiler<'a> {
                     virtual_source: None,
                     replace_exports: Default::default(),
                     inject_jest_globals: false,
-                    set_breakpoint_on_first_line: false,
                     remove_cjs_module_wrapper: false,
                     dont_bundle_twice: false,
                     allow_commonjs: false,

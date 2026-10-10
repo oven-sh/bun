@@ -205,8 +205,6 @@ pub mod Runtime {
         pub minify_whitespace: bool,
         pub dead_code_elimination: bool,
 
-        pub set_breakpoint_on_first_line: bool,
-
         pub trim_unused_imports: bool,
 
         /// Allow runtime usage of require(), converting `require` into `__require`
@@ -293,7 +291,6 @@ pub mod Runtime {
                 minify_keep_names: false,
                 minify_whitespace: false,
                 dead_code_elimination: true,
-                set_breakpoint_on_first_line: false,
                 trim_unused_imports: false,
                 auto_polyfill_require: false,
                 replace_exports: ReplaceableExportMap::default(),
@@ -359,7 +356,7 @@ pub mod Runtime {
         pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
-            let bools: [bool; 17] = [
+            let bools: [bool; 16] = [
                 self.top_level_await,
                 self.auto_import_jsx,
                 self.allow_runtime,
@@ -369,7 +366,6 @@ pub mod Runtime {
                 self.minify_identifiers,
                 self.minify_keep_names,
                 self.dead_code_elimination,
-                self.set_breakpoint_on_first_line,
                 self.trim_unused_imports,
                 self.dont_bundle_twice,
                 self.commonjs_at_runtime,

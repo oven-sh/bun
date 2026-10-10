@@ -3409,6 +3409,9 @@ impl VirtualMachine {
 
         let hooks = runtime_hooks();
         let _ = self.ensure_debugger(true);
+        // Before the preloads: one of them can import the entry.
+        crate::debugger::Debugger::cancel_pause_at_entry(self);
+        crate::debugger::Debugger::schedule_pause_at_entry(self);
 
         // Node.js `--trace-*` and `--stack-trace-limit` flags need
         // `internal/process/pre_execution` to run before any user code.
@@ -5636,6 +5639,9 @@ impl VirtualMachine {
         self.event_loop_mut().ensure_waker();
 
         let _ = self.ensure_debugger(true);
+        // As in `reload_entry_point`.
+        crate::debugger::Debugger::cancel_pause_at_entry(self);
+        crate::debugger::Debugger::schedule_pause_at_entry(self);
 
         if !self.transpiler.options.disable_transpilation {
             if let Some(hooks) = runtime_hooks() {

@@ -2480,18 +2480,6 @@ fn transpile_source_code_inner(
                 use bun_bundler::transpiler::{AlreadyBundled, ParseOptions, ParseResult};
                 use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
 
-                // Keep the one-shot
-                // `set_break_point_on_first_line()` last so it is only
-                // consumed when the other conditions hold.
-                // SAFETY: per fn contract — leaf-field `&` borrow on
-                // `(*jsc_vm).debugger` (same shape as RuntimeTranspilerStore).
-                let set_breakpoint_on_first_line = is_main
-                    && unsafe { &(*jsc_vm).debugger }
-                        .as_ref()
-                        .map(|d| d.set_breakpoint_on_first_line)
-                        .unwrap_or(false)
-                    && bun_jsc::runtime_transpiler_store::set_break_point_on_first_line();
-
                 // `ParseOptions::path` is `bun_paths::fs::Path<'static>`
                 // (the `'static`-slice flavour used by `bun_ast::Source`), but
                 // `path` here is `bun_resolver::fs::Path<'_>`. The two structs
@@ -2587,7 +2575,6 @@ fn transpile_source_code_inner(
                     },
                     keep_json_and_toml_as_one_statement: true,
                     allow_bytecode_cache: true,
-                    set_breakpoint_on_first_line,
                     runtime_transpiler_cache: if !disable_transpilying
                         && !<RuntimeTranspilerCache as bun_bundler::RuntimeTranspilerCacheExt>::disabled()
                     {

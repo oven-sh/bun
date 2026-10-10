@@ -175,7 +175,7 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--inspect-wait <STR>?             Activate Bun's debugger, wait for a connection before executing"
     ),
     parse_param!(
-        "--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait"
+        "--inspect-brk <STR>?              Activate Bun's debugger, wait for a connection and pause before the first line of code"
     ),
     parse_param!(
         "--cpu-prof                        Start CPU profiler and write profile to disk on exit"

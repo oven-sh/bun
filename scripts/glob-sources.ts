@@ -60,7 +60,14 @@ const patterns = {
   bakeRuntime: {
     // dev_server/mod.rs is read by bake-codegen.ts to derive the
     // MessageId/IncomingMessageId const-enums in generated.ts.
-    paths: ["src/runtime/bake/*.ts", "src/runtime/bake/*/*.{ts,css}", "src/runtime/bake/dev_server/mod.rs"],
+    // hmr-module.ts bundles every export of runtime.bun.js as `bun:wrap`.
+    paths: [
+      "src/runtime/bake/*.ts",
+      "src/runtime/bake/*/*.{ts,css}",
+      "src/runtime/bake/dev_server/mod.rs",
+      "src/runtime.js",
+      "src/runtime.bun.js",
+    ],
     exclude: ["src/runtime/bake/generated.ts"],
   },
   /** legacy bindgen input */

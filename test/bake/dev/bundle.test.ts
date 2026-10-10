@@ -940,3 +940,90 @@ devTest("a render() that does not return a Response is reported as that", {
     }).toEqual({ status: 500, saysWhatIsWrong: true, referenceError: false });
   },
 });
+
+// TC39 decorator lowering calls runtime helpers through the HMR runtime's synthetic `bun:wrap` module.
+const tc39DecoratorFiles = {
+  "tsconfig.json": JSON.stringify({
+    compilerOptions: { experimentalDecorators: false, emitDecoratorMetadata: false },
+  }),
+  "decorators.ts": `
+    function classDecorator(value, context) {
+      context.metadata.label = "tc39";
+      context.addInitializer(function () {
+        this.ready = this.seed + 1;
+      });
+    }
+    function fieldDecorator(value, context) {
+      return initialValue => initialValue * 2;
+    }
+    function methodDecorator(value, context) {
+      return function () {
+        return value.call(this) + 4;
+      };
+    }
+    function accessorDecorator(value, context) {
+      return { init: initialValue => initialValue + 3 };
+    }
+
+    @classDecorator
+    export class Example {
+      static seed = 10;
+      static ready;
+      hasHidden() {
+        return #hidden in this;
+      }
+      @fieldDecorator value = 2;
+      @accessorDecorator accessor score = 5;
+      @fieldDecorator #hidden = 3;
+      @methodDecorator #secret() {
+        this.#hidden = this.#hidden + 1;
+        return this.#hidden;
+      }
+      @methodDecorator result() {
+        return this.value + this.score + this.#secret();
+      }
+    }
+
+    export function report() {
+      const instance = new Example();
+      const metadata = Example[Symbol.metadata ?? Symbol.for("Symbol.metadata")];
+      return [instance.value, instance.score, instance.result(), Example.ready, metadata.label, instance.hasHidden()].join(":");
+    }
+  `,
+};
+
+devTest("TC39 decorators in the client HMR runtime", {
+  files: {
+    ...tc39DecoratorFiles,
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { report } from "./decorators";
+      console.log(report());
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("4:8:27:11:tc39:true");
+    await dev.patch("decorators.ts", { find: "value = 2", replace: "value = 3" });
+    await c.expectMessage("6:8:29:11:tc39:true");
+  },
+});
+
+devTest("TC39 decorators in the server HMR runtime", {
+  framework: minimalFramework,
+  files: {
+    ...tc39DecoratorFiles,
+    "routes/index.ts": `
+      import { report } from "../decorators";
+      export default function () {
+        return new Response(report());
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("4:8:27:11:tc39:true");
+    await dev.patch("decorators.ts", { find: "value = 2", replace: "value = 3" });
+    await dev.fetch("/").equals("6:8:29:11:tc39:true");
+  },
+});

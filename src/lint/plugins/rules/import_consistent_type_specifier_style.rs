@@ -86,16 +86,10 @@ impl Rule for ConsistentTypeSpecifierStyle {
             cx.report(stmt, if is_oxlint { TOP_LEVEL_IF_ONLY_TYPE_IMPORTS } else { TOP_LEVEL }).fix(fix);
             return;
         }
-        // Each fix is the whole statement anew, and only one of them can be applied: for oxlint, which does not show them, only
-        // the first of a long statement has it.
-        let each_has_it = !is_oxlint || stmt.span().len() <= 1024;
         let message = if is_declaration_file_import { USE_TOP_LEVEL_FOR_DECLARATION_FILE_IMPORT } else { TOP_LEVEL };
         let mut made = None;
-        for (index, item) in named.iter().filter(|it| it.is_type_only()).enumerate() {
-            let report = cx.report(item, message);
-            if each_has_it || index == 0 {
-                report.fix(|fixer| made.get_or_insert_with(|| fix(fixer)).clone());
-            }
+        for item in named.iter().filter(|it| it.is_type_only()) {
+            cx.report(item, message).fix(|fixer| made.get_or_insert_with(|| fix(fixer)).clone());
         }
     }
 }

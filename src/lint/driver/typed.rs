@@ -21,7 +21,7 @@ use bun_lint::context::Severity;
 use bun_lint::linter::globals::{InferredGlobal, InferredGlobals, ProgramGlobals};
 use bun_lint::linter::{
     Details, LintMessage, LintResult, MAX_AUTOFIX_PASSES, ResolvedConfig, RuleId, apply_fixes,
-    grows_too_much, is_parse_error, max_fixed_len,
+    is_parse_error,
 };
 use bun_sema::json::Json;
 use bun_sema::program::{FileId, Files};
@@ -630,10 +630,6 @@ struct Fixing {
     is_fixed: bool,
     /// Nothing more is fixed: only the messages about `current` are missing.
     is_over: bool,
-    /// How long the text was before the first pass.
-    original_len: usize,
-    /// The fixes are given up, and `current` is what it was at first: see [`max_fixed_len`].
-    has_grown_too_much: bool,
     /// The rules whose fixes the last pass has applied, and whether the text had changed before it.
     last_pass: Option<(Vec<RuleId>, bool)>,
 }
@@ -670,11 +666,6 @@ pub(crate) fn lint(
                 ),
                 (None, None) => continue,
             };
-            if state.has_grown_too_much {
-                result
-                    .messages
-                    .insert(0, grows_too_much(state.original_len));
-            }
             // The fixes of the last pass are taken back.
             if matches!(&result.messages[..], [only] if is_parse_error(only))
                 && let (Some(before), Some((rules, was_fixed))) =
@@ -712,9 +703,6 @@ pub(crate) fn lint(
                 continue;
             };
             state.passes += 1;
-            if state.passes == 1 {
-                state.original_len = text.len();
-            }
             if file.config.language.is_oxlint {
                 crate::lint::order_fixes_as_oxlint(&mut result.messages);
             }
@@ -726,17 +714,6 @@ pub(crate) fn lint(
             if !fixed.is_fixed {
                 let text = state.current.take().or(Some(fixed.output));
                 finish(result, text, state.is_fixed);
-                continue;
-            }
-            if fixed.output.len() > max_fixed_len(state.original_len) {
-                *state = Fixing {
-                    current: file.text.clone(),
-                    is_over: true,
-                    original_len: state.original_len,
-                    has_grown_too_much: true,
-                    ..Fixing::default()
-                };
-                next.push(index);
                 continue;
             }
             // oxlint fixes once.

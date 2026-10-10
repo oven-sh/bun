@@ -12,7 +12,8 @@ pub struct ConsistentReturn {
 }
 
 fn is_promise_void<'a>(node: TsNode<'a>, mut ty: Type<'a>) -> bool {
-    for _ in 0..100 {
+    let mut seen = rustc_hash::FxHashSet::default();
+    while seen.insert(ty) {
         if !tsutils::is_thenable_type(node, ty) || !tsutils::is_type_reference(ty) {
             return false;
         }

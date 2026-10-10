@@ -61,8 +61,6 @@ pub(crate) struct ExpressionTypes<'a> {
     tracked: Vec<Expr<'a>>,
     /// The least position in `tracked` of an expression that was come to again since the one on top was come to.
     came_again_to: Option<usize>,
-    /// How many expressions have been looked at for the first of `tracked`.
-    steps: u32,
     /// What was found about an expression at a position in `tracked`, if it does not depend on what else was in there.
     known: FxHashMap<(Expr<'a>, usize), Option<&'static str>>,
     /// Whether a variable only has the value that it is declared with.
@@ -70,16 +68,9 @@ pub(crate) struct ExpressionTypes<'a> {
 }
 
 impl<'a> ExpressionTypes<'a> {
-    /// Variables whose values refer to each other, several times each, lead to the same expressions in ever different ways. Nothing
-    /// is said about what takes more steps.
-    const MOST_STEPS: u32 = 4096;
-
     pub(crate) fn get_type(&mut self, node: Expr<'a>) -> Option<&'static str> {
         let depth = self.tracked.len();
-        if depth == 0 {
-            self.steps = 0;
-        }
-        if depth > 64 || self.steps >= Self::MOST_STEPS {
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
             return None;
         }
         if let Some(at) = self.tracked.iter().position(|it| *it == node) {
@@ -89,16 +80,13 @@ impl<'a> ExpressionTypes<'a> {
         if let Some(&known) = self.known.get(&(node, depth)) {
             return known;
         }
-        self.steps += 1;
         let before = self.came_again_to.take();
         self.tracked.push(node);
         let result = self.compute(node);
         self.tracked.pop();
         if self.came_again_to.is_none_or(|it| it >= depth) {
             self.came_again_to = before;
-            if self.steps < Self::MOST_STEPS {
-                self.known.insert((node, depth), result);
-            }
+            self.known.insert((node, depth), result);
         } else {
             self.came_again_to = self.came_again_to.min(before.or(self.came_again_to));
         }

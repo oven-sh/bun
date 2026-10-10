@@ -941,7 +941,7 @@ pub(crate) mod no_test_prefixes {
             return None;
         }
         let (mut member_names, mut at) = (Names::new(), possible_jest_node.node);
-        for _ in 0..256 {
+        loop {
             if at.is_parenthesized() && at != possible_jest_node.node {
                 return None;
             }
@@ -963,7 +963,6 @@ pub(crate) mod no_test_prefixes {
                 _ => return None,
             };
         }
-        None
     }
 }
 

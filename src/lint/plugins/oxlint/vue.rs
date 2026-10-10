@@ -13,7 +13,6 @@ use bun_lint_oxlint::import::{
     is_type_export_declaration,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::cell::Cell;
 use std::rc::Rc;
 
 /// `ctx.file_extension().is_some_and(|ext| ext == "vue")`
@@ -1063,43 +1062,20 @@ pub(crate) const VUE2_BUILTIN_COMPONENT_NAMES: [&str; 10] = [
 pub(crate) const VUE3_BUILTIN_COMPONENT_NAMES_EXTRA: [&str; 4] =
     ["Suspense", "Teleport", "suspense", "teleport"];
 
-/// How many members of interfaces and type aliases a rule still looks at in a file. A name can stand for them any number of times,
-/// `defineProps<A & A>(); defineProps<A>()`, so that there is no end to it in proportion to the file. The state of a rule.
-pub struct NamedTypeBudget(Cell<u32>);
-
-impl Default for NamedTypeBudget {
-    fn default() -> Self {
-        NamedTypeBudget(Cell::new(1 << 20))
-    }
-}
-
-impl NamedTypeBudget {
-    fn spend(&self) -> bool {
-        let left = self.0.get();
-        self.0.set(left.saturating_sub(1));
-        left > 0
-    }
-}
-
 /// Calls `f` with every member of the type literals and interfaces that the `T` of `defineProps<T>()` is made of: it goes through
 /// unions, intersections and the names of interfaces and type aliases. Each alias is looked at once.
 pub(crate) fn for_each_define_props_type_signature<'a>(
     ts_type: TypeNode<'a>,
-    budget: &NamedTypeBudget,
     f: &mut dyn FnMut(Member<'a>),
 ) {
-    // With whether a name stands for it.
-    let mut pending = vec![(ts_type, false)];
+    let mut pending = vec![ts_type];
     let mut seen: FxHashSet<TypeNode<'a>> = FxHashSet::default();
-    while let Some((ts_type, is_named)) = pending.pop() {
+    while let Some(ts_type) = pending.pop() {
         match ts_type.kind() {
             _ if ts_type.is_parenthesized() => {}
-            TypeKind::Object(members) => members
-                .iter()
-                .take_while(|_| !is_named || budget.spend())
-                .for_each(&mut *f),
+            TypeKind::Object(members) => members.iter().for_each(&mut *f),
             TypeKind::Union(types) | TypeKind::Intersection(types) => {
-                pending.extend(types.iter().rev().map(|it| (it, is_named)))
+                pending.extend(types.iter().rev())
             }
             TypeKind::Ref { name, .. } if name.len() == 1 => {
                 let reference = name
@@ -1110,14 +1086,10 @@ pub(crate) fn for_each_define_props_type_signature<'a>(
                     .and_then(|it| it.symbol()?.declarations().next())
                 {
                     Some(Declaration::Interface(interface)) => {
-                        interface
-                            .members()
-                            .iter()
-                            .take_while(|_| budget.spend())
-                            .for_each(&mut *f);
+                        interface.members().iter().for_each(&mut *f);
                     }
                     Some(Declaration::TypeAlias(alias)) if seen.insert(alias.ty()) => {
-                        pending.push((alias.ty(), true))
+                        pending.push(alias.ty())
                     }
                     _ => {}
                 }

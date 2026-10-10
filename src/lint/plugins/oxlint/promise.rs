@@ -37,8 +37,9 @@ pub(crate) fn is_promise_with_context(call_expr: Call<'_>) -> Option<Name<'_>> {
 /// `classify_receiver(..) == ReceiverKind::NotPromise`
 fn is_not_promise(receiver: Expr) -> bool {
     let mut at = receiver;
-    // Not further than anybody writes it: `const a = b, b = a` goes in a circle, and of `const b = a, c = b ..` each can be a receiver.
-    for _ in 0..32 {
+    // `const a = b, b = a` goes in a circle.
+    let mut seen = rustc_hash::FxHashSet::default();
+    while seen.insert(at) {
         at = get_inner_expression(at);
         match at.kind() {
             ExprKind::New(new_expr) => return !is_promise_constructor(new_expr),

@@ -293,8 +293,6 @@ struct Rc<'r, 'l> {
     options: Vec<(Vec<u8>, Json)>,
     /// `plugins` of all files, without those of overrides.
     plugins_of_files: Vec<Vec<u8>>,
-    /// How often a file was extended.
-    extended: usize,
 }
 
 /// A rule as a file names it.
@@ -603,20 +601,14 @@ impl Rc<'_, '_> {
         json: &Json,
         directory: &[u8],
         is_extended: bool,
-        depth: usize,
     ) -> Result<Vec<Written>, ConfigError> {
         if json.as_object().is_none() {
             return Err(ConfigError::new(&[b"Unexpected non-object config."]));
         }
-        if depth > 32 {
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
             return Err(ConfigError::new(&[b"Too many levels of \"extends\"."]));
         }
         if is_extended {
-            // Files that each extend the next one twice are read 2^n times. oxlint reads them.
-            self.extended += 1;
-            if self.extended > 4096 {
-                return Err(ConfigError::new(&[b"Too many files in \"extends\"."]));
-            }
             shape::check(json)?;
         }
         // A plugin that an override names is known everywhere.
@@ -637,7 +629,7 @@ impl Rc<'_, '_> {
         for extended in extends {
             // What an `oxlint.config.ts` has imported.
             if extended.as_object().is_some() {
-                objects.push(self.file(extended, directory, true, depth + 1)?);
+                objects.push(self.file(extended, directory, true)?);
                 continue;
             }
             let Some(name) = extended.as_str() else {
@@ -666,7 +658,7 @@ impl Rc<'_, '_> {
                 ]));
             };
             let file = paths::resolve(directory, &portable);
-            let read = self.file(&extended, paths::dirname(&file), true, depth + 1);
+            let read = self.file(&extended, paths::dirname(&file), true);
             files.push(read.map_err(|error| {
                 ConfigError::new(&[
                     b"invalid config file ",
@@ -1125,7 +1117,6 @@ impl Config {
             overrides: Vec::new(),
             options: Vec::new(),
             plugins_of_files: Vec::new(),
-            extended: 0,
         };
         rc.reader.objects.push(ConfigObject {
             files: Some(vec![vec![Pattern::new(LINTED_FILES)]]),
@@ -1147,7 +1138,7 @@ impl Config {
         // The place of the rules of the categories, which are known when all files are read.
         let categories_at = rc.reader.objects.len();
         rc.reader.objects.push(ConfigObject::default());
-        rc.file(json, &base_path, false, 0)?;
+        rc.file(json, &base_path, false)?;
         rc.reader.objects[categories_at].rules =
             rc.category_rules(&rc.categories, &|it| rc.has_plugin(it));
         let lacking = rc.lacking_rules();

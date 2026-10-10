@@ -1936,16 +1936,6 @@ describe.concurrent("an .oxlintrc.json", () => {
     expect(extended.exitCode).toBe(1);
   });
 
-  // What oxlint 1.87 does with each.
-  test("files that each extend the next one twice are not read 2^n times", async () => {
-    const files: Record<string, string> = { "a.js": code, "d22.json": "{}" };
-    for (let i = 0; i < 22; i++)
-      files[i ? `d${i}.json` : ".oxlintrc.json"] = `{"extends":["./d${i + 1}.json","./d${i + 1}.json"]}`;
-    const { stdout, stderr, exitCode } = await lint(files, ["a.js"]);
-    expect(stdout + stderr).toContain('Too many files in "extends".');
-    expect(exitCode).toBe(1);
-  });
-
   test("`plugins` of an override count for that override alone", async () => {
     const files = Object.fromEntries(
       ["a.ts", "a.test.ts", "a.spec.test.ts"].map(name => [name, "beforeEach(() => {});\ntest('a', () => {});\n"]),
@@ -2653,16 +2643,6 @@ describe.concurrent("the configuration files of ESLint 8", () => {
       expect(stderr).toContain("is invalid:");
       expect(exitCode).toBe(2);
     }
-  });
-
-  test("files that each extend the next one twice", async () => {
-    const files: Record<string, string> = { ".eslintrc.json": rc({ extends: "./d0.json" }), "a.js": "" };
-    for (let i = 0; i < 22; i++)
-      files[`d${i}.json`] = JSON.stringify({ extends: [`./d${i + 1}.json`, `./d${i + 1}.json`] });
-    files["d22.json"] = "{}";
-    const { stderr, exitCode } = await lint(files);
-    expect(stderr).toContain('Too many files in "extends".');
-    expect(exitCode).toBe(2);
   });
 
   test("--print-config has no settings that the files do not have", async () => {

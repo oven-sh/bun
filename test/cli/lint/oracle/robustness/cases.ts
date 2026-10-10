@@ -217,65 +217,11 @@ export const cases: Case[] = [
     ];
   }),
 
-  // ── fixes that make a file much larger ──
+  // ── fixes that make a file larger ──
   ...[false, true].flatMap((eslint): Case[] => {
     const flavor = eslint ? "ESLint" : "oxlint";
-    // With a line for each part, and each `?` indented by four more than the one before: 4n² + 12n + 7 bytes.
-    // oxlint fixes once, so there each part has its line already, and `indent` does the rest.
-    const ternaries = (n: number) => `x = ${rep(eslint ? "a ? b : " : "a\n? b\n: ", n)}c;\n`;
     const rules = { indent: "error", "multiline-ternary": "error", "brace-style": "error" };
-    const given = /Fixes would grow this file from \d+ KB to more than 64 MB\. It is left as it is\./;
     return [
-      {
-        name: `${flavor}: fixes that make 32 KB a little less than 64 MB are made`,
-        file: "a.js",
-        text: () => ternaries(4_094),
-        eslint,
-        rules,
-        isSlow: true,
-        args: ["--fix", "-f", "unix"],
-        lacks: given,
-        length: 67_092_479,
-        exitCode: 0,
-      },
-      {
-        name: `${flavor}: fixes that make 32 KB a little more than 64 MB are not made, which is said`,
-        file: "a.js",
-        text: () => ternaries(4_095),
-        eslint,
-        rules,
-        isHeavy: true,
-        args: ["--fix", "-f", "unix"],
-        matches: given,
-        length: "as before",
-        exitCode: 1,
-      },
-      {
-        name: `${flavor}: nor are they printed`,
-        file: "a.js",
-        text: () => ternaries(4_095),
-        eslint,
-        rules,
-        isHeavy: true,
-        args: ["--fix-dry-run", "-f", eslint ? "json" : "unix"],
-        matches: given,
-        lacks: /"output":/,
-        length: "as before",
-        exitCode: 1,
-      },
-      {
-        name: `${flavor}: 9,000 statements in each other are not indented`,
-        file: "a.js",
-        text: () => `${rep(eslint ? "if (a) { " : "if (a) {\n", 9_000)}b();${rep(eslint ? " }" : "\n}", 9_000)}\n`,
-        eslint,
-        rules,
-        isSlow: true,
-        args: ["--fix", "-f", "unix"],
-        // How deep the parser goes depends on the size of the stack frames of the build.
-        matches: /Fixes would grow this file from \d+ KB to more than 64 MB|nested too deeply/,
-        length: "as before",
-        exitCode: 1,
-      },
       {
         name: `${flavor}: a file that fixes make twice as large is fixed`,
         isHeavy: eslint,
@@ -486,35 +432,6 @@ export const cases: Case[] = [
       },
     ];
   })(),
-
-  // ── fixes that make a file much larger, in the passes with types ──
-  ...[380, 440].map((count): Case => {
-    const isLeft = count === 440;
-    return {
-      name: `${count} statements of 200 conditions in each other, with types, are ${isLeft ? "left as they are" : "fixed"}`,
-      file: "a.ts",
-      text: () =>
-        "export {};\ndeclare const a: boolean, b: number, c: number; let x: number;\nawait b;\nx = b as number;\n" +
-        rep(`x = ${rep("a ? b : ", 200)}c;\n`, count),
-      // With oxlint's configuration there is one pass.
-      eslint: true,
-      rules: {
-        indent: "error",
-        "multiline-ternary": "error",
-        "@typescript-eslint/await-thenable": "error",
-        "@typescript-eslint/no-unnecessary-type-assertion": "error",
-      },
-      isSlow: true,
-      args: ["--type-aware", "--fix", "-f", "unix"],
-      // That the rules with types report shows that these are the passes with types.
-      matches: isLeft
-        ? /Fixes would grow this file from 690 KB to more than 64 MB\. It is left as it is\./
-        : /await-thenable/,
-      keeps: [/b as number/g, isLeft ? 1 : 0],
-      length: isLeft ? "as before" : 61_714_750,
-      exitCode: 1,
-    };
-  }),
 
   // ── time that doubles with each line ──
   // Seven times as long for each alternative. Yarn's release bundle, which many repositories commit, has such a parser.

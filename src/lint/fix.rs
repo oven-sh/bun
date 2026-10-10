@@ -45,11 +45,9 @@ impl<'a> Fixer<'a> {
     }
 
     /// `byte`, `count` times: the only way to a text whose length a number in the options decides. `None`: it would be longer than
-    /// what fixes may make of the file ([`max_fixed_len`](crate::linter::max_fixed_len)), so that it could not be applied: it is
-    /// not built. See [`Cx::repeat_count`](crate::context::Cx::repeat_count).
+    /// [`MAX_STRING_LENGTH`]. See [`Cx::repeat_count`](crate::context::Cx::repeat_count).
     pub fn repeat(self, byte: u8, count: u64) -> Option<Vec<u8>> {
-        let most = crate::linter::max_fixed_len(self.file.text().len()) as u64;
-        (count <= most).then(|| vec![byte; count as usize])
+        (count <= MAX_STRING_LENGTH).then(|| vec![byte; count as usize])
     }
 
     /// `replaceText`, `replaceTextRange`

@@ -1,6 +1,6 @@
 use bun_lint_oxlint::ast_util::{get_inner_expression, is_specific_id, parent_node, static_name};
 use crate::oxlint::vue::{
-    DestructuredDefaults, NamedTypeBudget, as_inner_object_expression, find_property, first_type_argument,
+    DestructuredDefaults, as_inner_object_expression, find_property, first_type_argument,
     for_each_define_props_type_signature, is_optional_signature, is_specific_static_name,
     is_vue_component_options_object_excluding_instance, is_vue_setup, key_name, key_span, object_properties,
     signature_key,
@@ -22,7 +22,6 @@ type Context<'c, 'a> = &'c Cx<'a, RequireDefaultProp>;
 #[derive(Default)]
 pub struct State<'a> {
     defaults: DestructuredDefaults<'a>,
-    budget: NamedTypeBudget,
 }
 
 /// Where the props of a `defineProps()` can have default values.
@@ -120,7 +119,7 @@ fn handle_define_props<'a>(call: Call<'a>, cx: Context<'_, 'a>, pc: &PropsContex
             check_object_props(props, cx, pc);
         }
     } else if let Some(first) = first_type_argument(call) {
-        for_each_define_props_type_signature(first, &cx.state.budget, &mut |signature| check_type_signature(signature, cx, pc));
+        for_each_define_props_type_signature(first, &mut |signature| check_type_signature(signature, cx, pc));
     }
 }
 

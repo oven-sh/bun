@@ -33,7 +33,8 @@ struct ReportValueExport<'a> {
 fn is_symbol_type_based(symbol: Option<TsSymbol>) -> Option<bool> {
     let mut symbol = symbol?;
     // Aliases can form a cycle through other modules.
-    for _ in 0..64 {
+    let mut seen = rustc_hash::FxHashSet::default();
+    while seen.insert(symbol) {
         if symbol.is_unknown() {
             return None;
         }

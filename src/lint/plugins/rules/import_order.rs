@@ -482,7 +482,7 @@ fn named_cjs_export(target: Expr) -> Option<Vec<u8>> {
 /// `findRootNode` of what is in `statement`.
 fn root_of(mut statement: Stmt) -> Span {
     // An `if` and a `switch` have no `body`.
-    for _ in 0..1000 {
+    loop {
         statement = match statement.parent() {
             Node::Stmt(parent) if parent.tag() == StmtTag::If => parent,
             Node::Case(case) => match case.parent() {

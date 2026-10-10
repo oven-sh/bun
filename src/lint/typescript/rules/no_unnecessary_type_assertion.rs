@@ -654,9 +654,6 @@ fn tsgolint_is_property_in_inferred_callback_return(node: Expr) -> bool {
         && is_in_generic_context(node)
 }
 
-/// Where an element or an argument is matters for a tuple and for the parameters, of which there are fewer than this.
-const MAX_INDEX: usize = 64;
-
 /// tsgolint's `hasGenericInferenceParameterAtArgument`: the type of the parameter, as it is declared, has a type
 /// variable at `element_path`, which goes from the argument inwards.
 fn tsgolint_has_generic_inference_parameter_at_argument<'a>(
@@ -726,7 +723,7 @@ fn tsgolint_is_nested_in_array_literal_argument_to_generic_call<'a>(
             continue;
         };
         let is_element = |it: Expr<'a>| Node::Expr(it) == element;
-        let element_index = elements.iter().take(MAX_INDEX).position(is_element).unwrap_or(MAX_INDEX);
+        let element_index = elements.iter().position(is_element).unwrap_or(elements.len());
         element_path.push(element_index);
 
         let (argument, is_spread) = match array.parent() {
@@ -745,16 +742,13 @@ fn tsgolint_is_nested_in_array_literal_argument_to_generic_call<'a>(
         if call.callee() == argument {
             continue;
         }
-        let arg_index = call.args().iter().take(MAX_INDEX).position(|it| it == argument).unwrap_or(MAX_INDEX);
+        let arg_index = call.args().iter().position(|it| it == argument).unwrap_or(call.args().len());
         let (arg_index, left_out) = if is_spread { (arg_index + element_index, 1) } else { (arg_index, 0) };
         let element_path = element_path.into_iter().rev().skip(left_out);
         return tsgolint_has_generic_inference_parameter_at_argument(parent, arg_index, element_path, known);
     }
     false
 }
-
-/// More pairs of members than this are not compared.
-const MAX_PAIRS: usize = 4096;
 
 /// TypeScript's `getAssignmentReducedType`: the members of the union `declared` that are left after `assigned` has been
 /// assigned to a variable of that type.
@@ -764,7 +758,7 @@ fn get_assignment_reduced_type<'a>(declared: Type<'a>, assigned: Type<'a>) -> Sm
     }
     let members: SmallVec<[Type<'a>; 8]> = declared.types().iter().collect();
     let assigned: SmallVec<[Type<'a>; 8]> = union_constituents(assigned).iter().collect();
-    if members == assigned || members.len().saturating_mul(assigned.len()) > MAX_PAIRS {
+    if members == assigned {
         return members;
     }
     let accepts_some = |target: &Type<'a>| assigned.iter().any(|it| it.is_assignable_to(*target));

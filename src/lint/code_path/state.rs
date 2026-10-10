@@ -550,11 +550,6 @@ struct TryContext {
     last_of_catch_is_reachable: bool,
 }
 
-/// Each `finally` block that can be left by a `return` or a `throw` doubles the number of parallel
-/// routes in it. Beyond this number, which takes 8 such blocks each inside the `finally` of the
-/// other, a `finally` block is analyzed as if it could only be left at its end.
-const MAX_PARALLEL_ROUTES: u32 = 256;
-
 /// ESLint's `CodePathState`. Each of its linked lists of contexts is a stack here.
 pub(super) struct State {
     pub(super) path: u32,
@@ -977,11 +972,6 @@ impl State {
         }
         context.position = Position::Finally;
         if context.returned.is_empty() && context.thrown.is_empty() {
-            return;
-        }
-        if fork.count * 2 > MAX_PARALLEL_ROUTES {
-            context.returned.clear();
-            context.thrown.clear();
             return;
         }
         let mut segments = fork.make_next(store, -1, -1);

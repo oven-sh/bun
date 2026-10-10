@@ -1,6 +1,6 @@
 use bun_lint_oxlint::ast_util::{get_inner_expression, is_specific_id, static_name};
 use crate::oxlint::vue::{
-    NamedTypeBudget, first_type_argument, for_each_define_props_type_signature, is_vue_component_options_object,
+    first_type_argument, for_each_define_props_type_signature, is_vue_component_options_object,
     is_vue_file, is_vue_setup, key_name, key_span, object_of, object_properties, signature_key, span_of_key,
 };
 use bun_lint::prelude::*;
@@ -24,7 +24,7 @@ const RESERVED_KEYS: [&str; 24] = [
 impl Rule for NoReservedKeys {
     const META: Meta = Meta::oxlint(Plugin::Vue, "no-reserved-keys", Kind::Problem);
     const ON: On = On::new().exprs(&[ExprTag::Call]).props();
-    type State<'a> = NamedTypeBudget;
+    type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -40,8 +40,8 @@ impl Rule for NoReservedKeys {
         on
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<NamedTypeBudget> {
-        is_vue_file(file).then(NamedTypeBudget::default)
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        is_vue_file(file).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -129,7 +129,7 @@ impl NoReservedKeys {
     fn check_define_props<'a>(&self, call: Call<'a>, cx: &Cx<'a, Self>) {
         let Some(arg) = call.args().first().filter(|it| it.tag() != ExprTag::Spread) else {
             if let Some(first) = first_type_argument(call) {
-                for_each_define_props_type_signature(first, &cx.state, &mut |signature| {
+                for_each_define_props_type_signature(first, &mut |signature| {
                     if let Some(key) = signature_key(signature)
                         && let Some(name) = static_name(key)
                     {

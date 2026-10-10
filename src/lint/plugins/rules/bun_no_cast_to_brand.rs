@@ -31,9 +31,6 @@ const MINT: Message = Message::new(
     "`{{name}}` makes a `{{type}}` of any value, and this file is not listed as one that may import it.",
 );
 
-/// How many types are looked at for one cast. An alias can be its own.
-const MOST_TYPES: usize = 64;
-
 impl Brand {
     /// Whether `path`, with or without an extension, is that of the module.
     fn is_at(&self, path: &[u8]) -> bool {
@@ -96,8 +93,12 @@ impl NoCastToBrand {
     /// The brand that `ty` is, or that the elements of `ty` are.
     fn brand_in<'a>(&self, ty: TypeNode<'a>, file: &File) -> Option<&Brand> {
         let mut pending: SmallVec<[TypeNode<'a>; 8]> = smallvec![ty];
-        for _ in 0..MOST_TYPES {
-            let ty = pending.pop()?;
+        // An alias can be its own.
+        let mut seen = rustc_hash::FxHashSet::default();
+        while let Some(ty) = pending.pop() {
+            if !seen.insert(ty) {
+                continue;
+            }
             match ty.kind() {
                 TypeKind::Array(element) | TypeKind::Readonly(element) => pending.push(element),
                 TypeKind::Tuple(elements) => pending.extend(elements.iter().map(TupleElem::ty)),

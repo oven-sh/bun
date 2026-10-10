@@ -1,6 +1,6 @@
 use bun_lint_oxlint::ast_util::{as_object_expression, get_inner_expression, static_name};
 use crate::oxlint::vue::{
-    DestructuredDefaults, NamedTypeBudget, as_inner_object_expression, define_component_object, exported_object,
+    DestructuredDefaults, as_inner_object_expression, define_component_object, exported_object,
     find_property, first_type_argument, for_each_define_props_type_signature, is_optional_signature, is_vue_file,
     is_vue_setup, key_name, object_properties, span_of_key,
 };
@@ -23,7 +23,6 @@ type Keys<'a> = FxHashSet<Name<'a>>;
 #[derive(Default)]
 pub struct State<'a> {
     defaults: DestructuredDefaults<'a>,
-    budget: NamedTypeBudget,
 }
 
 impl Rule for NoRequiredPropWithDefault {
@@ -112,7 +111,7 @@ fn run_on_setup<'a>(e: Expr<'a>, cx: &mut Cx<'a, NoRequiredPropWithDefault>) {
 }
 
 fn handle_type_argument<'a>(ts_type: TypeNode<'a>, key_hash: &Keys<'a>, cx: Context<'_, 'a>) {
-    for_each_define_props_type_signature(ts_type, &cx.state.budget, &mut |item| {
+    for_each_define_props_type_signature(ts_type, &mut |item| {
         if matches!(item.kind(), MemberKind::Property | MemberKind::Method)
             && let Some(key) = item.key()
             && let Some(key_name) = static_name(key).filter(|it| !is_optional_signature(item) && key_hash.contains(it))

@@ -91,9 +91,6 @@ struct Checks<'a> {
     errors: Vec<SyntaxError>,
 }
 
-/// More errors than this are not told apart: the file is refused with one of these.
-const MAX_CANDIDATES: usize = 1024;
-
 const NO_SOURCE: &str = "'source' is not a valid meta-property for keyword 'import'.";
 
 /// `is_of_prettier`: the version that Prettier 3.9 has, which does not look at the values of import attributes.
@@ -142,7 +139,7 @@ impl<'a> Checks<'a> {
         message: impl Into<Vec<u8>>,
     ) {
         // What is synthesized from a comment is not syntax.
-        if !self.file.is_in_jsdoc(at) && self.errors.len() < MAX_CANDIDATES {
+        if !self.file.is_in_jsdoc(at) {
             self.candidates.push(Candidate { node, when, step });
             self.errors.push(SyntaxError {
                 at,

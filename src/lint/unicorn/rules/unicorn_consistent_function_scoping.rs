@@ -222,9 +222,6 @@ struct Direct<'a> {
     noted: Option<Scope<'a>>,
 }
 
-/// How many classes directly in classes are looked at.
-const MAX_CLASSES: usize = 16;
-
 /// What the functions of a file refer to that is not their own.
 struct Captures<'a> {
     regions: FxHashMap<Scope<'a>, Region>,
@@ -377,10 +374,7 @@ impl<'a> Captures<'a> {
     /// A private name that the class with the scope `class_scope` declares is used at `at`, in the last of `path`.
     fn note_private_reference(&mut self, path: &[Scope<'a>], class_scope: Scope<'a>, at: u32) {
         let mut outer = class_scope;
-        for _ in 0..MAX_CLASSES {
-            let Some(inner) = scope_in(path, outer) else {
-                break;
-            };
+        while let Some(inner) = scope_in(path, outer) {
             if self.regions.get(&inner).is_some_and(|it| it.contains(at)) {
                 self.of_class.insert(inner);
             }

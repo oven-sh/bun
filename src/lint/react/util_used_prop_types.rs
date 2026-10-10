@@ -42,10 +42,6 @@ const ASYNC_SAFE_LIFE_CYCLE_METHODS: [&[u8]; 4] = [
 ];
 const COMPUTED_PROP: &[u8] = b"__COMPUTED_PROP__";
 
-/// How many names a used prop type has at most: those of all the links of `props.a.a.a ..` take
-/// the square of it. Upstream goes on until its stack is full.
-const MAX_DEPTH: usize = 100;
-
 /// `props.a.b` is `["a", "b"]`.
 type AllNames<'a> = SmallVec<[&'a [u8]; 2]>;
 
@@ -362,7 +358,7 @@ impl<'a> UsedPropTypesInstructions<'a> {
         parent_names: &[&'a [u8]],
         components: &mut Components<'a>,
     ) {
-        if parent_names.len() >= MAX_DEPTH {
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
             return;
         }
         let mut direct = None;

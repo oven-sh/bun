@@ -475,7 +475,7 @@ fn arguments_of_define_property_call(node: TsNode<'_>) -> Option<[TsNode<'_>; 3]
 
 /// `isEntityNameExpression(node)`
 fn is_entity_name_expression(mut node: TsNode) -> bool {
-    for _ in 0..4096 {
+    loop {
         match node.kind() {
             SyntaxKind::Identifier => return true,
             SyntaxKind::PropertyAccessExpression
@@ -491,7 +491,6 @@ fn is_entity_name_expression(mut node: TsNode) -> bool {
             _ => return false,
         }
     }
-    false
 }
 
 fn is_readonly_assignment_declaration(node: TsNode) -> bool {
@@ -518,7 +517,7 @@ fn is_readonly_assignment_declaration(node: TsNode) -> bool {
 /// `isInConstContext(node, typeChecker)`
 pub fn is_in_const_context(node: TsNode) -> bool {
     let mut current = node;
-    for _ in 0..4096 {
+    loop {
         let Some(parent) = current.parent() else {
             return false;
         };
@@ -581,5 +580,4 @@ pub fn is_in_const_context(node: TsNode) -> bool {
             _ => return false,
         }
     }
-    false
 }

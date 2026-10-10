@@ -99,10 +99,8 @@ impl<'a> Deprecations<'a> {
             };
         }
         let target_symbol = symbol.get_aliased_symbol();
-        for _ in 0..1000 {
-            if !symbol.has_flags(SymbolFlags::ALIAS) {
-                break;
-            }
+        let mut seen = rustc_hash::FxHashSet::default();
+        while symbol.has_flags(SymbolFlags::ALIAS) && seen.insert(symbol) {
             if let Some(reason) = self.of_symbol(Some(symbol)) {
                 return Some(reason);
             }

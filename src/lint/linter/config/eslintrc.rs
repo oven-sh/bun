@@ -776,7 +776,6 @@ struct Context<'c> {
     is_implicit_processor: bool,
     /// Of the overrides that this is in. All have to match.
     criteria: Vec<Criterion>,
-    depth: usize,
 }
 
 /// What has been asked of [`LoadLegacy`] about a plugin.
@@ -925,8 +924,6 @@ struct Legacy<'r, 'l, 'c> {
     ignored: Vec<IgnorePattern>,
     /// The major version of typescript-eslint that is installed, if it is before 8.
     typescript_eslint: Option<u32>,
-    /// How often something has been extended.
-    extended: usize,
 }
 
 impl<'c> Legacy<'_, '_, 'c> {
@@ -1122,18 +1119,10 @@ impl<'c> Legacy<'_, '_, 'c> {
 
     /// `_loadExtends`
     fn extends(&mut self, name: &[u8], context: &Context<'c>) -> Result<(), ConfigError> {
-        if context.depth >= 32 {
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
             return Err(ConfigError::new(&[
                 &context.name,
                 b":\n\tToo many levels of \"extends\".",
-            ]));
-        }
-        // Files that each extend the next one twice are read 2^n times. ESLint reads them.
-        self.extended += 1;
-        if self.extended > 4096 {
-            return Err(ConfigError::new(&[
-                &context.name,
-                b":\n\tToo many files in \"extends\".",
             ]));
         }
         let referenced = |message: &[u8]| {
@@ -1146,7 +1135,6 @@ impl<'c> Legacy<'_, '_, 'c> {
         let inner = |path: Vec<u8>, what: &[u8]| Context {
             path,
             name: [&context.name[..], " \u{bb} ".as_bytes(), what].concat(),
-            depth: context.depth + 1,
             ..context.clone()
         };
         if name.starts_with(b"eslint:") {
@@ -1320,7 +1308,6 @@ impl<'c> Legacy<'_, '_, 'c> {
                 plugins_from: given.unwrap_or_else(|| paths::dirname(&file.path)),
                 is_implicit_processor: false,
                 criteria: Vec::new(),
-                depth: 0,
             },
         )
     }
@@ -1489,7 +1476,6 @@ impl<'c> Legacy<'_, '_, 'c> {
                             all
                         })
                     })
-                    .take(4096)
                     .collect();
             }
             let alternatives = alternatives.into_iter().map(Json::Array);
@@ -2232,7 +2218,6 @@ impl Config {
             defaults,
             ignored: Vec::new(),
             typescript_eslint: None,
-            extended: 0,
         };
         // What ESLint lints of a directory. An override adds its patterns.
         let extensions: Vec<Json> = match options.extensions {

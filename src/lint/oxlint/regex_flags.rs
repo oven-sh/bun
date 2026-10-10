@@ -35,8 +35,9 @@ struct RegExpFlags {
 /// The flags of the regular expression that `e` is, or is a variable for, and where it is. `None` if that is not known.
 fn resolve_regex_flags(e: Expr) -> Option<(RegExpFlags, Span)> {
     let mut at = e;
-    // Not further than anybody writes it: `const a = b, b = a` goes in a circle, and of `const b = a, c = b ..` each can be asked about.
-    for _ in 0..32 {
+    // `const a = b, b = a` goes in a circle.
+    let mut seen = rustc_hash::FxHashSet::default();
+    while seen.insert(at) {
         let flags = match at.kind() {
             ExprKind::Regex(regex) => Some(RegExpFlags {
                 is_global: bun_core::strings::contains_char(regex.flags(), b'g'),

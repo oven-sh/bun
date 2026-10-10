@@ -47,8 +47,7 @@ pub use config::{
     LegacyOptions, LoadLegacy, LoadLocatedPlugin, LoadPlugin, oxlint_category,
 };
 pub use fixer::{
-    FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, grows_too_much, is_parse_error,
-    max_fixed_len, verify_and_fix,
+    FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, is_parse_error, verify_and_fix,
 };
 pub use globals::{CommentGlobal, GlobalVariable};
 pub use json_v8::parse as json_parse;

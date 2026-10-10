@@ -52,7 +52,8 @@ fn global_this_member(member: Expr<'_>) -> Option<Name<'_>> {
 /// name.
 fn resolve_global_binding(mut ident: Expr<'_>) -> Option<Name<'_>> {
     // `var a = b, b = a;` has no end.
-    for _ in 0..64 {
+    let mut seen = rustc_hash::FxHashSet::default();
+    while seen.insert(ident) {
         let name = ident.as_ident()?;
         let Some(declaration) = get_declaration_of_variable(ident) else {
             return is_reference_to_global_variable(ident).then_some(name);

@@ -1,7 +1,7 @@
 use bun_core::strings;
 use crate::oxlint::comments::leading_comments;
 use crate::oxlint::vue::{
-    EnclosingDeclarators, NamedTypeBudget, enclosing_variable_declarator, first_type_argument,
+    EnclosingDeclarators, enclosing_variable_declarator, first_type_argument,
     for_each_define_props_type_signature, is_vue_component_options_object, is_vue_setup, key_span, object_properties,
     signature_key,
 };
@@ -27,7 +27,6 @@ pub struct State<'a> {
     /// Where the outermost statement around a node starts that such a comment can be before.
     outermost_targets: FxHashMap<Node<'a>, Option<u32>>,
     declarators: EnclosingDeclarators<'a>,
-    budget: NamedTypeBudget,
 }
 
 type Context<'c, 'a> = &'c Cx<'a, NoDupeKeys>;
@@ -217,7 +216,7 @@ impl NoDupeKeys {
     }
 }
 
-fn collect_prop_names_from_call<'a>(call: Call<'a>, budget: &NamedTypeBudget) -> Vec<Cow<'a, [u8]>> {
+fn collect_prop_names_from_call<'a>(call: Call<'a>) -> Vec<Cow<'a, [u8]>> {
     let mut props = Vec::new();
     match call.args().first().filter(|it| it.tag() != ExprTag::Spread).map(Expr::kind) {
         Some(ExprKind::Object(properties)) => {
@@ -228,7 +227,7 @@ fn collect_prop_names_from_call<'a>(call: Call<'a>, budget: &NamedTypeBudget) ->
         None => {
             if let Some(first_type) = first_type_argument(call) {
                 let mut add = |it| props.extend(signature_key(it).and_then(static_key_name));
-                for_each_define_props_type_signature(first_type, budget, &mut add);
+                for_each_define_props_type_signature(first_type, &mut add);
             }
         }
     }
@@ -290,7 +289,7 @@ fn collect_props_bindings<'a>(node: Expr<'a>, declarator: Option<VarDecl<'a>>) -
 }
 
 fn check_define_props<'a>(node: Expr<'a>, call: Call<'a>, cx: &mut Cx<'a, NoDupeKeys>) {
-    let props = collect_prop_names_from_call(call, &cx.state.budget);
+    let props = collect_prop_names_from_call(call);
     if props.is_empty() {
         return;
     }

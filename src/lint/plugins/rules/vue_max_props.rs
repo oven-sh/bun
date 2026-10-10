@@ -1,6 +1,6 @@
 use bun_lint_oxlint::ast_util::{get_inner_expression, is_specific_id, static_name};
 use crate::oxlint::vue::{
-    NamedTypeBudget, exported_object, find_property, first_type_argument, for_each_define_props_type_signature,
+    exported_object, find_property, first_type_argument, for_each_define_props_type_signature,
     is_vue_file, is_vue_setup, signature_key,
 };
 use bun_lint::prelude::*;
@@ -17,7 +17,7 @@ const MAX_PROPS: Message = Message::new("", "This component has too many props (
 impl Rule for MaxProps {
     const META: Meta = Meta::oxlint(Plugin::Vue, "max-props", Kind::Suggestion);
     const ON: On = On::new().exprs(&[ExprTag::Call]).stmts(&[StmtTag::ExportDefault]);
-    type State<'a> = NamedTypeBudget;
+    type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         MaxProps { max_props: options.object(0).usize("maxProps").unwrap_or(1) }
@@ -33,11 +33,11 @@ impl Rule for MaxProps {
         on
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<NamedTypeBudget> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !is_vue_file(file) {
             return None;
         }
-        Some(NamedTypeBudget::default())
+        Some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -55,7 +55,7 @@ impl Rule for MaxProps {
             None => {
                 let mut keys = FxHashSet::default();
                 if let Some(first_type_argument) = first_type_argument(call_expr) {
-                    for_each_define_props_type_signature(first_type_argument, &cx.state, &mut |signature| {
+                    for_each_define_props_type_signature(first_type_argument, &mut |signature| {
                         keys.extend(signature_key(signature).and_then(static_name));
                     });
                 }

@@ -6,8 +6,7 @@
 //!   there takes a [`Ctx`], which is not generic, and the two rules are wrappers.
 //! - A `CallExpression` is the `Expr` of a `Call`. Text is bytes.
 //! - Which calls may be calls of Jest is found once for a file, whatever the number of rules: [`iter_possible_jest_call_node`].
-//! - oxlint recurses along `a.b().c().d..`. Here these are loops, which give up after [`MAX_CHAIN`] links: what is longer is no call
-//!   of Jest.
+//! - oxlint recurses along `a.b().c().d..`. Here these are loops.
 
 use bun_core::strings;
 use bun_lint::prelude::*;
@@ -370,9 +369,6 @@ fn is_member(e: Expr) -> bool {
 
 // ───────────────────────────── the parser of calls ─────────────────────────────
 
-/// How many calls, members and tagged templates are followed from a call to what it starts with.
-const MAX_CHAIN: usize = 256;
-
 pub(crate) type Members<'a> = SmallVec<[KnownMemberExpressionProperty<'a>; 4]>;
 
 pub(crate) enum ParsedJestFnCall<'a> {
@@ -508,7 +504,7 @@ fn get_node_chain(callee: Expr<'_>) -> Option<Members<'_>> {
     let mut chain = Members::new();
     let (mut at, mut parent) = (callee, None);
     let (mut parent_kind, mut grandparent_kind) = (Some(Call), None);
-    for _ in 0..MAX_CHAIN {
+    loop {
         if at.is_parenthesized() {
             return None;
         }
@@ -556,7 +552,6 @@ fn get_node_chain(callee: Expr<'_>) -> Option<Members<'_>> {
         (parent, grandparent_kind, parent_kind) = (Some(at), parent_kind, Some(kind));
         at = next;
     }
-    None
 }
 
 pub(crate) fn parse_jest_fn_call<'a>(
@@ -915,7 +910,7 @@ pub(crate) fn parse_expect_and_typeof_vitest_fn_call<'a>(
 pub(crate) fn get_node_name_vec(expr: Expr<'_>) -> SmallVec<[&[u8]; 4]> {
     let mut chain = SmallVec::new();
     let mut at = expr;
-    for _ in 0..MAX_CHAIN {
+    loop {
         if at.is_parenthesized() || at.is_chain_root() {
             break;
         }

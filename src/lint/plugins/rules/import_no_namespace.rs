@@ -16,9 +16,6 @@ pub struct NoNamespace {
 const NO_NAMESPACE: Message = Message::new("", "Unexpected namespace import.");
 const OXLINT: Message = Message::new("", "Usage of namespaced aka wildcard \"*\" imports prohibited");
 
-/// How often a scope is asked for a name to make one fix. Upstream has no bound.
-const MAX_LOOKUPS: usize = 1 << 20;
-
 /// What every object of JavaScript has. Upstream keeps the names in one, and throws at these.
 const OF_EVERY_OBJECT: [&[u8]; 12] = [
     b"__defineGetter__",
@@ -145,19 +142,19 @@ fn has_variable<'a>(file: &'a File<'a>, scope: Scope<'a>, name: &[u8]) -> bool {
 /// One name of upstream's `generateLocalNames`. `has`: `nameConflicts[name].has(..)`
 fn generate_local_name(
     name: &[u8],
-    has: &mut dyn FnMut(&[u8]) -> Option<bool>,
+    has: &dyn Fn(&[u8]) -> bool,
     namespace_name: &[u8],
-) -> Option<Vec<u8>> {
-    if !has(name)? {
-        return Some(name.to_vec());
+) -> Vec<u8> {
+    if !has(name) {
+        return name.to_vec();
     }
     let prefixed = [namespace_name, b"_", name].concat();
     let (mut local_name, mut i) = (prefixed.clone(), 0u32);
-    while has(&local_name)? {
+    while has(&local_name) {
         i += 1;
         local_name = [&prefixed[..], b"_", i.to_string().as_bytes()].concat();
     }
-    Some(local_name)
+    local_name
 }
 
 /// Each `namespace.x` becomes a named import. `None`: the namespace is used otherwise or not at all, or upstream
@@ -197,16 +194,13 @@ fn fix<'a>(fixer: Fixer<'a>, declaration: Stmt<'a>, local: Ident<'a>, node: Span
     };
     utils::sort::sort_by_cached_key(&mut import_names, place);
 
-    let mut lookups = MAX_LOOKUPS;
     let mut import_local_names: FxHashMap<&[u8], Vec<u8>> = FxHashMap::default();
     let mut named_import_specifiers = Vec::new();
     for import_name in import_names {
         let conflicts = import_name_conflicts.get(import_name)?;
-        let mut has = |name: &[u8]| {
-            lookups = lookups.checked_sub(conflicts.len())?;
-            Some(conflicts.iter().any(|it| has_variable(file, it.0, name) || has_variable(file, it.1, name)))
-        };
-        let local_name = generate_local_name(import_name, &mut has, local.bytes())?;
+        let has =
+            |name: &[u8]| conflicts.iter().any(|it| has_variable(file, it.0, name) || has_variable(file, it.1, name));
+        let local_name = generate_local_name(import_name, &has, local.bytes());
         named_import_specifiers.push(match local_name == import_name {
             true => import_name.to_vec(),
             false => [import_name, b" as ", &local_name[..]].concat(),

@@ -18,7 +18,7 @@ use bun_lint::js_plugin::{Host, Route};
 use bun_lint::language::Parser;
 use bun_lint::linter::{
     Again, LintMessage, LintOptions, LintResult, ResolvedConfig, RuleId, Suggestion, apply_fixes,
-    grows_too_much, is_parse_error, max_fixed_len, may_be_misread,
+    is_parse_error, may_be_misread,
 };
 use bun_lint::rule::{Kind, Plugin};
 use bun_lint_graph::Graph;
@@ -515,11 +515,6 @@ impl Context<'_, '_> {
                 let mut messages = std::mem::take(&mut result.messages);
                 order_fixes_as_oxlint(&mut messages);
                 let fixed = apply_fixes(&text, messages, &|message| self.should_fix(message));
-                if fixed.output.len() > max_fixed_len(text.len()) {
-                    let mut result = verify(&text);
-                    result.messages.insert(0, grows_too_much(text.len()));
-                    return self.result(path, result, text, was_fixed, config);
-                }
                 if fixed.is_fixed && !self.parses(path_to_verify, &fixed.output, config) {
                     self.note_broken_fixes(path_to_verify, fixed.applied);
                     return self.result(path, verify(&text), text, was_fixed, config);

@@ -3,7 +3,6 @@ use bun_lint_oxlint::codegen::{Codegen, print_expression};
 use bun_lint_oxlint::ast_util::could_be_asi_hazard;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use std::cell::Cell;
 
 /// Enforces the use of the spread operator (`...`) over outdated patterns.
 pub struct PreferSpread;
@@ -13,8 +12,7 @@ const PREFER_SPREAD: Message = Message::new("", "Prefer the spread operator (`..
 impl Rule for PreferSpread {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-spread", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    /// How many bytes the fixes have spread so far.
-    type State<'a> = Cell<usize>;
+    type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferSpread
@@ -24,7 +22,7 @@ impl Rule for PreferSpread {
         if !file.mentions_any(&["from", "concat", "slice", "toSpliced"]) {
             return None;
         }
-        Some(Cell::new(0))
+        Some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -70,12 +68,6 @@ impl Rule for PreferSpread {
         let report = cx.report(e, PREFER_SPREAD).data("bad_method", bad_method);
         if let Some(expr_to_spread) = spread {
             report.fix(|fixer| {
-                // In `a.slice().slice() ..` each fix has all that is before it. After a megabyte only what is short is fixed.
-                let (size, spread_so_far) = (expr_to_spread.text().len(), cx.state.get());
-                if size > 1024 && spread_so_far > 1 << 20 {
-                    return None;
-                }
-                cx.state.set(spread_so_far + size);
                 let mut codegen = Codegen::default();
                 codegen.code.extend_from_slice(if could_be_asi_hazard(e) { ";[..." } else { "[..." }.as_bytes());
                 // The parentheses around it are not printed.

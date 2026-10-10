@@ -8,7 +8,7 @@ use bun_lint::ast::jsdoc::{
 };
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 pub(crate) use bun_lint::ast::jsdoc::{JSDoc, JSDocTag};
@@ -82,11 +82,6 @@ pub struct JSDocFinder<'a> {
     docs: JSDocs<'a>,
     comments: Kept<'a>,
     nearest: AncestorMemo<'a, Option<Attached<'a>>>,
-    /// Where the nodes start whose comments were found for a function.
-    found: FxHashSet<u32>,
-    /// How many comments and tags can still be found for another function. The comments of a function are also those of the
-    /// functions that are declared in it, so that there is no end to it in proportion to the file.
-    budget: usize,
 }
 
 impl<'a> JSDocFinder<'a> {
@@ -103,8 +98,6 @@ impl<'a> JSDocFinder<'a> {
             docs: file.jsdoc(),
             comments,
             nearest: AncestorMemo::default(),
-            found: FxHashSet::default(),
-            budget: 1 << 20,
         }
     }
 
@@ -161,35 +154,18 @@ impl<'a> JSDocFinder<'a> {
     ) -> Option<Attached<'a>> {
         let comments = self.comments.get();
         let at = func.estree_span().start;
-        let node = match comments.has(at) {
-            true => Attached {
+        match comments.has(at) {
+            true => Some(Attached {
                 at,
                 method_definition: None,
-            },
+            }),
             false => self
                 .nearest
                 .find(Node::Func(func), |child, parent| {
                     nearest_in(comments, child, parent)
                 })
-                .flatten()?,
-        };
-        if !self.found.insert(node.at) {
-            let (docs, again) = (self.docs, comments.attached_to(node.at));
-            let cost = || {
-                again
-                    .iter()
-                    .map(|it| 1 + docs.at(it.start).map_or(0, |jsdoc| jsdoc.tags().len()))
-                    .sum::<usize>()
-            };
-            self.budget = (again.len() <= self.budget)
-                .then(cost)
-                .and_then(|it| self.budget.checked_sub(it))
-                .unwrap_or(0);
-            if self.budget == 0 {
-                return None;
-            }
+                .flatten(),
         }
-        Some(node)
     }
 }
 

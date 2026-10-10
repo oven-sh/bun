@@ -1,7 +1,7 @@
 use bun_lint_oxlint::ast_util::{get_inner_expression, is_specific_id, static_name};
 use bun_lint_oxlint::regex_flags::rust_regex;
 use crate::oxlint::vue::{
-    NamedTypeBudget, casing, find_property, first_type_argument, for_each_define_props_type_signature,
+    casing, find_property, first_type_argument, for_each_define_props_type_signature,
     is_vue_component_options_object_excluding_instance, is_vue_setup, key_span, object_properties, signature_key,
     span_of_key,
 };
@@ -19,7 +19,7 @@ const PROP_NAME_CASING: Message = Message::new("", "Prop '{{name}}' is not in {{
 impl Rule for PropNameCasing {
     const META: Meta = Meta::oxlint(Plugin::Vue, "prop-name-casing", Kind::Suggestion);
     const ON: On = On::new().exprs(&[ExprTag::Object, ExprTag::Call]);
-    type State<'a> = NamedTypeBudget;
+    type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         let regex = |pattern: &&str| rust_regex(pattern, false);
@@ -40,8 +40,8 @@ impl Rule for PropNameCasing {
         on
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<NamedTypeBudget> {
-        Some(NamedTypeBudget::default())
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<()> {
+        Some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -84,7 +84,7 @@ impl PropNameCasing {
         if let Some(arg) = call.args().first().filter(|it| it.tag() != ExprTag::Spread) {
             self.check_props_value(Some(arg), cx);
         } else if let Some(first_type) = first_type_argument(call) {
-            for_each_define_props_type_signature(first_type, &cx.state, &mut |signature| {
+            for_each_define_props_type_signature(first_type, &mut |signature| {
                 if let Some(key) = signature_key(signature)
                     && let Some(name) = static_name(key)
                 {

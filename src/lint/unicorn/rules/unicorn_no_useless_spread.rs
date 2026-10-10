@@ -327,19 +327,12 @@ enum ValueHint {
     Unknown,
 }
 
-/// How often what a method is called on is looked at in its turn, where it is more than another call of such a method.
-const MAX_DEPTH: u8 = 8;
-
 /// What is known of the value of `e`. Of `a ? b : c`: what is known of both `b` and `c`.
 fn const_eval(e: Expr) -> ValueHint {
-    const_eval_at(e, 0)
-}
-
-fn const_eval_at(e: Expr, depth: u8) -> ValueHint {
     let mut pending: SmallVec<[Expr; 4]> = smallvec![e];
     let mut known = None;
     while let Some(e) = pending.pop() {
-        let hint = match const_eval_unless_conditional(e, depth) {
+        let hint = match const_eval_unless_conditional(e) {
             Ok(hint) => hint,
             Err(branches) => {
                 pending.extend(branches);
@@ -357,7 +350,7 @@ fn const_eval_at(e: Expr, depth: u8) -> ValueHint {
 }
 
 /// `Err`: it is what `a ? b : c` is: the `b` and the `c`.
-fn const_eval_unless_conditional(e: Expr<'_>, depth: u8) -> Result<ValueHint, [Expr<'_>; 2]> {
+fn const_eval_unless_conditional(e: Expr<'_>) -> Result<ValueHint, [Expr<'_>; 2]> {
     let (mut at, mut is_awaited) = (e, false);
     loop {
         let Some(inner) = get_inner_expression_unless_chain(at) else {
@@ -383,7 +376,7 @@ fn const_eval_unless_conditional(e: Expr<'_>, depth: u8) -> Result<ValueHint, [E
             ExprKind::Cond { yes, no, .. } => return Err([yes, no]),
             ExprKind::Array(_) => ValueHint::NewArray,
             ExprKind::Object(_) => ValueHint::NewObject,
-            ExprKind::Call(call) => const_eval_call(call, depth),
+            ExprKind::Call(call) => const_eval_call(call),
             ExprKind::New(new) => const_eval_new(new),
             _ => ValueHint::Unknown,
         };
@@ -405,9 +398,9 @@ fn const_eval_new(new: Call) -> ValueHint {
     }
 }
 
-fn const_eval_call(call: Call, depth: u8) -> ValueHint {
+fn const_eval_call(call: Call) -> ValueHint {
     let is_typed_array_from = is_method_call(call, Some(&TYPED_ARRAYS), Some(&["from"]), Some(1), Some(1));
-    if is_typed_array_from || is_typed_array_method(call, depth) {
+    if is_typed_array_from || is_typed_array_method(call) {
         ValueHint::NewTypedArray
     } else if returns_new_array(call) {
         ValueHint::NewArray
@@ -440,7 +433,7 @@ fn is_functional_array_method(call: Call) -> bool {
 }
 
 /// Such a method, called on a typed array: it makes a new typed array.
-fn is_typed_array_method(mut call: Call, depth: u8) -> bool {
+fn is_typed_array_method(mut call: Call) -> bool {
     loop {
         let object = get_member_expr(call.callee()).and_then(Expr::object);
         let Some(object) = object.filter(|_| is_functional_array_method(call)) else {
@@ -449,7 +442,9 @@ fn is_typed_array_method(mut call: Call, depth: u8) -> bool {
         // A chain of such calls can be as long as the code.
         match get_inner_expression_unless_chain(object).and_then(Expr::as_call) {
             Some(inner) if is_functional_array_method(inner) => call = inner,
-            _ => return depth < MAX_DEPTH && const_eval_at(object, depth + 1) == ValueHint::NewTypedArray,
+            _ => {
+                return bun_core::StackCheck::init().is_safe_to_recurse() && const_eval(object) == ValueHint::NewTypedArray;
+            }
         }
     }
 }

@@ -106,6 +106,17 @@ impl UpdateRequest {
             }
     }
 
+    /// `matches` compares hashes, and a package names itself. This also compares the bytes, for a caller that replaces the row it finds.
+    pub(crate) fn matches_exactly(&self, dependency: &Dependency, string_buf: &[u8]) -> bool {
+        self.matches(dependency, string_buf)
+            && if self.name.is_empty() {
+                self.version.literal.slice(self.version_buf())
+                    == dependency.version.literal.slice(string_buf)
+            } else {
+                self.name == dependency.name.slice(string_buf)
+            }
+    }
+
     pub(crate) fn get_name(&self) -> &[u8] {
         if self.is_aliased {
             self.name

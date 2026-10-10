@@ -930,6 +930,73 @@ fn resolve_catalog_literals(
     }
 }
 
+/// A request without a name (`bun add ./folder`, a tarball, a git URL) is written as `"<literal>": "<literal>"` before the install. Once it resolves it has a name; these are the values `package_json` already declares under that name, which take the literal as they do for `bun add <name>@<literal>`. A peer entry and the entry of another group may share a name, so only lists of `dependency_list`'s kind are searched.
+fn declared_slots_of_resolved_name(
+    package_json: &Expr,
+    request: &UpdateRequest,
+    lockfile: &Lockfile,
+    dependency_list: &[u8],
+) -> Vec<*mut E::EString> {
+    if request.is_aliased {
+        return Vec::new();
+    }
+    let Some(name) = request.get_name_in_lockfile(lockfile) else {
+        return Vec::new();
+    };
+    if name.is_empty() || name == request.get_name() {
+        return Vec::new();
+    }
+    let is_peer = |list: &[u8]| list == DependencyGroup::PEER.prop;
+    // `fold_resolved_positionals` leaves the row of an optional peer alone, so its entry is not handed over either.
+    let optional_peer = package_json
+        .as_property(b"peerDependenciesMeta")
+        .and_then(|meta| meta.expr.as_property(name))
+        .and_then(|entry| entry.expr.as_property(b"optional"))
+        .is_some_and(
+            |optional| matches!(&optional.expr.data, bun_ast::ExprData::EBoolean(b) if b.value),
+        );
+    DependencyGroup::FOUR
+        .iter()
+        .filter(|group| {
+            is_peer(group.prop) == is_peer(dependency_list)
+                && !(optional_peer && is_peer(group.prop))
+        })
+        .filter_map(|group| {
+            let declared = package_json
+                .as_property(group.prop)?
+                .expr
+                .as_property(name)?;
+            declared.expr.data.e_string().map(|value| value.as_ptr())
+        })
+        .collect()
+}
+
+/// Removes `key` from the dependency list `list`, and the list once nothing is left in it. Returns whether `key` was there.
+fn remove_entry(package_json: &mut Expr, list: &[u8], key: &[u8]) -> bool {
+    let Some(query) = package_json.as_property(list) else {
+        return false;
+    };
+    let Some(mut entries) = query.expr.data.e_object() else {
+        return false;
+    };
+    let before = entries.properties.len();
+    entries.properties.retain(|property| {
+        !property
+            .key
+            .and_then(|key| key.data.e_string())
+            .is_some_and(|name| name.eql_bytes(key))
+    });
+    let removed = entries.properties.len() != before;
+    if removed && entries.properties.is_empty() {
+        package_json
+            .data
+            .as_e_object_mut()
+            .properties
+            .remove(query.i as usize);
+    }
+    removed
+}
+
 /// Edits the dependency lists for `updates` and returns whether anything was rewritten; `trustedDependencies` is added later by `package_json_write_back::flush`.
 pub(crate) fn edit(
     manager: &mut PackageManager,
@@ -972,6 +1039,12 @@ pub(crate) fn edit(
     let mut remaining = updates.len();
     let mut replacing: usize = 0;
     let only_add_missing = manager.options.enable.only_missing();
+    // `package_json_write_back::fold_resolved_positionals` does this to the lockfile rows.
+    let fold_positionals = !options.before_install
+        && manager.subcommand == Subcommand::Add
+        && manager.options.add_catalog.is_none();
+    // The slots after the first that take a folded request's literal, by the first slot (`request.e_string`).
+    let mut also_declared: Vec<(*mut E::EString, *mut E::EString)> = Vec::new();
 
     // There are three possible scenarios here
     // 1. There is no "dependencies" (or equivalent list) or it is empty
@@ -983,6 +1056,24 @@ pub(crate) fn edit(
             let mut i: usize = 0;
             'loop_: while i < updates.len() {
                 let request = &mut updates[i];
+                if fold_positionals {
+                    let declared = declared_slots_of_resolved_name(
+                        current_package_json,
+                        request,
+                        &manager.lockfile,
+                        dependency_list,
+                    );
+                    if let Some((&slot, rest)) = declared.split_first() {
+                        if remove_entry(current_package_json, dependency_list, request.get_name()) {
+                            request.e_string = Some(slot);
+                            also_declared.extend(rest.iter().map(|&rest| (slot, rest)));
+                            remaining -= 1;
+                            changed = true;
+                            i += 1;
+                            continue 'loop_;
+                        }
+                    }
+                }
                 // order-insensitive scan: `FOUR` is fine here
                 'dependency_group: for list in DependencyGroup::FOUR.map(|g| g.prop) {
                     if let Some(query) = current_package_json.as_property(list) {
@@ -1214,12 +1305,7 @@ pub(crate) fn edit(
                 break;
             }
 
-            // For a non-aliased git/github/tarball/folder request, `get_name()` is the
-            // URL or path literal: the before-install edit keys its entry by that
-            // literal, and the slot above was just re-keyed to the resolved package
-            // name. If the list already declared this package under the resolved name
-            // with a different literal (e.g. a new commit hash), that stale entry is
-            // still present, so drop it or the file ends up with a duplicate key.
+            // The slot above was just re-keyed from the request's literal to its resolved name. An entry `declared_slots_of_resolved_name` did not hand over (its value is not a string, or it is an optional peer) still has that key and would duplicate it.
             if !request.is_aliased && k < new_dependencies.len() {
                 let resolved_name = request.get_resolved_name(&manager.lockfile);
                 let mut j = new_dependencies.len();
@@ -1351,7 +1437,7 @@ pub(crate) fn edit(
             //       loop) — backed by `manager.ast_arena`, which is process-lifetime; or
             //   (b) a pre-existing slot from the parsed `current_package_json` input tree
             //       (`value.expr.data.e_string()` / `v.data.e_string()` in the earlier
-            //       dependency-group scan) — backed by the thread-local Expr
+            //       dependency-group scan, or `declared_slots_of_resolved_name` for `e_string` and `also_declared`), backed by the thread-local Expr
             //       Store, which the *caller* guarantees stays live for the duration of `edit`
             //       (it owns the parsed tree).
             // Note: `ExprDisabler::scope()` at function entry is a debug guard that *forbids*
@@ -1483,6 +1569,13 @@ pub(crate) fn edit(
             if e_string.data.slice() != new_literal {
                 changed = true;
                 e_string.data = bun_ast::StoreStr::new(new_literal);
+            }
+            for &(_, slot) in also_declared
+                .iter()
+                .filter(|&&(first, _)| request.e_string == Some(first))
+            {
+                // SAFETY: provenance (b) above, a slot of the parsed `current_package_json` tree that is not `e_string`.
+                unsafe { (*slot).data = bun_ast::StoreStr::new(new_literal) };
             }
         }
     }

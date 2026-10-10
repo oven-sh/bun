@@ -2,7 +2,16 @@ import type { BunLockFile } from "bun";
 import { $, file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  readdirSorted,
+  tempDir,
+  tmpdirSync,
+  toBeValidBin,
+  toBeWorkspaceLink,
+  toHaveBins,
+} from "harness";
 import { join, relative, resolve } from "path";
 import { pathToFileURL } from "url";
 import {
@@ -2726,6 +2735,365 @@ it("should not add duplicate package.json entries when installing a different co
       mydep: `${repo_url}#${sha2}`,
     },
   });
+});
+
+describe("a spec without a name that resolves to a dependency package.json already declares", () => {
+  type Kind = "folder" | "tarball" | "git";
+  type Declared =
+    | "none"
+    | "dependencies"
+    | "devDependencies"
+    | "optionalDependencies"
+    | "peerDependencies"
+    | "optional peer";
+  type Flag = "" | "-d" | "--peer";
+
+  const gitEnv = {
+    ...env,
+    // Set on the asan lanes, where it makes `bun install` kill its own git clones (#33982).
+    BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_NAME: "Test",
+    GIT_AUTHOR_EMAIL: "test@example.com",
+    GIT_COMMITTER_NAME: "Test",
+    GIT_COMMITTER_EMAIL: "test@example.com",
+  };
+
+  const manifest = (version: string) => JSON.stringify({ name: "pkga", version });
+
+  async function commit(repo: string, version: string) {
+    await Bun.write(join(repo, "package.json"), manifest(version));
+    await $`git init -q && git add -A && git commit -q -m ${version} --no-gpg-sign`.cwd(repo).env(gitEnv).quiet();
+    return (await $`git rev-parse HEAD`.cwd(repo).env(gitEnv).text()).trim();
+  }
+
+  // Tarballs and git repositories live in `root`, next to the projects that use them, so two projects name the same bytes.
+  async function source(root: string, kind: Kind, label: string, version: string) {
+    if (kind === "tarball") {
+      await Bun.Archive.write(
+        join(root, `${label}.tgz`),
+        { "package/package.json": manifest(version) },
+        { compress: "gzip" },
+      );
+    } else if (kind === "git") {
+      await commit(join(root, label), version);
+    }
+    return async (project: string, prefix: string) => {
+      switch (kind) {
+        case "folder":
+          await Bun.write(join(project, label, "package.json"), manifest(version));
+          return `${prefix}./${label}`;
+        case "tarball":
+          await copyFile(join(root, `${label}.tgz`), join(project, `${label}.tgz`));
+          return `${prefix}./${label}.tgz`;
+        case "git":
+          return `git+${pathToFileURL(join(root, label)).href}`;
+      }
+    };
+  }
+
+  async function run(project: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: project,
+      env: { ...gitEnv, BUN_INSTALL_CACHE_DIR: join(project, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, exitCode };
+  }
+
+  async function ok(project: string, ...args: string[]) {
+    const { out, err, exitCode } = await run(project, ...args);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return out;
+  }
+
+  // Keys that one object of a JSON or JSONC text has twice. `JSON.parse` keeps the last one, so they are found in the text.
+  function duplicateKeys(text: string) {
+    const duplicates: string[] = [];
+    const open: (Set<string> | null)[] = [];
+    for (const [token, colon] of text.matchAll(/"(?:[^"\\]|\\.)*"(\s*:)?|[{}\[\]]/g)) {
+      if (token === "{") open.push(new Set());
+      else if (token === "[") open.push(null);
+      else if (token === "}" || token === "]") open.pop();
+      else if (colon) {
+        const key = token.slice(0, token.lastIndexOf('"') + 1);
+        if (open.at(-1)!.has(key)) duplicates.push(key);
+        open.at(-1)!.add(key);
+      }
+    }
+    return duplicates;
+  }
+
+  const state = async (project: string) => ({
+    packageJson: await file(join(project, "package.json")).text(),
+    lockfile: await file(join(project, "bun.lock")).text(),
+    installed: (await file(join(project, "node_modules", "pkga", "package.json")).json()).version,
+  });
+
+  // package.json, bun.lock and node_modules agree, and stay as they are: no key twice, a frozen install passes, a second install changes nothing.
+  async function settled(project: string, frozen = true) {
+    const after = await state(project);
+    expect(duplicateKeys(after.packageJson)).toEqual([]);
+    expect(duplicateKeys(after.lockfile)).toEqual([]);
+    if (frozen) await ok(project, "install", "--frozen-lockfile");
+    await ok(project, "install");
+    expect(await state(project)).toEqual(after);
+    return after;
+  }
+
+  const declaredAxis: Declared[] = [
+    "none",
+    "dependencies",
+    "devDependencies",
+    "optionalDependencies",
+    "peerDependencies",
+    "optional peer",
+  ];
+  // Every group with a folder. The other kinds and the flags only where the group can change the outcome,
+  // so that the file stays fast. `bun add --peer <spec>` over an optional peer of that name is left out:
+  // it still writes the name twice into bun.lock.
+  const cell = (declared: Declared, kind: Kind, flag: Flag) => ({ declared, kind, flag });
+  const cells = [
+    ...declaredAxis.map(declared => cell(declared, "folder", "")),
+    ...(["none", "dependencies", "peerDependencies"] as Declared[]).flatMap(declared => [
+      cell(declared, "tarball", ""),
+      cell(declared, "git", ""),
+    ]),
+    ...(["none", "dependencies", "devDependencies", "peerDependencies"] as Declared[]).map(declared =>
+      cell(declared, "folder", "-d"),
+    ),
+    ...declaredAxis
+      .filter(declared => declared !== "optional peer")
+      .map(declared => cell(declared, "folder", "--peer")),
+  ];
+
+  test.concurrent.each(cells)("bun add $flag <$kind>, declared: $declared", async ({ declared, kind, flag }) => {
+    using dir = tempDir("bun-add-declared-name", {});
+    const root = String(dir);
+    const [oldSource, newSource] = await Promise.all([
+      source(root, "folder", "old-pkga", "1.0.0"),
+      source(root, kind, "new-pkga", "2.0.0"),
+    ]);
+
+    const declaredGroup = declared === "optional peer" ? "peerDependencies" : declared;
+    const flagGroup = flag === "-d" ? "devDependencies" : flag === "--peer" ? "peerDependencies" : "dependencies";
+    // The declared entry takes the spec when it is of the kind the flag asks for: a peer entry and the entry of
+    // another group may share a name, so neither replaces the other.
+    const replaces =
+      declared !== "none" && (declaredGroup === "peerDependencies") === (flagGroup === "peerDependencies");
+
+    const add = async (name: string) => {
+      const project = join(root, name);
+      const siblings = { "other-a": "file:./other-a", "other-z": "file:./other-z" };
+      for (const sibling of Object.keys(siblings)) {
+        await Bun.write(join(project, sibling, "package.json"), JSON.stringify({ name: sibling, version: "1.0.0" }));
+      }
+      const before: Record<string, any> = { name: "app", dependencies: { ...siblings } };
+      if (declared !== "none") {
+        before[declaredGroup] = { ...before[declaredGroup], pkga: await oldSource(project, "file:") };
+        if (declared === "optional peer") before.peerDependenciesMeta = { pkga: { optional: true } };
+      }
+      await Bun.write(join(project, "package.json"), JSON.stringify(before));
+      if (declared !== "none") await ok(project, "install");
+
+      const spec = await newSource(project, "");
+      const out = await ok(project, "add", ...(flag ? [flag] : []), name === "named" ? `pkga@${spec}` : spec);
+      expect(out).toContain("installed pkga@");
+      return { project, before, spec };
+    };
+
+    // `bun add pkga@<spec>` is correct on every release, so it is the oracle where the declared entry is replaced. One kind is enough: the kind does not change what the named spec writes.
+    const oracle = (replaces || declared === "none") && kind === "folder";
+    const [bare, named] = await Promise.all([add("bare"), oracle ? add("named") : undefined]);
+
+    const expected = structuredClone(bare.before);
+    const group = replaces ? declaredGroup : flagGroup;
+    expected[group] = { ...expected[group], pkga: bare.spec };
+    // Where nothing is replaced the result is what 1.4.3 writes, so one follow-up install is enough there.
+    const after = await settled(bare.project, replaces);
+    expect(JSON.parse(after.packageJson)).toEqual(expected);
+    // A peer entry next to the entry of another group does not decide what is installed.
+    expect(after.installed).toBe(
+      declared !== "none" && !replaces && flagGroup === "peerDependencies" ? "1.0.0" : "2.0.0",
+    );
+    if (named) expect(after).toEqual(await state(named.project));
+  });
+
+  test.concurrent.each([
+    { name: "./folder over a tarball", old: "tarball", add: "folder" },
+    { name: "./x.tgz over a git dependency", old: "git", add: "tarball" },
+  ] as { name: string; old: Kind; add: Kind }[])("bun add $name", async ({ old, add }) => {
+    using dir = tempDir("bun-add-declared-name", {});
+    const project = String(dir);
+    const oldSpec = await (await source(project, old, "old-pkga", "1.0.0"))(project, "");
+    await Bun.write(join(project, "package.json"), JSON.stringify({ name: "app", dependencies: { pkga: oldSpec } }));
+    await ok(project, "install");
+
+    const spec = await (await source(project, add, "new-pkga", "2.0.0"))(project, "file:");
+    await ok(project, "add", spec);
+    const after = await settled(project);
+    expect(JSON.parse(after.packageJson)).toEqual({ name: "app", dependencies: { pkga: spec } });
+    expect(after.installed).toBe("2.0.0");
+  });
+
+  test.concurrent("bun add <git url>#<commit> over another commit of the same repository (#8031)", async () => {
+    using dir = tempDir("bun-add-declared-name", {});
+    const project = join(String(dir), "app");
+    const repo = join(String(dir), "repo");
+    const url = `git+${pathToFileURL(repo).href}`;
+    await Bun.write(join(project, "package.json"), JSON.stringify({ name: "app" }));
+
+    for (const version of ["1.0.0", "2.0.0"]) {
+      const spec = `${url}#${await commit(repo, version)}`;
+      await ok(project, "add", spec);
+      const after = await state(project);
+      expect(duplicateKeys(after.lockfile)).toEqual([]);
+      expect(JSON.parse(after.packageJson)).toEqual({ name: "app", dependencies: { pkga: spec } });
+      expect(after.installed).toBe(version);
+    }
+    await settled(project);
+  });
+
+  test.concurrent("bun add <tarball url> over another url of the same package (#20647)", async () => {
+    using dir = tempDir("bun-add-declared-name", {});
+    const project = String(dir);
+    const tarballs = new Map<string, Uint8Array>();
+    for (const version of ["1.0.0", "2.0.0"]) {
+      tarballs.set(
+        `/pkga-${version}.tgz`,
+        await new Bun.Archive({ "package/package.json": manifest(version) }, { compress: "gzip" }).bytes(),
+      );
+    }
+    using server = Bun.serve({
+      port: 0,
+      fetch: req => new Response(tarballs.get(new URL(req.url).pathname.replace("/mirror", "")) ?? null),
+    });
+    await Bun.write(join(project, "package.json"), JSON.stringify({ name: "app" }));
+
+    // `/mirror` is a second literal for the first tarball, as `?1` is in the report.
+    for (const [path, version] of [
+      ["/pkga-1.0.0.tgz", "1.0.0"],
+      ["/mirror/pkga-1.0.0.tgz", "1.0.0"],
+      ["/pkga-1.0.0.tgz", "1.0.0"],
+      ["/pkga-2.0.0.tgz", "2.0.0"],
+    ]) {
+      const spec = new URL(path, server.url).href;
+      await ok(project, "add", spec);
+      const after = await state(project);
+      expect(duplicateKeys(after.lockfile)).toEqual([]);
+      expect(JSON.parse(after.packageJson)).toEqual({ name: "app", dependencies: { pkga: spec } });
+      expect(after.installed).toBe(version);
+    }
+    await settled(project);
+  });
+
+  // A folder in both `dependencies` and `devDependencies` is written to bun.lock twice by a plain install, so that pair uses tarballs.
+  test.concurrent.each([
+    { kind: "folder", groups: ["dependencies", "optionalDependencies"] },
+    { kind: "tarball", groups: ["dependencies", "devDependencies"] },
+  ] as { kind: Kind; groups: string[] }[])(
+    "bun add <$kind>, declared: $groups.0 and $groups.1",
+    async ({ kind, groups }) => {
+      using dir = tempDir("bun-add-declared-name", {});
+      const project = String(dir);
+      const oldSpec = await (await source(project, kind, "old-pkga", "1.0.0"))(project, "file:");
+      const declared = Object.fromEntries(groups.map(group => [group, { pkga: oldSpec }]));
+      await Bun.write(join(project, "package.json"), JSON.stringify({ name: "app", ...declared }));
+      await ok(project, "install");
+
+      const spec = await (await source(project, kind, "new-pkga", "2.0.0"))(project, "");
+      await ok(project, "add", spec);
+      const after = await settled(project);
+      // Each entry takes the spec, so the row bun.lock keeps for the name agrees with package.json whichever group wins.
+      expect(JSON.parse(after.packageJson)).toEqual({
+        name: "app",
+        ...Object.fromEntries(groups.map(group => [group, { pkga: spec }])),
+      });
+      expect(after.installed).toBe("2.0.0");
+    },
+  );
+
+  test.concurrent.each([
+    ["./a-v1", "./a-v2"],
+    ["./a-v1", "pkga@./a-v2"],
+    ["pkga@./a-v2", "./a-v1"],
+  ])("bun add %s %s is refused: one package, two specs", async (first, second) => {
+    using dir = tempDir("bun-add-declared-name", {});
+    const project = String(dir);
+    const before = JSON.stringify({ name: "app" });
+    await Promise.all([
+      Bun.write(join(project, "package.json"), before),
+      Bun.write(join(project, "a-v1", "package.json"), manifest("1.0.0")),
+      Bun.write(join(project, "a-v2", "package.json"), manifest("2.0.0")),
+    ]);
+
+    const { err, exitCode } = await run(project, "add", first, second);
+    expect(err).toContain(`error: "${first}" and "${second}" both resolve to "pkga"\nnote: add one of them`);
+    expect(exitCode).toBe(1);
+    expect(await file(join(project, "package.json")).text()).toBe(before);
+    expect(await Bun.file(join(project, "bun.lock")).exists()).toBeFalse();
+  });
+
+  test.concurrent("two folders without a package name do not count as one package", async () => {
+    using dir = tempDir("bun-add-declared-name", {});
+    const project = String(dir);
+    await Promise.all([
+      Bun.write(join(project, "package.json"), JSON.stringify({ name: "app" })),
+      Bun.write(join(project, "a", "package.json"), JSON.stringify({ version: "1.0.0" })),
+      Bun.write(join(project, "b", "package.json"), JSON.stringify({ version: "2.0.0" })),
+    ]);
+
+    // The installer rejects a package without a name. It is the one to say so.
+    const { err, exitCode } = await run(project, "add", "./a", "./b");
+    expect(err).toContain("error: refusing to install dependency with unsafe name");
+    expect(err).not.toContain("both resolve to");
+    expect(exitCode).toBe(1);
+  });
+});
+
+it("should replace a registry dependency when adding a local folder with the same package name", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await Promise.all([
+    writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
+    ),
+    Bun.write(join(package_dir, "bar-fork", "package.json"), JSON.stringify({ name: "bar", version: "0.0.2-fork" })),
+  ]);
+
+  for (const args of [["install"], ["add", "./bar-fork"], ["install", "--frozen-lockfile"]]) {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), ...args, "--save-text-lockfile"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: { bar: "./bar-fork" },
+  });
+  expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+    name: "bar",
+    version: "0.0.2-fork",
+  });
+  const lockfileText = await file(join(package_dir, "bun.lock")).text();
+  expect(lockfileText.match(/"bar":/g)).toHaveLength(2);
+  const lockfile = Bun.JSONC.parse(lockfileText) as BunLockFile;
+  expect(lockfile.workspaces[""].dependencies).toEqual({ bar: "./bar-fork" });
+  expect(lockfile.packages).toEqual({ bar: ["bar@file:bar-fork", {}] });
 });
 
 it("should add multiple dependencies specified on command line", async () => {

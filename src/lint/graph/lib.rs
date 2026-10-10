@@ -18,7 +18,7 @@
 #![forbid(unsafe_code)]
 
 use bun_core::strings;
-use bun_glob::{Options as GlobOptions, Pattern};
+use bun_glob::{BunGlobWalker, Options as GlobOptions, Pattern};
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser};
 use bun_lint::modules::{
@@ -110,7 +110,8 @@ struct Known<'h> {
     configs: ShardedMap<Vec<u8>, Vec<u8>>,
     /// [`Graph::scopes_in`], [`Graph::scopes_of`]
     scopes: ShardedMap<Vec<u8>, Vec<Scope>>,
-    /// [`Graph::configs_of_typescript_resolver`]: by the directory and the projects.
+    /// [`Graph::configs_of_typescript_resolver`]: by the directory and the projects. [`Graph::projects_listed`]: by the
+    /// projects.
     typescript_configs: ShardedMap<Vec<u8>, Vec<Vec<u8>>>,
     /// What a specifier that is not relative means: by the `tsconfig.json`, the directory, how it is imported, and the
     /// specifier.
@@ -390,6 +391,51 @@ impl<'h> Graph<'h> {
         known.scopes.insert_ref(key.to_vec(), scopes)
     }
 
+    /// The `tsconfig.json` or else the `jsconfig.json` in `directory`.
+    fn config_in(&self, directory: &[u8]) -> Option<Vec<u8>> {
+        let names = [&b"tsconfig.json"[..], b"jsconfig.json"];
+        let mut paths = names.iter().map(|name| join(directory, name));
+        paths.find(|it| self.store.disk().is_file(it))
+    }
+
+    /// `normalizeOptions` of eslint-import-resolver-typescript 4: the configurations that its `project` names.
+    fn projects_listed(&self, projects: &[&[u8]]) -> &[Vec<u8>] {
+        let key = [&b"\0"[..], &projects.join(&b"\0"[..])[..]].concat();
+        if let Some(listed) = self.known().typescript_configs.get_ref(&key[..]) {
+            return listed;
+        }
+        let (cwd, disk) = (&self.store.cwd[..], self.store.disk());
+        let mut named: Vec<Vec<u8>> = Vec::new();
+        for project in projects {
+            if !strings::contains_any(project, b"*?[{(!") {
+                named.push(join(cwd, project));
+                continue;
+            }
+            // Hidden ones too, directories too.
+            let is_ignored = |name: &[u8]| name == b"node_modules";
+            let (cwd, is_ignored) = (typescript_path(cwd), Some(is_ignored as fn(&[u8]) -> bool));
+            let walker = BunGlobWalker::init_with_cwd(
+                project, cwd, true, true, false, false, false, is_ignored,
+            );
+            let Ok(Ok(mut walker)) = walker else {
+                continue;
+            };
+            let mut matches = bun_glob::walk::Iterator::new(&mut walker);
+            if matches!(matches.init(), Ok(Ok(()))) {
+                while let Ok(Ok(Some(path))) = matches.next() {
+                    named.push(from_native(&path.into_vec()));
+                }
+            }
+        }
+        // `tryFile`
+        let try_file = |path: Vec<u8>| match disk.is_file(&path) {
+            true => Some(path),
+            false => self.config_in(&path),
+        };
+        let listed = named.into_iter().filter_map(try_file).collect();
+        self.known().typescript_configs.insert_ref(key, listed)
+    }
+
     /// The configurations whose `paths` eslint-import-resolver-typescript 4 asks about what `from` imports, in its
     /// order. An empty one: none. `projects`: its `project`.
     fn configs_of_typescript_resolver(&self, projects: &[&[u8]], from: &[u8]) -> &[Vec<u8>] {
@@ -398,39 +444,7 @@ impl<'h> Graph<'h> {
         if let Some(configs) = self.known().typescript_configs.get_ref(&key[..]) {
             return configs;
         }
-        let (cwd, disk) = (&self.store.cwd[..], self.store.disk());
-        let names = [&b"tsconfig.json"[..], b"jsconfig.json"];
-        let in_directory = |it: &[u8]| {
-            names
-                .iter()
-                .map(|name| join(it, name))
-                .find(|it| disk.is_file(it))
-        };
-        // `tryFile`
-        let try_file = |path: Vec<u8>| match disk.is_file(&path) {
-            true => Some(path),
-            false => in_directory(&path),
-        };
-        let mut listed: Vec<Vec<u8>> = match projects
-            .iter()
-            .any(|it| strings::contains_any(it, b"*?[{(!"))
-        {
-            false => (projects.iter())
-                .filter_map(|it| try_file(join(cwd, it)))
-                .collect(),
-            // Of what the patterns find only those above the file: the others are further from it.
-            true => {
-                let patterns = projects
-                    .iter()
-                    .map(|it| Pattern::new(&join(cwd, it), GlobOptions::BUN));
-                let patterns: Vec<Pattern> = patterns.collect();
-                let named = |it: &[u8]| [it.to_vec(), join(it, names[0]), join(it, names[1])];
-                (ancestors(directory).flat_map(named))
-                    .filter(|it| patterns.iter().any(|pattern| pattern.matches(it)))
-                    .filter_map(try_file)
-                    .collect()
-            }
-        };
+        let mut listed = self.projects_listed(projects).to_vec();
         // `computeAffinity`
         let distance = |config: &Vec<u8>| {
             let (mut a, mut b) = (
@@ -447,7 +461,7 @@ impl<'h> Graph<'h> {
         listed.dedup();
         let is_for_it = |it: &Vec<u8>| self.scopes_of(it).last().is_some_and(|own| own.has(from));
         let chosen = match listed.len() {
-            0 => in_directory(cwd).into_iter().collect(),
+            0 => self.config_in(&self.store.cwd).into_iter().collect(),
             1 => listed,
             _ => match listed.iter().position(is_for_it) {
                 Some(at) => vec![listed.swap_remove(at)],

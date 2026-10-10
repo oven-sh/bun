@@ -159,6 +159,8 @@ pub(crate) struct DeclaredPropTypes<'a> {
     entries: Vec<(Cow<'a, [u8]>, DeclaredPropType<'a>)>,
     /// The index into `entries` by the name, once there are more than [`DeclaredPropTypes::FEW`].
     index: FxHashMap<Cow<'a, [u8]>, u32>,
+    /// What is assigned to `__proto__`: that makes no property. What is found through it is not.
+    prototype: Option<Box<DeclaredPropType<'a>>>,
 }
 
 impl<'a> DeclaredPropTypes<'a> {
@@ -179,16 +181,26 @@ impl<'a> DeclaredPropTypes<'a> {
     }
 
     pub(crate) fn get(&self, name: &[u8]) -> Option<&DeclaredPropType<'a>> {
+        if name == b"__proto__" {
+            return self.prototype.as_deref();
+        }
         Some(&self.entries.get(self.position(name)?)?.1)
     }
 
     pub(crate) fn get_mut(&mut self, name: &[u8]) -> Option<&mut DeclaredPropType<'a>> {
+        if name == b"__proto__" {
+            return self.prototype.as_deref_mut();
+        }
         let at = self.position(name)?;
         Some(&mut self.entries.get_mut(at)?.1)
     }
 
     /// `object[name] = value`: a name that is there keeps its place.
     pub(crate) fn insert(&mut self, name: Cow<'a, [u8]>, value: DeclaredPropType<'a>) {
+        if *name == *b"__proto__" {
+            self.prototype = Some(Box::new(value));
+            return;
+        }
         if let Some(old) = self.get_mut(&name) {
             *old = value;
             return;

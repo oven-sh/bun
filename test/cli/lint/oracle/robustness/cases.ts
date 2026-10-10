@@ -996,6 +996,82 @@ export const cases: Case[] = [
     reports: { "@typescript-eslint/no-duplicate-type-constituents": 2_399 },
     exitCode: 1,
   },
+  // ── eslint-plugin-react: what many components share, and what is asked once for each of them ──
+  {
+    name: "5,000 components with one object of 5,000 prop types",
+    isHeavy: true,
+    file: "a.jsx",
+    text: () =>
+      `import T from "prop-types";\nconst t = {${seq(5_000, i => `a${i}: T.any`, ",")}};\n` +
+      seq(5_000, i => `function C${i}(props) { return <a/>; }\nC${i}.propTypes = t;\n`),
+    rules: { "react/no-unused-prop-types": "error" },
+    reports: { "react/no-unused-prop-types": 65_537 },
+    exitCode: 1,
+  },
+  {
+    name: "5,000 components with one interface of 5,000 members",
+    isHeavy: true,
+    file: "a.tsx",
+    text: () =>
+      `interface P {${seq(5_000, i => `a${i}?: string`, ";")}}\n` +
+      seq(5_000, i => `function C${i}(props: P) { return <a/>; }\n`),
+    rules: { "react/prefer-read-only-props": "error" },
+    reports: { "react/prefer-read-only-props": 65_537 },
+    exitCode: 1,
+  },
+  {
+    name: "5,000 components with one object of 5,000 default props",
+    isHeavy: true,
+    file: "a.jsx",
+    text: () =>
+      `import T from "prop-types";\nconst d = {${seq(5_000, i => `a${i}: 1`, ",")}};\n` +
+      seq(5_000, i => `function C${i}(props) { return <a/>; }\nC${i}.propTypes = { x: T.any };\nC${i}.defaultProps = d;\n`),
+    rules: { "react/default-props-match-prop-types": "error" },
+    reports: { "react/default-props-match-prop-types": 65_537 },
+    exitCode: 1,
+  },
+  {
+    name: "5,000 prop types that are one shape of 5,000",
+    isHeavy: true,
+    file: "a.jsx",
+    text: () =>
+      `import T from "prop-types";\nconst s = T.shape({${seq(5_000, i => `b${i}: T.any`, ",")}});\n` +
+      `function C(props) { return <a/>; }\nC.propTypes = {${seq(5_000, i => `a${i}: s`, ",")}};\n`,
+    rules: { "react/no-unused-prop-types": "error" },
+    reports: {},
+    exitCode: 0,
+  },
+  {
+    name: "30,000 components that are properties of one object, each with its prop types",
+    isHeavy: true,
+    file: "a.jsx",
+    text: () =>
+      `const A = {${seq(30_000, i => `p${i}: () => <a/>`, ",")}};\n` + seq(30_000, i => `A.p${i}.propTypes = {};\n`),
+    rules: { "react/prop-types": "error" },
+    reports: {},
+    exitCode: 0,
+  },
+  {
+    name: "60,000 components in React.memo",
+    isHeavy: true,
+    file: "a.jsx",
+    text: () =>
+      `import React from "react";\n` + seq(60_000, i => `const C${i} = React.memo((props) => <a>{props.x}</a>);\n`),
+    rules: { "react/prop-types": "error" },
+    reports: { "react/prop-types": 60_000 },
+    exitCode: 1,
+  },
+  {
+    name: "60,000 components whose props are the ReturnType of a member",
+    isHeavy: true,
+    file: "a.tsx",
+    text: () =>
+      `const a = { b: () => ({ x: 1 }) };\n` +
+      seq(60_000, i => `function C${i}(props: ReturnType<typeof a.b>) { return <a/>; }\n`),
+    rules: { "react/prop-types": "error" },
+    reports: {},
+    exitCode: 0,
+  },
   // ── the type checker alone: the rule asks for nothing ──
   ...(
     [

@@ -328,7 +328,7 @@ class TokenStore {
   getTokenOrCommentAfter(node, skip) {
     return this.getTokenAfter(node, { includeComments: true, skip });
   }
-  isSpaceBetween(first, second) {
+  isSpaceBetween(first, second, looksIntoText = false) {
     const overlaps =
       (first.range[0] <= second.range[0] && first.range[1] >= second.range[0]) ||
       (second.range[0] <= first.range[0] && second.range[1] >= first.range[0]);
@@ -339,11 +339,13 @@ class TokenStore {
     while (current !== final) {
       const next = this.getTokenAfter(current, { includeComments: true });
       if (current.range[1] !== next.range[0]) return true;
+      if (looksIntoText && next !== final && next.type === "JSXText" && /\s/u.test(next.value)) return true;
       current = next;
     }
     return false;
   }
+  // Until ESLint 9. A blank in the text between two elements counts.
   isSpaceBetweenTokens(first, second) {
-    return this.isSpaceBetween(first, second);
+    return this.isSpaceBetween(first, second, true);
   }
 }

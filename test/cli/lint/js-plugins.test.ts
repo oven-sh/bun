@@ -392,6 +392,37 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
+  // As `react/jsx-one-expression-per-line` asks.
+  test(
+    "isSpaceBetweenTokens looks into the text between two elements, isSpaceBetween does not",
+    async () => {
+      const { stdout, exitCode } = await lint(
+        {
+          "eslint.config.mjs": `
+          const asks = {
+            create: context => ({
+              JSXElement(node) {
+                const [first, , last] = node.children;
+                if (last === undefined) return;
+                const { sourceCode } = context;
+                context.report({ node, message: sourceCode.isSpaceBetweenTokens(first, last) + " " + sourceCode.isSpaceBetween(first, last) });
+              },
+            }),
+          };
+          export default [
+            { files: ["a.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } }, plugins: { own: { rules: { asks } } }, rules: { "own/asks": "error" } },
+          ];`,
+          "a.jsx": "<div>{a} {b}</div>;\n<div>{a}x{b}</div>;\n",
+        },
+        ["-f", "unix", "a.jsx"],
+      );
+      expect(stdout).toContain("a.jsx:1:1: true false [Error/own/asks]");
+      expect(stdout).toContain("a.jsx:2:1: false false [Error/own/asks]");
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
   // Nothing of it is built in.
   test.each([
     [

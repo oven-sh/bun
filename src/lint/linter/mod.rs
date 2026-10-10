@@ -59,8 +59,8 @@ pub use message::{
 };
 pub(crate) use per_file::PerFile;
 pub use registry::{
-    NativePlugins, Registry, oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, parse_rule_id,
-    plugin_of_oxlint,
+    NativePlugins, Registry, oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key,
+    parse_rule_id, plugin_of_oxlint,
 };
 pub use resolved::{ConfiguredJsRule, ConfiguredRule, LinterOptions, ResolvedConfig, severity_of};
 use resolved::{Prepared, Slot};
@@ -748,13 +748,16 @@ impl<S: RuleSet> Linter<S> {
             let enabled: Vec<&js_plugin::Configured> =
                 back.iter().map(|it| &**it.0.configured).collect();
             let reports = match (options.js_plugins, &config.js_settings) {
-                (Some(host), Some(settings)) if !enabled.is_empty() => host.run_on_block(
-                    file,
-                    settings,
-                    &enabled,
-                    options.wants_fixes,
-                    options.physical_path_len,
-                ),
+                (Some(host), Some(settings)) if !enabled.is_empty() => {
+                    host.has_shown(file.text().len() as u64, true);
+                    host.run_on_block(
+                        file,
+                        settings,
+                        &enabled,
+                        options.wants_fixes,
+                        options.physical_path_len,
+                    )
+                }
                 // Nothing here runs JavaScript.
                 _ => Ok(Vec::new()),
             };

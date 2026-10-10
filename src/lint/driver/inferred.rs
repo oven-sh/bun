@@ -5,7 +5,7 @@
 //! declare a global are loaded and bound, and the names are copied out.
 
 use crate::run::Environment;
-use bun_lint::linter::globals::{InferredGlobal, InferredGlobals};
+use bun_lint::linter::globals::{InferredGlobal, InferredGlobals, ProgramGlobals};
 use bun_sema::resolve::to_path;
 use bun_sema::util::FxHashMap;
 use bun_sema_driver::host::{Provided, from_native};
@@ -23,7 +23,8 @@ struct Tables {
     is_case_sensitive: bool,
     /// By `tspath.Path`: where the names are in `lists`.
     of_file: FxHashMap<Vec<u8>, usize>,
-    lists: Vec<Vec<InferredGlobal>>,
+    /// With `ProgramGlobals::checks_javascript`.
+    lists: Vec<(Vec<InferredGlobal>, bool)>,
 }
 
 impl<'e> Inferred<'e> {
@@ -102,7 +103,7 @@ impl<'e> Inferred<'e> {
                     is_type: it.is_type,
                     is_writable: it.is_writable,
                 });
-                tables.lists.push(names.collect());
+                (tables.lists).push((names.collect(), of_program.checks_javascript));
             }
             tables
         })
@@ -110,10 +111,14 @@ impl<'e> Inferred<'e> {
 }
 
 impl InferredGlobals for Inferred<'_> {
-    fn of(&self, path: &[u8]) -> Option<&[InferredGlobal]> {
+    fn of(&self, path: &[u8]) -> Option<ProgramGlobals<'_>> {
         let tables = self.tables.get_or_init(|| self.load());
         let path = from_native(&crate::paths::to_native(path.to_vec()));
         let at = *(tables.of_file).get(&*to_path(&path, tables.is_case_sensitive))?;
-        Some(&tables.lists[at])
+        let (names, checks_javascript) = &tables.lists[at];
+        Some(ProgramGlobals {
+            names,
+            checks_javascript: *checks_javascript,
+        })
     }
 }

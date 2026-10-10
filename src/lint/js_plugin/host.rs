@@ -260,6 +260,16 @@ impl<'e> Host<'e> {
         self.engine.expect(files, size, most);
     }
 
+    /// [`Engine::may_come`]
+    pub fn may_come(&self, size: u64) {
+        self.engine.may_come(size);
+    }
+
+    /// [`Engine::has_shown`]
+    pub fn has_shown(&self, size: u64, comes: bool) {
+        self.engine.has_shown(size, comes);
+    }
+
     /// [`Engine::keep_vm`]
     pub fn keep_a_realm(&self, then: &mut dyn FnMut()) -> Result<(), Vec<u8>> {
         self.engine.keep_vm(then)

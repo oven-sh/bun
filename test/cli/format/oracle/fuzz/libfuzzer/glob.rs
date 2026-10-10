@@ -1,7 +1,7 @@
 //! `bun_glob`: patterns and ignore files, which come from configuration files and the command line. Nothing panics, every mode is
 //! bounded, and with debug assertions every linear program is run beside one on sets (`Program::matches`).
 //!
-//! The variant says who reads the text. 0 to 5 and 16 to 19: a pattern, a line break, and a path: `Pattern` with each of
+//! The variant says who reads the text. 0 to 5 and 16 to 22: a pattern, a line break, and a path: `Pattern` with each of
 //! `OPTIONS`, and `of_oxc_glob_set` (5). 6 to 15: the last line is a path, the lines before it an ignore file: `IgnoreRules` with
 //! each `IgnoreSyntax`, with and without `ignores_case`.
 //!
@@ -14,7 +14,7 @@ use bun_fuzz::{Input, Run, show, shows};
 use bun_glob::ignore::{IgnoreOptions, IgnoreRules, IgnoreSyntax, Verdict};
 use bun_glob::{How, Options, Pattern};
 
-const OPTIONS: [(&str, Options); 9] = [
+const OPTIONS: [(&str, Options); 12] = [
     ("minimatch, dot", Options::MINIMATCH_DOT),
     ("minimatch", Options::MINIMATCH),
     ("micromatch, dot", Options::MICROMATCH_DOT),
@@ -24,6 +24,12 @@ const OPTIONS: [(&str, Options); 9] = [
     ("minimatch 3, dot", Options::MINIMATCH_3_DOT),
     ("minimatch 3, makeRe", Options::MINIMATCH_3_MAKE_RE),
     ("minimatch 3, no comment, no negation", Options { nocomment: true, nonegate: true, ..Options::MINIMATCH_3 }),
+    (
+        "minimatch 3, no case, extglob, brace, globstar",
+        Options { nocase: true, noext: true, nobrace: true, noglobstar: true, ..Options::MINIMATCH_3 },
+    ),
+    ("minimatch 3, dot, no case", Options { nocase: true, ..Options::MINIMATCH_3_DOT }),
+    ("minimatch 3, makeRe, no case", Options { nocase: true, ..Options::MINIMATCH_3_MAKE_RE }),
 ];
 
 const SYNTAXES: [IgnoreSyntax; 5] =
@@ -65,13 +71,14 @@ fn pattern(run: &mut Run, which: Option<usize>, text: &[u8]) {
             glob.may_match_inside(path),
             glob.matches_with(path, How { flip_negate: true, partial: false }),
             glob.matches_with(path, How { flip_negate: false, partial: true }),
-            glob.matches_base(path),
+            glob.matches_base_with(path, How::default()),
+            glob.matches_base_with(path, How { flip_negate: true, partial: true }),
         ]
     }) else {
         return;
     };
     if shows() {
-        show(&format!("matches, may match inside, without the `!`, partially, with matchBase: {said:?}"), b"");
+        show(&format!("matches, may match inside, without the `!`, partially, with matchBase, with that and both: {said:?}"), b"");
     }
     if which == Some(0) {
         record([pattern, path, &[b'0' + u8::from(said[0]), b'0' + u8::from(said[1])][..]]);
@@ -112,7 +119,7 @@ fn run(data: &[u8]) {
         return;
     };
     let mut run = Run::new(data);
-    match input.variant as usize % 20 {
+    match input.variant as usize % 23 {
         which @ 0..5 => pattern(&mut run, Some(which), input.text),
         5 => pattern(&mut run, None, input.text),
         which @ 6..16 => ignore_file(&mut run, which - 6, input.text),

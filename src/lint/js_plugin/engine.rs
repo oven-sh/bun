@@ -29,6 +29,13 @@ pub trait Engine: Sync {
     /// Nobody says so if a realm is needed to find out.
     fn expect(&self, _files: usize, _size: u64, _most: usize) {}
 
+    /// Besides, files of `size` bytes together may need a realm or not: it shows when each is linted. To be said after
+    /// [`Engine::expect`].
+    fn may_come(&self, _size: u64) {}
+
+    /// One of these, of `size` bytes, needs a realm: it is going to ask for one. Or it is done without.
+    fn has_shown(&self, _size: u64, _comes: bool) {}
+
     /// For `--timing`: the most that all realms together have taken, in bytes, and how many were freed because that was too much.
     fn sizes(&self) -> (usize, usize) {
         (0, 0)
@@ -44,20 +51,28 @@ pub trait Engine: Sync {
 /// what it has grown to. So all heavy files go to one realm, one at a time. 0.24 % of the files of 391 repositories are.
 pub const HEAVY: usize = 256 << 10;
 
-/// How many bytes a realm lints in the time that another one takes to start, until the run has measured both: 1.0, 1.2 and 1.5 MB
-/// with the configurations of openlayers, vscode and mermaid.
+/// How much of what a realm costs it has to save: time against memory and work. With 0.5 openlayers (8 MB) and mermaid (7 MB)
+/// have 3 realms and vscode (180 MB) 16. With 1 they have 3, 2 and 13, with 0.25 4, 4 and 16.
+const SHARE_TO_SAVE: f64 = 0.5;
+
+/// How many bytes a realm lints in the time that another one costs: it has to load the plugins, and it is slow until its code
+/// is compiled. From under 0.1 to 6 MB with the configurations of eight projects, five of them from 0.4 to 2.
+///
+/// A number, and no measure of the run itself, so that the same files have the same realms every time. A clock says less: the
+/// first files, by which it would judge, are the slow ones, so that another realm looks cheap: the same 300 files had from 1 to
+/// 16 realms. Nor does what a realm has loaded say what it costs: from 0.06 to 2.7 seconds for a MB of source.
 const BYTES_IN_THE_COST: f64 = 1e6;
 
 #[derive(Default)]
 struct Left {
     /// How large the files are that are still to come.
     bytes: u64,
+    /// How large those are that may come, and of which it has not shown.
+    possible: u64,
+    /// How large those are that have come, and those that have not.
+    shown: (u64, u64),
     /// How many realms there can be. 0: nobody has said, and there is one.
     most: usize,
-    /// How many seconds realms have taken until they had loaded what they need and linted their first file, and how many have.
-    starting: (f64, u32),
-    /// How many seconds realms have taken after that, and for how many bytes.
-    linting: (f64, u64),
 }
 
 /// Decides how many realms a run has.
@@ -74,34 +89,52 @@ impl Demand {
         };
     }
 
-    /// How large the files are that are still to come.
-    pub fn left(&self) -> u64 {
-        self.0.lock().bytes
+    /// [`Engine::may_come`]
+    pub fn may_come(&self, size: u64) {
+        self.0.lock().possible = size;
     }
 
-    /// A file of `size` bytes is done, after `seconds` in a realm. `is_first`: it is the first of that realm.
-    pub fn note(&self, size: usize, seconds: f64, is_first: bool) {
+    /// [`Engine::has_shown`]
+    pub fn has_shown(&self, size: u64, comes: bool) {
         let mut left = self.0.lock();
-        left.bytes = left.bytes.saturating_sub(size as u64);
-        match is_first {
-            true => left.starting = (left.starting.0 + seconds, left.starting.1 + 1),
-            false => left.linting = (left.linting.0 + seconds, left.linting.1 + size as u64),
+        left.possible = left.possible.saturating_sub(size);
+        if comes {
+            left.bytes += size;
+            left.shown.0 += size;
+        } else {
+            left.shown.1 += size;
         }
     }
 
-    /// Whether to start another realm beside the `realms` that there are, all of which are in use: whether it is going to lint for
-    /// as long as it takes to start, the others going on meanwhile.
+    /// How large the files are that are still to come, as far as can be told.
+    pub fn left(&self) -> u64 {
+        self.0.lock().expected() as u64
+    }
+
+    /// A file of `size` bytes is done.
+    pub fn note(&self, size: usize) {
+        let mut left = self.0.lock();
+        left.bytes = left.bytes.saturating_sub(size as u64);
+    }
+
+    /// Whether to start another realm beside the `realms` that there are, all of which are in use: by how much sooner the run
+    /// ends with it, against what it costs.
     pub fn is_worth_another(&self, realms: usize) -> bool {
         let left = self.0.lock();
         if realms == 0 || realms >= left.most {
             return realms == 0;
         }
-        let cost = match (left.starting, left.linting) {
-            ((starting, realms @ 1..), (linting, bytes @ 1..)) if linting > 0.0 => {
-                starting / f64::from(realms) * bytes as f64 / linting
-            }
-            _ => BYTES_IN_THE_COST,
-        };
-        left.bytes as f64 / realms as f64 > 2.0 * cost
+        // Until it is of use the others go on. Then they are one more.
+        let (left, realms) = (left.expected() / BYTES_IN_THE_COST, realms as f64);
+        (left / realms - 1.0) / (realms + 1.0) >= SHARE_TO_SAVE
+    }
+}
+
+impl Left {
+    /// Of those that may come, as large a part as has come of those of which it has shown.
+    fn expected(&self) -> f64 {
+        let (come, not) = (self.shown.0 as f64, self.shown.1 as f64);
+        let part = if come > 0.0 { come / (come + not) } else { 0.0 };
+        self.bytes as f64 + self.possible as f64 * part
     }
 }

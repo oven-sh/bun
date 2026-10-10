@@ -5,8 +5,17 @@ use crate::ast::File;
 
 /// The globals of the programs that the files of a run belong to.
 pub trait InferredGlobals: Sync {
-    /// Sorted by name. `None`: the file belongs to no program: nothing is known. `path`: [`File::path`].
-    fn of(&self, path: &[u8]) -> Option<&[InferredGlobal]>;
+    /// `None`: the file belongs to no program: nothing is known. `path`: [`File::path`].
+    fn of(&self, path: &[u8]) -> Option<ProgramGlobals<'_>>;
+}
+
+#[derive(Copy, Clone)]
+pub struct ProgramGlobals<'a> {
+    /// Sorted by name.
+    pub names: &'a [InferredGlobal],
+    /// `checkJs`. Without it TypeScript reports nothing in JavaScript, so nobody has seen to it that what the JavaScript
+    /// of the project uses is declared: the names are there besides those of the configuration, not in their place.
+    pub checks_javascript: bool,
 }
 
 pub struct InferredGlobal {
@@ -21,9 +30,9 @@ impl<'a> File<'a> {
         self.inferred_from.set(Some(all));
     }
 
-    /// What the program of the file declares as global, sorted by name. `None`: nothing is inferred for the file, or it is in no
-    /// program. The first call asks.
-    pub(crate) fn inferred_globals(&self) -> Option<&'a [InferredGlobal]> {
+    /// What the program of the file declares as global. `None`: nothing is inferred for the file, or it is in no program.
+    /// The first call asks.
+    pub(crate) fn inferred_globals(&self) -> Option<ProgramGlobals<'a>> {
         if !(self.language().infers_globals).is_for(self.is_javascript()) {
             return None;
         }

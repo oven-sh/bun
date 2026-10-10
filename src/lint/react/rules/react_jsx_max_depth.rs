@@ -1,5 +1,6 @@
 use crate::react::is_jsx;
 use crate::util_variable::get_variable_from_context;
+use bun_lint::context::MAX_REPORTS;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use rustc_hash::FxHashMap;
@@ -99,9 +100,22 @@ impl Rule for JsxMaxDepth {
         let mut found = std::mem::take(&mut cx.state.found);
         // upstream's `JSXExpressionContainer`
         if cx.state.is_any_written {
+            let (mut known, mut fine) = (Known::default(), FxHashMap::<u32, u32>::default());
             for (expression, base_depth) in std::mem::take(&mut cx.state.containers) {
-                if let Some(element) = find_jsx_element_or_fragment(expression) {
-                    self.check_descendant(expression.span().start, base_depth, element, &mut found);
+                let Some(element) = find_jsx_element_or_fragment(expression, &mut known) else {
+                    continue;
+                };
+                let (start, before) = (element.opening_span().start, found.len());
+                if before > MAX_REPORTS as usize {
+                    break;
+                }
+                // Where nothing is found in an element, nothing is found with less around it.
+                if fine.get(&start).is_some_and(|it| base_depth <= *it) {
+                    continue;
+                }
+                self.check_descendant(expression.span().start, base_depth, element, &mut found);
+                if found.len() == before {
+                    fine.insert(start, base_depth);
                 }
             }
         }
@@ -140,12 +154,20 @@ impl JsxMaxDepth {
     }
 }
 
+/// What `findJSXElementOrFragment` finds from a scope for a name. `None` also while it is being found out.
+type Known<'a> = FxHashMap<(Scope<'a>, Name<'a>), Option<Jsx<'a>>>;
+
 /// upstream's `findJSXElementOrFragment`, for the identifier in the braces.
-fn find_jsx_element_or_fragment(start_node: Expr<'_>) -> Option<Jsx<'_>> {
-    let (file, mut name) = (start_node.file(), start_node.as_ident()?);
-    // Brent's: a circle is left after about as many steps as it has.
-    let (mut seen, mut steps, mut limit) = (name, 0u32, 1u32);
-    loop {
+fn find_jsx_element_or_fragment<'a>(start_node: Expr<'a>, known: &mut Known<'a>) -> Option<Jsx<'a>> {
+    let (file, scope, mut name) = (start_node.file(), Node::Expr(start_node).scope(), start_node.as_ident()?);
+    let mut names: SmallVec<[Name<'a>; 4]> = SmallVec::new();
+    let element = loop {
+        // A name that comes again in one search is a circle.
+        match known.entry((scope, name)) {
+            Entry::Occupied(found) => break *found.get(),
+            Entry::Vacant(entry) => entry.insert(None),
+        };
+        names.push(name);
         let last_write = match get_variable_from_context(Node::Expr(start_node), name) {
             Some(variable) => {
                 // For upstream the name of a class declaration is a second variable inside the class.
@@ -154,25 +176,23 @@ fn find_jsx_element_or_fragment(start_node: Expr<'_>) -> Option<Jsx<'_>> {
                     _ => None,
                 });
                 let is_in_class = |scope| class.is_some_and(|it| it.contains(scope));
-                let is_inner = is_in_class(Node::Expr(start_node).scope());
+                let is_inner = is_in_class(scope);
                 variable.references().rfind(|it| it.is_write() && is_in_class(it.scope()) == is_inner)
             }
             // What the configuration defines is a variable for upstream.
-            None => {
-                file.global_named(name)?;
-                file.unresolved_references_to(name.bytes()).rfind(|it| it.is_write())
-            }
+            None => (file.global_named(name))
+                .and_then(|_| file.unresolved_references_to(name.bytes()).rfind(|it| it.is_write())),
         };
-        match last_write?.write_expr()?.kind() {
-            ExprKind::Jsx(jsx) => return Some(jsx),
-            ExprKind::Ident(next) if next != seen => name = next,
-            _ => return None,
+        match last_write.and_then(Reference::write_expr).map(Expr::kind) {
+            Some(ExprKind::Jsx(jsx)) => break Some(jsx),
+            Some(ExprKind::Ident(next)) => name = next,
+            _ => break None,
         }
-        steps += 1;
-        if steps == limit {
-            (seen, steps, limit) = (name, 0, limit * 2);
-        }
+    };
+    if element.is_some() {
+        known.extend(names.into_iter().map(|it| ((scope, it), element)));
     }
+    element
 }
 
 /// For oxlint: what the depth of an element, or of what a variable is initialized with, is made of.

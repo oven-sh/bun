@@ -31,11 +31,12 @@ impl Rule for JsxPropsNoMultiSpaces {
         let mut prev_span = jsx.type_args().angle_brackets_span().unwrap_or_else(|| name.span());
         let mut prev = None;
         for node in jsx.attrs() {
-            let between = prev_span.between(node.span());
+            let span = node.span();
+            let between = prev_span.between(span);
             if cx.slice(between) != b" " {
                 check_spacing(jsx, prev, between, node, cx);
             }
-            (prev, prev_span) = (Some(node), node.span());
+            (prev, prev_span) = (Some(node), span);
         }
     }
 }
@@ -56,12 +57,17 @@ fn check_spacing<'a>(
     };
     // A name with type arguments is a copy of the opening element with another `range`: its `loc` ends with the tag.
     let is_generic = prev.is_none() && jsx.type_args().first().is_some();
-    if has_two_line_breaks(file, between) && has_empty_lines(file, between, is_generic) {
+    // 2 for more as well.
+    let line_breaks = strings::js_lines(file.slice(between)).skip(1).take(2).count();
+    if line_breaks == 2 && has_empty_lines(file, between, is_generic) {
         report(NO_LINE_GAP);
     }
     // Whether both end on one line.
-    let ends = if is_generic { Span::after(node.span(), jsx.opening_span().end) } else { between.to(node.span()) };
-    if ast_utils::is_on_one_line(file, ends) {
+    let is_on_one_line = match is_generic {
+        true => ast_utils::is_on_one_line(file, Span::after(node.span(), jsx.opening_span().end)),
+        false => line_breaks == 0 && ast_utils::is_on_one_line(file, node.span()),
+    };
+    if is_on_one_line {
         report(ONLY_ONE_SPACE).fix(|fixer| fixer.replace(between, " "));
     }
 }

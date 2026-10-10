@@ -1,15 +1,17 @@
-use bun_lint_oxlint::ast_util::{as_function_expression, as_object_property, callee_name, is_react_component_name};
 use crate::react::{
     FunctionsWithJsx, component_wrapper_functions, is_es5_component, is_es6_component, is_hoc_call, is_jsx,
 };
+use crate::util_components::Components;
 use bun_lint::prelude::*;
 use bun_lint::rule::{NodeTags, Plugin};
+use bun_lint_oxlint::ast_util::{as_function_expression, as_object_property, callee_name, is_react_component_name};
 
-/// Prevents multiple React components from being defined in the same file.
+/// Disallow multiple component definition per file
 pub struct NoMultiComp {
     ignore_stateless: bool,
 }
 
+const ONLY_ONE_COMPONENT: Message = Message::new("onlyOneComponent", "Declare only one React component per file");
 const NO_MULTI_COMP: Message = Message::new("", "Declare only one React component per file. Found: {{component_name}}");
 
 struct DetectedComponent<'a> {
@@ -29,6 +31,7 @@ enum Entered<'a> {
     Declarator(Option<Name<'a>>),
 }
 
+/// For oxlint, which goes by names and by JSX anywhere in a function, on a walk of its own.
 pub struct State<'a> {
     components: Vec<DetectedComponent<'a>>,
     /// How many components are around. What is in a component is not one.
@@ -48,12 +51,16 @@ const TAGS: NodeTags = NodeTags::CLASS
     .union(NodeTags::new().stmts(&[StmtTag::ExportDefault]));
 
 impl Rule for NoMultiComp {
-    const META: Meta = Meta::oxlint(Plugin::React, "no-multi-comp", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "no-multi-comp", Kind::Suggestion);
     const ON: On = On::new().enter(TAGS).exit(TAGS).finish();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         NoMultiComp { ignore_stateless: options.object(0).bool_or("ignoreStateless", false) }
+    }
+
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.language().is_oxlint { Self::ON } else { On::new().finish() }
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
@@ -65,6 +72,9 @@ impl Rule for NoMultiComp {
             functions_with_jsx: None,
             component_wrapper_functions: &[],
         };
+        if !file.language().is_oxlint {
+            return Components::may_have_any(file).then_some(state);
+        }
         if !is_jsx(file) {
             return None;
         }
@@ -110,9 +120,34 @@ impl Rule for NoMultiComp {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
+        if !cx.language().is_oxlint {
+            self.report_detected(cx);
+            return;
+        }
         for component in cx.state.components.iter().filter(|it| !self.ignore_stateless || !it.is_stateless).skip(1) {
             let component_name = component.name.map_or(&b"UnnamedComponent"[..], Name::bytes);
             cx.report(component.span, NO_MULTI_COMP).data("component_name", component_name);
+        }
+    }
+}
+
+impl NoMultiComp {
+    /// All but the first of what `Components.detect` finds.
+    fn report_detected(&self, cx: &Cx<'_, Self>) {
+        let mut components = Components::new(cx.file());
+        components.finish();
+        if components.length() <= 1 {
+            return;
+        }
+        let places = components.list().into_iter().filter_map(|id| {
+            let node = components.component(id).node;
+            // upstream's `isIgnored`
+            let is_ignored = self.ignore_stateless
+                && (matches!(node, Node::Func(_)) || components.is_pragma_component_wrapper(node));
+            (!is_ignored).then(|| components.component(id).span())
+        });
+        for place in places.skip(1) {
+            cx.report(place, ONLY_ONE_COMPONENT).at_the_end();
         }
     }
 }

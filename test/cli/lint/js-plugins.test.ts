@@ -998,10 +998,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       ]);
       const counts = JSON.parse(raw).map((it: any) => it.messages.length);
       expect(counts).toEqual([2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1]);
-      // Once in each engine that comes to such a file. How many engines there are is up to the clock.
-      const runs = stderr.split("The configuration file runs.").length - 1;
-      expect(runs).toBeGreaterThanOrEqual(1);
-      expect(runs).toBeLessThanOrEqual(Number(/JavaScript: (\d+) engines/.exec(stderr)?.[1]));
+      expect(stderr.split("The configuration file runs.").length - 1).toBe(1);
       expect(stderr).toContain(`with the whole configuration file, which alone has the plugin "inline"`);
       expect(exitCode).toBe(1);
     },
@@ -1284,7 +1281,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         expect(exitCode).toBe(1);
         return { stdout, engines: Number(/JavaScript: (\d+) engines/.exec(stderr)?.[1]) };
       };
-      // 24 files of 250 KB, which are not heavy yet.
+      // 24 files of 250 KB, which are not heavy yet, are 6 MB, which three engines are for.
       const [smallWithTypes, small, oneWithTypes, one, largeWithTypes, large] = await Promise.all([
         run(24, "ts", 0, "8"),
         run(24, "js", 0, "8"),
@@ -1293,11 +1290,11 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         run(24, "ts", 250_000, "8"),
         run(24, "js", 250_000, "8"),
       ]);
-      expect([oneWithTypes.engines, one.engines]).toEqual([1, 1]);
-      // Whether another engine pays is up to the clock, once the run has measured what one takes to start and to lint.
-      for (const it of [smallWithTypes, small, largeWithTypes, large]) {
-        expect(it.engines).toBeGreaterThanOrEqual(1);
-        expect(it.engines).toBeLessThanOrEqual(8);
+      expect([smallWithTypes.engines, small.engines, oneWithTypes.engines, one.engines]).toEqual([1, 1, 1, 1]);
+      // A thread only asks for an engine while the others are in use.
+      for (const it of [largeWithTypes, large]) {
+        expect(it.engines).toBeGreaterThan(1);
+        expect(it.engines).toBeLessThanOrEqual(3);
       }
       expect(largeWithTypes.stdout).toBe(oneWithTypes.stdout);
       expect(large.stdout).toBe(one.stdout);
@@ -1785,7 +1782,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         export default {
           rules: { helpers: { create: context => ({ Program: node => context.report({ node, message: "" + helpers() }) }) } },
         };`,
-        // 200 of them are 16 MB, which is work for an engine on each of the 8 threads.
+        // 200 of them are 16 MB, which five engines are for.
         ...Object.fromEntries(
           Array.from({ length: count }, (_, i) => [`f${i}.js`, `1;\n/*${Buffer.alloc(80_000, "x")}*/\n`]),
         ),
@@ -1882,7 +1879,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
                     mkdirSync("engines", { recursive: true });
                     writeFileSync("engines/" + randomUUID(), "");
                   }
-                  // It takes its time, so that more than one engine pays.
+                  // It takes its time, so that a thread asks for an engine while the first is in use.
                   let sum = 0;
                   for (let i = 0; i < 1e7; i++) sum += i % 7;
                   // Nothing foresees it: as long as there is one engine it does not grow at all. From the second on each keeps

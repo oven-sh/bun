@@ -732,12 +732,12 @@ impl Run<'_> {
         let with_engine = (supported.iter()).filter(|it| needs(it) != Needs::Nothing);
         let most_engines = (pool.threads()).min(context.js_plugins.most_realms());
         let shared = with_engine.clone().filter(|it| needs(it) != Needs::Heavy);
-        // Those that a rule may hand back to the rule of its package count: it costs nothing if they do not come.
-        let may_come =
-            (supported.iter()).filter(|it| needs(it) == Needs::Nothing && may_be_handed_back(it));
-        let size: u64 = shared.chain(may_come.clone()).map(|it| it.size).sum();
-        let count = with_engine.count() + may_come.count();
+        let size: u64 = shared.map(|it| it.size).sum();
+        // Those that a rule may hand back to the rule of its package.
+        let may_come = supported.iter().filter(|it| may_be_handed_back(it));
+        let count = with_engine.count() + may_come.clone().count();
         (context.js_plugins).expect(count, size, most_engines);
+        (context.js_plugins).may_come(may_come.map(|it| it.size).sum());
         if !with_types.is_empty() {
             if !is_oxlint {
                 loader.advise_about_typescript();

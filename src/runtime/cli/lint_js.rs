@@ -476,17 +476,8 @@ struct Borrowed<'e> {
     engines: &'e Engines,
     at: usize,
     desk: Arc<Desk>,
-    /// `None`: a caller further up has borrowed it, and gives it back.
-    loan: Option<Loan>,
-}
-
-/// What is known when an engine is borrowed, for when it is given back.
-struct Loan {
-    /// The size of the file that it is borrowed for.
-    size: usize,
-    since: std::time::Instant,
-    /// It has not loaded what it needs yet.
-    is_first: bool,
+    /// The size of the file that it is borrowed for. `None`: a caller further up has borrowed it, and gives it back.
+    size: Option<usize>,
 }
 
 impl Vm for Borrowed<'_> {
@@ -541,7 +532,7 @@ impl Borrowed<'_> {
 
 impl Drop for Borrowed<'_> {
     fn drop(&mut self) {
-        let Some(loan) = &self.loan else {
+        let Some(size) = self.size else {
             return;
         };
         let mut state = self.engines.state.lock();
@@ -569,10 +560,7 @@ impl Drop for Borrowed<'_> {
             state.idle.push(self.at);
         }
         drop(state);
-        if loan.size > 0 {
-            let seconds = loan.since.elapsed().as_secs_f64();
-            (self.engines.demand).note(loan.size, seconds, loan.is_first);
-        }
+        self.engines.demand.note(size);
         // Each of those that wait may wait for another one.
         self.engines.is_idle.notify_all();
     }
@@ -697,7 +685,7 @@ impl Engines {
                 engines: self,
                 at,
                 desk: Arc::clone(&state.all[at].desk),
-                loan: None,
+                size: None,
             });
         }
         let at = loop {
@@ -745,11 +733,7 @@ impl Engines {
             engines: self,
             at,
             desk: Arc::clone(&state.all[at].desk),
-            loan: Some(Loan {
-                size,
-                since: std::time::Instant::now(),
-                is_first: !state.all[at].is_loaded(),
-            }),
+            size: Some(size),
         })
     }
 }
@@ -773,6 +757,14 @@ impl Engine for Engines {
     fn sizes(&self) -> (usize, usize) {
         let state = self.state.lock();
         (state.most, state.all.len() - state.count())
+    }
+
+    fn may_come(&self, size: u64) {
+        self.demand.may_come(size);
+    }
+
+    fn has_shown(&self, size: u64, comes: bool) {
+        self.demand.has_shown(size, comes);
     }
 
     fn expect(&self, _files: usize, size: u64, most: usize) {

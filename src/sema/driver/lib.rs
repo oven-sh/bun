@@ -1033,6 +1033,8 @@ pub struct GlobalsOf {
     /// The files of `Request::paths` that are in the program, each a `tspath.Path`. Sorted.
     pub files: Vec<Vec<u8>>,
     pub names: Vec<GlobalName>,
+    /// `checkJs`
+    pub checks_javascript: bool,
 }
 
 #[derive(Default)]
@@ -3534,6 +3536,7 @@ fn check_named_files(
         let files_of = |names| GlobalsOf {
             files: named.unwrap_or_default().to_vec(),
             names,
+            checks_javascript: files.options.check_js == Some(true),
         };
         report.globals.extend(files.global_names().map(files_of));
         return report;

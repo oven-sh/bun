@@ -18,8 +18,7 @@ use crate::results::{Counts, FileResult};
 use crate::run::Environment;
 use bun_core::strings;
 use bun_lint::context::Severity;
-use bun_lint::language::InferGlobals;
-use bun_lint::linter::globals::{InferredGlobal, InferredGlobals};
+use bun_lint::linter::globals::{InferredGlobal, InferredGlobals, ProgramGlobals};
 use bun_lint::linter::{
     Details, LintMessage, LintResult, MAX_AUTOFIX_PASSES, ResolvedConfig, RuleId, apply_fixes,
     grows_too_much, is_parse_error, max_fixed_len,
@@ -274,6 +273,7 @@ fn files_matching(root: &[u8], pattern: &[u8], ignored: &[&[u8]]) -> Vec<Vec<u8>
 struct OfProgram {
     /// `None`: see `Files::global_names`.
     names: Option<Vec<InferredGlobal>>,
+    checks_javascript: bool,
     /// The files that are in it only because they are linted, each by the name that the program has for it: the project does
     /// not include them, so they are not written for its libraries.
     added: FxHashSet<Vec<u8>>,
@@ -292,16 +292,17 @@ impl OfProgram {
         let added = options.own_roots.and_then(|own| options.files.get(own..));
         OfProgram {
             names: names.map(|it| it.into_iter().map(inferred).collect()),
+            checks_javascript: options.check_js == Some(true),
             added: added.unwrap_or_default().iter().cloned().collect(),
         }
     }
 }
 
 /// What [`OfProgram`] has for one file.
-struct OfFile<'p>(Option<&'p [InferredGlobal]>);
+struct OfFile<'p>(Option<ProgramGlobals<'p>>);
 
 impl InferredGlobals for OfFile<'_> {
-    fn of(&self, _: &[u8]) -> Option<&[InferredGlobal]> {
+    fn of(&self, _: &[u8]) -> Option<ProgramGlobals<'_>> {
         self.0
     }
 }
@@ -349,7 +350,8 @@ fn check_and_lint_in(
         let (path, config) = (files[indices[at]].path, files[indices[at]].config);
         let project_of_file = &program.options.config_path;
         let is_in_a_project = !matches!(project, Project::This(_)) && !project_of_file.is_empty();
-        let infers = config.language.infers_globals != InferGlobals::No;
+        let is_javascript = bun_sema::resolve::is_javascript(name);
+        let infers = config.language.infers_globals.is_for(is_javascript);
         let of_program = (infers && is_in_a_project).then(|| {
             let mut known = of_programs.lock();
             if let Some(found) = known.iter().find(|it| it.0 == *project_of_file) {
@@ -360,7 +362,12 @@ fn check_and_lint_in(
             made
         });
         let of_program = of_program.as_ref().filter(|it| !it.added.contains(name));
-        let of_file = OfFile(of_program.and_then(|it| it.names.as_deref()));
+        let of_file = OfFile(of_program.and_then(|it| {
+            Some(ProgramGlobals {
+                names: it.names.as_deref()?,
+                checks_javascript: it.checks_javascript,
+            })
+        }));
         let started = context.timing.now();
         let linted = bun_lint::types::with_file_and_modules(
             checker,

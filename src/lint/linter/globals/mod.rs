@@ -18,7 +18,7 @@
 mod inferred;
 mod tables;
 
-pub use inferred::{InferredGlobal, InferredGlobals};
+pub use inferred::{InferredGlobal, InferredGlobals, ProgramGlobals};
 
 use crate::ast::File;
 use crate::language::{Global, InferGlobals, LanguageOptions, Parser, SourceType};
@@ -402,7 +402,8 @@ impl<'a> File<'a> {
         let config = self.language().config_globals();
         // The libraries of the program are in the place of the tables.
         let only_written = self.language().infers_globals != InferGlobals::Besides
-            && self.inferred_globals().is_some();
+            && (self.inferred_globals())
+                .is_some_and(|it| it.checks_javascript || !self.is_javascript());
         // TypeScript knows these in JavaScript without a declaration.
         let is_of_commonjs = || {
             matches!(name, b"require" | b"module" | b"exports")
@@ -426,7 +427,7 @@ impl<'a> File<'a> {
         let is_exported = self.is_exported_in_comments(name);
         let setting = comment.map(|it| it.setting).or(implicit);
         if setting.is_none()
-            && let Some(all) = self.inferred_globals()
+            && let Some(ProgramGlobals { names: all, .. }) = self.inferred_globals()
             && let Ok(at) = all.binary_search_by(|it| (*it.name).cmp(name))
         {
             let found = &all[at];

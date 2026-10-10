@@ -185,7 +185,7 @@ describe.concurrent("bun lint", () => {
       "a/a.js": "console.log(window, process, Bun, nothing);\n",
       "b/jsconfig.json": options(["es2022"], { checkJs: true }),
       "b/a.js": "console.log(window, process, Bun, nothing, Promise, Map);\n",
-      "c/tsconfig.json": options(["es2022", "dom"], { allowJs: true }),
+      "c/tsconfig.json": options(["es2022", "dom"], { checkJs: true }),
       "c/types/g.d.ts":
         "declare global {\n  var MY_GLOBAL: string;\n  const MY_CONST: number;\n  interface OnlyAType {\n    a: 1;\n  }\n}\nexport {};\n",
       "c/a.js":
@@ -240,7 +240,7 @@ describe.concurrent("bun lint", () => {
     test("`require`, `module` and `exports` are defined in a JavaScript file that is no ES module", async () => {
       const { stdout } = await lint(
         {
-          "tsconfig.json": options(["es2022"], { allowJs: true }),
+          "tsconfig.json": options(["es2022"], { checkJs: true }),
           "a.js": "module.exports = require('x');\nexports.a = __dirname;\n",
           "b.js": "export default require('x');\nmodule;\n",
         },
@@ -3767,6 +3767,20 @@ describe.concurrent("bun lint", () => {
         const { "globals.d.ts": _, ...rest } = tree;
         const text = "export {};\nvoid [Array, fromTypes, typo];\n";
         const { stdout, exitCode } = await lint({ ...rest, "a.js": text }, ["-f", "unix"]);
+        expect(reported(stdout, "no-undef")).toEqual(["a.js typo"]);
+        expect(exitCode).toBe(1);
+      });
+
+      // TypeScript reports nothing in such a file, so nobody has seen to it that what it uses is declared.
+      test("where the project does not check its JavaScript, its types only add to the environments", async () => {
+        const { stdout, exitCode } = await lint(
+          {
+            ...tree,
+            "tsconfig.json": tsconfig({ lib: ["es2022"], types: ["a"], checkJs: false }),
+            "a.js": "void [fromTypes, mine, process, window, typo];\n",
+          },
+          ["-f", "unix"],
+        );
         expect(reported(stdout, "no-undef")).toEqual(["a.js typo"]);
         expect(exitCode).toBe(1);
       });

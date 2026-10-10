@@ -59,6 +59,7 @@ fn is_type_parameter_repeated_in_ast<'a>(
     node: TypeParam<'a>,
     references: impl Iterator<Item = Reference<'a>>,
     start_of_body: u32,
+    is_oxlint: bool,
 ) -> bool {
     let definition = node.span();
     let mut total = 0;
@@ -72,7 +73,8 @@ fn is_type_parameter_repeated_in_ast<'a>(
         {
             continue;
         }
-        if is_type_argument(reference) {
+        // tsgolint leaves a type argument to the types: in `Missing<T> & { a: 1 }`, which is `any`, there is no `T`.
+        if !is_oxlint && is_type_argument(reference) {
             return true;
         }
         total += 1;
@@ -402,7 +404,8 @@ fn check_node<'a>(
             continue;
         };
         // If it is written several times, the types need not be asked.
-        if is_type_parameter_repeated_in_ast(type_parameter, variable.references(), start_of_body) {
+        let is_oxlint = cx.language().is_oxlint;
+        if is_type_parameter_repeated_in_ast(type_parameter, variable.references(), start_of_body, is_oxlint) {
             continue;
         }
         // Inferred types take the type checker.

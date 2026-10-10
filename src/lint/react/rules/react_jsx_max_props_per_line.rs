@@ -44,25 +44,32 @@ impl Rule for JsxMaxPropsPerLine {
         let Some(max) = (if is_single_line_tag { self.single } else { self.multi }) else {
             return;
         };
-        // `linePartitionedProps`, one after the other: from where the line goes.
-        let (mut from, mut last) = (0, None::<Prop<'a>>);
-        for (i, decl) in attributes.iter().enumerate() {
+        // `linePartitionedProps`, one after the other: where the line starts, and how many it has.
+        let mut rest = attributes.iter();
+        let (mut line, mut count, mut last) = (rest, 0, None::<Prop<'a>>);
+        loop {
+            let from_here = rest;
+            let Some(decl) = rest.next() else {
+                break;
+            };
             if last.is_some_and(|last| !ast_utils::is_on_one_line(file, last.span().between(decl.span()))) {
-                check_line(attributes, from, i, max, cx);
-                from = i;
+                check_line(line, count, max, cx);
+                (line, count) = (from_here, 0);
             }
+            count += 1;
             last = Some(decl);
         }
-        check_line(attributes, from, attributes.len(), max, cx);
+        check_line(line, count, max, cx);
     }
 }
 
-/// The attributes `from..to` are those of one line.
-fn check_line<'a>(attributes: List<'a, Prop<'a>>, from: usize, to: usize, max: usize, cx: &Cx<'a, JsxMaxPropsPerLine>) {
-    if to - from <= max {
+/// The first `count` of `line` are the attributes of one line.
+fn check_line<'a>(mut line: ListIter<'a, Prop<'a>>, count: usize, max: usize, cx: &Cx<'a, JsxMaxPropsPerLine>) {
+    if count <= max {
         return;
     }
-    let Some(prop) = attributes.get(from + max) else {
+    let props_in_line = line.take(count);
+    let Some(prop) = line.nth(max) else {
         return;
     };
     // `getPropName`: of `a:b` upstream takes the node `b` for the name.
@@ -72,14 +79,14 @@ fn check_line<'a>(attributes: List<'a, Prop<'a>>, from: usize, to: usize, max: u
         None => prop.value().map_or(&b""[..], Expr::text),
     };
     cx.report(prop, NEW_LINE).data("prop", name).fix(|fixer| {
-        let mut code = Vec::new();
-        for (i, node) in attributes.iter().skip(from).take(to - from).enumerate() {
+        let (mut code, mut range) = (Vec::new(), None::<Span>);
+        for (i, node) in props_in_line.enumerate() {
             if i > 0 {
                 code.push(if i % max == 0 { b'\n' } else { b' ' });
             }
             code.extend_from_slice(node.text());
+            range = Some(range.unwrap_or_else(|| node.span()).to(node.span()));
         }
-        let (front, back) = (attributes.get(from)?, attributes.get(to - 1)?);
-        Some(fixer.replace(front.span().to(back.span()), code))
+        Some(fixer.replace(range?, code))
     });
 }

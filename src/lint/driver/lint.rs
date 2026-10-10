@@ -563,6 +563,8 @@ impl Context<'_, '_> {
                 Some(entry) => entry.1 += 1,
                 None => all.push((reason, 1)),
             }
+        } else if config.may_hand_back() {
+            self.js_plugins.has_shown(text.len() as u64, false);
         }
         if !result.skipped_rules.is_empty() {
             let mut all = self.skipped_in_comments.lock();

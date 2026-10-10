@@ -200,7 +200,6 @@ impl Processes<'_> {
             self.is_idle.wait_guarded(&mut state);
         };
         drop(state);
-        let (since, is_first) = (std::time::Instant::now(), idle.is_err());
         let process = match idle {
             Ok(process) => process,
             Err(is_for_heavy) => {
@@ -210,9 +209,7 @@ impl Processes<'_> {
         let is_for_heavy = process.is_for_heavy;
         self.state.lock().lent.push((to, Some(process)));
         then(&mut Lent { by: self, to });
-        if size > 0 {
-            (self.demand).note(size, since.elapsed().as_secs_f64(), is_first);
-        }
+        self.demand.note(size);
         let mut state = self.state.lock();
         let at = state.lent.iter().position(|it| it.0 == to);
         match at.and_then(|at| state.lent.swap_remove(at).1) {
@@ -242,6 +239,14 @@ impl Engine for Processes<'_> {
             then();
             self.state.lock().kept -= 1;
         })
+    }
+
+    fn may_come(&self, size: u64) {
+        self.demand.may_come(size);
+    }
+
+    fn has_shown(&self, size: u64, comes: bool) {
+        self.demand.has_shown(size, comes);
     }
 
     fn expect(&self, _files: usize, size: u64, most: usize) {

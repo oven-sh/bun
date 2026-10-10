@@ -35,7 +35,8 @@ for (const name of JSON.parse(readFileSync(names, "utf8"))) {
         ? ["returns", at("root", () => render(entry.fn(...args), "root"))]
         : ["returns", render(React.createElement(entry.fn, args[0]), "root")];
     } catch (error) {
-      return ["throws", error?.constructor?.name ?? typeof error];
+      // With the name that is not bound: it must not be one that the compiler made.
+      return ["throws", error instanceof ReferenceError ? error.message : (error?.constructor?.name ?? typeof error)];
     }
   });
 }

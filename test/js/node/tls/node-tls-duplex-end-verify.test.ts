@@ -222,10 +222,10 @@ async function behindProxy(server, wire, proxyOptions = {}, overDuplex = false) 
   };
 }
 
-// The same shape on a plain TCP socket. The client calls end() when its last handshake flight left. The proxy holds
-// the server's final flight until the client's FIN arrived, so the handshake completes on a socket that is already
-// shut down. The proxy never forwards the FIN, so the server keeps writing. The server's certificate is not trusted,
-// unless `trusted`. Returns the ordered events of the client.
+// The same shape on a plain TCP socket. The client calls end() when its last handshake flight left. The proxy
+// delivers what the server sends from then on after the client's FIN arrived, in `pieces` parts, so the handshake
+// completes on a socket that is already shut down. The proxy never forwards the FIN, so the server keeps writing.
+// The server's certificate is not trusted, unless `trusted`. Returns the ordered events of the client.
 async function endMidHandshakeOverTcp(
   maxVersion,
   rejectUnauthorized,
@@ -245,8 +245,8 @@ async function endMidHandshakeOverTcp(
     (downstream, upstream) => {
       let sawChangeCipherSpec = false;
       let ending = false;
-      let clientEnded = false;
-      const held: Buffer[] = [];
+      const clientEnded = Promise.withResolvers();
+      let delivered = clientEnded.promise;
       eachRecord(downstream, record => {
         upstream.write(record);
         if (ending) return;
@@ -258,14 +258,11 @@ async function endMidHandshakeOverTcp(
         }
         sawChangeCipherSpec ||= record[0] === CHANGE_CIPHER_SPEC;
       });
-      downstream.on("end", async () => {
-        await inPieces(part => downstream.write(part), Buffer.concat(held.splice(0)), pieces);
-        clientEnded = true;
-        for (const chunk of held.splice(0)) downstream.write(chunk);
-      });
+      downstream.on("end", clientEnded.resolve);
       upstream.on("data", chunk => {
-        if (ending && !clientEnded) held.push(chunk);
-        else downstream.write(chunk);
+        if (!ending) return void downstream.write(chunk);
+        // The FIN can arrive before the server's answer does: each chunk waits for it, and for the chunk before.
+        delivered = delivered.then(() => inPieces(part => downstream.write(part), chunk, pieces));
       });
     },
     { allowHalfOpen: true },
@@ -1141,5 +1138,794 @@ test("end() after a second connect() of the same socket sends no ClientHello", a
   } finally {
     client.destroy();
     server.close();
+  }
+});
+
+// Records the events of `client` in `events` and calls `closed` at 'close'. A client that was let through, or that got
+// data with no report of its handshake, is destroyed, so that it does not keep its test waiting.
+function recordClient(client, events, closed) {
+  client.on("secureConnect", () => {
+    events.push(`secureConnect authorized=${client.authorized} authError=${client.authorizationError}`);
+    setImmediate(() => client.destroy());
+  });
+  client.on("data", data => {
+    events.push(`data ${data}`);
+    if (!events.some(event => event.startsWith("secureConnect"))) client.destroy();
+  });
+  client.on("error", err => events.push(`error ${err.code}`));
+  client.on("close", () => {
+    events.push("close");
+    closed();
+  });
+}
+
+// A handshake that did not complete is never an established session. The client below wraps a Duplex, does not call
+// end(), and its peer makes the handshake fail. `peer(otherEnd)` plays the peer on the other end of the Duplex, and
+// can return a function that closes what it opened. Returns the ordered events of the client.
+async function failedHandshakeOverDuplex(rejectUnauthorized, peer) {
+  const events: string[] = [];
+  const { promise, resolve } = Promise.withResolvers();
+  const [transport, otherEnd] = duplexPair();
+  transport.on("error", () => {});
+  otherEnd.on("error", () => {});
+  const close = await peer(otherEnd);
+  const client = tls.connect({ socket: transport, servername: "agent1", ca: serverCA, rejectUnauthorized });
+  recordClient(client, events, resolve);
+  await promise;
+  close?.();
+  return events;
+}
+
+const HANDSHAKE = 0x16;
+const SERVER_KEY_EXCHANGE = 12;
+
+// A TLS 1.2 server with a trusted certificate for "agent1". The relay in front of it changes the last byte of the
+// signature in ServerKeyExchange, so the peer proves no possession of the key. The chain is already verified then.
+async function trustedChainWithBadKeyProof(otherEnd) {
+  const server = tls.createServer({ key, cert, maxVersion: "TLSv1.2" }, socket =>
+    socket.on("error", () => {}),
+  ) as Listening<tls.Server>;
+  server.on("tlsClientError", () => {});
+  await new Promise<void>(listening => server.listen(0, "127.0.0.1", listening));
+  const upstream = net.connect(server.address().port, "127.0.0.1");
+  upstream.on("error", () => {});
+  otherEnd.on("data", chunk => upstream.write(chunk));
+  eachRecord(upstream, record => {
+    if (record[0] === HANDSHAKE) {
+      // A record can carry several handshake messages: type (1 byte), length (3 bytes), body.
+      for (let at = 5; at + 4 <= record.length; ) {
+        const end = at + 4 + record.readUIntBE(at + 1, 3);
+        if (record[at] === SERVER_KEY_EXCHANGE && end <= record.length) record[end - 1] ^= 0xff;
+        at = end;
+      }
+    }
+    otherEnd.write(record);
+  });
+  upstream.on("close", () => otherEnd.destroy());
+  return () => {
+    upstream.destroy();
+    server.close();
+  };
+}
+
+for (const [failure, peer] of [
+  [
+    "a fatal alert",
+    otherEnd =>
+      void otherEnd.once("data", () => otherEnd.write(Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x02, 0x28]))),
+  ],
+  [
+    "bytes that are not TLS",
+    otherEnd => void otherEnd.once("data", () => otherEnd.write("this is not a TLS record\n")),
+  ],
+  ["a trusted chain with a bad key proof", trustedChainWithBadKeyProof],
+]) {
+  for (const rejectUnauthorized of [true, false]) {
+    test(`over a Duplex: ${failure} is an error, not a secureConnect, with rejectUnauthorized: ${rejectUnauthorized}`, async () => {
+      const events = await failedHandshakeOverDuplex(rejectUnauthorized, peer);
+      assert.match(events[0], /^error ERR_SSL_/, events.join(", "));
+      assert.deepStrictEqual(events.slice(1), ["close"]);
+    });
+  }
+}
+
+// A TLS 1.2 server with a trusted certificate that requires a client certificate. The client has none, so the server's
+// alert arrives after the client verified the chain.
+async function serverThatRequiresClientCert(otherEnd) {
+  const server = tls.createServer({
+    key,
+    cert,
+    ca: clientCA,
+    requestCert: true,
+    maxVersion: "TLSv1.2",
+  }) as Listening<tls.Server>;
+  server.on("tlsClientError", () => {});
+  await new Promise<void>(listening => server.listen(0, "127.0.0.1", listening));
+  const upstream = net.connect(server.address().port, "127.0.0.1");
+  upstream.on("error", () => {});
+  otherEnd.pipe(upstream).pipe(otherEnd);
+  return () => {
+    upstream.destroy();
+    server.close();
+  };
+}
+
+for (const rejectUnauthorized of [true, false]) {
+  test(`over a Duplex: an alert behind a verified chain is reported by its name, with rejectUnauthorized: ${rejectUnauthorized}`, async () => {
+    const events = await failedHandshakeOverDuplex(rejectUnauthorized, serverThatRequiresClientCert);
+    assert.match(events[0], /^error ERR_SSL_.*ALERT_HANDSHAKE_FAILURE$/, events.join(", "));
+    assert.deepStrictEqual(events.slice(1), ["close"]);
+  });
+}
+
+const ALERT = 0x15;
+const FATAL = 2;
+
+test("over a Duplex: a client that refuses the server's key proof sends its fatal alert", async () => {
+  const sent: number[][] = [];
+  await failedHandshakeOverDuplex(true, async otherEnd => {
+    eachRecord(otherEnd, record => sent.push([record[0], record[5]]));
+    return trustedChainWithBadKeyProof(otherEnd);
+  });
+  assert.deepStrictEqual(sent, [
+    [HANDSHAKE, 1],
+    [ALERT, FATAL],
+  ]);
+});
+
+test("over a Duplex: a server that shares no cipher with the client sends its fatal alert", async () => {
+  const [transport, otherEnd] = duplexPair();
+  const server = new tls.TLSSocket(transport, {
+    isServer: true,
+    secureContext: tls.createSecureContext({ key, cert }),
+  });
+  const serverFailed = new Promise<NodeJS.ErrnoException>(resolve => server.once("error", resolve));
+  const client = tls.connect({ socket: otherEnd, maxVersion: "TLSv1.2", ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256" });
+  const clientFailed = new Promise<NodeJS.ErrnoException>(resolve => client.once("error", resolve));
+  assert.strictEqual((await serverFailed).code, "ERR_SSL_NO_SHARED_CIPHER");
+  assert.match((await clientFailed).code!, /^ERR_SSL_.*ALERT_HANDSHAKE_FAILURE$/);
+  server.destroy();
+});
+
+// A handshake that the peer ends with a close_notify alert. The peer keeps the transport open, so only the alert tells
+// this side that no session will come.
+const CLOSE_NOTIFY = Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x01, 0x00]);
+
+// A transport with no file descriptor. `peer(chunk, transport)` gets each chunk that the TLS socket writes to it.
+function transportWithPeer(peer: (chunk: Buffer, transport: Duplex) => void = () => {}) {
+  const transport = new Duplex({
+    read() {},
+    write(chunk, encoding, callback) {
+      callback();
+      peer(chunk, transport);
+    },
+  });
+  return transport;
+}
+
+// A peer that calls `answer(transport)` once: on a later turn of the event loop than the first flight of the TLS
+// socket, or inside the write() of that flight with `inWrite`.
+function answerFirstFlight(answer: (transport: Duplex) => void, inWrite = false) {
+  let answered = false;
+  return (chunk: Buffer, transport: Duplex) => {
+    if (answered) return;
+    answered = true;
+    if (inWrite) answer(transport);
+    else setImmediate(answer, transport);
+  };
+}
+
+// The events of `socket` in order. Resolves at 'close'.
+function eventsUntilClose(socket: tls.TLSSocket) {
+  const events: string[] = [];
+  const { promise, resolve } = Promise.withResolvers<string[]>();
+  socket.on("secureConnect", () => events.push("secureConnect"));
+  socket.on("end", () => events.push("end"));
+  socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}: ${err.message}`));
+  socket.on("close", hadError => {
+    events.push(`close ${hadError}`);
+    resolve(events);
+  });
+  return promise;
+}
+
+const DISCONNECTED_IN_HANDSHAKE = [
+  "end",
+  "error ECONNRESET: Client network socket disconnected before secure TLS connection was established",
+  "close true",
+];
+
+for (const rejectUnauthorized of [true, false]) {
+  test(`over a Duplex: a close_notify in answer to the ClientHello fails the connection, rejectUnauthorized ${rejectUnauthorized}`, async () => {
+    const transport = transportWithPeer(answerFirstFlight(transport => transport.push(CLOSE_NOTIFY)));
+    const client = tls.connect({ socket: transport, servername: "agent1", rejectUnauthorized });
+    assert.deepStrictEqual(await eventsUntilClose(client), DISCONNECTED_IN_HANDSHAKE);
+  });
+}
+
+test("over a Duplex: a close_notify that the transport delivers inside its write() fails the connection", async () => {
+  const transport = transportWithPeer(answerFirstFlight(transport => transport.push(CLOSE_NOTIFY), true));
+  const client = tls.connect({ socket: transport, servername: "agent1" });
+  assert.deepStrictEqual(await eventsUntilClose(client), DISCONNECTED_IN_HANDSHAKE);
+});
+
+test("over a Duplex: a close_notify that is readable before tls.connect() fails the connection", async () => {
+  const transport = transportWithPeer();
+  transport.push(CLOSE_NOTIFY);
+  const client = tls.connect({ socket: transport, servername: "agent1" });
+  assert.deepStrictEqual(await eventsUntilClose(client), DISCONNECTED_IN_HANDSHAKE);
+});
+
+test("over a Duplex: a close_notify that arrives in two reads fails the connection", async () => {
+  const transport = transportWithPeer(
+    answerFirstFlight(transport => {
+      transport.push(CLOSE_NOTIFY.subarray(0, 3));
+      setImmediate(() => transport.push(CLOSE_NOTIFY.subarray(3)));
+    }),
+  );
+  const client = tls.connect({ socket: transport, servername: "agent1" });
+  assert.deepStrictEqual(await eventsUntilClose(client), DISCONNECTED_IN_HANDSHAKE);
+});
+
+test("over a Duplex: a close_notify after this side called end() fails the connection", async () => {
+  const transport = transportWithPeer(
+    answerFirstFlight(transport => {
+      client.end();
+      setImmediate(() => transport.push(CLOSE_NOTIFY));
+    }),
+  );
+  const client = tls.connect({ socket: transport, servername: "agent1" });
+  assert.deepStrictEqual(await eventsUntilClose(client), DISCONNECTED_IN_HANDSHAKE);
+});
+
+test("over a Duplex: a close_notify in place of the server's last TLS 1.2 flight fails the connection", async () => {
+  // A real server answers the ClientHello, so the client has checked a trusted certificate when the alert arrives.
+  let clientWrites = 0;
+  const serverTransport = transportWithPeer(chunk => {
+    if (clientWrites < 2) clientTransport.push(chunk);
+  });
+  const clientTransport = transportWithPeer((chunk, transport) => {
+    clientWrites++;
+    if (clientWrites === 1) serverTransport.push(chunk);
+    // The client sent its last flight. It now waits for the server's ChangeCipherSpec.
+    else if (clientWrites === 2) setImmediate(() => transport.push(CLOSE_NOTIFY));
+  });
+  const server = new tls.TLSSocket(serverTransport, {
+    isServer: true,
+    secureContext: tls.createSecureContext({ key, cert, maxVersion: "TLSv1.2" }),
+  });
+  server.on("error", () => {});
+  try {
+    const client = tls.connect({ socket: clientTransport, servername: "agent1", ca: serverCA });
+    assert.deepStrictEqual(await eventsUntilClose(client), DISCONNECTED_IN_HANDSHAKE);
+  } finally {
+    server.destroy();
+    serverTransport.destroy();
+  }
+});
+
+test("over a TLS socket: a close_notify in answer to the inner ClientHello fails the inner connection", async () => {
+  // The outer session carries the inner handshake. The outer server answers the inner ClientHello itself.
+  const server = tls.createServer({ key, cert }, socket => {
+    socket.on("error", () => {});
+    socket.once("data", () => socket.write(CLOSE_NOTIFY));
+  }) as Listening<tls.Server>;
+  await new Promise<void>(listening => server.listen(0, "127.0.0.1", listening));
+  const outer = tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: false });
+  outer.on("error", () => {});
+  try {
+    await new Promise(secured => outer.once("secureConnect", secured));
+    const inner = tls.connect({ socket: outer, servername: "agent1" });
+    assert.deepStrictEqual(await eventsUntilClose(inner), DISCONNECTED_IN_HANDSHAKE);
+  } finally {
+    outer.destroy();
+    server.close();
+  }
+});
+
+// The same alert on a TCP socket: https://github.com/oven-sh/bun/issues/44517
+for (const rejectUnauthorized of [true, false]) {
+  test(`on a TCP socket: a close_notify in answer to the ClientHello fails the connection, rejectUnauthorized ${rejectUnauthorized}`, async () => {
+    const peer = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", () => socket.write(CLOSE_NOTIFY));
+    }) as Listening<net.Server>;
+    await new Promise<void>(listening => peer.listen(0, "127.0.0.1", listening));
+    try {
+      const client = tls.connect({ port: peer.address().port, host: "127.0.0.1", rejectUnauthorized });
+      assert.deepStrictEqual(await eventsUntilClose(client), DISCONNECTED_IN_HANDSHAKE);
+    } finally {
+      peer.close();
+    }
+  });
+}
+
+test("on a TCP socket: a close_notify in place of the client's last TLS 1.2 flight is a 'tlsClientError'", async () => {
+  const server = tls.createServer({ key, cert, maxVersion: "TLSv1.2" });
+  const reported = new Promise<NodeJS.ErrnoException>(resolve => server.once("tlsClientError", resolve));
+  // The proxy forwards the ClientHello and answers the server's flight itself.
+  const { port, close } = await behindProxy(server, (downstream, upstream) => {
+    downstream.once("data", clientHello => upstream.write(clientHello));
+    upstream.once("data", () => upstream.write(CLOSE_NOTIFY));
+  });
+  const client = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+  client.on("error", () => {});
+  try {
+    const err = await reported;
+    assert.deepStrictEqual({ code: err.code, message: err.message }, { code: "ECONNRESET", message: "socket hang up" });
+  } finally {
+    client.destroy();
+    close();
+  }
+});
+
+// The peer can go away while the handshake of a socket that called end() still runs. The socket closes with no error,
+// and the server reports the handshake that never finished. `half`: the peer sends the first half of its last flight
+// before its FIN.
+for (const maxVersion of ["TLSv1.2", "TLSv1.3"] as const) {
+  for (const half of [false, true]) {
+    test(`${maxVersion}: a server that end()s reports the handshake that its peer left ${half ? "in the middle of a flight" : "before its last flight"}`, async () => {
+      const events: string[] = [];
+      const refused = Promise.withResolvers();
+      const serverClosed = Promise.withResolvers();
+      let serverSocket;
+      const server = tls.createServer({ key, cert, maxVersion }, () => events.push("secureConnection"));
+      server.on("tlsClientError", (err: NodeJS.ErrnoException) => {
+        events.push(`tlsClientError ${err.code}`);
+        refused.resolve();
+      });
+      server.on("connection", socket => {
+        serverSocket = socket;
+        socket.on("error", () => {});
+        socket.on("close", serverClosed.resolve);
+      });
+      const { port, close } = await behindProxy(
+        server,
+        (downstream, upstream) => {
+          let chunks = 0;
+          const held: Buffer[] = [];
+          downstream.on("data", chunk => {
+            // The ClientHello goes through. The proxy holds the client's last flight, and the server calls end().
+            if (++chunks === 1) return void upstream.write(chunk);
+            held.push(chunk);
+            if (held.length === 1) serverSocket.end();
+          });
+          upstream.on("data", chunk => downstream.write(chunk));
+          upstream.on("end", async () => {
+            const flight = Buffer.concat(held.splice(0));
+            if (half) {
+              upstream.write(flight.subarray(0, Math.ceil(flight.length / 2)));
+              await pendingReadsDone();
+            }
+            upstream.end();
+          });
+        },
+        { allowHalfOpen: true },
+      );
+      const client = tls.connect({
+        port,
+        host: "127.0.0.1",
+        servername: "agent1",
+        rejectUnauthorized: false,
+        maxVersion,
+      });
+      client.on("error", () => {});
+      try {
+        await Promise.all([refused.promise, serverClosed.promise]);
+        assert.deepStrictEqual(events, ["tlsClientError ECONNRESET"]);
+      } finally {
+        client.destroy();
+        close();
+      }
+    });
+  }
+}
+
+// What a TLS socket over another stream has written is still on its way when the TLS socket closes: the stream has
+// taken the ciphertext and may yet have to send it.
+const turn = () => new Promise(resolve => setImmediate(resolve));
+
+// `depth` TLS sessions, one inside the other, over one TCP connection. Index 0 is the session over TCP.
+async function nestedSessions(depth: number, { allowHalfOpen = false } = {}) {
+  const accepted = Promise.withResolvers<tls.TLSSocket>();
+  const listener = tls.createServer({ key, cert, allowHalfOpen }, accepted.resolve) as Listening<tls.Server>;
+  await new Promise<void>(listening => listener.listen(0, "127.0.0.1", listening));
+  const clients = [
+    tls.connect({
+      port: listener.address().port,
+      host: "127.0.0.1",
+      rejectUnauthorized: false,
+      allowHalfOpen,
+    } as tls.ConnectionOptions),
+  ];
+  const servers: tls.TLSSocket[] = [];
+  const close = () => {
+    for (const socket of [...clients, ...servers]) socket.destroy();
+    listener.close();
+  };
+  try {
+    servers.push(await accepted.promise);
+    while (clients.length < depth) {
+      servers.push(new tls.TLSSocket(servers.at(-1)!, { isServer: true, key, cert }));
+      clients.push(tls.connect({ socket: clients.at(-1), rejectUnauthorized: false }));
+      await Promise.all([
+        new Promise(secured => clients.at(-1)!.once("secureConnect", secured)),
+        new Promise(secured => servers.at(-1)!.once("secure", secured)),
+      ]);
+    }
+  } catch (err) {
+    close();
+    throw err;
+  }
+  return { clients, servers, close };
+}
+
+for (const side of ["client", "server"]) {
+  test(`over a Duplex: a ${side} write that the Duplex has yet to complete is no error when the peer closes its side`, async () => {
+    // Holds the chunk and the callback of each write of `side` from `stall()` on.
+    const held: [Buffer, (error?: Error | null) => void][] = [];
+    let stalled = false;
+    const makeSide = (name: string, peer: () => Duplex) =>
+      new Duplex({
+        read() {},
+        write(chunk, encoding, callback) {
+          if (stalled && name === side) return void held.push([chunk, callback]);
+          peer().push(chunk);
+          callback();
+        },
+        final(callback) {
+          peer().push(null);
+          callback();
+        },
+      });
+    const sides = { client: makeSide("client", () => sides.server), server: makeSide("server", () => sides.client) };
+    const server = new tls.TLSSocket(sides.server, { isServer: true, key, cert });
+    const client = tls.connect({ socket: sides.client, rejectUnauthorized: false });
+    const [writer, reader] = side === "client" ? [client, server] : [server, client];
+    const log: string[] = [];
+    let received = "";
+    try {
+      writer.on("error", err => log.push(`'error': ${err.message}`));
+      reader.on("error", err => log.push(`peer 'error': ${err.message}`));
+      await Promise.all([
+        new Promise(secured => client.once("secureConnect", secured)),
+        new Promise(secured => server.once("secure", secured)),
+      ]);
+      // The session tickets of the server are out.
+      await turn();
+      reader.on("data", chunk => (received += chunk));
+      writer.resume();
+      const arrived = new Promise(resolve => reader.once("data", resolve));
+      stalled = true;
+      writer.write("x", err => log.push(`write callback: ${err?.message}`));
+      reader.end();
+      await turn();
+      stalled = false;
+      for (const [chunk, callback] of held.splice(0)) {
+        sides[side === "client" ? "server" : "client"].push(chunk);
+        callback();
+      }
+      await arrived;
+      await turn();
+      assert.deepStrictEqual({ received, log }, { received: "x", log: ["write callback: undefined"] });
+    } finally {
+      client.destroy();
+      server.destroy();
+    }
+  });
+
+  for (const depth of [2, 3]) {
+    test(`${depth} TLS sessions deep: what a ${side} wrote arrives when the peer closes its side first`, async () => {
+      const { clients, servers, close } = await nestedSessions(depth);
+      const [writer, reader] =
+        side === "client" ? [clients.at(-1)!, servers.at(-1)!] : [servers.at(-1)!, clients.at(-1)!];
+      const log: string[] = [];
+      let received = 0;
+      try {
+        // The sessions below report that the one above is gone in their own ways. Only what the writer is told counts.
+        for (const socket of [...clients, ...servers]) socket.on("error", () => {});
+        reader.on("data", chunk => (received += chunk.length));
+        writer.resume();
+        const readerEnded = new Promise(ended => reader.once("end", ended));
+        // More than the kernel takes at once, so most of it is queued in the session over TCP when the writer closes.
+        const first = Buffer.alloc(8 * 1024 * 1024, "a");
+        writer.write(first, (err?: NodeJS.ErrnoException | null) => log.push(`write callback: ${err?.code}`));
+        writer.write("tail", (err?: NodeJS.ErrnoException | null) => log.push(`queued write callback: ${err?.code}`));
+        // A turn later only what the kernel did not take is left. Node writes to the handle of the session below, past its queue.
+        await turn();
+        if (isBun) assert.notStrictEqual((side === "client" ? clients : servers)[0].writableLength, 0);
+        reader.end();
+        await readerEnded;
+        assert.deepStrictEqual(
+          { received, log },
+          { received: first.length + 4, log: ["write callback: undefined", "queued write callback: undefined"] },
+        );
+      } finally {
+        close();
+      }
+    });
+  }
+}
+
+for (const [how, leave] of [
+  [
+    "ends its TLS socket and then destroys the connection",
+    (inner, outer) => (inner.end(), setImmediate(() => outer.destroy())),
+  ],
+  ["destroys the connection", (inner, outer) => outer.destroy()],
+  ["destroys its TLS socket", inner => inner.destroy()],
+] as [string, (inner: tls.TLSSocket, outer: tls.TLSSocket) => void][]) {
+  test(`2 TLS sessions deep: the connection closes when it still has ciphertext to send and the peer ${how}`, async () => {
+    const { clients, servers, close } = await nestedSessions(2);
+    try {
+      for (const socket of [...clients, ...servers]) socket.on("error", () => {});
+      const closed = clients.map(socket => new Promise(resolve => socket.once("close", resolve)));
+      clients[1].resume();
+      servers[1].resume();
+      clients[1].write(Buffer.alloc(8 * 1024 * 1024, "a"));
+      await turn();
+      if (isBun) assert.notStrictEqual(clients[0].writableLength, 0);
+      leave(servers[1], servers[0]);
+      await Promise.all(closed);
+    } finally {
+      close();
+    }
+  });
+}
+
+// A stream that is no net.Socket has nothing behind it that still has to send: it goes with the TLS socket.
+for (const [how, leave] of [
+  ["destroy()", socket => socket.destroy()],
+  ["destroy(err)", socket => socket.destroy(new Error("gone"))],
+  ["destroySoon()", socket => socket.destroySoon()],
+] as [string, (socket: tls.TLSSocket) => void][]) {
+  test(`over a Duplex: ${how} of the TLS socket destroys a Duplex whose other end stays open`, async () => {
+    const [transport, otherEnd] = duplexPair();
+    const server = new tls.TLSSocket(otherEnd, {
+      isServer: true,
+      key,
+      cert,
+      allowHalfOpen: true,
+    } as tls.TLSSocketOptions);
+    const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+    try {
+      for (const socket of [client, server, transport, otherEnd]) socket.on("error", () => {});
+      await Promise.all([
+        new Promise(secured => client.once("secureConnect", secured)),
+        new Promise(secured => server.once("secure", secured)),
+      ]);
+      let received = "";
+      server.on("data", chunk => (received += chunk));
+      const closed = new Promise(resolve => transport.once("close", resolve));
+      client.write("last words");
+      leave(client);
+      await closed;
+      assert.strictEqual(transport.destroyed, true);
+      // Only a destroy() gives up what is on its way.
+      if (!how.startsWith("destroy(")) {
+        await turn();
+        assert.strictEqual(received, "last words");
+      }
+    } finally {
+      client.destroy();
+      server.destroy();
+      transport.destroy();
+      otherEnd.destroy();
+    }
+  });
+}
+
+test("over a Duplex: the close of the TLS socket does not resume a Duplex that it did not pause", async () => {
+  const [transport, otherEnd] = duplexPair();
+  const server = new tls.TLSSocket(otherEnd, { isServer: true, key, cert });
+  const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+  try {
+    for (const socket of [client, server, transport, otherEnd]) socket.on("error", () => {});
+    client.resume();
+    await Promise.all([
+      new Promise(secured => client.once("secureConnect", secured)),
+      new Promise(secured => server.once("secure", secured)),
+    ]);
+    await turn();
+    let resumed = 0;
+    const resume = transport.resume;
+    transport.resume = function () {
+      resumed++;
+      return resume.call(this);
+    };
+    const closed = new Promise(resolve => client.once("close", resolve));
+    client.destroy();
+    await closed;
+    assert.strictEqual(resumed, 0);
+  } finally {
+    client.destroy();
+    server.destroy();
+    transport.destroy();
+    otherEnd.destroy();
+  }
+});
+
+// The session below is a net.Socket, which outlives the one above. Its peer keeps its side open in these.
+test("2 TLS sessions deep: the timeout of the session below still fires after the one above is destroyed", async () => {
+  const { clients, servers, close } = await nestedSessions(2, { allowHalfOpen: true });
+  try {
+    for (const socket of [...clients, ...servers]) socket.on("error", () => {});
+    const timedOut = new Promise<void>(resolve => servers[0].setTimeout(50, resolve));
+    servers[1].destroy();
+    // Node destroys the session below with the one above.
+    await Promise.race([timedOut, new Promise(resolve => servers[0].once("close", resolve))]);
+  } finally {
+    close();
+  }
+});
+
+for (const side of ["client", "server"]) {
+  test(`2 TLS sessions deep: a ${side} hears of a reset that cuts what it wrote, after its TLS socket closed too`, async () => {
+    const accepted = Promise.withResolvers<net.Socket>();
+    const listener = net.createServer(accepted.resolve) as Listening<net.Server>;
+    await new Promise<void>(listening => listener.listen(0, "127.0.0.1", listening));
+    const tcpClient = net.connect(listener.address().port, "127.0.0.1");
+    const tcpServer = await accepted.promise;
+    const outerServer = new tls.TLSSocket(tcpServer, { isServer: true, key, cert });
+    const outerClient = tls.connect({ socket: tcpClient, rejectUnauthorized: false });
+    const innerServer = new tls.TLSSocket(outerServer, { isServer: true, key, cert });
+    const innerClient = tls.connect({ socket: outerClient, rejectUnauthorized: false });
+    const all = [tcpClient, tcpServer, outerClient, outerServer, innerClient, innerServer];
+    const [inner, outer, peerTcp, peers] =
+      side === "client"
+        ? [innerClient, outerClient, tcpServer, [innerServer, outerServer, tcpServer]]
+        : [innerServer, outerServer, tcpClient, [innerClient, outerClient, tcpClient]];
+    try {
+      const told: string[] = [];
+      for (const socket of all) socket.on("error", () => {});
+      await Promise.all([
+        new Promise(secured => innerClient.once("secureConnect", secured)),
+        new Promise(secured => innerServer.once("secure", secured)),
+      ]);
+      // The peer reads nothing, so most of this never leaves.
+      for (const socket of peers) socket.pause();
+      inner.on("error", (err: NodeJS.ErrnoException) => told.push(`TLS socket 'error': ${err.code}`));
+      outer.on("error", (err: NodeJS.ErrnoException) => told.push(`session below 'error': ${err.code}`));
+      inner.write(
+        Buffer.alloc(8 * 1024 * 1024, "a"),
+        (err?: NodeJS.ErrnoException | null) => err && told.push(`write callback: ${err.code}`),
+      );
+      const innerClosed = new Promise(resolve => inner.once("close", resolve));
+      const outerClosed = new Promise(resolve => outer.once("close", resolve));
+      inner.destroy();
+      await innerClosed;
+      peerTcp.resetAndDestroy();
+      await outerClosed;
+      assert.notDeepStrictEqual(told, []);
+    } finally {
+      for (const socket of all) socket.destroy();
+      listener.close();
+    }
+  });
+}
+
+// No session the application could have written over: the connection goes at once, whatever its peer does.
+for (const transportKind of ["a TLS socket", "a Duplex"]) {
+  test(`over ${transportKind}: a client that rejects the server's certificate releases a transport whose peer stays`, async () => {
+    const { clients, servers, close } = await nestedSessions(1, { allowHalfOpen: true });
+    let [transport, otherEnd]: [Duplex, Duplex] = [clients[0], servers[0]];
+    if (transportKind === "a Duplex") [transport, otherEnd] = duplexPair();
+    const server = new tls.TLSSocket(otherEnd, {
+      isServer: true,
+      key,
+      cert,
+      allowHalfOpen: true,
+    } as tls.TLSSocketOptions);
+    const client = tls.connect({ socket: transport, servername: "agent1" });
+    try {
+      for (const socket of [client, server, transport, otherEnd]) socket.on("error", () => {});
+      const rejected = new Promise<NodeJS.ErrnoException>(resolve => client.once("error", resolve));
+      const closed = new Promise(resolve => transport.once("close", resolve));
+      assert.strictEqual((await rejected).code, "UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+      await closed;
+      assert.strictEqual(transport.destroyed, true);
+    } finally {
+      client.destroy();
+      server.destroy();
+      transport.destroy();
+      otherEnd.destroy();
+      close();
+    }
+  });
+}
+
+test("over a Duplex: destroy() after end() releases a Duplex that never completes its writes", async () => {
+  let stalled = false;
+  const makeSide = peer =>
+    new Duplex({
+      read() {},
+      write(chunk, encoding, callback) {
+        if (stalled) return;
+        peer().push(chunk);
+        callback();
+      },
+    });
+  const transport = makeSide(() => otherEnd);
+  const otherEnd = makeSide(() => transport);
+  const server = new tls.TLSSocket(otherEnd, { isServer: true, key, cert });
+  const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+  try {
+    for (const socket of [client, server, transport, otherEnd]) socket.on("error", () => {});
+    await Promise.all([
+      new Promise(secured => client.once("secureConnect", secured)),
+      new Promise(secured => server.once("secure", secured)),
+    ]);
+    await turn();
+    stalled = true;
+    const closed = new Promise(resolve => transport.once("close", resolve));
+    client.end("last words");
+    await turn();
+    client.destroy();
+    await closed;
+    assert.strictEqual(transport.destroyed, true);
+  } finally {
+    client.destroy();
+    server.destroy();
+    transport.destroy();
+    otherEnd.destroy();
+  }
+});
+
+test("over a Duplex: a TLS socket whose peer was destroyed takes its Duplex with it", async () => {
+  const [transport, otherEnd] = duplexPair({ allowHalfOpen: false });
+  const server = new tls.TLSSocket(otherEnd, { isServer: true, key, cert });
+  const client = tls.connect({ socket: transport, rejectUnauthorized: false });
+  try {
+    for (const socket of [client, server, transport, otherEnd]) socket.on("error", () => {});
+    await Promise.all([
+      new Promise(secured => client.once("secureConnect", secured)),
+      new Promise(secured => server.once("secure", secured)),
+    ]);
+    server.resume();
+    const closed = [server, otherEnd].map(stream => new Promise(resolve => stream.once("close", resolve)));
+    client.destroy();
+    await Promise.all(closed);
+    assert.strictEqual(otherEnd.destroyed, true);
+  } finally {
+    client.destroy();
+    server.destroy();
+    transport.destroy();
+    otherEnd.destroy();
+  }
+});
+
+// The peers keep their sides open in these two.
+test("3 TLS sessions deep: a client that rejects the innermost certificate releases the connection", async () => {
+  const { clients, servers, close } = await nestedSessions(2, { allowHalfOpen: true });
+  const server = new tls.TLSSocket(servers[1], {
+    isServer: true,
+    key,
+    cert,
+    allowHalfOpen: true,
+  } as tls.TLSSocketOptions);
+  const client = tls.connect({ socket: clients[1], servername: "agent1" });
+  try {
+    for (const socket of [...clients, ...servers, client, server]) socket.on("error", () => {});
+    const rejected = new Promise<NodeJS.ErrnoException>(resolve => client.once("error", resolve));
+    const closed = [...clients, client].map(socket => new Promise(resolve => socket.once("close", resolve)));
+    assert.strictEqual((await rejected).code, "UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+    await Promise.all(closed);
+  } finally {
+    client.destroy();
+    server.destroy();
+    close();
+  }
+});
+
+test("3 TLS sessions deep: the timeout of the session over TCP still fires after the one above it is destroyed", async () => {
+  const { clients, servers, close } = await nestedSessions(3, { allowHalfOpen: true });
+  try {
+    for (const socket of [...clients, ...servers]) socket.on("error", () => {});
+    const timedOut = new Promise<void>(resolve => servers[0].setTimeout(50, resolve));
+    servers[1].destroy();
+    // Node destroys the session over TCP with the one above it.
+    await Promise.race([timedOut, new Promise(resolve => servers[0].once("close", resolve))]);
+  } finally {
+    close();
   }
 });

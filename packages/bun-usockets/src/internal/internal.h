@@ -155,6 +155,11 @@ extern int us_dispatch_new_session(us_socket_r s, struct ssl_session_st *session
 extern int us_dispatch_server_identity(us_socket_r s, struct ssl_st *ssl);
 extern struct ssl_ctx_st *us_dispatch_socket_server_name(us_socket_r s, const char *hostname, int *abort_handshake);
 extern struct us_socket_t *us_dispatch_ssl_raw_tap(us_socket_r s, char *data, int length);
+/* crypto/sni_tree.cpp: the one place server names are compared. */
+void *sni_new();
+void sni_free(void *sni, void (*cb)(void *));
+void *sni_add(void *sni, const char *hostname, void *user);
+void *sni_find(void *sni, const char *hostname);
 #ifdef __cplusplus
 }
 #endif
@@ -246,15 +251,16 @@ void us_internal_ssl_attach(us_socket_r s, struct ssl_ctx_st *ssl_ctx, int is_cl
 /* SSL_free(s->ssl); s->ssl = NULL. Idempotent. */
 void us_internal_ssl_detach(us_socket_r s);
 void us_internal_ssl_socket_relocated(us_loop_r loop, us_socket_r old_s, us_socket_r new_s);
-void us_internal_ssl_socket_left_group(us_socket_r s);
 
 /* TLS-layer event hooks. loop.c calls these instead of us_dispatch_* when
  * s->ssl != NULL; they decrypt/encrypt and re-dispatch the plaintext. */
 struct us_socket_t *us_internal_ssl_on_open(us_socket_r s, int is_client, char *ip, int ip_length);
 struct us_socket_t *us_internal_ssl_on_data(us_socket_r s, char *data, int length);
 struct us_socket_t *us_internal_ssl_on_writable(us_socket_r s);
+struct us_socket_t *us_internal_ssl_on_timeout(us_socket_r s);
 struct us_socket_t *us_internal_ssl_on_close(us_socket_r s, int code, void *reason);
 struct us_socket_t *us_internal_ssl_on_end(us_socket_r s);
+struct us_socket_t *us_internal_ssl_on_end_after_rejected_send(us_socket_r s);
 int us_internal_ssl_is_low_prio(us_socket_r s);
 
 int us_internal_ssl_is_handshake_finished(us_socket_r s);
@@ -263,17 +269,22 @@ int us_internal_ssl_is_shut_down(us_socket_r s);
 void us_internal_ssl_shutdown(us_socket_r s);
 int us_internal_ssl_write(us_socket_r s, const char *data, int length);
 int us_internal_ssl_writev(us_socket_r s, const struct us_iovec_t *iov, int count);
+/* Platform error code of the write that just returned if it killed the connection, else 0. */
+int us_internal_ssl_fatal_write_error(us_socket_r s);
 unsigned int us_internal_ssl_spill_pending(us_socket_r s);
 void *us_internal_ssl_get_native_handle(us_socket_r s);
 struct us_bun_verify_error_t us_internal_ssl_verify_error(us_socket_r s);
 const char *us_internal_ssl_sni_servername(us_socket_r s);
-/* SSL_CTX_free(ls->ssl_ctx) + sni_free(ls->sni). Called from us_listen_socket_close. */
+/* Drops the listen socket's references to ls->ssl_ctx and ls->server_names. Called from us_listen_socket_close. */
 void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls);
 /* Opaque SSL_CTX_up_ref/SSL_CTX_free so context.c needn't include OpenSSL. */
 void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
 void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
 /* TCP-level FIN, bypassing the SSL layer (used by ssl_on_end). */
 void us_internal_socket_raw_shutdown(us_socket_r s);
+/* us_socket_raw_write that stores us_internal_classify_failed_send's answer for a failed send(). */
+int us_internal_socket_raw_write(us_socket_r s, const char *data, int length, int *fatal_send_error);
+void us_internal_rearm_writable(us_socket_r s);
 
 int us_internal_handle_dns_results(us_loop_r loop);
 
@@ -313,7 +324,6 @@ struct us_socket_t {
    * not finished. ssl_write_wants_read cannot tell: every pending handshake
    * sets it. */
   unsigned char ssl_write_parked : 1;
-  unsigned char ssl_read_wants_write : 1;
   unsigned char ssl_fatal_error : 1;
   unsigned char ssl_is_server : 1;
   /* If set, us_internal_ssl_on_data() first dispatches the still-encrypted
@@ -321,12 +331,15 @@ struct us_socket_t {
    * Used by Bun's `socket.upgradeTLS()` so the returned [raw, tls] pair's
    * `raw` half can observe ciphertext (node:net Duplex.ondata semantics). */
   unsigned char ssl_raw_tap : 1;
-  /* A graceful TLS shutdown arrived while batched ciphertext was still
-   * spilled (see ssl_flush_write_batch); the shutdown re-runs once the
+  /* Sealed ciphertext of this socket waits for the kernel (openssl.c us_ssl_spill_t). */
+  unsigned char ssl_spilled : 1;
+  /* A graceful TLS shutdown arrived while ciphertext was still
+   * spilled (see ssl_emit); the shutdown re-runs once the
    * spill drains so those records are not cut off by our FIN/close_notify. */
   unsigned char ssl_shutdown_after_spill : 1;
   /* Same as ssl_shutdown_after_spill but for us_internal_ssl_close: the
-   * close re-runs from the writable event once the spill drains. */
+   * close re-runs from the writable event once the spill drains, or without it
+   * from the socket's timeout. */
   unsigned char ssl_close_after_spill : 1;
   /* The plaintext EOF (peer close_notify or the raw TCP FIN behind it) was
    * already dispatched to the user layer; both EOF paths can fire for one
@@ -365,6 +378,8 @@ struct us_socket_t {
   unsigned char ssl_first_flight_before_fin : 1;
   /* us_internal_ssl_shutdown held its FIN back for that step. */
   unsigned char ssl_shutdown_after_first_flight : 1;
+  /* ssl_raw_write shut the write side down, not the owner. */
+  unsigned char ssl_send_rejected : 1;
   /* Consecutive send() failures with an errno that is neither
    * would-block/transient nor a known peer-gone error (see
    * us_socket_write_check_error). Reset by any send that makes progress.
@@ -498,12 +513,9 @@ struct us_listen_socket_t {
   /* SSL_CTX for accepted sockets. Borrowed; up_ref'd on listen, freed on
    * close. NULL → plain TCP. */
   struct ssl_ctx_st *ssl_ctx;
-  /* SNI hostname → {SSL_CTX*, user*} tree. Owned. */
-  void *sni;
-  /* Dynamic SNI resolver: returns the SSL_CTX to serve for `hostname` on the
-   * in-flight handshake only (the caller does not cache it), or NULL to fall
-   * through to the default context. */
-  struct ssl_ctx_st *(*on_server_name)(struct us_listen_socket_t *, const char *hostname, int *abort_handshake, struct us_socket_t *socket);
+  /* SNI tree + dynamic resolver, shared with every SSL this listener accepted
+   * (crypto/openssl.c). NULL until the first name, resolver or TLS accept. */
+  struct us_server_names_t *server_names;
   unsigned int socket_ext_size;
   /* kind to stamp on accepted sockets. */
   unsigned char accept_kind;

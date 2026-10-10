@@ -87,10 +87,15 @@ impl Rule for PreferReflect {
         }
     }
 
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let on = On::new().exprs(&[ExprTag::Call]);
+        if self.allows_delete { on } else { on.exprs(&[ExprTag::Unary]) }
+    }
+
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.tag() {
             ExprTag::Call => self.check_call(e, cx),
-            ExprTag::Unary if !self.allows_delete => self.check_unary(e, cx),
+            ExprTag::Unary => self.check_unary(e, cx),
             _ => {}
         }
     }

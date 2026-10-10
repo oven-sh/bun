@@ -259,6 +259,29 @@ impl Rule for Quotes {
         }
     }
 
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let on = On::new()
+            .exprs(&[ExprTag::String])
+            .stmts(&[
+                StmtTag::Import,
+                StmtTag::ExportNamed,
+                StmtTag::ExportStar,
+                StmtTag::ImportEquals,
+                StmtTag::Module,
+            ])
+            .types(&[TypeTag::StringLit, TypeTag::Import])
+            .pats(&[PatTag::Object])
+            .members()
+            .props()
+            .enum_members()
+            .import_specs()
+            .export_specs();
+        match !self.allows_template_literals && !self.wants_backticks() {
+            true => on.exprs(&[ExprTag::Template]),
+            false => on,
+        }
+    }
+
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         let other_quotes: &[u8] = match self.quote {
             b'"' => b"'`",
@@ -274,9 +297,7 @@ impl Rule for Quotes {
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.tag() {
             ExprTag::String => self.check_string(e, cx),
-            ExprTag::Template if !self.allows_template_literals && !self.wants_backticks() => {
-                self.check_template_literal(e, cx);
-            }
+            ExprTag::Template => self.check_template_literal(e, cx),
             _ => {}
         }
     }

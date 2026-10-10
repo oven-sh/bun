@@ -207,35 +207,35 @@ impl Rule for PreferFunctionType {
     const META: Meta = Meta::typescript("prefer-function-type", Kind::Suggestion)
         .fixable(Fixable::Code)
         .presets(Presets::STYLISTIC);
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::Interface]).types(&[TypeTag::Object]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         PreferFunctionType
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Interface], |_, statement, cx| {
-            let StmtKind::Interface(interface) = statement.kind() else {
-                return;
-            };
-            let members = interface.members();
-            if let Some(member) = members.first()
-                && members.len() == 1
-                && !has_one_supertype(interface)
-            {
-                check_member(member, Owner::Interface(interface), cx);
-            }
-        });
-        on.types([TypeTag::Object], |_, literal, cx| {
-            let TypeKind::Object(members) = literal.kind() else {
-                return;
-            };
-            if let Some(member) = members.first()
-                && members.len() == 1
-                && (!cx.language().is_oxlint || oxlint_looks_at(literal))
-            {
-                check_member(member, Owner::TypeLiteral(literal), cx);
-            }
-        });
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::Interface(interface) = statement.kind() else {
+            return;
+        };
+        let members = interface.members();
+        if let Some(member) = members.first()
+            && members.len() == 1
+            && !has_one_supertype(interface)
+        {
+            check_member(member, Owner::Interface(interface), cx);
+        }
+    }
+
+    fn ty<'a>(&self, literal: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        let TypeKind::Object(members) = literal.kind() else {
+            return;
+        };
+        if let Some(member) = members.first()
+            && members.len() == 1
+            && (!cx.language().is_oxlint || oxlint_looks_at(literal))
+        {
+            check_member(member, Owner::TypeLiteral(literal), cx);
+        }
     }
 }

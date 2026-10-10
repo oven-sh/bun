@@ -47,6 +47,7 @@ impl Rule for RestrictTemplateExpressions {
     const META: Meta = Meta::typescript("restrict-template-expressions", Kind::Problem)
         .presets(Presets::RECOMMENDED_TYPE_CHECKED.union(Presets::STRICT_TYPE_CHECKED))
         .requires_types();
+    const ON: On = On::new().exprs(&[ExprTag::Template]);
     /// Whether a type is allowed. Each constituent of a union is looked at, and many expressions have the same type.
     type State<'a> = FxHashMap<Type<'a>, bool>;
 
@@ -77,24 +78,25 @@ impl Rule for RestrictTemplateExpressions {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> FxHashMap<Type<'a>, bool> {
-        on.exprs([ExprTag::Template], |rule, node, cx| {
-            let ExprKind::Template(template) = node.kind() else {
-                return;
-            };
-            if template.exprs().is_empty()
-                || matches!(node.parent(), Node::Expr(parent) if parent.tag() == ExprTag::TaggedTemplate)
-            {
-                return;
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<FxHashMap<Type<'a>, bool>> {
+        Some(FxHashMap::default())
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Template(template) = node.kind() else {
+            return;
+        };
+        if template.exprs().is_empty()
+            || matches!(node.parent(), Node::Expr(parent) if parent.tag() == ExprTag::TaggedTemplate)
+        {
+            return;
+        }
+        for expression in template.exprs() {
+            let expression_type = get_constrained_type_at_location(expression);
+            let is_allowed = || self.recursively_check_type(expression_type, 0);
+            if !*cx.state.entry(expression_type).or_insert_with(is_allowed) {
+                cx.report(expression, INVALID_TYPE).data("type", expression_type.to_text());
             }
-            for expression in template.exprs() {
-                let expression_type = get_constrained_type_at_location(expression);
-                let is_allowed = || rule.recursively_check_type(expression_type, 0);
-                if !*cx.state.entry(expression_type).or_insert_with(is_allowed) {
-                    cx.report(expression, INVALID_TYPE).data("type", expression_type.to_text());
-                }
-            }
-        });
-        FxHashMap::default()
+        }
     }
 }

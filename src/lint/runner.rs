@@ -9,6 +9,7 @@ use crate::context::{Cx, CxBase, Diagnostic, Severity};
 use crate::literal::Literal;
 use crate::options::Options;
 use crate::rule::{Entries, Entry, Kept, Listeners, Meta, NodeTags, On, Rule};
+use crate::rule_set::{RuleBits, RuleSet};
 use crate::span::Span;
 use bun_sema::hir;
 use std::cell::OnceCell;
@@ -572,7 +573,7 @@ impl<'a> File<'a> {
 // ───────────────────────────── a rule, whatever its type ─────────────────────────────
 
 /// A [`Rule`] with its options, whatever its type.
-pub trait AnyRule: Send + Sync {
+pub trait AnyRule: Send + Sync + 'static {
     fn meta(&self) -> &'static Meta;
 
     /// Calls the listeners that take the nodes in no particular order. `None`: it has no others.
@@ -617,6 +618,65 @@ impl<R: Rule> AnyRule for R {
             Started::On(run) => run,
             Started::Registered(run) => run,
         })
+    }
+}
+
+/// What can be started on a file: a rule, or one of several.
+pub trait Starts: Send + Sync {
+    /// It at work on a file, after what takes the nodes in no particular order.
+    type Run<'r, 'a: 'r>: Running<'a>
+    where
+        Self: 'r;
+
+    fn meta(&self) -> &'static Meta;
+
+    /// Calls what takes the nodes in no particular order. `None`: nothing is left to call.
+    #[doc(hidden)]
+    fn start<'r, 'a: 'r>(&'r self, start: Start<'a>) -> Option<Self::Run<'r, 'a>>;
+}
+
+impl<R: Rule> Starts for R {
+    type Run<'r, 'a: 'r> = Started<'r, 'a, R>;
+
+    #[inline]
+    fn meta(&self) -> &'static Meta {
+        &R::META
+    }
+
+    #[inline]
+    fn start<'r, 'a: 'r>(&'r self, start: Start<'a>) -> Option<Started<'r, 'a, R>> {
+        started(self, start)
+    }
+}
+
+impl Starts for dyn AnyRule {
+    type Run<'r, 'a: 'r> = Box<dyn Running<'a> + 'r>;
+
+    #[inline]
+    fn meta(&self) -> &'static Meta {
+        AnyRule::meta(self)
+    }
+
+    #[inline]
+    fn start<'r, 'a: 'r>(&'r self, start: Start<'a>) -> Option<Box<dyn Running<'a> + 'r>> {
+        AnyRule::start(self, start)
+    }
+}
+
+impl<'a> Running<'a> for Box<dyn Running<'a> + '_> {
+    #[inline]
+    fn listeners_of_walk(&self, add: &mut dyn FnMut(WalkListener)) {
+        (**self).listeners_of_walk(add);
+    }
+
+    #[inline]
+    fn call(&mut self, entry: u16, node: Node<'a>) {
+        (**self).call(entry, node);
+    }
+
+    #[inline]
+    fn finish(&mut self) {
+        (**self).finish();
     }
 }
 
@@ -1130,22 +1190,28 @@ impl ByTag {
 }
 
 /// Calls the listeners that depend on the order of the nodes.
-struct Walk<'w, 'r, 'a> {
-    running: &'w mut [Box<dyn Running<'a> + 'r>],
+struct Walk<'w, T> {
+    running: &'w mut [T],
     enter: ByTag,
     exit: ByTag,
 }
 
-impl<'a> Walk<'_, '_, 'a> {
+impl<T> Walk<'_, T> {
     #[inline]
-    fn enter(&mut self, node: Node<'a>) {
+    fn enter<'a>(&mut self, node: Node<'a>)
+    where
+        T: Running<'a>,
+    {
         for &(rule, entry) in self.enter.of(node) {
             self.running[rule as usize].call(entry, node);
         }
     }
 
     #[inline]
-    fn exit(&mut self, node: Node<'a>) {
+    fn exit<'a>(&mut self, node: Node<'a>)
+    where
+        T: Running<'a>,
+    {
         for &(rule, entry) in self.exit.of(node) {
             self.running[rule as usize].call(entry, node);
         }
@@ -1155,7 +1221,7 @@ impl<'a> Walk<'_, '_, 'a> {
 /// Enters and leaves the nodes that are listened for, without walking: the nodes of a file nest, so their spans determine the order.
 /// Only the nodes of the kinds that are listened for are collected, from the vectors they are in, and sorted. The cost depends on
 /// how many of those there are, not on the size of the file.
-fn walk_listened<'a>(file: &'a File<'a>, walk: &mut Walk<'_, '_, 'a>) {
+fn walk_listened<'a, T: Running<'a>>(file: &'a File<'a>, walk: &mut Walk<'_, T>) {
     struct Found<'a> {
         start: u32,
         end: u32,
@@ -1269,21 +1335,35 @@ pub(crate) const EXPR_TAGS: [ExprTag; ExprTag::COUNT] = {
 // ───────────────────────────── a file ─────────────────────────────
 
 /// A rule that is enabled for a file.
-#[derive(Copy, Clone)]
-pub struct Enabled<'r> {
-    pub rule: &'r dyn AnyRule,
+pub struct Enabled<'r, S: ?Sized + Starts = dyn AnyRule> {
+    pub rule: &'r S,
     pub severity: Severity,
 }
+
+impl<S: ?Sized + Starts> Clone for Enabled<'_, S> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<S: ?Sized + Starts> Copy for Enabled<'_, S> {}
 
 /// Runs `rules` on `file`. What they report is sorted by position. `Diagnostic::rule` is an index
 /// into `rules`.
 ///
 /// `wants_fixes`: whether the fixes and suggestions are going to be read.
-pub fn run<'a>(file: &'a File<'a>, rules: &[Enabled<'_>], wants_fixes: bool) -> Vec<Diagnostic> {
+pub fn run<'a, S: ?Sized + Starts>(
+    file: &'a File<'a>,
+    rules: &[Enabled<'_, S>],
+    wants_fixes: bool,
+) -> Vec<Diagnostic> {
     file.sink.wants_fixes.set(wants_fixes);
     file.sink.bytes.borrow_mut().clear();
     run_rules(file, rules);
-    let diagnostics = file.sink.diagnostics.take();
+    sorted(file.sink.diagnostics.take())
+}
+
+fn sorted(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
     // ESLint sorts by line and column alone, which leaves what starts at the same place in the order it was reported: for a
     // listener that is called on entering a node, the outer node first.
     let key = |it: &Diagnostic| (it.span.start, std::cmp::Reverse(it.span.end), it.rule);
@@ -1304,9 +1384,56 @@ pub fn run<'a>(file: &'a File<'a>, rules: &[Enabled<'_>], wants_fixes: bool) -> 
         .collect()
 }
 
-fn run_rules<'r, 'a: 'r>(file: &'a File<'a>, rules: &'r [Enabled<'r>]) {
+/// Those of `enabled` for which `file` has something: all others would not be started.
+pub fn listening<'a, S: RuleSet>(file: &'a File<'a>, enabled: RuleBits) -> RuleBits {
+    let rows = S::LISTENS;
+    let mut all = rows[On::ALWAYS];
+    // What groups the nodes of a sort is called only if a rule wants that sort.
+    macro_rules! kinds {
+        ($($sort:literal $present:ident;)*) => {
+            $(if !enabled.and(S::LISTENS_TO_KINDS[$sort]).is_empty() {
+                each_bit(file.$present(), |kind| all = all.or(rows[On::KINDS[$sort].0 + kind]));
+            })*
+        };
+    }
+    kinds! {
+        0 present_exprs;
+        1 present_binaries;
+        2 present_unaries;
+        3 present_stmts;
+        4 present_types;
+        5 present_pats;
+    }
+    if !enabled.and(rows[On::SORTS]).is_empty() && file.present_chained() != 0 {
+        all = all.or(rows[On::SORTS]);
+    }
+    // After `optional_chains`, in the order of the bits of `On`.
+    macro_rules! sorts {
+        ($($bit:literal $field:ident;)*) => {
+            $(if !file.hir.$field.is_empty() {
+                all = all.or(rows[On::SORTS + $bit]);
+            })*
+        };
+    }
+    sorts! {
+        1 fns;
+        2 classes;
+        3 members;
+        4 props;
+        5 params;
+        6 type_params;
+        7 var_decls;
+        8 cases;
+        9 enum_members;
+        10 import_specs;
+        11 export_specs;
+    }
+    enabled.and(all)
+}
+
+fn run_rules<'r, 'a: 'r, S: ?Sized + Starts>(file: &'a File<'a>, rules: &'r [Enabled<'r, S>]) {
     let has_types = file.types.is_some();
-    let mut running: Vec<Box<dyn Running<'a> + 'r>> = Vec::with_capacity(rules.len());
+    let mut running: Vec<S::Run<'r, 'a>> = Vec::with_capacity(rules.len());
     for (i, enabled) in rules.iter().enumerate() {
         let meta = enabled.rule.meta();
         if enabled.severity == Severity::Off || meta.requires_types && !has_types {

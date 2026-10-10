@@ -55,7 +55,63 @@ impl NoWhitespaceBeforeProperty {
             });
     }
 
-    fn check_member<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+    /// The `a.b` of `implements a.b` and of `interface I extends a.b` is a `MemberExpression` in
+    /// ESTree.
+    fn check_heritage<'a>(cx: &Cx<'a, Self>, types: List<'a, TypeNode<'a>>) {
+        for ty in types {
+            let TypeKind::Ref { name, .. } = ty.kind() else {
+                continue;
+            };
+            let mut parts = name.parts();
+            let Some(first) = parts.next() else {
+                continue;
+            };
+            let mut object_end = first.span().end;
+            for part in parts {
+                let property = part.span();
+                if object_end + 1 != property.start {
+                    Self::check(
+                        cx,
+                        Access {
+                            node: Span::new(first.start(), property.end),
+                            object_end,
+                            left: object_end,
+                            right: property.start,
+                            property,
+                            punctuator: ".",
+                            object_before_dot: None,
+                        },
+                    );
+                }
+                object_end = property.end;
+            }
+        }
+    }
+}
+
+impl Rule for NoWhitespaceBeforeProperty {
+    const META: Meta = Meta::eslint("no-whitespace-before-property", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Dot, ExprTag::Index])
+        .classes()
+        .stmts(&[StmtTag::Interface]);
+    no_state!();
+
+    fn new(_: &Options) -> Self {
+        NoWhitespaceBeforeProperty
+    }
+
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]);
+        if !file.is_javascript() {
+            on = on.classes().stmts(&[StmtTag::Interface]);
+        }
+        on
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.kind() {
             ExprKind::Dot { obj, name, chain } => {
                 let is_optional = chain == Chain::Start;
@@ -105,59 +161,13 @@ impl NoWhitespaceBeforeProperty {
         }
     }
 
-    /// The `a.b` of `implements a.b` and of `interface I extends a.b` is a `MemberExpression` in
-    /// ESTree.
-    fn check_heritage<'a>(cx: &Cx<'a, Self>, types: List<'a, TypeNode<'a>>) {
-        for ty in types {
-            let TypeKind::Ref { name, .. } = ty.kind() else {
-                continue;
-            };
-            let mut parts = name.parts();
-            let Some(first) = parts.next() else {
-                continue;
-            };
-            let mut object_end = first.span().end;
-            for part in parts {
-                let property = part.span();
-                if object_end + 1 != property.start {
-                    Self::check(
-                        cx,
-                        Access {
-                            node: Span::new(first.start(), property.end),
-                            object_end,
-                            left: object_end,
-                            right: property.start,
-                            property,
-                            punctuator: ".",
-                            object_before_dot: None,
-                        },
-                    );
-                }
-                object_end = property.end;
-            }
-        }
-    }
-}
-
-impl Rule for NoWhitespaceBeforeProperty {
-    const META: Meta = Meta::eslint("no-whitespace-before-property", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        NoWhitespaceBeforeProperty
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        Self::check_heritage(cx, class.implements());
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        on.exprs([ExprTag::Dot, ExprTag::Index], Self::check_member);
-        if !file.is_javascript() {
-            on.classes(|_, class, cx| Self::check_heritage(cx, class.implements()));
-            on.stmts([StmtTag::Interface], |_, statement, cx| {
-                if let StmtKind::Interface(interface) = statement.kind() {
-                    Self::check_heritage(cx, interface.extends());
-                }
-            });
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if let StmtKind::Interface(interface) = statement.kind() {
+            Self::check_heritage(cx, interface.extends());
         }
     }
 }

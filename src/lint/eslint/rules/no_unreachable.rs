@@ -102,6 +102,37 @@ fn has_constructor_without_super_call<'a>(file: &'a File<'a>) -> bool {
     constructors.any(|member| !with_call.contains(&member))
 }
 
+const STATEMENTS: NodeTags = NodeTags::new().stmts(&[
+    StmtTag::Block,
+    StmtTag::Break,
+    StmtTag::Class,
+    StmtTag::Continue,
+    StmtTag::Debugger,
+    StmtTag::DoWhile,
+    StmtTag::Expr,
+    StmtTag::ForIn,
+    StmtTag::ForOf,
+    StmtTag::For,
+    StmtTag::If,
+    StmtTag::Labeled,
+    StmtTag::Return,
+    StmtTag::Switch,
+    StmtTag::Throw,
+    StmtTag::Try,
+    StmtTag::Var,
+    StmtTag::While,
+    StmtTag::ExportNamed,
+    StmtTag::ExportDefault,
+    StmtTag::ExportStar,
+    // These only with an `export`.
+    StmtTag::Fn,
+    StmtTag::Interface,
+    StmtTag::TypeAlias,
+    StmtTag::Enum,
+    StmtTag::Module,
+    StmtTag::ImportEquals,
+]);
+
 impl NoUnreachable {
     fn enter_statement<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         let Node::Stmt(stmt) = node else {
@@ -175,58 +206,54 @@ impl NoUnreachable {
 
 impl Rule for NoUnreachable {
     const META: Meta = Meta::eslint("no-unreachable", Kind::Problem).recommended();
+    const ON: On = On::new()
+        .enter(STATEMENTS)
+        .enter(NodeTags::FUNC)
+        .enter(NodeTags::MEMBER)
+        .exit(NodeTags::MEMBER)
+        .enter(NodeTags::new().exprs(&[ExprTag::Super]))
+        .finish();
     type State<'a> = State;
 
     fn new(_: &Options) -> Self {
         NoUnreachable
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         // oxlint says nothing about the fields of a class.
         let looks_at_fields = !file.language().is_oxlint && has_constructor_without_super_call(file);
         if !file.has_unreachable_statements() && !looks_at_fields {
-            return State::default();
+            return On::new();
         }
-        on.enter(
-            [
-                StmtTag::Block,
-                StmtTag::Break,
-                StmtTag::Class,
-                StmtTag::Continue,
-                StmtTag::Debugger,
-                StmtTag::DoWhile,
-                StmtTag::Expr,
-                StmtTag::ForIn,
-                StmtTag::ForOf,
-                StmtTag::For,
-                StmtTag::If,
-                StmtTag::Labeled,
-                StmtTag::Return,
-                StmtTag::Switch,
-                StmtTag::Throw,
-                StmtTag::Try,
-                StmtTag::Var,
-                StmtTag::While,
-                StmtTag::ExportNamed,
-                StmtTag::ExportDefault,
-                StmtTag::ExportStar,
-                // These only with an `export`.
-                StmtTag::Fn,
-                StmtTag::Interface,
-                StmtTag::TypeAlias,
-                StmtTag::Enum,
-                StmtTag::Module,
-                StmtTag::ImportEquals,
-            ],
-            Self::enter_statement,
-        );
-        on.enter(NodeTags::FUNC, Self::enter_function);
+        let mut on = On::new().enter(STATEMENTS);
+        on = on.enter(NodeTags::FUNC);
         if looks_at_fields {
-            on.enter(NodeTags::MEMBER, Self::enter_member);
-            on.exit(NodeTags::MEMBER, Self::exit_member);
-            on.enter(ExprTag::Super, Self::enter_super);
+            on = on.enter(NodeTags::MEMBER);
+            on = on.exit(NodeTags::MEMBER);
+            on = on.enter(NodeTags::new().exprs(&[ExprTag::Super]));
         }
-        on.finish(|_, cx| report_range(None, cx));
-        State::default()
+        on.finish()
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State> {
+        Some(State::default())
+    }
+
+    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        match node {
+            Node::Stmt(_) => self.enter_statement(node, cx),
+            Node::Func(_) => self.enter_function(node, cx),
+            Node::Member(_) => self.enter_member(node, cx),
+            Node::Expr(_) => self.enter_super(node, cx),
+            _ => {}
+        }
+    }
+
+    fn exit<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        self.exit_member(node, cx);
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        report_range(None, cx);
     }
 }

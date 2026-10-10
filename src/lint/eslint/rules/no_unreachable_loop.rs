@@ -11,7 +11,14 @@ const INVALID: Message =
 
 impl Rule for NoUnreachableLoop {
     const META: Meta = Meta::eslint("no-unreachable-loop", Kind::Problem);
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[
+        StmtTag::While,
+        StmtTag::DoWhile,
+        StmtTag::For,
+        StmtTag::ForIn,
+        StmtTag::ForOf,
+    ]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let ignored = options.object(0).strings("ignore");
@@ -28,12 +35,14 @@ impl Rule for NoUnreachableLoop {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts(self.checked.iter().copied(), |_, it, cx| {
-            // The analysis does not tell enough about a loop that cannot be reached.
-            if !it.is_repeating_loop() && it.is_reachable() {
-                cx.report(it, INVALID);
-            }
-        });
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        On::new().stmts(&self.checked)
+    }
+
+    fn stmt<'a>(&self, it: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        // The analysis does not tell enough about a loop that cannot be reached.
+        if !it.is_repeating_loop() && it.is_reachable() {
+            cx.report(it, INVALID);
+        }
     }
 }

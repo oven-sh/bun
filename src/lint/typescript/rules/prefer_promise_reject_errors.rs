@@ -92,7 +92,8 @@ impl Rule for PreferPromiseRejectErrors {
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types()
         .extends_base_rule("prefer-promise-reject-errors");
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -104,8 +105,11 @@ impl Rule for PreferPromiseRejectErrors {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Call], Self::check_call);
-        on.exprs([ExprTag::New], Self::check_new);
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match node.tag() {
+            ExprTag::Call => self.check_call(node, cx),
+            ExprTag::New => self.check_new(node, cx),
+            _ => {}
+        }
     }
 }

@@ -14,36 +14,35 @@ const DEFINE_INITIALIZER_SUGGESTION: Message = Message::new(
 
 impl Rule for PreferEnumInitializers {
     const META: Meta = Meta::typescript("prefer-enum-initializers", Kind::Suggestion).has_suggestions();
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::Enum]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         PreferEnumInitializers
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Enum], |_, stmt, cx| {
-            let StmtKind::Enum(declaration) = stmt.kind() else {
-                return;
-            };
-            for (index, member) in declaration.members().iter().enumerate() {
-                if member.init().is_some() {
-                    continue;
-                }
-                let name = member.text();
-                let mut report = cx.report(member, DEFINE_INITIALIZER).data("name", name);
-                let suggestions = [
-                    index.to_string().into_bytes(),
-                    (index + 1).to_string().into_bytes(),
-                    [&b"'"[..], name, b"'"].concat(),
-                ];
-                for suggested in suggestions.iter().map(Vec::as_slice) {
-                    report = report.suggest_with(
-                        DEFINE_INITIALIZER_SUGGESTION,
-                        &[("name", name), ("suggested", suggested)],
-                        |fixer| fixer.replace(member, [name, b" = ", suggested].concat()),
-                    );
-                }
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::Enum(declaration) = stmt.kind() else {
+            return;
+        };
+        for (index, member) in declaration.members().iter().enumerate() {
+            if member.init().is_some() {
+                continue;
             }
-        });
+            let name = member.text();
+            let mut report = cx.report(member, DEFINE_INITIALIZER).data("name", name);
+            let suggestions = [
+                index.to_string().into_bytes(),
+                (index + 1).to_string().into_bytes(),
+                [&b"'"[..], name, b"'"].concat(),
+            ];
+            for suggested in suggestions.iter().map(Vec::as_slice) {
+                report = report.suggest_with(
+                    DEFINE_INITIALIZER_SUGGESTION,
+                    &[("name", name), ("suggested", suggested)],
+                    |fixer| fixer.replace(member, [name, b" = ", suggested].concat()),
+                );
+            }
+        }
     }
 }

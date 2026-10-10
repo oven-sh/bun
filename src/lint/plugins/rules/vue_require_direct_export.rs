@@ -12,6 +12,7 @@ const REQUIRE_DIRECT_EXPORT: Message = Message::new("", "Expected the component 
 
 impl Rule for RequireDirectExport {
     const META: Meta = Meta::oxlint(Plugin::Vue, "require-direct-export", Kind::Suggestion);
+    const ON: On = On::new().stmts(&[StmtTag::ExportDefault, StmtTag::Fn, StmtTag::Class, StmtTag::Interface]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -19,22 +20,24 @@ impl Rule for RequireDirectExport {
         RequireDirectExport { disallow_functional_component_function: options.bool_or("disallowFunctionalComponentFunction", false) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !is_vue_file(file) || is_vue_setup(file) {
-            return;
+            return None;
         }
-        on.stmts([StmtTag::ExportDefault, StmtTag::Fn, StmtTag::Class, StmtTag::Interface], |rule, stmt, cx| {
-            let is_direct = match stmt.kind() {
-                StmtKind::ExportDefault(e) => rule.is_direct_expression(get_inner_expression(e)),
-                _ if !stmt.is_default_export() => true,
-                // `export default function () {}`
-                StmtKind::Fn(func) => rule.is_functional_component(func),
-                _ => false,
-            };
-            if !is_direct {
-                cx.report(stmt, REQUIRE_DIRECT_EXPORT);
-            }
-        });
+        Some(())
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let is_direct = match stmt.kind() {
+            StmtKind::ExportDefault(e) => self.is_direct_expression(get_inner_expression(e)),
+            _ if !stmt.is_default_export() => true,
+            // `export default function () {}`
+            StmtKind::Fn(func) => self.is_functional_component(func),
+            _ => false,
+        };
+        if !is_direct {
+            cx.report(stmt, REQUIRE_DIRECT_EXPORT);
+        }
     }
 }
 

@@ -221,6 +221,7 @@ impl Rule for ReturnAwait {
         .has_suggestions()
         .presets(Presets::STRICT_TYPE_CHECKED)
         .requires_types();
+    const ON: On = On::new().funcs().stmts(&[StmtTag::Return]);
     /// Once it has been asked for.
     type State<'a> = Option<Resources<'a>>;
 
@@ -238,26 +239,28 @@ impl Rule for ReturnAwait {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Option<Resources<'a>> {
-        on.funcs(|rule, func, cx| {
-            if func.is_async()
-                && let FnBody::Expr(body) = func.body()
-            {
-                rule.test_possibly_returned_nodes(body, cx);
-            }
-        });
-        on.stmts([StmtTag::Return], |rule, statement, cx| {
-            let StmtKind::Return(Some(argument)) = statement.kind() else {
-                return;
-            };
-            let mut functions = Node::Stmt(statement).ancestors().filter_map(Node::as_func);
-            if functions
-                .find(|func| func.kind() != FnKind::StaticBlock)
-                .is_some_and(Func::is_async)
-            {
-                rule.test_possibly_returned_nodes(argument, cx);
-            }
-        });
-        None
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Option<Resources<'a>>> {
+        Some(None)
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if func.is_async()
+            && let FnBody::Expr(body) = func.body()
+        {
+            self.test_possibly_returned_nodes(body, cx);
+        }
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::Return(Some(argument)) = statement.kind() else {
+            return;
+        };
+        let mut functions = Node::Stmt(statement).ancestors().filter_map(Node::as_func);
+        if functions
+            .find(|func| func.kind() != FnKind::StaticBlock)
+            .is_some_and(Func::is_async)
+        {
+            self.test_possibly_returned_nodes(argument, cx);
+        }
     }
 }

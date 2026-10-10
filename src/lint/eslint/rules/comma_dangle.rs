@@ -110,6 +110,19 @@ fn check(mode: Mode, last: LastItem, cx: &Cx<'_, CommaDangle>) {
 }
 
 impl CommaDangle {
+    fn modes(&self, file: &File) -> Modes {
+        match self.option {
+            OptionValue::All(mode) => Modes {
+                arrays: mode,
+                objects: mode,
+                imports: mode,
+                exports: mode,
+                functions: if file.language().ecma_version < 2017 { Mode::Ignore } else { mode },
+            },
+            OptionValue::Each(modes) => modes,
+        }
+    }
+
     /// An `ObjectExpression`, or an `ObjectPattern` in an assignment.
     fn check_object<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Object(properties) = e.kind() else {
@@ -214,31 +227,42 @@ impl Rule for CommaDangle {
         }
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let (modes, mut on) = (self.modes(file), On::new());
+        if modes.objects != Mode::Ignore {
+            on = on.exprs(&[ExprTag::Object]).pats(&[PatTag::Object]).types(&[TypeTag::Import]);
+        }
+        if modes.arrays != Mode::Ignore {
+            on = on.exprs(&[ExprTag::Array]).pats(&[PatTag::Array]);
+        }
+        if modes.imports != Mode::Ignore {
+            on = on.stmts(&[StmtTag::Import]);
+        }
+        if modes.exports != Mode::Ignore {
+            on = on.stmts(&[StmtTag::ExportNamed]);
+        }
+        if modes.functions != Mode::Ignore {
+            on = on.funcs().exprs(&[ExprTag::Call, ExprTag::New]);
+        }
+        on
+    }
+
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Modes> {
-        Some(match self.option {
-            OptionValue::All(mode) => Modes {
-                arrays: mode,
-                objects: mode,
-                imports: mode,
-                exports: mode,
-                functions: if file.language().ecma_version < 2017 { Mode::Ignore } else { mode },
-            },
-            OptionValue::Each(modes) => modes,
-        })
+        Some(self.modes(file))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.tag() {
-            ExprTag::Object if cx.state.objects != Mode::Ignore => self.check_object(e, cx),
-            ExprTag::Array if cx.state.arrays != Mode::Ignore => self.check_array(e, cx),
-            ExprTag::Call | ExprTag::New if cx.state.functions != Mode::Ignore => self.check_call(e, cx),
+            ExprTag::Object => self.check_object(e, cx),
+            ExprTag::Array => self.check_array(e, cx),
+            ExprTag::Call | ExprTag::New => self.check_call(e, cx),
             _ => {}
         }
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         match statement.tag() {
-            StmtTag::Import if cx.state.imports != Mode::Ignore => {
+            StmtTag::Import => {
                 if let StmtKind::Import(import) = statement.kind()
                     && let Some(last) = import.named().last()
                 {
@@ -249,7 +273,7 @@ impl Rule for CommaDangle {
                     check(cx.state.imports, item, cx);
                 }
             }
-            StmtTag::ExportNamed if cx.state.exports != Mode::Ignore => {
+            StmtTag::ExportNamed => {
                 if let StmtKind::ExportNamed(export) = statement.kind()
                     && let Some(last) = export.items().last()
                 {
@@ -267,9 +291,6 @@ impl Rule for CommaDangle {
     // ESLint has `{ with: { type: "json" } }` in `import("m", { with: { type: "json" } })`
     // as two object literals.
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
-        if cx.state.objects == Mode::Ignore {
-            return;
-        }
         let Some(attributes) = ty.import_attributes() else {
             return;
         };
@@ -281,17 +302,13 @@ impl Rule for CommaDangle {
 
     fn pat<'a>(&self, pattern: Pat<'a>, cx: &mut Cx<'a, Self>) {
         match pattern.tag() {
-            PatTag::Object if cx.state.objects != Mode::Ignore => self.check_binding_pattern(pattern, cx),
-            PatTag::Array if cx.state.arrays != Mode::Ignore => self.check_binding_pattern(pattern, cx),
+            PatTag::Object | PatTag::Array => self.check_binding_pattern(pattern, cx),
             _ => {}
         }
     }
 
     /// A `FunctionDeclaration`, a `FunctionExpression` or an `ArrowFunctionExpression`.
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        if cx.state.functions == Mode::Ignore {
-            return;
-        }
         if ast_utils::is_function_with_body(func)
             && let Some(last) = func.params().last().or_else(|| func.this_param())
         {

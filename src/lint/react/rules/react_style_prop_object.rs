@@ -22,6 +22,7 @@ pub struct State<'a> {
 
 impl Rule for StylePropObject {
     const META: Meta = Meta::oxlint(Plugin::React, "style-prop-object", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Call]);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -30,66 +31,79 @@ impl Rule for StylePropObject {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if !is_jsx(file) || !file.mentions("style") {
-            return State::default();
-        }
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            let ExprKind::Jsx(jsx) = e.kind() else {
-                return;
-            };
-            let styles = jsx.attrs().iter().filter(|it| it.key().is_some_and(|key| key.is("style")));
-            for value in styles.filter_map(get_prop_value) {
-                let is_invalid = match value {
-                    AttributeValue::StringLiteral(_) => true,
-                    _ => value.as_expression().is_some_and(|it| is_invalid_expression(it, &mut cx.state)),
-                };
-                // `<a.b>`, `<a:b>` and `<this>` are not looked at.
-                if is_invalid
-                    && let Some(ExprKind::Ident(name) | ExprKind::String(name)) = jsx.tag().map(Expr::kind)
-                    && !strings::contains_char(name.bytes(), b':')
-                    && !rule.allows(name)
-                {
-                    cx.report(value.span(), STYLE_PROP_OBJECT);
-                }
-            }
-        });
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new().exprs(&[ExprTag::Jsx]);
         if !file.mentions("createElement") {
-            return State::default();
+            return on;
         }
-        on.exprs([ExprTag::Call], |rule, e, cx| {
-            let Some(call) = e.as_call().filter(|call| is_create_element_call(*call)) else {
-                return;
-            };
-            let arguments = call.args();
-            let Some(ExprKind::String(name) | ExprKind::Ident(name)) =
-                arguments.first().filter(|it| !it.is_parenthesized()).map(Expr::kind)
-            else {
-                return;
-            };
-            let Some(ExprKind::Object(properties)) =
-                arguments.get(1).filter(|it| !it.is_parenthesized()).map(Expr::kind)
-            else {
-                return;
-            };
-            if rule.allows(name) {
-                return;
-            }
-            for property in
-                properties.iter().filter(|it| it.key().and_then(static_name).is_some_and(|key| key.is("style")))
-            {
-                if let Some(value) = property.value()
-                    && is_invalid_expression(value, &mut cx.state)
-                {
-                    cx.report(value, STYLE_PROP_OBJECT);
-                }
-            }
-        });
-        State::default()
+        on.exprs(&[ExprTag::Call])
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        if !is_jsx(file) || !file.mentions("style") {
+            return None;
+        }
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Jsx => self.jsx(e, cx),
+            ExprTag::Call => self.call(e, cx),
+            _ => {}
+        }
     }
 }
 
 impl StylePropObject {
+    fn jsx<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Jsx(jsx) = e.kind() else {
+            return;
+        };
+        let styles = jsx.attrs().iter().filter(|it| it.key().is_some_and(|key| key.is("style")));
+        for value in styles.filter_map(get_prop_value) {
+            let is_invalid = match value {
+                AttributeValue::StringLiteral(_) => true,
+                _ => value.as_expression().is_some_and(|it| is_invalid_expression(it, &mut cx.state)),
+            };
+            // `<a.b>`, `<a:b>` and `<this>` are not looked at.
+            if is_invalid
+                && let Some(ExprKind::Ident(name) | ExprKind::String(name)) = jsx.tag().map(Expr::kind)
+                && !strings::contains_char(name.bytes(), b':')
+                && !self.allows(name)
+            {
+                cx.report(value.span(), STYLE_PROP_OBJECT);
+            }
+        }
+    }
+
+    fn call<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call) = e.as_call().filter(|call| is_create_element_call(*call)) else {
+            return;
+        };
+        let arguments = call.args();
+        let Some(ExprKind::String(name) | ExprKind::Ident(name)) =
+            arguments.first().filter(|it| !it.is_parenthesized()).map(Expr::kind)
+        else {
+            return;
+        };
+        let Some(ExprKind::Object(properties)) = arguments.get(1).filter(|it| !it.is_parenthesized()).map(Expr::kind)
+        else {
+            return;
+        };
+        if self.allows(name) {
+            return;
+        }
+        for property in properties.iter().filter(|it| it.key().and_then(static_name).is_some_and(|key| key.is("style")))
+        {
+            if let Some(value) = property.value()
+                && is_invalid_expression(value, &mut cx.state)
+            {
+                cx.report(value, STYLE_PROP_OBJECT);
+            }
+        }
+    }
+
     fn allows(&self, name: Name) -> bool {
         self.allow.iter().any(|it| **it == *name.bytes())
     }

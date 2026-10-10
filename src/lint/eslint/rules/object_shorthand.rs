@@ -310,7 +310,8 @@ impl ObjectShorthand {
 
 impl Rule for ObjectShorthand {
     const META: Meta = Meta::eslint("object-shorthand", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Object]).props();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let apply = options.str(0).unwrap_or("always");
@@ -329,12 +330,22 @@ impl Rule for ObjectShorthand {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new();
         if self.is_consistent || self.is_consistent_as_needed {
-            on.exprs([ExprTag::Object], Self::check_consistency);
+            on = on.exprs(&[ExprTag::Object]);
         }
         if self.applies_to_methods || self.applies_to_props || self.is_never || self.avoids_quotes {
-            on.props(Self::check_property);
+            on = on.props();
         }
+        on
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_consistency(e, cx);
+    }
+
+    fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_property(prop, cx);
     }
 }

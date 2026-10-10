@@ -95,6 +95,7 @@ impl TripleSlashReference {
 
 impl Rule for TripleSlashReference {
     const META: Meta = Meta::typescript("triple-slash-reference", Kind::Suggestion).recommended();
+    const ON: On = On::new().stmts(&[StmtTag::Import, StmtTag::ImportEquals]).finish();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -106,11 +107,11 @@ impl Rule for TripleSlashReference {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         let mut directives = Vec::new();
         let program = file.program_span();
         if !strings::contains(file.slice(Span::before(0, program)), b"<reference") {
-            return State::default();
+            return None;
         }
         for comment in file.comments_before(program) {
             if comment.kind() == TokenKind::Line
@@ -124,18 +125,8 @@ impl Rule for TripleSlashReference {
                 });
             }
         }
-        if directives.iter().any(|it| it.policy == Policy::Never) {
-            on.finish(|_, cx| {
-                for directive in &cx.state.directives {
-                    if directive.policy == Policy::Never {
-                        cx.report(directive.comment, TRIPLE_SLASH_REFERENCE)
-                            .data("module", directive.module);
-                    }
-                }
-            });
-        }
-        if directives.iter().any(|it| it.policy == Policy::PreferImport) {
-            on.stmts([StmtTag::Import, StmtTag::ImportEquals], Self::check_import);
+        if directives.is_empty() {
+            return None;
         }
         let mut by_module: FxHashMap<&'a [u8], SmallVec<[u32; 1]>> = FxHashMap::default();
         if directives.len() > 8 {
@@ -143,6 +134,19 @@ impl Rule for TripleSlashReference {
                 by_module.entry(directive.module).or_default().push(at as u32);
             }
         }
-        State { directives, by_module }
+        Some(State { directives, by_module })
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_import(stmt, cx);
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        for directive in &cx.state.directives {
+            if directive.policy == Policy::Never {
+                cx.report(directive.comment, TRIPLE_SLASH_REFERENCE)
+                    .data("module", directive.module);
+            }
+        }
     }
 }

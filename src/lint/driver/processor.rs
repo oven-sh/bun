@@ -104,14 +104,17 @@ impl Context<'_, '_> {
             );
         }
         let (len, without_fixes) = (file.physical_path_len, file.without_fixes);
-        if loaded.for_eslint.is_none() {
-            return self.verify_block_natively(path, len, text, config, without_fixes);
-        }
         // What only the parser of the configuration can read is for ESLint's own `Linter`, which has that parser.
         self.verify_block_if_read(path, len, text, config, without_fixes)
-            .unwrap_or_else(|| {
-                let it = Text { path, text, ..file };
-                self.verify_with_eslint(loaded, it, config).0
+            .unwrap_or_else(|| match loaded.for_eslint {
+                Some(_) => {
+                    let it = Text { path, text, ..file };
+                    self.verify_with_eslint(loaded, it, config).0
+                }
+                None => {
+                    self.unread.lock().push(path.to_vec());
+                    LintResult::default()
+                }
             })
     }
 

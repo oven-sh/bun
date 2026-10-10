@@ -5,8 +5,20 @@ pub struct NoUselessCall;
 
 const UNNECESSARY_CALL: Message = Message::new("unnecessaryCall", "Unnecessary '.{{name}}()'.");
 
-impl NoUselessCall {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoUselessCall {
+    const META: Meta = Meta::eslint("no-useless-call", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    type State<'a> = ();
+
+    fn new(_: &Options) -> Self {
+        NoUselessCall
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions_any(&["call", "apply"]).then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Call(call) = e.kind() else {
             return;
         };
@@ -36,21 +48,5 @@ impl NoUselessCall {
         if is_valid_this_arg {
             cx.report(e, UNNECESSARY_CALL).data("name", name);
         }
-    }
-}
-
-impl Rule for NoUselessCall {
-    const META: Meta = Meta::eslint("no-useless-call", Kind::Suggestion);
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        NoUselessCall
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions_any(&["call", "apply"]) {
-            return;
-        }
-        on.exprs([ExprTag::Call], Self::check);
     }
 }

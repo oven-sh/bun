@@ -89,23 +89,37 @@ impl Rule for NoRestrictedText {
         patterns_of(options).try_for_each(|it| regex_of(&it).map(|_| ()))
     }
 
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new();
+        if self.looks_at(Place::Strings) {
+            on = on.string_literals();
+        }
+        if self.looks_at(Place::Templates) {
+            on = on.exprs(&[ExprTag::Template]);
+        }
+        if self.looks_at(Place::JsxText) {
+            on = on.exprs(&[ExprTag::String]);
+        }
+        if self.looks_at(Place::RegularExpressions) {
+            on = on.exprs(&[ExprTag::Regex]);
+        }
+        if self.looks_at(Place::Comments) {
+            on = on.finish();
+        }
+        on
+    }
+
     fn start<'a>(&self, _: &'a File<'a>) -> Option<()> {
         (!self.patterns.is_empty()).then_some(())
     }
 
     fn string_literal<'a>(&self, literal: Literal<'a>, cx: &mut Cx<'a, Self>) {
-        if !self.looks_at(Place::Strings) {
-            return;
-        }
         self.check(literal.span().shrink(1, 1), Place::Strings, cx)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.tag() {
             ExprTag::Template => {
-                if !self.looks_at(Place::Templates) {
-                    return;
-                }
                 let ExprKind::Template(template) = e.kind() else {
                     return;
                 };
@@ -116,27 +130,16 @@ impl Rule for NoRestrictedText {
                 }
             }
             ExprTag::String => {
-                if !self.looks_at(Place::JsxText) {
-                    return;
-                }
                 if e.is_jsx_text() {
                     self.check(e.span(), Place::JsxText, cx);
                 }
             }
-            ExprTag::Regex => {
-                if !self.looks_at(Place::RegularExpressions) {
-                    return;
-                }
-                self.check(e.span(), Place::RegularExpressions, cx)
-            }
+            ExprTag::Regex => self.check(e.span(), Place::RegularExpressions, cx),
             _ => {}
         }
     }
 
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
-        if !self.looks_at(Place::Comments) {
-            return;
-        }
         for comment in cx.file().comments() {
             self.check(comment.span(), Place::Comments, cx);
         }

@@ -26,45 +26,44 @@ fn can_have_equal_tokens(left: &[u8], right: &[u8]) -> bool {
 
 impl Rule for NoSelfCompare {
     const META: Meta = Meta::eslint("no-self-compare", Kind::Problem);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Binary]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoSelfCompare
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Binary], |_, e, cx| {
-            let ExprKind::Binary { op, left, right } = e.kind() else {
-                return;
-            };
-            let is_comparison = matches!(
-                op,
-                BinOp::EqEqEq
-                    | BinOp::EqEq
-                    | BinOp::NotEqEq
-                    | BinOp::NotEq
-                    | BinOp::Gt
-                    | BinOp::Lt
-                    | BinOp::Ge
-                    | BinOp::Le
-            );
-            let is_oxlint = cx.language().is_oxlint;
-            let is_same = || match (left.kind(), right.kind()) {
-                // oxlint compares what literals stand for: `"a" === 'a'`, `1.0 === 1`.
-                (ExprKind::String(left), ExprKind::String(right)) if is_oxlint => left == right,
-                (ExprKind::Number(left), ExprKind::Number(right)) if is_oxlint => left == right,
-                // The same tokens are the same kind of expression.
-                _ => {
-                    left.tag() == right.tag()
-                        && can_have_equal_tokens(left.text(), right.text())
-                        && ast_utils::equal_tokens(cx.file(), left, right)
-                }
-            };
-            if is_comparison && is_same() {
-                // oxlint points at the left side.
-                cx.report(if is_oxlint { left.outer_span() } else { e.span() }, COMPARING_TO_SELF)
-                    .labels_with(|labels| labels.push(right.outer_span(), ""));
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Binary { op, left, right } = e.kind() else {
+            return;
+        };
+        let is_comparison = matches!(
+            op,
+            BinOp::EqEqEq
+                | BinOp::EqEq
+                | BinOp::NotEqEq
+                | BinOp::NotEq
+                | BinOp::Gt
+                | BinOp::Lt
+                | BinOp::Ge
+                | BinOp::Le
+        );
+        let is_oxlint = cx.language().is_oxlint;
+        let is_same = || match (left.kind(), right.kind()) {
+            // oxlint compares what literals stand for: `"a" === 'a'`, `1.0 === 1`.
+            (ExprKind::String(left), ExprKind::String(right)) if is_oxlint => left == right,
+            (ExprKind::Number(left), ExprKind::Number(right)) if is_oxlint => left == right,
+            // The same tokens are the same kind of expression.
+            _ => {
+                left.tag() == right.tag()
+                    && can_have_equal_tokens(left.text(), right.text())
+                    && ast_utils::equal_tokens(cx.file(), left, right)
             }
-        });
+        };
+        if is_comparison && is_same() {
+            // oxlint points at the left side.
+            cx.report(if is_oxlint { left.outer_span() } else { e.span() }, COMPARING_TO_SELF)
+                .labels_with(|labels| labels.push(right.outer_span(), ""));
+        }
     }
 }

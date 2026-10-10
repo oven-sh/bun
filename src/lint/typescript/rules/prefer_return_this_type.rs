@@ -54,8 +54,23 @@ fn is_function_returning_this<'a>(original_func: Func<'a>, original_class: Class
     has_return_this
 }
 
-impl PreferReturnThisType {
-    fn check_member<'a>(&self, node: Member<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for PreferReturnThisType {
+    const META: Meta = Meta::typescript("prefer-return-this-type", Kind::Suggestion)
+        .fixable(Fixable::Code)
+        .presets(Presets::STRICT_TYPE_CHECKED)
+        .requires_types();
+    const ON: On = On::new().members();
+    type State<'a> = ();
+
+    fn new(_: &Options) -> Self {
+        PreferReturnThisType
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.has_classes().then_some(())
+    }
+
+    fn member<'a>(&self, node: Member<'a>, cx: &mut Cx<'a, Self>) {
         if node.flags().contains(Flags::ABSTRACT) {
             return;
         }
@@ -81,24 +96,6 @@ impl PreferReturnThisType {
         };
         if is_function_returning_this(original_func, original_class) {
             cx.report(found, USE_THIS_TYPE).fix(|fixer| fixer.replace(found, "this"));
-        }
-    }
-}
-
-impl Rule for PreferReturnThisType {
-    const META: Meta = Meta::typescript("prefer-return-this-type", Kind::Suggestion)
-        .fixable(Fixable::Code)
-        .presets(Presets::STRICT_TYPE_CHECKED)
-        .requires_types();
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        PreferReturnThisType
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.has_classes() {
-            on.members(Self::check_member);
         }
     }
 }

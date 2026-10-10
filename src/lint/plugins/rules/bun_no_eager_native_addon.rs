@@ -37,6 +37,15 @@ impl Rule for NoEagerNativeAddon {
         NoEagerNativeAddon
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new().exprs(&[ExprTag::ImportCall]).stmts(&[
+            StmtTag::Import,
+            StmtTag::ExportNamed,
+            StmtTag::ExportStar,
+        ]);
+        if file.mentions("require") { on.exprs(&[ExprTag::Call]) } else { on }
+    }
+
     fn start<'a>(&self, _: &'a File<'a>) -> Option<RunsLater<'a>> {
         Some(RunsLater::default())
     }
@@ -62,7 +71,7 @@ impl Rule for NoEagerNativeAddon {
                     check_call(e, args.first(), cx);
                 }
             }
-            ExprTag::Call if cx.file().mentions("require") => {
+            ExprTag::Call => {
                 if let Some(call) = e.as_call().filter(|it| it.callee().is_ident("require")) {
                     check_call(e, call.args().first(), cx);
                 }

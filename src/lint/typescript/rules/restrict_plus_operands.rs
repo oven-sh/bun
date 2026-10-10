@@ -139,7 +139,8 @@ impl Rule for RestrictPlusOperands {
     const META: Meta = Meta::typescript("restrict-plus-operands", Kind::Problem)
         .presets(Presets::RECOMMENDED_TYPE_CHECKED.union(Presets::STRICT_TYPE_CHECKED))
         .requires_types();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Binary, ExprTag::Assign]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -173,18 +174,27 @@ impl Rule for RestrictPlusOperands {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Binary], |rule, node, cx| {
-            if let ExprKind::Binary { op: BinOp::Add, left, right } = node.kind() {
-                rule.check_plus_operands(node, left, right, cx);
-            }
-        });
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new().exprs(&[ExprTag::Binary]);
         if !self.skip_compound_assignments {
-            on.exprs([ExprTag::Assign], |rule, node, cx| {
-                if let ExprKind::Assign { op: Some(BinOp::Add), target, value } = node.kind() {
-                    rule.check_plus_operands(node, target, value, cx);
+            on = on.exprs(&[ExprTag::Assign]);
+        }
+        on
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match node.tag() {
+            ExprTag::Binary => {
+                if let ExprKind::Binary { op: BinOp::Add, left, right } = node.kind() {
+                    self.check_plus_operands(node, left, right, cx);
                 }
-            });
+            }
+            ExprTag::Assign => {
+                if let ExprKind::Assign { op: Some(BinOp::Add), target, value } = node.kind() {
+                    self.check_plus_operands(node, target, value, cx);
+                }
+            }
+            _ => {}
         }
     }
 }

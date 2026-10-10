@@ -277,8 +277,20 @@ fn fix_as_oxlint<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, declarations: List<'
     Some(fixer.replace(span, [before, keyword, after].concat()))
 }
 
-impl NoVar {
-    fn check<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoVar {
+    const META: Meta = Meta::eslint("no-var", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().stmts(&[StmtTag::Var]);
+    type State<'a> = State<'a>;
+
+    fn new(_: &Options) -> Self {
+        NoVar
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let StmtKind::Var(declarations) = statement.kind() else {
             return;
         };
@@ -306,19 +318,5 @@ impl NoVar {
             let var = var_keyword(statement)?;
             cx.state.can_fix(statement, declarations).then(|| fixer.replace(var, "let"))
         });
-    }
-}
-
-impl Rule for NoVar {
-    const META: Meta = Meta::eslint("no-var", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = State<'a>;
-
-    fn new(_: &Options) -> Self {
-        NoVar
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
-        on.stmts([StmtTag::Var], Self::check);
-        State::default()
     }
 }

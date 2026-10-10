@@ -37,6 +37,11 @@ impl Rule for NoImportingVitestGlobals {
         NoImportingVitestGlobals
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new().stmts(&[StmtTag::Import]);
+        if file.mentions("require") { on.stmts(&[StmtTag::Var]) } else { on }
+    }
+
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions_any(&["vitest", "vite-plus/test", "@effect/vitest"]) {
             return None;
@@ -54,9 +59,6 @@ impl Rule for NoImportingVitestGlobals {
                 }
             }
             StmtTag::Var => {
-                if !cx.file().mentions("require") {
-                    return;
-                }
                 if let StmtKind::Var(declarations) = node.kind() {
                     check_variable_declaration(node, declarations, cx);
                 }

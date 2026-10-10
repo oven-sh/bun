@@ -14,6 +14,7 @@ fn declares_react(scope: Scope) -> bool {
 
 impl Rule for ReactInJsxScope {
     const META: Meta = Meta::oxlint(Plugin::React, "react-in-jsx-scope", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     /// Whether the file has the name `React` in it.
     type State<'a> = bool;
 
@@ -21,21 +22,22 @@ impl Rule for ReactInJsxScope {
         ReactInJsxScope
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> bool {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<bool> {
         if !is_jsx(file) || !file.has_exprs([ExprTag::Jsx]) {
-            return false;
+            return None;
         }
         let mentions_react = file.mentions("React");
         if mentions_react && declares_react(file.top_level_scope()) {
-            return true;
+            return None;
         }
-        on.exprs([ExprTag::Jsx], |_, e, cx| {
-            if let ExprKind::Jsx(jsx) = e.kind()
-                && !(cx.state && declares_react(Node::Expr(e).scope()))
-            {
-                cx.report(jsx.tag().map_or_else(|| jsx.opening_span(), Expr::span), REACT_IN_JSX_SCOPE);
-            }
-        });
-        mentions_react
+        Some(mentions_react)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let ExprKind::Jsx(jsx) = e.kind()
+            && !(cx.state && declares_react(Node::Expr(e).scope()))
+        {
+            cx.report(jsx.tag().map_or_else(|| jsx.opening_span(), Expr::span), REACT_IN_JSX_SCOPE);
+        }
     }
 }

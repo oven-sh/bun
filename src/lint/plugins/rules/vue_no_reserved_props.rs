@@ -16,48 +16,55 @@ const NO_RESERVED_PROPS: Message = Message::new("", "'{{prop_name}}' is a reserv
 
 impl Rule for NoReservedProps {
     const META: Meta = Meta::oxlint(Plugin::Vue, "no-reserved-props", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Call]).props();
     type State<'a> = NamedTypeBudget;
 
     fn new(options: &Options) -> Self {
         NoReservedProps { is_vue2: options.object(0).number("vueVersion") == Some(2.0) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> NamedTypeBudget {
-        if !is_vue_file(file) {
-            return NamedTypeBudget::default();
-        }
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
         if file.mentions("props") {
-            on.props(|rule, prop, cx| {
-                if prop.kind() != PropKind::Spread
-                    && is_specific_static_name(prop, "props")
-                    && object_of(prop).is_some_and(is_vue_component_options_object)
-                {
-                    rule.check_props(prop.value(), cx);
-                }
-            });
+            on = on.props();
         }
         if is_vue_setup(file) && file.mentions("defineProps") {
-            on.exprs([ExprTag::Call], |rule, e, cx| {
-                let Some(call) = e.as_call().filter(|it| is_specific_id(it.callee(), "defineProps")) else {
-                    return;
-                };
-                match call.args().first().filter(|it| it.tag() != ExprTag::Spread) {
-                    Some(arg) => rule.check_props(Some(arg), cx),
-                    None => {
-                        if let Some(first) = first_type_argument(call) {
-                            for_each_define_props_type_signature(first, &cx.state, &mut |signature| {
-                                if let Some(key) = signature_key(signature)
-                                    && let Some(name) = static_name(key)
-                                {
-                                    rule.report(name, span_of_key(key, cx.file()), cx);
-                                }
-                            });
-                        }
-                    }
-                }
-            });
+            on = on.exprs(&[ExprTag::Call]);
         }
-        NamedTypeBudget::default()
+        on
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<NamedTypeBudget> {
+        is_vue_file(file).then(NamedTypeBudget::default)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call) = e.as_call().filter(|it| is_specific_id(it.callee(), "defineProps")) else {
+            return;
+        };
+        match call.args().first().filter(|it| it.tag() != ExprTag::Spread) {
+            Some(arg) => self.check_props(Some(arg), cx),
+            None => {
+                if let Some(first) = first_type_argument(call) {
+                    for_each_define_props_type_signature(first, &cx.state, &mut |signature| {
+                        if let Some(key) = signature_key(signature)
+                            && let Some(name) = static_name(key)
+                        {
+                            self.report(name, span_of_key(key, cx.file()), cx);
+                        }
+                    });
+                }
+            }
+        }
+    }
+
+    fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        if prop.kind() != PropKind::Spread
+            && is_specific_static_name(prop, "props")
+            && object_of(prop).is_some_and(is_vue_component_options_object)
+        {
+            self.check_props(prop.value(), cx);
+        }
     }
 }
 

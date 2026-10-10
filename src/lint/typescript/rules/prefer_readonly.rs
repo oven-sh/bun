@@ -428,8 +428,33 @@ impl PreferReadonly {
         }
         scope
     }
+}
 
-    fn check_member_expression<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for PreferReadonly {
+    const META: Meta = Meta::typescript("prefer-readonly", Kind::Suggestion)
+        .fixable(Fixable::Code)
+        .requires_types();
+    const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]).finish();
+    type State<'a> = ClassScopes<'a>;
+
+    fn new(options: &Options) -> Self {
+        PreferReadonly {
+            only_inline_lambdas: options.object(0).bool_or("onlyInlineLambdas", false),
+        }
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<ClassScopes<'a>> {
+        let mut class_scopes = FxHashMap::default();
+        for class in file.classes() {
+            let class_scope = self.new_class_scope(class);
+            if !class_scope.private_modifiables.is_empty() {
+                class_scopes.insert(class, class_scope);
+            }
+        }
+        (!class_scopes.is_empty()).then_some(ClassScopes(class_scopes))
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let is_modified = match node.kind() {
             ExprKind::Dot { .. } => is_modified_property_access(node),
             // tsgolint does not see what is written to with brackets.
@@ -468,39 +493,11 @@ impl PreferReadonly {
         );
     }
 
-    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
         for class_scope in cx.state.0.values() {
             for violating in class_scope.private_modifiables.iter().filter(|it| !it.is_modified) {
                 report(cx, violating);
             }
         }
-    }
-}
-
-impl Rule for PreferReadonly {
-    const META: Meta = Meta::typescript("prefer-readonly", Kind::Suggestion)
-        .fixable(Fixable::Code)
-        .requires_types();
-    type State<'a> = ClassScopes<'a>;
-
-    fn new(options: &Options) -> Self {
-        PreferReadonly {
-            only_inline_lambdas: options.object(0).bool_or("onlyInlineLambdas", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> ClassScopes<'a> {
-        let mut class_scopes = FxHashMap::default();
-        for class in file.classes() {
-            let class_scope = self.new_class_scope(class);
-            if !class_scope.private_modifiables.is_empty() {
-                class_scopes.insert(class, class_scope);
-            }
-        }
-        if !class_scopes.is_empty() {
-            on.exprs([ExprTag::Dot, ExprTag::Index], Self::check_member_expression);
-            on.finish(Self::finish);
-        }
-        ClassScopes(class_scopes)
     }
 }

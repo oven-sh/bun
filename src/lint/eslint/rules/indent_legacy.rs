@@ -858,6 +858,34 @@ impl Rule for IndentLegacy {
         }
     }
 
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new()
+            .exprs(&[ExprTag::Object, ExprTag::Array])
+            .stmts(&[
+                StmtTag::Block,
+                StmtTag::While,
+                StmtTag::For,
+                StmtTag::ForIn,
+                StmtTag::ForOf,
+                StmtTag::DoWhile,
+                StmtTag::If,
+                StmtTag::Var,
+                StmtTag::Switch,
+            ])
+            .funcs()
+            .classes()
+            .enter(NodeTags::new().stmts(&[StmtTag::Return]))
+            .exit(NodeTags::CASE)
+            .finish();
+        if self.call_arguments.is_some() {
+            on = on.exprs(&[ExprTag::Call]);
+        }
+        if self.member_expression.is_some() {
+            on = on.exprs(&[ExprTag::Dot, ExprTag::Index]);
+        }
+        on
+    }
+
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
         Some(State::default())
     }
@@ -865,10 +893,8 @@ impl Rule for IndentLegacy {
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.tag() {
             ExprTag::Object | ExprTag::Array => self.check_indent_in_array_or_object_block(cx, e),
-            ExprTag::Call if self.call_arguments.is_some() => self.check_call_expression(cx, e),
-            ExprTag::Dot | ExprTag::Index if self.member_expression.is_some() => {
-                self.check_member_expression(cx, e);
-            }
+            ExprTag::Call => self.check_call_expression(cx, e),
+            ExprTag::Dot | ExprTag::Index => self.check_member_expression(cx, e),
             _ => {}
         }
     }

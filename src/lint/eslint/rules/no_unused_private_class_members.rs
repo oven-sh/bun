@@ -305,6 +305,33 @@ impl NoUnusedPrivateClassMembers {
             }
         }
     }
+}
+
+impl Rule for NoUnusedPrivateClassMembers {
+    const META: Meta = Meta::eslint("no-unused-private-class-members", Kind::Problem)
+        .has_suggestions()
+        .recommended();
+    const ON: On = On::new()
+        .classes()
+        .exprs(&[ExprTag::Dot, ExprTag::PrivateIdentifier])
+        .finish();
+    type State<'a> = State<'a>;
+
+    fn new(_: &Options) -> Self {
+        NoUnusedPrivateClassMembers
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+        (file.has_classes() && strings::contains_char(file.text(), b'#')).then(State::default)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.collect_usage(e, cx);
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        self.collect_members(class, cx);
+    }
 
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         if cx.language().is_oxlint {
@@ -347,25 +374,5 @@ impl NoUnusedPrivateClassMembers {
                     },
                 );
         }
-    }
-}
-
-impl Rule for NoUnusedPrivateClassMembers {
-    const META: Meta = Meta::eslint("no-unused-private-class-members", Kind::Problem)
-        .has_suggestions()
-        .recommended();
-    type State<'a> = State<'a>;
-
-    fn new(_: &Options) -> Self {
-        NoUnusedPrivateClassMembers
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        if file.has_classes() && strings::contains_char(file.text(), b'#') {
-            on.classes(Self::collect_members);
-            on.exprs([ExprTag::Dot, ExprTag::PrivateIdentifier], Self::collect_usage);
-            on.finish(Self::finish);
-        }
-        State::default()
     }
 }

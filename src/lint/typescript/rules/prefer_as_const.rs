@@ -64,30 +64,33 @@ impl Rule for PreferAsConst {
         .fixable(Fixable::Code)
         .has_suggestions()
         .recommended();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::As]).var_decls().members();
+    no_state!();
 
     fn new(_: &Options) -> Self {
         PreferAsConst
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::As], |_, e, cx| {
-            if let ExprKind::As { expr, ty } = e.kind()
-                && is_same_literal(expr, ty)
-                // oxlint does not look at `<"a">"a"`.
-                && !(cx.language().is_oxlint && e.is_angle_bracket_assertion())
-            {
-                cx.report(ty, PREFER_CONST_ASSERTION).fix(|fixer| fixer.replace(ty, "const"));
-            }
-        });
-        on.var_decls(|_, declaration, cx| check_annotation(|| declaration.init(), declaration.ty(), cx));
-        on.members(|_, member, cx| {
-            if member.kind() == MemberKind::Property
-                && !member.flags().intersects(Flags::ACCESSOR | Flags::ABSTRACT)
-                && !member.is_signature()
-            {
-                check_annotation(|| member.init(), member.ty(), cx);
-            }
-        });
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let ExprKind::As { expr, ty } = e.kind()
+            && is_same_literal(expr, ty)
+            // oxlint does not look at `<"a">"a"`.
+            && !(cx.language().is_oxlint && e.is_angle_bracket_assertion())
+        {
+            cx.report(ty, PREFER_CONST_ASSERTION).fix(|fixer| fixer.replace(ty, "const"));
+        }
+    }
+
+    fn var_decl<'a>(&self, declaration: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        check_annotation(|| declaration.init(), declaration.ty(), cx);
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        if member.kind() == MemberKind::Property
+            && !member.flags().intersects(Flags::ACCESSOR | Flags::ABSTRACT)
+            && !member.is_signature()
+        {
+            check_annotation(|| member.init(), member.ty(), cx);
+        }
     }
 }

@@ -48,6 +48,10 @@ impl NoSync {
 
 impl Rule for NoSync {
     const META: Meta = Meta::eslint("no-sync", Kind::Suggestion).deprecated();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Dot, ExprTag::Index])
+        .classes()
+        .stmts(&[StmtTag::Interface]);
     /// That a node is in a function.
     type State<'a> = AncestorMemo<'a, ()>;
 
@@ -57,22 +61,33 @@ impl Rule for NoSync {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        on.exprs([ExprTag::Dot, ExprTag::Index], Self::check);
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]);
         if !file.is_javascript() {
-            on.classes(|rule, class, cx| {
-                for ty in class.implements() {
-                    rule.check_heritage(ty, cx);
-                }
-            });
-            on.stmts([StmtTag::Interface], |rule, statement, cx| {
-                if let StmtKind::Interface(interface) = statement.kind() {
-                    for ty in interface.extends() {
-                        rule.check_heritage(ty, cx);
-                    }
-                }
-            });
+            on = on.classes().stmts(&[StmtTag::Interface]);
         }
-        AncestorMemo::default()
+        on
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(AncestorMemo::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(e, cx);
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if let StmtKind::Interface(interface) = statement.kind() {
+            for ty in interface.extends() {
+                self.check_heritage(ty, cx);
+            }
+        }
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        for ty in class.implements() {
+            self.check_heritage(ty, cx);
+        }
     }
 }

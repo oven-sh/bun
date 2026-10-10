@@ -90,7 +90,8 @@ impl Rule for PreferDestructuring {
         .fixable(Fixable::Code)
         .requires_types()
         .extends_base_rule("prefer-destructuring");
-    type State<'a> = ();
+    const ON: On = On::new().var_decls().exprs(&[ExprTag::Assign]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let enabled_types = options.object(0);
@@ -108,8 +109,11 @@ impl Rule for PreferDestructuring {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.var_decls(Self::check_variable_declarator);
-        on.exprs([ExprTag::Assign], Self::check_assignment_expression);
+    fn var_decl<'a>(&self, node: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_variable_declarator(node, cx);
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_assignment_expression(node, cx);
     }
 }

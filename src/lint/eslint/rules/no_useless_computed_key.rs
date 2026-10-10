@@ -81,8 +81,28 @@ impl NoUselessComputedKey {
                 })
             });
     }
+}
 
-    fn check_property<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoUselessComputedKey {
+    const META: Meta = Meta::eslint("no-useless-computed-key", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().props().pats(&[PatTag::Object]).members();
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        NoUselessComputedKey {
+            enforces_for_class_members: options.object(0).bool_or("enforceForClassMembers", true),
+        }
+    }
+
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new().props().pats(&[PatTag::Object]);
+        if self.enforces_for_class_members {
+            on = on.members();
+        }
+        on
+    }
+
+    fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
         let Some((key, literal)) = computed_literal(prop.key(), cx.file()) else {
             return;
         };
@@ -95,7 +115,7 @@ impl NoUselessComputedKey {
         Self::report(prop.into(), key, cx);
     }
 
-    fn check_pattern<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
+    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
         let PatKind::Object(props) = pat.kind() else {
             return;
         };
@@ -106,7 +126,7 @@ impl NoUselessComputedKey {
         }
     }
 
-    fn check_class_member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         let Some((key, literal)) = computed_literal(member.key(), cx.file()) else {
             return;
         };
@@ -121,25 +141,6 @@ impl NoUselessComputedKey {
         };
         if !literal.is_any(needs_brackets) {
             Self::report(member.into(), key, cx);
-        }
-    }
-}
-
-impl Rule for NoUselessComputedKey {
-    const META: Meta = Meta::eslint("no-useless-computed-key", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        NoUselessComputedKey {
-            enforces_for_class_members: options.object(0).bool_or("enforceForClassMembers", true),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.props(Self::check_property);
-        on.pats([PatTag::Object], Self::check_pattern);
-        if self.enforces_for_class_members {
-            on.members(Self::check_class_member);
         }
     }
 }

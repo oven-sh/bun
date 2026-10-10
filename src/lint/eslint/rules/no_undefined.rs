@@ -63,7 +63,7 @@ impl Rule for NoUndefined {
         self.check_symbol(symbol, cx);
     }
 
-    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
         self.check_global(cx);
     }
 }

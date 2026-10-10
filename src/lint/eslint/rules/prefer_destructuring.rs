@@ -240,17 +240,22 @@ impl Rule for PreferDestructuring {
         }
     }
 
-    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if !(is_enabled(self.config.assignment_expression) || cx.language().is_oxlint) {
-            return;
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
+        if is_enabled(self.config.variable_declarator) {
+            on = on.var_decls();
         }
+        if is_enabled(self.config.assignment_expression) || file.language().is_oxlint {
+            on = on.exprs(&[ExprTag::Assign]);
+        }
+        on
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         self.config.check_assignment_expression(e, cx);
     }
 
     fn var_decl<'a>(&self, declaration: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
-        if !is_enabled(self.config.variable_declarator) {
-            return;
-        }
         let has_type_annotation = cx.language().is_oxlint && declaration.ty().is_some();
         if !has_type_annotation || self.enforce_for_declaration_with_type_annotation {
             self.config.check_variable_declarator(declaration, cx, !has_type_annotation);

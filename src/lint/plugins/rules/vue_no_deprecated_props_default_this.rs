@@ -22,24 +22,24 @@ pub struct State<'a> {
 
 impl Rule for NoDeprecatedPropsDefaultThis {
     const META: Meta = Meta::oxlint(Plugin::Vue, "no-deprecated-props-default-this", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::This]);
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoDeprecatedPropsDefaultThis
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if is_vue_file(file) && file.mentions("props") {
-            on.exprs([ExprTag::This], |_, this_expr, cx| {
-                if !this_expr.is_jsx_tag_name()
-                    && let Some(function) = enclosing_function(Node::Expr(this_expr), Enclosing::Function, &mut cx.state.functions)
-                    && *cx.state.is_default_factory.entry(function).or_insert_with(|| is_default_factory(function))
-                {
-                    cx.report(this_expr, NO_DEPRECATED_PROPS_DEFAULT_THIS);
-                }
-            });
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        (is_vue_file(file) && file.mentions("props")).then(State::default)
+    }
+
+    fn expr<'a>(&self, this_expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if !this_expr.is_jsx_tag_name()
+            && let Some(function) = enclosing_function(Node::Expr(this_expr), Enclosing::Function, &mut cx.state.functions)
+            && *cx.state.is_default_factory.entry(function).or_insert_with(|| is_default_factory(function))
+        {
+            cx.report(this_expr, NO_DEPRECATED_PROPS_DEFAULT_THIS);
         }
-        State::default()
     }
 }
 

@@ -14,39 +14,51 @@ type Context<'c, 'a> = &'c Cx<'a, RequirePropTypes>;
 
 impl Rule for RequirePropTypes {
     const META: Meta = Meta::oxlint(Plugin::Vue, "require-prop-types", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]).stmts(&[StmtTag::ExportDefault]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         RequirePropTypes
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
         if is_vue_setup(file) {
             if file.mentions_any(&["defineProps", "defineModel"]) {
-                on.exprs([ExprTag::Call], |_, e, cx| run_on_setup(e, cx));
+                on = on.exprs(&[ExprTag::Call]);
             }
         } else if file.mentions("props") {
-            on.stmts([StmtTag::ExportDefault], |_, stmt, cx| {
-                // `export default { .. }`, `export default Vue.extend({ .. })`
-                let extended = || match stmt.kind() {
-                    StmtKind::ExportDefault(e) if !e.is_parenthesized() && !e.is_chain_root() => {
-                        let call = e.as_call()?;
-                        let is_extend = get_member_expr(call.callee()).and_then(static_property_name).is_some_and(|it| it.is("extend"));
-                        call.args().first().filter(|_| is_extend).and_then(as_inner_object_expression)
-                    }
-                    _ => None,
-                };
-                check_options_props(exported_object(stmt).or_else(extended), cx);
-            });
+            on = on.stmts(&[StmtTag::ExportDefault]).exprs(&[ExprTag::New]);
+        }
+        on
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Call => run_on_setup(e, cx),
             // `new Vue({ .. })`
-            on.exprs([ExprTag::New], |_, e, cx| {
+            ExprTag::New => {
                 if let ExprKind::New(new_expr) = e.kind()
                     && is_specific_id(new_expr.callee(), "Vue")
                 {
                     check_options_props(new_expr.args().first().and_then(as_inner_object_expression), cx);
                 }
-            });
+            }
+            _ => {}
         }
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        // `export default { .. }`, `export default Vue.extend({ .. })`
+        let extended = || match stmt.kind() {
+            StmtKind::ExportDefault(e) if !e.is_parenthesized() && !e.is_chain_root() => {
+                let call = e.as_call()?;
+                let is_extend = get_member_expr(call.callee()).and_then(static_property_name).is_some_and(|it| it.is("extend"));
+                call.args().first().filter(|_| is_extend).and_then(as_inner_object_expression)
+            }
+            _ => None,
+        };
+        check_options_props(exported_object(stmt).or_else(extended), cx);
     }
 }
 

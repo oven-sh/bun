@@ -11,6 +11,7 @@
 //! - `src/HIR/CollectOptionalChainDependencies.ts`
 //! - `src/HIR/CollectHoistablePropertyLoads.ts`
 //! - `src/HIR/DeriveMinimalDependenciesHIR.ts`
+//! Caught throws: https://github.com/oxc-project/oxc (Copyright VoidZero Inc. and contributors, MIT License).
 
 use crate::collections::{IdMap, IndexMap};
 use std::collections::BTreeSet;
@@ -25,6 +26,7 @@ use crate::hir::{
     InstructionValue, MutableRange, ParamPattern, Place, PlaceOrSpread, PropertyLiteral,
     ReactFunctionType, ReactiveScopeDependency, ScopeId, Terminal, Type, hir_vec, visitors,
 };
+use crate::optimization::dead_code_elimination::find_semantic_only_caught_instructions;
 
 // =============================================================================
 // Public entry point
@@ -1932,6 +1934,18 @@ impl<'a> DependencyCollectionContext<'a> {
         self.visit_dependency(dep, env);
     }
 
+    /// The variable that the operand is read from, without the path.
+    fn visit_operand_root(&mut self, place: &Place, env: &mut Environment) {
+        let resolved = self.temporaries.get(place.identifier);
+        let dep = ReactiveScopeDependency {
+            identifier: resolved.map_or(place.identifier, |it| it.identifier),
+            reactive: resolved.map_or(place.reactive, |it| it.reactive),
+            path: hir_vec![],
+            loc: resolved.map_or(place.loc, |it| it.loc),
+        };
+        self.visit_dependency(dep, env);
+    }
+
     fn visit_property(
         &mut self,
         object: &Place,
@@ -2050,6 +2064,9 @@ fn visit_inner_function_blocks(
     ctx: &mut DependencyCollectionContext,
     env: &mut Environment,
 ) {
+    let semantic_only =
+        find_semantic_only_caught_instructions(&env.functions[func_id.0 as usize], env);
+
     // Clone inner function's instructions and block structure to avoid
     // borrow conflicts when mutating env through handle_instruction.
     let inner_instrs: HirVec<Instruction> = env.functions[func_id.0 as usize].instructions.clone();
@@ -2106,7 +2123,9 @@ fn visit_inner_function_blocks(
                     visit_inner_function_blocks(lowered_func.func, ctx, env);
                 }
                 _ => {
-                    handle_instruction(inner_instr, ctx, env);
+                    let is_semantic_only =
+                        semantic_only.as_ref().is_some_and(|it| it[iid.0 as usize]);
+                    handle_instruction(inner_instr, is_semantic_only, ctx, env);
                 }
             }
         }
@@ -2122,6 +2141,7 @@ fn visit_inner_function_blocks(
 
 fn handle_instruction(
     instr: &Instruction,
+    is_semantic_only: bool,
     ctx: &mut DependencyCollectionContext,
     env: &mut Environment,
 ) {
@@ -2135,6 +2155,14 @@ fn handle_instruction(
         },
         env,
     );
+
+    if is_semantic_only {
+        // See `find_semantic_only_caught_instructions`.
+        for operand in visitors::each_instruction_value_operand(&instr.value, env) {
+            ctx.visit_operand_root(&operand, env);
+        }
+        return;
+    }
 
     if ctx.is_deferred_dependency_instr(instr) {
         return;
@@ -2236,6 +2264,7 @@ fn collect_dependencies(
     temporaries: &IdMap<IdentifierId, ReactiveScopeDependency>,
     processed_instrs_in_optional: &HashSet<ProcessedInstr>,
 ) -> IndexMap<ScopeId, Vec<ReactiveScopeDependency>> {
+    let semantic_only = find_semantic_only_caught_instructions(func, env);
     let mut ctx = DependencyCollectionContext::new(temporaries, processed_instrs_in_optional);
 
     // Declare params
@@ -2266,7 +2295,13 @@ fn collect_dependencies(
 
     let mut traversal = ScopeBlockTraversal::new();
 
-    handle_function_deps(func, env, &mut ctx, &mut traversal);
+    handle_function_deps(
+        func,
+        env,
+        semantic_only.as_deref(),
+        &mut ctx,
+        &mut traversal,
+    );
 
     ctx.deps
 }
@@ -2274,6 +2309,7 @@ fn collect_dependencies(
 fn handle_function_deps(
     func: &HirFunction,
     env: &mut Environment,
+    semantic_only: Option<&[bool]>,
     ctx: &mut DependencyCollectionContext,
     traversal: &mut ScopeBlockTraversal,
 ) {
@@ -2328,7 +2364,8 @@ fn handle_function_deps(
                     ctx.inner_fn_context = prev_inner;
                 }
                 _ => {
-                    handle_instruction(instr, ctx, env);
+                    let is_semantic_only = semantic_only.is_some_and(|it| it[instr_id.0 as usize]);
+                    handle_instruction(instr, is_semantic_only, ctx, env);
                 }
             }
         }

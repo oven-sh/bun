@@ -51,8 +51,37 @@ fn validate_statement<'a>(
     }
 }
 
-impl NonblockStatementBodyPosition {
-    fn check<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NonblockStatementBodyPosition {
+    const META: Meta = Meta::eslint("nonblock-statement-body-position", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new().stmts(&[
+        StmtTag::If,
+        StmtTag::While,
+        StmtTag::DoWhile,
+        StmtTag::For,
+        StmtTag::ForIn,
+        StmtTag::ForOf,
+    ]);
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let overrides = options.object(1).object("overrides");
+        let placement = |keyword: &str| match overrides.str(keyword).or_else(|| options.str(0)) {
+            Some("below") => Placement::Below,
+            Some("any") => Placement::Any,
+            _ => Placement::Beside,
+        };
+        NonblockStatementBodyPosition {
+            of_if: placement("if"),
+            of_else: placement("else"),
+            of_while: placement("while"),
+            of_do: placement("do"),
+            of_for: placement("for"),
+        }
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         // The `)` after `e`.
         let paren_after = |e: Expr<'a>| Some((e.outer_span().end, 1));
         match statement.kind() {
@@ -78,42 +107,5 @@ impl NonblockStatementBodyPosition {
             }
             _ => {}
         }
-    }
-}
-
-impl Rule for NonblockStatementBodyPosition {
-    const META: Meta = Meta::eslint("nonblock-statement-body-position", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let overrides = options.object(1).object("overrides");
-        let placement = |keyword: &str| match overrides.str(keyword).or_else(|| options.str(0)) {
-            Some("below") => Placement::Below,
-            Some("any") => Placement::Any,
-            _ => Placement::Beside,
-        };
-        NonblockStatementBodyPosition {
-            of_if: placement("if"),
-            of_else: placement("else"),
-            of_while: placement("while"),
-            of_do: placement("do"),
-            of_for: placement("for"),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts(
-            [
-                StmtTag::If,
-                StmtTag::While,
-                StmtTag::DoWhile,
-                StmtTag::For,
-                StmtTag::ForIn,
-                StmtTag::ForOf,
-            ],
-            Self::check,
-        );
     }
 }

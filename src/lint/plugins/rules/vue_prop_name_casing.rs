@@ -18,6 +18,7 @@ const PROP_NAME_CASING: Message = Message::new("", "Prop '{{name}}' is not in {{
 
 impl Rule for PropNameCasing {
     const META: Meta = Meta::oxlint(Plugin::Vue, "prop-name-casing", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Object, ExprTag::Call]);
     type State<'a> = NamedTypeBudget;
 
     fn new(options: &Options) -> Self {
@@ -28,35 +29,33 @@ impl Rule for PropNameCasing {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> NamedTypeBudget {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
         if file.mentions("props") {
-            on.exprs([ExprTag::Object], |rule, e, cx| {
+            on = on.exprs(&[ExprTag::Object]);
+        }
+        if is_vue_setup(file) && file.mentions("defineProps") {
+            on = on.exprs(&[ExprTag::Call]);
+        }
+        on
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<NamedTypeBudget> {
+        Some(NamedTypeBudget::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Object => {
                 if let ExprKind::Object(properties) = e.kind()
                     && is_vue_component_options_object_excluding_instance(e)
                 {
-                    rule.check_props_value(find_property(properties, "props").and_then(Prop::value), cx);
+                    self.check_props_value(find_property(properties, "props").and_then(Prop::value), cx);
                 }
-            });
+            }
+            ExprTag::Call => self.call(e, cx),
+            _ => {}
         }
-        if is_vue_setup(file) && file.mentions("defineProps") {
-            on.exprs([ExprTag::Call], |rule, e, cx| {
-                let Some(call) = e.as_call().filter(|it| is_specific_id(it.callee(), "defineProps")) else {
-                    return;
-                };
-                if let Some(arg) = call.args().first().filter(|it| it.tag() != ExprTag::Spread) {
-                    rule.check_props_value(Some(arg), cx);
-                } else if let Some(first_type) = first_type_argument(call) {
-                    for_each_define_props_type_signature(first_type, &cx.state, &mut |signature| {
-                        if let Some(key) = signature_key(signature)
-                            && let Some(name) = static_name(key)
-                        {
-                            rule.report_if_invalid(name.bytes(), span_of_key(key, cx.file()), cx);
-                        }
-                    });
-                }
-            });
-        }
-        NamedTypeBudget::default()
     }
 }
 
@@ -78,6 +77,23 @@ fn property_key_static_name(prop: Prop<'_>) -> Option<(&[u8], Span)> {
 }
 
 impl PropNameCasing {
+    fn call<'a>(&self, e: Expr<'a>, cx: &Cx<'a, Self>) {
+        let Some(call) = e.as_call().filter(|it| is_specific_id(it.callee(), "defineProps")) else {
+            return;
+        };
+        if let Some(arg) = call.args().first().filter(|it| it.tag() != ExprTag::Spread) {
+            self.check_props_value(Some(arg), cx);
+        } else if let Some(first_type) = first_type_argument(call) {
+            for_each_define_props_type_signature(first_type, &cx.state, &mut |signature| {
+                if let Some(key) = signature_key(signature)
+                    && let Some(name) = static_name(key)
+                {
+                    self.report_if_invalid(name.bytes(), span_of_key(key, cx.file()), cx);
+                }
+            });
+        }
+    }
+
     fn check_props_value<'a>(&self, expr: Option<Expr<'a>>, cx: &Cx<'a, Self>) {
         match expr.map(|it| get_inner_expression(it).kind()) {
             Some(ExprKind::Array(elements)) => {

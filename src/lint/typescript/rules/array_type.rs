@@ -226,14 +226,21 @@ impl Rule for ArrayType {
         }
     }
 
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new();
+        if self.default != Style::Array || self.readonly != Style::Array {
+            on = on.types(&[TypeTag::Array]);
+        }
+        if self.default != Style::Generic || self.readonly != Style::Generic {
+            on = on.types(&[TypeTag::Ref]);
+        }
+        on
+    }
+
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         match ty.tag() {
-            TypeTag::Array if self.default != Style::Array || self.readonly != Style::Array => {
-                self.check_array(ty, cx);
-            }
-            TypeTag::Ref if self.default != Style::Generic || self.readonly != Style::Generic => {
-                self.check_reference(ty, cx);
-            }
+            TypeTag::Array => self.check_array(ty, cx),
+            TypeTag::Ref => self.check_reference(ty, cx),
             _ => {}
         }
     }

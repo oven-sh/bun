@@ -581,13 +581,14 @@ pub struct State<'a> {
 
 impl Rule for RulesOfHooks {
     const META: Meta = Meta::plugin(Plugin::ReactHooks, "rules-of-hooks", Kind::Problem).recommended();
+    const ON: On = On::new().finish();
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         RulesOfHooks
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         let mut state = State::default();
         // A file has many times as many calls as names.
         let mut is_name_of_hook = ByName::default();
@@ -603,14 +604,24 @@ impl Rule for RulesOfHooks {
                 state.calls.push(e);
             }
         }
-        if !state.calls.is_empty() {
-            on.finish(Self::check);
+        if state.calls.is_empty() && !checks_effect_events(file) {
+            return None;
         }
-        if file.mentions("useEffectEvent") && !oxlint::is_followed(file) {
-            on.finish(Self::check_effect_events);
-        }
-        state
+        Some(state)
     }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        if !cx.state.calls.is_empty() {
+            self.check(cx);
+        }
+        if checks_effect_events(cx.file()) {
+            self.check_effect_events(cx);
+        }
+    }
+}
+
+fn checks_effect_events(file: &File) -> bool {
+    file.mentions("useEffectEvent") && !oxlint::is_followed(file)
 }
 
 /// A call in a statement at the top of a code path, in a part of it that is always evaluated.

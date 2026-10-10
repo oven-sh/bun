@@ -80,14 +80,18 @@ impl Rule for MaxNestedCallbacks {
         }
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        match file.language().eslint_major < 10 {
+            true => On::new().enter(NodeTags::FUNC).exit(NodeTags::FUNC),
+            false => On::new().exprs(&[ExprTag::Fn]),
+        }
+    }
+
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
         Some(State::default())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if cx.language().eslint_major < 10 {
-            return;
-        }
         let (Some(max), Some(func)) = (self.max, e.as_fn()) else {
             return;
         };
@@ -110,16 +114,10 @@ impl Rule for MaxNestedCallbacks {
     }
 
     fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        if cx.language().eslint_major >= 10 {
-            return;
-        }
         self.enter_before_10(node, cx);
     }
 
     fn exit<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        if cx.language().eslint_major >= 10 {
-            return;
-        }
         if as_function_expression(node).is_some() {
             cx.state.depth = cx.state.depth.saturating_sub(1);
         }

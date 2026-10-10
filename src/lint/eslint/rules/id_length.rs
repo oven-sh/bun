@@ -436,6 +436,48 @@ impl Rule for IdLength {
         }
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.language().is_oxlint {
+            let mut on = On::new()
+                .pats(&[PatTag::Ident])
+                .funcs()
+                .classes()
+                .import_specs()
+                .stmts(&[
+                    StmtTag::Interface,
+                    StmtTag::TypeAlias,
+                    StmtTag::Enum,
+                    StmtTag::ImportEquals,
+                    StmtTag::ExportStar,
+                    StmtTag::Import,
+                    StmtTag::Module,
+                ])
+                .members()
+                .enum_members()
+                .exprs(&[ExprTag::Dot, ExprTag::PrivateIdentifier])
+                .types(&[TypeTag::Tuple, TypeTag::Ref, TypeTag::Typeof, TypeTag::Predicate]);
+            if self.check_generic {
+                on = on.type_params();
+            }
+            if self.properties {
+                on = on.pats(&[PatTag::Object]).props();
+            }
+            return on;
+        }
+        let mut on = On::new()
+            .pats(&[PatTag::Ident])
+            .exprs(&[ExprTag::Ident])
+            .members()
+            .funcs()
+            .classes()
+            .stmts(&[StmtTag::Import])
+            .import_specs();
+        if self.properties {
+            on = on.props().types(&[TypeTag::Import]).exprs(&[ExprTag::Dot]);
+        }
+        on
+    }
+
     fn start<'a>(&self, _: &'a File<'a>) -> Option<ByName<bool>> {
         Some(ByName::default())
     }
@@ -444,9 +486,6 @@ impl Rule for IdLength {
         match (e.tag(), cx.language().is_oxlint) {
             (ExprTag::Ident, false) => self.check_reference(e, cx),
             (ExprTag::Dot, false) => {
-                if !self.properties {
-                    return;
-                }
                 if let ExprKind::Dot { name, .. } = e.kind() {
                     self.check(cx, name.name(), || is_assigned_member(e).then(|| name.span()));
                 }
@@ -475,7 +514,7 @@ impl Rule for IdLength {
 
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         match (ty.tag(), cx.language().is_oxlint) {
-            (TypeTag::Import, false) if self.properties => self.check_import_type(ty, cx),
+            (TypeTag::Import, false) => self.check_import_type(ty, cx),
             (TypeTag::Tuple | TypeTag::Ref | TypeTag::Typeof | TypeTag::Predicate, true) => {
                 self.check_type_as_oxlint(ty, cx);
             }
@@ -487,7 +526,7 @@ impl Rule for IdLength {
         match (pat.tag(), cx.language().is_oxlint) {
             (PatTag::Ident, false) => self.check_binding(pat, cx),
             (PatTag::Ident, true) => self.check_binding_as_oxlint(pat, cx),
-            (PatTag::Object, true) if self.properties => self.check_keys_of_pattern(pat, cx),
+            (PatTag::Object, true) => self.check_keys_of_pattern(pat, cx),
             _ => {}
         }
     }
@@ -526,23 +565,14 @@ impl Rule for IdLength {
     }
 
     fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
-        if !self.properties {
-            return;
-        }
         self.check_property(prop, cx);
     }
 
     fn type_param<'a>(&self, it: TypeParam<'a>, cx: &mut Cx<'a, Self>) {
-        if !cx.language().is_oxlint || !self.check_generic {
-            return;
-        }
         self.check_ident(it.name(), cx);
     }
 
     fn enum_member<'a>(&self, member: EnumMember<'a>, cx: &mut Cx<'a, Self>) {
-        if !cx.language().is_oxlint {
-            return;
-        }
         self.check_key(member.key(), cx);
     }
 

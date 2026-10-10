@@ -53,75 +53,86 @@ impl Rule for NoUnusedLabels {
     const META: Meta = Meta::eslint("no-unused-labels", Kind::Suggestion)
         .fixable(Fixable::Code)
         .recommended();
+    const ON: On = On::new()
+        .stmts(&[StmtTag::Labeled, StmtTag::Break, StmtTag::Continue])
+        .finish();
     type State<'a> = Labels<'a>;
 
     fn new(_: &Options) -> Self {
         NoUnusedLabels
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Labels<'a> {
-        on.stmts([StmtTag::Labeled], |_, statement, cx| cx.state.all.push(statement));
-        on.stmts([StmtTag::Break, StmtTag::Continue], |_, jump, cx| {
-            if let StmtKind::Break(Some(name)) | StmtKind::Continue(Some(name)) = jump.kind() {
-                cx.state.jumps.push((jump.span().start, name));
-            }
-        });
-        on.finish(|_, cx| {
-            let Labels { mut all, mut jumps } = std::mem::take(&mut cx.state);
-            utils::sort::sort_unstable_by_key(&mut all, |it| it.span().start);
-            utils::sort::sort_unstable_by_key(&mut jumps, |it| it.0);
-            let label_of = |statement: Stmt<'a>| match statement.kind() {
-                StmtKind::Labeled { label, .. } => Some(label),
-                _ => None,
-            };
-            // One pass through the labeled statements and the jumps, in the order of the source.
-            let mut is_used = vec![false; all.len()];
-            // The indexes of the labeled statements around the place, the outermost first, and of
-            // those of them with each label.
-            let mut around: Vec<usize> = Vec::new();
-            let mut with_label: FxHashMap<Name<'a>, Vec<usize>> = FxHashMap::default();
-            let mut rest = all.iter().copied().enumerate().peekable();
-            for (jump, name) in jumps {
-                loop {
-                    let next = rest.next_if(|it| it.1.span().start <= jump);
-                    let place = next.map_or(jump, |it| it.1.span().start);
-                    while let Some(ended) = around.last().and_then(|&it| all.get(it)).filter(|it| it.span().end <= place) {
-                        around.pop();
-                        if let Some(same) = label_of(*ended).and_then(|it| with_label.get_mut(&it)) {
-                            same.pop();
-                        }
-                    }
-                    let Some((index, statement)) = next else {
-                        break;
-                    };
-                    around.push(index);
-                    if let Some(label) = label_of(statement) {
-                        with_label.entry(label).or_default().push(index);
-                    }
-                }
-                let target = with_label.get(&name).and_then(|it| it.last());
-                if let Some(is_used) = target.and_then(|&it| is_used.get_mut(it)) {
-                    *is_used = true;
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Labels<'a>> {
+        Some(Labels::default())
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match statement.tag() {
+            StmtTag::Labeled => cx.state.all.push(statement),
+            StmtTag::Break | StmtTag::Continue => {
+                let jump = statement;
+                if let StmtKind::Break(Some(name)) | StmtKind::Continue(Some(name)) = jump.kind() {
+                    cx.state.jumps.push((jump.span().start, name));
                 }
             }
-            let mut known = AncestorMemo::default();
-            for (&statement, is_used) in all.iter().zip(is_used) {
-                if is_used {
-                    continue;
+            _ => {}
+        }
+    }
+
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+        let Labels { mut all, mut jumps } = std::mem::take(&mut cx.state);
+        utils::sort::sort_unstable_by_key(&mut all, |it| it.span().start);
+        utils::sort::sort_unstable_by_key(&mut jumps, |it| it.0);
+        let label_of = |statement: Stmt<'a>| match statement.kind() {
+            StmtKind::Labeled { label, .. } => Some(label),
+            _ => None,
+        };
+        // One pass through the labeled statements and the jumps, in the order of the source.
+        let mut is_used = vec![false; all.len()];
+        // The indexes of the labeled statements around the place, the outermost first, and of
+        // those of them with each label.
+        let mut around: Vec<usize> = Vec::new();
+        let mut with_label: FxHashMap<Name<'a>, Vec<usize>> = FxHashMap::default();
+        let mut rest = all.iter().copied().enumerate().peekable();
+        for (jump, name) in jumps {
+            loop {
+                let next = rest.next_if(|it| it.1.span().start <= jump);
+                let place = next.map_or(jump, |it| it.1.span().start);
+                while let Some(ended) = around.last().and_then(|&it| all.get(it)).filter(|it| it.span().end <= place) {
+                    around.pop();
+                    if let Some(same) = label_of(*ended).and_then(|it| with_label.get_mut(&it)) {
+                        same.pop();
+                    }
                 }
-                let (StmtKind::Labeled { body, .. }, Some(label)) = (statement.kind(), statement.label()) else {
-                    continue;
+                let Some((index, statement)) = next else {
+                    break;
                 };
-                cx.report(label, UNUSED).data("name", label).fix(|fixer| {
-                    // oxlint always puts the body in the place of the statement.
-                    if fixer.file().language().is_oxlint {
-                        return Some(fixer.replace(statement, body.text()));
-                    }
-                    is_fixable(statement, label, body, &mut known)
-                        .then(|| fixer.remove(Span::new(statement.span().start, body.span().start)))
-                });
+                around.push(index);
+                if let Some(label) = label_of(statement) {
+                    with_label.entry(label).or_default().push(index);
+                }
             }
-        });
-        Labels::default()
+            let target = with_label.get(&name).and_then(|it| it.last());
+            if let Some(is_used) = target.and_then(|&it| is_used.get_mut(it)) {
+                *is_used = true;
+            }
+        }
+        let mut known = AncestorMemo::default();
+        for (&statement, is_used) in all.iter().zip(is_used) {
+            if is_used {
+                continue;
+            }
+            let (StmtKind::Labeled { body, .. }, Some(label)) = (statement.kind(), statement.label()) else {
+                continue;
+            };
+            cx.report(label, UNUSED).data("name", label).fix(|fixer| {
+                // oxlint always puts the body in the place of the statement.
+                if fixer.file().language().is_oxlint {
+                    return Some(fixer.replace(statement, body.text()));
+                }
+                is_fixable(statement, label, body, &mut known)
+                    .then(|| fixer.remove(Span::new(statement.span().start, body.span().start)))
+            });
+        }
     }
 }

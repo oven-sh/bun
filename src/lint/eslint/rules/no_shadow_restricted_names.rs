@@ -98,6 +98,11 @@ impl NoShadowRestrictedNames {
 
 impl Rule for NoShadowRestrictedNames {
     const META: Meta = Meta::eslint("no-shadow-restricted-names", Kind::Suggestion).recommended();
+    const ON: On = On::new()
+        .pats(&[PatTag::Ident])
+        .funcs()
+        .classes()
+        .stmts(&[StmtTag::Module, StmtTag::Import]);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -106,7 +111,16 @@ impl Rule for NoShadowRestrictedNames {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new().pats(&[PatTag::Ident]).funcs().classes();
+        // `namespace globalThis {}`
+        if file.language().is_oxlint {
+            on = on.stmts(&[StmtTag::Module]);
+        }
+        on.stmts(&[StmtTag::Import])
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         let report_global_this = self.report_global_this.unwrap_or_else(|| file.language().eslint_major >= 10);
         let last = if report_global_this { "globalThis" } else { "eval" };
         let names = ["undefined", "NaN", "Infinity", "arguments", "eval", last];
@@ -116,47 +130,55 @@ impl Rule for NoShadowRestrictedNames {
             seen: FxHashMap::default(),
         };
         if state.restricted.is_empty() {
-            return state;
+            return None;
         }
-        on.pats([PatTag::Ident], Self::check_pat);
-        on.funcs(|_, func, cx| {
-            if let Some(name) = func.name()
-                && Self::is_restricted(name.name(), cx)
-                && func.has_body()
-            {
-                Self::report(name.span(), name.name(), func.symbol(), cx);
-            }
-        });
-        on.classes(|_, class, cx| {
-            if let Some(name) = class.name()
-                && Self::is_restricted(name.name(), cx)
-            {
-                Self::report(name.span(), name.name(), class.symbol(), cx);
-            }
-        });
-        // `namespace globalThis {}`
-        if file.language().is_oxlint {
-            on.stmts([StmtTag::Module], |_, stmt, cx| {
+        Some(state)
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match stmt.tag() {
+            StmtTag::Module => {
                 if let StmtKind::Module(module) = stmt.kind()
                     && let ModuleName::Ident(name) = module.name()
                     && Self::is_restricted(name.name(), cx)
                 {
                     Self::report_once(name.span(), name.name(), cx);
                 }
-            });
-        }
-        on.stmts([StmtTag::Import], |_, stmt, cx| {
-            let StmtKind::Import(import) = stmt.kind() else {
-                return;
-            };
-            let named = import.named().iter().map(ImportSpec::local);
-            for local in import.default().into_iter().chain(import.namespace()).chain(named) {
-                if Self::is_restricted(local.name(), cx) {
-                    let symbol = Node::Stmt(stmt).scope().get_name(local.name());
-                    Self::report(local.span(), local.name(), symbol, cx);
+            }
+            StmtTag::Import => {
+                let StmtKind::Import(import) = stmt.kind() else {
+                    return;
+                };
+                let named = import.named().iter().map(ImportSpec::local);
+                for local in import.default().into_iter().chain(import.namespace()).chain(named) {
+                    if Self::is_restricted(local.name(), cx) {
+                        let symbol = Node::Stmt(stmt).scope().get_name(local.name());
+                        Self::report(local.span(), local.name(), symbol, cx);
+                    }
                 }
             }
-        });
-        state
+            _ => {}
+        }
+    }
+
+    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_pat(pat, cx);
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(name) = func.name()
+            && Self::is_restricted(name.name(), cx)
+            && func.has_body()
+        {
+            Self::report(name.span(), name.name(), func.symbol(), cx);
+        }
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(name) = class.name()
+            && Self::is_restricted(name.name(), cx)
+        {
+            Self::report(name.span(), name.name(), class.symbol(), cx);
+        }
     }
 }

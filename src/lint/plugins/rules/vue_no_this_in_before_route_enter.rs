@@ -11,31 +11,34 @@ const NO_THIS_IN_BEFORE_ROUTE_ENTER: Message =
 
 impl Rule for NoThisInBeforeRouteEnter {
     const META: Meta = Meta::oxlint(Plugin::Vue, "no-this-in-before-route-enter", Kind::Problem);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoThisInBeforeRouteEnter
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !is_vue_file(file) || !file.mentions("beforeRouteEnter") || !file.has_exprs([ExprTag::This]) {
+            return None;
+        }
+        Some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let guards: FxHashSet<Func> = cx.file().stmts_of_kind(StmtTag::ExportDefault).filter_map(before_route_enter).collect();
+        if guards.is_empty() {
             return;
         }
-        on.finish(|_, cx| {
-            let guards: FxHashSet<Func> = cx.file().stmts_of_kind(StmtTag::ExportDefault).filter_map(before_route_enter).collect();
-            if guards.is_empty() {
-                return;
+        let mut memo = EnclosingFunctions::default();
+        for this_expr in cx.file().exprs_of_kind(ExprTag::This).filter(|it| !it.is_jsx_tag_name()) {
+            if let Some(function) = enclosing_function(Node::Expr(this_expr), Enclosing::Function, &mut memo)
+                && guards.contains(&function)
+                && function.body_span().is_some_and(|it| it.contains(this_expr.span()))
+            {
+                cx.report(this_expr, NO_THIS_IN_BEFORE_ROUTE_ENTER);
             }
-            let mut memo = EnclosingFunctions::default();
-            for this_expr in cx.file().exprs_of_kind(ExprTag::This).filter(|it| !it.is_jsx_tag_name()) {
-                if let Some(function) = enclosing_function(Node::Expr(this_expr), Enclosing::Function, &mut memo)
-                    && guards.contains(&function)
-                    && function.body_span().is_some_and(|it| it.contains(this_expr.span()))
-                {
-                    cx.report(this_expr, NO_THIS_IN_BEFORE_ROUTE_ENTER);
-                }
-            }
-        });
+        }
     }
 }
 

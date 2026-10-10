@@ -26,17 +26,19 @@ pub struct State<'a> {
 
 impl Rule for NoSideEffectsInComputedProperties {
     const META: Meta = Meta::oxlint(Plugin::Vue, "no-side-effects-in-computed-properties", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]);
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoSideEffectsInComputedProperties
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if file.mentions("computed") {
-            on.exprs([ExprTag::Dot, ExprTag::Index], check);
-        }
-        State::default()
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        file.mentions("computed").then(State::default)
+    }
+
+    fn expr<'a>(&self, member: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        check(self, member, cx);
     }
 }
 

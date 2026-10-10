@@ -136,7 +136,8 @@ impl ParameterProperties {
 
 impl Rule for ParameterProperties {
     const META: Meta = Meta::typescript("parameter-properties", Kind::Problem);
-    type State<'a> = ();
+    const ON: On = On::new().classes().params();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -160,11 +161,19 @@ impl Rule for ParameterProperties {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
         if self.prefers_parameter_property {
-            on.classes(Self::check_class);
+            On::new().classes()
         } else {
-            on.params(Self::check_parameter);
+            On::new().params()
         }
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_class(class, cx);
+    }
+
+    fn param<'a>(&self, param: Param<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_parameter(param, cx);
     }
 }

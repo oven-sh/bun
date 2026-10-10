@@ -127,7 +127,8 @@ impl NoWarningComments {
 
 impl Rule for NoWarningComments {
     const META: Meta = Meta::eslint("no-warning-comments", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().finish();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -165,26 +166,24 @@ impl Rule for NoWarningComments {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.finish(|rule, cx| {
-            for comment in cx.file().comments() {
-                if comment.kind() == TokenKind::Shebang {
-                    continue;
-                }
-                let value = comment.comment_value();
-                let mut matches = rule.terms.iter().filter(|term| rule.has(term, value)).peekable();
-                if matches.peek().is_none() || ast_utils::is_directive_comment(&comment) && is_self_config(value) {
-                    continue;
-                }
-                let shown = comment_to_display(value);
-                // oxlint says one thing about a comment.
-                let count = if cx.language().is_oxlint { 1 } else { usize::MAX };
-                for term in matches.take(count) {
-                    cx.report(comment, UNEXPECTED_COMMENT)
-                        .data("matchedTerm", term.text.clone())
-                        .data("comment", shown.clone());
-                }
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        for comment in cx.file().comments() {
+            if comment.kind() == TokenKind::Shebang {
+                continue;
             }
-        });
+            let value = comment.comment_value();
+            let mut matches = self.terms.iter().filter(|term| self.has(term, value)).peekable();
+            if matches.peek().is_none() || ast_utils::is_directive_comment(&comment) && is_self_config(value) {
+                continue;
+            }
+            let shown = comment_to_display(value);
+            // oxlint says one thing about a comment.
+            let count = if cx.language().is_oxlint { 1 } else { usize::MAX };
+            for term in matches.take(count) {
+                cx.report(comment, UNEXPECTED_COMMENT)
+                    .data("matchedTerm", term.text.clone())
+                    .data("comment", shown.clone());
+            }
+        }
     }
 }

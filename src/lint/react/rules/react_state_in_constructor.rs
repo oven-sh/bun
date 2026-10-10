@@ -21,39 +21,43 @@ pub struct State<'a> {
 
 impl Rule for StateInConstructor {
     const META: Meta = Meta::oxlint(Plugin::React, "state-in-constructor", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Assign]).members();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         StateInConstructor { is_always: options.str(0) != Some("never") }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        if self.is_always { On::new().members() } else { On::new().exprs(&[ExprTag::Assign]) }
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if !file.has_classes() || !file.mentions_any(&["state", "#state"]) {
-            return State::default();
+            return None;
         }
-        if self.is_always {
-            on.members(|_, member, cx| {
-                if as_property_definition(Node::Member(member)).is_some()
-                    && !member.is_static()
-                    && member.key().and_then(Key::name).is_some_and(|name| name.is_any(&["state", "#state"]))
-                    && has_parent_es6_component(Node::Member(member), &mut cx.state)
-                {
-                    cx.report(member, IN_CONSTRUCTOR);
-                }
-            });
-        } else {
-            on.exprs([ExprTag::Assign], |_, e, cx| {
-                let as_method = |node: Node<'a>| as_method_definition(node).map(Member::is_constructor);
-                if e.left().and_then(get_outer_member_expression).is_some_and(is_state_member_expression)
-                    && !e.is_assignment_target()
-                    && cx.state.in_constructor.find(Node::Expr(e), |_, ancestor| as_method(ancestor)) == Some(true)
-                    && has_parent_es6_component(Node::Expr(e), &mut cx.state)
-                {
-                    cx.report(e, IN_CLASS_PROPERTY);
-                }
-            });
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let as_method = |node: Node<'a>| as_method_definition(node).map(Member::is_constructor);
+        if e.left().and_then(get_outer_member_expression).is_some_and(is_state_member_expression)
+            && !e.is_assignment_target()
+            && cx.state.in_constructor.find(Node::Expr(e), |_, ancestor| as_method(ancestor)) == Some(true)
+            && has_parent_es6_component(Node::Expr(e), &mut cx.state)
+        {
+            cx.report(e, IN_CLASS_PROPERTY);
         }
-        State::default()
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        if as_property_definition(Node::Member(member)).is_some()
+            && !member.is_static()
+            && member.key().and_then(Key::name).is_some_and(|name| name.is_any(&["state", "#state"]))
+            && has_parent_es6_component(Node::Member(member), &mut cx.state)
+        {
+            cx.report(member, IN_CONSTRUCTOR);
+        }
     }
 }
 

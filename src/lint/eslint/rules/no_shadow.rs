@@ -653,13 +653,14 @@ impl Checker {
 
 impl Rule for NoShadow {
     const META: Meta = Meta::eslint("no-shadow", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().finish();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         NoShadow(Checker::new(options, Dialect::Eslint))
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.finish(|rule, cx| rule.0.check(cx));
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        self.0.check(cx);
     }
 }

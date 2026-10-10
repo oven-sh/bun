@@ -13,22 +13,28 @@ const USE_CALLBACK: Message = Message::new("", "Pass a callback function to `nex
 
 impl Rule for NextTickStyle {
     const META: Meta = Meta::oxlint(Plugin::Vue, "next-tick-style", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Dot]).finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         NextTickStyle { is_callback: options.str(0) == Some("callback") }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !is_vue_file(file) || !file.mentions_any(&["nextTick", "$nextTick"]) {
-            return;
+            return None;
         }
-        on.exprs([ExprTag::Dot], |rule, member, cx| {
-            if let Some(report_span) = next_tick_property(member) {
-                rule.check(member, report_span, cx);
-            }
-        });
-        on.finish(|rule, cx| next_tick_imports(cx.file()).for_each(|it| rule.check(it, it.span(), cx)));
+        Some(())
+    }
+
+    fn expr<'a>(&self, member: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(report_span) = next_tick_property(member) {
+            self.check(member, report_span, cx);
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        next_tick_imports(cx.file()).for_each(|it| self.check(it, it.span(), cx));
     }
 }
 

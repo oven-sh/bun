@@ -37,51 +37,67 @@ struct PropsContext<'a> {
 
 impl Rule for RequireDefaultProp {
     const META: Meta = Meta::oxlint(Plugin::Vue, "require-default-prop", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Object, ExprTag::Call]);
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         RequireDefaultProp
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
         if file.mentions("props") {
-            on.exprs([ExprTag::Object], |_, e, cx| {
+            on = on.exprs(&[ExprTag::Object]);
+        }
+        if is_vue_setup(file) && file.mentions("defineProps") {
+            on = on.exprs(&[ExprTag::Call]);
+        }
+        on
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Object => {
                 if let ExprKind::Object(properties) = e.kind()
                     && is_vue_component_options_object_excluding_instance(e)
                     && let Some(props) = find_property(properties, "props").and_then(Prop::value).and_then(as_inner_object_expression)
                 {
                     check_object_props(props, cx, &PropsContext::default());
                 }
-            });
+            }
+            ExprTag::Call => check_call(e, cx),
+            _ => {}
         }
-        if is_vue_setup(file) && file.mentions("defineProps") {
-            on.exprs([ExprTag::Call], |_, e, cx| {
-                let Some(call) = e.as_call() else {
-                    return;
-                };
-                let is_call_of = |node: Option<Expr>, name: &str| {
-                    node.and_then(Expr::as_call).is_some_and(|it| is_specific_id(it.callee(), name))
-                };
-                if is_call_of(Some(e), "defineProps") {
-                    // With a `withDefaults` around it, that is looked at.
-                    if !is_call_of(parent_node(e).and_then(Node::as_expr), "withDefaults") {
-                        let pc = destructure_context(e, false, None, cx);
-                        handle_define_props(call, cx, &pc);
-                    }
-                } else if is_call_of(Some(e), "withDefaults")
-                    && call.args().len() == 2
-                    && let (Some(first), Some(second)) = (call.args().first(), call.args().get(1))
-                    && second.tag() != ExprTag::Spread
-                    && !get_inner_expression(first).is_chain_root()
-                    && is_call_of(Some(get_inner_expression(first)), "defineProps")
-                    && let Some(define_props) = get_inner_expression(first).as_call()
-                {
-                    let pc = destructure_context(e, true, as_inner_object_expression(second), cx);
-                    handle_define_props(define_props, cx, &pc);
-                }
-            });
+    }
+}
+
+fn check_call<'a>(e: Expr<'a>, cx: &mut Cx<'a, RequireDefaultProp>) {
+    let Some(call) = e.as_call() else {
+        return;
+    };
+    let is_call_of = |node: Option<Expr>, name: &str| {
+        node.and_then(Expr::as_call).is_some_and(|it| is_specific_id(it.callee(), name))
+    };
+    if is_call_of(Some(e), "defineProps") {
+        // With a `withDefaults` around it, that is looked at.
+        if !is_call_of(parent_node(e).and_then(Node::as_expr), "withDefaults") {
+            let pc = destructure_context(e, false, None, cx);
+            handle_define_props(call, cx, &pc);
         }
-        State::default()
+    } else if is_call_of(Some(e), "withDefaults")
+        && call.args().len() == 2
+        && let (Some(first), Some(second)) = (call.args().first(), call.args().get(1))
+        && second.tag() != ExprTag::Spread
+        && !get_inner_expression(first).is_chain_root()
+        && is_call_of(Some(get_inner_expression(first)), "defineProps")
+        && let Some(define_props) = get_inner_expression(first).as_call()
+    {
+        let pc = destructure_context(e, true, as_inner_object_expression(second), cx);
+        handle_define_props(define_props, cx, &pc);
     }
 }
 

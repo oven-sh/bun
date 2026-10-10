@@ -31,8 +31,6 @@ const TYPE_OVER_VALUE: Message = Message::new(
 #[derive(Default)]
 pub struct State<'a> {
     imports: Vec<Import<'a>>,
-    /// `experimentalDecorators` and `emitDecoratorMetadata` are on for the file.
-    emits_decorator_metadata: bool,
     /// There is a decorator, in a file for which `experimentalDecorators` and
     /// `emitDecoratorMetadata` are on: a type next to it can be needed as a value.
     has_decorator_metadata: bool,
@@ -539,9 +537,14 @@ impl Rule for ConsistentTypeImports {
         }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new().stmts(&[StmtTag::Import]);
+        if self.disallow_type_annotations {
+            on = on.types(&[TypeTag::Import]);
+        }
+
         if !self.prefers_type_imports {
-            return Some(State::default());
+            return on.import_specs();
         }
 
         // `parserOptions` say it only where there is no program to say it.
@@ -552,10 +555,14 @@ impl Rule for ConsistentTypeImports {
             }
             None => (file.language().experimental_decorators, file.language().emit_decorator_metadata),
         };
-        Some(State {
-            emits_decorator_metadata: experimental_decorators && emit_decorator_metadata,
-            ..State::default()
-        })
+        if experimental_decorators && emit_decorator_metadata {
+            on = on.classes().members().params();
+        }
+        on.finish()
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -574,39 +581,24 @@ impl Rule for ConsistentTypeImports {
     }
 
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
-        if !self.disallow_type_annotations {
-            return;
-        }
         if let Some(span) = ty.import_span() {
             cx.report(span, NO_IMPORT_TYPE_ANNOTATIONS);
         }
     }
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
-        if !cx.state.emits_decorator_metadata {
-            return;
-        }
         cx.state.has_decorator_metadata |= class.decorators().next().is_some();
     }
 
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
-        if !cx.state.emits_decorator_metadata {
-            return;
-        }
         cx.state.has_decorator_metadata |= member.decorators().next().is_some();
     }
 
     fn param<'a>(&self, param: Param<'a>, cx: &mut Cx<'a, Self>) {
-        if !cx.state.emits_decorator_metadata {
-            return;
-        }
         cx.state.has_decorator_metadata |= param.decorators().next().is_some();
     }
 
     fn import_spec<'a>(&self, spec: ImportSpec<'a>, cx: &mut Cx<'a, Self>) {
-        if self.prefers_type_imports {
-            return;
-        }
         if spec.is_type_only() {
             cx.report(spec, AVOID_IMPORT_TYPE)
                 .fix(|fixer| fix_remove_type_specifier_from_import_specifier(fixer, spec));
@@ -614,9 +606,6 @@ impl Rule for ConsistentTypeImports {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        if !self.prefers_type_imports {
-            return;
-        }
         self.check_imports(cx);
     }
 }

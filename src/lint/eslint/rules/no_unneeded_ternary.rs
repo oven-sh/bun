@@ -126,7 +126,8 @@ fn is_primary_expression(e: Expr) -> bool {
 
 impl Rule for NoUnneededTernary {
     const META: Meta = Meta::eslint("no-unneeded-ternary", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Cond]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         NoUnneededTernary {
@@ -134,59 +135,57 @@ impl Rule for NoUnneededTernary {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Cond], |rule, e, cx| {
-            let ExprKind::Cond { test, yes, no } = e.kind() else {
-                return;
-            };
-            // oxlint sees through `as T` and the like.
-            let is_oxlint = cx.language().is_oxlint;
-            let seen = |it: Expr<'a>| if is_oxlint { get_inner_expression(it) } else { it };
-            if let (Some(consequent), Some(alternate)) = (boolean_literal(yes), boolean_literal(no)) {
-                cx.report(e, UNNECESSARY_CONDITIONAL_EXPRESSION).fix(|fixer| {
-                    if is_oxlint {
-                        return Some(match consequent == alternate {
-                            true => fixer.replace(e, yes.text()),
-                            false => fixer.replace(e, boolean_of_oxlint(test, alternate)),
-                        });
-                    }
-                    if consequent == alternate {
-                        // Not `foo() ? true : true`, which calls `foo`.
-                        return (test.tag() == ExprTag::Ident).then(|| fixer.replace(e, yes.text()));
-                    }
-                    if alternate {
-                        return Some(fixer.replace(e, invert_expression(test)));
-                    }
-                    Some(match is_boolean_expression(test) {
-                        true => fixer.replace(e, ast_utils::get_parenthesised_text(test)),
-                        false => fixer.replace(e, [&b"!"[..], &invert_expression(test)].concat()),
-                    })
-                });
-            } else if !rule.allows_default_assignment
-                && let (Some(tested), Some(consequent)) = (seen(test).as_ident(), seen(yes).as_ident())
-                && tested == consequent
-            {
-                cx.report(e, UNNECESSARY_CONDITIONAL_ASSIGNMENT).fix(|fixer| {
-                    if is_oxlint {
-                        let file = fixer.file();
-                        let (test, alternate) = (file.slice(test.outer_span()), file.slice(no.outer_span()));
-                        return fixer.replace(e, match is_primary_expression(no) {
-                            true => [test, b" || ", alternate].concat(),
-                            false => [test, b" || (", alternate, b")"].concat(),
-                        });
-                    }
-                    let or_precedence = ast_utils::get_binary_operator_precedence(BinOp::Or);
-                    let should_parenthesize_alternate = (ast_utils::get_precedence(no) < or_precedence
-                        || ast_utils::is_coalesce_expression(no))
-                        && !ast_utils::is_parenthesised(no);
-                    let test_text = ast_utils::get_parenthesised_text(test);
-                    let text = match should_parenthesize_alternate {
-                        true => [test_text, b" || (", no.text(), b")"].concat(),
-                        false => [test_text, b" || ", ast_utils::get_parenthesised_text(no)].concat(),
-                    };
-                    fixer.replace(e, text)
-                });
-            }
-        });
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Cond { test, yes, no } = e.kind() else {
+            return;
+        };
+        // oxlint sees through `as T` and the like.
+        let is_oxlint = cx.language().is_oxlint;
+        let seen = |it: Expr<'a>| if is_oxlint { get_inner_expression(it) } else { it };
+        if let (Some(consequent), Some(alternate)) = (boolean_literal(yes), boolean_literal(no)) {
+            cx.report(e, UNNECESSARY_CONDITIONAL_EXPRESSION).fix(|fixer| {
+                if is_oxlint {
+                    return Some(match consequent == alternate {
+                        true => fixer.replace(e, yes.text()),
+                        false => fixer.replace(e, boolean_of_oxlint(test, alternate)),
+                    });
+                }
+                if consequent == alternate {
+                    // Not `foo() ? true : true`, which calls `foo`.
+                    return (test.tag() == ExprTag::Ident).then(|| fixer.replace(e, yes.text()));
+                }
+                if alternate {
+                    return Some(fixer.replace(e, invert_expression(test)));
+                }
+                Some(match is_boolean_expression(test) {
+                    true => fixer.replace(e, ast_utils::get_parenthesised_text(test)),
+                    false => fixer.replace(e, [&b"!"[..], &invert_expression(test)].concat()),
+                })
+            });
+        } else if !self.allows_default_assignment
+            && let (Some(tested), Some(consequent)) = (seen(test).as_ident(), seen(yes).as_ident())
+            && tested == consequent
+        {
+            cx.report(e, UNNECESSARY_CONDITIONAL_ASSIGNMENT).fix(|fixer| {
+                if is_oxlint {
+                    let file = fixer.file();
+                    let (test, alternate) = (file.slice(test.outer_span()), file.slice(no.outer_span()));
+                    return fixer.replace(e, match is_primary_expression(no) {
+                        true => [test, b" || ", alternate].concat(),
+                        false => [test, b" || (", alternate, b")"].concat(),
+                    });
+                }
+                let or_precedence = ast_utils::get_binary_operator_precedence(BinOp::Or);
+                let should_parenthesize_alternate = (ast_utils::get_precedence(no) < or_precedence
+                    || ast_utils::is_coalesce_expression(no))
+                    && !ast_utils::is_parenthesised(no);
+                let test_text = ast_utils::get_parenthesised_text(test);
+                let text = match should_parenthesize_alternate {
+                    true => [test_text, b" || (", no.text(), b")"].concat(),
+                    false => [test_text, b" || ", ast_utils::get_parenthesised_text(no)].concat(),
+                };
+                fixer.replace(e, text)
+            });
+        }
     }
 }

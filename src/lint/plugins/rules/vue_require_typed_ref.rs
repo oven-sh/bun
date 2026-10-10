@@ -11,33 +11,35 @@ const REQUIRE_TYPED_REF: Message =
 
 impl Rule for RequireTypedRef {
     const META: Meta = Meta::oxlint(Plugin::Vue, "require-typed-ref", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = EnclosingDeclarators<'a>;
 
     fn new(_: &Options) -> Self {
         RequireTypedRef
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if file.is_javascript() || !file.mentions_any(&["ref", "shallowRef"]) {
-            return EnclosingDeclarators::default();
+            return None;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(call_expr) = e.as_call() else {
-                return;
-            };
-            let Some(name) = get_inner_expression(call_expr.callee()).as_ident().filter(|it| it.is_any(&["ref", "shallowRef"])) else {
-                return;
-            };
-            // `ref()`, `ref(null)`, `ref(undefined)`
-            let is_value = |it: Expr| it.is_parenthesized() || it.tag() != ExprTag::Null && !it.is_ident("undefined");
-            let is_valid_first_arg = call_expr.args().first().is_some_and(is_value);
-            if !is_valid_first_arg
-                && call_expr.type_args().angle_brackets_span().is_none()
-                && !enclosing_variable_declarator(e, &mut cx.state).is_some_and(|it| it.ty().is_some())
-            {
-                cx.report(e, REQUIRE_TYPED_REF).data("name", name);
-            }
-        });
-        EnclosingDeclarators::default()
+        Some(EnclosingDeclarators::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call_expr) = e.as_call() else {
+            return;
+        };
+        let Some(name) = get_inner_expression(call_expr.callee()).as_ident().filter(|it| it.is_any(&["ref", "shallowRef"])) else {
+            return;
+        };
+        // `ref()`, `ref(null)`, `ref(undefined)`
+        let is_value = |it: Expr| it.is_parenthesized() || it.tag() != ExprTag::Null && !it.is_ident("undefined");
+        let is_valid_first_arg = call_expr.args().first().is_some_and(is_value);
+        if !is_valid_first_arg
+            && call_expr.type_args().angle_brackets_span().is_none()
+            && !enclosing_variable_declarator(e, &mut cx.state).is_some_and(|it| it.ty().is_some())
+        {
+            cx.report(e, REQUIRE_TYPED_REF).data("name", name);
+        }
     }
 }

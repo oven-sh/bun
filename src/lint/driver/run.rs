@@ -895,6 +895,7 @@ impl Run<'_> {
             (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
         let broken_fixes = Guarded::new(Vec::new());
         let handed_back = Guarded::new(Vec::new());
+        let unread = Guarded::new(Vec::new());
         let formatter = crate::fmt::ForRules::new(environment);
         let invalid_tsconfigs = Guarded::new(Default::default());
         let context = Context {
@@ -902,6 +903,7 @@ impl Run<'_> {
             out_of_stack: &out_of_stack,
             broken_fixes: &broken_fixes,
             handed_back: &handed_back,
+            unread: &unread,
             invalid_tsconfigs: &invalid_tsconfigs,
             memory: &memory,
             atoms: &atoms,
@@ -1024,6 +1026,27 @@ impl Run<'_> {
                 noun,
                 b" did not run, the configuration has to turn on a rule of the plugin: ",
                 &in_comments.join(&b", "[..]),
+            ]);
+        }
+        let mut unread: Vec<Vec<u8>> = std::mem::take(&mut *unread.lock());
+        if !unread.is_empty() {
+            unread.sort_unstable();
+            unread.dedup();
+            let noun: &[u8] = match unread.len() {
+                1 => b" file was not linted, only the parser of the configuration can read it: ",
+                _ => {
+                    b" files were not linted, only the parser of the configuration can read them: "
+                }
+            };
+            let first: Vec<Vec<u8>> = (unread.iter().take(3))
+                .map(|it| paths::relative(&environment.cwd, it))
+                .collect();
+            loader.cannot_do(&[
+                unread.len().to_string().as_bytes(),
+                noun,
+                &first.join(&b", "[..]),
+                if unread.len() > 3 { b", .." } else { b"" },
+                b". The package \"eslint\" lints with that parser, if it is installed",
             ]);
         }
         let mut unsupported = std::mem::take(&mut *loader.unsupported.lock());

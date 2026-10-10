@@ -150,6 +150,18 @@ impl Rule for ExplicitMemberAccessibility {
         }
     }
 
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new();
+        let members = [self.constructors, self.accessors, self.methods, self.properties];
+        if members.iter().any(|it| *it != Level::Off) {
+            on = on.members();
+        }
+        if self.parameter_properties != Level::Off {
+            on = on.params();
+        }
+        on
+    }
+
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.has_classes() {
             return None;
@@ -158,15 +170,10 @@ impl Rule for ExplicitMemberAccessibility {
     }
 
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
-        let members = [self.constructors, self.accessors, self.methods, self.properties];
-        if members.iter().any(|it| *it != Level::Off) {
-            self.check_member(member, cx);
-        }
+        self.check_member(member, cx);
     }
 
     fn param<'a>(&self, param: Param<'a>, cx: &mut Cx<'a, Self>) {
-        if self.parameter_properties != Level::Off {
-            self.check_parameter(param, cx);
-        }
+        self.check_parameter(param, cx);
     }
 }

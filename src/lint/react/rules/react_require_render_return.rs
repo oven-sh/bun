@@ -13,46 +13,49 @@ const REQUIRE_RENDER_RETURN: Message = Message::new("", "Your `render` method sh
 
 impl Rule for RequireRenderReturn {
     const META: Meta = Meta::oxlint(Plugin::React, "require-render-return", Kind::Problem);
+    const ON: On = On::new().funcs();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         RequireRenderReturn
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !is_jsx(file) || !file.mentions("render") {
+            return None;
+        }
+        Some(())
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if as_function(Node::Func(func)).is_none() {
             return;
         }
-        on.funcs(|_, func, cx| {
-            if as_function(Node::Func(func)).is_none() {
-                return;
-            }
-            // The method or the property that the function is the value of.
-            let parent = match func.owner() {
-                Node::Expr(e) if !e.is_parenthesized() => e.parent(),
-                owner => owner,
-            };
-            let (key, is_in_component) = match parent {
-                Node::Member(member)
-                    if as_method_definition(parent).or_else(|| as_property_definition(parent)).is_some() =>
-                {
-                    (member.key(), is_es6_component(member.parent()))
-                }
-                Node::Prop(property) if as_object_property(parent).is_some() => {
-                    let is_in_es5_component =
-                        matches!(property.parent(), Node::Expr(object)
-                            if !object.is_parenthesized() && is_es5_component(object.parent()));
-                    (property.key(), is_in_es5_component)
-                }
-                _ => return,
-            };
-            if let Some(key) = key.filter(|key| static_name(*key).is_some_and(|name| name.is("render")))
-                && is_in_component
-                && !contains_return_statement(func)
+        // The method or the property that the function is the value of.
+        let parent = match func.owner() {
+            Node::Expr(e) if !e.is_parenthesized() => e.parent(),
+            owner => owner,
+        };
+        let (key, is_in_component) = match parent {
+            Node::Member(member)
+                if as_method_definition(parent).or_else(|| as_property_definition(parent)).is_some() =>
             {
-                cx.report(key.inner_span(cx.file()), REQUIRE_RENDER_RETURN);
+                (member.key(), is_es6_component(member.parent()))
             }
-        });
+            Node::Prop(property) if as_object_property(parent).is_some() => {
+                let is_in_es5_component =
+                    matches!(property.parent(), Node::Expr(object)
+                        if !object.is_parenthesized() && is_es5_component(object.parent()));
+                (property.key(), is_in_es5_component)
+            }
+            _ => return,
+        };
+        if let Some(key) = key.filter(|key| static_name(*key).is_some_and(|name| name.is("render")))
+            && is_in_component
+            && !contains_return_statement(func)
+        {
+            cx.report(key.inner_span(cx.file()), REQUIRE_RENDER_RETURN);
+        }
     }
 }
 

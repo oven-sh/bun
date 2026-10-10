@@ -35,31 +35,45 @@ type Names<'a> = FxHashSet<Cow<'a, [u8]>>;
 
 impl Rule for NoDupeKeys {
     const META: Meta = Meta::oxlint(Plugin::Vue, "no-dupe-keys", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Object, ExprTag::Call]);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         NoDupeKeys { groups: options.object(0).strings("groups").iter().map(|it| (*it).into()).collect() }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
         if file.mentions_any(&GROUP_NAMES) || self.groups.iter().any(|it| file.mentions(it)) {
-            on.exprs([ExprTag::Object], |rule, e, cx| {
+            on = on.exprs(&[ExprTag::Object]);
+        }
+        if is_vue_setup(file) && file.mentions("defineProps") {
+            on = on.exprs(&[ExprTag::Call]);
+        }
+        on
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Object => {
                 if let ExprKind::Object(properties) = e.kind()
                     && !properties.is_empty()
                     && (is_vue_component_options_object(e) || has_vue_component_annotation(e, cx))
                 {
-                    rule.check_component_options(properties, cx);
+                    self.check_component_options(properties, cx);
                 }
-            });
-        }
-        if is_vue_setup(file) && file.mentions("defineProps") {
-            on.exprs([ExprTag::Call], |_, e, cx| {
+            }
+            ExprTag::Call => {
                 if let Some(call) = e.as_call().filter(|it| it.callee().is_ident("defineProps") && !it.callee().is_parenthesized()) {
                     check_define_props(e, call, cx);
                 }
-            });
+            }
+            _ => {}
         }
-        State::default()
     }
 }
 

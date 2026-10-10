@@ -134,16 +134,25 @@ impl NoUnexpectedMultiline {
 
 impl Rule for NoUnexpectedMultiline {
     const META: Meta = Meta::eslint("no-unexpected-multiline", Kind::Problem).recommended();
-    type State<'a> = ();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Index, ExprTag::Call, ExprTag::TaggedTemplate])
+        .binaries(&[BinOp::Div]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoUnexpectedMultiline
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Index], Self::check_index);
-        on.exprs([ExprTag::Call], Self::check_call);
-        on.exprs([ExprTag::TaggedTemplate], Self::check_tagged_template);
-        on.binaries([BinOp::Div], Self::check_division);
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Index => self.check_index(e, cx),
+            ExprTag::Call => self.check_call(e, cx),
+            ExprTag::TaggedTemplate => self.check_tagged_template(e, cx),
+            _ => {}
+        }
+    }
+
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_division(e, cx);
     }
 }

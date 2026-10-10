@@ -157,6 +157,7 @@ impl NoUnsafeOptionalChaining {
 
 impl Rule for NoUnsafeOptionalChaining {
     const META: Meta = Meta::eslint("no-unsafe-optional-chaining", Kind::Problem).recommended();
+    const ON: On = On::new().optional_chains().exprs(&[ExprTag::NonNull]);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -165,9 +166,15 @@ impl Rule for NoUnsafeOptionalChaining {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        on.optional_chains(Self::check);
-        on.exprs([ExprTag::NonNull], Self::check);
-        FxHashMap::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(FxHashMap::default())
+    }
+
+    fn expr<'a>(&self, chain: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(chain, cx);
+    }
+
+    fn optional_chain<'a>(&self, chain: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(chain, cx);
     }
 }

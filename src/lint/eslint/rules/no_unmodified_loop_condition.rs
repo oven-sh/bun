@@ -317,6 +317,31 @@ impl NoUnmodifiedLoopCondition {
             is_alone,
         })
     }
+}
+
+impl Rule for NoUnmodifiedLoopCondition {
+    const META: Meta = Meta::eslint("no-unmodified-loop-condition", Kind::Problem);
+    const ON: On = On::new().stmts(&[StmtTag::While, StmtTag::DoWhile, StmtTag::For]).finish();
+    type State<'a> = State<'a>;
+
+    fn new(options: &Options) -> Self {
+        NoUnmodifiedLoopCondition {
+            check_conditional_expressions: options.object(0).bool_or("checkConditionalExpressions", false),
+        }
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+        Some(State { is_oxlint: file.language().is_oxlint, ..State::default() })
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let test = match statement.kind() {
+            StmtKind::While { test, .. } | StmtKind::DoWhile { test, .. } => Some(test),
+            StmtKind::For { test, .. } => test,
+            _ => None,
+        };
+        cx.state.tests.extend(test.map(Expr::span));
+    }
 
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         let mut spans = std::mem::take(&mut cx.state.tests);
@@ -372,29 +397,5 @@ impl NoUnmodifiedLoopCondition {
         for condition in &conditions {
             cx.report(condition.reference, LOOP_CONDITION_NOT_MODIFIED).data("name", condition.reference.name());
         }
-    }
-}
-
-impl Rule for NoUnmodifiedLoopCondition {
-    const META: Meta = Meta::eslint("no-unmodified-loop-condition", Kind::Problem);
-    type State<'a> = State<'a>;
-
-    fn new(options: &Options) -> Self {
-        NoUnmodifiedLoopCondition {
-            check_conditional_expressions: options.object(0).bool_or("checkConditionalExpressions", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        on.stmts([StmtTag::While, StmtTag::DoWhile, StmtTag::For], |_, statement, cx| {
-            let test = match statement.kind() {
-                StmtKind::While { test, .. } | StmtKind::DoWhile { test, .. } => Some(test),
-                StmtKind::For { test, .. } => test,
-                _ => None,
-            };
-            cx.state.tests.extend(test.map(Expr::span));
-        });
-        on.finish(Self::finish);
-        State { is_oxlint: file.language().is_oxlint, ..State::default() }
     }
 }

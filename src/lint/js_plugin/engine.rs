@@ -74,6 +74,11 @@ impl Demand {
         };
     }
 
+    /// How many realms there can be: [`Engine::expect`].
+    pub fn most(&self) -> usize {
+        self.0.lock().most
+    }
+
     /// How large the files are that are still to come.
     pub fn left(&self) -> u64 {
         self.0.lock().bytes

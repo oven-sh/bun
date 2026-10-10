@@ -47,13 +47,14 @@ impl Rule for NoSpacedFunc {
     const META: Meta = Meta::eslint("no-spaced-func", Kind::Layout)
         .fixable(Fixable::Whitespace)
         .deprecated();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoSpacedFunc
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Call, ExprTag::New], Self::detect_open_spaces);
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.detect_open_spaces(e, cx);
     }
 }

@@ -14,35 +14,38 @@ const EXPECTED_TRUE: Message = Message::new("", "Expected to return a true value
 
 impl Rule for ReturnInEmitsValidator {
     const META: Meta = Meta::oxlint(Plugin::Vue, "return-in-emits-validator", Kind::Problem);
+    const ON: On = On::new().funcs();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         ReturnInEmitsValidator
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !is_vue_file(file) || !file.mentions_any(&["emits", "defineEmits"]) {
-            return;
+            return None;
         }
-        on.funcs(|_, func, cx| {
-            let Some(emit_name) = get_emit_validator_name(func) else {
-                return;
-            };
-            let body = match func.body() {
-                FnBody::Expr(e) => Some(e),
-                _ => None,
-            };
-            let returned = func.returns().filter_map(|it| match it.kind() {
-                StmtKind::Return(argument) => argument,
-                _ => None,
-            });
-            let mut values = body.into_iter().chain(returned).peekable();
-            let has_return_value = values.peek().is_some();
-            if values.all(is_falsy) {
-                let message = if has_return_value { EXPECTED_TRUE } else { EXPECTED_BOOLEAN };
-                cx.report(func.estree_span(), message).data("name", emit_name);
-            }
+        Some(())
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(emit_name) = get_emit_validator_name(func) else {
+            return;
+        };
+        let body = match func.body() {
+            FnBody::Expr(e) => Some(e),
+            _ => None,
+        };
+        let returned = func.returns().filter_map(|it| match it.kind() {
+            StmtKind::Return(argument) => argument,
+            _ => None,
         });
+        let mut values = body.into_iter().chain(returned).peekable();
+        let has_return_value = values.peek().is_some();
+        if values.all(is_falsy) {
+            let message = if has_return_value { EXPECTED_TRUE } else { EXPECTED_BOOLEAN };
+            cx.report(func.estree_span(), message).data("name", emit_name);
+        }
     }
 }
 

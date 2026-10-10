@@ -80,6 +80,11 @@ impl Rule for ComputedPropertySpacing {
         }
     }
 
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let on = On::new().exprs(&[ExprTag::Index]).props().pats(&[PatTag::Object]);
+        if self.enforces_for_class_members { on.members() } else { on }
+    }
+
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Index { obj, index, chain } = e.kind() else {
             return;
@@ -104,9 +109,6 @@ impl Rule for ComputedPropertySpacing {
     }
 
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
-        if !self.enforces_for_class_members {
-            return;
-        }
         // Only `MethodDefinition` and `PropertyDefinition`.
         if !member.flags().intersects(Flags::ABSTRACT | Flags::ACCESSOR) && !member.is_signature() {
             self.check_key(member.key(), cx);

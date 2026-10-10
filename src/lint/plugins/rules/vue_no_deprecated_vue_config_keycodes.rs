@@ -9,27 +9,30 @@ const NO_DEPRECATED_VUE_CONFIG_KEYCODES: Message = Message::new("", "`Vue.config
 
 impl Rule for NoDeprecatedVueConfigKeycodes {
     const META: Meta = Meta::oxlint(Plugin::Vue, "no-deprecated-vue-config-keycodes", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Dot]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoDeprecatedVueConfigKeycodes
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("keyCodes") || !file.mentions("Vue") {
-            return;
+            return None;
         }
-        on.exprs([ExprTag::Dot], |_, outer, cx| {
-            if let ExprKind::Dot { obj, name, .. } = outer.kind()
-                && name.name().is("keyCodes")
-                && let Some(middle) = get_member_expr(obj)
-                && static_property_name(middle).is_some_and(|it| it.is("config"))
-                && middle.object().is_some_and(|it| is_specific_id(it, "Vue"))
-                && !outer.is_jsx_tag_name()
-                && !outer.is_in_type_query()
-            {
-                cx.report(outer, NO_DEPRECATED_VUE_CONFIG_KEYCODES);
-            }
-        });
+        Some(())
+    }
+
+    fn expr<'a>(&self, outer: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let ExprKind::Dot { obj, name, .. } = outer.kind()
+            && name.name().is("keyCodes")
+            && let Some(middle) = get_member_expr(obj)
+            && static_property_name(middle).is_some_and(|it| it.is("config"))
+            && middle.object().is_some_and(|it| is_specific_id(it, "Vue"))
+            && !outer.is_jsx_tag_name()
+            && !outer.is_in_type_query()
+        {
+            cx.report(outer, NO_DEPRECATED_VUE_CONFIG_KEYCODES);
+        }
     }
 }

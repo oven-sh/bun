@@ -225,6 +225,14 @@ impl NoUnderscoreDangle {
 
 impl Rule for NoUnderscoreDangle {
     const META: Meta = Meta::eslint("no-underscore-dangle", Kind::Suggestion);
+    const ON: On = On::new()
+        .stmts(&[StmtTag::Fn])
+        .var_decls()
+        .exprs(&[ExprTag::Dot, ExprTag::Index])
+        .types(&[TypeTag::Ref])
+        .params()
+        .members()
+        .props();
     /// `is_member_expression`
     type State<'a> = AncestorMemo<'a, bool>;
 
@@ -244,22 +252,55 @@ impl Rule for NoUnderscoreDangle {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        on.stmts([StmtTag::Fn], Self::check_function_declaration);
-        on.var_decls(Self::check_variable);
-        on.exprs([ExprTag::Dot, ExprTag::Index], Self::check_member_expression);
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new()
+            .stmts(&[StmtTag::Fn])
+            .var_decls()
+            .exprs(&[ExprTag::Dot, ExprTag::Index]);
         if !file.is_javascript() {
-            on.types([TypeTag::Ref], Self::check_heritage);
+            on = on.types(&[TypeTag::Ref]);
         }
         if !self.allow_function_params {
-            on.params(Self::check_param);
+            on = on.params();
         }
         if self.enforce_in_method_names || self.enforce_in_class_fields {
-            on.members(Self::check_class_member);
+            on = on.members();
         }
         if self.enforce_in_method_names {
-            on.props(Self::check_property);
+            on = on.props();
         }
-        AncestorMemo::default()
+        on
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(AncestorMemo::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_member_expression(e, cx);
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_function_declaration(statement, cx);
+    }
+
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_heritage(ty, cx);
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_class_member(member, cx);
+    }
+
+    fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_property(prop, cx);
+    }
+
+    fn param<'a>(&self, param: Param<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_param(param, cx);
+    }
+
+    fn var_decl<'a>(&self, declaration: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_variable(declaration, cx);
     }
 }

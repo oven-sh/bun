@@ -775,10 +775,21 @@ impl Rule for MemberOrdering {
         }
     }
 
-    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
-        if self.config(&self.classes).is_none() && self.config(&self.class_expressions).is_none() {
-            return;
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new();
+        if self.config(&self.classes).is_some() || self.config(&self.class_expressions).is_some() {
+            on = on.classes();
         }
+        if self.config(&self.interfaces).is_some() {
+            on = on.stmts(&[StmtTag::Interface]);
+        }
+        if self.config(&self.type_literals).is_some() {
+            on = on.types(&[TypeTag::Object]);
+        }
+        on
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
         let setting = match class.owner() {
             Node::Expr(_) => &self.class_expressions,
             _ => &self.classes,
@@ -787,18 +798,12 @@ impl Rule for MemberOrdering {
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if self.config(&self.interfaces).is_none() {
-            return;
-        }
         if let StmtKind::Interface(interface) = stmt.kind() {
             self.validate(cx, interface.members(), &self.interfaces, false);
         }
     }
 
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
-        if self.config(&self.type_literals).is_none() {
-            return;
-        }
         if let TypeKind::Object(members) = ty.kind() {
             self.validate(cx, members, &self.type_literals, false);
         }

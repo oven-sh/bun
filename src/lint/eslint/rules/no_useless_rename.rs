@@ -48,9 +48,42 @@ impl NoUselessRename {
             Some(fixer.replace(node, file.slice(replacement)))
         });
     }
+}
+
+impl Rule for NoUselessRename {
+    const META: Meta = Meta::eslint("no-useless-rename", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new()
+        .pats(&[PatTag::Object])
+        .props()
+        .import_specs()
+        .export_specs();
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let object = options.object(0);
+        NoUselessRename {
+            ignore_destructuring: object.bool_or("ignoreDestructuring", false),
+            ignore_import: object.bool_or("ignoreImport", false),
+            ignore_export: object.bool_or("ignoreExport", false),
+        }
+    }
+
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new();
+        if !self.ignore_destructuring {
+            on = on.pats(&[PatTag::Object]).props();
+        }
+        if !self.ignore_import {
+            on = on.import_specs();
+        }
+        if !self.ignore_export {
+            on = on.export_specs();
+        }
+        on
+    }
 
     /// An `ObjectPattern` in a declaration or a parameter.
-    fn check_pattern<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
+    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
         let PatKind::Object(props) = pat.kind() else {
             return;
         };
@@ -75,7 +108,7 @@ impl NoUselessRename {
     }
 
     /// A `Property` of an `ObjectPattern` that is assigned to.
-    fn check_property<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
+    fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
         if prop.kind() != PropKind::Init || prop.is_jsx_attribute() {
             return;
         }
@@ -107,7 +140,7 @@ impl NoUselessRename {
         }
     }
 
-    fn check_import<'a>(&self, spec: ImportSpec<'a>, cx: &mut Cx<'a, Self>) {
+    fn import_spec<'a>(&self, spec: ImportSpec<'a>, cx: &mut Cx<'a, Self>) {
         if spec.is_renamed() && spec.imported().name() == spec.local().name() {
             Self::report(cx, Renamed {
                 node: spec.span(),
@@ -120,7 +153,7 @@ impl NoUselessRename {
         }
     }
 
-    fn check_export<'a>(&self, spec: ExportSpec<'a>, cx: &mut Cx<'a, Self>) {
+    fn export_spec<'a>(&self, spec: ExportSpec<'a>, cx: &mut Cx<'a, Self>) {
         if spec.is_renamed() && spec.local().name() == spec.exported().name() {
             Self::report(cx, Renamed {
                 node: spec.span(),
@@ -130,33 +163,6 @@ impl NoUselessRename {
                 is_fixable: true,
                 is_type_only: spec.is_type_only(),
             });
-        }
-    }
-}
-
-impl Rule for NoUselessRename {
-    const META: Meta = Meta::eslint("no-useless-rename", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let object = options.object(0);
-        NoUselessRename {
-            ignore_destructuring: object.bool_or("ignoreDestructuring", false),
-            ignore_import: object.bool_or("ignoreImport", false),
-            ignore_export: object.bool_or("ignoreExport", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        if !self.ignore_destructuring {
-            on.pats([PatTag::Object], Self::check_pattern);
-            on.props(Self::check_property);
-        }
-        if !self.ignore_import {
-            on.import_specs(Self::check_import);
-        }
-        if !self.ignore_export {
-            on.export_specs(Self::check_export);
         }
     }
 }

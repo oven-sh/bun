@@ -199,6 +199,11 @@ impl Rule for PreferObjectSpread {
         PreferObjectSpread
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new().exprs(&[ExprTag::Call]);
+        if file.language().is_oxlint { on } else { on.finish() }
+    }
+
     fn start<'a>(&self, file: &'a File<'a>) -> Option<bool> {
         file.has_exprs([ExprTag::Call]).then_some(false)
     }
@@ -216,9 +221,6 @@ impl Rule for PreferObjectSpread {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        if cx.language().is_oxlint {
-            return;
-        }
         if !cx.state {
             return;
         }

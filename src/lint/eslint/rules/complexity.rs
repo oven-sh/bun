@@ -90,6 +90,37 @@ impl Rule for Complexity {
         }
     }
 
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new()
+            .exprs(&[
+                ExprTag::Cond,
+                ExprTag::Binary,
+                ExprTag::Assign,
+                ExprTag::Dot,
+                ExprTag::Index,
+                ExprTag::Call,
+            ])
+            .stmts(&[
+                StmtTag::If,
+                StmtTag::For,
+                StmtTag::ForIn,
+                StmtTag::ForOf,
+                StmtTag::While,
+                StmtTag::DoWhile,
+                StmtTag::Try,
+            ])
+            .params()
+            .pats(&[PatTag::Object, PatTag::Array])
+            .finish();
+        if self.threshold == Some(0) {
+            on = on.funcs().members();
+        }
+        match self.is_modified {
+            true => on.stmts(&[StmtTag::Switch]),
+            false => on.cases(),
+        }
+    }
+
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
         self.threshold.is_some().then(State::default)
     }
@@ -123,7 +154,7 @@ impl Rule for Complexity {
                     Self::increase(stmt, 1, cx);
                 }
             }
-            StmtTag::Switch if self.is_modified => Self::increase(stmt, 1, cx),
+            StmtTag::Switch => Self::increase(stmt, 1, cx),
             _ => {}
         }
     }
@@ -140,18 +171,12 @@ impl Rule for Complexity {
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        if self.threshold != Some(0) {
-            return;
-        }
         if func.has_body() {
             cx.state.complexities.entry(Node::Func(func)).or_insert(1);
         }
     }
 
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
-        if self.threshold != Some(0) {
-            return;
-        }
         if let Some(init) = member.init()
             && is_field_initializer(member, Node::Expr(init))
         {
@@ -166,9 +191,6 @@ impl Rule for Complexity {
     }
 
     fn case<'a>(&self, case: Case<'a>, cx: &mut Cx<'a, Self>) {
-        if self.is_modified {
-            return;
-        }
         if !case.is_default() {
             Self::increase(case, 1, cx);
         }

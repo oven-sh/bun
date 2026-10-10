@@ -6,8 +6,8 @@
 //! [`RuleSet`].
 
 use crate::options::Options;
-use crate::rule::{Meta, On, Rule};
-use crate::runner::{self, Running, Start, Started};
+use crate::rule::{Meta, On};
+use crate::runner::Starts;
 
 /// A set of rules, by their numbers.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -49,6 +49,16 @@ impl RuleBits {
         self
     }
 
+    #[inline]
+    pub const fn is_empty(&self) -> bool {
+        let (mut any, mut word) = (0, 0);
+        while word < RuleBits::WORDS {
+            any |= self.0[word];
+            word += 1;
+        }
+        any == 0
+    }
+
     /// What is in this one and not in `other`.
     #[inline]
     pub const fn and_not(mut self, other: RuleBits) -> RuleBits {
@@ -71,51 +81,34 @@ impl RuleBits {
 }
 
 /// An instance of one of the rules that a linter has.
-pub trait RuleSet: Send + Sync + Sized + 'static {
+pub trait RuleSet: Starts + Sized + 'static {
     /// By the number. `None`: no rule has it.
     const METAS: &'static [Option<&'static Meta>];
-    /// For each row of [`On::ROWS`], the rules whose [`Rule::ON`] names it.
+    /// For each row of [`On::ROWS`], the rules whose [`Rule::ON`](crate::rule::Rule::ON) names it.
     const LISTENS: &'static [RuleBits; On::ROWS];
-    /// One of them at work on a file, after what takes the nodes in no particular order.
-    type Run<'r, 'a: 'r>: Running<'a>;
+    /// For each of [`On::KINDS`], the rules that name a row of it.
+    const LISTENS_TO_KINDS: [RuleBits; On::KINDS.len()] = of_kinds(Self::LISTENS);
 
-    /// [`Rule::new`]. `None`: no rule has the number.
+    /// [`Rule::new`](crate::rule::Rule::new). `None`: no rule has the number.
     fn build(rule: u16, options: &Options) -> Option<Self>;
-    /// [`Rule::validate`]
+    /// [`Rule::validate`](crate::rule::Rule::validate)
     fn validate(rule: u16, options: &Options) -> Result<(), Vec<u8>>;
     /// Its number.
     fn number(&self) -> u16;
-    fn start<'r, 'a: 'r>(&'r self, start: Start<'a>) -> Option<Self::Run<'r, 'a>>;
 }
 
-/// A set of one rule, which has the number 0.
-pub struct One<R: Rule>(pub R);
-
-impl<R: Rule> RuleSet for One<R> {
-    const METAS: &'static [Option<&'static Meta>] = &[Some(&R::META)];
-    const LISTENS: &'static [RuleBits; On::ROWS] =
-        &with_rows([RuleBits::EMPTY; On::ROWS], &listens::<1, 1>(&[R::ON]), 0);
-    type Run<'r, 'a: 'r> = Started<'r, 'a, R>;
-
-    #[inline]
-    fn build(_: u16, options: &Options) -> Option<Self> {
-        Some(One(R::new(options)))
+const fn of_kinds(rows: &[RuleBits; On::ROWS]) -> [RuleBits; On::KINDS.len()] {
+    let mut all = [RuleBits::EMPTY; On::KINDS.len()];
+    let mut sort = 0;
+    while sort < all.len() {
+        let (mut row, end) = On::KINDS[sort];
+        while row < end {
+            all[sort] = all[sort].or(rows[row]);
+            row += 1;
+        }
+        sort += 1;
     }
-
-    #[inline]
-    fn validate(_: u16, options: &Options) -> Result<(), Vec<u8>> {
-        R::validate(options)
-    }
-
-    #[inline]
-    fn number(&self) -> u16 {
-        0
-    }
-
-    #[inline]
-    fn start<'r, 'a: 'r>(&'r self, start: Start<'a>) -> Option<Started<'r, 'a, R>> {
-        runner::start(&self.0, start)
-    }
+    all
 }
 
 /// For [`rules!`](crate::rules): for each row, the rules of `ons` that name it, by their places: 64 to a word.
@@ -240,9 +233,20 @@ macro_rules! rules_as_a_set {
                     $(Rules::$module(_) => Place::$module as u16,)*
                 }
             }
+        }
+
+        impl $crate::runner::Starts for Rules {
+            type Run<'r, 'a: 'r> = Runs<'r, 'a>;
 
             #[inline]
-            pub fn start<'r, 'a: 'r>(
+            fn meta(&self) -> &'static $crate::rule::Meta {
+                match self {
+                    $(Rules::$module(_) => &<rules::$module::$rule as $crate::rule::Rule>::META,)*
+                }
+            }
+
+            #[inline]
+            fn start<'r, 'a: 'r>(
                 &'r self,
                 start: $crate::runner::Start<'a>,
             ) -> Option<Runs<'r, 'a>> {
@@ -325,7 +329,6 @@ macro_rules! rule_sets {
                     $crate::rule_set::with_rows(all, &$from::Rules::LISTENS, Crate::$name.offset() / 64);)*
                 all
             };
-            type Run<'r, 'a: 'r> = $runs<'r, 'a>;
 
             #[inline]
             fn build(rule: u16, options: &$crate::options::Options) -> Option<Self> {
@@ -353,6 +356,17 @@ macro_rules! rule_sets {
                     $($rules::$name(rule) => Crate::$name.offset() as u16 + rule.place(),)*
                 }
             }
+        }
+
+        impl $crate::runner::Starts for $rules {
+            type Run<'r, 'a: 'r> = $runs<'r, 'a>;
+
+            #[inline]
+            fn meta(&self) -> &'static $crate::rule::Meta {
+                match self {
+                    $($rules::$name(rule) => $crate::runner::Starts::meta(rule),)*
+                }
+            }
 
             #[inline]
             fn start<'r, 'a: 'r>(
@@ -360,7 +374,7 @@ macro_rules! rule_sets {
                 start: $crate::runner::Start<'a>,
             ) -> Option<$runs<'r, 'a>> {
                 match self {
-                    $($rules::$name(rule) => rule.start(start).map($runs::$name),)*
+                    $($rules::$name(rule) => $crate::runner::Starts::start(rule, start).map($runs::$name),)*
                 }
             }
         }

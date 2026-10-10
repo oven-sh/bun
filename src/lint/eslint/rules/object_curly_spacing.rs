@@ -139,6 +139,11 @@ impl Rule for ObjectCurlySpacing {
     const META: Meta = Meta::eslint("object-curly-spacing", Kind::Layout)
         .fixable(Fixable::Whitespace)
         .deprecated();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Object])
+        .pats(&[PatTag::Object])
+        .types(&[TypeTag::Import])
+        .stmts(&[StmtTag::Import, StmtTag::ExportNamed]);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -151,43 +156,47 @@ impl Rule for ObjectCurlySpacing {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
-        on.exprs([ExprTag::Object], |rule, e, cx| {
-            if matches!(e.kind(), ExprKind::Object(props) if !props.is_empty()) {
-                let span = e.span();
-                rule.validate_brace_spacing(Node::Expr(e), span.start, span.end.saturating_sub(1), cx);
-            }
-        });
-        on.pats([PatTag::Object], |rule, pat, cx| {
-            if matches!(pat.kind(), PatKind::Object(props) if !props.is_empty()) {
-                let span = pat.span();
-                rule.validate_brace_spacing(Node::Pat(pat), span.start, span.end.saturating_sub(1), cx);
-            }
-        });
-        // ESLint has `{ with: { type: "json" } }` in `import("m", { with: { type: "json" } })` as two
-        // object literals.
-        on.types([TypeTag::Import], |rule, ty, cx| {
-            let Some(attributes) = ty.import_attributes() else {
-                return;
-            };
-            let (outer, inner) = (attributes.options_span(), attributes.braces_span());
-            let inner_close = inner.end.saturating_sub(1);
-            if !attributes.entries().is_empty() {
-                rule.validate_brace_spacing(Node::Type(ty), inner.start, inner_close, cx);
-            }
-            let outer_close = outer.end.saturating_sub(1);
-            rule.validate_brace_spacing_around(Node::Type(ty), outer.start, outer_close, Some(inner_close), cx);
-        });
-        on.stmts([StmtTag::Import, StmtTag::ExportNamed], |rule, statement, cx| {
-            let ends = match statement.kind() {
-                StmtKind::Import(import) => import.named().first().zip(import.named().last()).map(|it| (it.0.span(), it.1.span())),
-                StmtKind::ExportNamed(export) => export.items().first().zip(export.items().last()).map(|it| (it.0.span(), it.1.span())),
-                _ => None,
-            };
-            if let Some((first, last)) = ends {
-                rule.check_specifiers(statement, first, last, cx);
-            }
-        });
-        State::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if matches!(e.kind(), ExprKind::Object(props) if !props.is_empty()) {
+            let span = e.span();
+            self.validate_brace_spacing(Node::Expr(e), span.start, span.end.saturating_sub(1), cx);
+        }
+    }
+
+    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        if matches!(pat.kind(), PatKind::Object(props) if !props.is_empty()) {
+            let span = pat.span();
+            self.validate_brace_spacing(Node::Pat(pat), span.start, span.end.saturating_sub(1), cx);
+        }
+    }
+
+    // ESLint has `{ with: { type: "json" } }` in `import("m", { with: { type: "json" } })` as two
+    // object literals.
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(attributes) = ty.import_attributes() else {
+            return;
+        };
+        let (outer, inner) = (attributes.options_span(), attributes.braces_span());
+        let inner_close = inner.end.saturating_sub(1);
+        if !attributes.entries().is_empty() {
+            self.validate_brace_spacing(Node::Type(ty), inner.start, inner_close, cx);
+        }
+        let outer_close = outer.end.saturating_sub(1);
+        self.validate_brace_spacing_around(Node::Type(ty), outer.start, outer_close, Some(inner_close), cx);
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let ends = match statement.kind() {
+            StmtKind::Import(import) => import.named().first().zip(import.named().last()).map(|it| (it.0.span(), it.1.span())),
+            StmtKind::ExportNamed(export) => export.items().first().zip(export.items().last()).map(|it| (it.0.span(), it.1.span())),
+            _ => None,
+        };
+        if let Some((first, last)) = ends {
+            self.check_specifiers(statement, first, last, cx);
+        }
     }
 }

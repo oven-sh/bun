@@ -28,23 +28,41 @@ pub struct State<'a> {
 
 impl Rule for NoRequiredPropWithDefault {
     const META: Meta = Meta::oxlint(Plugin::Vue, "no-required-prop-with-default", Kind::Problem).has_suggestions();
+    const ON: On = On::new().exprs(&[ExprTag::Call]).stmts(&[StmtTag::ExportDefault]);
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoRequiredPropWithDefault
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
         let is_setup = is_vue_file(file) && is_vue_setup(file);
-        if is_setup && file.mentions("defineProps") {
-            on.exprs([ExprTag::Call], |_, e, cx| run_on_setup(e, cx));
-        } else if file.mentions("defineComponent") {
-            on.exprs([ExprTag::Call], |_, e, cx| check_define_component(e, cx));
+        if is_setup && file.mentions("defineProps") || file.mentions("defineComponent") {
+            on = on.exprs(&[ExprTag::Call]);
         }
         if is_vue_file(file) && !is_vue_setup(file) && file.mentions("props") {
-            on.stmts([StmtTag::ExportDefault], |_, stmt, cx| handle_object_expression(exported_object(stmt), cx));
+            on = on.stmts(&[StmtTag::ExportDefault]);
         }
-        State::default()
+        on
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let file = cx.file();
+        let is_setup = is_vue_file(file) && is_vue_setup(file);
+        if is_setup && file.mentions("defineProps") {
+            run_on_setup(e, cx);
+        } else {
+            check_define_component(e, cx);
+        }
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        handle_object_expression(exported_object(stmt), cx);
     }
 }
 

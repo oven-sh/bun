@@ -124,8 +124,7 @@ impl NoCastToBrand {
 impl Rule for NoCastToBrand {
     const META: Meta = Meta::plugin(Plugin::Bun, "no-cast-to-brand", Kind::Problem);
     const ON: On = On::new().exprs(&[ExprTag::As]).stmts(&[StmtTag::Import, StmtTag::ExportNamed]);
-    /// Whether a cast of the file can be to a brand, and whether an import of it can be of a function that mints one.
-    type State<'a> = (bool, bool);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let list = |names: Vec<&str>| names.into_iter().map(Box::from).collect();
@@ -141,16 +140,18 @@ impl Rule for NoCastToBrand {
         NoCastToBrand { brands: brands.collect() }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<(bool, bool)> {
-        let casts = self.brands.iter().any(|it| file.mentions(&it.name) && !it.is_at(file.path()));
-        let mints = self.brands.iter().any(|it| it.mint.iter().any(|name| file.mentions(name)));
-        (casts || mints).then_some((casts, mints))
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
+        if self.brands.iter().any(|it| file.mentions(&it.name) && !it.is_at(file.path())) {
+            on = on.exprs(&[ExprTag::As]);
+        }
+        if self.brands.iter().any(|it| it.mint.iter().any(|name| file.mentions(name))) {
+            on = on.stmts(&[StmtTag::Import, StmtTag::ExportNamed]);
+        }
+        on
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if !cx.state.0 {
-            return;
-        }
         if let ExprKind::As { ty, .. } = e.kind()
             && let Some(brand) = self.brand_in(ty, cx.file())
         {
@@ -159,9 +160,6 @@ impl Rule for NoCastToBrand {
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if !cx.state.1 {
-            return;
-        }
         let file = cx.file();
         match statement.kind() {
             StmtKind::Import(import) if !import.is_type_only() => {

@@ -399,14 +399,18 @@ impl Rule for ConsistentIndexedObjectStyle {
         }
     }
 
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        match self.prefers_record {
+            true => On::new().stmts(&[StmtTag::Interface]).types(&[TypeTag::Mapped, TypeTag::Object]),
+            false => On::new().types(&[TypeTag::Ref]),
+        }
+    }
+
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
         Some(State::default())
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if !self.prefers_record {
-            return;
-        }
         if let StmtKind::Interface(interface) = statement.kind() {
             check_members(
                 interface.members(),
@@ -421,9 +425,9 @@ impl Rule for ConsistentIndexedObjectStyle {
 
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         match ty.tag() {
-            TypeTag::Ref if !self.prefers_record => self.check_type_reference(ty, cx),
-            TypeTag::Mapped if self.prefers_record => self.check_mapped_type(ty, cx),
-            TypeTag::Object if self.prefers_record => {
+            TypeTag::Ref => self.check_type_reference(ty, cx),
+            TypeTag::Mapped => self.check_mapped_type(ty, cx),
+            TypeTag::Object => {
                 if let TypeKind::Object(members) = ty.kind()
                     && members.first().is_some_and(|it| it.kind() == MemberKind::IndexSignature)
                     && members.len() == 1

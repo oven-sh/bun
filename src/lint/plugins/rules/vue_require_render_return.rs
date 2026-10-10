@@ -12,24 +12,24 @@ const REQUIRE_RENDER_RETURN: Message = Message::new("", "Expected to return a va
 
 impl Rule for RequireRenderReturn {
     const META: Meta = Meta::oxlint(Plugin::Vue, "require-render-return", Kind::Problem);
+    const ON: On = On::new().funcs();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         RequireRenderReturn
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("render") {
-            return;
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("render").then_some(())
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(prop) = property_of_function(func)
+            && is_specific_static_name(prop, "render")
+            && object_of(prop).is_some_and(is_vue_component_options_object)
+            && !definitely_returns_in_all_codepaths(func, true)
+        {
+            cx.report(key_span(prop), REQUIRE_RENDER_RETURN);
         }
-        on.funcs(|_, func, cx| {
-            if let Some(prop) = property_of_function(func)
-                && is_specific_static_name(prop, "render")
-                && object_of(prop).is_some_and(is_vue_component_options_object)
-                && !definitely_returns_in_all_codepaths(func, true)
-            {
-                cx.report(key_span(prop), REQUIRE_RENDER_RETURN);
-            }
-        });
     }
 }

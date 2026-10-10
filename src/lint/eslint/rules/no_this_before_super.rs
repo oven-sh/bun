@@ -221,24 +221,26 @@ impl NoThisBeforeSuper {
 
 impl Rule for NoThisBeforeSuper {
     const META: Meta = Meta::eslint("no-this-before-super", Kind::Problem).recommended();
+    const ON: On = On::new().classes();
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoThisBeforeSuper
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
-        on.classes(|rule, class, cx| {
-            if class.extends().is_none() {
-                return;
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        if class.extends().is_none() {
+            return;
+        }
+        let constructors = class.members().iter().filter(|it| it.is_constructor());
+        for constructor in constructors.filter_map(Member::func).filter(|it| it.has_body()) {
+            if !calls_super_first(constructor) || Self::has_winding_switch(constructor, cx) {
+                self.check_constructor(constructor, cx);
             }
-            let constructors = class.members().iter().filter(|it| it.is_constructor());
-            for constructor in constructors.filter_map(Member::func).filter(|it| it.has_body()) {
-                if !calls_super_first(constructor) || Self::has_winding_switch(constructor, cx) {
-                    rule.check_constructor(constructor, cx);
-                }
-            }
-        });
-        State::default()
+        }
     }
 }

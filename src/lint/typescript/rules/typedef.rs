@@ -180,7 +180,13 @@ impl Typedef {
 
 impl Rule for Typedef {
     const META: Meta = Meta::typescript("typedef", Kind::Suggestion).deprecated();
-    type State<'a> = ();
+    const ON: On = On::new()
+        .pats(&[PatTag::Array, PatTag::Object])
+        .exprs(&[ExprTag::Array, ExprTag::Object])
+        .funcs()
+        .members()
+        .var_decls();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -196,23 +202,43 @@ impl Rule for Typedef {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new();
         if self.array_destructuring {
-            on.pats([PatTag::Array], Self::check_binding_pattern);
-            on.exprs([ExprTag::Array], Self::check_assignment_pattern);
+            on = on.pats(&[PatTag::Array]).exprs(&[ExprTag::Array]);
         }
         if self.object_destructuring {
-            on.pats([PatTag::Object], Self::check_binding_pattern);
-            on.exprs([ExprTag::Object], Self::check_assignment_pattern);
+            on = on.pats(&[PatTag::Object]).exprs(&[ExprTag::Object]);
         }
         if self.arrow_parameter || self.parameter {
-            on.funcs(Self::check_parameters);
+            on = on.funcs();
         }
         if self.member_variable_declaration || self.property_declaration {
-            on.members(Self::check_member);
+            on = on.members();
         }
         if self.variable_declaration {
-            on.var_decls(Self::check_variable_declarator);
+            on = on.var_decls();
         }
+        on
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_assignment_pattern(node, cx);
+    }
+
+    fn pat<'a>(&self, node: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_binding_pattern(node, cx);
+    }
+
+    fn func<'a>(&self, node: Func<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_parameters(node, cx);
+    }
+
+    fn member<'a>(&self, node: Member<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_member(node, cx);
+    }
+
+    fn var_decl<'a>(&self, node: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_variable_declarator(node, cx);
     }
 }

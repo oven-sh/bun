@@ -662,6 +662,10 @@ impl Rule for PreferNullishCoalescing {
         .has_suggestions()
         .presets(Presets::STYLISTIC_TYPE_CHECKED)
         .requires_types();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Assign, ExprTag::Binary, ExprTag::Cond])
+        .stmts(&[StmtTag::If])
+        .finish();
     type State<'a> = Walks<'a>;
 
     fn new(options: &Options) -> Self {
@@ -694,54 +698,77 @@ impl Rule for PreferNullishCoalescing {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Walks<'a> {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new().exprs(&[ExprTag::Assign, ExprTag::Binary]);
         let compiler_options = file.type_checker().compiler_options();
         if !is_strict_compiler_option_enabled(compiler_options, CompilerOption::StrictNullChecks)
             && !self.allow_rule_to_run_without_strict_null_checks_i_know_what_i_am_doing
         {
-            on.finish(|_, cx| {
-                // tsgolint points at the start of the file.
-                if cx.language().is_oxlint {
-                    cx.report(Span::empty(0), NO_STRICT_NULL_CHECK);
-                    return;
-                }
-                let line_zero = Position { line: 0, column: 0 };
-                cx.report(Span::empty(0), NO_STRICT_NULL_CHECK)
-                    .start_at(line_zero)
-                    .end_at(line_zero);
-            });
+            on = on.finish();
         }
-        on.exprs([ExprTag::Assign], |rule, node, cx| {
-            if let ExprKind::Assign {
-                op: Some(BinOp::Or),
-                target,
-                value,
-            } = node.kind()
-            {
-                rule.check_and_fix_with_prefer_nullish_over_or(
-                    cx,
-                    (node, target, value),
-                    "assignment",
-                    "=",
-                );
-            }
-        });
-        on.exprs([ExprTag::Binary], |rule, node, cx| {
-            if let ExprKind::Binary {
-                op: BinOp::Or,
-                left,
-                right,
-            } = node.kind()
-            {
-                rule.check_and_fix_with_prefer_nullish_over_or(cx, (node, left, right), "or", "");
-            }
-        });
         if !self.ignore_ternary_tests {
-            on.exprs([ExprTag::Cond], Self::check_conditional_expression);
+            on = on.exprs(&[ExprTag::Cond]);
         }
         if !self.ignore_if_statements {
-            on.stmts([StmtTag::If], Self::check_if_statement);
+            on = on.stmts(&[StmtTag::If]);
         }
-        Walks::default()
+        on
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Walks<'a>> {
+        Some(Walks::default())
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match node.tag() {
+            ExprTag::Assign => {
+                if let ExprKind::Assign {
+                    op: Some(BinOp::Or),
+                    target,
+                    value,
+                } = node.kind()
+                {
+                    self.check_and_fix_with_prefer_nullish_over_or(
+                        cx,
+                        (node, target, value),
+                        "assignment",
+                        "=",
+                    );
+                }
+            }
+            ExprTag::Binary => {
+                if let ExprKind::Binary {
+                    op: BinOp::Or,
+                    left,
+                    right,
+                } = node.kind()
+                {
+                    self.check_and_fix_with_prefer_nullish_over_or(
+                        cx,
+                        (node, left, right),
+                        "or",
+                        "",
+                    );
+                }
+            }
+            ExprTag::Cond => self.check_conditional_expression(node, cx),
+            _ => {}
+        }
+    }
+
+    fn stmt<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_if_statement(node, cx);
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        // tsgolint points at the start of the file.
+        if cx.language().is_oxlint {
+            cx.report(Span::empty(0), NO_STRICT_NULL_CHECK);
+            return;
+        }
+        let line_zero = Position { line: 0, column: 0 };
+        cx.report(Span::empty(0), NO_STRICT_NULL_CHECK)
+            .start_at(line_zero)
+            .end_at(line_zero);
     }
 }

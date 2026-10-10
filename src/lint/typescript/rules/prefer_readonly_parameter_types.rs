@@ -28,8 +28,26 @@ fn get_parameter_type(param: Param<'_>) -> Type<'_> {
     }
 }
 
-impl PreferReadonlyParameterTypes {
-    fn check<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for PreferReadonlyParameterTypes {
+    const META: Meta = Meta::typescript("prefer-readonly-parameter-types", Kind::Suggestion).requires_types();
+    const ON: On = On::new().funcs();
+    /// Whether a type is to be reported. All that can be reached from it is looked at, and parameters share types.
+    type State<'a> = FxHashMap<Type<'a>, bool>;
+
+    fn new(options: &Options) -> Self {
+        let options = options.object(0);
+        PreferReadonlyParameterTypes {
+            readonlyness: ReadonlynessOptions::parse(options),
+            check_parameter_properties: options.bool_or("checkParameterProperties", true),
+            ignore_inferred_types: options.bool_or("ignoreInferredTypes", false),
+        }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<FxHashMap<Type<'a>, bool>> {
+        Some(FxHashMap::default())
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         if matches!(func.kind(), FnKind::ConstructorType | FnKind::IndexSignature | FnKind::StaticBlock) {
             return;
         }
@@ -55,25 +73,5 @@ impl PreferReadonlyParameterTypes {
                 cx.report(place, SHOULD_BE_READONLY);
             }
         }
-    }
-}
-
-impl Rule for PreferReadonlyParameterTypes {
-    const META: Meta = Meta::typescript("prefer-readonly-parameter-types", Kind::Suggestion).requires_types();
-    /// Whether a type is to be reported. All that can be reached from it is looked at, and parameters share types.
-    type State<'a> = FxHashMap<Type<'a>, bool>;
-
-    fn new(options: &Options) -> Self {
-        let options = options.object(0);
-        PreferReadonlyParameterTypes {
-            readonlyness: ReadonlynessOptions::parse(options),
-            check_parameter_properties: options.bool_or("checkParameterProperties", true),
-            ignore_inferred_types: options.bool_or("ignoreInferredTypes", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> FxHashMap<Type<'a>, bool> {
-        on.funcs(Self::check);
-        FxHashMap::default()
     }
 }

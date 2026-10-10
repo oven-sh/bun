@@ -20,29 +20,29 @@ pub struct State<'a> {
 
 impl Rule for RequireSlotsAsFunctions {
     const META: Meta = Meta::oxlint(Plugin::Vue, "require-slots-as-functions", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Dot]);
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         RequireSlotsAsFunctions
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if is_vue_file(file) && file.mentions("$slots") {
-            on.exprs([ExprTag::Dot], |_, slot_prop_member, cx| {
-                // `this.$slots.foo`
-                let is_options = |it: Node| matches!(it, Node::Expr(e) if is_vue_component_options_object(e));
-                if let ExprKind::Dot { obj, name, .. } = slot_prop_member.kind()
-                    && !slot_prop_member.is_private_member()
-                    && let ExprKind::Dot { obj: this, name: slots, .. } = get_inner_expression(obj).kind()
-                    && slots.name().is("$slots")
-                    && cx.state.in_options.find(Node::Expr(slot_prop_member), |_, parent| is_options(parent).then_some(())).is_some()
-                    && is_this_object(this)
-                {
-                    verify(slot_prop_member, name.span(), cx);
-                }
-            });
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        (is_vue_file(file) && file.mentions("$slots")).then(State::default)
+    }
+
+    fn expr<'a>(&self, slot_prop_member: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        // `this.$slots.foo`
+        let is_options = |it: Node| matches!(it, Node::Expr(e) if is_vue_component_options_object(e));
+        if let ExprKind::Dot { obj, name, .. } = slot_prop_member.kind()
+            && !slot_prop_member.is_private_member()
+            && let ExprKind::Dot { obj: this, name: slots, .. } = get_inner_expression(obj).kind()
+            && slots.name().is("$slots")
+            && cx.state.in_options.find(Node::Expr(slot_prop_member), |_, parent| is_options(parent).then_some(())).is_some()
+            && is_this_object(this)
+        {
+            verify(slot_prop_member, name.span(), cx);
         }
-        State::default()
     }
 }
 

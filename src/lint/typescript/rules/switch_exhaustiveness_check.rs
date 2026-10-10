@@ -278,7 +278,8 @@ impl Rule for SwitchExhaustivenessCheck {
     const META: Meta = Meta::typescript("switch-exhaustiveness-check", Kind::Suggestion)
         .has_suggestions()
         .requires_types();
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::Switch]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -292,7 +293,7 @@ impl Rule for SwitchExhaustivenessCheck {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Switch], Self::check);
+    fn stmt<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(node, cx);
     }
 }

@@ -11,22 +11,25 @@ const RETURN_IN_COMPUTED_PROPERTY: Message = Message::new("", "Expected to retur
 
 impl Rule for ReturnInComputedProperty {
     const META: Meta = Meta::oxlint(Plugin::Vue, "return-in-computed-property", Kind::Problem);
+    const ON: On = On::new().funcs();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         ReturnInComputedProperty { treat_undefined_as_unspecified: options.object(0).bool_or("treatUndefinedAsUnspecified", true) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !is_vue_file(file) || !file.mentions("computed") {
-            return;
+            return None;
         }
-        on.funcs(|rule, func, cx| {
-            if get_computed_getter_context(func).is_some()
-                && !definitely_returns_in_all_codepaths(func, rule.treat_undefined_as_unspecified)
-            {
-                cx.report(func.estree_span(), RETURN_IN_COMPUTED_PROPERTY);
-            }
-        });
+        Some(())
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if get_computed_getter_context(func).is_some()
+            && !definitely_returns_in_all_codepaths(func, self.treat_undefined_as_unspecified)
+        {
+            cx.report(func.estree_span(), RETURN_IN_COMPUTED_PROPERTY);
+        }
     }
 }

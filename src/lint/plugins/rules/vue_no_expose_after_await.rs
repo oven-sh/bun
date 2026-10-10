@@ -13,6 +13,7 @@ const NO_EXPOSE_AFTER_AWAIT: Message = Message::new("", "`{{name}}` is forbidden
 
 impl Rule for NoExposeAfterAwait {
     const META: Meta = Meta::oxlint(Plugin::Vue, "no-expose-after-await", Kind::Problem);
+    const ON: On = On::new().stmts(&[StmtTag::ExportDefault]).exprs(&[ExprTag::Call]).finish();
     /// Made for the first `setup` that can expose something.
     type State<'a> = Option<AfterAwait<'a>>;
 
@@ -20,20 +21,37 @@ impl Rule for NoExposeAfterAwait {
         NoExposeAfterAwait
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if !is_vue_file(file) || !file.has_exprs([ExprTag::Await]) {
-            return None;
-        }
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
         if file.mentions("setup") {
-            on.stmts([StmtTag::ExportDefault], |_, stmt, cx| check_setup_in_object(exported_object(stmt), cx));
+            on = on.stmts(&[StmtTag::ExportDefault]);
             if file.mentions("defineComponent") {
-                on.exprs([ExprTag::Call], |_, e, cx| check_setup_in_object(e.as_call().and_then(define_component_object), cx));
+                on = on.exprs(&[ExprTag::Call]);
             }
         }
         if is_vue_setup(file) && file.mentions("defineExpose") {
-            on.finish(|_, cx| check_script_setup(cx));
+            on = on.finish();
         }
-        None
+        on
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        if !is_vue_file(file) || !file.has_exprs([ExprTag::Await]) {
+            return None;
+        }
+        Some(None)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        check_setup_in_object(e.as_call().and_then(define_component_object), cx);
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        check_setup_in_object(exported_object(stmt), cx);
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        check_script_setup(cx);
     }
 }
 

@@ -121,7 +121,7 @@ impl Rule for DotNotation {
         .exprs(&[ExprTag::Index, ExprTag::Dot])
         .stmts(&[StmtTag::Interface])
         .classes();
-    type State<'a> = ();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -132,21 +132,20 @@ impl Rule for DotNotation {
         }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (self.checks_keywords() || file.has_exprs([ExprTag::Index])).then_some(())
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new().exprs(&[ExprTag::Index]);
+        if !self.checks_keywords() {
+            return on;
+        }
+        let on = on.exprs(&[ExprTag::Dot]);
+        if file.is_javascript() { on } else { on.classes().stmts(&[StmtTag::Interface]) }
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if e.tag() == ExprTag::Dot && !self.checks_keywords() {
-            return;
-        }
         self.check_member_expression(e, cx);
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if !self.checks_keywords() || cx.file().is_javascript() {
-            return;
-        }
         if let StmtKind::Interface(interface) = statement.kind() {
             for ty in interface.extends() {
                 self.check_heritage(ty, cx);
@@ -155,9 +154,6 @@ impl Rule for DotNotation {
     }
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
-        if !self.checks_keywords() || cx.file().is_javascript() {
-            return;
-        }
         for ty in class.implements() {
             self.check_heritage(ty, cx);
         }

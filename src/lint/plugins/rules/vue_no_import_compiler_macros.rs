@@ -16,64 +16,67 @@ const COMPILER_MACROS: [&str; 7] =
 
 impl Rule for NoImportCompilerMacros {
     const META: Meta = Meta::oxlint(Plugin::Vue, "no-import-compiler-macros", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().stmts(&[StmtTag::Import]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoImportCompilerMacros
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions_any(&COMPILER_MACROS) {
+            return None;
+        }
+        Some(())
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::Import(import_decl) = stmt.kind() else {
+            return;
+        };
+        if !import_decl.spec().is_any(&["vue", "@vue/runtime-core", "@vue/runtime-dom"]) {
             return;
         }
-        on.stmts([StmtTag::Import], |_, stmt, cx| {
-            let StmtKind::Import(import_decl) = stmt.kind() else {
-                return;
-            };
-            if !import_decl.spec().is_any(&["vue", "@vue/runtime-core", "@vue/runtime-dom"]) {
-                return;
+        // What is before the names in braces: `import def, { a, b }`.
+        let before = import_decl.default().map(|it| it.span()).or_else(|| import_decl.namespace_span());
+        let mut rest = import_decl.named().iter();
+        let mut last = None;
+        while let Some(import_specifier) = rest.next() {
+            let (previous, mut after) = (last.replace(import_specifier.span()), rest);
+            let next = after.next();
+            let imported_name = import_specifier.imported();
+            let is_string = matches!(cx.file().slice(imported_name.span()).first(), Some(b'"' | b'\''));
+            if is_string || !imported_name.name().is_any(&COMPILER_MACROS) {
+                continue;
             }
-            // What is before the names in braces: `import def, { a, b }`.
-            let before = import_decl.default().map(|it| it.span()).or_else(|| import_decl.namespace_span());
-            let mut rest = import_decl.named().iter();
-            let mut last = None;
-            while let Some(import_specifier) = rest.next() {
-                let (previous, mut after) = (last.replace(import_specifier.span()), rest);
-                let next = after.next();
-                let imported_name = import_specifier.imported();
-                let is_string = matches!(cx.file().slice(imported_name.span()).first(), Some(b'"' | b'\''));
-                if is_string || !imported_name.name().is_any(&COMPILER_MACROS) {
-                    continue;
-                }
-                let fix = move |fixer: Fixer| -> Option<Fix> {
-                    let (file, span) = (stmt.file(), import_specifier.span());
-                    match (previous.or(before), next) {
-                        (None, None) => Some(fixer.remove(stmt)),
-                        // With the comma after it.
-                        (_, Some(next)) if previous.is_none() => {
-                            let comma = find_next_token_within(file, span.between(next.span()), b",")?;
-                            Some(fixer.remove(Span::new(span.start, comma + 1)))
-                        }
-                        // With the comma before it, and with the braces if nothing is left in them.
-                        (Some(prev), _) => {
-                            let comma = find_prev_token_within(file, prev.between(span), b",")?;
-                            let end = match previous {
-                                Some(_) => span.end,
-                                None => find_next_token_within(file, Span::after(span, stmt.span().end), b"}")? + 1,
-                            };
-                            Some(fixer.remove(Span::new(comma, end)))
-                        }
-                        (None, Some(_)) => None,
+            let fix = move |fixer: Fixer| -> Option<Fix> {
+                let (file, span) = (stmt.file(), import_specifier.span());
+                match (previous.or(before), next) {
+                    (None, None) => Some(fixer.remove(stmt)),
+                    // With the comma after it.
+                    (_, Some(next)) if previous.is_none() => {
+                        let comma = find_next_token_within(file, span.between(next.span()), b",")?;
+                        Some(fixer.remove(Span::new(span.start, comma + 1)))
                     }
-                };
-                // In a `<script setup>` the macro is there without the import.
-                if is_vue_setup(cx.file()) {
-                    cx.report(import_specifier, NO_IMPORT_COMPILER_MACROS).data("name", imported_name).fix(fix);
-                } else {
-                    cx.report(import_specifier, INVALID_IMPORT_COMPILER_MACROS).data("name", imported_name).fix_dangerously(fix);
+                    // With the comma before it, and with the braces if nothing is left in them.
+                    (Some(prev), _) => {
+                        let comma = find_prev_token_within(file, prev.between(span), b",")?;
+                        let end = match previous {
+                            Some(_) => span.end,
+                            None => find_next_token_within(file, Span::after(span, stmt.span().end), b"}")? + 1,
+                        };
+                        Some(fixer.remove(Span::new(comma, end)))
+                    }
+                    (None, Some(_)) => None,
                 }
+            };
+            // In a `<script setup>` the macro is there without the import.
+            if is_vue_setup(cx.file()) {
+                cx.report(import_specifier, NO_IMPORT_COMPILER_MACROS).data("name", imported_name).fix(fix);
+            } else {
+                cx.report(import_specifier, INVALID_IMPORT_COMPILER_MACROS).data("name", imported_name).fix_dangerously(fix);
             }
-        });
+        }
     }
 }
 

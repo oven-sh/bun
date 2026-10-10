@@ -541,6 +541,30 @@ describe.concurrent("an eslint.config.js", () => {
   });
 });
 
+// `import.source(..)` is a syntax error here, and Babel may read it. No rule is to run on a tree with holes in it.
+test.concurrent(
+  "what only the parser of the configuration can read is named, if the package eslint is not there",
+  async () => {
+    const crashes = `{ create: context => ({ MemberExpression(node) { context.report({ node, message: node.object.type }); } }) }`;
+    const files = {
+      "eslint.config.mjs": `export default [{
+      languageOptions: { parser: { meta: { name: "@babel/eslint-parser" }, parseForESLint() { throw new Error("called"); } } },
+      plugins: { mine: { rules: { crashes: ${crashes} } } },
+      rules: { "mine/crashes": "error", "no-var": "error" },
+    }];`,
+      "a.mjs": "var a = 1;\nexport { a };\n",
+      "b.mjs": "const b = await import.source('./b.wasm');\nexport { b };\n",
+    };
+    const { problems, stderr, exitCode } = await lint(files, ["a.mjs", "b.mjs"]);
+    expect(problems).toEqual(["a.mjs:1:1 no-var"]);
+    expect(stderr).toContain(
+      `1 file was not linted, only the parser of the configuration can read it: b.mjs. The package "eslint" lints with that parser, if it is installed`,
+    );
+    expect(exitCode).toBe(2);
+    expect((await lint(files, ["--allow-unsupported", "a.mjs", "b.mjs"])).exitCode).toBe(1);
+  },
+);
+
 // The rule here answers only where its text is that of the package, byte for byte. Where it cannot tell, the package's rule runs.
 test.concurrent("prettier/prettier: what the rule here cannot answer for, the rule of the package does", async () => {
   const theirs = `{ create: context => ({ VariableDeclaration(node) { context.report({ node, message: "theirs" }); } }) }`;

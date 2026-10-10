@@ -58,8 +58,24 @@ fn definitely_does_not_contain_global_flag(node: Expr) -> bool {
         .is_some_and(|value| !value.as_str().is_some_and(|flags| strings::contains_char(flags, b'g')))
 }
 
-impl PreferRegexpExec {
-    fn check<'a>(&self, call_node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for PreferRegexpExec {
+    const META: Meta = Meta::typescript("prefer-regexp-exec", Kind::Suggestion)
+        .fixable(Fixable::Code)
+        .presets(Presets::STYLISTIC_TYPE_CHECKED)
+        .requires_types();
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    /// Whether the value of a variable can have the global flag. All its references are looked at to find its value.
+    type State<'a> = FxHashMap<Symbol<'a>, bool>;
+
+    fn new(_: &Options) -> Self {
+        PreferRegexpExec
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<FxHashMap<Symbol<'a>, bool>> {
+        Some(FxHashMap::default())
+    }
+
+    fn expr<'a>(&self, call_node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Call(call) = call_node.kind() else {
             return;
         };
@@ -129,23 +145,5 @@ impl PreferRegexpExec {
                 },
             )
         });
-    }
-}
-
-impl Rule for PreferRegexpExec {
-    const META: Meta = Meta::typescript("prefer-regexp-exec", Kind::Suggestion)
-        .fixable(Fixable::Code)
-        .presets(Presets::STYLISTIC_TYPE_CHECKED)
-        .requires_types();
-    /// Whether the value of a variable can have the global flag. All its references are looked at to find its value.
-    type State<'a> = FxHashMap<Symbol<'a>, bool>;
-
-    fn new(_: &Options) -> Self {
-        PreferRegexpExec
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> FxHashMap<Symbol<'a>, bool> {
-        on.exprs([ExprTag::Call], Self::check);
-        FxHashMap::default()
     }
 }

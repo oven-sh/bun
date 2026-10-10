@@ -268,14 +268,31 @@ fn check_regex<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &Cx<'a, NoU
     }
 }
 
-impl NoUselessBackreference {
-    fn check_literal<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoUselessBackreference {
+    const META: Meta = Meta::eslint("no-useless-backreference", Kind::Problem).recommended();
+    const ON: On = On::new().exprs(&[ExprTag::Regex]).finish();
+    no_state!();
+
+    fn new(_: &Options) -> Self {
+        NoUselessBackreference
+    }
+
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new().exprs(&[ExprTag::Regex]);
+        // Finding the calls takes resolving every name of the file.
+        if file.mentions("RegExp") {
+            on = on.finish();
+        }
+        on
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let ExprKind::Regex(literal) = e.kind() {
             check_regex(e, literal.pattern(), literal.flags(), cx);
         }
     }
 
-    fn check_calls<'a>(&self, cx: &mut Cx<'a, Self>) {
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         let scope = Some(file.scope());
         for reference in ReferenceTracker::new(file).iterate_global_references(&TRACE_MAP) {
@@ -286,23 +303,6 @@ impl NoUselessBackreference {
             if let Some(pattern) = argument(0) {
                 check_regex(node, &pattern, argument(1).as_deref().unwrap_or_default(), cx);
             }
-        }
-    }
-}
-
-impl Rule for NoUselessBackreference {
-    const META: Meta = Meta::eslint("no-useless-backreference", Kind::Problem).recommended();
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        NoUselessBackreference
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        on.exprs([ExprTag::Regex], Self::check_literal);
-        // Finding the calls takes resolving every name of the file.
-        if file.mentions("RegExp") {
-            on.finish(Self::check_calls);
         }
     }
 }

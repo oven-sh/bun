@@ -185,21 +185,24 @@ impl Rule for AdjacentOverloadSignatures {
         .funcs()
         .classes()
         .finish();
-    /// Whether the file has a function declaration.
-    type State<'a> = bool;
+    no_state!();
 
     fn new(_: &Options) -> Self {
         AdjacentOverloadSignatures
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<bool> {
-        Some(file.has_stmts([StmtTag::Fn]))
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new().classes().stmts(&[StmtTag::Interface]).types(&[TypeTag::Object]);
+        match file.has_stmts([StmtTag::Fn]) {
+            true => on.stmts(&[StmtTag::Block, StmtTag::Module]).funcs().finish(),
+            false => on,
+        }
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         match statement.kind() {
-            StmtKind::Block(body) if cx.state => check_statements(body, cx),
-            StmtKind::Module(module) if cx.state => check_statements(module.body(), cx),
+            StmtKind::Block(body) => check_statements(body, cx),
+            StmtKind::Module(module) => check_statements(module.body(), cx),
             StmtKind::Interface(interface) => check_members(interface.members(), false, cx),
             _ => {}
         }
@@ -212,9 +215,6 @@ impl Rule for AdjacentOverloadSignatures {
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        if !cx.state {
-            return;
-        }
         if func.kind() != FnKind::StaticBlock
             && let Some(body) = func.body_statements()
         {
@@ -227,9 +227,6 @@ impl Rule for AdjacentOverloadSignatures {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        if !cx.state {
-            return;
-        }
         check_statements(cx.file().body(), cx);
     }
 }

@@ -50,79 +50,80 @@ fn report<'a>(statement: Stmt<'a>, cx: &mut Cx<'a, NoUnsafeFinally>) {
 
 impl Rule for NoUnsafeFinally {
     const META: Meta = Meta::eslint("no-unsafe-finally", Kind::Problem).recommended();
+    const ON: On =
+        On::new().stmts(&[StmtTag::Return, StmtTag::Throw, StmtTag::Break, StmtTag::Continue]).finish();
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoUnsafeFinally
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         if !file.has_stmts([StmtTag::Try]) {
-            return State::default();
+            return None;
         }
-        on.stmts(
-            [StmtTag::Return, StmtTag::Throw, StmtTag::Break, StmtTag::Continue],
-            |_, statement, cx| {
-                let is_oxlint = cx.language().is_oxlint;
-                let (label, stops_at_loops, stops_at_switch, left) = match statement.kind() {
-                    StmtKind::Break(None) => (None, true, true, &mut cx.state.left_by_break),
-                    // For oxlint a `continue` goes no further than the next loop, whatever its label is.
-                    StmtKind::Continue(label) if is_oxlint => (label, true, false, &mut cx.state.left_by_continue),
-                    StmtKind::Continue(None) => (None, true, false, &mut cx.state.left_by_continue),
-                    StmtKind::Break(label) | StmtKind::Continue(label) => (label, false, false, &mut cx.state.left),
-                    _ => (None, false, false, &mut cx.state.left),
-                };
-                let finalizer = left.find(Node::Stmt(statement), |at, parent| {
-                    leaves(at, parent, stops_at_loops, stops_at_switch)
-                });
-                match (finalizer.flatten(), label) {
-                    (None, _) => {}
-                    (Some(_), None) => report(statement, cx),
-                    (Some(finalizer), Some(label)) => cx.state.to_labels.push((statement, label, finalizer)),
-                }
-            },
-        );
-        // A jump to a label that is in the `finally` block too does not leave it.
-        on.finish(|_, cx| {
-            let mut jumps = std::mem::take(&mut cx.state.to_labels);
-            if jumps.is_empty() {
-                return;
-            }
-            utils::sort::sort_unstable_by_key(&mut jumps, |it| it.0.span().start);
-            let labeled = cx.file().stmts_of_kind(StmtTag::Labeled).filter_map(|it| match it.kind() {
-                StmtKind::Labeled { label, .. } => Some((it.span(), label)),
-                _ => None,
-            });
-            let mut labeled: Vec<(Span, Name<'a>)> = labeled.collect();
-            utils::sort::sort_unstable_by_key(&mut labeled, |it| it.0.start);
-            // One pass through the labeled statements and the jumps, in the order of the source: the labeled statements
-            // around the place, the outermost first, and where those of them with each label start.
-            let mut around: Vec<(Span, Name<'a>)> = Vec::new();
-            let mut with_label: FxHashMap<Name<'a>, Vec<u32>> = FxHashMap::default();
-            let mut rest = labeled.into_iter().peekable();
-            for (jump, name, finalizer) in jumps {
-                let at = jump.span().start;
-                loop {
-                    let next = rest.next_if(|it| it.0.start <= at);
-                    let place = next.map_or(at, |it| it.0.start);
-                    while let Some(&(_, ended)) = around.last().filter(|it| it.0.end <= place) {
-                        around.pop();
-                        if let Some(same) = with_label.get_mut(&ended) {
-                            same.pop();
-                        }
-                    }
-                    let Some((span, label)) = next else {
-                        break;
-                    };
-                    around.push((span, label));
-                    with_label.entry(label).or_default().push(span.start);
-                }
-                let target = with_label.get(&name).and_then(|it| it.last());
-                if target.is_none_or(|&start| start < finalizer.start) {
-                    report(jump, cx);
-                }
-            }
+        Some(State::default())
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let is_oxlint = cx.language().is_oxlint;
+        let (label, stops_at_loops, stops_at_switch, left) = match statement.kind() {
+            StmtKind::Break(None) => (None, true, true, &mut cx.state.left_by_break),
+            // For oxlint a `continue` goes no further than the next loop, whatever its label is.
+            StmtKind::Continue(label) if is_oxlint => (label, true, false, &mut cx.state.left_by_continue),
+            StmtKind::Continue(None) => (None, true, false, &mut cx.state.left_by_continue),
+            StmtKind::Break(label) | StmtKind::Continue(label) => (label, false, false, &mut cx.state.left),
+            _ => (None, false, false, &mut cx.state.left),
+        };
+        let finalizer = left.find(Node::Stmt(statement), |at, parent| {
+            leaves(at, parent, stops_at_loops, stops_at_switch)
         });
-        State::default()
+        match (finalizer.flatten(), label) {
+            (None, _) => {}
+            (Some(_), None) => report(statement, cx),
+            (Some(finalizer), Some(label)) => cx.state.to_labels.push((statement, label, finalizer)),
+        }
+    }
+
+    // A jump to a label that is in the `finally` block too does not leave it.
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+        let mut jumps = std::mem::take(&mut cx.state.to_labels);
+        if jumps.is_empty() {
+            return;
+        }
+        utils::sort::sort_unstable_by_key(&mut jumps, |it| it.0.span().start);
+        let labeled = cx.file().stmts_of_kind(StmtTag::Labeled).filter_map(|it| match it.kind() {
+            StmtKind::Labeled { label, .. } => Some((it.span(), label)),
+            _ => None,
+        });
+        let mut labeled: Vec<(Span, Name<'a>)> = labeled.collect();
+        utils::sort::sort_unstable_by_key(&mut labeled, |it| it.0.start);
+        // One pass through the labeled statements and the jumps, in the order of the source: the labeled statements
+        // around the place, the outermost first, and where those of them with each label start.
+        let mut around: Vec<(Span, Name<'a>)> = Vec::new();
+        let mut with_label: FxHashMap<Name<'a>, Vec<u32>> = FxHashMap::default();
+        let mut rest = labeled.into_iter().peekable();
+        for (jump, name, finalizer) in jumps {
+            let at = jump.span().start;
+            loop {
+                let next = rest.next_if(|it| it.0.start <= at);
+                let place = next.map_or(at, |it| it.0.start);
+                while let Some(&(_, ended)) = around.last().filter(|it| it.0.end <= place) {
+                    around.pop();
+                    if let Some(same) = with_label.get_mut(&ended) {
+                        same.pop();
+                    }
+                }
+                let Some((span, label)) = next else {
+                    break;
+                };
+                around.push((span, label));
+                with_label.entry(label).or_default().push(span.start);
+            }
+            let target = with_label.get(&name).and_then(|it| it.last());
+            if target.is_none_or(|&start| start < finalizer.start) {
+                report(jump, cx);
+            }
+        }
     }
 }

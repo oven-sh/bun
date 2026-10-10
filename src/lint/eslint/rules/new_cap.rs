@@ -184,10 +184,21 @@ impl Rule for NewCap {
         }
     }
 
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new();
+        if self.new_is_cap {
+            on = on.exprs(&[ExprTag::New]);
+        }
+        if self.cap_is_new {
+            on = on.exprs(&[ExprTag::Call]);
+        }
+        on
+    }
+
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.tag() {
-            ExprTag::New if self.new_is_cap => self.check_new(e, cx),
-            ExprTag::Call if self.cap_is_new => self.check_call(e, cx),
+            ExprTag::New => self.check_new(e, cx),
+            ExprTag::Call => self.check_call(e, cx),
             _ => {}
         }
     }

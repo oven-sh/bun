@@ -177,6 +177,14 @@ impl Rule for GroupedAccessorPairs {
         }
     }
 
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let on = On::new().exprs(&[ExprTag::Object]).classes();
+        match self.enforce_for_ts_types {
+            true => on.types(&[TypeTag::Object]).stmts(&[StmtTag::Interface]),
+            false => on,
+        }
+    }
+
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let ExprKind::Object(props) = e.kind() {
             self.check_list(
@@ -187,18 +195,12 @@ impl Rule for GroupedAccessorPairs {
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if !self.enforce_for_ts_types {
-            return;
-        }
         if let StmtKind::Interface(interface) = statement.kind() {
             self.check_signatures(interface.members(), cx);
         }
     }
 
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
-        if !self.enforce_for_ts_types {
-            return;
-        }
         if let TypeKind::Object(members) = ty.kind() {
             self.check_signatures(members, cx);
         }

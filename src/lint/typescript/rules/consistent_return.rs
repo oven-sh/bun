@@ -143,6 +143,10 @@ impl Rule for ConsistentReturn {
         }
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.language().is_oxlint { On::new().funcs() } else { On::new().funcs().finish() }
+    }
+
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !is_relevant(file) {
             return None;
@@ -159,9 +163,6 @@ impl Rule for ConsistentReturn {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        if cx.language().is_oxlint {
-            return;
-        }
         self.check(cx.file().into(), cx);
     }
 }

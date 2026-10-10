@@ -743,6 +743,39 @@ describe("bundler", () => {
     },
   });
 
+  // DeadCodeElimination took a read that nothing uses out of a `try`. Its block was then empty and could not throw, so the
+  // handler went too: another result for the first two, a panic for the third, and the fourth was not compiled.
+  itBundled("react-compiler/CaughtThrowIsNotDeadCode", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function Returns(props) { try { props.a.b; } catch (e) { return <b />; } return <div>{props.c}</div>; }
+        function Global(props) { try { notDefined; } catch (e) { return <b />; } return <div>{props.c}</div>; }
+        function Assigns(props) { let a = props.a; try { props.d.m; } catch (e) { a = props.x; } return <div>{a}</div>; }
+        function Joins(props) { let a; try { notDefined; a = props.o; } catch (e) {} return <div>{a}</div>; }
+        const rendered = [
+          Returns({ c: 1 }),
+          Returns({ c: 1, a: {} }),
+          Global({ c: 1 }),
+          Assigns({ a: 1, x: 2 }),
+          Assigns({ a: 1, x: 2, d: {} }),
+          Joins({ o: 1 }),
+        ];
+        console.log(rendered.map(it => it.t + " " + it.p.children).join(", "));
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "b undefined, div 1, b undefined, div 2, div 1, div undefined" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
   // Sibling of the above: `WAS_ORIGINALLY_TYPEOF_IDENTIFIER` was also dropped,
   // so the printer wrapped `typeof undeclared` as `typeof (0, undeclared)`,
   // which throws ReferenceError instead of returning "undefined" — breaking

@@ -35,31 +35,33 @@ impl Rule for PreferTsExpectError {
     const META: Meta = Meta::typescript("prefer-ts-expect-error", Kind::Problem)
         .fixable(Fixable::Code)
         .deprecated();
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferTsExpectError
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.comments().any(|it| strings::contains(it.text(), TS_IGNORE)) {
-            return;
-        }
-        on.finish(|_, cx| {
-            for comment in cx.file().comments() {
-                if !is_valid_ts_ignore_present(comment) {
-                    continue;
-                }
-                cx.report(comment, PREFER_EXPECT_ERROR_COMMENT).fix(|fixer| {
-                    let value = comment.comment_value();
-                    let at = strings::index_of(value, TS_IGNORE)?;
-                    let is_line_comment = comment.kind() == TokenKind::Line;
-                    let open: &[u8] = if is_line_comment { b"//" } else { b"/*" };
-                    let close: &[u8] = if is_line_comment { b"" } else { b"*/" };
-                    let after = &value[at + TS_IGNORE.len()..];
-                    Some(fixer.replace(comment, [open, &value[..at], b"@ts-expect-error", after, close].concat()))
-                });
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.comments()
+            .any(|it| strings::contains(it.text(), TS_IGNORE))
+            .then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        for comment in cx.file().comments() {
+            if !is_valid_ts_ignore_present(comment) {
+                continue;
             }
-        });
+            cx.report(comment, PREFER_EXPECT_ERROR_COMMENT).fix(|fixer| {
+                let value = comment.comment_value();
+                let at = strings::index_of(value, TS_IGNORE)?;
+                let is_line_comment = comment.kind() == TokenKind::Line;
+                let open: &[u8] = if is_line_comment { b"//" } else { b"/*" };
+                let close: &[u8] = if is_line_comment { b"" } else { b"*/" };
+                let after = &value[at + TS_IGNORE.len()..];
+                Some(fixer.replace(comment, [open, &value[..at], b"@ts-expect-error", after, close].concat()))
+            });
+        }
     }
 }

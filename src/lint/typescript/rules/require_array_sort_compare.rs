@@ -47,7 +47,8 @@ impl RequireArraySortCompare {
 
 impl Rule for RequireArraySortCompare {
     const META: Meta = Meta::typescript("require-array-sort-compare", Kind::Problem).requires_types();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         RequireArraySortCompare {
@@ -55,7 +56,7 @@ impl Rule for RequireArraySortCompare {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Call], Self::check);
+    fn expr<'a>(&self, expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(expr, cx);
     }
 }

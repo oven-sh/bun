@@ -2042,6 +2042,32 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
+  // As nodejs/node makes a selector of them, and as rules tell `import "ws"` from `import "fs"`.
+  test(
+    "the modules that are built in are those of Node.js, for a configuration file and for a rule",
+    async () => {
+      const { stdout, exitCode } = await lint(
+        {
+          "eslint.config.mjs": `
+          import own from "./plugin.mjs";
+          import { builtinModules, isBuiltin } from "node:module";
+          const said = ["fs", "undici", "ws", "bun", "bun:test"].map(it => +builtinModules.includes(it) + "" + +isBuiltin(it)).join();
+          export default [{ files: ["a.js"], plugins: { own }, settings: { said }, rules: { "own/says": "error" } }];`,
+          "plugin.mjs": `
+          import { builtinModules, isBuiltin } from "node:module";
+          const said = ["fs", "undici", "ws", "bun", "bun:test"].map(it => +builtinModules.includes(it) + "" + +isBuiltin(it)).join();
+          const says = { create: context => ({ Program: node => context.report({ node, message: context.settings.said + " " + said }) }) };
+          export default { rules: { says } };`,
+          "a.js": "1;\n",
+        },
+        ["-f", "unix", "a.js"],
+      );
+      expect(stdout).toContain("a.js:1:1: 11,00,00,00,00 11,00,00,00,00 [Error/own/says]");
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
   // As `merge(...tseslint.configs.recommended, other)` of lodash does.
   test(
     "a plugin that the configuration file has put into what a package exports",

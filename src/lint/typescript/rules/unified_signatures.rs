@@ -755,7 +755,8 @@ impl UnifiedSignatures {
 
 impl Rule for UnifiedSignatures {
     const META: Meta = Meta::typescript("unified-signatures", Kind::Suggestion).presets(Presets::STRICT);
-    type State<'a> = ();
+    const ON: On = On::new().classes().stmts(&[StmtTag::Interface, StmtTag::Module]).types(&[TypeTag::Object]).finish();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -765,30 +766,33 @@ impl Rule for UnifiedSignatures {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.classes(|rule, class, cx| {
-            if matches!(class.owner(), Node::Stmt(_)) {
-                let overloads = class.members().iter().filter_map(overload_of_member);
-                rule.check_scope(overloads, Some(class.type_params()), cx);
-            }
-        });
-        on.stmts([StmtTag::Interface, StmtTag::Module], |rule, statement, cx| match statement.kind() {
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        if matches!(class.owner(), Node::Stmt(_)) {
+            let overloads = class.members().iter().filter_map(overload_of_member);
+            self.check_scope(overloads, Some(class.type_params()), cx);
+        }
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match statement.kind() {
             StmtKind::Interface(interface) => {
                 let overloads = interface.members().iter().filter_map(overload_of_member);
-                rule.check_scope(overloads, Some(interface.type_params()), cx);
+                self.check_scope(overloads, Some(interface.type_params()), cx);
             }
             StmtKind::Module(module) => {
-                rule.check_scope(module.body().iter().filter_map(overload_of_statement), None, cx);
+                self.check_scope(module.body().iter().filter_map(overload_of_statement), None, cx);
             }
             _ => {}
-        });
-        on.types([TypeTag::Object], |rule, ty, cx| {
-            if let TypeKind::Object(members) = ty.kind() {
-                rule.check_scope(members.iter().filter_map(overload_of_member), None, cx);
-            }
-        });
-        on.finish(|rule, cx| {
-            rule.check_scope(cx.file().body().iter().filter_map(overload_of_statement), None, cx);
-        });
+        }
+    }
+
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        if let TypeKind::Object(members) = ty.kind() {
+            self.check_scope(members.iter().filter_map(overload_of_member), None, cx);
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        self.check_scope(cx.file().body().iter().filter_map(overload_of_statement), None, cx);
     }
 }

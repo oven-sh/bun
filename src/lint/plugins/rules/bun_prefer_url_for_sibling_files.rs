@@ -72,6 +72,11 @@ impl Rule for PreferUrlForSiblingFiles {
         PreferUrlForSiblingFiles
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new().exprs(&[ExprTag::Template]).binaries(&[BinOp::Add]);
+        if PATH.names.iter().any(|it| file.mentions(it)) { on.finish() } else { on }
+    }
+
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         // There is no `import.meta.url` in a script.
         if !file.is_module() || !["__dirname", "dirname", "dir"].iter().any(|it| file.mentions(it)) {
@@ -101,9 +106,6 @@ impl Rule for PreferUrlForSiblingFiles {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        if !PATH.names.iter().any(|it| cx.file().mentions(it)) {
-            return;
-        }
         for (e, _) in calls_of_modules(cx.file(), &PATH) {
             if let Some(arguments) = e.as_call().map(Call::args)
                 && arguments.len() > 1

@@ -246,13 +246,40 @@ impl Rule for Camelcase {
         }
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new()
+            .stmts(&[
+                StmtTag::Labeled,
+                StmtTag::Break,
+                StmtTag::Continue,
+                StmtTag::ExportStar,
+                StmtTag::Import,
+                StmtTag::ImportEquals,
+                StmtTag::ExportAsNamespace,
+            ])
+            .export_specs()
+            .import_specs()
+            .pats(&[PatTag::Ident])
+            .funcs()
+            .classes()
+            .exprs(&[ExprTag::Ident, ExprTag::Jsx])
+            .finish();
+        if self.checks_properties {
+            on = on.props().members().exprs(&[ExprTag::Dot]);
+        }
+        if !file.is_javascript() {
+            on = on.types(&[TypeTag::Ref, TypeTag::Predicate, TypeTag::Import]);
+        }
+        on
+    }
+
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State> {
         Some(State::default())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.tag() {
-            ExprTag::Dot if self.checks_properties => self.check_member_access(e, cx),
+            ExprTag::Dot => self.check_member_access(e, cx),
             ExprTag::Ident => {
                 if let Some(name) = e.as_ident() {
                     self.note_variable_name(name, cx);
@@ -302,9 +329,6 @@ impl Rule for Camelcase {
     /// The names in a type that are references, and the keys in `import("m", { with: { key: "" } })`,
     /// which ESLint has as an object literal.
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
-        if cx.file().is_javascript() {
-            return;
-        }
         match ty.kind() {
             TypeKind::Ref { name, .. } => {
                 if let Some(first) = name.first() {
@@ -347,9 +371,6 @@ impl Rule for Camelcase {
 
     /// The key of a method or a field of a class.
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
-        if !self.checks_properties {
-            return;
-        }
         let Some(key) = member.key() else {
             return;
         };
@@ -374,9 +395,6 @@ impl Rule for Camelcase {
 
     /// The key of a property of an object literal.
     fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
-        if !self.checks_properties {
-            return;
-        }
         let Some(key) = prop.key() else {
             return;
         };

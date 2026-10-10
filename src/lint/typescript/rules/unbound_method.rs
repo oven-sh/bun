@@ -570,6 +570,11 @@ impl Rule for UnboundMethod {
     const META: Meta = Meta::typescript("unbound-method", Kind::Problem)
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Dot, ExprTag::Index, ExprTag::Object])
+        .pats(&[PatTag::Object])
+        .classes()
+        .stmts(&[StmtTag::Interface]);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -578,16 +583,29 @@ impl Rule for UnboundMethod {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
-        on.exprs([ExprTag::Dot, ExprTag::Index], Self::check_member_expression);
-        on.pats([PatTag::Object], Self::check_binding_pattern);
-        on.exprs([ExprTag::Object], Self::check_assignment_target);
-        on.classes(|rule, class, cx| class.implements().iter().for_each(|it| rule.check_heritage(it, cx)));
-        on.stmts([StmtTag::Interface], |rule, statement, cx| {
-            if let StmtKind::Interface(interface) = statement.kind() {
-                interface.extends().iter().for_each(|it| rule.check_heritage(it, cx));
-            }
-        });
-        State::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match node.tag() {
+            ExprTag::Dot | ExprTag::Index => self.check_member_expression(node, cx),
+            ExprTag::Object => self.check_assignment_target(node, cx),
+            _ => {}
+        }
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if let StmtKind::Interface(interface) = statement.kind() {
+            interface.extends().iter().for_each(|it| self.check_heritage(it, cx));
+        }
+    }
+
+    fn pat<'a>(&self, node: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_binding_pattern(node, cx);
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        class.implements().iter().for_each(|it| self.check_heritage(it, cx));
     }
 }

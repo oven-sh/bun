@@ -148,13 +148,18 @@ impl Rule for RequireAwait {
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types()
         .extends_base_rule("require-await");
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Await])
+        .stmts(&[StmtTag::ForOf])
+        .var_decls()
+        .finish();
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         RequireAwait
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         let is_candidate = |func: &Func| {
             func.is_async()
                 && ast_utils::is_function_with_body(*func)
@@ -162,41 +167,47 @@ impl Rule for RequireAwait {
         };
         let candidates: Vec<Func<'a>> = file.funcs().filter(is_candidate).collect();
         if candidates.is_empty() {
-            return State::default();
+            return None;
         }
-        on.exprs([ExprTag::Await], |_, node, cx| mark_as_has_await(node.into(), cx));
-        on.stmts([StmtTag::ForOf], |_, node, cx| {
-            if matches!(node.kind(), StmtKind::ForOf { is_await: true, .. }) {
-                mark_as_has_await(node.into(), cx);
-            }
-        });
-        on.var_decls(|_, node, cx| {
-            if node.var_kind() == VarKind::AwaitUsing {
-                mark_as_has_await(node.into(), cx);
-            }
-        });
-        on.finish(|_, cx| {
-            for func in std::mem::take(&mut cx.state.candidates) {
-                if cx.state.with_await.contains(&func)
-                    || returns_thenable(func)
-                    || func.is_generator() && is_async_yield(func)
-                {
-                    continue;
-                }
-                let name = get_function_name_with_kind(func, false);
-                let place = match cx.language().is_oxlint {
-                    true => tsgolint_function_head_loc(func),
-                    false => get_function_head_loc(func),
-                };
-                cx.report(place, MISSING_AWAIT)
-                    .data("name", upper_case_first(&name).into_owned())
-                    .suggest(REMOVE_ASYNC, |fixer| remove_async(fixer, func));
-            }
-        });
-        State {
+        Some(State {
             candidates,
             with_await: FxHashSet::default(),
             functions: AncestorMemo::default(),
+        })
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        mark_as_has_await(node.into(), cx);
+    }
+
+    fn stmt<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if matches!(node.kind(), StmtKind::ForOf { is_await: true, .. }) {
+            mark_as_has_await(node.into(), cx);
+        }
+    }
+
+    fn var_decl<'a>(&self, node: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        if node.var_kind() == VarKind::AwaitUsing {
+            mark_as_has_await(node.into(), cx);
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        for func in std::mem::take(&mut cx.state.candidates) {
+            if cx.state.with_await.contains(&func)
+                || returns_thenable(func)
+                || func.is_generator() && is_async_yield(func)
+            {
+                continue;
+            }
+            let name = get_function_name_with_kind(func, false);
+            let place = match cx.language().is_oxlint {
+                true => tsgolint_function_head_loc(func),
+                false => get_function_head_loc(func),
+            };
+            cx.report(place, MISSING_AWAIT)
+                .data("name", upper_case_first(&name).into_owned())
+                .suggest(REMOVE_ASYNC, |fixer| remove_async(fixer, func));
         }
     }
 }

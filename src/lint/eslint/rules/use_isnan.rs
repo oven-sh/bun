@@ -201,6 +201,26 @@ impl Rule for UseIsnan {
         }
     }
 
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new().binaries(&[
+            BinOp::Lt,
+            BinOp::Le,
+            BinOp::Gt,
+            BinOp::Ge,
+            BinOp::EqEq,
+            BinOp::NotEq,
+            BinOp::EqEqEq,
+            BinOp::NotEqEq,
+        ]);
+        if self.enforce_for_switch_case {
+            on = on.stmts(&[StmtTag::Switch]);
+        }
+        if self.enforce_for_index_of {
+            on = on.exprs(&[ExprTag::Call]);
+        }
+        on
+    }
+
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("NaN") {
             return None;
@@ -213,16 +233,10 @@ impl Rule for UseIsnan {
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if !self.enforce_for_switch_case {
-            return;
-        }
         self.check_switch_statement(statement, cx);
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if !self.enforce_for_index_of {
-            return;
-        }
         self.check_call_expression(e, cx);
     }
 }

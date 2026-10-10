@@ -589,6 +589,44 @@ impl Rule for IdMatch {
         }
     }
 
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new()
+            .exprs(&[ExprTag::Ident, ExprTag::Dot, ExprTag::PrivateIdentifier])
+            .pats(&[PatTag::Ident])
+            .members()
+            .funcs()
+            .stmts(&[StmtTag::Import])
+            .import_specs();
+        if !self.ignores_destructuring {
+            on = on.pats(&[PatTag::Object]);
+        }
+        if self.checks_properties || !self.ignores_destructuring {
+            on = on.props();
+        }
+        if self.checks_properties || !self.only_declarations {
+            on = on.types(&[TypeTag::Ref, TypeTag::Import, TypeTag::Predicate, TypeTag::Tuple]);
+        }
+        if self.only_declarations {
+            return on;
+        }
+        on.classes()
+            .stmts(&[
+                StmtTag::Labeled,
+                StmtTag::Break,
+                StmtTag::Continue,
+                StmtTag::ExportStar,
+                StmtTag::Interface,
+                StmtTag::TypeAlias,
+                StmtTag::Enum,
+                StmtTag::Module,
+                StmtTag::ImportEquals,
+                StmtTag::ExportAsNamespace,
+            ])
+            .export_specs()
+            .type_params()
+            .enum_members()
+    }
+
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
         self.regex.is_some().then(State::default)
     }
@@ -617,21 +655,18 @@ impl Rule for IdMatch {
                     }
                 }
             }
-            _ if self.only_declarations => {}
             _ => self.check_statement(statement, cx),
         }
     }
 
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
-        if self.checks_properties || !self.only_declarations {
-            self.check_type(ty, cx);
-        }
+        self.check_type(ty, cx);
     }
 
     fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
         match pat.tag() {
             PatTag::Ident => self.check_binding(pat, cx),
-            PatTag::Object if !self.ignores_destructuring => self.check_keys_of_pattern(pat, cx),
+            PatTag::Object => self.check_keys_of_pattern(pat, cx),
             _ => {}
         }
     }
@@ -645,9 +680,6 @@ impl Rule for IdMatch {
     }
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
-        if self.only_declarations {
-            return;
-        }
         if let Some(name) = class.name() {
             self.check_name(name, cx);
         }
@@ -658,22 +690,14 @@ impl Rule for IdMatch {
     }
 
     fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
-        if self.checks_properties || !self.ignores_destructuring {
-            self.check_property(prop, cx);
-        }
+        self.check_property(prop, cx);
     }
 
     fn type_param<'a>(&self, param: TypeParam<'a>, cx: &mut Cx<'a, Self>) {
-        if self.only_declarations {
-            return;
-        }
         self.check_name(param.name(), cx);
     }
 
     fn enum_member<'a>(&self, member: EnumMember<'a>, cx: &mut Cx<'a, Self>) {
-        if self.only_declarations {
-            return;
-        }
         if let Some(key) = member.key() {
             self.check_key(key, cx);
         }
@@ -688,9 +712,6 @@ impl Rule for IdMatch {
     }
 
     fn export_spec<'a>(&self, specifier: ExportSpec<'a>, cx: &mut Cx<'a, Self>) {
-        if self.only_declarations {
-            return;
-        }
         match specifier.export().has_from() {
             true => self.check_name(specifier.local(), cx),
             false => self.check_referencing_name(specifier.local(), cx),

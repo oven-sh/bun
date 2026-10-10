@@ -275,14 +275,18 @@ impl Rule for PreferIncludes {
         .fixable(Fixable::Code)
         .presets(Presets::STYLISTIC_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Binary, ExprTag::Call]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         PreferIncludes
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Binary], Self::check_comparison);
-        on.exprs([ExprTag::Call], Self::check_test_call);
+    fn expr<'a>(&self, expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match expr.tag() {
+            ExprTag::Binary => self.check_comparison(expr, cx),
+            ExprTag::Call => self.check_test_call(expr, cx),
+            _ => {}
+        }
     }
 }

@@ -120,6 +120,15 @@ impl Rule for DotNotation {
         }
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new().exprs(&[ExprTag::Index]);
+        if !self.base.checks_keywords() {
+            return on;
+        }
+        let on = on.exprs(&[ExprTag::Dot]);
+        if file.is_javascript() { on } else { on.classes().stmts(&[StmtTag::Interface]) }
+    }
+
     fn start<'a>(&self, file: &'a File<'a>) -> Option<bool> {
         Some(
             self.allow_index_signature_property_access
@@ -133,20 +142,12 @@ impl Rule for DotNotation {
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match node.tag() {
             ExprTag::Index => self.check_computed(node, cx),
-            ExprTag::Dot => {
-                if !self.base.checks_keywords() {
-                    return;
-                }
-                self.base.check_member_expression(node, cx);
-            }
+            ExprTag::Dot => self.base.check_member_expression(node, cx),
             _ => {}
         }
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if !self.base.checks_keywords() || cx.file().is_javascript() {
-            return;
-        }
         if let StmtKind::Interface(interface) = statement.kind() {
             for ty in interface.extends() {
                 self.base.check_heritage(ty, cx);
@@ -155,9 +156,6 @@ impl Rule for DotNotation {
     }
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
-        if !self.base.checks_keywords() || cx.file().is_javascript() {
-            return;
-        }
         for ty in class.implements() {
             self.base.check_heritage(ty, cx);
         }

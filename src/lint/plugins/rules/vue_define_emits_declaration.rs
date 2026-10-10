@@ -19,6 +19,7 @@ const HAS_TYPE_CALL: Message = Message::new("", "Use new type literal declaratio
 
 impl Rule for DefineEmitsDeclaration {
     const META: Meta = Meta::oxlint(Plugin::Vue, "define-emits-declaration", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -29,36 +30,38 @@ impl Rule for DefineEmitsDeclaration {
         })
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !is_vue_setup(file) || file.is_javascript() || !file.mentions("defineEmits") {
-            return;
+            return None;
         }
-        on.exprs([ExprTag::Call], |rule, e, cx| {
-            let Some(call_expr) = e.as_call().filter(|it| is_specific_id(it.callee(), "defineEmits")) else {
-                return;
-            };
-            match rule.0 {
-                DeclarationStyle::Runtime => {
-                    if !call_expr.type_args().is_empty() {
-                        cx.report(e, HAS_TYPE_ARG);
-                    }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call_expr) = e.as_call().filter(|it| is_specific_id(it.callee(), "defineEmits")) else {
+            return;
+        };
+        match self.0 {
+            DeclarationStyle::Runtime => {
+                if !call_expr.type_args().is_empty() {
+                    cx.report(e, HAS_TYPE_ARG);
                 }
-                _ if !call_expr.args().is_empty() => drop(cx.report(e, HAS_ARG)),
-                DeclarationStyle::TypeBased => {}
-                DeclarationStyle::TypeLiteral => {
-                    for param in call_expr.type_args().iter().filter(|it| !it.is_parenthesized()) {
-                        match param.kind() {
-                            TypeKind::Object(members) => {
-                                for member in members.iter().filter(|it| it.kind() != MemberKind::Property) {
-                                    cx.report(member, HAS_TYPE_CALL);
-                                }
+            }
+            _ if !call_expr.args().is_empty() => drop(cx.report(e, HAS_ARG)),
+            DeclarationStyle::TypeBased => {}
+            DeclarationStyle::TypeLiteral => {
+                for param in call_expr.type_args().iter().filter(|it| !it.is_parenthesized()) {
+                    match param.kind() {
+                        TypeKind::Object(members) => {
+                            for member in members.iter().filter(|it| it.kind() != MemberKind::Property) {
+                                cx.report(member, HAS_TYPE_CALL);
                             }
-                            TypeKind::Fn(func) if func.kind() == FnKind::FunctionType => drop(cx.report(param, HAS_TYPE_CALL)),
-                            _ => {}
                         }
+                        TypeKind::Fn(func) if func.kind() == FnKind::FunctionType => drop(cx.report(param, HAS_TYPE_CALL)),
+                        _ => {}
                     }
                 }
             }
-        });
+        }
     }
 }

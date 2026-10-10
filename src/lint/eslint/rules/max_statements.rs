@@ -123,6 +123,10 @@ impl Rule for MaxStatements {
         }
     }
 
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        if self.ignore_top_level_functions { On::new().funcs().finish() } else { On::new().funcs() }
+    }
+
     fn start<'a>(&self, _: &'a File<'a>) -> Option<TopLevelFunctions<'a>> {
         Some(TopLevelFunctions::default())
     }
@@ -151,9 +155,6 @@ impl Rule for MaxStatements {
 
     /// A single top level function is taken for the wrapper of a module.
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        if !self.ignore_top_level_functions {
-            return;
-        }
         let Some(max) = self.max else {
             return;
         };

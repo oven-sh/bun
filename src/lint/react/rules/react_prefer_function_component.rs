@@ -19,6 +19,7 @@ pub struct State<'a> {
 
 impl Rule for PreferFunctionComponent {
     const META: Meta = Meta::oxlint(Plugin::React, "prefer-function-component", Kind::Suggestion);
+    const ON: On = On::new().classes();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -29,20 +30,21 @@ impl Rule for PreferFunctionComponent {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if !is_jsx(file) || !file.has_classes() {
-            return State { functions_with_jsx: None };
+            return None;
         }
-        on.classes(|rule, class, cx| {
-            if !is_es6_component(Node::Class(class))
-                && !cx.state.functions_with_jsx.as_ref().is_some_and(|it| class_body_contains_jsx(class, it))
-                || rule.allow_error_boundary && is_error_boundary(class)
-            {
-                return;
-            }
-            cx.report(class.name().map_or_else(|| class.estree_span(), Ident::span), PREFER_FUNCTION_COMPONENT);
-        });
-        State { functions_with_jsx: (!self.allow_jsx_utility_class).then(|| FunctionsWithJsx::new(file)) }
+        Some(State { functions_with_jsx: (!self.allow_jsx_utility_class).then(|| FunctionsWithJsx::new(file)) })
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        if !is_es6_component(Node::Class(class))
+            && !cx.state.functions_with_jsx.as_ref().is_some_and(|it| class_body_contains_jsx(class, it))
+            || self.allow_error_boundary && is_error_boundary(class)
+        {
+            return;
+        }
+        cx.report(class.name().map_or_else(|| class.estree_span(), Ident::span), PREFER_FUNCTION_COMPONENT);
     }
 }
 

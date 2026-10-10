@@ -21,8 +21,16 @@ fn is_declared(decl: VarDecl<'_>) -> bool {
             }))
 }
 
-impl NoUnassignedVars {
-    fn check<'a>(&self, decl: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoUnassignedVars {
+    const META: Meta = Meta::eslint("no-unassigned-vars", Kind::Problem).recommended();
+    const ON: On = On::new().var_decls();
+    no_state!();
+
+    fn new(_: &Options) -> Self {
+        NoUnassignedVars
+    }
+
+    fn var_decl<'a>(&self, decl: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
         if decl.init().is_some() || decl.var_kind() == VarKind::Const {
             return;
         }
@@ -42,18 +50,5 @@ impl NoUnassignedVars {
             let place = if cx.language().is_oxlint { decl.pat().span() } else { decl.span() };
             cx.report(place, UNASSIGNED).data("name", name);
         }
-    }
-}
-
-impl Rule for NoUnassignedVars {
-    const META: Meta = Meta::eslint("no-unassigned-vars", Kind::Problem).recommended();
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        NoUnassignedVars
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.var_decls(Self::check);
     }
 }

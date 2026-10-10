@@ -31,7 +31,8 @@ fn is_init_or_update_of_for(e: Expr<'_>) -> bool {
 
 impl Rule for NoSequences {
     const META: Meta = Meta::eslint("no-sequences", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Binary]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         NoSequences {
@@ -39,28 +40,26 @@ impl Rule for NoSequences {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Binary], |rule, e, cx| {
-            if !utils::is_sequence_root(e)
-                || is_init_or_update_of_for(e)
-                || (rule.allow_in_parentheses && e.parens().len() >= parentheses_needed(e))
-            {
-                return;
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if !utils::is_sequence_root(e)
+            || is_init_or_update_of_for(e)
+            || (self.allow_in_parentheses && e.parens().len() >= parentheses_needed(e))
+        {
+            return;
+        }
+        let sequence = e.sequence();
+        let Some(first) = sequence.first() else {
+            return;
+        };
+        let after_first = first.outer_span().end;
+        // oxlint points at all that is between the first two.
+        let place = match sequence.get(1).filter(|_| cx.language().is_oxlint) {
+            Some(second) => first.outer_span().between(second.outer_span()),
+            None => {
+                let comma = skip_trivia(cx.text(), after_first);
+                Span::new(comma, comma + 1)
             }
-            let sequence = e.sequence();
-            let Some(first) = sequence.first() else {
-                return;
-            };
-            let after_first = first.outer_span().end;
-            // oxlint points at all that is between the first two.
-            let place = match sequence.get(1).filter(|_| cx.language().is_oxlint) {
-                Some(second) => first.outer_span().between(second.outer_span()),
-                None => {
-                    let comma = skip_trivia(cx.text(), after_first);
-                    Span::new(comma, comma + 1)
-                }
-            };
-            cx.report(place, UNEXPECTED_COMMA_EXPRESSION);
-        });
+        };
+        cx.report(place, UNEXPECTED_COMMA_EXPRESSION);
     }
 }

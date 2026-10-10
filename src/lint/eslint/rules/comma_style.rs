@@ -284,51 +284,54 @@ impl Rule for CommaStyle {
         }
     }
 
-    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let exceptions = &self.exceptions;
-        let is_checked = match e.tag() {
-            ExprTag::Array => !exceptions.array_expression || !exceptions.array_pattern,
-            ExprTag::Object => !exceptions.object_expression || !exceptions.object_pattern,
-            ExprTag::Call => !exceptions.call_expression,
-            ExprTag::New => !exceptions.new_expression,
-            _ => false,
-        };
-        if is_checked {
-            self.check_expr(e, cx);
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let (exceptions, mut on) = (&self.exceptions, On::new());
+        if !exceptions.array_expression || !exceptions.array_pattern {
+            on = on.exprs(&[ExprTag::Array]);
         }
-    }
-
-    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        let exceptions = &self.exceptions;
-        let is_checked = match statement.tag() {
-            StmtTag::Var => !exceptions.variable_declaration,
-            StmtTag::Import => !exceptions.import_declaration,
-            _ => false,
-        };
-        if is_checked {
-            self.check_stmt(statement, cx);
+        if !exceptions.object_expression || !exceptions.object_pattern {
+            on = on.exprs(&[ExprTag::Object]);
         }
-    }
-
-    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
-        let exceptions = &self.exceptions;
-        let is_checked = match pat.tag() {
-            PatTag::Array => !exceptions.array_pattern,
-            PatTag::Object => !exceptions.object_pattern,
-            _ => false,
-        };
-        if is_checked {
-            self.check_pat(pat, cx);
+        if !exceptions.call_expression {
+            on = on.exprs(&[ExprTag::Call]);
         }
-    }
-
-    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        let exceptions = &self.exceptions;
+        if !exceptions.new_expression {
+            on = on.exprs(&[ExprTag::New]);
+        }
+        if !exceptions.array_pattern {
+            on = on.pats(&[PatTag::Array]);
+        }
+        if !exceptions.object_pattern {
+            on = on.pats(&[PatTag::Object]);
+        }
         if !exceptions.function_declaration
             || !exceptions.function_expression
             || !exceptions.arrow_function_expression
         {
-            self.check_func(func, cx);
+            on = on.funcs();
         }
+        if !exceptions.variable_declaration {
+            on = on.stmts(&[StmtTag::Var]);
+        }
+        if !exceptions.import_declaration {
+            on = on.stmts(&[StmtTag::Import]);
+        }
+        on
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_expr(e, cx);
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_stmt(statement, cx);
+    }
+
+    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_pat(pat, cx);
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_func(func, cx);
     }
 }

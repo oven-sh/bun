@@ -214,6 +214,13 @@ impl Rule for ClassLiteralPropertyStyle {
         }
     }
 
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        match self.prefers_getters {
+            true => On::new().exprs(&[ExprTag::This]).members().finish(),
+            false => On::new().members(),
+        }
+    }
+
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         if !file.has_classes() {
             return None;
@@ -222,9 +229,6 @@ impl Rule for ClassLiteralPropertyStyle {
     }
 
     fn expr<'a>(&self, this: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if !self.prefers_getters {
-            return;
-        }
         self.check_this(this, cx);
     }
 
@@ -237,9 +241,6 @@ impl Rule for ClassLiteralPropertyStyle {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        if !self.prefers_getters {
-            return;
-        }
         self.check_properties(cx);
     }
 }

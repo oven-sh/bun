@@ -161,7 +161,8 @@ impl Rule for PromiseFunctionAsync {
     const META: Meta = Meta::typescript("promise-function-async", Kind::Suggestion)
         .fixable(Fixable::Code)
         .requires_types();
-    type State<'a> = ();
+    const ON: On = On::new().funcs();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -178,7 +179,7 @@ impl Rule for PromiseFunctionAsync {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.funcs(Self::check);
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(func, cx);
     }
 }

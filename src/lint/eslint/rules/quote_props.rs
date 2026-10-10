@@ -234,10 +234,15 @@ impl Rule for QuoteProps {
         }
     }
 
-    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if !matches!(self.mode, Mode::Consistent | Mode::ConsistentAsNeeded) {
-            return;
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let on = On::new().types(&[TypeTag::Import]);
+        match self.mode {
+            Mode::Consistent | Mode::ConsistentAsNeeded => on.exprs(&[ExprTag::Object]),
+            _ => on.props().pats(&[PatTag::Object]),
         }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let ExprKind::Object(properties) = e.kind() {
             self.check_consistency_of(properties, Some(e), cx);
         }
@@ -270,9 +275,6 @@ impl Rule for QuoteProps {
     }
 
     fn pat<'a>(&self, pattern: Pat<'a>, cx: &mut Cx<'a, Self>) {
-        if matches!(self.mode, Mode::Consistent | Mode::ConsistentAsNeeded) {
-            return;
-        }
         let PatKind::Object(properties) = pattern.kind() else {
             return;
         };
@@ -286,9 +288,6 @@ impl Rule for QuoteProps {
     }
 
     fn prop<'a>(&self, property: Prop<'a>, cx: &mut Cx<'a, Self>) {
-        if matches!(self.mode, Mode::Consistent | Mode::ConsistentAsNeeded) {
-            return;
-        }
         self.check_prop(property, false, cx);
     }
 }

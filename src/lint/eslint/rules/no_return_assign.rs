@@ -11,8 +11,24 @@ const RETURN_ASSIGNMENT: Message =
 const ARROW_ASSIGNMENT: Message =
     Message::new("arrowAssignment", "Arrow function should not return assignment.");
 
-impl NoReturnAssign {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoReturnAssign {
+    const META: Meta = Meta::eslint("no-return-assign", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Assign]);
+    /// The `return` statement or the arrow function that an expression is returned by, with whether it
+    /// is an arrow function.
+    type State<'a> = AncestorMemo<'a, Option<(Span, bool)>>;
+
+    fn new(options: &Options) -> Self {
+        NoReturnAssign {
+            is_always: options.str(0).is_some_and(|mode| mode != "except-parens"),
+        }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(AncestorMemo::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         // Nothing above a statement, a function or a class can be a `return` or an arrow function
         // without one of ESLint's sentinels in between.
         let found = cx.state.find(Node::Expr(e), |child, parent| match parent {
@@ -48,23 +64,5 @@ impl NoReturnAssign {
                 }
             });
         }
-    }
-}
-
-impl Rule for NoReturnAssign {
-    const META: Meta = Meta::eslint("no-return-assign", Kind::Suggestion);
-    /// The `return` statement or the arrow function that an expression is returned by, with whether it
-    /// is an arrow function.
-    type State<'a> = AncestorMemo<'a, Option<(Span, bool)>>;
-
-    fn new(options: &Options) -> Self {
-        NoReturnAssign {
-            is_always: options.str(0).is_some_and(|mode| mode != "except-parens"),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        on.exprs([ExprTag::Assign], Self::check);
-        AncestorMemo::default()
     }
 }

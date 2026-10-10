@@ -95,62 +95,62 @@ fn is_index_only_used_with_array<'a>(body: Stmt<'a>, index_var: Symbol<'a>, arra
     })
 }
 
-fn check<'a>(_: &PreferForOf, stmt: Stmt<'a>, cx: &mut Cx<'a, PreferForOf>) {
-    let StmtKind::For {
-        init: Some(init),
-        test: Some(test),
-        update: Some(update),
-        body,
-    } = stmt.kind()
-    else {
-        return;
-    };
-    let StmtKind::Var(declarations) = init.kind() else {
-        return;
-    };
-    let Some(declarator) = declarations.first() else {
-        return;
-    };
-    if declarations.len() != 1
-        || declarator.var_kind() == VarKind::Const
-        || !declarator.init().is_some_and(|init| is_literal(init, 0.0))
-    {
-        return;
-    }
-    let Some(index_name) = declarator.pat().as_ident() else {
-        return;
-    };
-    let Some(array) = is_less_than_length_expression(test, index_name) else {
-        return;
-    };
-    let is_oxlint = cx.language().is_oxlint;
-    if !is_increment(update, index_name) {
-        return;
-    }
-    let Some(index_var) = declarator.pat().symbol() else {
-        return;
-    };
-    if is_oxlint && !oxlint_looks_at(array, index_var) {
-        return;
-    }
-    if is_index_only_used_with_array(body, index_var, array, &mut cx.state) {
-        // oxlint points at what is between the parentheses.
-        let place = if is_oxlint { Span::new(init.span().start, update.span().end) } else { stmt.span() };
-        cx.report(place, PREFER_FOR_OF);
-    }
-}
-
 impl Rule for PreferForOf {
     const META: Meta =
         Meta::typescript("prefer-for-of", Kind::Suggestion).presets(Presets::STYLISTIC);
+    const ON: On = On::new().stmts(&[StmtTag::For]);
     type State<'a> = References<'a>;
 
     fn new(_: &Options) -> Self {
         PreferForOf
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> References<'a> {
-        on.stmts([StmtTag::For], check);
-        References::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<References<'a>> {
+        Some(References::default())
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::For {
+            init: Some(init),
+            test: Some(test),
+            update: Some(update),
+            body,
+        } = stmt.kind()
+        else {
+            return;
+        };
+        let StmtKind::Var(declarations) = init.kind() else {
+            return;
+        };
+        let Some(declarator) = declarations.first() else {
+            return;
+        };
+        if declarations.len() != 1
+            || declarator.var_kind() == VarKind::Const
+            || !declarator.init().is_some_and(|init| is_literal(init, 0.0))
+        {
+            return;
+        }
+        let Some(index_name) = declarator.pat().as_ident() else {
+            return;
+        };
+        let Some(array) = is_less_than_length_expression(test, index_name) else {
+            return;
+        };
+        let is_oxlint = cx.language().is_oxlint;
+        if !is_increment(update, index_name) {
+            return;
+        }
+        let Some(index_var) = declarator.pat().symbol() else {
+            return;
+        };
+        if is_oxlint && !oxlint_looks_at(array, index_var) {
+            return;
+        }
+        if is_index_only_used_with_array(body, index_var, array, &mut cx.state) {
+            // oxlint points at what is between the parentheses.
+            let place = if is_oxlint { Span::new(init.span().start, update.span().end) } else { stmt.span() };
+            cx.report(place, PREFER_FOR_OF);
+        }
     }
 }

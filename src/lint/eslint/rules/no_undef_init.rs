@@ -8,8 +8,16 @@ const UNNECESSARY_UNDEFINED_INIT: Message = Message::new(
     "It's not necessary to initialize '{{name}}' to undefined.",
 );
 
-impl NoUndefInit {
-    fn check<'a>(&self, decl: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoUndefInit {
+    const META: Meta = Meta::eslint("no-undef-init", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().var_decls();
+    no_state!();
+
+    fn new(_: &Options) -> Self {
+        NoUndefInit
+    }
+
+    fn var_decl<'a>(&self, decl: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
         let Some(init) = decl.init() else {
             return;
         };
@@ -30,18 +38,5 @@ impl NoUndefInit {
             }
             Some(fixer.remove(Span::new(id.end, decl.span().end)))
         });
-    }
-}
-
-impl Rule for NoUndefInit {
-    const META: Meta = Meta::eslint("no-undef-init", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        NoUndefInit
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.var_decls(Self::check);
     }
 }

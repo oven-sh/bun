@@ -31,8 +31,22 @@ fn are_on_same_line<'a>(file: &'a File<'a>, first: Prop<'a>, last: Prop<'a>) -> 
         })
 }
 
-impl ObjectPropertyNewline {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for ObjectPropertyNewline {
+    const META: Meta = Meta::eslint("object-property-newline", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new().exprs(&[ExprTag::Object]);
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let object = options.object(0);
+        ObjectPropertyNewline {
+            allow_same_line: object.bool_or("allowAllPropertiesOnSameLine", false)
+                || object.bool_or("allowMultiplePropertiesPerLine", false),
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Object(properties) = e.kind() else {
             return;
         };
@@ -71,24 +85,5 @@ impl ObjectPropertyNewline {
                 strings::is_all_js_whitespace(file.slice(after_comma)).then(|| fixer.replace(after_comma, "\n"))
             });
         }
-    }
-}
-
-impl Rule for ObjectPropertyNewline {
-    const META: Meta = Meta::eslint("object-property-newline", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let object = options.object(0);
-        ObjectPropertyNewline {
-            allow_same_line: object.bool_or("allowAllPropertiesOnSameLine", false)
-                || object.bool_or("allowMultiplePropertiesPerLine", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Object], Self::check);
     }
 }

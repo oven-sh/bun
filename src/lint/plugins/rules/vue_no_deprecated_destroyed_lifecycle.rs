@@ -10,25 +10,28 @@ const NO_DEPRECATED_DESTROYED_LIFECYCLE: Message =
 
 impl Rule for NoDeprecatedDestroyedLifecycle {
     const META: Meta = Meta::oxlint(Plugin::Vue, "no-deprecated-destroyed-lifecycle", Kind::Problem).fixable(Fixable::Code);
+    const ON: On = On::new().stmts(&[StmtTag::ExportDefault]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoDeprecatedDestroyedLifecycle
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions_any(&["beforeDestroy", "destroyed"]) {
-            return;
+            return None;
         }
-        on.stmts([StmtTag::ExportDefault], |_, stmt, cx| {
-            let call = match stmt.kind() {
-                StmtKind::ExportDefault(e) if !e.is_parenthesized() && !e.is_chain_root() => e.as_call(),
-                _ => None,
-            };
-            if let Some(properties) = exported_object(stmt).or_else(|| call.and_then(define_component_object)) {
-                check_object_properties(properties, cx);
-            }
-        });
+        Some(())
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let call = match stmt.kind() {
+            StmtKind::ExportDefault(e) if !e.is_parenthesized() && !e.is_chain_root() => e.as_call(),
+            _ => None,
+        };
+        if let Some(properties) = exported_object(stmt).or_else(|| call.and_then(define_component_object)) {
+            check_object_properties(properties, cx);
+        }
     }
 }
 

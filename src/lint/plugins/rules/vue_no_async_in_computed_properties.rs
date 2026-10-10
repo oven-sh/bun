@@ -25,6 +25,7 @@ const TIMED_FUNCTIONS: [&str; 4] = ["setTimeout", "setInterval", "setImmediate",
 
 impl Rule for NoAsyncInComputedProperties {
     const META: Meta = Meta::oxlint(Plugin::Vue, "no-async-in-computed-properties", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Await, ExprTag::New, ExprTag::Call]).funcs();
     type State<'a> = EnclosingFunctions<'a>;
 
     fn new(options: &Options) -> Self {
@@ -32,29 +33,29 @@ impl Rule for NoAsyncInComputedProperties {
         NoAsyncInComputedProperties { ignored_object_names: names.iter().map(|it| it.as_bytes().into()).collect() }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if is_vue_file(file) && file.mentions("computed") {
-            on.funcs(|_, func, cx| {
-                if func.is_async()
-                    && let Some(context) = get_computed_getter_context(func)
-                {
-                    report(func.estree_span(), context, ASYNC_FUNCTION, cx);
-                }
-            });
-            on.exprs([ExprTag::Await, ExprTag::New, ExprTag::Call], |rule, e, cx| {
-                let kind = match e.kind() {
-                    ExprKind::Await(_) => AWAIT,
-                    ExprKind::New(new_expr) if is_specific_id(new_expr.callee(), "Promise") => NEW_PROMISE,
-                    ExprKind::Call(call) if rule.is_promise_method_call(call) || is_next_tick_call(call) => ASYNCHRONOUS,
-                    ExprKind::Call(call) if is_timed_function_call(call) => TIMED,
-                    _ => return,
-                };
-                if let Some(context) = find_computed_context(e, &mut cx.state) {
-                    report(e.span(), context, kind, cx);
-                }
-            });
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        (is_vue_file(file) && file.mentions("computed")).then(EnclosingFunctions::default)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let kind = match e.kind() {
+            ExprKind::Await(_) => AWAIT,
+            ExprKind::New(new_expr) if is_specific_id(new_expr.callee(), "Promise") => NEW_PROMISE,
+            ExprKind::Call(call) if self.is_promise_method_call(call) || is_next_tick_call(call) => ASYNCHRONOUS,
+            ExprKind::Call(call) if is_timed_function_call(call) => TIMED,
+            _ => return,
+        };
+        if let Some(context) = find_computed_context(e, &mut cx.state) {
+            report(e.span(), context, kind, cx);
         }
-        EnclosingFunctions::default()
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if func.is_async()
+            && let Some(context) = get_computed_getter_context(func)
+        {
+            report(func.estree_span(), context, ASYNC_FUNCTION, cx);
+        }
     }
 }
 

@@ -116,7 +116,12 @@ impl Rule for ObjectCurlyNewline {
     const META: Meta = Meta::eslint("object-curly-newline", Kind::Layout)
         .fixable(Fixable::Whitespace)
         .deprecated();
-    type State<'a> = ();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Object])
+        .types(&[TypeTag::Import])
+        .pats(&[PatTag::Object])
+        .stmts(&[StmtTag::Import, StmtTag::ExportNamed]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -138,48 +143,49 @@ impl Rule for ObjectCurlyNewline {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Object], |rule, e, cx| {
-            let ExprKind::Object(props) = e.kind() else {
-                return;
-            };
-            let options = match utils::is_assignment_target(e) {
-                true => rule.object_pattern,
-                false => rule.object_expression,
-            };
-            check(cx, options, e.span(), props.len(), None);
-        });
-        // ESLint has `{ with: { type: "json" } }` in `import("m", { with: { type: "json" } })` as two
-        // object literals.
-        on.types([TypeTag::Import], |rule, ty, cx| {
-            if let Some(attributes) = ty.import_attributes() {
-                check(cx, rule.object_expression, attributes.options_span(), 1, None);
-                check(cx, rule.object_expression, attributes.braces_span(), attributes.entries().len(), None);
-            }
-        });
-        on.pats([PatTag::Object], |rule, pat, cx| {
-            let PatKind::Object(props) = pat.kind() else {
-                return;
-            };
-            let ty = match pat.parent() {
-                // That of `...{ a }: T` belongs to the `RestElement`.
-                Node::Param(param) if !param.is_rest() => param.ty(),
-                Node::VarDecl(declaration) => declaration.ty(),
-                _ => None,
-            };
-            let annotation = ty.map(TypeNode::annotation_span);
-            let node = Span::new(pat.span().start, annotation.map_or_else(|| pat.span().end, |it| it.start));
-            check(cx, rule.object_pattern, node, props.len(), annotation);
-        });
-        on.stmts([StmtTag::Import, StmtTag::ExportNamed], |rule, statement, cx| {
-            let (options, count) = match statement.kind() {
-                StmtKind::Import(import) => (rule.import_declaration, import.named().len()),
-                StmtKind::ExportNamed(export) => (rule.export_declaration, export.items().len()),
-                _ => return,
-            };
-            if count > 0 {
-                check(cx, options, statement.span(), count, None);
-            }
-        });
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Object(props) = e.kind() else {
+            return;
+        };
+        let options = match utils::is_assignment_target(e) {
+            true => self.object_pattern,
+            false => self.object_expression,
+        };
+        check(cx, options, e.span(), props.len(), None);
+    }
+
+    // ESLint has `{ with: { type: "json" } }` in `import("m", { with: { type: "json" } })` as two
+    // object literals.
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(attributes) = ty.import_attributes() {
+            check(cx, self.object_expression, attributes.options_span(), 1, None);
+            check(cx, self.object_expression, attributes.braces_span(), attributes.entries().len(), None);
+        }
+    }
+
+    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        let PatKind::Object(props) = pat.kind() else {
+            return;
+        };
+        let ty = match pat.parent() {
+            // That of `...{ a }: T` belongs to the `RestElement`.
+            Node::Param(param) if !param.is_rest() => param.ty(),
+            Node::VarDecl(declaration) => declaration.ty(),
+            _ => None,
+        };
+        let annotation = ty.map(TypeNode::annotation_span);
+        let node = Span::new(pat.span().start, annotation.map_or_else(|| pat.span().end, |it| it.start));
+        check(cx, self.object_pattern, node, props.len(), annotation);
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let (options, count) = match statement.kind() {
+            StmtKind::Import(import) => (self.import_declaration, import.named().len()),
+            StmtKind::ExportNamed(export) => (self.export_declaration, export.items().len()),
+            _ => return,
+        };
+        if count > 0 {
+            check(cx, options, statement.span(), count, None);
+        }
     }
 }

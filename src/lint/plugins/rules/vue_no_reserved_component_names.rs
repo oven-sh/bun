@@ -25,6 +25,7 @@ const RESERVED_IN_VUE3: Message = Message::new("", "Name \"{{name}}\" is reserve
 
 impl Rule for NoReservedComponentNames {
     const META: Meta = Meta::oxlint(Plugin::Vue, "no-reserved-component-names", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Object, ExprTag::Call]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -36,21 +37,31 @@ impl Rule for NoReservedComponentNames {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !is_vue_file(file) {
-            return;
-        }
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
         if file.mentions_any(&["name", "components"]) {
-            on.exprs([ExprTag::Object], |rule, e, cx| {
+            on = on.exprs(&[ExprTag::Object]);
+        }
+        if file.mentions_any(&["component", "defineOptions"]) {
+            on = on.exprs(&[ExprTag::Call]);
+        }
+        on
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        is_vue_file(file).then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Object => {
                 if let ExprKind::Object(properties) = e.kind()
                     && is_vue_component_options_object_excluding_instance(e)
                 {
-                    rule.check_options_object(properties, cx);
+                    self.check_options_object(properties, cx);
                 }
-            });
-        }
-        if file.mentions_any(&["component", "defineOptions"]) {
-            on.exprs([ExprTag::Call], |rule, e, cx| {
+            }
+            ExprTag::Call => {
                 let Some(call) = e.as_call() else {
                     return;
                 };
@@ -58,12 +69,13 @@ impl Rule for NoReservedComponentNames {
                 let is_component = get_member_expr(call.callee()).and_then(static_property_name).is_some_and(|it| it.is("component"));
                 if is_component && call.args().len() == 2 {
                     // Not `get_inner_expression`.
-                    rule.check_name_expression(first.filter(|it| !it.is_parenthesized()), cx);
+                    self.check_name_expression(first.filter(|it| !it.is_parenthesized()), cx);
                 } else if is_specific_id(call.callee(), "defineOptions") {
                     let name_prop = first.and_then(as_inner_object_expression).and_then(|it| find_property(it, "name"));
-                    rule.check_name_expression(name_prop.and_then(Prop::value).map(get_inner_expression), cx);
+                    self.check_name_expression(name_prop.and_then(Prop::value).map(get_inner_expression), cx);
                 }
-            });
+            }
+            _ => {}
         }
     }
 }

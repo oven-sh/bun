@@ -82,6 +82,10 @@ impl Rule for ConsistentTypeDefinitions {
         }
     }
 
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        On::new().stmts(&[if self.prefers_type { StmtTag::Interface } else { StmtTag::TypeAlias }])
+    }
+
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         if self.prefers_type {
             let StmtKind::Interface(interface) = statement.kind() else {

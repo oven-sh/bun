@@ -176,7 +176,8 @@ impl Rule for SortTypeConstituents {
         .fixable(Fixable::Code)
         .has_suggestions()
         .deprecated();
-    type State<'a> = ();
+    const ON: On = On::new().types(&[TypeTag::Intersection, TypeTag::Union]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -207,12 +208,18 @@ impl Rule for SortTypeConstituents {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new();
         if self.checks_intersections {
-            on.types([TypeTag::Intersection], Self::check);
+            on = on.types(&[TypeTag::Intersection]);
         }
         if self.checks_unions {
-            on.types([TypeTag::Union], Self::check);
+            on = on.types(&[TypeTag::Union]);
         }
+        on
+    }
+
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(ty, cx);
     }
 }

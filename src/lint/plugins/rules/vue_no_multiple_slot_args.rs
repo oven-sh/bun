@@ -17,49 +17,50 @@ pub struct State<'a>(OnceCell<FxHashMap<Name<'a>, Vec<(u32, Expr<'a>)>>>);
 
 impl Rule for NoMultipleSlotArgs {
     const META: Meta = Meta::oxlint(Plugin::Vue, "no-multiple-slot-args", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoMultipleSlotArgs
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         if is_vue_file(file) && !is_vue_setup(file) && file.mentions_any(&["$slots", "$scopedSlots"]) {
-            on.exprs([ExprTag::Call], check);
+            return Some(State(OnceCell::new()));
         }
-        State(OnceCell::new())
+        None
     }
-}
 
-fn check<'a>(_: &NoMultipleSlotArgs, e: Expr<'a>, cx: &mut Cx<'a, NoMultipleSlotArgs>) {
-    let Some(call_expr) = e.as_call().filter(|it| !it.args().is_empty()) else {
-        return;
-    };
-    // `this.$slots.name(..)`, where `this.$slots.name` and `this` can be variables.
-    let callee = get_inner_expression(call_expr.callee());
-    let member_expr = match callee.tag() {
-        ExprTag::Ident => get_identifier_resolved_reference(callee, cx).filter(|it| !it.is_chain_root()),
-        _ => Some(callee),
-    };
-    let Some(ExprKind::Dot { obj, .. }) = member_expr.filter(|it| !it.is_private_member()).map(Expr::kind) else {
-        return;
-    };
-    let ExprKind::Dot { obj: this, name, .. } = get_inner_expression(obj).kind() else {
-        return;
-    };
-    let this = get_inner_expression(this);
-    let is_this = match this.tag() {
-        ExprTag::This => true,
-        ExprTag::Ident => get_identifier_resolved_reference(this, cx).is_some_and(|it| it.tag() == ExprTag::This),
-        _ => false,
-    };
-    if !is_this || !name.name().is_any(&["$slots", "$scopedSlots"]) {
-        return;
-    }
-    match (call_expr.args().first(), call_expr.args().get(1)) {
-        (_, Some(second)) => drop(cx.report(second.outer_span(), MULTIPLE_ARGUMENTS)),
-        (Some(first), None) if first.tag() == ExprTag::Spread => drop(cx.report(first, SPREAD_ARGUMENT)),
-        _ => {}
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call_expr) = e.as_call().filter(|it| !it.args().is_empty()) else {
+            return;
+        };
+        // `this.$slots.name(..)`, where `this.$slots.name` and `this` can be variables.
+        let callee = get_inner_expression(call_expr.callee());
+        let member_expr = match callee.tag() {
+            ExprTag::Ident => get_identifier_resolved_reference(callee, cx).filter(|it| !it.is_chain_root()),
+            _ => Some(callee),
+        };
+        let Some(ExprKind::Dot { obj, .. }) = member_expr.filter(|it| !it.is_private_member()).map(Expr::kind) else {
+            return;
+        };
+        let ExprKind::Dot { obj: this, name, .. } = get_inner_expression(obj).kind() else {
+            return;
+        };
+        let this = get_inner_expression(this);
+        let is_this = match this.tag() {
+            ExprTag::This => true,
+            ExprTag::Ident => get_identifier_resolved_reference(this, cx).is_some_and(|it| it.tag() == ExprTag::This),
+            _ => false,
+        };
+        if !is_this || !name.name().is_any(&["$slots", "$scopedSlots"]) {
+            return;
+        }
+        match (call_expr.args().first(), call_expr.args().get(1)) {
+            (_, Some(second)) => drop(cx.report(second.outer_span(), MULTIPLE_ARGUMENTS)),
+            (Some(first), None) if first.tag() == ExprTag::Spread => drop(cx.report(first, SPREAD_ARGUMENT)),
+            _ => {}
+        }
     }
 }
 

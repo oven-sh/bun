@@ -159,14 +159,18 @@ impl Rule for MaxDepth {
         }
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        match file.language().eslint_major < 10 {
+            true => On::new().enter(WALKED).exit(WALKED),
+            false => On::new().stmts(STATEMENTS),
+        }
+    }
+
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
         Some(State::default())
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if cx.language().eslint_major < 10 {
-            return;
-        }
         let (Some(max), Some(keyword)) = (self.max, keyword_of(stmt)) else {
             return;
         };
@@ -187,9 +191,6 @@ impl Rule for MaxDepth {
     }
 
     fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        if cx.language().eslint_major >= 10 {
-            return;
-        }
         match node {
             Node::File(_) | Node::Func(_) => cx.state.depths.push(0),
             _ => self.enter_before_10(node, cx),
@@ -197,9 +198,6 @@ impl Rule for MaxDepth {
     }
 
     fn exit<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        if cx.language().eslint_major >= 10 {
-            return;
-        }
         match node {
             Node::File(_) | Node::Func(_) => {
                 cx.state.depths.pop();

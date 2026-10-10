@@ -21,8 +21,22 @@ fn trailing_blank_len(line: &[u8]) -> usize {
     }
 }
 
-impl NoTrailingSpaces {
-    fn check(&self, cx: &mut Cx<'_, Self>) {
+impl Rule for NoTrailingSpaces {
+    const META: Meta = Meta::eslint("no-trailing-spaces", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new().finish();
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let options = options.object(0);
+        NoTrailingSpaces {
+            skip_blank_lines: options.bool_or("skipBlankLines", false),
+            ignore_comments: options.bool_or("ignoreComments", false),
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
         let (file, text) = (cx.file(), cx.text());
         let mut has_backtick = None;
         let mut line_start = if file.has_bom() { 3 } else { 0 };
@@ -53,24 +67,5 @@ impl NoTrailingSpaces {
                 None => return,
             }
         }
-    }
-}
-
-impl Rule for NoTrailingSpaces {
-    const META: Meta = Meta::eslint("no-trailing-spaces", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let options = options.object(0);
-        NoTrailingSpaces {
-            skip_blank_lines: options.bool_or("skipBlankLines", false),
-            ignore_comments: options.bool_or("ignoreComments", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.finish(Self::check);
     }
 }

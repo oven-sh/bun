@@ -15,58 +15,61 @@ const TYPE_ARGS: Message = Message::new("", "`defineOptions()` cannot accept typ
 
 impl Rule for ValidDefineOptions {
     const META: Meta = Meta::oxlint(Plugin::Vue, "valid-define-options", Kind::Problem);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         ValidDefineOptions
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !is_vue_file(file) || !is_vue_setup(file) || !file.mentions("defineOptions") {
-            return;
+            return None;
         }
-        on.finish(|_, cx| {
-            let calls = calls_of(cx.file(), "defineOptions");
-            // The identifiers of the file that are the names of what it declares, in the order of the source. With where that is.
-            let mut identifiers: Vec<(Expr, Option<Span>)> = Vec::new();
-            if !calls.is_empty() {
-                let all = cx.file().exprs_of_kind(ExprTag::Ident).filter(|it| !it.is_in_type_query());
-                identifiers.extend(all.filter_map(|it| Some((it, name_span_of_local_declaration(it)?))));
-                utils::sort::sort_unstable_by_key(&mut identifiers, |it| it.0.span().start);
+        Some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let calls = calls_of(cx.file(), "defineOptions");
+        // The identifiers of the file that are the names of what it declares, in the order of the source. With where that is.
+        let mut identifiers: Vec<(Expr, Option<Span>)> = Vec::new();
+        if !calls.is_empty() {
+            let all = cx.file().exprs_of_kind(ExprTag::Ident).filter(|it| !it.is_in_type_query());
+            identifiers.extend(all.filter_map(|it| Some((it, name_span_of_local_declaration(it)?))));
+            utils::sort::sort_unstable_by_key(&mut identifiers, |it| it.0.span().start);
+        }
+        for (call_expr, call) in &calls {
+            if calls.len() > 1 {
+                cx.report(call_expr, MULTIPLE);
             }
-            for (call_expr, call) in &calls {
-                if calls.len() > 1 {
-                    cx.report(call_expr, MULTIPLE);
-                }
-                if let Some(type_args) = call.type_args().angle_brackets_span() {
-                    cx.report(type_args, TYPE_ARGS);
-                }
-                let Some(first_arg_expr) = call.args().first().filter(|it| it.tag() != ExprTag::Spread) else {
-                    cx.report(call_expr, NOT_DEFINED);
-                    continue;
+            if let Some(type_args) = call.type_args().angle_brackets_span() {
+                cx.report(type_args, TYPE_ARGS);
+            }
+            let Some(first_arg_expr) = call.args().first().filter(|it| it.tag() != ExprTag::Spread) else {
+                cx.report(call_expr, NOT_DEFINED);
+                continue;
+            };
+            for name in as_object_expression(first_arg_expr).into_iter().flat_map(object_properties).filter_map(key_name) {
+                let instead_macro = match name.bytes() {
+                    b"props" => "defineProps",
+                    b"emits" => "defineEmits",
+                    b"expose" => "defineExpose",
+                    b"slots" => "defineSlots",
+                    _ => continue,
                 };
-                for name in as_object_expression(first_arg_expr).into_iter().flat_map(object_properties).filter_map(key_name) {
-                    let instead_macro = match name.bytes() {
-                        b"props" => "defineProps",
-                        b"emits" => "defineEmits",
-                        b"expose" => "defineExpose",
-                        b"slots" => "defineSlots",
-                        _ => continue,
-                    };
-                    cx.report(call_expr, DISALLOW_PROP).data("prop_name", name).data("instead_macro", instead_macro);
+                cx.report(call_expr, DISALLOW_PROP).data("prop_name", name).data("instead_macro", instead_macro);
+            }
+            let options_span = first_arg_expr.outer_span();
+            let inside = identifiers.iter().skip(identifiers.partition_point(|it| it.0.span().start < options_span.start));
+            for (ident, declared_at) in inside.take_while(|it| it.0.span().start < options_span.end) {
+                if cx.has_reported_too_much() {
+                    break;
                 }
-                let options_span = first_arg_expr.outer_span();
-                let inside = identifiers.iter().skip(identifiers.partition_point(|it| it.0.span().start < options_span.start));
-                for (ident, declared_at) in inside.take_while(|it| it.0.span().start < options_span.end) {
-                    if cx.has_reported_too_much() {
-                        break;
-                    }
-                    if !declared_at.is_some_and(|it| options_span.contains(it)) {
-                        cx.report(ident, REFERENCING_LOCALLY);
-                    }
+                if !declared_at.is_some_and(|it| options_span.contains(it)) {
+                    cx.report(ident, REFERENCING_LOCALLY);
                 }
             }
-        });
+        }
     }
 }
 

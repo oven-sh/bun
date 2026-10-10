@@ -17,6 +17,7 @@ const SELF_CLOSING_COMP: Message = Message::new("", "Unnecessary closing tag");
 
 impl Rule for SelfClosingComp {
     const META: Meta = Meta::oxlint(Plugin::React, "self-closing-comp", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -24,30 +25,31 @@ impl Rule for SelfClosingComp {
         SelfClosingComp { component: options.bool_or("component", true), html: options.bool_or("html", true) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !is_jsx(file) {
+            return None;
+        }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx) = as_jsx_element(e) else {
+            return;
+        };
+        let Some(closing) = jsx.closing_span() else {
+            return;
+        };
+        // Nothing but blanks with a line break in them is between the tags.
+        let between = cx.slice(jsx.opening_span().between(closing));
+        if !between.is_empty()
+            && !(strings::is_all_unicode_whitespace(between) && strings::contains_char(between, b'\n'))
+        {
             return;
         }
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            let Some(jsx) = as_jsx_element(e) else {
-                return;
-            };
-            let Some(closing) = jsx.closing_span() else {
-                return;
-            };
-            // Nothing but blanks with a line break in them is between the tags.
-            let between = cx.slice(jsx.opening_span().between(closing));
-            if !between.is_empty()
-                && !(strings::is_all_unicode_whitespace(between) && strings::contains_char(between, b'\n'))
-            {
-                return;
-            }
-            let is_dom_comp =
-                get_identifier_name(jsx).is_some_and(|tag_name| contains_name(&HTML_TAG, tag_name.bytes()));
-            if if is_dom_comp { rule.html } else { rule.component } {
-                cx.report(closing, SELF_CLOSING_COMP)
-                    .fix(|fixer| fixer.replace(Span::new(jsx.opening_span().end - 1, closing.end), " />"));
-            }
-        });
+        let is_dom_comp = get_identifier_name(jsx).is_some_and(|tag_name| contains_name(&HTML_TAG, tag_name.bytes()));
+        if if is_dom_comp { self.html } else { self.component } {
+            cx.report(closing, SELF_CLOSING_COMP)
+                .fix(|fixer| fixer.replace(Span::new(jsx.opening_span().end - 1, closing.end), " />"));
+        }
     }
 }

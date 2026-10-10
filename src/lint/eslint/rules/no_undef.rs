@@ -17,7 +17,8 @@ fn has_typeof_operator(reference: Reference) -> bool {
 
 impl Rule for NoUndef {
     const META: Meta = Meta::eslint("no-undef", Kind::Problem).recommended();
-    type State<'a> = ();
+    const ON: On = On::new().finish();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         NoUndef {
@@ -25,19 +26,17 @@ impl Rule for NoUndef {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.finish(|rule, cx| {
-            // oxlint says nothing about a name that can be that of a type.
-            let is_oxlint = cx.language().is_oxlint;
-            for reference in cx.file().unresolved_references() {
-                if reference.global().is_some()
-                    || is_oxlint && reference.is_type()
-                    || !rule.considers_typeof && has_typeof_operator(reference)
-                {
-                    continue;
-                }
-                cx.report(reference, UNDEF).data("name", reference.name());
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        // oxlint says nothing about a name that can be that of a type.
+        let is_oxlint = cx.language().is_oxlint;
+        for reference in cx.file().unresolved_references() {
+            if reference.global().is_some()
+                || is_oxlint && reference.is_type()
+                || !self.considers_typeof && has_typeof_operator(reference)
+            {
+                continue;
             }
-        });
+            cx.report(reference, UNDEF).data("name", reference.name());
+        }
     }
 }

@@ -26,25 +26,24 @@ fn is_setter(func: Func, is_oxlint: bool) -> bool {
 
 impl Rule for NoSetterReturn {
     const META: Meta = Meta::eslint("no-setter-return", Kind::Problem).recommended();
-    type State<'a> = ();
+    const ON: On = On::new().funcs();
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoSetterReturn
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.funcs(|_, func, cx| {
-            if !func.has_body() || !is_setter(func, cx.language().is_oxlint) {
-                return;
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if !func.has_body() || !is_setter(func, cx.language().is_oxlint) {
+            return;
+        }
+        if let FnBody::Expr(body) = func.body() {
+            cx.report(body, RETURNS_VALUE);
+        }
+        for statement in func.returns() {
+            if let StmtKind::Return(Some(_)) = statement.kind() {
+                cx.report(statement, RETURNS_VALUE);
             }
-            if let FnBody::Expr(body) = func.body() {
-                cx.report(body, RETURNS_VALUE);
-            }
-            for statement in func.returns() {
-                if let StmtKind::Return(Some(_)) = statement.kind() {
-                    cx.report(statement, RETURNS_VALUE);
-                }
-            }
-        });
+        }
     }
 }

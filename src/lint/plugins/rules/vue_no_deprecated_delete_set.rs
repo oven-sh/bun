@@ -11,6 +11,7 @@ const NO_DEPRECATED_DELETE_SET: Message = Message::new("", "`$delete` and `$set`
 
 impl Rule for NoDeprecatedDeleteSet {
     const META: Meta = Meta::oxlint(Plugin::Vue, "no-deprecated-delete-set", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     /// That something is in a component.
     type State<'a> = AncestorMemo<'a, ()>;
 
@@ -18,31 +19,30 @@ impl Rule for NoDeprecatedDeleteSet {
         NoDeprecatedDeleteSet
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if is_vue_file(file) && file.mentions_any(&["set", "delete", "del", "$set", "$delete"]) {
-            on.exprs([ExprTag::Call], |_, e, cx| {
-                let Some(callee) = e.callee().map(get_inner_expression) else {
-                    return;
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        (is_vue_file(file) && file.mentions_any(&["set", "delete", "del", "$set", "$delete"])).then(AncestorMemo::default)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(callee) = e.callee().map(get_inner_expression) else {
+            return;
+        };
+        match callee.kind() {
+            ExprKind::Dot { obj, name, .. } if !callee.is_private_member() => {
+                let is_deprecated = match name.bytes() {
+                    b"set" | b"delete" => is_vue_global_or_default_import(get_inner_expression(obj)),
+                    b"$set" | b"$delete" => is_this_object(obj) && is_in_vue_component(e, &mut cx.state),
+                    _ => false,
                 };
-                match callee.kind() {
-                    ExprKind::Dot { obj, name, .. } if !callee.is_private_member() => {
-                        let is_deprecated = match name.bytes() {
-                            b"set" | b"delete" => is_vue_global_or_default_import(get_inner_expression(obj)),
-                            b"$set" | b"$delete" => is_this_object(obj) && is_in_vue_component(e, &mut cx.state),
-                            _ => false,
-                        };
-                        if is_deprecated {
-                            cx.report(name, NO_DEPRECATED_DELETE_SET);
-                        }
-                    }
-                    ExprKind::Ident(_) if is_import_symbol(callee, "vue", "set") || is_import_symbol(callee, "vue", "del") => {
-                        cx.report(callee, NO_DEPRECATED_DELETE_SET);
-                    }
-                    _ => {}
+                if is_deprecated {
+                    cx.report(name, NO_DEPRECATED_DELETE_SET);
                 }
-            });
+            }
+            ExprKind::Ident(_) if is_import_symbol(callee, "vue", "set") || is_import_symbol(callee, "vue", "del") => {
+                cx.report(callee, NO_DEPRECATED_DELETE_SET);
+            }
+            _ => {}
         }
-        AncestorMemo::default()
     }
 }
 

@@ -147,6 +147,14 @@ impl Rule for ArrayElementNewline {
         }
     }
 
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new().exprs(&[ExprTag::Array]);
+        if self.pattern.is_some() {
+            on = on.pats(&[PatTag::Array]);
+        }
+        on
+    }
+
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Array(elements) = e.kind() else {
             return;
@@ -163,9 +171,6 @@ impl Rule for ArrayElementNewline {
     }
 
     fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
-        if self.pattern.is_none() {
-            return;
-        }
         let (PatKind::Array(elements), Some(config)) = (pat.kind(), self.pattern) else {
             return;
         };

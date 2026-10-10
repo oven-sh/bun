@@ -73,23 +73,29 @@ impl Rule for RelatedGetterSetterPairs {
     const META: Meta = Meta::typescript("related-getter-setter-pairs", Kind::Problem)
         .presets(Presets::STRICT_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    const ON: On = On::new()
+        .classes()
+        .stmts(&[StmtTag::Interface])
+        .types(&[TypeTag::Object]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         RelatedGetterSetterPairs
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.classes(|_, class, cx| Self::check(class.members(), cx));
-        on.stmts([StmtTag::Interface], |_, stmt, cx| {
-            if let StmtKind::Interface(interface) = stmt.kind() {
-                Self::check(interface.members(), cx);
-            }
-        });
-        on.types([TypeTag::Object], |_, ty, cx| {
-            if let TypeKind::Object(members) = ty.kind() {
-                Self::check(members, cx);
-            }
-        });
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        Self::check(class.members(), cx);
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if let StmtKind::Interface(interface) = stmt.kind() {
+            Self::check(interface.members(), cx);
+        }
+    }
+
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        if let TypeKind::Object(members) = ty.kind() {
+            Self::check(members, cx);
+        }
     }
 }

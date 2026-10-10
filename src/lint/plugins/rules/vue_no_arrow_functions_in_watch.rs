@@ -14,28 +14,38 @@ const NO_ARROW_FUNCTIONS_IN_WATCH: Message = Message::new("", "You should not us
 
 impl Rule for NoArrowFunctionsInWatch {
     const META: Meta = Meta::oxlint(Plugin::Vue, "no-arrow-functions-in-watch", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Call]).stmts(&[StmtTag::ExportDefault]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoArrowFunctionsInWatch
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("watch") || is_vue_setup(file) {
-            return;
-        }
-        on.stmts([StmtTag::ExportDefault], |_, stmt, cx| {
-            for prop in exported_object(stmt).and_then(get_watch_object_expression).into_iter().flat_map(object_properties) {
-                handle_watch_value(prop.value(), cx);
-            }
-        });
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new().stmts(&[StmtTag::ExportDefault]);
         if file.mentions("defineComponent") {
-            on.exprs([ExprTag::Call], |_, e, cx| {
-                let object = e.as_call().filter(|it| it.args().len() == 1).and_then(define_component_object);
-                for prop in object.and_then(get_watch_object_expression).into_iter().flat_map(object_properties) {
-                    handle_watch_inner_property(prop, cx);
-                }
-            });
+            on = on.exprs(&[ExprTag::Call]);
+        }
+        on
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        if !file.mentions("watch") || is_vue_setup(file) {
+            return None;
+        }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let object = e.as_call().filter(|it| it.args().len() == 1).and_then(define_component_object);
+        for prop in object.and_then(get_watch_object_expression).into_iter().flat_map(object_properties) {
+            handle_watch_inner_property(prop, cx);
+        }
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        for prop in exported_object(stmt).and_then(get_watch_object_expression).into_iter().flat_map(object_properties) {
+            handle_watch_value(prop.value(), cx);
         }
     }
 }

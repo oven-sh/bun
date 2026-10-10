@@ -18,8 +18,19 @@ fn is_array_type(ty: Type) -> bool {
     })
 }
 
-impl PreferReduceTypeParameter {
-    fn check<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for PreferReduceTypeParameter {
+    const META: Meta = Meta::typescript("prefer-reduce-type-parameter", Kind::Problem)
+        .fixable(Fixable::Code)
+        .presets(Presets::STRICT_TYPE_CHECKED)
+        .requires_types();
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    no_state!();
+
+    fn new(_: &Options) -> Self {
+        PreferReduceTypeParameter
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Call(call) = node.kind() else {
             return;
         };
@@ -80,21 +91,5 @@ impl PreferReduceTypeParameter {
             }
             fixes
         });
-    }
-}
-
-impl Rule for PreferReduceTypeParameter {
-    const META: Meta = Meta::typescript("prefer-reduce-type-parameter", Kind::Problem)
-        .fixable(Fixable::Code)
-        .presets(Presets::STRICT_TYPE_CHECKED)
-        .requires_types();
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        PreferReduceTypeParameter
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Call], Self::check);
     }
 }

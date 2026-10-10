@@ -55,27 +55,26 @@ fn is_in_tail_call_position(e: Expr) -> bool {
 
 impl Rule for NoReturnAwait {
     const META: Meta = Meta::eslint("no-return-await", Kind::Suggestion).has_suggestions().deprecated();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Await]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoReturnAwait
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Await], |_, e, cx| {
-            if !is_in_tail_call_position(e) || has_error_handler(e.into()) {
-                return;
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if !is_in_tail_call_position(e) || has_error_handler(e.into()) {
+            return;
+        }
+        cx.report(e, REDUNDANT_USE_OF_AWAIT).suggest(REMOVE_AWAIT, |fixer| {
+            let file = fixer.file();
+            let start = e.span().start;
+            let end = start + "await".len() as u32;
+            if !file.is_on_same_line(start, skip_trivia(file.text(), end)) {
+                return None;
             }
-            cx.report(e, REDUNDANT_USE_OF_AWAIT).suggest(REMOVE_AWAIT, |fixer| {
-                let file = fixer.file();
-                let start = e.span().start;
-                let end = start + "await".len() as u32;
-                if !file.is_on_same_line(start, skip_trivia(file.text(), end)) {
-                    return None;
-                }
-                let space = u32::from(file.text().get(end as usize) == Some(&b' '));
-                Some(fixer.remove(Span::new(start, end + space)))
-            });
+            let space = u32::from(file.text().get(end as usize) == Some(&b' '));
+            Some(fixer.remove(Span::new(start, end + space)))
         });
     }
 }

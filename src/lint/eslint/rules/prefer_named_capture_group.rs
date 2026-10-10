@@ -144,14 +144,15 @@ impl<'t> Utf16Cursor<'t> {
 impl Rule for PreferNamedCaptureGroup {
     const META: Meta = Meta::eslint("prefer-named-capture-group", Kind::Suggestion).has_suggestions();
     const ON: On = On::new().exprs(&[ExprTag::Regex]).finish();
-    type State<'a> = ();
+    no_state!();
 
     fn new(_: &Options) -> Self {
         PreferNamedCaptureGroup
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.has_exprs([ExprTag::Regex, ExprTag::Call, ExprTag::New]).then_some(())
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new().exprs(&[ExprTag::Regex]);
+        if file.has_exprs([ExprTag::Call, ExprTag::New]) { on.finish() } else { on }
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -161,9 +162,6 @@ impl Rule for PreferNamedCaptureGroup {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        if !cx.has_exprs([ExprTag::Call, ExprTag::New]) {
-            return;
-        }
         for reference in ReferenceTracker::new(cx.file()).iterate_global_references(&TRACE_MAP) {
             let (Some(node), Some(call)) = (reference.expr(), reference.call()) else {
                 continue;

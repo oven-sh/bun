@@ -536,8 +536,16 @@ async function lint(entry: Entry, run: Run) {
     });
     const pluginReport = report(it.stdout);
     const judged = pluginReport ? compare(pluginReport, b) : null;
+    // How often the hook has answered for each plugin, over all threads: a judge that was not asked is no judge.
+    const answered: Record<string, number> = {};
+    for (const [, line] of read(it.stderr).matchAll(/^latest-plugin: (\{.*\})$/gm)) {
+      for (const [name, count] of Object.entries(JSON.parse(line) as Record<string, number>)) {
+        answered[name] = (answered[name] ?? 0) + count;
+      }
+    }
     plugin = {
       versions: PLUGIN_JUDGE,
+      answered,
       ...summary(it),
       comparison: judged && cut(judged),
       verdict: !pluginReport ? "cannot run: theirs" : verdictOf(judged!, it.code),

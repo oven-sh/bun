@@ -57,6 +57,8 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) out_of_stack: &'c Guarded<Vec<Vec<u8>>>,
     /// The files that fixes would have left with a syntax error, each with the rules whose fixes are not applied for that.
     pub(crate) broken_fixes: &'c Guarded<Vec<(Vec<u8>, Vec<RuleId>)>>,
+    /// The files and blocks that [may be misread](may_be_misread), with nobody there to read them.
+    pub(crate) unread: &'c Guarded<Vec<Vec<u8>>>,
     /// Why files were [handed back](LintResult::handed_back), and how many for each reason.
     pub(crate) handed_back: &'c Guarded<Vec<(Reason, usize)>>,
     /// What oxlint says about the configuration files of TypeScript for which there is no program, so that no rule that
@@ -308,24 +310,7 @@ impl Context<'_, '_> {
     }
 
     /// The same for a block that a processor has found in a file, whose path is the first `physical_path_len` bytes of `path`.
-    /// `without_fixes`: ESLint's `disableFixes`.
-    pub(crate) fn verify_block_natively(
-        &self,
-        path: &[u8],
-        physical_path_len: usize,
-        text: &[u8],
-        config: &ResolvedConfig,
-        without_fixes: bool,
-    ) -> LintResult {
-        let how = How {
-            without_fixes,
-            physical_path_len: Some(physical_path_len),
-            ..How::default()
-        };
-        self.verify_as(path, text, config, &how)
-    }
-
-    /// The same. `None`: it [may be misread](may_be_misread), and no rule has run.
+    /// `without_fixes`: ESLint's `disableFixes`. `None`: it [may be misread](may_be_misread), and no rule has run.
     pub(crate) fn verify_block_if_read(
         &self,
         path: &[u8],

@@ -14,31 +14,46 @@ const REQUIRE_PROP_TYPE_CONSTRUCTOR: Message = Message::new("", "The \"{{prop_na
 
 impl Rule for RequirePropTypeConstructor {
     const META: Meta = Meta::oxlint(Plugin::Vue, "require-prop-type-constructor", Kind::Problem).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Object, ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         RequirePropTypeConstructor
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !is_vue_file(file) {
-            return;
-        }
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
         if file.mentions("props") {
-            on.exprs([ExprTag::Object], |_, e, cx| {
+            on = on.exprs(&[ExprTag::Object]);
+        }
+        if is_vue_setup(file) && file.mentions("defineProps") {
+            on = on.exprs(&[ExprTag::Call]);
+        }
+        on
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        if !is_vue_file(file) {
+            return None;
+        }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Object => {
                 if let ExprKind::Object(properties) = e.kind()
                     && is_vue_component_options_object_excluding_instance(e)
                 {
                     verify_props(find_property(properties, "props").and_then(Prop::value), cx);
                 }
-            });
-        }
-        if is_vue_setup(file) && file.mentions("defineProps") {
-            on.exprs([ExprTag::Call], |_, e, cx| {
+            }
+            ExprTag::Call => {
                 if let Some(call) = e.as_call().filter(|it| is_specific_id(it.callee(), "defineProps")) {
                     verify_props(call.args().first(), cx);
                 }
-            });
+            }
+            _ => {}
         }
     }
 }

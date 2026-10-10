@@ -21,30 +21,30 @@ pub struct State<'a> {
 
 impl Rule for NoComputedPropertiesInData {
     const META: Meta = Meta::oxlint(Plugin::Vue, "no-computed-properties-in-data", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Dot]);
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoComputedPropertiesInData
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if is_vue_file(file) && file.mentions("data") && file.mentions("computed") {
-            on.exprs([ExprTag::Dot], |_, member, cx| {
-                let ExprKind::Dot { obj, name, .. } = member.kind() else {
-                    return;
-                };
-                if !member.is_private_member()
-                    && !member.is_jsx_tag_name()
-                    && is_this_object(obj)
-                    && let Some(function) = enclosing_function(Node::Expr(member), Enclosing::FunctionOrArrow, &mut cx.state.functions)
-                    && let Some(names) = cx.state.computed_names.entry(function).or_insert_with(|| collect_computed_names(function))
-                    && names.contains(&name.name())
-                {
-                    cx.report(member, NO_COMPUTED_PROPERTIES_IN_DATA);
-                }
-            });
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        (is_vue_file(file) && file.mentions("data") && file.mentions("computed")).then(State::default)
+    }
+
+    fn expr<'a>(&self, member: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Dot { obj, name, .. } = member.kind() else {
+            return;
+        };
+        if !member.is_private_member()
+            && !member.is_jsx_tag_name()
+            && is_this_object(obj)
+            && let Some(function) = enclosing_function(Node::Expr(member), Enclosing::FunctionOrArrow, &mut cx.state.functions)
+            && let Some(names) = cx.state.computed_names.entry(function).or_insert_with(|| collect_computed_names(function))
+            && names.contains(&name.name())
+        {
+            cx.report(member, NO_COMPUTED_PROPERTIES_IN_DATA);
         }
-        State::default()
     }
 }
 

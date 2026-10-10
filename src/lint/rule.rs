@@ -617,12 +617,21 @@ impl On {
         self
     }
 
+    /// The sorts that have kinds: the first row of each, and the one after its last.
+    pub(crate) const KINDS: [(usize, usize); 6] = [
+        (0, On::BINARIES),
+        (On::BINARIES, On::UNARIES),
+        (On::UNARIES, On::STMTS),
+        (On::STMTS, On::TYPES),
+        (On::TYPES, On::PATS),
+        (On::PATS, On::SORTS),
+    ];
     const BINARIES: usize = ExprTag::COUNT;
     const UNARIES: usize = On::BINARIES + BinOp::Comma as usize + 1;
     const STMTS: usize = On::UNARIES + UnOp::PostDec as usize + 1;
     const TYPES: usize = On::STMTS + StmtTag::COUNT;
     const PATS: usize = On::TYPES + TypeTag::COUNT;
-    const SORTS: usize = On::PATS + PatTag::COUNT;
+    pub(crate) const SORTS: usize = On::PATS + PatTag::COUNT;
     /// The row of the rules that are started whatever a file has.
     pub const ALWAYS: usize = On::SORTS + 12;
     /// What a file can have or not have: a row for each kind of expression, operator, statement, type and pattern, in

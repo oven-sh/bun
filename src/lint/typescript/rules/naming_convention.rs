@@ -1036,23 +1036,14 @@ impl Rule for NamingConvention {
         NamingConvention { options, validators }
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State::default())
-    }
-
-    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new();
         if self.has(&[Selector::Function, Selector::Parameter, Selector::ParameterProperty]) {
-            self.check_function(func, cx);
+            on = on.funcs();
         }
-    }
-
-    fn var_decl<'a>(&self, declarator: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
         if self.has(&[Selector::Variable]) {
-            self.check_variable_declarator(declarator, cx);
+            on = on.var_decls();
         }
-    }
-
-    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         if self.has(&[
             Selector::ClassProperty,
             Selector::ClassMethod,
@@ -1061,44 +1052,66 @@ impl Rule for NamingConvention {
             Selector::TypeProperty,
             Selector::TypeMethod,
         ]) {
-            self.check_member(member, cx);
+            on = on.members();
         }
-    }
-
-    fn prop<'a>(&self, property: Prop<'a>, cx: &mut Cx<'a, Self>) {
         if self.has(&[Selector::ObjectLiteralProperty, Selector::ObjectLiteralMethod, Selector::ClassicAccessor]) {
-            self.check_property(property, cx);
+            on = on.props();
         }
-    }
-
-    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
         if self.has(&[Selector::Class]) {
-            self.check_class(class, cx);
+            on = on.classes();
         }
-    }
-
-    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         for (selector, tag) in [
             (Selector::Enum, StmtTag::Enum),
             (Selector::Interface, StmtTag::Interface),
             (Selector::TypeAlias, StmtTag::TypeAlias),
             (Selector::Import, StmtTag::Import),
         ] {
-            if statement.tag() == tag && self.has(&[selector]) {
-                self.check_statement(statement, cx);
+            if self.has(&[selector]) {
+                on = on.stmts(&[tag]);
             }
         }
+        if self.has(&[Selector::EnumMember]) {
+            on = on.enum_members();
+        }
+        if self.has(&[Selector::TypeParameter]) {
+            on = on.type_params();
+        }
+        on
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_function(func, cx);
+    }
+
+    fn var_decl<'a>(&self, declarator: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_variable_declarator(declarator, cx);
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_member(member, cx);
+    }
+
+    fn prop<'a>(&self, property: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_property(property, cx);
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_class(class, cx);
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_statement(statement, cx);
     }
 
     fn enum_member<'a>(&self, member: EnumMember<'a>, cx: &mut Cx<'a, Self>) {
-        if self.has(&[Selector::EnumMember]) {
-            self.check_enum_member(member, cx);
-        }
+        self.check_enum_member(member, cx);
     }
 
     fn type_param<'a>(&self, param: TypeParam<'a>, cx: &mut Cx<'a, Self>) {
-        if self.has(&[Selector::TypeParameter]) {
-            self.check_type_parameter(param, cx);
-        }
+        self.check_type_parameter(param, cx);
     }
 }

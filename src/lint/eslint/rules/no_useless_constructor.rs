@@ -121,13 +121,14 @@ pub fn check<'a, R: Rule>(member: Member<'a>, cx: &Cx<'a, R>) {
 
 impl Rule for NoUselessConstructor {
     const META: Meta = Meta::eslint("no-useless-constructor", Kind::Suggestion).has_suggestions();
-    type State<'a> = ();
+    const ON: On = On::new().members();
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoUselessConstructor
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.members(|_, member, cx| check(member, cx));
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        check(member, cx);
     }
 }

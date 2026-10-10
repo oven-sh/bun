@@ -8,18 +8,19 @@ pub struct NoMocksImport;
 
 impl Rule for NoMocksImport {
     const META: Meta = Meta::oxlint(Plugin::Jest, "no-mocks-import", Kind::Suggestion);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoMocksImport
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.has_stmts([StmtTag::Import]) || file.mentions("require") {
-            on.finish(|_, cx| {
-                let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
-                no_mocks_import::run_once(&ctx);
-            });
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        (file.has_stmts([StmtTag::Import]) || file.mentions("require")).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        no_mocks_import::run_once(&ctx);
     }
 }

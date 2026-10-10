@@ -10,9 +10,19 @@
 // a plugin.
 
 const { pathToFileURL } = require("node:url");
-const { createRequire } = require("node:module");
+const nodeModule = require("node:module");
+const { createRequire } = nodeModule;
 const nodePath = require("node:path");
 const { statSync } = require("node:fs");
+
+// Rules ask which modules are built in, to tell them from packages. They mean Node.js, where `undici` and `ws` are packages. The
+// same is in `evaluate-start.js`.
+{
+  const isOfBun = name => /^bun(?::|$)/.test(name) || name === "undici" || name === "ws";
+  const { isBuiltin } = nodeModule;
+  nodeModule.builtinModules = nodeModule.builtinModules.filter(name => !isOfBun(name));
+  nodeModule.isBuiltin = name => !isOfBun(name) && isBuiltin(name);
+}
 
 const LOAD = 1;
 const LINT = 2;

@@ -23,6 +23,7 @@ const RESERVED_KEYS: [&str; 24] = [
 
 impl Rule for NoReservedKeys {
     const META: Meta = Meta::oxlint(Plugin::Vue, "no-reserved-keys", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Call]).props();
     type State<'a> = NamedTypeBudget;
 
     fn new(options: &Options) -> Self {
@@ -31,19 +32,26 @@ impl Rule for NoReservedKeys {
         NoReservedKeys { reserved: owned("reserved"), groups: owned("groups") }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> NamedTypeBudget {
-        if !is_vue_file(file) {
-            return NamedTypeBudget::default();
-        }
-        on.props(Self::check_group);
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new().props();
         if is_vue_setup(file) && file.mentions("defineProps") {
-            on.exprs([ExprTag::Call], |rule, e, cx| {
-                if let Some(call) = e.as_call().filter(|it| is_specific_id(it.callee(), "defineProps")) {
-                    rule.check_define_props(call, cx);
-                }
-            });
+            on = on.exprs(&[ExprTag::Call]);
         }
-        NamedTypeBudget::default()
+        on
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<NamedTypeBudget> {
+        is_vue_file(file).then(NamedTypeBudget::default)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(call) = e.as_call().filter(|it| is_specific_id(it.callee(), "defineProps")) {
+            self.check_define_props(call, cx);
+        }
+    }
+
+    fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_group(prop, cx);
     }
 }
 

@@ -91,7 +91,8 @@ fn each_self_assigned_property<'a>(left: Prop<'a>, right: Prop<'a>, props: bool,
 
 impl Rule for NoSelfAssign {
     const META: Meta = Meta::eslint("no-self-assign", Kind::Problem).recommended();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Assign]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         NoSelfAssign {
@@ -99,20 +100,18 @@ impl Rule for NoSelfAssign {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Assign], |rule, e, cx| {
-            let ExprKind::Assign { op, target, value } = e.kind() else {
-                return;
-            };
-            if !matches!(op, None | Some(BinOp::And | BinOp::Or | BinOp::Nullish)) {
-                return;
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Assign { op, target, value } = e.kind() else {
+            return;
+        };
+        if !matches!(op, None | Some(BinOp::And | BinOp::Or | BinOp::Nullish)) {
+            return;
+        }
+        each_self_assignment(target, value, self.props, &mut |found| {
+            // A default value in a destructuring assignment is not an assignment.
+            if !utils::is_assignment_target(e) {
+                cx.report(found, SELF_ASSIGNMENT).data("name", strings::without_js_whitespace(found.text()));
             }
-            each_self_assignment(target, value, rule.props, &mut |found| {
-                // A default value in a destructuring assignment is not an assignment.
-                if !utils::is_assignment_target(e) {
-                    cx.report(found, SELF_ASSIGNMENT).data("name", strings::without_js_whitespace(found.text()));
-                }
-            });
         });
     }
 }

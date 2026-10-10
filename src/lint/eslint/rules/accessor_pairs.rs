@@ -215,6 +215,17 @@ impl Rule for AccessorPairs {
         }
     }
 
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new().exprs(&[ExprTag::Object]);
+        if self.enforce_for_class_members {
+            on = on.classes();
+        }
+        if self.enforce_for_ts_types {
+            on = on.types(&[TypeTag::Object]).stmts(&[StmtTag::Interface]);
+        }
+        on
+    }
+
     fn start<'a>(&self, _: &'a File<'a>) -> Option<()> {
         if !self.get_without_set && !self.set_without_get {
             return None;
@@ -261,9 +272,6 @@ impl Rule for AccessorPairs {
     }
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
-        if !self.enforce_for_class_members {
-            return;
-        }
         for is_static in [true, false] {
             // An abstract accessor is not a `MethodDefinition`.
             let methods = class.members().iter().filter(move |member| {
@@ -279,18 +287,12 @@ impl Rule for AccessorPairs {
     }
 
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
-        if !self.enforce_for_ts_types {
-            return;
-        }
         if let TypeKind::Object(members) = ty.kind() {
             self.check_type(members, cx);
         }
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if !self.enforce_for_ts_types {
-            return;
-        }
         if let StmtKind::Interface(interface) = statement.kind() {
             self.check_type(interface.members(), cx);
         }

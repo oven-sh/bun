@@ -399,6 +399,14 @@ impl Rule for PreserveCaughtError {
         }
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new().stmts(&[StmtTag::Throw]);
+        match self.requires_catch_parameter && file.language().is_oxlint {
+            true => on.stmts(&[StmtTag::Try]),
+            false => on,
+        }
+    }
+
     fn start<'a>(&self, _: &'a File<'a>) -> Option<ParentCatches<'a>> {
         Some(ParentCatches::default())
     }
@@ -407,9 +415,6 @@ impl Rule for PreserveCaughtError {
         match statement.tag() {
             StmtTag::Throw => self.check(statement, cx),
             StmtTag::Try => {
-                if !(self.requires_catch_parameter && cx.language().is_oxlint) {
-                    return;
-                }
                 if matches!(statement.kind(), StmtKind::Try { param: None, .. })
                     && let Some(catch_clause) = statement.catch_clause_span()
                 {

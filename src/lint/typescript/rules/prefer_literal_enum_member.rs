@@ -102,8 +102,25 @@ impl PreferLiteralEnumMember {
         }
         true
     }
+}
 
-    fn check<'a>(&self, member: EnumMember<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for PreferLiteralEnumMember {
+    const META: Meta =
+        Meta::typescript("prefer-literal-enum-member", Kind::Suggestion).presets(Presets::STRICT);
+    const ON: On = On::new().enum_members();
+    type State<'a> = MemberNames<'a>;
+
+    fn new(options: &Options) -> Self {
+        PreferLiteralEnumMember {
+            allow_bitwise_expressions: options.object(0).bool_or("allowBitwiseExpressions", false),
+        }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<MemberNames<'a>> {
+        Some(MemberNames::default())
+    }
+
+    fn enum_member<'a>(&self, member: EnumMember<'a>, cx: &mut Cx<'a, Self>) {
         let Some(initializer) = member.init() else {
             return;
         };
@@ -127,22 +144,5 @@ impl PreferLiteralEnumMember {
                 false => NOT_LITERAL,
             },
         );
-    }
-}
-
-impl Rule for PreferLiteralEnumMember {
-    const META: Meta =
-        Meta::typescript("prefer-literal-enum-member", Kind::Suggestion).presets(Presets::STRICT);
-    type State<'a> = MemberNames<'a>;
-
-    fn new(options: &Options) -> Self {
-        PreferLiteralEnumMember {
-            allow_bitwise_expressions: options.object(0).bool_or("allowBitwiseExpressions", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> MemberNames<'a> {
-        on.enum_members(Self::check);
-        MemberNames::default()
     }
 }

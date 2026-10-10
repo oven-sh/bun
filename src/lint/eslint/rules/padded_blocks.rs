@@ -97,9 +97,23 @@ impl Rule for PaddedBlocks {
         }
     }
 
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new();
+        if self.switches.is_some() {
+            on = on.stmts(&[StmtTag::Switch]);
+        }
+        if self.blocks.is_some() {
+            on = on.stmts(&[StmtTag::Block]).funcs();
+        }
+        if self.classes.is_some() {
+            on = on.classes();
+        }
+        on
+    }
+
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         match stmt.tag() {
-            StmtTag::Switch if self.switches.is_some() => {
+            StmtTag::Switch => {
                 if let StmtKind::Switch { expr, cases } = stmt.kind()
                     && !cases.is_empty()
                     && let Some(requires_padding) = self.switches
@@ -109,7 +123,7 @@ impl Rule for PaddedBlocks {
                     self.check_padding(Span::new(open_brace, stmt.span().end), requires_padding, cx);
                 }
             }
-            StmtTag::Block if self.blocks.is_some() => {
+            StmtTag::Block => {
                 if stmt.as_block().is_some_and(|body| !body.is_empty())
                     && let Some(requires_padding) = self.blocks
                 {
@@ -121,9 +135,6 @@ impl Rule for PaddedBlocks {
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        if self.blocks.is_none() {
-            return;
-        }
         if func.body_statements().is_some_and(|body| !body.is_empty())
             && let Some(braces) = func.body_span()
             && let Some(requires_padding) = self.blocks
@@ -133,9 +144,6 @@ impl Rule for PaddedBlocks {
     }
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
-        if self.classes.is_none() {
-            return;
-        }
         if !class.members().is_empty()
             && let Some(requires_padding) = self.classes
         {

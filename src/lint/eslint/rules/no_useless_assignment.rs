@@ -2210,22 +2210,27 @@ impl NoUselessAssignment {
 
 impl Rule for NoUselessAssignment {
     const META: Meta = Meta::eslint("no-useless-assignment", Kind::Problem).recommended();
+    const ON: On = On::new().symbols().finish();
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoUselessAssignment
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         if !file.has_stmts([StmtTag::Var]) && !file.has_exprs([ExprTag::Assign, ExprTag::Unary]) {
-            return State::default();
+            return None;
         }
-        on.symbols(Self::check_variable);
-        on.finish(|rule, cx| {
-            for root in std::mem::take(&mut cx.state.roots) {
-                rule.check_code_path(root, cx);
-            }
-        });
-        State::default()
+        Some(State::default())
+    }
+
+    fn symbol<'a>(&self, variable: Symbol<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_variable(variable, cx);
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        for root in std::mem::take(&mut cx.state.roots) {
+            self.check_code_path(root, cx);
+        }
     }
 }

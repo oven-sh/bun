@@ -9,7 +9,6 @@ pub(crate) mod simple_argument;
 
 use self::chain_member::{
     CallExpressionPosition, ChainMember, call_of_callee, comments_are_attached_to_links,
-    comments_lead_a_later_link,
 };
 use self::groups::{FormatMemberChainGroup, should_insert_empty_line_after};
 use self::simple_argument::SimpleArgument;
@@ -357,9 +356,6 @@ fn has_leading_comment<'a>(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool 
         return member
             .inner_end()
             .is_some_and(|end| f.comments().has_comment_leading_link(end));
-    }
-    if matches!(member, ChainMember::Node(node) if comments_lead_a_later_link(*node, f)) {
-        return true;
     }
     let (object, character) = match member.expr().kind() {
         ExprKind::Dot { obj, .. } if matches!(member, ChainMember::StaticMember(_)) => (obj, b'.'),

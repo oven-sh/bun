@@ -431,28 +431,31 @@ impl NoUselessReturn {
 
 impl Rule for NoUselessReturn {
     const META: Meta = Meta::eslint("no-useless-return", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().stmts(&[StmtTag::Return]).finish();
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoUselessReturn
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
-        on.stmts([StmtTag::Return], |_, statement, cx| {
-            if !matches!(statement.kind(), StmtKind::Return(None))
-                || cx.state.useful.find(statement.into(), is_known_to_be_useful) == Some(true)
-            {
-                return;
-            }
-            let function = cx.state.functions.find(statement.into(), |_, parent| parent.as_func());
-            let root = function.map_or_else(|| Node::File(cx.file()), Node::Func);
-            cx.state.roots.insert(root);
-        });
-        on.finish(|rule, cx| {
-            for root in std::mem::take(&mut cx.state.roots) {
-                rule.check_code_path(root, cx);
-            }
-        });
-        State::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if !matches!(statement.kind(), StmtKind::Return(None))
+            || cx.state.useful.find(statement.into(), is_known_to_be_useful) == Some(true)
+        {
+            return;
+        }
+        let function = cx.state.functions.find(statement.into(), |_, parent| parent.as_func());
+        let root = function.map_or_else(|| Node::File(cx.file()), Node::Func);
+        cx.state.roots.insert(root);
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        for root in std::mem::take(&mut cx.state.roots) {
+            self.check_code_path(root, cx);
+        }
     }
 }

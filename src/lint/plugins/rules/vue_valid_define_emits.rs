@@ -13,34 +13,37 @@ const DEFINE_IN_BOTH: Message = Message::new("", "Custom events are defined in b
 
 impl Rule for ValidDefineEmits {
     const META: Meta = Meta::oxlint(Plugin::Vue, "valid-define-emits", Kind::Problem);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         ValidDefineEmits
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !is_vue_setup(file) || !file.mentions("defineEmits") {
-            return;
+            return None;
         }
-        on.finish(|_, cx| {
-            let calls = calls_of(cx.file(), "defineEmits");
-            for (call_expr, _) in calls.iter().skip(1) {
-                cx.report(call_expr, CALLED_MULTIPLE_TIMES)
-                    .first_label("`defineEmits` is called here")
-                    .label(calls.first().map(|it| it.0.span()).unwrap_or_default(), "`defineEmits` is called here too");
-            }
-            let Some((call_expr, call)) = calls.first() else {
-                return;
-            };
-            let message = match check_define_macro_call_expression(*call, cx.file().vue_script().other_exports_emits) {
-                Some(DefineMacroProblem::DefineInBoth) => DEFINE_IN_BOTH,
-                Some(DefineMacroProblem::HasTypeAndArguments) => HAS_TYPE_AND_ARGUMENTS,
-                Some(DefineMacroProblem::EventsNotDefined) => EVENTS_NOT_DEFINED,
-                Some(DefineMacroProblem::ReferencingLocally) => REFERENCING_LOCALLY,
-                None => return,
-            };
-            cx.report(call_expr, message);
-        });
+        Some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let calls = calls_of(cx.file(), "defineEmits");
+        for (call_expr, _) in calls.iter().skip(1) {
+            cx.report(call_expr, CALLED_MULTIPLE_TIMES)
+                .first_label("`defineEmits` is called here")
+                .label(calls.first().map(|it| it.0.span()).unwrap_or_default(), "`defineEmits` is called here too");
+        }
+        let Some((call_expr, call)) = calls.first() else {
+            return;
+        };
+        let message = match check_define_macro_call_expression(*call, cx.file().vue_script().other_exports_emits) {
+            Some(DefineMacroProblem::DefineInBoth) => DEFINE_IN_BOTH,
+            Some(DefineMacroProblem::HasTypeAndArguments) => HAS_TYPE_AND_ARGUMENTS,
+            Some(DefineMacroProblem::EventsNotDefined) => EVENTS_NOT_DEFINED,
+            Some(DefineMacroProblem::ReferencingLocally) => REFERENCING_LOCALLY,
+            None => return,
+        };
+        cx.report(call_expr, message);
     }
 }

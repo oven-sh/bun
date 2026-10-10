@@ -113,45 +113,15 @@ fn write_call_without_callee<'a>(expression: Expr<'a>, f: &mut Formatter<'a>) {
     );
 }
 
-/// `(// comment\n a.b()).c()`: whether the next comment is in the parentheses of a later link than
-/// `link`, which starts at the same place. It leads that one, and is written before its `()`.
-pub(super) fn comments_lead_a_later_link<'a>(link: Expr<'a>, f: &Formatter<'a>) -> bool {
-    let Some(first) = f.comments().comments_before(link.span().start).first() else {
-        return false;
-    };
-    let mut e = link;
-    loop {
-        if let Some(parentheses) = e.parens().next() {
-            return e != link && first.span.start > parentheses.start;
-        }
-        e = match e.parent() {
-            Node::Expr(parent)
-                if parent.object() == Some(e)
-                    || matches!(parent.kind(), ExprKind::Call(call) if call.callee() == e)
-                    || matches!(parent.kind(), ExprKind::NonNull(it) if it == e) =>
-            {
-                parent
-            }
-            _ => return false,
-        };
-    }
-}
-
 impl<'a> Format<'a> for ChainMember<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         if f.is_quiet() {
             return self.write_without_comments(f);
         }
-        if comments_are_attached_to_links(f) {
-            return self.write_with_attached_comments(f);
+        match comments_are_attached_to_links(f) {
+            true => self.write_with_attached_comments(f),
+            false => self.write_with_comments_around(f),
         }
-        if !comments_lead_a_later_link(self.expr(), f) {
-            return self.write_with_comments_around(f);
-        }
-        // No comment is seen while this link is written.
-        let previous_limit = f.comments_mut().limit_comments_up_to(0);
-        self.write_with_comments_around(f);
-        f.comments_mut().restore_view_limit(previous_limit);
     }
 }
 
@@ -215,8 +185,7 @@ impl<'a> ChainMember<'a> {
                 ..
             } => return self.write_without_comments(f),
             Self::Node(node) if call_of_callee(node).is_none() => return write!(f, node),
-            Self::Node(_) => {}
-            _ => format_leading_comments(self.expr().span()).fmt(f),
+            _ => {}
         }
         self.write_without_comments(f);
         write_trailing_comments_of_member(self.expr(), f);

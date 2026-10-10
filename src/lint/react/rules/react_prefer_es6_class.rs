@@ -14,30 +14,41 @@ const EXPECTED_ES6_CLASS: Message =
 
 impl Rule for PreferEs6Class {
     const META: Meta = Meta::oxlint(Plugin::React, "prefer-es6-class", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call]).classes();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         PreferEs6Class { is_always: options.str(0) != Some("never") }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !is_jsx(file) {
-            return;
-        }
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
         if !self.is_always {
-            on.classes(|_, class, cx| {
-                if is_es6_component(Node::Class(class)) {
-                    cx.report(class.name().map_or_else(|| class.estree_span(), Ident::span), UNEXPECTED_ES6_CLASS);
-                }
-            });
+            on = on.classes();
         } else if file.mentions("createReactClass") {
-            on.exprs([ExprTag::Call], |_, e, cx| {
-                if is_es5_component(Node::Expr(e))
-                    && let Some(callee) = e.callee()
-                {
-                    cx.report(callee.outer_span(), EXPECTED_ES6_CLASS);
-                }
-            });
+            on = on.exprs(&[ExprTag::Call]);
+        }
+        on
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        if !is_jsx(file) {
+            return None;
+        }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if is_es5_component(Node::Expr(e))
+            && let Some(callee) = e.callee()
+        {
+            cx.report(callee.outer_span(), EXPECTED_ES6_CLASS);
+        }
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        if is_es6_component(Node::Class(class)) {
+            cx.report(class.name().map_or_else(|| class.estree_span(), Ident::span), UNEXPECTED_ES6_CLASS);
         }
     }
 }

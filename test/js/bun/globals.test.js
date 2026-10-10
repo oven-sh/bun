@@ -292,7 +292,7 @@ describe("built-in modules keep their own setImmediate, clearImmediate and queue
     callsToTheReplacements: { setImmediate: 0, clearImmediate: 0, queueMicrotask: 0 },
   };
 
-  it.each([
+  it.concurrent.each([
     [
       "replaced after the modules are loaded",
       "entry.cjs",
@@ -322,6 +322,8 @@ describe("built-in modules keep their own setImmediate, clearImmediate and queue
     expect({ result: stdout && JSON.parse(stdout), ...exit }).toEqual({ result: expected, ...exitedCleanly });
   });
 
+  // The next three children load node:test, node:net and node:http2. A debug
+  // build needs 2.5 to 5 s for each of them alone, so they run one at a time.
   it("node:test's mock.timers for setImmediate does not hold back a PerformanceObserver", async () => {
     const result = await run(
       "entry.cjs",
@@ -387,7 +389,9 @@ describe("built-in modules keep their own setImmediate, clearImmediate and queue
   it("http2 sessions over TCP and over a Duplex close with setImmediate replaced", async () => {
     // A session whose close was handed to the replaced function never closes
     // and keeps the process alive, so the child has a deadline. Over a Duplex
-    // the session also defers each write callback by one setImmediate.
+    // the session also defers each write callback by one setImmediate. The
+    // test has its own timeout because a debug build needs 3 s to load
+    // node:http2 and about 5 s for the whole child.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

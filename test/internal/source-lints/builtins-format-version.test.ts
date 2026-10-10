@@ -9,12 +9,12 @@
 // src/exe_format/builtins.rs reads it. So every bun that reads a version has
 // to have every Bun private name that the modules of that version use.
 //
-// The inventory is the rows of BunBuiltinNames.h when the version last
-// changed: every bun that reads the version has them. A builtin module may use
-// those rows, and none of them may go away.
+// The inventory is the private names of Bun when the version last changed:
+// every bun that reads the version has them. A builtin module may use those
+// names, and none of them may go away.
 //
-// If this fails because a builtin module uses a newer row, or because a row of
-// the inventory is gone: bump both versions, then regenerate the inventory:
+// If this fails because a builtin module uses a newer name, or because a name
+// of the inventory is gone: bump both versions, then regenerate the inventory:
 //   bun ./test/internal/source-lints/builtins-format-version.test.ts --update
 
 import { Glob } from "bun";
@@ -28,7 +28,18 @@ const read = (file: string) => readFileSync(path.join(root, file), "utf8");
 
 const writer = Number(read("src/codegen/bundle-modules.ts").match(/^const BUILTINS_FORMAT_VERSION = (\d+);$/m)?.[1]);
 const reader = Number(read("src/exe_format/builtins.rs").match(/^const FORMAT_VERSION: u32 = (\d+);$/m)?.[1]);
-const rows = [...read("src/js/builtins/BunBuiltinNames.h").matchAll(/^\s*macro\(([\w$]+)\)/gm)].map(m => m[1]);
+
+// Bun's private names: the rows of BunBuiltinNames.h, and one for each function that an `@internal` file of
+// src/js/builtins exports (src/codegen/bundle-functions.ts writes those to BunBuiltinNames+extras.h).
+const privateNames = new Set(
+  [...read("src/js/builtins/BunBuiltinNames.h").matchAll(/^\s*macro\(([\w$]+)\)/gm)].map(m => m[1]),
+);
+const rowCount = privateNames.size;
+for (const file of new Glob("*.ts").scanSync({ cwd: path.join(root, "src", "js", "builtins") })) {
+  const source = read("src/js/builtins/" + file);
+  if (!source.includes("@internal")) continue;
+  for (const match of source.matchAll(/^export (?:async )?function\s*\*?\s*([\w$]+)/gm)) privateNames.add(match[1]);
+}
 
 // A bare use of a name in globalsToPrefix is a use of the private name too: the builtin bundler rewrites it.
 const prefixedList = read("src/codegen/replacements.ts").match(/globalsToPrefix = \[([^\]]*)\]/)?.[1] ?? "";
@@ -56,18 +67,19 @@ const inventory: Inventory = await Bun.file(INVENTORY).json();
 if (process.argv.includes("--update")) {
   if (writer !== reader || !(writer > inventory.formatVersion)) {
     console.error(
-      `BUILTINS_FORMAT_VERSION is ${writer} and FORMAT_VERSION is ${reader}: ` +
-        `set both to ${inventory.formatVersion + 1} first. The rows of version ${inventory.formatVersion} do not change.`,
+      `BUILTINS_FORMAT_VERSION is ${writer} and FORMAT_VERSION is ${reader}: set both to ` +
+        `${inventory.formatVersion + 1} first. The private names of version ${inventory.formatVersion} do not change.`,
     );
     process.exit(1);
   }
-  await Bun.write(INVENTORY, JSON.stringify({ formatVersion: writer, privateNames: rows }, null, 2) + "\n");
-  console.log(`Wrote ${rows.length} private names of version ${writer} to ${path.basename(INVENTORY)}`);
+  const next: Inventory = { formatVersion: writer, privateNames: [...privateNames] };
+  await Bun.write(INVENTORY, JSON.stringify(next, null, 2) + "\n");
+  console.log(`Wrote ${privateNames.size} private names of version ${writer} to ${path.basename(INVENTORY)}`);
   process.exit(0);
 }
 
 test("the scan finds the private names, the rewritten globals and the builtin modules", () => {
-  expect({ rows: rows.length > 100, prefixed: prefixed.length > 10, modules: modules.length > 100 }).toEqual({
+  expect({ rows: rowCount > 100, prefixed: prefixed.length > 10, modules: modules.length > 100 }).toEqual({
     rows: true,
     prefixed: true,
     modules: true,
@@ -80,17 +92,17 @@ test("builtin modules use only the private names that every reader of the builti
     {
       "BUILTINS_FORMAT_VERSION (src/codegen/bundle-modules.ts)": writer,
       "FORMAT_VERSION (src/exe_format/builtins.rs)": reader,
-      "rows newer than the version that a builtin module uses": rows.filter(row => !known.has(row) && used.has(row)),
-      "rows of the version that BunBuiltinNames.h no longer has": inventory.privateNames.filter(
-        row => !rows.includes(row),
+      "private names newer than the version that a builtin module uses": [...privateNames].filter(
+        name => !known.has(name) && used.has(name),
       ),
+      "private names of the version that are gone": inventory.privateNames.filter(name => !privateNames.has(name)),
     },
     "Bump BUILTINS_FORMAT_VERSION and FORMAT_VERSION, then run " +
       "`bun ./test/internal/source-lints/builtins-format-version.test.ts --update`.",
   ).toEqual({
     "BUILTINS_FORMAT_VERSION (src/codegen/bundle-modules.ts)": inventory.formatVersion,
     "FORMAT_VERSION (src/exe_format/builtins.rs)": inventory.formatVersion,
-    "rows newer than the version that a builtin module uses": [],
-    "rows of the version that BunBuiltinNames.h no longer has": [],
+    "private names newer than the version that a builtin module uses": [],
+    "private names of the version that are gone": [],
   });
 });

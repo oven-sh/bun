@@ -548,10 +548,10 @@ public:
     using Super::getRemoteAddressAsText;
     using Super::getNativeHandle;
 
-    /* Throttle reads and writes */
+    /* Throttle reads and writes. The idle timeout keeps running: it also
+     * bounds the wait for the peer to take the response. */
     HttpResponse *pause() {
         Super::pause();
-        Super::timeout(0);
         return this;
     }
 

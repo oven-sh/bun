@@ -1244,6 +1244,137 @@ describe("immediately closing", () => {
   });
 });
 
+// Each watcher follows its signal natively, and the signal links the watchers that follow it in
+// the order they started. A watcher that closes takes itself out of that list.
+describe("watchers that share one AbortSignal", () => {
+  const filepath = path.join(testDir, "abort.txt");
+
+  function watchAll(signal: AbortSignal, count: number) {
+    const errors: number[] = [];
+    const closes: number[] = [];
+    const closed: Promise<void>[] = [];
+    const watchers = Array.from({ length: count }, (_, i) => {
+      const watcher = fs.watch(filepath, { signal });
+      // An abort is an 'error' for the watcher, emitted while the signal aborts.
+      watcher.on("error", () => errors.push(i));
+      closed.push(new Promise(resolve => watcher.on("close", () => (closes.push(i), resolve()))));
+      return watcher;
+    });
+    return { watchers, errors, closes, closed: () => Promise.all(closed) };
+  }
+
+  test.each([
+    ["the oldest", [0, 1, 2, 3]],
+    ["the newest", [8, 7, 6, 5]],
+    ["from the middle", [4, 0, 8, 2]],
+  ])("closing some of them (%s), then aborting, aborts the rest in order", async (_, toClose) => {
+    const controller = new AbortController();
+    const { watchers, errors, closes, closed } = watchAll(controller.signal, 9);
+
+    for (const i of toClose) watchers[i].close();
+    controller.abort();
+    await closed();
+
+    expect({ errors, closes: closes.sort((a, b) => a - b) }).toEqual({
+      errors: [0, 1, 2, 3, 4, 5, 6, 7, 8].filter(i => !toClose.includes(i)),
+      closes: [0, 1, 2, 3, 4, 5, 6, 7, 8],
+    });
+  });
+
+  test("a watcher that another one closes during the abort is not aborted", async () => {
+    const controller = new AbortController();
+    const { watchers, errors, closes, closed } = watchAll(controller.signal, 4);
+
+    // Runs inside the abort, while the other three still wait for theirs.
+    watchers[0].on("error", () => {
+      watchers[1].close();
+      watchers[3].close();
+    });
+    controller.abort();
+    await closed();
+
+    expect({ errors, closes: closes.sort((a, b) => a - b) }).toEqual({ errors: [0, 2], closes: [0, 1, 2, 3] });
+  });
+
+  test("a closed watcher that is collected is gone from the signal", async () => {
+    // In a subprocess: if the signal still linked a freed watcher, the abort is an ASAN report.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          const file = ${JSON.stringify(filepath)};
+          const controller = new AbortController();
+          const closeMany = () => {
+            for (let i = 0; i < 200; i++) fs.watch(file, { signal: controller.signal }).close();
+          };
+          closeMany();
+          const live = fs.watch(file, { signal: controller.signal });
+          live.on("error", err => console.log("live: " + err.name));
+          live.on("close", () => console.log("live: closed"));
+          closeMany();
+          for (let i = 0; i < 3; i++) {
+            Bun.gc(true);
+            await new Promise(resolve => setImmediate(resolve));
+          }
+          controller.abort();
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode, stderr }).toEqual({ stdout: "live: AbortError\nlive: closed\n", exitCode: 0, stderr });
+  });
+
+  test("closing a watcher does not cost more the more watchers share its signal", async () => {
+    // When the signal kept the watchers that follow it in a vector, each close() passed over all
+    // of them. The same closes, timed against watchers that each have a signal of their own in
+    // one process, cancel out machine speed and build flavour.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          const file = ${JSON.stringify(filepath)};
+          const live = 4000, reps = 100, rounds = 3;
+          const sharedSignal = new AbortController().signal;
+          const watch = shared => fs.watch(file, { signal: shared ? sharedSignal : new AbortController().signal });
+
+          const watchers = Array.from({ length: live }, () => watch(true));
+          let sharedNs = Infinity, ownNs = Infinity;
+          for (let round = 0; round < rounds; round++) {
+            const own = Array.from({ length: reps }, () => watch(false));
+            const first = round * reps;
+            let t0 = Bun.nanoseconds();
+            for (let i = first; i < first + reps; i++) watchers[i].close();
+            sharedNs = Math.min(sharedNs, Bun.nanoseconds() - t0);
+            t0 = Bun.nanoseconds();
+            for (const watcher of own) watcher.close();
+            ownNs = Math.min(ownNs, Bun.nanoseconds() - t0);
+            // The closed ones come back as the newest, so the signal keeps its number of watchers.
+            for (let i = first; i < first + reps; i++) watchers[i] = watch(true);
+          }
+          console.log(JSON.stringify({ ratio: Math.round((sharedNs / ownNs) * 10) / 10 }));
+          process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // With the vector: 6 in release, 7 in debug+ASAN. With the list: 1.
+    expect(JSON.parse(stdout).ratio, stdout).toBeLessThan(3);
+    expect(exitCode).toBe(0);
+    // 4,000 watchers take a few seconds to create in a debug build.
+  }, 30_000);
+});
+
 // FSWatcher.close() set `closed = true` before calling refTask(), so refTask() returned
 // false without incrementing pending_activity_count and the paired unrefTask() ran anyway.
 // For { persistent: false } watchers (count starts at 1), close() did a net -2, wrapping the

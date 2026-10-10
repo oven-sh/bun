@@ -2,7 +2,7 @@
 
 import { generateClient } from "./../../helper.ts";
 
-const Client = await generateClient("postgres");
+const Client = await (generateClient as (type: string) => Promise<any>)("postgres");
 const prisma = new Client();
 
 const createdUsers = await Promise.all(

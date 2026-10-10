@@ -30,13 +30,16 @@
 
 #pragma once
 
+#include "ScriptWrappable.h"
 #include <wtf/MonotonicTime.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 
 namespace WebCore {
 
-class PerformanceTiming : public RefCounted<PerformanceTiming> {
+class PerformanceTiming : public ScriptWrappable, public RefCounted<PerformanceTiming> {
+    WTF_MAKE_TZONE_ALLOCATED(PerformanceTiming);
+
 public:
     static Ref<PerformanceTiming> create() { return adoptRef(*new PerformanceTiming()); }
 
@@ -64,8 +67,6 @@ public:
 
 private:
     explicit PerformanceTiming();
-
-    unsigned long long monotonicTimeToIntegerMilliseconds(MonotonicTime) const;
 };
 
 } // namespace WebCore

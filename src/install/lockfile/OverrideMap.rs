@@ -1010,9 +1010,7 @@ fn parse_parent(
     selector: &PackageSelector<'_>,
 ) -> Option<Dependency> {
     let name_hash = SemverBuilder::string_hash(selector.name);
-    let name = ctx
-        .builder
-        .append_with_hash::<SemverString>(selector.name, name_hash);
+    let name = ctx.builder.append::<SemverString>(selector.name);
     let version = parse_range(ctx, key_loc, name, name_hash, selector.range)?;
     Some(Dependency {
         name,
@@ -1088,22 +1086,27 @@ fn parse_override_value(
     }
 
     let name_hash = SemverBuilder::string_hash(key);
-    let name = ctx.builder.append_with_hash::<SemverString>(key, name_hash);
+    let name = ctx.builder.append::<SemverString>(key);
 
     // https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides
-    let (literal, tag): (SemverString, Option<VersionTag>) = if value[0] == b'$' {
+    let literal: SemverString = if value[0] == b'$' {
         let ref_name = &value[1..];
         let ref_name_str = SemverString::init(ref_name, ref_name);
+        // The spec the root declares for `ref_name`, as written: a range `Package::parse` linked
+        // to a workspace is still that range here (and in bun.lock), and the root's `workspaces`
+        // entries are not declarations.
         let root_ref = ctx
             .root_package
             .dependencies
             .get(ctx.lockfile_dependencies)
             .iter()
             .find(|dep| {
-                dep.name
-                    .eql(ref_name_str, ctx.builder.string_bytes.as_slice(), ref_name)
+                !dep.behavior.is_workspace()
+                    && dep
+                        .name
+                        .eql(ref_name_str, ctx.builder.string_bytes.as_slice(), ref_name)
             })
-            .map(|dep| (dep.version.literal, Some(dep.version.tag)));
+            .map(|dep| dep.version.literal);
 
         match root_ref {
             Some(root_ref) => root_ref,
@@ -1114,7 +1117,7 @@ fn parse_override_value(
                 ctx.workspace_names,
                 ref_name,
             ) {
-                Ok(Some(literal)) => (ctx.builder.append::<SemverString>(&literal), None),
+                Ok(Some(literal)) => ctx.builder.append::<SemverString>(&literal),
                 Ok(None) => {
                     ctx.log.add_warning_fmt(
                         Some(ctx.source),
@@ -1142,7 +1145,7 @@ fn parse_override_value(
             },
         }
     } else {
-        (ctx.builder.append::<SemverString>(value), None)
+        ctx.builder.append::<SemverString>(value)
     };
 
     let sliced = literal.sliced(ctx.builder.string_bytes.as_slice());
@@ -1151,11 +1154,10 @@ fn parse_override_value(
     } else {
         None
     };
-    let Some(version) = dependency::parse_with_optional_tag(
+    let Some(version) = Dependency::parse(
         name,
         name_hash,
         sliced.slice,
-        tag,
         &sliced,
         &mut *ctx.log,
         alias_registry,

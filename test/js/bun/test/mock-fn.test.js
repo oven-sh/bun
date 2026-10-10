@@ -515,6 +515,37 @@ describe("mock()", () => {
       value: 44,
     });
   });
+  test("this is undefined when called without a receiver from a closure", () => {
+    const fn = jest.fn().mockReturnThis();
+    // Referencing `fn` from an inner function moves it into the closure's
+    // scope, so the bare call below resolves it through that scope object.
+    function keep() {
+      return fn;
+    }
+    expect(fn()).toBeUndefined();
+    expect(fn.mock.contexts).toEqual([undefined]);
+    expect(fn.mock.results).toEqual([{ type: "return", value: undefined }]);
+    expect(keep()).toBe(fn);
+  });
+  if (isBun) {
+    test("mock.lastCall getter ignores the closure scope it is called through", () => {
+      const calls = [["from the enclosing scope"]];
+      const lastCall = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(jest.fn().mock), "lastCall").get;
+      function keep() {
+        return [calls, lastCall];
+      }
+      expect(lastCall()).toBeUndefined();
+      expect(keep()).toEqual([calls, lastCall]);
+    });
+    test("mock methods called without a receiver from a closure throw the invalid this error", () => {
+      const { mockName } = jest.fn();
+      function keep() {
+        return mockName;
+      }
+      expect(() => mockName("name")).toThrow(/^Expected this to be instanceof Mock$/);
+      expect(keep()).toBe(mockName);
+    });
+  }
   test("looks like a function", () => {
     const fn = jest.fn(function nameHere(a, b, c) {
       return [a, b, c];
@@ -693,6 +724,59 @@ describe("mock()", () => {
       },
     );
     expect(fn()).toBe("1");
+  });
+  if (isBun) {
+    // Bun wraps the value in a promise when mockResolvedValue is called, not when the mock is.
+    test("mockResolvedValue propagates an error thrown while wrapping the value in a promise", () => {
+      const boom = new Error("boom");
+      const value = Promise.resolve(1);
+      Object.defineProperty(value, "constructor", {
+        get() {
+          throw boom;
+        },
+      });
+      const fn = jest.fn();
+      expect(() => fn.mockResolvedValue(value)).toThrow(boom);
+      expect(() => fn.mockResolvedValueOnce(value)).toThrow(boom);
+      // nothing was queued
+      expect(fn()).toBeUndefined();
+    });
+  }
+  test("withImplementation (callback throws)", () => {
+    const fn = jest.fn(() => "1");
+    expect(() =>
+      fn.withImplementation(
+        () => "2",
+        () => {
+          expect(fn()).toBe("2");
+          throw new Error("from callback");
+        },
+      ),
+    ).toThrow("from callback");
+  });
+  test("withImplementation restores a queued mockImplementationOnce chain", () => {
+    const fn = jest.fn(() => "base");
+    fn.mockImplementationOnce(() => "a").mockImplementationOnce(() => "b");
+    fn.withImplementation(
+      () => "temp",
+      () => {
+        expect(fn()).toBe("temp");
+      },
+    );
+    fn.mockImplementationOnce(() => "c");
+    expect([fn(), fn(), fn(), fn()]).toEqual(["a", "b", "c", "base"]);
+  });
+  test("copying name/length from the implementation propagates getter errors", () => {
+    const impl = function () {};
+    Object.defineProperty(impl, "length", {
+      get() {
+        throw new Error("length getter");
+      },
+    });
+    expect(() => jest.fn(impl)).toThrow("length getter");
+    const obj = { method: impl };
+    expect(() => jest.spyOn(obj, "method")).toThrow("length getter");
+    expect(obj.method).toBe(impl);
   });
   test("withImplementation (async)", async () => {
     const fn = jest.fn(() => "1");
@@ -1087,6 +1171,214 @@ describe("spyOn", () => {
       fn.mockRestore();
       expect(arr[14]).toBe(original);
       expect(arr[14]()).toBe(456);
+      expect(fn).not.toHaveBeenCalled();
+    });
+
+    // Like named properties, a non-function indexed property gets a getter/setter spy.
+    // This used to store the mock itself flagged as an accessor, and the next write to
+    // the index crashed the process.
+    test("spyOn works with indexed properties that are not functions", () => {
+      const arr = [42];
+
+      const fn = spyOn(arr, 0);
+      expect(fn).not.toHaveBeenCalled();
+      expect(arr[0]).toBe(42);
+      expect(fn).toHaveBeenCalledTimes(1);
+
+      arr[0] = 7;
+      expect(fn).toHaveBeenCalledTimes(2);
+      expect(fn.mock.calls[1]).toEqual([7]);
+      expect(arr[0]).toBe(42);
+
+      fn.mockRestore();
+      expect(Object.getOwnPropertyDescriptor(arr, 0)).toEqual({
+        value: 42,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      expect(arr[0]).toBe(42);
+      expect(fn).not.toHaveBeenCalled();
+    });
+
+    test("spyOn works with indexed properties on plain objects", () => {
+      const obj = {};
+      obj[213] = obj;
+
+      const fn = spyOn(obj, 213);
+      obj[213] = 1;
+      expect(fn).toHaveBeenCalledTimes(1);
+      expect(obj[213]).toBe(obj);
+      expect(fn).toHaveBeenCalledTimes(2);
+
+      // Same as named keys: the index is an accessor now, so it cannot be spied again.
+      expect(() => spyOn(obj, 213)).toThrow("does not support accessor properties");
+
+      fn.mockRestore();
+      expect(obj[213]).toBe(obj);
+      expect(fn).not.toHaveBeenCalled();
+    });
+
+    // An int32 at an index of an object literal is in Int32 storage. The plain object
+    // above has Contiguous storage, because its value is an object.
+    test("spyOn works with an index key of an object literal", () => {
+      const obj = { 0: 42 };
+
+      const fn = spyOn(obj, 0);
+      expect(Object.getOwnPropertyDescriptor(obj, 0)).toEqual({
+        get: fn,
+        set: fn,
+        enumerable: true,
+        configurable: true,
+      });
+      expect(obj[0]).toBe(42);
+      obj[0] = 7;
+      expect(obj[0]).toBe(42);
+      expect(fn.mock.calls).toEqual([[], [7], []]);
+
+      fn.mockRestore();
+      expect(Object.getOwnPropertyDescriptor(obj, 0)).toEqual({
+        value: 42,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      obj[0] = 8;
+      expect(obj[0]).toBe(8);
+      expect(fn).not.toHaveBeenCalled();
+    });
+
+    // An index this large never gets vector storage. It lives in the sparse map from the
+    // start, which is where the malformed accessor entry used to crash reads and writes.
+    test("spyOn works with a large sparse index that is not a function", () => {
+      const obj = {};
+      const original = [1.5];
+      obj[3221225473] = original;
+
+      const fn = spyOn(obj, 3221225473);
+      expect(Object.getOwnPropertyDescriptor(obj, 3221225473)).toEqual({
+        get: fn,
+        set: fn,
+        enumerable: true,
+        configurable: true,
+      });
+      expect(obj[3221225473]).toBe(original);
+      obj[3221225473] = 5;
+      expect(obj[3221225473]).toBe(original);
+      expect(fn.mock.calls).toEqual([[], [5], []]);
+
+      fn.mockRestore();
+      expect(Object.getOwnPropertyDescriptor(obj, 3221225473)).toEqual({
+        value: original,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      obj[3221225473] = 6;
+      expect(obj[3221225473]).toBe(6);
+      expect(fn).not.toHaveBeenCalled();
+    });
+
+    // An array filled after creation is not copy-on-write, so it takes a different
+    // storage path than an array literal when the index becomes an accessor.
+    test("spyOn installs a getter/setter on an indexed property that is not a function", () => {
+      const arr = [];
+      arr[0] = 42;
+
+      const fn = spyOn(arr, 0);
+      expect(Object.getOwnPropertyDescriptor(arr, 0)).toEqual({
+        get: fn,
+        set: fn,
+        enumerable: true,
+        configurable: true,
+      });
+      expect(arr[0]).toBe(42);
+      arr[0] = 7;
+      expect(arr[0]).toBe(42);
+      expect(fn.mock.calls).toEqual([[], [7], []]);
+
+      fn.mockRestore();
+      expect(Object.getOwnPropertyDescriptor(arr, 0)).toEqual({
+        value: 42,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      arr[0] = 8;
+      expect(arr[0]).toBe(8);
+      expect(fn).not.toHaveBeenCalled();
+    });
+
+    // Making one index an accessor moves the whole array out of contiguous storage.
+    // The other elements and the length must survive that move.
+    test("spyOn on one array element keeps the other elements and the length", () => {
+      const arr = [1, 2, 3];
+
+      const fn = spyOn(arr, 1);
+      expect(arr[1]).toBe(2);
+      arr[1] = 20;
+      expect(arr[1]).toBe(2);
+      expect(fn.mock.calls).toEqual([[], [20], []]);
+      expect(arr.length).toBe(3);
+      expect([arr[0], arr[2]]).toEqual([1, 3]);
+
+      fn.mockRestore();
+      expect(arr).toEqual([1, 2, 3]);
+      expect(Object.getOwnPropertyDescriptor(arr, 1)).toEqual({
+        value: 2,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      expect(fn).not.toHaveBeenCalled();
+    });
+
+    test("spyOn works with missing indexed properties", () => {
+      const arr = [];
+
+      const fn = spyOn(arr, 3);
+      expect(arr[3]).toBeUndefined();
+      expect(fn).toHaveBeenCalledTimes(1);
+      arr[3] = "x";
+      expect(fn).toHaveBeenCalledTimes(2);
+      expect(arr[3]).toBeUndefined();
+
+      fn.mockRestore();
+      expect(Object.getOwnPropertyDescriptor(arr, 3)).toEqual({
+        value: undefined,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      expect(arr[3]).toBeUndefined();
+      expect(fn).not.toHaveBeenCalled();
+    });
+
+    // A plain object has no indexed storage at all, so the spy creates it.
+    test("spyOn works with a missing indexed property on a plain object", () => {
+      const obj = {};
+
+      const fn = spyOn(obj, 169);
+      expect(Object.getOwnPropertyDescriptor(obj, 169)).toEqual({
+        get: fn,
+        set: fn,
+        enumerable: true,
+        configurable: true,
+      });
+      expect(obj[169]).toBeUndefined();
+      obj[169] = "x";
+      expect(obj[169]).toBeUndefined();
+      expect(fn.mock.calls).toEqual([[], ["x"], []]);
+
+      fn.mockRestore();
+      // Same as a missing named key: restore writes the original `undefined` back as a data property.
+      expect(Object.getOwnPropertyDescriptor(obj, 169)).toEqual({
+        value: undefined,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      expect(obj[169]).toBeUndefined();
       expect(fn).not.toHaveBeenCalled();
     });
 

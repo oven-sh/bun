@@ -84,7 +84,7 @@ test("--randomize: files whose u32-truncated path hashes collide get distinct pe
   const seen = new Map<number, number>();
   const mask = 0xffffffffn;
   for (let i = 0; i < 400_000; i++) {
-    const h = Number(Bun.hash(join(tmpRoot, `f${i}.test.ts`)) & mask);
+    const h = Number((Bun.hash(join(tmpRoot, `f${i}.test.ts`)) as bigint) & mask);
     if (seen.has(h)) {
       aIdx = seen.get(h)!;
       bIdx = i;

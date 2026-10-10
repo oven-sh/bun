@@ -3571,7 +3571,7 @@ bun install --frozen-lockfile exit code: 0
 exports[`package-lock.json migration fixes arborist fixtures edit-package-json--changed 1`] = `
 "migrated lockfile from package-lock.json
 bun pm migrate exit code: 0
-bun install --frozen-lockfile exit code: 1
+bun install --frozen-lockfile exit code: 0
 
 {
   "lockfileVersion": 2,

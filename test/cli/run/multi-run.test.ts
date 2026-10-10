@@ -1914,6 +1914,22 @@ describe("workspace integration", () => {
     expect(r.exitCode).toBe(0);
   });
 
+  test("--parallel --filter distinguishes an unmatched filter from a missing script", async () => {
+    using dir = makeWorkspace("mr-ws-missing", {
+      "pkg-a": { build: `echo a` },
+      "pkg-b": { build: `echo b` },
+    });
+    const noPkg = await runMulti(["run", "--parallel", "--filter", "nope", "build"], String(dir));
+    expect(noPkg.stderr.trim()).toBe(`error: No workspace packages matched the filter "nope"`);
+    const negated = await runMulti(["run", "--parallel", "--filter", "*", "--filter", "!*", "build"], String(dir));
+    expect(negated.stderr.trim()).toBe(`error: No workspace packages matched the filters "*", "!*"`);
+    const noScript = await runMulti(["run", "--parallel", "--filter", "pkg-*", "lint", "test"], String(dir));
+    expect(noScript.stderr.trim()).toBe(`error: Script "lint", "test" not found in 2 packages matching "pkg-*"`);
+    expect(noPkg.exitCode).toBe(1);
+    expect(negated.exitCode).toBe(1);
+    expect(noScript.exitCode).toBe(1);
+  });
+
   test("--parallel --filter='pkg-a' runs only in matching package", async () => {
     using dir = makeWorkspace("mr-ws-single", {
       "pkg-a": { build: `echo a-only` },
@@ -2141,5 +2157,52 @@ describe("workspace integration", () => {
     // Label should use relative path "packages/my-pkg" instead of empty string
     expectPrefixed(r.stdout, "packages/my-pkg:build", "no-name-ok");
     expect(r.exitCode).toBe(0);
+  });
+});
+
+// ─── BUNFIG [run] SECTION ─────────────────────────────────────────────────────
+
+// Serial: debug builds recreate the shared `node` shim dir on every `--bun`
+// run, so concurrent `--bun` processes can race each other.
+describe("auto-discovered bunfig.toml [run] section", () => {
+  // With `run.bun = true` bun puts a `node` shim on PATH, so `typeof Bun`
+  // tells which binary ran the script.
+  const typeofBun = `node -e "console.log('Bun is ' + typeof Bun)"`;
+
+  // Script names that are not also `bun` subcommand aliases (`bun a` is `bun add`).
+  test.each([
+    ["bun run --parallel", ["run", "--parallel", "one", "two"]],
+    ["bun --parallel", ["--parallel", "one", "two"]],
+    ["bun run --sequential", ["run", "--sequential", "one", "two"]],
+  ])("%s applies [run] bun = true", async (_, args) => {
+    using dir = tempDir("mr-bunfig-run-bun", {
+      "bunfig.toml": "[run]\nbun = true\n",
+      "package.json": JSON.stringify({ scripts: { one: typeofBun, two: typeofBun } }),
+    });
+    const r = await runMulti(args, String(dir));
+    expectPrefixed(r.stdout, "one", "Bun is object");
+    expectPrefixed(r.stdout, "two", "Bun is object");
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("--bun on the CLI wins over [run] bun = false", async () => {
+    using dir = tempDir("mr-bunfig-cli-bun", {
+      "bunfig.toml": "[run]\nbun = false\n",
+      "package.json": JSON.stringify({ scripts: { one: typeofBun } }),
+    });
+    const r = await runMulti(["run", "--bun", "--parallel", "one"], String(dir));
+    expectPrefixed(r.stdout, "one", "Bun is object");
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("a malformed bunfig.toml fails the run", async () => {
+    using dir = tempDir("mr-bunfig-malformed", {
+      "bunfig.toml": '[run]\nbun = "yes"\n',
+      "package.json": JSON.stringify({ scripts: { one: typeofBun } }),
+    });
+    const r = await runMulti(["run", "--parallel", "one"], String(dir));
+    expect(r.stderr).toContain("Expected boolean");
+    expect(r.stdout).not.toContain("Bun is");
+    expect(r.exitCode).toBe(1);
   });
 });

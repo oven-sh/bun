@@ -1,5 +1,4 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::ZigString;
 
 use super::Expect;
 use super::get_signature;
@@ -33,14 +32,7 @@ pub(crate) fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFra
     };
     value.ensure_still_alive();
 
-    let result = match predicate.call(global, JSValue::UNDEFINED, &[value]) {
-        Ok(r) => r,
-        Err(e) => {
-            let err = global.take_exception(e);
-            let fmt = ZigString::init(b"toSatisfy() predicate threw an exception");
-            return Err(global.throw_value(global.create_aggregate_error(&[err], &fmt)?));
-        }
-    };
+    let result = predicate.call(global, JSValue::UNDEFINED, &[value])?;
 
     let not = this.flags.get().not();
     let pass = (result.is_boolean() && result.to_boolean()) != not;

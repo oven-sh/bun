@@ -270,8 +270,8 @@ bun --heap-prof script.js
 `--heap-prof` writes a full V8-format heap snapshot on exit, using Node.js's
 diagnostic filename format
 (`Heap.<yyyymmdd>.<hhmmss>.<pid>.<tid>.<seq>.heapprofile`). The extension
-follows Node's `--heap-prof` filename contract, which the harness and tooling
-key on. The content is the same as `v8.writeHeapSnapshot()` /
+follows Node's `--heap-prof` filename contract. The content is the same as
+`v8.writeHeapSnapshot()` /
 `Bun.generateHeapSnapshot("v8")`. Load it in Chrome DevTools via
 Memory tab → Load. Pick "All Files", or rename the file to `.heapsnapshot`.
 

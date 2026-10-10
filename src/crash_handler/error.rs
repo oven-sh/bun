@@ -6,8 +6,6 @@ pub enum Error {
     UnsupportedOperatingSystem,
     #[error("Unexpected")]
     Unexpected,
-    #[error("InvalidDebugInfo")]
-    InvalidDebugInfo,
     #[error("EndOfFile")]
     EndOfFile,
 
@@ -34,7 +32,6 @@ impl Error {
             Self::MissingDebugInfo => "MissingDebugInfo",
             Self::UnsupportedOperatingSystem => "UnsupportedOperatingSystem",
             Self::Unexpected => "Unexpected",
-            Self::InvalidDebugInfo => "InvalidDebugInfo",
             Self::EndOfFile => "EndOfFile",
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",

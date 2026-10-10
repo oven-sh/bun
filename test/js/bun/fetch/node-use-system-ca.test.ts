@@ -193,7 +193,7 @@ testClient();
 
       // Wait for server to start and get port
       let serverPort;
-      const serverOutput = [];
+      const serverOutput: string[] = [];
       const reader = serverProc.stdout.getReader();
 
       const timeout = setTimeout(() => {

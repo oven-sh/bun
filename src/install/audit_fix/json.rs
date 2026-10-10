@@ -101,8 +101,14 @@ pub(super) fn write(plan: &FixPlan, outcome: Option<&FixOutcome>, dry_run: bool)
     out.extend_from_slice(b"],\"unaudited\":[");
     for (i, group) in plan.unaudited.iter().enumerate() {
         comma(&mut out, i);
+        let mut registry: Vec<u8> = Vec::new();
+        let _ = write!(
+            registry,
+            "{}",
+            bun_core::fmt::redacted_npm_url(&group.registry)
+        );
         out.extend_from_slice(b"{\"registry\":");
-        s(&mut out, &group.registry);
+        s(&mut out, &registry);
         out.extend_from_slice(b",\"packages\":[");
         for (j, package) in group.packages.iter().enumerate() {
             comma(&mut out, j);

@@ -53,6 +53,10 @@ bun publish --dry-run
 
 </ParamField>
 
+<ParamField path="--tolerate-republish" type="boolean">
+  `bun publish` exits with code 0 instead of 1 when the version being published already exists in the registry.
+</ParamField>
+
 <ParamField path="--gzip-level" type="string" default="9">
   Specify the level of gzip compression to use when packing the package. Only applies to `bun publish` without a tarball
   path argument. Values range from `0` to `9` (default is `9`).
@@ -92,7 +96,8 @@ bun publish --otp 123456
 #### Custom Registry
 
 <ParamField path="--registry" type="string">
-  Specify registry URL, overriding .npmrc and bunfig.toml
+  Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables. A registry configured
+  for the package's scope (`@scope:registry=` in .npmrc or `[install.scopes]` in bunfig.toml) still takes precedence.
 </ParamField>
 
 ```bash
@@ -120,7 +125,7 @@ bun publish --cafile ./ca-cert.pem
 
 </CodeGroup>
 
-### Publishing Options
+### General Options
 
 #### Dependency Management
 
@@ -168,7 +173,8 @@ bun publish --cafile ./ca-cert.pem
 #### Performance
 
 <ParamField path="--backend" type="string">
-  Platform optimizations: `clonefile` (default), `hardlink`, `symlink`, or `copyfile`
+  Platform optimizations: `clonefile` (default on macOS), `hardlink` (default on Linux and Windows), `symlink`, or
+  `copyfile`
 </ParamField>
 
 <ParamField path="--network-concurrency" type="number" default="48">

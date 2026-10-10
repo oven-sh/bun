@@ -6,16 +6,17 @@ import type { AddressInfo } from "node:net";
 import type { Server, TLSSocket } from "node:tls";
 import { join } from "path";
 import tls from "tls";
+type Certs = { key: string; cert: string; ca: string; single: string; subca: string };
 const clientTls = {
   key: readFileSync(join(import.meta.dir, "fixtures", "ec10-key.pem"), "utf8"),
   cert: readFileSync(join(import.meta.dir, "fixtures", "ec10-cert.pem"), "utf8"),
   ca: readFileSync(join(import.meta.dir, "fixtures", "ca5-cert.pem"), "utf8"),
-};
+} as Certs;
 const serverTls = {
   key: readFileSync(join(import.meta.dir, "fixtures", "agent10-key.pem"), "utf8"),
   cert: readFileSync(join(import.meta.dir, "fixtures", "agent10-cert.pem"), "utf8"),
   ca: readFileSync(join(import.meta.dir, "fixtures", "ca2-cert.pem"), "utf8"),
-};
+} as Certs;
 
 function split(file: any, into: any) {
   const certs = /([^]*END CERTIFICATE-----\r?\n)(-----BEGIN[^]*)/.exec(file) as RegExpExecArray;
@@ -28,7 +29,7 @@ split(clientTls.cert, clientTls);
 split(serverTls.cert, serverTls);
 
 // The certificates aren't for "127.0.0.1", so override the identity check.
-function checkServerIdentity(hostname: string, cert: any) {
+function checkServerIdentity(hostname: string, cert: any): undefined {
   expect(hostname).toBe("127.0.0.1");
   expect(cert.subject.CN).toBe("agent10.example.com");
 }
@@ -353,7 +354,7 @@ it("explicit rejectUnauthorized: false still admits an unverified client certifi
   try {
     const [serverSocket] = await Promise.all([handledSocket, once(client, "secureConnect")]);
     expect(serverSocket.authorized).toBe(false);
-    expect(serverSocket.authorizationError).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+    expect(serverSocket.authorizationError).toBe<string>("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
   } finally {
     client.end();
     server.close();
@@ -514,7 +515,7 @@ it("Check getPeerCertificate can properly handle '\\0' for fix CVE-2009-2408.", 
 });
 
 it("tls.connect should not accept untrusted certificates", async () => {
-  const { promise, resolve, reject } = Promise.withResolvers();
+  const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
   let server: Server | null = null;
   let socket: TLSSocket | null = null;
 
@@ -726,5 +727,154 @@ describe("tls ciphers should work", () => {
     expect(tls.DEFAULT_CIPHERS).toBe(
       "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-SHA256:ECDHE-RSA-AES256-SHA384:HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!SRP:!CAMELLIA",
     );
+  });
+});
+
+// A CA certificate in a trust source (`ca`, NODE_EXTRA_CA_CERTS, bundled, system) whose validity period does not
+// cover "now" is treated as absent: it can neither shadow a currently-valid certificate for the same issuer that the
+// server sends (Windows' system store caches stale intermediates — https://github.com/anthropics/claude-code/issues/71554)
+// nor anchor a chain itself. Certificates the *server* sends are checked exactly as before.
+describe("expired or not-yet-valid CA in the trust set", () => {
+  const dir = join(import.meta.dir, "fixtures", "expired-intermediate");
+  const F = Object.fromEntries(
+    [
+      "root", // self-signed, valid
+      "root-expired", // same name+key as root, self-signed, expired 2021
+      "oldroot-expired", // a different, expired self-signed root
+      "root-cross-by-oldroot", // root's key certified by oldroot (valid dates)
+      "int-valid", // CN=Bun Test Intermediate, issued by root — all int-* share one key
+      "int-expired", // expired 2021
+      "int-future", // notBefore 2100
+      "int-constrained-valid", // nameConstraints permitted DNS:.example.com (leaf is localhost => violates)
+      "int-constrained-expired",
+      "leaf", // CN=localhost, issued by the intermediate key
+    ].map(n => [n, readFileSync(join(dir, `${n}.pem`), "utf8")]),
+  );
+  const leafKey = readFileSync(join(dir, "leaf.key"), "utf8");
+
+  async function connect(serverCert: string, ca: string[], extra: object = {}) {
+    const server = tls.createServer({ key: leafKey, cert: serverCert });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      return await new Promise<string>(resolve => {
+        const socket = tls.connect(
+          { host: "127.0.0.1", port: (server.address() as AddressInfo).port, servername: "localhost", ca, ...extra },
+          () => {
+            resolve("authorized");
+            socket.destroy();
+          },
+        );
+        socket.on("error", (err: NodeJS.ErrnoException) => resolve(String(err.code)));
+      });
+    } finally {
+      server.close();
+    }
+  }
+
+  // [name, server sends, client trusts, expected, tls.connect extras]. Where 1.4.0 differed, the old result is noted.
+  const cases: [string, string[], string[], string, object?][] = [
+    ["baseline: valid intermediate from server", ["leaf", "int-valid"], ["root"], "authorized"],
+    ["expired intermediate from the SERVER is still expired", ["leaf", "int-expired"], ["root"], "CERT_HAS_EXPIRED"],
+    // was CERT_HAS_EXPIRED: the trusted expired copy shadowed the server's valid one
+    [
+      "expired trusted intermediate does not shadow the server's valid one",
+      ["leaf", "int-valid"],
+      ["root", "int-expired"],
+      "authorized",
+    ],
+    ["...in either order", ["leaf", "int-valid"], ["int-expired", "root"], "authorized"],
+    // was CERT_NOT_YET_VALID
+    [
+      "not-yet-valid trusted intermediate does not shadow either",
+      ["leaf", "int-valid"],
+      ["root", "int-future"],
+      "authorized",
+    ],
+    // absent as an anchor, but the failure still names the reason
+    ["expired trusted intermediate is not an anchor", ["leaf"], ["root", "int-expired"], "CERT_HAS_EXPIRED"],
+    ["not-yet-valid trusted intermediate is not an anchor", ["leaf"], ["root", "int-future"], "CERT_NOT_YET_VALID"],
+    ["valid trusted intermediate is (server sends leaf only)", ["leaf"], ["root", "int-valid"], "authorized"],
+    // pinning only an expired intermediate fails closed (was UNABLE_TO_GET_ISSUER_CERT: through it, then no root)
+    ["ca = only the expired intermediate", ["leaf", "int-valid"], ["int-expired"], "CERT_HAS_EXPIRED"],
+    [
+      "ca = only the expired intermediate, partial chains allowed, server sends it",
+      ["leaf", "int-expired"],
+      ["int-expired"],
+      "CERT_HAS_EXPIRED",
+      { allowPartialTrustChain: true },
+    ],
+    // an exact match on an expired pinned cert is not a trust anchor either
+    [
+      "ca = only the expired intermediate, partial chains allowed, server sends the valid one",
+      ["leaf", "int-valid"],
+      ["int-expired"],
+      "CERT_HAS_EXPIRED",
+      { allowPartialTrustChain: true },
+    ],
+    [
+      "ca = only the valid intermediate, partial chains allowed",
+      ["leaf", "int-valid"],
+      ["int-valid"],
+      "authorized",
+      { allowPartialTrustChain: true },
+    ],
+    // Name constraints are enforced on the chain actually built: a valid constrained copy in the trust set still wins
+    // (trusted first) and rejects; an expired constrained copy is absent, and trusting `root` means trusting what it
+    // issued. (was UNSPECIFIED, i.e. rejected via the expired constrained copy)
+    [
+      "valid constrained trusted intermediate still applies its constraints",
+      ["leaf", "int-valid"],
+      ["root", "int-constrained-valid"],
+      "UNSPECIFIED",
+    ],
+    ["constrained intermediate from the server violates", ["leaf", "int-constrained-valid"], ["root"], "UNSPECIFIED"],
+    [
+      "expired constrained trusted intermediate is absent",
+      ["leaf", "int-valid"],
+      ["root", "int-constrained-expired"],
+      "authorized",
+    ],
+    // Roots (the two "authorized" rows were CERT_HAS_EXPIRED)
+    [
+      "expired self-signed twin of the root does not shadow it",
+      ["leaf", "int-valid"],
+      ["root-expired", "root"],
+      "authorized",
+    ],
+    ["only the expired twin trusted", ["leaf", "int-valid"], ["root-expired"], "CERT_HAS_EXPIRED"],
+    [
+      "cross-sign to an expired old root: the valid root anchors",
+      ["leaf", "int-valid", "root-cross-by-oldroot"],
+      ["oldroot-expired", "root"],
+      "authorized",
+    ],
+    [
+      "cross-sign to an expired old root: only the old root trusted",
+      ["leaf", "int-valid", "root-cross-by-oldroot"],
+      ["oldroot-expired"],
+      "CERT_HAS_EXPIRED",
+    ],
+  ];
+  for (const [name, chain, ca, expected, extra] of cases) {
+    it(name, async () => {
+      expect(
+        await connect(
+          chain.map(n => F[n]).join(""),
+          ca.map(n => F[n]),
+          extra,
+        ),
+      ).toBe(expected);
+    });
+  }
+
+  it("a CA with a malformed validity field is rejected when the context is created, not ignored", () => {
+    const der = Buffer.from(F["int-valid"].replace(/-----[^\n]+-----|\s/g, ""), "base64");
+    // notBefore is a 13-byte UTCTime (tag 0x17, length 0x0d); corrupt one of its digits.
+    const notBefore = der.indexOf(Buffer.from([0x17, 0x0d]));
+    expect(notBefore).toBeGreaterThan(0);
+    const bad = Buffer.from(der);
+    bad[notBefore + 2] = 0x58; // 'X'
+    const pem = `-----BEGIN CERTIFICATE-----\n${bad.toString("base64")}\n-----END CERTIFICATE-----\n`;
+    expect(() => tls.createSecureContext({ ca: [F.root, pem] })).toThrow();
   });
 });

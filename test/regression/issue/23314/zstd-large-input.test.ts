@@ -29,7 +29,7 @@ describe("zstd compression with larger inputs", () => {
   it("should respect custom pledgedSrcSize if provided", async () => {
     const input = "custom test";
     const compressed = await new Promise<Buffer>((resolve, reject) => {
-      zlib.zstdCompress(input, { pledgedSrcSize: input.length }, (err, result) => {
+      zlib.zstdCompress(input, { pledgedSrcSize: input.length } as zlib.ZstdOptions, (err, result) => {
         if (err) reject(err);
         else resolve(result);
       });

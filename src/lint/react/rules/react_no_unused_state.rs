@@ -1,7 +1,6 @@
 use crate::util_ast::{get_property_name, name_of_key, unwrap_ts_as_expression};
 use crate::util_component_util::{Pragmas, is_es5_component, is_es6_component};
 use crate::util_pragma::{get_create_class_from_context, mentions_create_class};
-use crate::util_steps::Way;
 use bun_core::strings;
 use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::prelude::*;
@@ -142,9 +141,7 @@ struct Walk<'a> {
 impl<'a> Walk<'a> {
     /// The functions around `node`, the innermost first.
     fn functions_around(&mut self, node: Node<'a>) -> impl Iterator<Item = Func<'a>> + use<'a> {
-        let way = Way::new(node.file());
-        let innermost = self.enclosing_functions.find(node, |_, parent| parent.as_func());
-        successors(innermost, move |it| it.enclosing().filter(|_| way.take(1)))
+        successors(self.enclosing_functions.find(node, |_, parent| parent.as_func()), |it| it.enclosing())
     }
 
     /// `isES5Component`, of an `ObjectExpression`.

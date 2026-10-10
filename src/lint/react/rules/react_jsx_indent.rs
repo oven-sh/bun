@@ -1,5 +1,4 @@
 use crate::util_ast::{get_first_node_in_line, is_node_first_in_line};
-use crate::util_steps::Way;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -101,10 +100,9 @@ impl Rule for JsxIndent {
         if opening_indent == closing_indent {
             return;
         }
-        let way = Way::new(cx.file());
         let mut functions =
             std::iter::successors(Node::Stmt(statement).enclosing_function(), |it| {
-                it.enclosing().filter(|_| way.take(1))
+                it.enclosing()
             });
         if !functions.any(|it| !matches!(it.kind(), FnKind::Arrow | FnKind::StaticBlock)) {
             return;
@@ -347,8 +345,8 @@ fn with_indent(raw: &[u8], indent: &[u8]) -> Vec<u8> {
 
 /// Where the operand of the innermost `?:` around `offset` starts, and without one the `Program`.
 fn start_in_conditional_expression<'a>(file: &'a File<'a>, offset: u32) -> u32 {
-    let (mut node, way) = (get_node_by_range_index(file, offset), Way::new(file));
-    for parent in node.ancestors().take_while(|_| way.take(1)) {
+    let mut node = get_node_by_range_index(file, offset);
+    for parent in node.ancestors() {
         if matches!(parent, Node::Expr(it) if it.tag() == ExprTag::Cond) {
             return estree_span(node).start;
         }

@@ -5228,5 +5228,15 @@
   "a.ts:1:21+5 import(no-cycle)",
   "m.ts:3:19+5 import(no-cycle)",
   "n.ts:1:19+5 import(no-cycle)"
+ ],
+ "named/module-before-main": [
+  "a.js:12:10+2 import(named)",
+  "a.js:1:10+2 import(named)",
+  "a.js:2:10+2 import(named)",
+  "a.js:3:10+2 import(named)",
+  "a.js:4:10+2 import(named)",
+  "a.js:6:10+2 import(named)",
+  "a.js:7:10+2 import(named)",
+  "a.js:8:10+2 import(named)"
  ]
 }

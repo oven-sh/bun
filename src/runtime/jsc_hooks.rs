@@ -2317,11 +2317,18 @@ fn transpile_source_code_inner(
 
             // ── RuntimeTranspilerCache ──────────────────────────────────────
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-            let use_isolation_source_provider_cache =
-                unsafe { &*jsc_vm }.use_isolation_source_provider_cache();
+            let (use_isolation_source_provider_cache, macro_mode) = unsafe {
+                (
+                    (*jsc_vm).use_isolation_source_provider_cache(),
+                    (*jsc_vm).macro_mode,
+                )
+            };
             let mut cache = bun_ast::RuntimeTranspilerCache {
                 r#impl: Some(bun_ast::TranspilerCacheImplKind::Jsc),
-                require_esm_record: use_isolation_source_provider_cache,
+                esm_record: bun_ast::EsmRecordUse::for_reader(
+                    use_isolation_source_provider_cache,
+                    macro_mode,
+                ),
                 ..Default::default()
             };
 
@@ -2367,8 +2374,7 @@ fn transpile_source_code_inner(
             let is_node_override = specifier.starts_with(node_fallbacks::IMPORT_PATH);
 
             // SAFETY: per fn contract.
-            let (macro_mode, has_any_macro_remappings) =
-                unsafe { ((*jsc_vm).macro_mode, (*jsc_vm).has_any_macro_remappings) };
+            let has_any_macro_remappings = unsafe { (*jsc_vm).has_any_macro_remappings };
             let macro_remappings = if macro_mode || !has_any_macro_remappings || is_node_override {
                 bun_resolver::package_json::MacroMap::default()
             } else {
@@ -2840,17 +2846,7 @@ fn transpile_source_code_inner(
                     // Rebuild the cached ESM record for the
                     // isolation source-provider cache (same shape as
                     // `RuntimeTranspilerStore`).
-                    let module_info = if use_isolation_source_provider_cache
-                        && entry.metadata.module_type != CacheModuleType::Cjs
-                    {
-                        // `cache.get()` is a miss for an ES-module entry with no record.
-                        debug_assert!(!entry.esm_record.is_empty());
-                        bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized::create_from_cached_record(
-                            &entry.esm_record,
-                        )
-                    } else {
-                        None
-                    };
+                    let module_info = entry.module_info();
                     let is_commonjs_module = entry.metadata.module_type == CacheModuleType::Cjs;
                     // Node compile cache hook (transpiler-cache-hit path); must
                     // read `output_code` before it is consumed below. UTF-16

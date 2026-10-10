@@ -13,6 +13,33 @@
 use crate::{ExportsKind, Source};
 use core::ptr::NonNull;
 
+/// What the reader of an entry does with the ESM record (the serialized
+/// `ModuleInfo`) that an entry can store behind its output.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum EsmRecordUse {
+    /// The record is not read.
+    #[default]
+    Unused,
+    /// The record is read when the entry has one.
+    IfStored,
+    /// The reader builds its module record from it. `get()` is a miss for an
+    /// ES-module entry that has none, and `put()` then stores one.
+    Required,
+}
+
+impl EsmRecordUse {
+    /// `uses_records`: the VM builds module records from ESM records (test
+    /// isolation). A transpile in macro mode prints other output under the
+    /// same key, so it takes an entry as it is.
+    pub fn for_reader(uses_records: bool, macro_mode: bool) -> Self {
+        match (uses_records, macro_mode) {
+            (false, _) => Self::Unused,
+            (true, true) => Self::IfStored,
+            (true, false) => Self::Required,
+        }
+    }
+}
+
 pub struct RuntimeTranspilerCache {
     pub input_hash: Option<u64>,
     pub input_byte_length: Option<u64>,
@@ -25,10 +52,13 @@ pub struct RuntimeTranspilerCache {
     /// Opaque storage for `bun_bundler::cache::RuntimeTranspilerCacheEntry` —
     /// the concrete type lives a tier up and is round-tripped via cast.
     pub entry: Option<*mut ()>,
-    /// The caller builds its `JSModuleRecord` from the entry's stored ESM
-    /// record (test isolation), so `get()` treats an ES-module entry that was
-    /// written without one as a miss.
-    pub require_esm_record: bool,
+    /// Set by the caller before the parse.
+    pub esm_record: EsmRecordUse,
+    /// Set by `get()` when it refused an entry only because the entry has no
+    /// ESM record: the hash of that entry's output. Every other reader still
+    /// takes that entry, so `put()` replaces it only with the same output plus
+    /// the record.
+    pub recordless_entry_output_hash: Option<u64>,
 
     /// Dispatch slot — `bun_jsc` sets `Some(TranspilerCacheImplKind::Jsc)` at
     /// init. `None` ⇒ caching disabled (e.g. wasm builds, `--no-transpiler-cache`).
@@ -44,7 +74,8 @@ impl Default for RuntimeTranspilerCache {
             exports_kind: ExportsKind::None,
             output_code: None,
             entry: None,
-            require_esm_record: false,
+            esm_record: EsmRecordUse::Unused,
+            recordless_entry_output_hash: None,
             r#impl: None,
         }
     }

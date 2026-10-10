@@ -3,8 +3,9 @@
 use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_ast::ExportsKind;
 use bun_ast::Source;
+use bun_ast::{EsmRecordUse, ExportsKind};
+use bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized;
 use bun_core::{FeatureFlags, env_var};
 use bun_core::{String as BunString, ZStr};
 use bun_js_parser::ParserOptions;
@@ -388,8 +389,8 @@ impl Entry {
         Ok(())
     }
 
-    /// `read_esm_record` is false for a reader that does not use the stored
-    /// ESM record: it then costs no read, allocation or hash.
+    /// `read_esm_record` is false for a reader that does not use the ESM
+    /// record: the record then costs no read, allocation or hash.
     pub(crate) fn load(
         &mut self,
         file: &sys::File,
@@ -543,6 +544,23 @@ impl Entry {
 
         Ok(())
     }
+
+    /// The module record that the entry stores, for a reader that uses ESM
+    /// records (`load` reads the record only for such a reader).
+    pub fn module_info(&self) -> Option<Box<ModuleInfoDeserialized>> {
+        if self.metadata.module_type == ModuleType::Cjs || self.esm_record.is_empty() {
+            return None;
+        }
+        ModuleInfoDeserialized::create_from_cached_record(&self.esm_record)
+    }
+}
+
+/// What a lookup found when the entry on disk is valid.
+pub(crate) enum Found {
+    Hit(Entry),
+    /// An ES-module entry that has no ESM record, for a reader that requires
+    /// one. `output_hash` is the hash of the entry's output.
+    MissingEsmRecord { output_hash: u64 },
 }
 
 pub struct RuntimeTranspilerCache {
@@ -550,8 +568,9 @@ pub struct RuntimeTranspilerCache {
     pub(crate) input_byte_length: Option<u64>,
     pub(crate) features_hash: Option<u64>,
     pub(crate) exports_kind: ExportsKind,
-    /// See `bun_ast::RuntimeTranspilerCache::require_esm_record`.
-    pub(crate) require_esm_record: bool,
+    /// See the fields of the same name on `bun_ast::RuntimeTranspilerCache`.
+    pub(crate) esm_record: EsmRecordUse,
+    pub(crate) recordless_entry_output_hash: Option<u64>,
     pub(crate) entry: Option<Entry>,
     // `sourcemap` / `esm_record` are owned `Box<[u8]>` (global mimalloc).
     // The per-call arena that once backed the output code is gone: the UTF-8
@@ -731,8 +750,8 @@ impl RuntimeTranspilerCache {
         input_hash: u64,
         feature_hash: u64,
         input_stat_size: u64,
-        require_esm_record: bool,
-    ) -> crate::CrateResult<Entry> {
+        esm_record: EsmRecordUse,
+    ) -> crate::CrateResult<Found> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.fromFile");
 
         let mut cache_file_path_buf = bun_paths::path_buffer_pool::get();
@@ -743,7 +762,7 @@ impl RuntimeTranspilerCache {
             input_hash,
             feature_hash,
             input_stat_size,
-            require_esm_record,
+            esm_record,
         )
     }
 
@@ -752,8 +771,8 @@ impl RuntimeTranspilerCache {
         input_hash: u64,
         feature_hash: u64,
         input_stat_size: u64,
-        require_esm_record: bool,
-    ) -> crate::CrateResult<Entry> {
+        esm_record: EsmRecordUse,
+    ) -> crate::CrateResult<Found> {
         let mut metadata_bytes_buf = [0u8; Metadata::SIZE];
         // NONBLOCK: a FIFO must not block the open. On Windows it would make the handle overlapped.
         #[cfg(unix)]
@@ -794,22 +813,27 @@ impl RuntimeTranspilerCache {
             return Err(crate::CrateError::MismatchedFeatureHash);
         }
 
-        // A writer that does not use ESM records stores none. This reader
-        // transpiles again and `put()` replaces the entry with one that has the
-        // record. The file is kept: it is valid for every other reader, and
-        // another process may have replaced it already.
-        if require_esm_record
+        if esm_record == EsmRecordUse::Required
             && entry.metadata.module_type != ModuleType::Cjs
             && entry.metadata.esm_record_byte_length == 0
         {
+            // keep the cache in this case: the entry is a hit for a reader
+            // that does not require the record
             let _ = scopeguard::ScopeGuard::into_inner(unlink_guard);
-            return Err(crate::CrateError::MissingEsmRecord);
+            return Ok(Found::MissingEsmRecord {
+                output_hash: entry.metadata.output_hash,
+            });
         }
 
-        entry.load(&file, stat_size, require_esm_record)?;
+        entry.load(&file, stat_size, esm_record != EsmRecordUse::Unused)?;
+        debug_assert!(
+            esm_record != EsmRecordUse::Required
+                || entry.metadata.module_type == ModuleType::Cjs
+                || !entry.esm_record.is_empty()
+        );
 
         let _ = scopeguard::ScopeGuard::into_inner(unlink_guard);
-        Ok(entry)
+        Ok(Found::Hit(entry))
     }
 
     pub(crate) fn to_file(
@@ -916,9 +940,18 @@ impl RuntimeTranspilerCache {
             input_hash,
             self.features_hash.unwrap(),
             source.contents.len() as u64,
-            self.require_esm_record,
+            self.esm_record,
         ) {
-            Ok(e) => Some(e),
+            Ok(Found::Hit(e)) => Some(e),
+            Ok(Found::MissingEsmRecord { output_hash }) => {
+                self.recordless_entry_output_hash = Some(output_hash);
+                bun_core::scoped_log!(
+                    cache,
+                    "get(\"{}\") = MissingEsmRecord",
+                    bstr::BStr::new(source.path.text)
+                );
+                return false;
+            }
             Err(err) => {
                 bun_core::scoped_log!(
                     cache,
@@ -985,7 +1018,8 @@ bun_ast::link_impl_TranspilerCacheImpl! {
                 input_byte_length: this.input_byte_length,
                 features_hash: this.features_hash,
                 exports_kind: this.exports_kind,
-                require_esm_record: this.require_esm_record,
+                esm_record: this.esm_record,
+                recordless_entry_output_hash: None,
                 entry: None,
             };
             let hit = jsc.get(source, parser_options, used_jsx);
@@ -993,6 +1027,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             this.input_byte_length = jsc.input_byte_length;
             this.features_hash = jsc.features_hash;
             this.exports_kind = jsc.exports_kind;
+            this.recordless_entry_output_hash = jsc.recordless_entry_output_hash;
             if let Some(entry) = jsc.entry {
                 this.entry = Some(bun_core::heap::into_raw(Box::new(entry)).cast::<()>());
             }
@@ -1004,6 +1039,15 @@ bun_ast::link_impl_TranspilerCacheImpl! {
                 return;
             }
             debug_assert!(this.entry.is_none());
+
+            // The key does not cover every input of a transpile (the module
+            // type, for one). Keep the entry if this is not the same output.
+            if this
+                .recordless_entry_output_hash
+                .is_some_and(|output_hash| hash(output_code_bytes) != output_hash)
+            {
+                return;
+            }
 
             // Borrowed Latin-1 view: `to_file` only reads `byte_slice()` + the encoding
             // tag (unmarked 8-bit EncodedSlice -> Encoding::LATIN1, same as clone_latin1),

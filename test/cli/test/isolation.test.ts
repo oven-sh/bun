@@ -1891,18 +1891,50 @@ test.concurrent("--isolate: require(esm) caches a BunTranspiledModule SourceProv
   }
 });
 
+// Entry layout: test/cli/run/transpiler-cache.test.ts. module_type @ 4 (1 = ESM, 2 = CommonJS),
+// esm_record_byte_offset @ 78, esm_record_byte_length @ 86. The output and the sourcemap are
+// between the 102-byte header and the record. An entry is replaced by a rename, so a new
+// inode or mtime shows that a run wrote it again.
+function transpilerCacheEntries(cacheDir: string) {
+  return fs
+    .readdirSync(cacheDir)
+    .sort()
+    .map(name => {
+      const bytes = fs.readFileSync(join(cacheDir, name));
+      const { ino, mtimeNs } = fs.statSync(join(cacheDir, name), { bigint: true });
+      return {
+        name,
+        moduleType: bytes[4],
+        record: Number(bytes.readBigUInt64LE(86)),
+        outputAndSourcemap: Bun.hash(bytes.subarray(102, Number(bytes.readBigUInt64LE(78)))),
+        file: `${ino}@${mtimeNs}`,
+      };
+    });
+}
+
+// Past the 4 KiB floor of the transpiler cache.
+const transpilerCachePadding = `//${Buffer.alloc(5 * 1024, "p").toString()}\n`;
+
+function transpilerCacheEnv(cacheDir: string, extraEnv: Record<string, string> = {}) {
+  return {
+    ...bunEnv,
+    ...extraEnv,
+    BUN_RUNTIME_TRANSPILER_CACHE_PATH: cacheDir,
+    // A debug build drops every cache hit without this.
+    BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+  };
+}
+
 // A run without isolation stores no module record in the on-disk transpiler cache. An isolated
 // run that took such an entry as it is cached a plain Module provider: JSC parsed the module
 // again in every test file, and a type-only re-export, which links only through the record,
 // failed. The isolated run has to transpile once more and store the record.
-// lib.ts and barrel.ts take the async transpile path, req.mjs the synchronous one.
+// lib.ts and barrel.ts take the async transpile path, req.mjs and common.cjs the synchronous one.
 test.concurrent.each([
   ["--isolate", ["--isolate"], {}],
   // One worker takes both files (scale-up gated).
   ["--parallel worker", ["--parallel=2"], { BUN_TEST_PARALLEL_SCALE_MS: "60000" }],
 ])("a transpiler cache entry written without isolation gets its module record (%s)", async (_, args, extraEnv) => {
-  // Past the 4 KiB floor of the transpiler cache.
-  const padding = `//${Buffer.alloc(5 * 1024, "p").toString()}\n`;
   const isolatedTestFile = `
     import { test, expect } from "bun:test";
     import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
@@ -1910,7 +1942,8 @@ test.concurrent.each([
 
     test("providers carry the module record", () => {
       const { f2 } = require("./req.mjs");
-      expect(f1(1) + f2(1)).toBe(5);
+      const { f3 } = require("./common.cjs");
+      expect(f1(1) + f2(1) + f3(1)).toBe(9);
       expect({
         lib: isolatedModuleCacheSourceType(require.resolve("./lib.ts")),
         req: isolatedModuleCacheSourceType(require.resolve("./req.mjs")),
@@ -1924,10 +1957,11 @@ test.concurrent.each([
     });
   `;
   using dir = tempDir("isolate-recordless-cache-entry", {
-    "lib.ts": `export function f1(x: number) { return x + 1; }\n${padding}`,
-    "req.mjs": `export function f2(x) { return x + 2; }\n${padding}`,
+    "lib.ts": `export function f1(x: number) { return x + 1; }\n${transpilerCachePadding}`,
+    "req.mjs": `export function f2(x) { return x + 2; }\n${transpilerCachePadding}`,
+    "common.cjs": `exports.f3 = function (x) { return x + 3; };\n${transpilerCachePadding}`,
     "types.ts": `export type T = number;\nexport const v = 1;\n`,
-    "barrel.ts": `export { T, v } from "./types";\n${padding}`,
+    "barrel.ts": `export { T, v } from "./types";\n${transpilerCachePadding}`,
     // A test run without isolation, not `bun run`, so that a change that gives test runs
     // their own entries does not remove the entries this test needs.
     "writer.test.ts": `
@@ -1936,7 +1970,8 @@ test.concurrent.each([
 
       test("writes the entries", async () => {
         const { f2 } = require("./req.mjs");
-        expect(f1(1) + f2(1)).toBe(5);
+        const { f3 } = require("./common.cjs");
+        expect(f1(1) + f2(1) + f3(1)).toBe(9);
         // Does not link without the record. The import still transpiles barrel.ts.
         await import("./barrel.ts").catch(() => {});
       });
@@ -1945,24 +1980,10 @@ test.concurrent.each([
     "b.test.ts": isolatedTestFile,
   });
   const cacheDir = join(String(dir), ".cache");
-  const env = {
-    ...bunEnv,
-    ...extraEnv,
-    BUN_RUNTIME_TRANSPILER_CACHE_PATH: cacheDir,
-    // A debug build drops every cache hit without this.
-    BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
-  };
-  // Entry layout: test/cli/run/transpiler-cache.test.ts. module_type @ 4 (1 = ESM), esm_record_byte_length @ 86.
-  // An entry is replaced by a rename, so a new inode or mtime shows that a run wrote it again.
-  const entries = () =>
-    fs
-      .readdirSync(cacheDir)
-      .sort()
-      .map(name => {
-        const bytes = fs.readFileSync(join(cacheDir, name));
-        const { ino, mtimeNs } = fs.statSync(join(cacheDir, name), { bigint: true });
-        return { name, moduleType: bytes[4], record: Number(bytes.readBigUInt64LE(86)), file: `${ino}@${mtimeNs}` };
-      });
+  const env = transpilerCacheEnv(cacheDir, extraEnv);
+  const entries = () => transpilerCacheEntries(cacheDir);
+  const esm = (list: ReturnType<typeof entries>) => list.filter(e => e.moduleType === 1);
+  const commonjs = (list: ReturnType<typeof entries>) => list.filter(e => e.moduleType === 2);
   const writer = async () => {
     const { stderr, exitCode } = await runTests(String(dir), [], ["./writer.test.ts"], env);
     expect(stderr).toContain("1 pass");
@@ -1978,17 +1999,21 @@ test.concurrent.each([
 
   await writer();
   const written = entries();
-  expect(written.map(e => ({ moduleType: e.moduleType, record: e.record }))).toEqual([
-    { moduleType: 1, record: 0 },
-    { moduleType: 1, record: 0 },
-    { moduleType: 1, record: 0 },
-  ]);
+  expect(esm(written).map(e => e.record)).toEqual([0, 0, 0]);
+  expect(commonjs(written).map(e => e.record)).toEqual([0]);
 
+  // A run that does not use the record takes an entry without one as a hit.
+  await writer();
+  expect(entries()).toEqual(written);
+
+  // The ES-module entries get the record and keep their output. The CommonJS entry has no
+  // record to get.
   await isolated();
   const upgraded = entries();
-  expect(upgraded.map(e => ({ name: e.name, moduleType: e.moduleType, hasRecord: e.record > 0 }))).toEqual(
-    written.map(e => ({ name: e.name, moduleType: 1, hasRecord: true })),
-  );
+  const output = (e: (typeof written)[number]) => ({ name: e.name, outputAndSourcemap: e.outputAndSourcemap });
+  expect(esm(upgraded).map(output)).toEqual(esm(written).map(output));
+  expect(esm(upgraded).map(e => e.record > 0)).toEqual([true, true, true]);
+  expect(commonjs(upgraded)).toEqual(commonjs(written));
 
   // Neither a run without isolation nor a later isolated run writes the entries again.
   await writer();
@@ -2002,7 +2027,7 @@ test.concurrent.each([
 // mismatch, deletes the entry and writes a new one.
 test.concurrent("a run without isolation does not read the module record of a transpiler cache entry", async () => {
   using dir = tempDir("isolate-cache-record-skip", {
-    "lib.ts": `export const value: number = 42;\n//${Buffer.alloc(5 * 1024, "p").toString()}\n`,
+    "lib.ts": `export const value: number = 42;\n${transpilerCachePadding}`,
     "a.test.ts": `
       import { test, expect } from "bun:test";
       import { value } from "./lib.ts";
@@ -2012,11 +2037,7 @@ test.concurrent("a run without isolation does not read the module record of a tr
     `,
   });
   const cacheDir = join(String(dir), ".cache");
-  const env = {
-    ...bunEnv,
-    BUN_RUNTIME_TRANSPILER_CACHE_PATH: cacheDir,
-    BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
-  };
+  const env = transpilerCacheEnv(cacheDir);
   const run = async (args: string[]) => {
     const { stderr, exitCode } = await runTests(String(dir), args, ["./a.test.ts"], env);
     expect(stderr).toContain("1 pass");
@@ -2029,7 +2050,7 @@ test.concurrent("a run without isolation does not read the module record of a tr
   expect(names).toHaveLength(1);
   const entry = join(cacheDir, names[0]);
   const intact = fs.readFileSync(entry);
-  // esm_record_byte_offset @ 78, esm_record_byte_length @ 86. The record is the last section.
+  // The record is the last section of the entry.
   const recordEnd = Number(intact.readBigUInt64LE(78) + intact.readBigUInt64LE(86));
   expect(Number(intact.readBigUInt64LE(86))).toBeGreaterThan(0);
   expect(recordEnd).toBe(intact.length);
@@ -2043,4 +2064,143 @@ test.concurrent("a run without isolation does not read the module record of a tr
 
   await run(["--isolate"]);
   expect(fs.readFileSync(entry).equals(intact)).toBe(true);
+});
+
+// The cache key does not cover every input of a transpile. Where the isolated run's own
+// transpile is not the output that the entry has, the isolated run must not put it in the place
+// of that entry: a run without isolation would then execute it.
+//   side.js   The same bytes in a "type": "module" and a "type": "commonjs" package.
+//   helper.ts A test run gives it the bun:test globals and stores no entry for it.
+//   alias.ts  A test run reads its "vitest" import as "bun:test".
+test.concurrent("an isolated run keeps a transpiler cache entry that its own transpile does not match", async () => {
+  const side = `
+    let strict;
+    try { undeclared_in_side_js = 1; strict = false; } catch { strict = true; }
+    globalThis.sideIsStrict = strict;
+    ${transpilerCachePadding}`;
+  using dir = tempDir("isolate-cache-entry-kept", {
+    "esm/package.json": `{ "type": "module" }`,
+    "esm/side.js": side,
+    "cjs/package.json": `{ "type": "commonjs" }`,
+    "cjs/side.js": side,
+    "helper.ts": `export const hasExpect = typeof expect !== "undefined";\n${transpilerCachePadding}`,
+    "node_modules/vitest/package.json": `{ "name": "vitest", "version": "0.0.0", "type": "module", "main": "index.js" }`,
+    "node_modules/vitest/index.js": `export const vi = "not bun:test";`,
+    "alias.ts": `
+      import { expect } from "bun:test";
+      import { vi } from "vitest";
+      export const vitest = typeof vi + " " + typeof expect;
+      ${transpilerCachePadding}`,
+    "run.ts": `
+      import "./esm/side.js";
+      import { hasExpect } from "./helper.ts";
+      import { vitest } from "./alias.ts";
+      console.log(JSON.stringify({ sideIsStrict: globalThis.sideIsStrict, hasExpect, vitest }));
+    `,
+    "a.test.ts": `
+      import { test, expect } from "bun:test";
+      import "./cjs/side.js";
+      import { hasExpect } from "./helper.ts";
+      import { vitest } from "./alias.ts";
+
+      test("each module is the transpile of this run", () => {
+        expect({ sideIsStrict: globalThis.sideIsStrict, hasExpect, vitest }).toEqual({
+          sideIsStrict: false,
+          hasExpect: true,
+          vitest: "object function",
+        });
+      });
+    `,
+  });
+  const cacheDir = join(String(dir), ".cache");
+  const env = transpilerCacheEnv(cacheDir);
+  const plain = async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "./run.ts"],
+      env,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ sideIsStrict: true, hasExpect: false, vitest: "string function" });
+    expect(exitCode).toBe(0);
+  };
+
+  await plain();
+  const written = transpilerCacheEntries(cacheDir);
+  expect(written.map(e => ({ moduleType: e.moduleType, record: e.record }))).toEqual([
+    { moduleType: 1, record: 0 },
+    { moduleType: 1, record: 0 },
+    { moduleType: 1, record: 0 },
+  ]);
+
+  for (const args of [["--isolate"], ["--parallel=2"]]) {
+    const { stderr, exitCode } = await runTests(String(dir), args, ["./a.test.ts"], env);
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+    expect(transpilerCacheEntries(cacheDir)).toEqual(written);
+  }
+
+  await plain();
+  expect(transpilerCacheEntries(cacheDir)).toEqual(written);
+});
+
+// A module that a macro imports is transpiled in macro mode, under the key of its normal
+// transpile. In an isolated run that load takes an entry as it is, like a run without isolation.
+test.concurrent("a macro import in an isolated run does not replace a transpiler cache entry", async () => {
+  using dir = tempDir("isolate-cache-macro", {
+    "m.ts": `
+      export function atBuildTime(): string { return "macro"; }
+      export function atRunTime(): string { return require("node:path").basename("/a/b"); }
+      ${transpilerCachePadding}`,
+    "run.ts": `
+      import { atRunTime } from "./m.ts";
+      console.log(atRunTime());
+    `,
+    "a.test.ts": `
+      import { test, expect } from "bun:test";
+      import { atBuildTime } from "./m.ts" with { type: "macro" };
+      test("the macro runs", () => {
+        expect(atBuildTime()).toBe("macro");
+      });
+    `,
+    "c.test.ts": `
+      import { test, expect } from "bun:test";
+      import { atRunTime } from "./m.ts";
+      test("the module runs", () => {
+        expect(atRunTime()).toBe("b");
+      });
+    `,
+  });
+  const cacheDir = join(String(dir), ".cache");
+  const env = transpilerCacheEnv(cacheDir);
+  const plain = async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "./run.ts"],
+      env,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("b\n");
+    expect(exitCode).toBe(0);
+  };
+
+  await plain();
+  const written = transpilerCacheEntries(cacheDir);
+  expect(written.map(e => ({ moduleType: e.moduleType, record: e.record }))).toEqual([{ moduleType: 1, record: 0 }]);
+
+  const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], ["./a.test.ts", "./c.test.ts"], env);
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+  expect(transpilerCacheEntries(cacheDir)).toEqual(written);
+
+  await plain();
+  expect(transpilerCacheEntries(cacheDir)).toEqual(written);
 });

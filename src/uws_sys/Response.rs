@@ -132,6 +132,21 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
+    /// node:http: ends a response that has trailer fields. See `HttpResponse::endWithTrailers`.
+    pub(crate) fn end_with_trailers(&mut self, data: &[u8], trailer_section: &[u8]) {
+        // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
+        unsafe {
+            c::uws_res_end_with_trailers(
+                Self::ssl_flag(),
+                self.downcast(),
+                data.as_ptr(),
+                data.len(),
+                trailer_section.as_ptr(),
+                trailer_section.len(),
+            );
+        }
+    }
+
     pub(crate) fn try_end(&mut self, data: &[u8], total: usize, close_: bool) -> bool {
         // SAFETY: self is a live opaque uws_res handle owned by uWS; FFI call has no extra preconditions.
         unsafe {
@@ -891,6 +906,20 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.end(data, close_connection))
     }
 
+    /// HTTP/1 only: an HTTP/2 or HTTP/3 response has no chunked body, so it ends without the section.
+    pub fn end_with_trailers(self, data: &[u8], trailer_section: &[u8]) {
+        match self {
+            AnyResponse::SSL(ptr) => {
+                TLSResponse::as_handle(ptr).end_with_trailers(data, trailer_section)
+            }
+            AnyResponse::TCP(ptr) => {
+                TCPResponse::as_handle(ptr).end_with_trailers(data, trailer_section)
+            }
+            AnyResponse::H3(ptr) => H3Response::as_handle(ptr).end(data, false),
+            AnyResponse::H2(ptr) => H2Response::as_handle(ptr).end(data, false),
+        }
+    }
+
     pub fn should_close_connection(self) -> bool {
         any_dispatch!(self, |r| r.should_close_connection())
     }
@@ -1255,6 +1284,14 @@ pub mod c {
             data: *const u8,
             length: usize,
             close_connection: bool,
+        );
+        pub(crate) fn uws_res_end_with_trailers(
+            ssl: i32,
+            res: *mut uws_res,
+            data: *const u8,
+            length: usize,
+            trailer_section: *const u8,
+            trailer_section_length: usize,
         );
         pub(crate) safe fn uws_res_flush_headers(
             ssl: i32,

@@ -46,7 +46,6 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketUpgradeToTunnel);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketReadStop);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketReadStart);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketSetResponseTrailers);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketIsRequestTimedOut);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStartPipelinedResponse);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStopParsing);
@@ -89,7 +88,6 @@ static const JSC::HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = 
     { "upgradeToTunnel"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketUpgradeToTunnel, 0 } },
     { "readStop"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketReadStop, 0 } },
     { "readStart"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketReadStart, 0 } },
-    { "setResponseTrailers"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketSetResponseTrailers, 1 } },
     { "isRequestTimedOut"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketIsRequestTimedOut, 2 } },
     { "startPipelinedResponse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketStartPipelinedResponse, 3 } },
     { "stopParsing"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketStopParsing, 0 } },
@@ -163,26 +161,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketReadStart, (JSC::JSGlobal
     if (auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue())) [[likely]] {
         thisObject->readStart();
     }
-    return JSValue::encode(JSC::jsUndefined());
-}
-
-// node:http: set the trailer fields (pre-rendered "name: value\r\n" lines) to send
-// at the end of the current response's chunked body (response.addTrailers()).
-JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketSetResponseTrailers, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());
-    if (!thisObject) [[unlikely]] {
-        return JSValue::encode(JSC::jsUndefined());
-    }
-    JSValue trailersValue = callFrame->argument(0);
-    if (!trailersValue.isString()) {
-        return JSValue::encode(JSC::jsUndefined());
-    }
-    WTF::String trailers = trailersValue.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    thisObject->setResponseTrailers(trailers);
     return JSValue::encode(JSC::jsUndefined());
 }
 

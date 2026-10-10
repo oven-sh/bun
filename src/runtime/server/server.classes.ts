@@ -138,6 +138,10 @@ export default [
         fn: "end",
         length: 2,
       },
+      endWithTrailers: {
+        fn: "endWithTrailers",
+        length: 5,
+      },
       getBytesWritten: {
         fn: "getBytesWritten",
         length: 0,
@@ -184,6 +188,10 @@ export default [
       writeHeadAndEnd: {
         fn: "writeHeadAndEnd",
         length: 8,
+      },
+      writeHeadAndEndWithTrailers: {
+        fn: "writeHeadAndEndWithTrailers",
+        length: 9,
       },
       resume: {
         fn: "doResume",

@@ -2286,6 +2286,10 @@ fn run_root_lifecycle_scripts(
     if let Some(scripts) = manager.root_lifecycle_scripts.take() {
         debug_assert!(scripts.total > 0);
 
+        if manager.options.dry_run {
+            return Ok(());
+        }
+
         if log_level != Options::LogLevel::Silent {
             Output::print_error(format_args!("\n"));
             Output::flush();

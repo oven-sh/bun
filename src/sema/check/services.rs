@@ -111,7 +111,7 @@ pub struct Services<'c, 'p, 's> {
     symbols_of_declarations: OnceCell<FxHashMap<Decl, SymbolId>>,
     read_library: Option<ReadLibrary<'c>>,
     /// What the queries must not change for the files that the task checks next.
-    flow_analysis_was_disabled: bool,
+    flow_analysis_was_disabled: Vec<FileId>,
     had_run_out_of_stack: bool,
 }
 
@@ -158,7 +158,7 @@ impl<'p, 's> Checker<'p, 's> {
 
 impl Drop for Services<'_, '_, '_> {
     fn drop(&mut self) {
-        self.c.flow_analysis_disabled = self.flow_analysis_was_disabled;
+        self.c.flow_analysis_disabled = std::mem::take(&mut self.flow_analysis_was_disabled);
         self.c.ran_out_of_stack.set(self.had_run_out_of_stack);
         self.c.rechecked_exprs.clear();
         self.c.rechecked_members.clear();
@@ -169,7 +169,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     /// Whether the control flow analysis was disabled when the file had been checked, or a question
     /// has disabled it since: there are references in the file that have the error type.
     pub fn was_flow_analysis_ever_disabled(&self) -> bool {
-        self.flow_analysis_was_disabled || self.c.flow_analysis_disabled
+        !self.flow_analysis_was_disabled.is_empty() || !self.c.flow_analysis_disabled.is_empty()
     }
 
     #[inline]
@@ -819,7 +819,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 _ => false,
             };
         // While the control flow analysis is disabled a reference has the error type that had another before.
-        if !has_many || self.c.flow_analysis_disabled {
+        if !has_many || !self.c.flow_analysis_disabled.is_empty() {
             return false;
         }
         let known = self.expected_of_many.get(&(file, literal)).copied();
@@ -830,7 +830,9 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         };
         // What the checker gave up on it can find when it knows more.
         if known.is_none() {
-            if self.c.flow_analysis_disabled || self.type_test(TypeTest::Unresolved, expected) {
+            if !self.c.flow_analysis_disabled.is_empty()
+                || self.type_test(TypeTest::Unresolved, expected)
+            {
                 return false;
             }
             self.expected_of_many.insert((file, literal), expected);

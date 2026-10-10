@@ -458,7 +458,7 @@ impl Services<'_, '_, '_> {
     /// `getTypeAtLocation`, `getTypeOfNode`
     pub fn type_at_location(&mut self, node: NodeRef) -> TypeId {
         // While the control flow analysis is disabled a reference has the error type that had another before.
-        if self.c.flow_analysis_disabled {
+        if !self.c.flow_analysis_disabled.is_empty() {
             return self.type_at_location_uncached(node);
         }
         if let Some(&known) = self.types_at.get(&node) {
@@ -466,7 +466,7 @@ impl Services<'_, '_, '_> {
         }
         let ty = self.type_at_location_uncached(node);
         // What the checker gave up on it can find when it knows more.
-        if !self.c.flow_analysis_disabled && !self.type_test(TypeTest::Unresolved, ty) {
+        if self.c.flow_analysis_disabled.is_empty() && !self.type_test(TypeTest::Unresolved, ty) {
             self.types_at.insert(node, ty);
         }
         ty

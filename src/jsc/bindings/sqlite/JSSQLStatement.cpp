@@ -49,6 +49,7 @@
 #include "wtf/text/StringToIntegerConversion.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include "BunString.h"
+#include "ErrorCode.h"
 static constexpr int32_t kSafeIntegersFlag = 1 << 1;
 static constexpr int32_t kStrictFlag = 1 << 2;
 static constexpr int32_t kOwnedByDatabaseFlag = 1 << 3;
@@ -386,7 +387,8 @@ static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, sqlite3* db)
     // Error messages can echo identifiers/values from the query, which SQLite does
     // not validate as UTF-8, so decode leniently to avoid dropping the message.
     WTF::String str = WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(msg), strlen(msg) });
-    JSC::JSObject* object = JSC::createError(globalObject, str);
+    // RAISE(ABORT, '') in a trigger gives an empty message.
+    JSC::JSObject* object = Bun::createErrorAllowingEmptyMessage(globalObject, JSC::ErrorType::Error, str);
     auto& builtinNames = WebCore::builtinNames(vm);
     object->putDirect(vm, vm.propertyNames->name, jsString(vm, String("SQLiteError"_s)), JSC::PropertyAttribute::DontEnum | 0);
 

@@ -79,7 +79,7 @@ impl Options {
     /// - `--revision` or `--version` flags are passed without a target
     ///   command also being provided. This is not a failure.
     /// - Incorrect arguments are passed. Prints usage and exits with a failure code.
-    fn parse(ctx: &mut ContextData, argv: &[&'static ZStr]) -> Result<Options, AllocError> {
+    fn parse(ctx: &mut ContextData, argv: &[&'static [u8]]) -> Result<Options, AllocError> {
         let mut found_subcommand_name = false;
         let mut maybe_package_name: Option<&'static [u8]> = None;
         let mut has_version = false; //  --version
@@ -94,7 +94,7 @@ impl Options {
         opts.passthrough_list.reserve_exact(argv.len());
 
         while i < argv.len() {
-            let positional: &[u8] = argv[i].as_bytes();
+            let positional: &[u8] = argv[i];
 
             if maybe_package_name.is_some() {
                 opts.passthrough_list.push(Box::<[u8]>::from(positional));
@@ -122,14 +122,14 @@ impl Options {
                         Output::err_generic("--package requires a package name", format_args!(""));
                         Global::exit(1);
                     }
-                    if argv[i].as_bytes().is_empty() {
+                    if argv[i].is_empty() {
                         Output::err_generic(
                             "--package requires a non-empty package name",
                             format_args!(""),
                         );
                         Global::exit(1);
                     }
-                    opts.specified_package = Some(argv[i].as_bytes());
+                    opts.specified_package = Some(argv[i]);
                 } else if positional.starts_with(b"--package=") {
                     let package_value = &positional[b"--package=".len()..];
                     if package_value.is_empty() {
@@ -668,7 +668,8 @@ impl BunxCommand {
         Global::exit(1);
     }
 
-    pub(crate) fn exec(ctx: &mut ContextData, argv: &[&'static ZStr]) -> crate::Result<()> {
+    /// `argv` is the flags in front of `x`, then `x` or `bunx`, then the rest.
+    pub(crate) fn exec(ctx: &mut ContextData, argv: &[&'static [u8]]) -> crate::Result<()> {
         // Don't log stuff
         ctx.debug.silent = true;
 

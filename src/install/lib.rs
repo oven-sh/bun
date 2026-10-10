@@ -396,6 +396,31 @@ pub struct RunCommand;
 pub static PRETEND_TO_BE_NODE: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+/// argv index of the subcommand keyword, set by `Command::which()` in
+/// `bun_runtime::cli` (`bun --cwd ./dir test` → 3).
+pub static SUBCOMMAND_ARGV_INDEX: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(1);
+
+#[inline]
+pub fn subcommand_argv_index() -> usize {
+    SUBCOMMAND_ARGV_INDEX.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// Drop the positionals before the keyword: values of runtime flags that
+/// this command's table does not declare (`bun --preload ./x.ts install`).
+pub fn positionals_from_keyword<'a>(positionals: &'a [&'static [u8]]) -> &'a [&'static [u8]] {
+    let Some(keyword) = bun_core::argv().get(subcommand_argv_index()) else {
+        return positionals;
+    };
+    match positionals
+        .iter()
+        .position(|p| core::ptr::eq(p.as_ptr(), keyword.as_bytes().as_ptr()))
+    {
+        Some(k) => &positionals[k..],
+        None => positionals,
+    }
+}
+
 #[cfg(not(windows))]
 use bun_core::ZStr;
 

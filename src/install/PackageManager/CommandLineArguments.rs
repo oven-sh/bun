@@ -1287,8 +1287,10 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             Global::exit(0);
         }
 
-        let mut cli = CommandLineArguments::default();
-        cli.positionals = args.positionals();
+        let mut cli = CommandLineArguments {
+            positionals: crate::positionals_from_keyword(args.positionals()),
+            ..Default::default()
+        };
         cli.yarn = args.flag(b"--yarn");
         cli.production = args.flag(b"--production") || args.flag(b"--prod");
         cli.frozen_lockfile = args.flag(b"--frozen-lockfile")

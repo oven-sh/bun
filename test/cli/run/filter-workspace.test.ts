@@ -478,6 +478,94 @@ describe("bun", () => {
     });
   });
 
+  // #40544: `bun --filter=<pat> test` must run each matched package's "test"
+  // script (like `bun run --filter=<pat> test`), not bun's own test runner.
+  // Same for `build` and the bundler.
+  describe.concurrent("routes `test` and `build` to the package scripts", () => {
+    const test_root = tempDirWithFiles("filter-test-subcommand", {
+      packages: {
+        pkga: {
+          ".env": "FILTER_TEST_ENV=from-pkga-env",
+          "package.json": JSON.stringify({
+            name: "pkga",
+            scripts: {
+              test: `${bunExe()} -e "console.log('testa', process.env.FILTER_TEST_ENV)"`,
+              build: "echo builda",
+            },
+          }),
+        },
+        pkgb: {
+          "package.json": JSON.stringify({
+            name: "pkgb",
+            scripts: {
+              test: "echo testb",
+              build: "echo buildb",
+            },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "ws",
+        workspaces: ["packages/*"],
+      }),
+    });
+
+    async function run(...args: string[]) {
+      await using proc = Bun.spawn({
+        cwd: test_root,
+        cmd: [bunExe(), ...args],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, exitCode };
+    }
+
+    for (const args of [
+      ["--filter=pkga", "test"],
+      ["-F=pkga", "test"],
+      ["-Fpkga", "test"],
+      ["--filter", "pkga", "test"],
+    ]) {
+      test(`bun ${args.join(" ")}`, async () => {
+        const { exitCode, stdout } = await run(...args);
+        // The package's own .env is loaded because the script runs with the
+        // package directory as cwd.
+        expect(stdout).toMatch(/testa from-pkga-env/);
+        expect(stdout).not.toMatch(/testb/);
+        expect(exitCode).toBe(0);
+      });
+    }
+
+    test("bun --workspaces test", async () => {
+      const { exitCode, stdout } = await run("--workspaces", "test");
+      expect(stdout).toMatch(/testa from-pkga-env/);
+      expect(stdout).toMatch(/testb/);
+      expect(exitCode).toBe(0);
+    });
+
+    test("bun --filter=pkga build runs the package build script", async () => {
+      const { exitCode, stdout } = await run("--filter=pkga", "build");
+      expect(stdout).toMatch(/builda/);
+      expect(stdout).not.toMatch(/buildb/);
+      expect(exitCode).toBe(0);
+    });
+
+    test("bun --workspaces build runs every package build script", async () => {
+      const { exitCode, stdout } = await run("--workspaces", "build");
+      expect(stdout).toMatch(/builda/);
+      expect(stdout).toMatch(/buildb/);
+      expect(exitCode).toBe(0);
+    });
+
+    test("bun --filter=pkgb test forwards extra args to the script", async () => {
+      const { exitCode, stdout } = await run("--filter=pkgb", "test", "extra-arg");
+      expect(stdout).toMatch(/testb extra-arg/);
+      expect(exitCode).toBe(0);
+    });
+  });
+
   test("should error with missing script", () => {
     runInCwdFailure(cwd_root, "*", "notpresent", /error: Script "notpresent" not found in \d+ packages matching "\*"/);
     runInCwdFailure(cwd_root, "pkga", "notpresent", /error: Script "notpresent" not found in package "pkga"/);

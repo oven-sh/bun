@@ -2922,7 +2922,7 @@ mod posix_impl {
             unsafe { libc::faccessat(dir.native(), sub.as_ptr(), libc::F_OK, 0) == 0 }
         }
     }
-    /// Calls extern C `is_executable_file` (c-bindings.cpp:72-89) via FFI.
+    /// Calls extern C `is_executable_file` (c-bindings.cpp) via FFI.
     pub fn is_executable_file_path(path: &ZStr) -> bool {
         unsafe extern "C" {
             // `c_char`, not `i8` — `char` is unsigned on aarch64/arm/ppc, so

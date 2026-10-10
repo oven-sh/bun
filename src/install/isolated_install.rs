@@ -214,6 +214,47 @@ pub(crate) enum Timings {
     Quiet,
 }
 
+/// Whether an entry of this resolution is linked into `node_modules/.bun/node_modules`.
+fn links_into_hidden_node_modules(tag: ResolutionTag) -> bool {
+    matches!(
+        tag,
+        ResolutionTag::Npm
+            | ResolutionTag::Git
+            | ResolutionTag::Github
+            | ResolutionTag::LocalTarball
+            | ResolutionTag::RemoteTarball
+    )
+}
+
+/// Whether a dependency of this name can be linked as `node_modules/.bun/node_modules/<dep_name>`.
+fn can_hold_hidden_hoist(manager: &PackageManager, dep_name: &[u8]) -> bool {
+    if !manager.options.hoist {
+        return false;
+    }
+    // `.bin` is on the `PATH` of store packages' scripts, and a bare scope is the directory that holds `<scope>/<name>`.
+    let is_package_name = match dep_name.first() {
+        Some(&b'.') => false,
+        Some(&b'@') => bun_core::strings::contains_char(dep_name, b'/'),
+        _ => true,
+    };
+    is_package_name
+        && manager
+            .options
+            .hoist_pattern
+            .as_ref()
+            .is_none_or(|hoist_pattern| hoist_pattern.is_match(dep_name))
+}
+
+/// Grants `node_modules/.bun/node_modules/<dep_name>` to the first dependency that asks for it.
+fn claim_hidden_hoist(
+    manager: &PackageManager,
+    hidden_hoisted: &mut StringArrayHashMap<()>,
+    dep_name: &[u8],
+) -> Result<bool, AllocError> {
+    Ok(can_hold_hidden_hoist(manager, dep_name)
+        && !hidden_hoisted.get_or_put(dep_name)?.found_existing)
+}
+
 pub(crate) fn build_store(
     manager: &PackageManager,
     lockfile: &Lockfile,
@@ -893,6 +934,7 @@ pub(crate) fn build_store(
     let mut public_hoisted: StringArrayHashMap<()> = StringArrayHashMap::default();
 
     let mut hidden_hoisted: StringArrayHashMap<()> = StringArrayHashMap::default();
+    let mut hidden_hoist_keys: Vec<store::entry::DependenciesItem> = Vec::new();
 
     // Second pass: Deduplicate nodes when the pkg_id and peer set match an existing entry.
     'next_entry: while let Some(entry) = entry_queue.read_item() {
@@ -932,6 +974,26 @@ pub(crate) fn build_store(
 
                 if info.peers.eql(curr_peers, &eql_ctx) {
                     // dedupe! depend on the already created entry
+
+                    // A second name for the entry. An entry that gets no link leaves the name to the next dependency.
+                    if curr_dep_id != invalid_dependency_id
+                        && info.dep_id != invalid_dependency_id
+                        && links_into_hidden_node_modules(pkg_resolutions[pkg_id as usize].tag)
+                    {
+                        let curr_dep = &dependencies[curr_dep_id as usize];
+                        if curr_dep.name_hash != dependencies[info.dep_id as usize].name_hash
+                            && claim_hidden_hoist(
+                                manager,
+                                &mut hidden_hoisted,
+                                curr_dep.name.slice(string_buf),
+                            )?
+                        {
+                            hidden_hoist_keys.push(store::entry::DependenciesItem {
+                                entry_id: info.entry_id,
+                                dep_id: curr_dep_id,
+                            });
+                        }
+                    }
 
                     let mut entries = store_entries.slice();
                     // disjoint-column views via `split_mut`.
@@ -1007,31 +1069,14 @@ pub(crate) fn build_store(
 
         let new_entry_parents: Vec<store::entry::Id> = vec![entry.entry_parent_id];
 
-        let hoisted = 'hoisted: {
-            if !manager.options.hoist {
-                break 'hoisted false;
-            }
-
-            if new_entry_dep_id == invalid_dependency_id {
-                break 'hoisted false;
-            }
-
-            let dep_name = dependencies[new_entry_dep_id as usize]
-                .name
-                .slice(string_buf);
-
-            let Some(hoist_pattern) = &manager.options.hoist_pattern else {
-                let hoist_entry = hidden_hoisted.get_or_put(dep_name)?;
-                break 'hoisted !hoist_entry.found_existing;
-            };
-
-            if hoist_pattern.is_match(dep_name) {
-                let hoist_entry = hidden_hoisted.get_or_put(dep_name)?;
-                break 'hoisted !hoist_entry.found_existing;
-            }
-
-            break 'hoisted false;
-        };
+        let hoisted = new_entry_dep_id != invalid_dependency_id
+            && claim_hidden_hoist(
+                manager,
+                &mut hidden_hoisted,
+                dependencies[new_entry_dep_id as usize]
+                    .name
+                    .slice(string_buf),
+            )?;
 
         let new_entry = StoreEntry {
             node_id: entry.node_id,
@@ -1126,9 +1171,12 @@ pub(crate) fn build_store(
         );
     }
 
+    hidden_hoist_keys.sort_by_key(|key| key.entry_id.get());
+
     Ok(Store {
         entries: store_entries,
         nodes,
+        hidden_hoist_keys,
     })
 }
 
@@ -2101,6 +2149,109 @@ pub(crate) fn install_isolated_packages(
             );
         }
 
+        // Before any filesystem work: an entry is linked under names that the dependencies of later entries declare.
+        {
+            let dependencies = &lockfile_ro.buffers.dependencies;
+            let unsafe_folder_name: Option<&[u8]> = 'unsafe_folder_name: {
+                for entry_idx in 0..store.entries.len() {
+                    let node_id = entry_node_ids[entry_idx];
+                    let name =
+                        pkg_names[node_pkg_ids[node_id.get() as usize] as usize].slice(string_buf);
+                    if !name.is_empty()
+                        && !crate::package_installer::alias_is_safe_install_target(name)
+                    {
+                        break 'unsafe_folder_name Some(name);
+                    }
+                    for dep in entry_dependencies[entry_idx].slice() {
+                        let dep_name = dependencies[dep.dep_id as usize].name.slice(string_buf);
+                        if !crate::package_installer::alias_is_safe_install_target(dep_name) {
+                            break 'unsafe_folder_name Some(dep_name);
+                        }
+                    }
+                }
+                for key in &store.hidden_hoist_keys {
+                    let dep_name = dependencies[key.dep_id as usize].name.slice(string_buf);
+                    if !crate::package_installer::alias_is_safe_install_target(dep_name) {
+                        break 'unsafe_folder_name Some(dep_name);
+                    }
+                }
+                None
+            };
+            if let Some(name) = unsafe_folder_name {
+                Output::err_generic(
+                    "\"{}\" is not a valid install folder name",
+                    (BStr::new(name),),
+                );
+                Output::flush();
+                Global::exit(1);
+            }
+
+            // Older versions named the link after the package. Before the first task, so it cannot remove a link this install writes.
+            if !is_new_bun_modules {
+                let mut linked_names: Option<HashMap<PackageNameHash, ()>> = None;
+                for entry_idx in 0..store.entries.len() {
+                    let node_id = entry_node_ids[entry_idx];
+                    let dep_id = node_dep_ids[node_id.get() as usize];
+                    if dep_id == invalid_dependency_id {
+                        continue;
+                    }
+                    let pkg_id = node_pkg_ids[node_id.get() as usize];
+                    let pkg_name_hash = pkg_name_hashes[pkg_id as usize];
+                    if dependencies[dep_id as usize].name_hash == pkg_name_hash
+                        || !links_into_hidden_node_modules(pkg_resolutions[pkg_id as usize].tag)
+                    {
+                        continue;
+                    }
+
+                    let linked_names = match &mut linked_names {
+                        Some(linked_names) => linked_names,
+                        None => {
+                            let mut names: HashMap<PackageNameHash, ()> = HashMap::default();
+                            for (idx, &hoisted) in entry_hoisted.iter().enumerate() {
+                                let node_id = entry_node_ids[idx].get() as usize;
+                                let tag = pkg_resolutions[node_pkg_ids[node_id] as usize].tag;
+                                if hoisted && links_into_hidden_node_modules(tag) {
+                                    names.put(
+                                        dependencies[node_dep_ids[node_id] as usize].name_hash,
+                                        (),
+                                    )?;
+                                }
+                            }
+                            for key in &store.hidden_hoist_keys {
+                                names.put(dependencies[key.dep_id as usize].name_hash, ())?;
+                            }
+                            linked_names.insert(names)
+                        }
+                    };
+                    if linked_names.contains_key(&pkg_name_hash) {
+                        continue;
+                    }
+
+                    // A dependency that this install leaves out (`--filter`) can hold the name.
+                    let pkg_name = pkg_names[pkg_id as usize].slice(string_buf);
+                    let held_by_name = can_hold_hidden_hoist(installer.manager(), pkg_name)
+                        && dependencies
+                            .iter()
+                            .zip(lockfile_ro.buffers.resolutions.iter())
+                            .any(|(dep, &res)| {
+                                dep.name_hash == pkg_name_hash
+                                    && res != invalid_package_id
+                                    && pkg_name_hashes[res as usize] == pkg_name_hash
+                                    && links_into_hidden_node_modules(
+                                        pkg_resolutions[res as usize].tag,
+                                    )
+                            });
+                    if held_by_name {
+                        continue;
+                    }
+
+                    installer.unlink_package_name_from_hidden_node_modules(store::entry::Id::from(
+                        u32::try_from(entry_idx).expect("int cast"),
+                    ));
+                }
+            }
+        }
+
         // add the pending task count upfront
         installer
             .manager_mut()
@@ -2115,35 +2266,6 @@ pub(crate) fn install_isolated_packages(
             let pkg_name = pkg_names[pkg_id as usize];
             let pkg_name_hash = pkg_name_hashes[pkg_id as usize];
             let pkg_res: Resolution = pkg_resolutions[pkg_id as usize];
-
-            // Validate the package name and every dependency alias as
-            // `node_modules/<name>` components before any filesystem work.
-            {
-                let mut unsafe_folder_name: Option<&[u8]> = None;
-                let name = pkg_name.slice(string_buf);
-                if !name.is_empty() && !crate::package_installer::alias_is_safe_install_target(name)
-                {
-                    unsafe_folder_name = Some(name);
-                } else {
-                    for dep in entry_dependencies[entry_id.get() as usize].slice() {
-                        let dep_name = lockfile_ro.buffers.dependencies[dep.dep_id as usize]
-                            .name
-                            .slice(string_buf);
-                        if !crate::package_installer::alias_is_safe_install_target(dep_name) {
-                            unsafe_folder_name = Some(dep_name);
-                            break;
-                        }
-                    }
-                }
-                if let Some(name) = unsafe_folder_name {
-                    Output::err_generic(
-                        "\"{}\" is not a valid install folder name",
-                        (BStr::new(name),),
-                    );
-                    Output::flush();
-                    Global::exit(1);
-                }
-            }
 
             match pkg_res.tag {
                 ResolutionTag::Root => {
@@ -2316,9 +2438,7 @@ pub(crate) fn install_isolated_packages(
                                 }
                             }
                         }
-                        if entry_hoisted[entry_id.get() as usize] {
-                            installer.link_to_hidden_node_modules(entry_id);
-                        }
+                        installer.link_to_hidden_node_modules(entry_id);
                         if !uses_global_store {
                             installer.start_relink_task(entry_id);
                             continue;

@@ -108,45 +108,102 @@ impl Symlinker {
                             };
                         }
                     };
-                let mut current_link: &[u8] = &current_link_buf[..current_link_len];
-
-                // libuv adds a trailing slash to junctions.
-                current_link = strings::without_trailing_slash(current_link);
-
-                if strings::eql_long(current_link, self.target.slice_z().as_bytes(), true) {
+                if self.is_current(&current_link_buf[..current_link_len]) {
                     return Ok(false);
                 }
 
-                #[cfg(windows)]
-                {
-                    if strings::eql_long(current_link, self.fallback_junction_target.slice(), true)
-                    {
-                        return Ok(false);
-                    }
-
-                    // this existing link is pointing to the wrong package.
-                    // on windows rmdir must be used for symlinks created to point
-                    // at directories, even if the target no longer exists
-                    match bun_sys::rmdir(self.dest.slice_z()) {
-                        Ok(()) => {}
-                        Err(err) => match err.get_errno() {
-                            Errno::EPERM => {
-                                let _ = bun_sys::unlink(self.dest.slice_z());
-                            }
-                            _ => {}
-                        },
-                    }
-                }
-                #[cfg(not(windows))]
-                {
-                    // this existing link is pointing to the wrong package
-                    let _ = bun_sys::unlink(self.dest.slice_z());
-                }
+                // this existing link is pointing to the wrong package
+                self.unlink();
 
                 return self.symlink().map(|()| true);
             }
         }
     }
+
+    /// Removes `dest` if it links to a store entry of `pkg_name`, at any version.
+    pub(crate) fn unlink_if_links_to_package(&mut self, pkg_name: &[u8]) {
+        let mut current_link_buf = bun_paths::path_buffer_pool::get();
+        let Ok(current_link_len) = bun_sys::readlink(self.dest.slice_z(), &mut current_link_buf)
+        else {
+            return;
+        };
+        // libuv adds a trailing slash to junctions.
+        let current_link = strings::without_trailing_slash(&current_link_buf[..current_link_len]);
+
+        let links_to_package =
+            links_to_entry_of(current_link, self.target.slice_z().as_bytes(), pkg_name);
+        #[cfg(windows)]
+        let links_to_package = links_to_package
+            || links_to_entry_of(
+                current_link,
+                self.fallback_junction_target.slice(),
+                pkg_name,
+            );
+        if links_to_package {
+            self.unlink();
+        }
+    }
+
+    /// Whether `current_link`, as read from `dest`, is the link this would write.
+    fn is_current(&mut self, current_link: &[u8]) -> bool {
+        // libuv adds a trailing slash to junctions.
+        let current_link = strings::without_trailing_slash(current_link);
+
+        let is_target = strings::eql_long(current_link, self.target.slice_z().as_bytes(), true);
+        #[cfg(windows)]
+        let is_target = is_target
+            || strings::eql_long(current_link, self.fallback_junction_target.slice(), true);
+        is_target
+    }
+
+    fn unlink(&mut self) {
+        #[cfg(windows)]
+        {
+            // on windows rmdir must be used for symlinks created to point at directories, even if the target no longer exists
+            match bun_sys::rmdir(self.dest.slice_z()) {
+                Ok(()) => {}
+                Err(err) => match err.get_errno() {
+                    Errno::EPERM => {
+                        let _ = bun_sys::unlink(self.dest.slice_z());
+                    }
+                    _ => {}
+                },
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = bun_sys::unlink(self.dest.slice_z());
+        }
+    }
+}
+
+/// Whether `link` is `target` with any store entry of `pkg_name`: `<dirs>/<pkg_name>@<resolution>/node_modules/<pkg_name>`.
+fn links_to_entry_of(link: &[u8], target: &[u8], pkg_name: &[u8]) -> bool {
+    let link: Vec<&[u8]> = strings::tokenize_any(link, b"/\\").collect();
+    let target: Vec<&[u8]> = strings::tokenize_any(target, b"/\\").collect();
+    let name_len = strings::tokenize_any(pkg_name, b"/\\").count();
+    if link.len() != target.len() || target.len() < name_len + 2 {
+        return false;
+    }
+
+    let entry_index = target.len() - name_len - 2;
+    let entry = target[entry_index];
+    // A scoped name starts with `@`, so the `@` that ends the name is never the first byte.
+    let Some(at) = strings::index_of_char_usize(&entry[1..], b'@') else {
+        return false;
+    };
+    let name_and_at = &entry[..at + 2];
+
+    link.iter()
+        .zip(&target)
+        .enumerate()
+        .all(|(i, (link, target))| {
+            if i == entry_index {
+                link.starts_with(name_and_at)
+            } else {
+                link == target
+            }
+        })
 }
 
 #[derive(Clone, Copy)]

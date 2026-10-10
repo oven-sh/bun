@@ -793,24 +793,17 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           client.on("error", reject);
           const req = client.request({ ":path": "/", "test-header": "test-value" });
           {
-            // Like node, the stream has no id (and an empty state object) until the session
-            // finishes connecting; the populated shape is asserted from the 'response' handler.
+            // Like node, the session has no native handle and the stream has no id until the
+            // session finishes connecting: both report an empty state object. The populated
+            // shapes are asserted from the 'connect' and 'response' handlers.
+            expect(client.connecting).toBe(true);
+            expect(client.state).toEqual({});
             expect(req.state).toEqual({});
           }
-          // Test Session State.
-          {
-            const state = client.state;
-            expect(typeof state).toBe("object");
-            expect(typeof state.effectiveLocalWindowSize).toBe("number");
-            expect(typeof state.effectiveRecvDataLength).toBe("number");
-            expect(typeof state.nextStreamID).toBe("number");
-            expect(typeof state.localWindowSize).toBe("number");
-            expect(typeof state.lastProcStreamID).toBe("number");
-            expect(typeof state.remoteWindowSize).toBe("number");
-            expect(typeof state.outboundQueueSize).toBe("number");
-            expect(typeof state.deflateDynamicTableSize).toBe("number");
-            expect(typeof state.inflateDynamicTableSize).toBe("number");
-          }
+          let session_state = null;
+          client.on("connect", () => {
+            session_state = client.state;
+          });
           let response_headers = null;
           let response_state = null;
           req.on("response", (headers, flags) => {
@@ -824,6 +817,20 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           });
           await promise;
           expect(response_headers[":status"]).toBe(200);
+          // Test Session State.
+          {
+            const state = session_state;
+            expect(typeof state).toBe("object");
+            expect(typeof state.effectiveLocalWindowSize).toBe("number");
+            expect(typeof state.effectiveRecvDataLength).toBe("number");
+            expect(typeof state.nextStreamID).toBe("number");
+            expect(typeof state.localWindowSize).toBe("number");
+            expect(typeof state.lastProcStreamID).toBe("number");
+            expect(typeof state.remoteWindowSize).toBe("number");
+            expect(typeof state.outboundQueueSize).toBe("number");
+            expect(typeof state.deflateDynamicTableSize).toBe("number");
+            expect(typeof state.inflateDynamicTableSize).toBe("number");
+          }
           {
             const state = response_state;
             expect(typeof state).toBe("object");

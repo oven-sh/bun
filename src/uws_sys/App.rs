@@ -409,6 +409,7 @@ impl<const SSL: bool> App<SSL> {
         ctx: *mut c_void,
         id: usize,
         behavior_: WebSocketBehavior,
+        shared_context_key: *const c_void,
     ) {
         let behavior = behavior_;
         // SAFETY: self is a valid app; pattern valid for the call; behavior is stack-local.
@@ -421,6 +422,7 @@ impl<const SSL: bool> App<SSL> {
                 pattern.len(),
                 id,
                 &raw const behavior,
+                shared_context_key,
             )
         }
     }

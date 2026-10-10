@@ -282,6 +282,31 @@ registry=http://localhost:\${PORT}/
     expect(result.default_registry_url).toEqual(`http://localhost:${registry.port}/`);
   });
 
+  // npm's `ini` trims keys and values with `String.prototype.trim`, so Unicode
+  // whitespace (NBSP from a copy-paste, FF/VT, a BOM in the middle of the file)
+  // around a key or a value is not part of it.
+  describe("trims Unicode whitespace like npm", () => {
+    const url = "http://127.0.0.1:4873/";
+    const expected = {
+      default_registry_url: url,
+      default_registry_token: "SECRET",
+      default_registry_username: "",
+      default_registry_password: "",
+      default_registry_email: "",
+    };
+
+    it.each([
+      ["NBSP after the registry key", `registry\u00a0= ${url}\n//127.0.0.1:4873/:_authToken=SECRET\n`],
+      ["NBSP after the registry value", `registry=${url}\u00a0\n//127.0.0.1:4873/:_authToken=SECRET\n`],
+      ["NBSP around the token", `registry=${url}\n//127.0.0.1:4873/:_authToken\u00a0=\u00a0SECRET\u00a0\n`],
+      ["FF and VT around the token", `registry=${url}\n//127.0.0.1:4873/:_authToken\u000c=\u000bSECRET\u000c\n`],
+      ["BOM before a key", `registry=${url}\n\ufeff//127.0.0.1:4873/:_authToken=SECRET\n`],
+      ["other Zs spaces", `registry\u3000=\u2003${url}\u202f\n//127.0.0.1:4873/:_authToken=SECRET\n`],
+    ])("%s", (_, ini) => {
+      expect(loadNpmrc(ini)).toEqual(expected);
+    });
+  });
+
   async function makeTest(
     options: [option: string, value: string][],
     check: (result: {

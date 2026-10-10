@@ -124,6 +124,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * JSNodeHTTPServerSocket::startPipelinedResponse(). Only meaningful while
          * the request handler dispatch is on the stack. */
         HTTP_NODE_PIPELINED_DISPATCH = 1 << 11,
+        /* node:http: the response to an HTTP/1.0 request is the last one on this connection, unless keepAliveBehindHead() clears this bit. */
+        HTTP_NODE_CLOSE_BY_DEFAULT = 1 << 26,
         /* The JS layer stopped HTTP processing on this connection (Node frees the
          * parser when 'close' is emitted on the socket); any further request data
          * in the buffer is not parsed. */
@@ -202,6 +204,30 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         }
     }
 
+    /* node:http: a response begins. connectionClose is the parser's verdict on its request (sawConnectionClose). */
+    void markNodeRequest(bool isAncient, bool connectionClose) {
+        if (isAncient) {
+            state |= HTTP_ANCIENT_REQUEST | HTTP_NODE_CLOSE_BY_DEFAULT;
+        }
+        if (connectionClose) {
+            state |= HTTP_CONNECTION_CLOSE;
+        }
+    }
+
+    /* node:http calls this once per head, behind its header lines and before its Connection line. Returns false if the HTTP/1.0 close stays. */
+    bool keepAliveBehindHead(bool persist) {
+        if (!(state & HTTP_NODE_CLOSE_BY_DEFAULT)) [[likely]] {
+            return true;
+        }
+        /* An HTTP/1.0 response gets no chunks: only a Content-Length line, or no body, delimits it (https://github.com/oven-sh/bun/issues/44314). */
+        if (persist && ((state & HTTP_NO_BODY_STATUS)
+            || (state & (HTTP_WROTE_CONTENT_LENGTH_HEADER | HTTP_WROTE_TRANSFER_ENCODING_HEADER)) == HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
+            state &= ~HTTP_NODE_CLOSE_BY_DEFAULT;
+            return true;
+        }
+        return false;
+    }
+
     /* Shared context pointer for onAborted/onTimeout/onData */
     void* userData = nullptr;
     /* onWritable can be owned by a different object (the streaming body
@@ -248,10 +274,15 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * flood). */
     uint32_t nodeHttpQueuedPipelinedCount = 0;
 
+    /* The response in flight is the last one on this connection. Only node:http sets HTTP_NODE_CLOSE_BY_DEFAULT. */
+    bool isLastResponse() const {
+        return state & (HTTP_CONNECTION_CLOSE | HTTP_NODE_CLOSE_BY_DEFAULT);
+    }
+
     /* Whether the connection should be torn down once the in-flight response (if
      * any) has completed and all buffered outgoing data has been flushed. */
     bool shouldCloseConnection() const {
-        return (state & (HTTP_CONNECTION_CLOSE | HTTP_NODE_CLOSE_AFTER_DRAIN))
+        return (state & (HTTP_CONNECTION_CLOSE | HTTP_NODE_CLOSE_BY_DEFAULT | HTTP_NODE_CLOSE_AFTER_DRAIN))
             || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0)
             || ((state & HTTP_CLOSE_WHEN_IDLE) && this->isIdle);
     }
@@ -261,8 +292,11 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * buffered bytes drain. Nothing received from here on is a request this
      * connection may answer (RFC 9112 9.6), and after a close-delimited body the
      * peer would read whatever we send as more body. */
+    template <bool ForNodeHttp>
     bool isDrainingBeforeClose() const {
-        return (state & (HTTP_CONNECTION_CLOSE | HTTP_RESPONSE_PENDING)) == HTTP_CONNECTION_CLOSE;
+        /* A Bun.serve connection never has HTTP_NODE_CLOSE_BY_DEFAULT, so its instantiation tests one bit. */
+        constexpr uint32_t last = ForNodeHttp ? HTTP_CONNECTION_CLOSE | HTTP_NODE_CLOSE_BY_DEFAULT : HTTP_CONNECTION_CLOSE;
+        return (state & last) && !(state & HTTP_RESPONSE_PENDING);
     }
 };
 

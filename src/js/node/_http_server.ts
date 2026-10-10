@@ -805,9 +805,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         // of which would force the lazy header-object build even when user
         // code never touches headers). Copy to locals before any callback
         // can re-enter the dispatcher.
-        // HTTP/1.0 (ancient) responses never advertise keep-alive on this
-        // server; otherwise honor a Connection: close token from the request.
-        http_req[kReqShouldKeepAlive] = isAncientHTTP ? false : (dispatchBits & DISPATCH_CONN_CLOSE) === 0;
+        http_req[kReqShouldKeepAlive] = (dispatchBits & DISPATCH_CONN_CLOSE) === 0;
         if (server.joinDuplicateHeaders) {
           http_req.joinDuplicateHeaders = true;
         }
@@ -895,7 +893,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         const uniqueHeaders = server[kUniqueHeaders];
         if (uniqueHeaders != null) http_res[kUniqueHeaders] = uniqueHeaders;
 
-        // The request itself forbids connection reuse (HTTP/1.0, or the
+        // The request itself forbids connection reuse (HTTP/1.0 with no keep-alive, or the
         // client sent Connection: close): end the server's writable side as
         // soon as the response has been written, like Node.js's resOnFinish.
         // Registered before the 'request' event so the socket is already
@@ -904,6 +902,11 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         // still need to be answered with 503.)
         if (!http_req[kReqShouldKeepAlive]) {
           http_res[kMustCloseConnection] = true;
+          // Node's parserOnIncoming: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L1293
+          http_res.shouldKeepAlive = false;
+        } else if (isAncientHTTP || ResponseClass !== ServerResponse) {
+          // The builtin constructor holds this value already, except for HTTP/1.0.
+          http_res.shouldKeepAlive = true;
         }
         // One plain on() listener (once() allocates a wrapper, a second listener
         // deoptimizes every 'finish' emit), registered before the 'request' event
@@ -2434,6 +2437,8 @@ const AUTO_HEADER_DATE = 1 << 0;
 const AUTO_HEADER_CONN_KEEP_ALIVE = 1 << 1;
 const AUTO_HEADER_CONN_CLOSE = 1 << 2;
 const AUTO_HEADER_KEEP_ALIVE_TIMEOUT = 1 << 3;
+// Not a header line: the native writer keeps an HTTP/1.0 connection open only when it gets this bit.
+const AUTO_HEADER_PERSIST = 1 << 7;
 // Node's _storeHeader writes the chunked Transfer-Encoding after the Connection
 // line, so it is rendered natively with the other auto headers rather than being
 // pushed into the flat array (which goes out first).
@@ -2604,6 +2609,10 @@ function renderNativeHeaders(res) {
         }
         autoHeaders |= AUTO_HEADER_CONN_CLOSE;
       }
+    }
+    // Node's `_last` is false here: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L500-L549
+    if (res[kMustCloseConnection] !== true) {
+      autoHeaders |= AUTO_HEADER_PERSIST;
     }
 
     if (res._hasBody === false) {
@@ -2952,7 +2961,7 @@ function advanceResponsePipeline(server, socket) {
       socket.destroyed ||
       !socketHandle.startPipelinedResponse(handle, !!queued.isAncient, !requestShouldKeepAlive(res.req))
     ) {
-      // The connection is already gone; the socket close path destroys queued
+      // The connection is gone, or closes behind the response that ended; the socket close path destroys queued
       // responses, but make sure this (already dequeued) one is not skipped.
       failQueuedPipelinedWriteCallbacks(queued, socket.errored ?? $ERR_STREAM_DESTROYED("write"));
       if (!res.destroyed) {
@@ -3141,6 +3150,7 @@ const RE_CONN_CLOSE = /(?:^|\W)close(?:$|\W)/i;
 // (kDispatch* in src/jsc/bindings/NodeHTTP.cpp - keep in sync). This is what
 // lets the framework never materialize req.headers/req.rawHeaders unless
 // user code reads them.
+// The native parser's verdict on the request: the connection closes after its response.
 const DISPATCH_CONN_CLOSE = 1 << 0;
 const DISPATCH_CONN_UPGRADE = 1 << 1;
 const DISPATCH_HAS_UPGRADE = 1 << 2;
@@ -3155,17 +3165,13 @@ const DISPATCH_HAS_TRANSFER_ENCODING = 1 << 7;
 function shouldKeepAliveForConnection(req, connection) {
   if (!req) return true;
   if (req.httpVersionMajor === 1 && req.httpVersionMinor === 0) {
-    // The native server always closes HTTP/1.0 connections after the
-    // response, even when the request asked for keep-alive, so the response
-    // must advertise Connection: close to stay consistent with the transport.
-    // (Node.js answers Connection: close here too whenever it cannot frame
-    // the response without closing, which is the common case for HTTP/1.0.)
+    // Only a request from the JS parser gets here. That path closes HTTP/1.0: https://github.com/oven-sh/bun/issues/44314
     return false;
   }
   return !(typeof connection === "string" && RE_CONN_CLOSE.test(connection));
 }
 
-// Result of shouldKeepAliveForConnection, computed once at dispatch and
+// The native parser's keep-alive verdict (else shouldKeepAliveForConnection), stamped once at dispatch and
 // reused by renderNativeHeaders / the pipelined-response path so neither has
 // to re-read req.headers (which would materialize the lazy header object).
 

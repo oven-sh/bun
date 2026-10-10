@@ -1615,6 +1615,9 @@ pub mod formatter {
         /// printed as a string. Set true in the error printer so that
         /// `ShellError` prints a more readable message.
         pub(crate) format_buffer_as_text: bool,
+        /// Set by the test runner only: DOM nodes print as markup through
+        /// `RuntimeHooks::console_print_dom_node`.
+        pub print_dom_nodes_as_markup: bool,
     }
 
     impl<'a> Formatter<'a> {
@@ -1646,6 +1649,7 @@ pub mod formatter {
                 can_throw_stack_overflow: false,
                 error_display_level: ErrorDisplayLevel::Full,
                 format_buffer_as_text: false,
+                print_dom_nodes_as_markup: false,
             }
         }
 
@@ -1682,6 +1686,7 @@ pub mod formatter {
                 can_throw_stack_overflow: self.can_throw_stack_overflow,
                 error_display_level: self.error_display_level,
                 format_buffer_as_text: self.format_buffer_as_text,
+                print_dom_nodes_as_markup: self.print_dom_nodes_as_markup,
             }
         }
 
@@ -2747,8 +2752,12 @@ pub mod formatter {
     }
 
     impl Formatter<'_> {
-        pub(crate) fn write_indent(&self, writer: &mut dyn bun_io::Write) -> bun_io::Result<()> {
+        pub fn write_indent(&self, writer: &mut dyn bun_io::Write) -> bun_io::Result<()> {
             write_indent_n(self.indent, writer)
+        }
+
+        pub fn depth_exceeded(&self) -> bool {
+            self.depth > self.max_depth
         }
 
         pub(crate) fn print_comma<const ENABLE_ANSI_COLORS: bool>(
@@ -2930,6 +2939,7 @@ pub mod formatter {
         pub(crate) i: usize,
         pub(crate) single_line: bool,
         pub(crate) always_newline: bool,
+        /// `JSValue::ZERO` when the caller already wrote the `Name ` prefix.
         pub(crate) parent: JSValue,
     }
 
@@ -3180,9 +3190,19 @@ pub mod formatter {
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<bun_core::String>> {
-        let name_str = value.get_class_name(global_this)?;
-        if !name_str.eq_ascii(b"Object") {
-            return Ok(Some(name_str));
+        let class_name = value.get_class_name(global_this)?;
+        object_name_for(global_this, value, class_name)
+    }
+
+    /// The `Name ` prefix of an object literal, given its class name.
+    #[inline(always)]
+    fn object_name_for(
+        global_this: &JSGlobalObject,
+        value: JSValue,
+        class_name: bun_core::String,
+    ) -> JsResult<Option<bun_core::String>> {
+        if !class_name.eq_ascii(b"Object") {
+            return Ok(Some(class_name));
         } else if value.get_prototype(global_this)?.eql_value(JSValue::NULL) {
             return Ok(Some(bun_core::String::static_("[Object: null prototype]")));
         }
@@ -5362,6 +5382,68 @@ pub mod formatter {
             //   Then, we print it each property on a new line, recursively.
             let prev_always_newline_scope = self.always_newline_scope;
             let _ans = defer_restore!(self.always_newline_scope, prev_always_newline_scope);
+
+            if self.print_dom_nodes_as_markup {
+                debug_assert!(!C, "the test runner formats without ANSI colors");
+                return self.print_object_for_test_runner(writer_, value, js_type);
+            }
+
+            let Some((iter_i, iter_always_newline)) =
+                self.print_object_properties::<C>(writer_, value, value)?
+            else {
+                return Ok(());
+            };
+            self.print_object_tail::<C>(writer_, value, js_type, iter_i, iter_always_newline)
+        }
+
+        /// `print_object` for the test runner: DOM markup, or the `Name ` prefix written up front.
+        #[cold]
+        #[inline(never)]
+        fn print_object_for_test_runner(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+            js_type: jsc::JSType,
+        ) -> JsResult<()> {
+            let class_name = value.get_class_name(self.global_this)?;
+            if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
+                if (hooks.console_print_dom_node)(self, writer_, value, &class_name)? {
+                    return Ok(());
+                }
+            }
+
+            // Class or callable: the property pass decides the prefix. `js_type` may be a literal.
+            let mut parent = value;
+            if !self.depth_exceeded()
+                && (value.js_type() == jsc::JSType::FinalObject
+                    || (!value.is_class(self.global_this) && !value.is_callable()))
+            {
+                if let Some(name_str) = object_name_for(self.global_this, value, class_name)? {
+                    let _ = write!(writer_, "{name_str} ");
+                }
+                parent = JSValue::ZERO;
+            }
+
+            let Some((iter_i, iter_always_newline)) =
+                self.print_object_properties::<false>(writer_, value, parent)?
+            else {
+                return Ok(());
+            };
+            if iter_i == 0 && parent.is_empty() {
+                let _ = writer_.write_all(b"{}");
+                return Ok(());
+            }
+            self.print_object_tail::<false>(writer_, value, js_type, iter_i, iter_always_newline)
+        }
+
+        /// The property pass of `print_object`. `None` when nothing is left to print.
+        #[inline(always)]
+        fn print_object_properties<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+            parent: JSValue,
+        ) -> JsResult<Option<(usize, bool)>> {
             // Hoist all `self.*` reads before constructing the iterator ctx —
             // `formatter: self` is a `&mut Self` reborrow, so once it's moved
             // into the struct literal we can no longer touch `self` until
@@ -5369,8 +5451,9 @@ pub mod formatter {
             let single_line = self.single_line;
             let always_newline =
                 !single_line && (self.always_newline_scope || self.good_time_for_a_new_line());
-            if self.depth > self.max_depth {
-                return self.print_object_depth_exceeded::<C>(writer_, value);
+            if self.depth_exceeded() {
+                self.print_object_depth_exceeded::<C>(writer_, value)?;
+                return Ok(None);
             }
             let ordered_properties = self.ordered_properties;
             let global_this = self.global_this;
@@ -5379,7 +5462,7 @@ pub mod formatter {
                 writer: writer_,
                 always_newline,
                 single_line,
-                parent: value,
+                parent,
                 i: 0,
             };
 
@@ -5403,10 +5486,9 @@ pub mod formatter {
             let iter_always_newline = iter.always_newline;
 
             if self.failed {
-                return Ok(());
+                return Ok(None);
             }
-
-            self.print_object_tail::<C>(writer_, value, js_type, iter_i, iter_always_newline)
+            Ok(Some((iter_i, iter_always_newline)))
         }
 
         #[inline(never)]

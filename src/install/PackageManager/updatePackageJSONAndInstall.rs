@@ -187,11 +187,9 @@ fn update_package_json_and_install_with_manager_with_updates(
 ) -> Result<(), Error> {
     let log_level = manager.options.log_level;
     if manager.log_mut().errors > 0 {
-        if log_level != LogLevel::Silent {
-            let _ = manager
-                .log_mut()
-                .print(std::ptr::from_mut(Output::error_writer()));
-        }
+        let _ = manager
+            .log_mut()
+            .print(std::ptr::from_mut(Output::error_writer()));
         Global::crash();
     }
 

@@ -130,7 +130,8 @@ describe("execution order", () => {
 });
 
 after(() => {
-  console.log("%AFTER%");
+  // node-test.test.ts compares these lines against 02-hooks.json as well.
+  for (const entry of order) console.log(entry);
   Bun.jest("/").expect(order).toEqual(node);
   assert.deepEqual(order, node);
 });

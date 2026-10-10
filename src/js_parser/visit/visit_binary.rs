@@ -5,7 +5,9 @@ use core::cmp::Ordering;
 use crate::p::P;
 use crate::parser::{ExprIn, float_to_int32, prefill};
 use crate::scan::scan_side_effects::SideEffects;
-use bun_ast::fold_string_addition::{FoldStringAdditionKind, fold_string_addition};
+use bun_ast::fold_string_addition::{
+    FoldStringAdditionKind, TemplatePartsBuilder, fold_string_addition,
+};
 use bun_ast::{
     self as js_ast, E, Expr, ExprData, Op, StoreRef, Symbol,
     expr::{Equality, LooseEql, StrictEql},
@@ -121,6 +123,7 @@ impl BinaryExpressionVisitor {
     >(
         v: &mut Self,
         p: &mut P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>,
+        template_parts: &mut TemplatePartsBuilder<'a>,
     ) -> Expr {
         // `v.e: StoreRef<E::Binary>` is the safe arena back-reference (Copy).
         // Snapshot the handle for the identity check / tail re-wrap, then take
@@ -462,6 +465,7 @@ impl BinaryExpressionVisitor {
                         e_.right,
                         p.arena,
                         FoldStringAdditionKind::Normal,
+                        template_parts,
                     ) {
                         return res;
                     }
@@ -474,6 +478,7 @@ impl BinaryExpressionVisitor {
                                 e_.right,
                                 p.arena,
                                 FoldStringAdditionKind::NestedLeft,
+                                template_parts,
                             ) {
                                 return p.new_expr(
                                     E::Binary {

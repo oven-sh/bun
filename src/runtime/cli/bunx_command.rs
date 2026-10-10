@@ -115,6 +115,19 @@ impl Options {
                     ctx.debug.run_in_bun = true;
                 } else if positional == b"--no-install" {
                     opts.no_install = true;
+                } else if positional == b"--env-file" {
+                    i += 1;
+                    if i >= argv.len() {
+                        Output::err_generic("--env-file requires a file path", format_args!(""));
+                        Global::exit(1);
+                    }
+                    ctx.args
+                        .env_files
+                        .push(Box::<[u8]>::from(argv[i].as_bytes()));
+                } else if positional.starts_with(b"--env-file=") {
+                    ctx.args
+                        .env_files
+                        .push(Box::<[u8]>::from(&positional[b"--env-file=".len()..]));
                 } else if positional == b"--package" || positional == b"-p" {
                     // Next argument should be the package name
                     i += 1;

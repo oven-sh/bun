@@ -27,8 +27,9 @@ type PluginBuilder = {
   onResolve: (
     args: { filter: RegExp; namespace?: string },
     callback: (args: { path: string; importer: string }) => {
-      path: string;
+      path?: string;
       namespace?: string;
+      external?: boolean;
     } | void,
   ) => void;
   onLoad: (
@@ -168,8 +169,9 @@ In this example, Bun waits for both `onStart()` callbacks to complete: the 10-se
 onResolve(
   args: { filter: RegExp; namespace?: string },
   callback: (args: { path: string; importer: string }) => {
-    path: string;
+    path?: string;
     namespace?: string;
+    external?: boolean;
   } | void,
 ): void;
 ```
@@ -202,6 +204,32 @@ plugin({
   },
 });
 ```
+
+To leave an import out of the bundle, return `external: true`. Bun keeps the `import` or `require()` in the output and uses the returned `path` as its specifier. Without a `path`, the output keeps the specifier from your source file.
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+await Bun.build({
+  entrypoints: ["./index.ts"],
+  outdir: "./dist",
+  plugins: [
+    {
+      name: "external example",
+      setup(build) {
+        // import React from "react" becomes import React from "https://esm.sh/react"
+        build.onResolve({ filter: /^react$/ }, args => {
+          return { path: "https://esm.sh/" + args.path, external: true };
+        });
+        // import _ from "lodash" stays import _ from "lodash"
+        build.onResolve({ filter: /^lodash$/ }, () => {
+          return { external: true };
+        });
+      },
+    },
+  ],
+});
+```
+
+An entry point cannot be external. For an entry point, Bun ignores `external: true` without a `path`. With a `path`, the build fails.
 
 ### onLoad
 

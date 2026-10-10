@@ -754,6 +754,7 @@ pub mod bv2_impl {
                     importer: &mut BunString,
                     context: *mut core::ffi::c_void,
                     kind: u8,
+                    is_dev_server: bool,
                 );
                 #[link_name = "JSBundlerPlugin__drainDeferred"]
                 safe fn JSBundlerPlugin__drainDeferred(this: &mut Plugin, rejected: bool);
@@ -867,6 +868,7 @@ pub mod bv2_impl {
                     importer: &[u8],
                     context: *mut core::ffi::c_void,
                     import_record_kind: ImportKind,
+                    is_dev_server: bool,
                 ) {
                     let _tracer = bun_core::perf::trace("JSBundler.matchOnResolve");
                     let mut namespace_string = if namespace.is_empty() || namespace == b"file" {
@@ -883,6 +885,7 @@ pub mod bv2_impl {
                         &mut importer_string,
                         context,
                         import_record_kind as u8,
+                        is_dev_server,
                     );
                 }
             }
@@ -1211,16 +1214,16 @@ pub mod bv2_impl {
                     // storage is disjoint from `self`, so the `&mut JSBundlerPlugin`
                     // returned by `plugins_mut()` does not alias the
                     // `&self.import_record.*` borrows below.
-                    unsafe { &mut *self.bv2 }
-                        .plugins_mut()
-                        .expect("plugins")
-                        .match_on_resolve(
-                            &self.import_record.specifier,
-                            &self.import_record.namespace,
-                            &self.import_record.source_file,
-                            self_ptr,
-                            kind,
-                        );
+                    let bv2 = unsafe { &mut *self.bv2 };
+                    let is_dev_server = bv2.dev_server.is_some();
+                    bv2.plugins_mut().expect("plugins").match_on_resolve(
+                        &self.import_record.specifier,
+                        &self.import_record.namespace,
+                        &self.import_record.source_file,
+                        self_ptr,
+                        kind,
+                        is_dev_server,
+                    );
                 }
             }
 
@@ -5429,6 +5432,8 @@ pub mod bv2_impl {
                                 .as_mut_slice()
                                 [resolve.import_record.import_record_index as usize];
                         import_record.path = path_as_static(&path);
+                        // The path map pass may have matched the source specifier to a module.
+                        import_record.source_index = Index::INVALID;
                     }
 
                     if let Some(source_index) = out_source_index {

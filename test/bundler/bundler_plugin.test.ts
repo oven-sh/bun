@@ -540,6 +540,228 @@ describe("bundler", () => {
       },
     });
   }
+  itBundled("plugin/ResolveExternalWithoutPath", {
+    files: {
+      "index.ts": /* ts */ `
+        import lodash from "lodash";
+        console.log(lodash);
+      `,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /^lodash$/ }, () => {
+        return { external: true };
+      });
+    },
+    onAfterBundle(api) {
+      const contents = api.readFile("/out.js");
+      expect(contents).toContain(`from "lodash"`);
+    },
+  });
+  // A filter that also matches the entry point: the entry point is still bundled.
+  itBundled("plugin/ResolveExternalWithoutPathSkipsEntryPoint", () => {
+    const kinds: string[] = [];
+    return {
+      files: {
+        "/index.ts": /* ts */ `
+          import lodash from "lodash";
+          import { local } from "./local.ts";
+          console.log(lodash, local);
+        `,
+        "/local.ts": `export const local = "bundled-local";`,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /.*/ }, args => {
+          kinds.push(args.kind);
+          return { external: true };
+        });
+      },
+      onAfterBundle(api) {
+        expect(kinds).toContain("entry-point-build");
+        const contents = api.readFile("/out.js");
+        expect(contents).toContain(`from "lodash"`);
+        expect(contents).toContain(`from "./local.ts"`);
+        expect(contents).not.toContain("bundled-local");
+      },
+    };
+  });
+  // Without a path, only `external: true` is an answer. Any other value falls through.
+  itBundled("plugin/ResolveExternalWithoutPathNotTrueFallsThrough", {
+    files: {
+      "/index.ts": /* ts */ `
+        import a from "./a.ts";
+        import b from "./b.ts";
+        import c from "./c.ts";
+        import d from "./d.ts";
+        console.log(a, b, c, d);
+      `,
+      "/a.ts": `export default "bundled-a";`,
+      "/b.ts": `export default "bundled-b";`,
+      "/c.ts": `export default "bundled-c";`,
+      "/d.ts": `export default "bundled-d";`,
+    },
+    plugins(builder) {
+      const answers: Record<string, unknown> = { a: false, b: null, c: 1, d: "yes" };
+      builder.onResolve({ filter: /\/[abcd]\.ts$/ }, args => {
+        return { external: answers[args.path.at(-4)!] } as never;
+      });
+    },
+    onAfterBundle(api) {
+      const contents = api.readFile("/out.js");
+      for (const name of ["a", "b", "c", "d"]) {
+        expect(contents).toContain(`"bundled-${name}"`);
+      }
+      expect(contents).not.toContain("import ");
+    },
+  });
+  itBundled("plugin/ResolveExternalSamePath", {
+    files: {
+      "index.ts": /* ts */ `
+        import React from "react";
+        console.log(React);
+      `,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /^react$/ }, args => {
+        return { path: args.path, external: true };
+      });
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain(`from "react"`);
+    },
+  });
+  // The path map is keyed by path text alone. Once the "virt" answer has put
+  // "react" in it, the map pass over late.js matches its import of "react" to the
+  // virt module before the plugin answers external for it. late.js is loaded
+  // only after the virt answer is queued, so that order is fixed. Released Bun
+  // keeps that match and prints `__INVALID__REF__` and `__toESM(, 1)`.
+  for (const [name, answer] of [
+    ["WithPath", (args: { path: string }) => ({ path: args.path, external: true })],
+    ["WithoutPath", () => ({ external: true })],
+  ] as const) {
+    itBundled(`plugin/ResolveExternalClearsModuleMatchedBySpecifier${name}`, () => {
+      const virtAnswered = Promise.withResolvers<void>();
+      return {
+        files: {
+          "/entry.js": /* js */ `
+            import { x } from "virt";
+            import "./late.js";
+            console.log(x);
+          `,
+          "/late.js": ``,
+        },
+        plugins(builder) {
+          builder.onResolve({ filter: /^virt$/ }, () => {
+            virtAnswered.resolve();
+            return { path: "react", namespace: "virt" };
+          });
+          builder.onLoad({ filter: /.*/, namespace: "virt" }, () => {
+            return { contents: `export const x = "x";`, loader: "js" };
+          });
+          builder.onResolve({ filter: /^react$/ }, answer);
+          builder.onLoad({ filter: /late\.js$/ }, async () => {
+            await virtAnswered.promise;
+            return { contents: `import React from "react"; console.log(React);`, loader: "js" };
+          });
+        },
+        onAfterBundle(api) {
+          const contents = api.readFile("/out.js");
+          expect(contents).toContain(`from "react"`);
+          expect(contents).toContain(`"x"`);
+          expect(contents).not.toContain(`__toESM(,`);
+          expect(contents).not.toContain(`__INVALID__REF__`);
+        },
+      };
+    });
+  }
+  // The same match inside one namespace: late.js imports x.js by its absolute
+  // path, which is the path map's key for the bundled x.js. late.js is loaded
+  // only after the plugin declined entry.js's import of x.js, so x.js is in the
+  // map by then. The plugin's external answer for late.js must still win.
+  itBundled("plugin/ResolveExternalClearsModuleMatchedByAbsolutePath", ({ root }) => {
+    const declined = Promise.withResolvers<void>();
+    return {
+      files: {
+        "/entry.js": /* js */ `
+          import x from "./x.js";
+          import "./late.js";
+          console.log(x);
+        `,
+        "/x.js": `export default "bundled-x";`,
+        "/late.js": ``,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /x\.js$/ }, args => {
+          if (args.importer.endsWith("late.js")) return { path: args.path, external: true };
+          declined.resolve();
+        });
+        builder.onLoad({ filter: /late\.js$/ }, async () => {
+          await declined.promise;
+          return { contents: `import y from ${JSON.stringify(join(root, "x.js"))}; console.log(y);`, loader: "js" };
+        });
+      },
+      onAfterBundle(api) {
+        const contents = api.readFile("/out.js");
+        expect(contents).toContain(`"bundled-x"`);
+        expect(contents).toMatch(/^import \w+ from "[^"]*x\.js";$/m);
+      },
+    };
+  });
+  // A barrel's records are resolved and patched again each time a consumer
+  // un-defers one of them. The rewritten external must survive both: it must
+  // not be resolved as the vendored specifier, and its path must not be matched
+  // against the bundled "virt" module that shares the same path text. late.js is
+  // loaded only after both answers are queued, so its un-defer of `a` runs after
+  // the rewrite landed.
+  itBundled("plugin/ResolveExternalRewriteSurvivesBarrelRevisit", () => {
+    const reactAnswered = Promise.withResolvers<void>();
+    const virtAnswered = Promise.withResolvers<void>();
+    return {
+      files: {
+        "/entry.js": /* js */ `
+          import { React, x } from "barrel";
+          import "./late.js";
+          console.log(React, x);
+        `,
+        "/late.js": ``,
+        "/node_modules/barrel/package.json": JSON.stringify({
+          name: "barrel",
+          main: "./index.js",
+          sideEffects: false,
+        }),
+        "/node_modules/barrel/index.js": /* js */ `
+          export { default as React } from "react";
+          export { x } from "virt";
+          export { a } from "./a.js";
+          export { b } from "./b.js";
+        `,
+        "/node_modules/barrel/a.js": `export const a = "a";`,
+        "/node_modules/barrel/b.js": `export const b = "b";`,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /^react$/ }, () => {
+          reactAnswered.resolve();
+          return { path: "react-vendored", external: true };
+        });
+        builder.onResolve({ filter: /^virt$/ }, () => {
+          virtAnswered.resolve();
+          return { path: "react-vendored", namespace: "virt" };
+        });
+        builder.onLoad({ filter: /.*/, namespace: "virt" }, () => {
+          return { contents: `export const x = "x";`, loader: "js" };
+        });
+        builder.onLoad({ filter: /late\.js$/ }, async () => {
+          await Promise.all([reactAnswered.promise, virtAnswered.promise]);
+          return { contents: `import { a } from "barrel"; console.log(a);`, loader: "js" };
+        });
+      },
+      onAfterBundle(api) {
+        const contents = api.readFile("/out.js");
+        expect(contents).toContain(`from "react-vendored"`);
+        expect(contents).toContain(`"x"`);
+        expect(contents).not.toContain(`"react"`);
+      },
+    };
+  });
   itBundled("plugin/ResolveOverrideFile", ({ root }) => {
     return {
       files: {

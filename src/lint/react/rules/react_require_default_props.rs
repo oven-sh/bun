@@ -77,7 +77,6 @@ impl Rule for RequireDefaultProps {
         }
         let mut components = Components::new(file).with(prop_types).with(defaults());
         components.finish();
-        components.say_what_is_left_out(cx);
         for id in components.list() {
             // Many components can have one object of many prop types.
             if cx.has_reported_too_much() {

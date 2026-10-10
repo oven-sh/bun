@@ -20,7 +20,6 @@ use crate::util_components::{Components, Instructions, Visit};
 use crate::util_components_list::{Component, ComponentId, UsedPropType};
 use crate::util_is_create_element::is_member_called;
 use crate::util_prop_types::is_in_object_prototype;
-use crate::util_steps::scopes_around;
 use crate::util_version::get_react_version_from_context;
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
@@ -150,7 +149,7 @@ fn parent_with_key(node: Node<'_>) -> Option<Node<'_>> {
 
 /// `inLifeCycleMethod`
 fn in_life_cycle_method(node: Node<'_>, check_async_safe_life_cycles: bool) -> bool {
-    scopes_around(node).any(|scope| {
+    node.scope().chain().any(|scope| {
         parent_with_key(scope.node())
             .and_then(util_ast::get_property_name)
             .is_some_and(|name| is_name_of_life_cycle_method(name, check_async_safe_life_cycles))
@@ -186,7 +185,7 @@ fn name_of_param(param: Param<'_>) -> Option<Name<'_>> {
 
 /// `isPropArgumentInSetStateUpdater`
 fn is_prop_argument_in_set_state_updater<'a>(node: Node<'a>, name: Name<'a>) -> bool {
-    let prop_argument = scopes_around(node).find_map(|scope| match scope.node() {
+    let prop_argument = node.scope().chain().find_map(|scope| match scope.node() {
         Node::Func(block) if is_set_state_updater(block) => block.params_with_this().nth(1),
         _ => None,
     });

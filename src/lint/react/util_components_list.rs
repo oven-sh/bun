@@ -11,7 +11,6 @@
 //! `getDefaultReactImports`, `getNamedReactImports` and the two that add to them have one reader,
 //! `hook-use-state`, which asks the imports itself.
 
-use crate::util_steps::Way;
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::{estree_parent, estree_span, normalize, sort};
@@ -295,8 +294,6 @@ pub(crate) enum DefaultProps<'a> {
 
 // ───────────────────────────── the list ─────────────────────────────
 
-const MAX_LISTED: usize = 1 << 21;
-
 /// Which component of a [`ComponentList`]: the how manyth that was added.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub(crate) struct ComponentId(u32);
@@ -356,12 +353,10 @@ pub(crate) struct ComponentList<'a> {
     list: Vec<Component<'a>>,
     by_id: FxHashMap<Span, ComponentId>,
     /// For `set`: the component around a node, until a node that it can have been asked about
-    /// becomes one or ceases to be one. `None`: no steps were left.
-    around: AncestorMemo<'a, Option<ComponentId>>,
+    /// becomes one or ceases to be one.
+    around: AncestorMemo<'a, ComponentId>,
     /// Where the last of the nodes starts that `around` has been asked about.
     asked_until: u32,
-    /// How many components [`ComponentList::list_in_the_walk`] has gone through.
-    listed: usize,
 }
 
 impl<'a> ComponentList<'a> {
@@ -425,15 +420,10 @@ impl<'a> ComponentList<'a> {
         let (list, by_id) = (&self.list, &self.by_id);
         let id = ComponentList::get_in(list, by_id, node).or_else(|| {
             self.asked_until = self.asked_until.max(At::place(node).0.start);
-            let way = Way::new(node.file());
             self.around
                 .find_with(normalize(node), estree_parent, |_, parent| {
-                    match way.take(1) {
-                        true => ComponentList::get_in(list, by_id, parent).map(Some),
-                        false => Some(None),
-                    }
+                    ComponentList::get_in(list, by_id, parent)
                 })
-                .flatten()
         })?;
         self.component_mut(id)
             .used_prop_types
@@ -478,15 +468,6 @@ impl<'a> ComponentList<'a> {
             }
         }
         list
-    }
-
-    /// `list()`, for one who asks in the middle of the walk. n of them go through n components:
-    /// after [`MAX_LISTED`] what the uncertain ones use is given to the others at the end alone.
-    pub(crate) fn list_in_the_walk(&mut self) {
-        self.listed = self.listed.saturating_add(self.list.len());
-        if self.listed <= MAX_LISTED {
-            self.list();
-        }
     }
 
     /// How many components are certain.

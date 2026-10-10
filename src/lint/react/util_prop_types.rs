@@ -25,7 +25,7 @@ use crate::util_is_first_letter_capitalized::is_first_letter_capitalized;
 use crate::util_jsx::Branches;
 use crate::util_prop_types_declaration::{
     RangeError, ReactTypeImports, UNDEFINED, build_react_declaration_types,
-    declare_prop_types_for_ts_type_annotation, is_used_up, is_valid_react_generic_type_annotation,
+    declare_prop_types_for_ts_type_annotation, is_valid_react_generic_type_annotation,
     key_in_full_name,
 };
 use crate::util_prop_wrapper::is_prop_wrapper_function;
@@ -36,12 +36,8 @@ use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::estree_parent;
+use rustc_hash::FxHashSet;
 use std::borrow::Cow;
-use std::cell::Cell;
-
-/// Through how many variables and calls of wrapper functions a declaration is followed. Upstream
-/// throws a `RangeError` where that has no end: `const a = a`.
-const MAX_DEPTH: u32 = 100;
 
 /// `name in Object.prototype`, which is `name in {}` for what is no property of its own.
 pub(crate) fn is_in_object_prototype(name: &[u8]) -> bool {
@@ -223,8 +219,6 @@ struct PropTypesInstructions<'a> {
     class_bodies: AncestorMemo<'a, ()>,
     /// Whether a node is in a declaration of prop types.
     declarations: AncestorMemo<'a, ()>,
-    /// How many parts of declarations have been looked at.
-    steps: Cell<u32>,
 }
 
 impl<'a> PropTypesInstructions<'a> {
@@ -304,13 +298,8 @@ impl<'a> PropTypesInstructions<'a> {
             return Ok(true);
         }
         let parent_prop = without_prop_types(object.text());
-        let built = build_react_declaration_types(
-            right,
-            parent_prop,
-            root_node,
-            &self.custom_validators,
-            &self.steps,
-        )?;
+        let built =
+            build_react_declaration_types(right, parent_prop, root_node, &self.custom_validators)?;
         let name = get_property_name(Node::Expr(prop_types));
         let types = DeclaredPropType {
             full_name: Some(Cow::Owned(
@@ -327,7 +316,8 @@ impl<'a> PropTypesInstructions<'a> {
         Ok(ignore_props_validation)
     }
 
-    /// The `switch` of `markPropTypesAsDeclared`: what `ignorePropsValidation` is after it.
+    /// The `switch` of `markPropTypesAsDeclared`: what `ignorePropsValidation` is after it. Upstream throws a `RangeError`
+    /// where that has no end: `const a = a`.
     fn declare_prop_types(
         &mut self,
         node: Node<'a>,
@@ -336,7 +326,8 @@ impl<'a> PropTypesInstructions<'a> {
         mut ignore_props_validation: bool,
         root_node: Option<Node<'a>>,
     ) -> Result<bool, RangeError> {
-        for _ in 0..MAX_DEPTH {
+        let mut seen = FxHashSet::default();
+        loop {
             let e = match prop_types {
                 PropTypes::Null => return Ok(ignore_props_validation),
                 PropTypes::Expr(e) => e,
@@ -347,13 +338,15 @@ impl<'a> PropTypesInstructions<'a> {
                         root_node,
                         &self.imports,
                         &self.custom_validators,
-                        &self.steps,
                     );
                     *declared_prop_types = ts_type_annotation.declared_prop_types;
                     return Ok(ts_type_annotation.should_ignore_prop_types);
                 }
                 PropTypes::Other => return Ok(true),
             };
+            if !seen.insert(e) {
+                return Err(RangeError);
+            }
             prop_types = match e.kind() {
                 ExprKind::Object(properties) => {
                     for prop_node in properties {
@@ -369,7 +362,6 @@ impl<'a> PropTypesInstructions<'a> {
                             key_in_full_name(prop_node, key.as_deref()),
                             root_node,
                             &self.custom_validators,
-                            &self.steps,
                         )?;
                         let types = DeclaredPropType {
                             full_name: key.clone(),
@@ -412,7 +404,6 @@ impl<'a> PropTypesInstructions<'a> {
                 _ => return Ok(true),
             };
         }
-        Err(RangeError)
     }
 
     /// `markPropTypesAsDeclared`. A `RangeError` ends it as it ends upstream's, whose listener for
@@ -428,9 +419,6 @@ impl<'a> PropTypesInstructions<'a> {
         let Some(id) = components.set(node) else {
             return;
         };
-        if is_used_up(&self.steps) {
-            components.leave_out(node);
-        }
         let component = components.component_mut(id);
         let known = component.declared_prop_types.take();
         let ignore_props_validation = component.ignore_props_validation;
@@ -478,7 +466,6 @@ impl<'a> PropTypesInstructions<'a> {
                 root_node,
                 &self.imports,
                 &self.custom_validators,
-                &self.steps,
             );
             if let Some(id) = components.set(node) {
                 let component = components.component_mut(id);

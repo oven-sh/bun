@@ -43,7 +43,6 @@ impl Rule for DefaultPropsMatchPropTypes {
         }
         let mut components = Components::new(cx.file()).with(declared(&[])).with(default_props);
         components.finish();
-        components.say_what_is_left_out(cx);
         for id in components.list() {
             let component = components.component(id);
             if let Some(DefaultProps::Known(default_props)) = &component.default_props

@@ -6,7 +6,6 @@
 
 use crate::util_is_create_element::is_member_called;
 use crate::util_pragma::{get_create_class_from_context, get_from_context, mentions_create_class};
-use crate::util_steps::scopes_around;
 use bun_core::strings;
 use bun_lint::language::Parser;
 use bun_lint::prelude::*;
@@ -300,7 +299,7 @@ pub(crate) fn get_parent_es5_component<'a>(
     if !mentions_create_class(node.file(), pragmas.create_class) {
         return None;
     }
-    scopes_around(node).find_map(|scope| {
+    node.scope().chain().find_map(|scope| {
         // A `CatchClause` is no node here, and is in no call. The scopes of types are left out.
         if matches!(
             scope.kind(),
@@ -318,7 +317,7 @@ pub(crate) fn get_parent_es6_component<'a>(
     node: Node<'a>,
     pragmas: &Pragmas<'_>,
 ) -> Option<Class<'a>> {
-    let mut scopes = scopes_around(node);
+    let mut scopes = node.scope().chain();
     match scopes.find(|it| it.kind() == ScopeKind::Class)?.node() {
         Node::Class(class) if is_es6_component(class, pragmas) => Some(class),
         _ => None,

@@ -21,22 +21,6 @@ use bun_lint::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::borrow::Cow;
-use std::cell::Cell;
-
-/// How far a declaration is followed into what it is made of.
-const MAX_DEPTH: u32 = 100;
-
-/// How many parts of a declaration are looked at. One that is named twice counts twice.
-const MAX_STEPS: u32 = 100_000;
-
-/// How many parts of all the declarations of a file: n components can have one declaration of n
-/// parts.
-const MAX_STEPS_IN_A_FILE: u32 = 1 << 19;
-
-/// No more declarations are looked at: [`Components::leave_out`](crate::util_components::Components::leave_out).
-pub(crate) fn is_used_up(steps_in_the_file: &Cell<u32>) -> bool {
-    steps_in_the_file.get() > MAX_STEPS_IN_A_FILE
-}
 
 /// What upstream throws where that has no end: `const a = PropTypes.arrayOf(a)`.
 pub(crate) struct RangeError;
@@ -117,9 +101,10 @@ pub(crate) fn key_in_full_name<'k>(property: Prop<'_>, key: Option<&'k [u8]>) ->
 struct ReactDeclarationTypes<'a, 'b> {
     root_node: Option<Node<'a>>,
     custom_validators: &'b [Box<[u8]>],
-    /// How often `build` is called.
-    steps: u32,
-    /// It has got to [`MAX_DEPTH`] or [`MAX_STEPS`]: nothing more is looked at.
+    /// The values that `build` is looking at.
+    on_the_way: FxHashSet<Expr<'a>>,
+    /// It has come to one of these again, where upstream goes round until its stack is full, or the stack is full here:
+    /// nothing more is looked at.
     has_given_up: bool,
 }
 
@@ -149,18 +134,25 @@ impl<'a> ReactDeclarationTypes<'a, '_> {
         true
     }
 
-    /// `buildReactDeclarationTypes`
-    fn build(
-        &mut self,
-        mut value: Option<Expr<'a>>,
-        parent_name: &[u8],
-        depth: u32,
-    ) -> DeclaredPropType<'a> {
-        self.steps += 1;
-        self.has_given_up |= depth > MAX_DEPTH || self.steps > MAX_STEPS;
+    fn build(&mut self, value: Option<Expr<'a>>, parent_name: &[u8]) -> DeclaredPropType<'a> {
+        let is_new = value.is_none_or(|it| self.on_the_way.insert(it));
+        self.has_given_up |= !is_new || !bun_core::StackCheck::init().is_safe_to_recurse();
         if self.has_given_up {
             return DeclaredPropType::default();
         }
+        let built = self.build_declaration_types(value, parent_name);
+        if let Some(it) = value {
+            self.on_the_way.remove(&it);
+        }
+        built
+    }
+
+    /// `buildReactDeclarationTypes`
+    fn build_declaration_types(
+        &mut self,
+        mut value: Option<Expr<'a>>,
+        parent_name: &[u8],
+    ) -> DeclaredPropType<'a> {
         let object_of_callee = value
             .filter(|it| !it.is_chain_root())
             .and_then(Expr::callee)
@@ -207,7 +199,7 @@ impl<'a> ReactDeclarationTypes<'a, '_> {
                     let child_key = get_key_value(Node::Prop(prop_node));
                     let joined_key = key_in_full_name(prop_node, child_key.as_deref());
                     let full_name = [parent_name, b".", joined_key].concat();
-                    let built = self.build(Some(child_value), &full_name, depth + 1);
+                    let built = self.build(Some(child_value), &full_name);
                     let types = DeclaredPropType {
                         full_name: Some(Cow::Owned(full_name)),
                         name: child_key.clone(),
@@ -228,7 +220,7 @@ impl<'a> ReactDeclarationTypes<'a, '_> {
             }
             b"arrayOf" | b"objectOf" => {
                 let full_name = [parent_name, b".*"].concat();
-                let built = self.build(Some(argument), &full_name, depth + 1);
+                let built = self.build(Some(argument), &full_name);
                 let child = DeclaredPropType {
                     full_name: Some(Cow::Owned(full_name)),
                     name: Some(Cow::Borrowed(ANY_KEY)),
@@ -247,7 +239,7 @@ impl<'a> ReactDeclarationTypes<'a, '_> {
                 ExprKind::Array(elements) if !elements.is_empty() => {
                     let children = elements
                         .iter()
-                        .map(|element| self.build(Some(element), parent_name, depth + 1));
+                        .map(|element| self.build(Some(element), parent_name));
                     DeclaredPropType {
                         kind: Some(PropTypeKind::Union),
                         children: Children::Union(children.collect()),
@@ -268,19 +260,14 @@ pub(crate) fn build_react_declaration_types<'a>(
     parent_name: &[u8],
     root_node: Option<Node<'a>>,
     custom_validators: &[Box<[u8]>],
-    steps_in_the_file: &Cell<u32>,
 ) -> Result<DeclaredPropType<'a>, RangeError> {
-    if is_used_up(steps_in_the_file) {
-        return Err(RangeError);
-    }
     let mut types = ReactDeclarationTypes {
         root_node,
         custom_validators,
-        steps: 0,
+        on_the_way: FxHashSet::default(),
         has_given_up: false,
     };
-    let built = types.build(value, parent_name, 0);
-    steps_in_the_file.set(steps_in_the_file.get().saturating_add(types.steps));
+    let built = types.build(value, parent_name);
     match types.has_given_up {
         true => Err(RangeError),
         false => Ok(built),
@@ -375,13 +362,6 @@ struct DeclarePropTypesForTsTypeAnnotation<'a, 'b> {
     root_node: Option<Node<'a>>,
     imports: &'b ReactTypeImports<'a>,
     custom_validators: &'b [Box<[u8]>],
-    steps_in_the_file: &'b Cell<u32>,
-    /// How many calls of `visit_ts_node` are under way.
-    depth: u32,
-    /// How often it is called.
-    steps: u32,
-    /// It has got to [`MAX_DEPTH`] or [`MAX_STEPS`]: nothing more is looked at.
-    has_given_up: bool,
 }
 
 impl<'a> DeclarePropTypesForTsTypeAnnotation<'a, '_> {
@@ -391,20 +371,16 @@ impl<'a> DeclarePropTypesForTsTypeAnnotation<'a, '_> {
         let Some(node) = node else {
             return;
         };
-        self.steps += 1;
-        self.has_given_up |= self.depth == MAX_DEPTH || self.steps > MAX_STEPS;
-        if self.has_given_up {
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
             self.should_ignore_prop_types = true;
             return;
         }
-        self.depth += 1;
         match node.kind() {
             TypeKind::Ref { name, args } => self.search_declaration_by_name(node, name, args),
             TypeKind::Object(members) => self.found_declared_properties_list.extend(members),
             TypeKind::Intersection(types) => self.convert_intersection_type_to_prop_types(types),
             _ => self.should_ignore_prop_types = true,
         }
-        self.depth -= 1;
     }
 
     /// `this.visitTSNode(propsUtil.getTypeArguments(call))`, or if there are none
@@ -523,10 +499,6 @@ impl<'a> DeclarePropTypesForTsTypeAnnotation<'a, '_> {
                 return;
             }
         };
-        // Without a name all the statements of the file are looked at.
-        if expr_name.is_none() {
-            self.steps = self.steps.saturating_add(file.body().len() as u32);
-        }
         let declarations = variable_declarations(file, expr_name);
         self.should_ignore_prop_types |= declarations.is_empty();
         for declaration in declarations {
@@ -586,7 +558,6 @@ impl<'a> DeclarePropTypesForTsTypeAnnotation<'a, '_> {
             key_in_full_name(prop_node, key.as_deref()),
             self.root_node,
             self.custom_validators,
-            self.steps_in_the_file,
         ) else {
             self.should_ignore_prop_types = true;
             return;
@@ -659,14 +630,7 @@ pub(crate) fn declare_prop_types_for_ts_type_annotation<'a>(
     root_node: Option<Node<'a>>,
     imports: &ReactTypeImports<'a>,
     custom_validators: &[Box<[u8]>],
-    steps_in_the_file: &Cell<u32>,
 ) -> TsAnnotation<'a> {
-    if is_used_up(steps_in_the_file) {
-        return TsAnnotation {
-            declared_prop_types,
-            should_ignore_prop_types: true,
-        };
-    }
     let mut annotation = DeclarePropTypesForTsTypeAnnotation {
         declared_prop_types,
         found_declared_properties_list: Vec::new(),
@@ -677,14 +641,8 @@ pub(crate) fn declare_prop_types_for_ts_type_annotation<'a>(
         root_node,
         imports,
         custom_validators,
-        steps_in_the_file,
-        depth: 0,
-        steps: 0,
-        has_given_up: false,
     };
     annotation.visit_ts_node(prop_types);
-    let steps = (annotation.found_declared_properties_list.len() as u32).max(annotation.steps);
-    steps_in_the_file.set(steps_in_the_file.get().saturating_add(steps));
     annotation.end_and_struct_declared_prop_types();
     TsAnnotation {
         declared_prop_types: annotation.declared_prop_types,

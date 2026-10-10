@@ -5629,55 +5629,6 @@ describe.concurrent("rules as oxlint has them", () => {
   });
 });
 
-// As ESLint 10.12.0 with eslint-plugin-react 7.37.5 and @typescript-eslint/parser.
-test.concurrent("react/prop-types: 300 components that name one interface of 500 members", async () => {
-  const members = Array.from({ length: 500 }, (_, at) => `  p${at}?: string;\n`).join("");
-  const component = (at: number) =>
-    `export function C${at}(props: Shared & { own: number }) {\n  return (\n    <i>\n      {props.p1}\n` +
-    `      {props.own}\n      {props.missing}\n    </i>\n  );\n}\n`;
-  const files = {
-    "eslint.config.mjs": `export default [{
-      files: ["**/*.tsx"],
-      languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } },
-      plugins: { react: { meta: { name: "eslint-plugin-react" }, rules: {} } },
-      settings: { react: { version: "18.3.1" } },
-      rules: { "react/prop-types": "error" },
-    }];`,
-    "a.tsx": `interface Shared {\n${members}}\n` + Array.from({ length: 300 }, (_, at) => component(at)).join(""),
-  };
-  const [{ messages }]: { messages: { line: number; message: string }[] }[] = JSON.parse(
-    (await lint(files, ["-f", "json", "a.tsx"])).raw,
-  );
-  expect(new Set(messages.map(it => it.message))).toEqual(new Set(["'missing' is missing in props validation"]));
-  expect(messages.map(it => it.line)).toEqual(Array.from({ length: 300 }, (_, at) => 508 + 9 * at));
-});
-
-// ESLint reports all 260. Each time that the interface is named counts for its 2,048 members.
-test.concurrent("react/prop-types says where it stops looking at the declarations of prop types", async () => {
-  const members = Array.from({ length: 2048 }, (_, at) => `  p${at}?: string;\n`).join("");
-  const component = (at: number) => `export function C${at}(props: Shared) {\n  return <i>{props.missing}</i>;\n}\n`;
-  const files = {
-    "eslint.config.mjs": `export default [{
-      files: ["**/*.tsx"],
-      languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } },
-      plugins: { react: { meta: { name: "eslint-plugin-react" }, rules: {} } },
-      settings: { react: { version: "18.3.1" } },
-      rules: { "react/prop-types": "error" },
-    }];`,
-    "a.tsx": `interface Shared {\n${members}}\n` + Array.from({ length: 260 }, (_, at) => component(at)).join(""),
-  };
-  const [{ messages }]: { messages: { line: number; column: number; message: string }[] }[] = JSON.parse(
-    (await lint(files, ["-f", "json", "a.tsx"])).raw,
-  );
-  expect(messages.slice(0, -1).map(it => it.line)).toEqual(Array.from({ length: 257 }, (_, at) => 2052 + 3 * at));
-  expect(messages.at(-1)).toMatchObject({
-    line: 2822,
-    column: 1,
-    message:
-      "The declarations of prop types in this file have more than 524,288 parts. From here on they are not looked at.",
-  });
-});
-
 describe.concurrent("regular expressions in a configuration", () => {
   test("are JavaScript's on text that is not ASCII", async () => {
     const { stdout, exitCode } = await lint(

@@ -3,7 +3,6 @@ use crate::util_component_util::is_pure_component;
 use crate::util_components::Components;
 use crate::util_components_list::{At, Queue};
 use crate::util_is_create_element::is_member_called;
-use crate::util_steps::scopes_around;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::estree_compat::estree_type_name;
@@ -155,5 +154,5 @@ fn is_class_declaration(node: Node<'_>) -> bool {
 
 /// upstream's `isFunctionInClass`
 fn is_function_in_class(func: Func<'_>) -> bool {
-    scopes_around(Node::Func(func)).any(|scope| scope.kind() == ScopeKind::Class && is_class_declaration(scope.node()))
+    Node::Func(func).scope().chain().any(|scope| scope.kind() == ScopeKind::Class && is_class_declaration(scope.node()))
 }

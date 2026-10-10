@@ -31,7 +31,6 @@ use crate::util_is_first_letter_capitalized::is_first_letter_capitalized;
 use crate::util_jsx::{self, Branches, Nulls};
 use crate::util_pragma::{get_create_class_from_context, mentions_create_class};
 use crate::util_props::{is_default_props_declaration, is_prop_types_declaration};
-use crate::util_steps::Way;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
@@ -264,14 +263,7 @@ pub(crate) struct Components<'a> {
     may_have_explicit: OnceCell<bool>,
     /// For [`is_explicit_component_function`].
     documented_at: AncestorMemo<'a, Option<u32>>,
-    /// [`Components::leave_out`]
-    left_out: Option<Node<'a>>,
 }
-
-const TOO_MANY_PROP_TYPES: Message = Message::new(
-    "tooManyPropTypes",
-    "The declarations of prop types in this file have more than 524,288 parts. From here on they are not looked at.",
-);
 
 impl<'a> Components<'a> {
     /// `false` is certain: nothing but what is banned gets into the list of this file.
@@ -317,19 +309,6 @@ impl<'a> Components<'a> {
             wrapped: FxHashMap::default(),
             may_have_explicit: OnceCell::new(),
             documented_at: AncestorMemo::default(),
-            left_out: None,
-        }
-    }
-
-    /// The declaration of prop types of `node` is not looked at, nor are those after it.
-    pub(crate) fn leave_out(&mut self, node: Node<'a>) {
-        self.left_out.get_or_insert(node);
-    }
-
-    /// Reports where the first one is that is left out.
-    pub(crate) fn say_what_is_left_out<R: Rule>(&self, cx: &Cx<'a, R>) {
-        if let Some(node) = self.left_out {
-            cx.report_at(node.span().start, TOO_MANY_PROP_TYPES);
         }
     }
 
@@ -634,17 +613,14 @@ impl<'a> Components<'a> {
         if let Some(&known) = func.and_then(|it| self.wrappers.get(&it)) {
             return known;
         }
-        let way = Way::new(self.file);
         let mut current_node = node;
         let mut prev_node = None;
         // What is said of `a.memo(..)` depends on the time.
         let mut is_certain = true;
         while let Parent::CallExpression(call) = Parent::of(current_node) {
             let callee = call.callee().map(Expr::tag);
-            let is_wrapper = way.within(4, || self.is_pragma_component_wrapper(Node::Expr(call)));
-            is_certain &=
-                is_wrapper.is_some() && !matches!(callee, Some(ExprTag::Dot | ExprTag::Index));
-            if is_wrapper != Some(true) {
+            is_certain &= !matches!(callee, Some(ExprTag::Dot | ExprTag::Index));
+            if !self.is_pragma_component_wrapper(Node::Expr(call)) {
                 break;
             }
             current_node = Node::Expr(call);
@@ -665,7 +641,7 @@ impl<'a> Components<'a> {
         });
         // `getDetectedComponents` asks for the list, which moves the props that are used.
         if !self.stages.is_empty() {
-            self.list.list_in_the_walk();
+            self.list.list();
         }
         child_component
             .and_then(|it| self.detected.get(&it))
@@ -899,11 +875,9 @@ impl<'a> Components<'a> {
 
     /// `getParentStatelessComponent`
     pub(crate) fn get_parent_stateless_component(&mut self, node: Node<'a>) -> Option<Node<'a>> {
-        let way = Way::new(self.file);
         let mut scope = Some(node.scope());
         while let Some(candidate) = scope.and_then(|it| self.closest_candidate(it)) {
-            // Many nodes under many functions that are given to wrappers.
-            let found = way.within(8, || self.get_stateless_component(candidate.node()))?;
+            let found = self.get_stateless_component(candidate.node());
             if found.is_some() {
                 return found;
             }

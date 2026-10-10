@@ -1,11 +1,15 @@
 import { spawn } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, dumpStats, expectMaxObjectTypeCount, getMaxFD, isASAN } from "harness";
+import { bunEnv, bunExe, dumpStats, expectMaxObjectTypeCount, getMaxFD } from "harness";
 import { join } from "path";
 
-const N = 50;
+// Two batches of `concurrency` spawns are enough for the fd/object-count
+// leak checks below: any per-spawn leak of one fd or one retained object
+// already blows past the asserted thresholds after 32 iterations.
+const N = 32;
 const concurrency = 16;
-const delay = isASAN ? 500 : 150;
+const line = "Wrote to stdin!\n";
+const writes = 7;
 
 test("spawn can write to stdin multiple chunks", async () => {
   const interval = setInterval(dumpStats, 1000).unref();
@@ -21,41 +25,60 @@ test("spawn can write to stdin multiple chunks", async () => {
           cmd: [bunExe(), join(import.meta.dir, "stdin-repro.js")],
           stdout: "pipe",
           stdin: "pipe",
-          stderr: "inherit",
+          stderr: "pipe",
           env: { ...bunEnv },
         });
 
-        const prom2 = (async function () {
-          let inCounter = 0;
-          while (true) {
-            proc.stdin!.write("Wrote to stdin!\n");
-            await proc.stdin!.flush();
-            await Bun.sleep(delay);
+        // The reader accumulates echoed bytes from the child and resolves any
+        // writer that is waiting for its echo. This lets the writer know the
+        // child has consumed the previous chunk, so the next write is observed
+        // as a distinct chunk by the child's `for await` loop without needing a
+        // fixed Bun.sleep() between writes.
+        let echoed = 0;
+        let stdoutClosed = false;
+        let notifyEcho: (() => void) | undefined;
+        const stderrPromise = proc.stderr.text();
 
-            if (inCounter++ === 6) break;
+        const readerTask = (async function () {
+          const chunks: Uint8Array[] = [];
+          for await (const chunk of proc.stdout) {
+            chunks.push(chunk);
+            echoed += chunk.byteLength;
+            notifyEcho?.();
+          }
+          stdoutClosed = true;
+          notifyEcho?.();
+          return Buffer.concat(chunks).toString();
+        })();
+
+        const writerTask = (async function () {
+          for (let w = 1; w <= writes; w++) {
+            proc.stdin!.write(line);
+            await proc.stdin!.flush();
+            while (echoed < line.length * w) {
+              if (stdoutClosed) {
+                // stdout ended before we got our echo. Kill the child so stderr
+                // reaches EOF even if the child is still blocked on stdin, then
+                // surface whatever it wrote.
+                proc.kill();
+                const [err, code] = await Promise.all([stderrPromise, proc.exited]);
+                throw new Error(
+                  `child stdout closed after ${echoed}/${line.length * writes} bytes (exit ${code}); stderr:\n${err}`,
+                );
+              }
+              await new Promise<void>(resolve => {
+                notifyEcho = resolve;
+              });
+              notifyEcho = undefined;
+            }
           }
           await proc.stdin!.end();
-          return inCounter;
         })();
 
-        const prom = (async function () {
-          let chunks: any[] = [];
+        const [received, stderr, , exitCode] = await Promise.all([readerTask, stderrPromise, writerTask, proc.exited]);
 
-          try {
-            for await (var chunk of proc.stdout) {
-              chunks.push(chunk);
-            }
-          } catch (e: any) {
-            console.log(e.stack);
-            throw e;
-          }
-
-          return Buffer.concat(chunks).toString().trim();
-        })();
-
-        const [chunks, , exitCode] = await Promise.all([prom, prom2, proc.exited]);
-
-        expect(chunks).toBe("Wrote to stdin!\n".repeat(7).trim());
+        expect(stderr).toBe("");
+        expect(received).toBe(line.repeat(writes));
         expect(exitCode).toBe(0);
       })();
     }

@@ -27,8 +27,8 @@ import {
 } from "node:child_process";
 import { getEventListeners, once, setMaxListeners } from "node:events";
 import net from "node:net";
-import { PassThrough } from "node:stream";
 import os from "node:os";
+import { PassThrough } from "node:stream";
 import tls from "node:tls";
 import { promisify } from "node:util";
 import path from "path";

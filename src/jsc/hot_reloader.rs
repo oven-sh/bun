@@ -1,17 +1,11 @@
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-#[cfg(not(windows))]
-use bun_collections::StringHashMap;
 use bun_collections::StringSet;
 use bun_core::Output;
 use bun_core::ZStr;
-#[cfg(not(windows))]
-use bun_paths::SEP;
 use bun_paths::strings;
-#[cfg(not(windows))]
-use bun_resolver::fs::PathName;
-use bun_resolver::fs::{self as Fs, FileSystem};
+use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Fd};
 use bun_watcher::WatchItemColumns as _;
 use bun_watcher::{ChangedFilePath, Op as WatchOp, Watcher};
@@ -361,9 +355,6 @@ pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
 
     pub(crate) main: MainFile,
 
-    #[cfg(not(windows))]
-    pub(crate) tombstones: StringHashMap<*mut Fs::EntriesOption>,
-
     /// See [`HotReloaderCtx::reload_handle`].
     pub(crate) reload_handle: Option<crate::VmHandle>,
 
@@ -428,6 +419,13 @@ impl MainFile {
 
         main
     }
+
+    /// Whether the watched folder at `folder_index` holds the entry point, under any of its spellings.
+    #[cfg(not(windows))]
+    fn is_in_folder(&self, watchlist: &bun_watcher::WatchList, folder_index: usize) -> bool {
+        let (folder, other_folders) = bun_watcher::folder_hashes(watchlist, folder_index);
+        folder == self.dir_hash || other_folders.contains(&self.dir_hash)
+    }
 }
 
 pub struct Task<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
@@ -471,7 +469,7 @@ where
     /// We deliberately do **not** expose a whole-struct `&NewHotReloader`
     /// accessor: [`Self::run`] executes on the JS event-loop thread while the
     /// watcher thread may be inside `on_file_update(&mut self)` writing
-    /// non-`UnsafeCell` fields (`main.is_waiting_for_dir_change`, `tombstones`).
+    /// non-`UnsafeCell` fields (`main.is_waiting_for_dir_change`).
     /// Materializing `&NewHotReloader` on the JS thread would assert those
     /// bytes are frozen, which is a data race / Stacked-Borrows violation even
     /// though this side never reads them. Instead, project to the single
@@ -713,8 +711,6 @@ where
             verbose: unsafe { (*this).log_level_at_least_info() },
             pending_count: AtomicU32::new(0),
             main: MainFile::init(entry_path.unwrap_or(b"")),
-            #[cfg(not(windows))]
-            tombstones: StringHashMap::default(),
             // SAFETY: see above.
             reload_handle: unsafe { (*this).reload_handle() },
             _event_loop: PhantomData,
@@ -754,14 +750,76 @@ where
         }
     }
 
+    /// Reloads the watched files that a directory event affects, as the watchlist alone tells.
     #[cfg(not(windows))]
-    fn put_tombstone(&mut self, key: &[u8], value: *mut Fs::EntriesOption) {
-        self.tombstones.put(key, value).expect("unreachable");
-    }
+    fn reload_watched_files_in(
+        &self,
+        watchlist: &bun_watcher::WatchList,
+        event: &bun_watcher::WatchEvent,
+        changed_names: &[ChangedFilePath],
+        current_task: &mut Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>,
+        ctx: *mut Watcher,
+    ) -> usize {
+        // inotify names the entries that changed. kqueue names none: a watched file that is gone changed.
+        let can_name_a_file = if IS_KQUEUE {
+            event.op.contains(WatchOp::DELETE)
+        } else {
+            !changed_names.is_empty()
+        };
+        if !can_name_a_file {
+            return 0;
+        }
 
-    #[cfg(not(windows))]
-    fn get_tombstone(&mut self, key: &[u8]) -> Option<*mut Fs::EntriesOption> {
-        self.tombstones.get(key).copied()
+        let slice = watchlist.slice();
+        let file_paths = slice.items_file_path();
+        let kinds = slice.items_kind();
+        let hashes = slice.items_hash();
+        let parents = slice.items_parent_hash();
+        let file_descriptors = slice.items_fd();
+
+        let (folder, other_folders) = bun_watcher::folder_hashes(watchlist, event.index as usize);
+        let mut reloaded: usize = 0;
+        for (entry_id, parent) in parents.iter().enumerate() {
+            if *parent != folder && (other_folders.is_empty() || !other_folders.contains(parent)) {
+                continue;
+            }
+            if kinds[entry_id] != bun_watcher::Kind::File
+                || (bun_watcher::REQUIRES_FILE_DESCRIPTORS
+                    && !file_descriptors[entry_id].is_valid())
+            {
+                continue;
+            }
+            let watched_path: &[u8] = &file_paths[entry_id];
+            let changed = if IS_KQUEUE {
+                !bun_sys::exists(watched_path)
+            } else {
+                bun_watcher::names_file(changed_names, watched_path)
+            };
+            if !changed {
+                continue;
+            }
+            reloaded += 1;
+            record_changed_path(watched_path);
+            current_task.append(hashes[entry_id]);
+            if self.verbose {
+                Self::debug(format_args!(
+                    "Removing file: {}",
+                    bstr::BStr::new(watched_path)
+                ));
+                Self::debug(format_args!(
+                    "File change: {}",
+                    bstr::BStr::new(bun_paths::resolve_path::relative(
+                        FileSystem::get().top_level_dir,
+                        watched_path,
+                    ))
+                ));
+            }
+            // SAFETY: see the File-arm call in `on_file_update`.
+            unsafe {
+                (*ctx).remove_at_index::<false>(bun_watcher::Kind::File, entry_id as u16, 0, &[])
+            };
+        }
+        reloaded
     }
 
     pub(crate) fn on_error(_: &mut Self, err: &bun_sys::Error) {
@@ -808,10 +866,9 @@ where
             unsafe { bun_core::ffi::slice_mut(slice.items_raw::<"count", u32>(), slice.len()) };
         let kinds = slice.items_kind();
         let hashes = slice.items_hash();
-        let parents = slice.items_parent_hash();
         let file_descriptors = slice.items_fd();
         // Note: reshaped for borrowck — `ctx` is held as a raw pointer so
-        // `self` can be reborrowed inside the loop body for tombstone access,
+        // `self` can be reborrowed inside the loop body,
         // and so the deferred `flush_evictions` doesn't hold `&mut Watcher`
         // across the loop.
         let ctx: *mut Watcher = std::ptr::from_mut(self.get_context());
@@ -837,11 +894,9 @@ where
             // SAFETY: the Watcher outlives this call (it owns the Reloader that calls us).
             unsafe { (*ctx).flush_evictions() };
         });
-        let fs: &mut FileSystem = FileSystem::instance();
-        let rfs: &mut Fs::file_system::RealFS = &mut fs.fs;
+        let fs = FileSystem::get();
         #[cfg(windows)]
-        let _ = (changed_files, parents, file_descriptors, rfs);
-        let mut _on_file_update_path_buf = bun_paths::path_buffer_pool::get();
+        let _ = (changed_files, file_descriptors);
 
         for event in events.iter() {
             // Stale udata: kevent.udata can outlive a swapRemove in flushEvictions.
@@ -881,9 +936,6 @@ where
                     if self.verbose {
                         Self::debug(format_args!(
                             "File changed: {}",
-                            // Note: `fs.relative_to(file_path)` would borrow `&*fs`
-                            // while `rfs = &mut fs.fs` is live; inline the body so the
-                            // split-borrow on `fs.top_level_dir` is visible to borrowck.
                             bstr::BStr::new(bun_paths::resolve_path::relative(
                                 fs.top_level_dir,
                                 file_path
@@ -931,34 +983,15 @@ where
                     }
                     #[cfg(not(windows))]
                     {
-                        let mut affected_buf: [&[u8]; 128] = [b"".as_slice(); 128];
-                        let mut entries_option: Option<*mut Fs::EntriesOption> = None;
-
-                        // Note: the affected-name element type differs by
-                        // platform (kqueue vs inotify). Split into two locals;
-                        // only one is populated per cfg.
-                        let mut affected_kqueue: &[&[u8]] = &[];
-                        let mut affected_inotify: &[ChangedFilePath] = &[];
-                        let _ = (&mut affected_kqueue, &mut affected_inotify);
-
-                        let affected_len: usize = 'brk: {
+                        let affected_inotify: &[ChangedFilePath] = 'brk: {
                             if IS_KQUEUE {
-                                // SAFETY: hot-reload runs single-threaded on the JS thread;
-                                // no other live `&mut EntriesOption` for this key here.
-                                if let Some(existing) = rfs.entries.get(file_path) {
-                                    self.put_tombstone(file_path, existing);
-                                    entries_option = Some(existing);
-                                } else if let Some(existing) = self.get_tombstone(file_path) {
-                                    entries_option = Some(existing);
-                                }
-
                                 if event.op.contains(WatchOp::WRITE) {
                                     // Check if the entrypoint now exists after an atomic save.
                                     // If we previously got a NOTE_RENAME on the entrypoint (vim renamed
                                     // the file), this directory write event signals that the new
                                     // file has been re-created. Verify it exists and trigger reload.
                                     if self.main.is_waiting_for_dir_change
-                                        && self.main.dir_hash == current_hash
+                                        && self.main.is_in_folder(watchlist, event.index as usize)
                                     {
                                         // `.is_ok()` only checks faccessat didn't
                                         // error (it errs only on NAMETOOLONG), not
@@ -988,61 +1021,11 @@ where
                                     }
                                 }
 
-                                let mut affected_i: usize = 0;
-
-                                // if a file descriptor is stale, we need to close it
-                                if event.op.contains(WatchOp::DELETE) && entries_option.is_some() {
-                                    for (entry_id, parent_hash) in parents.iter().enumerate() {
-                                        if *parent_hash == current_hash {
-                                            let affected_path: &[u8] = &file_paths[entry_id];
-                                            // bun_sys::access takes a &ZStr; build one on the
-                                            // stack from the &[u8] watch-list slice.
-                                            let was_deleted = {
-                                                let mut zbuf = bun_paths::path_buffer_pool::get();
-                                                if affected_path.len() >= zbuf.len() {
-                                                    false
-                                                } else {
-                                                    zbuf[..affected_path.len()]
-                                                        .copy_from_slice(affected_path);
-                                                    zbuf[affected_path.len()] = 0;
-                                                    // SAFETY: zbuf is NUL-terminated at len.
-                                                    let z = ZStr::from_buf(
-                                                        &zbuf[..],
-                                                        affected_path.len(),
-                                                    );
-                                                    bun_sys::access(z, libc::F_OK).is_err()
-                                                }
-                                            };
-                                            if !was_deleted {
-                                                continue;
-                                            }
-
-                                            affected_buf[affected_i] =
-                                                &affected_path[file_path.len()..];
-                                            affected_i += 1;
-                                            if affected_i >= affected_buf.len() {
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-
-                                affected_kqueue = &affected_buf[0..affected_i];
-                                break 'brk affected_i;
+                                break 'brk &[];
                             }
 
-                            affected_inotify = event.names(changed_files);
-                            break 'brk affected_inotify.len();
+                            event.names(changed_files)
                         };
-
-                        if affected_len > 0 && !IS_KQUEUE {
-                            if let Some(existing) = rfs.entries.get(file_path) {
-                                self.put_tombstone(file_path, existing);
-                                entries_option = Some(existing);
-                            } else if let Some(existing) = self.get_tombstone(file_path) {
-                                entries_option = Some(existing);
-                            }
-                        }
 
                         let _ = self.ctx_mut().bust_dir_cache(
                             strings::paths::without_trailing_slash_windows_path(file_path),
@@ -1065,7 +1048,7 @@ where
                         // of whether the per-file watchlist entry survived. The per-file
                         // watch itself is re-armed on the JS thread by
                         // `VirtualMachine::add_main_to_watcher_if_needed` after the reload.
-                        if !IS_KQUEUE && self.main.hash != 0 && self.main.dir_hash == current_hash {
+                        if !IS_KQUEUE && self.main.hash != 0 {
                             let main_basename = bun_paths::basename(self.main.file);
                             for changed_name_ in affected_inotify {
                                 let changed_name: &[u8] = match changed_name_ {
@@ -1074,6 +1057,9 @@ where
                                 };
                                 if changed_name != main_basename {
                                     continue;
+                                }
+                                if !self.main.is_in_folder(watchlist, event.index as usize) {
+                                    break;
                                 }
                                 let main_exists = {
                                     let mut zbuf = bun_paths::path_buffer_pool::get();
@@ -1096,152 +1082,13 @@ where
                             }
                         }
 
-                        if let Some(dir_ent) = entries_option {
-                            // SAFETY: dir_ent points into rfs.entries (or a tombstoned copy);
-                            // both outlive this loop iteration. Shared access only —
-                            // `entries()` takes `&self` and per-entry mutation below goes
-                            // through the entry's own mutex + cells.
-                            let dir_ent = unsafe { &*dir_ent };
-                            let mut last_file_hash: bun_watcher::HashType =
-                                bun_watcher::HashType::MAX;
-
-                            for i in 0..affected_len {
-                                let changed_name: &[u8] = if IS_KQUEUE {
-                                    affected_kqueue[i]
-                                } else {
-                                    affected_inotify[i].unwrap().as_bytes()
-                                };
-                                if changed_name.is_empty()
-                                    || changed_name[0] == b'~'
-                                    || changed_name[0] == b'.'
-                                {
-                                    continue;
-                                }
-
-                                // `ctx` is a BACKREF that outlives the reloader.
-                                let loader = self
-                                    .ctx
-                                    .get_loaders()
-                                    .get(PathName::find_extname(changed_name))
-                                    .copied()
-                                    .unwrap_or(bun_ast::Loader::File);
-                                // Note: the post-assignment `_ = prev_entry_id`
-                                // below documents the intentional dead store.
-                                let mut prev_entry_id: usize = usize::MAX;
-                                if loader != bun_ast::Loader::File {
-                                    // Both arms of `'brk` assign these before
-                                    // any read.
-                                    let path_string: bun_ptr::Interned;
-                                    let file_hash: bun_watcher::HashType;
-                                    let abs_path: &[u8] = 'brk: {
-                                        // Probe `.data` under `entries_mutex`; a
-                                        // resolver at a newer generation rewrites
-                                        // the map in place under that lock. The
-                                        // entry pointer stays valid after unlock
-                                        // (EntryStore-owned).
-                                        let looked_up = {
-                                            let _entries_lock = rfs.entries_mutex.lock_guard();
-                                            dir_ent.entries().get(changed_name)
-                                        };
-                                        if let Some(file_ent) = looked_up {
-                                            // reset the file descriptor
-                                            let ent = file_ent.entry();
-                                            {
-                                                // Every cached-`Entry` rewrite takes
-                                                // the per-entry mutex.
-                                                let _entry_guard = ent.mutex.lock_guard();
-                                                ent.set_cache_fd(Fd::INVALID);
-                                                ent.need_stat.store(
-                                                    true,
-                                                    core::sync::atomic::Ordering::Release,
-                                                );
-                                            }
-                                            path_string = ent.abs_path;
-                                            file_hash = Watcher::get_hash(path_string.as_bytes());
-                                            for (entry_id, hash) in hashes.iter().enumerate() {
-                                                if *hash == file_hash {
-                                                    if file_descriptors[entry_id].is_valid() {
-                                                        if prev_entry_id != entry_id {
-                                                            record_changed_path(
-                                                                path_string.as_bytes(),
-                                                            );
-                                                            current_task.append(hashes[entry_id]);
-                                                            if self.verbose {
-                                                                Self::debug(format_args!(
-                                                                    "Removing file: {}",
-                                                                    bstr::BStr::new(
-                                                                        path_string.as_bytes()
-                                                                    )
-                                                                ));
-                                                            }
-                                                            // SAFETY: see the
-                                                            // File-arm call
-                                                            // above.
-                                                            unsafe {
-                                                                (*ctx).remove_at_index::<false>(
-                                                                    bun_watcher::Kind::File,
-                                                                    entry_id as u16,
-                                                                    0,
-                                                                    &[],
-                                                                )
-                                                            };
-                                                        }
-                                                    }
-
-                                                    prev_entry_id = entry_id;
-                                                    _ = prev_entry_id;
-                                                    break;
-                                                }
-                                            }
-
-                                            break 'brk path_string.as_bytes();
-                                        } else {
-                                            let file_path_without_trailing_slash =
-                                                strings::trim_right(file_path, &[SEP]);
-                                            _on_file_update_path_buf
-                                                [0..file_path_without_trailing_slash.len()]
-                                                .copy_from_slice(file_path_without_trailing_slash);
-                                            _on_file_update_path_buf
-                                                [file_path_without_trailing_slash.len()] = SEP;
-
-                                            // The separator written at index `len` is
-                                            // immediately overwritten by the
-                                            // `changed_name` copy, and the slice takes
-                                            // one stale byte past the copy. Deliberate:
-                                            // changing it would change the resulting
-                                            // path hash.
-                                            _on_file_update_path_buf
-                                                [file_path_without_trailing_slash.len()
-                                                    ..file_path_without_trailing_slash.len()
-                                                        + changed_name.len()]
-                                                .copy_from_slice(changed_name);
-                                            let path_slice = &_on_file_update_path_buf[0
-                                                ..file_path_without_trailing_slash.len()
-                                                    + changed_name.len()
-                                                    + 1];
-                                            file_hash = Watcher::get_hash(path_slice);
-                                            break 'brk path_slice;
-                                        }
-                                    };
-
-                                    // skip consecutive duplicates
-                                    if last_file_hash == file_hash {
-                                        continue;
-                                    }
-                                    last_file_hash = file_hash;
-
-                                    if self.verbose {
-                                        Self::debug(format_args!(
-                                            "File change: {}",
-                                            bstr::BStr::new(bun_paths::resolve_path::relative(
-                                                fs.top_level_dir,
-                                                abs_path,
-                                            ))
-                                        ));
-                                    }
-                                }
-                            }
-                        }
+                        let reloaded = self.reload_watched_files_in(
+                            watchlist,
+                            event,
+                            affected_inotify,
+                            &mut current_task,
+                            ctx,
+                        );
 
                         if self.verbose {
                             Self::debug(format_args!(
@@ -1250,7 +1097,7 @@ where
                                     fs.top_level_dir,
                                     file_path
                                 )),
-                                affected_len
+                                reloaded
                             ));
                         }
                     }

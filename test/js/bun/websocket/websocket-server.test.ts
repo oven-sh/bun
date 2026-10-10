@@ -768,7 +768,8 @@ describe("Server", () => {
         },
       }));
       */
-    it.todo("perMessageDeflate");
+    // perMessageDeflate negotiation and compression are covered by
+    // websocket-server-permessage-deflate.test.ts
     describe("perMessageDeflate (validation)", () => {
       it.each([1073741824, "hello", 1n, Symbol()])("throws when not a boolean or object", value => {
         expect(() => {

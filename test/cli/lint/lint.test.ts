@@ -5583,6 +5583,73 @@ describe.concurrent("rules as oxlint has them", () => {
     };
     expect(await reports(files, names)).toEqual(rows.map(row => row[1]));
   });
+
+  // ESLint 10.12.0, whose parser reads `&#36;`, reports every row.
+  test("no-script-url, no-template-curly-in-string: the value of a JSX attribute is what is written", async () => {
+    const rows: [code: string, oxlint: string[], eslint: string[]][] = [
+      ['<a href="java&#115;cript:void(0)" />;\n', [], ["1:9 no-script-url"]],
+      ['<a href="&#106;avascript:void(0)" />;\n', [], ["1:9 no-script-url"]],
+      ['<a href="javascript:void(0)" />;\n', ["1:9 Unexpected `javascript:` url"], ["1:9 no-script-url"]],
+      ['<a href={"javascript:void(0)"} />;\n', ["1:10 Unexpected `javascript:` url"], ["1:10 no-script-url"]],
+      ['<p title="&#36;{x}" />;\n', [], ["1:10 no-template-curly-in-string"]],
+      ['<p title="$&#123;x}" />;\n', [], ["1:10 no-template-curly-in-string"]],
+      ['<p title="${x&#125;" />;\n', [], ["1:10 no-template-curly-in-string"]],
+      [
+        '<p title="${x}" />;\n',
+        ["1:10 Template placeholders will not interpolate in regular strings"],
+        ["1:10 no-template-curly-in-string"],
+      ],
+      [
+        '<p title="${&amp;}" />;\n',
+        ["1:10 Template placeholders will not interpolate in regular strings"],
+        ["1:10 no-template-curly-in-string"],
+      ],
+      [
+        '<p title={"${x}"} />;\n',
+        ["1:11 Template placeholders will not interpolate in regular strings"],
+        ["1:11 no-template-curly-in-string"],
+      ],
+    ];
+    const names = rows.map((_, at) => `r${at}.jsx`);
+    const rules = { "no-script-url": "error", "no-template-curly-in-string": "error" };
+    const code = Object.fromEntries(rows.map(([code], at) => [names[at], code]));
+    const oxlintrc = JSON.stringify({ categories: { correctness: "off" }, rules });
+    expect(await reports({ ".oxlintrc.json": oxlintrc, ...code }, names)).toEqual(rows.map(row => row[1]));
+    const config = `export default [{
+      files: ["**/*.jsx"],
+      languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
+      rules: ${JSON.stringify(rules)},
+    }];`;
+    type Result = { filePath: string; messages: { line: number; column: number; ruleId: string }[] };
+    const files = { "eslint.config.mjs": config, ...code };
+    const results: Result[] = JSON.parse((await lint(files, ["-f", "json", ...names])).raw);
+    const of = (name: string) => results.find(it => basename(it.filePath) === name)?.messages;
+    const found = names.map(name => of(name)?.map(it => `${it.line}:${it.column} ${it.ruleId}`));
+    expect(found).toEqual(rows.map(row => row[2]));
+  });
+});
+
+// As ESLint 10.12.0 with eslint-plugin-react 7.37.5 and @typescript-eslint/parser.
+test.concurrent("react/prop-types: 300 components that name one interface of 500 members", async () => {
+  const members = Array.from({ length: 500 }, (_, at) => `  p${at}?: string;\n`).join("");
+  const component = (at: number) =>
+    `export function C${at}(props: Shared & { own: number }) {\n  return (\n    <i>\n      {props.p1}\n` +
+    `      {props.own}\n      {props.missing}\n    </i>\n  );\n}\n`;
+  const files = {
+    "eslint.config.mjs": `export default [{
+      files: ["**/*.tsx"],
+      languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } },
+      plugins: { react: { meta: { name: "eslint-plugin-react" }, rules: {} } },
+      settings: { react: { version: "18.3.1" } },
+      rules: { "react/prop-types": "error" },
+    }];`,
+    "a.tsx": `interface Shared {\n${members}}\n` + Array.from({ length: 300 }, (_, at) => component(at)).join(""),
+  };
+  const [{ messages }]: { messages: { line: number; message: string }[] }[] = JSON.parse(
+    (await lint(files, ["-f", "json", "a.tsx"])).raw,
+  );
+  expect(new Set(messages.map(it => it.message))).toEqual(new Set(["'missing' is missing in props validation"]));
+  expect(messages.map(it => it.line)).toEqual(Array.from({ length: 300 }, (_, at) => 508 + 9 * at));
 });
 
 describe.concurrent("regular expressions in a configuration", () => {

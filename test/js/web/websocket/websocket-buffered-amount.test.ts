@@ -206,3 +206,74 @@ describe("WebSocket.bufferedAmount", () => {
     }
   });
 });
+
+describe("WebSocket send queue", () => {
+  // The queue is a ring buffer of this many bytes when it has to grow.
+  const RING = 8 * 1024 * 1024;
+  // The offset in the ring at which the queue starts.
+  const HEAD = (RING / 4) * 3;
+  // A frame of 64 KiB or more is 10 bytes of header + 4-byte mask + payload.
+  const OVERHEAD = 14;
+  // 1008 bytes on the wire: a frame under 1024 bytes goes to the socket, not through the queue.
+  const INLINE = new Uint8Array(1000);
+  const SMALL = new Uint8Array(1024);
+  // Header (4 bytes for a 1024-byte payload) + 4-byte mask + payload.
+  const SMALL_FRAME = SMALL.byteLength + 8;
+  // A few ms of noise on a non-wrapped cost below this would decide the ratio.
+  const FLOOR_MS = 16;
+
+  // CPU time of the one send() that does not fit in the ring.
+  async function growCost(wrapped: boolean): Promise<number> {
+    const origin = rawOrigin(false);
+    const port = await origin.listen();
+    try {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}`);
+      await open(ws);
+      const peer = await origin.upgraded;
+
+      // One frame goes through the queue to a peer that reads: the queue is then empty at HEAD.
+      peer.resume();
+      ws.send(new Uint8Array(HEAD - OVERHEAD));
+      expect(await origin.receive(HEAD)).toBe(HEAD);
+      expect(ws.bufferedAmount).toBe(0);
+
+      // The peer stops. The socket refuses a part of one small frame, and that part is queued.
+      peer.pause();
+      for (let i = 0; ws.bufferedAmount === 0 && i < MAX_TO_SATURATE * 64; i++) ws.send(INLINE);
+      const refused = ws.bufferedAmount;
+      expect(refused).toBeGreaterThan(0);
+      expect(refused).toBeLessThanOrEqual(INLINE.byteLength + 8);
+
+      // This frame ends exactly at the end of the ring.
+      ws.send(new Uint8Array(RING - HEAD - refused - OVERHEAD));
+      expect(ws.bufferedAmount).toBe(RING - HEAD);
+      if (wrapped) {
+        // This one starts at offset 0: the queue is now in two parts.
+        ws.send(SMALL);
+        expect(ws.bufferedAmount).toBe(RING - HEAD + SMALL_FRAME);
+      }
+
+      const tooBig = new Uint8Array(HEAD);
+      Bun.gc(true);
+      const before = process.threadCpuUsage();
+      ws.send(tooBig);
+      const { user, system } = process.threadCpuUsage(before);
+      ws.terminate();
+      return (user + system) / 1000;
+    } finally {
+      origin.close();
+    }
+  }
+
+  it("grows a queue that wraps around its buffer at the cost of one that does not", async () => {
+    let linear = await growCost(false);
+    let wrapped = await growCost(true);
+    const limit = () => 6 * Math.max(linear, FLOOR_MS);
+    // Other work on the machine can inflate a sample by some ms. A send of a second is not that.
+    if (wrapped >= limit() && wrapped < 1000) {
+      linear = Math.min(linear, await growCost(false));
+      wrapped = Math.min(wrapped, await growCost(true));
+    }
+    expect(wrapped).toBeLessThan(limit());
+  });
+});

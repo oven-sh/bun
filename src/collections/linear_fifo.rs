@@ -8,9 +8,6 @@ use core::ptr;
 
 use bun_alloc::AllocError;
 
-// 4096 is the conservative minimum page size on every platform Bun ships on.
-const PAGE_SIZE_MIN: usize = 4096;
-
 /// Backing-storage abstraction; `DYNAMIC` is true for the `.Dynamic` variant.
 // Trait + assoc-consts encode the structurally different layouts per
 // variant.
@@ -203,86 +200,26 @@ impl<T: Copy, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         }
     }
 
-    pub(crate) fn realign(&mut self) {
-        let buf_len = self.buf_len();
-        if buf_len - self.head >= self.count {
-            // this copy overlaps
-            let count = self.count;
-            let head = self.head;
-            let buf = self.buf.as_mut_slice().as_mut_ptr();
-            // SAFETY: src/dst within same allocation; ptr::copy is memmove.
-            unsafe { ptr::copy(buf.add(head), buf, count) };
-            self.head = 0;
-        } else {
-            // Stable Rust cannot size a stack array by `size_of::<T>()`, so use
-            // a fixed byte scratch (page_size/2 bytes, no heap) and compute the
-            // element count at runtime.
-            //
-            // The scratch is a `[MaybeUninit<u8>; _]` (alignment 1). Reading or
-            // writing through it as `*mut T` would violate
-            // `ptr::copy_nonoverlapping`'s alignment precondition for any
-            // `align_of::<T>() > 1`, so the tmp↔buf transfers are done at byte
-            // granularity instead — `*mut u8` only requires 1-byte alignment,
-            // which both the scratch and `buf` (cast down from `*T`) satisfy.
-            let mut tmp_bytes = [MaybeUninit::<u8>::uninit(); PAGE_SIZE_MIN / 2];
-            let tmp_ptr: *mut u8 = tmp_bytes.as_mut_ptr().cast::<u8>();
-            let t_size = mem::size_of::<T>();
-            let tmp_len = (PAGE_SIZE_MIN / 2) / t_size;
-
-            while self.head != 0 {
-                let n = self.head.min(tmp_len);
-                let m = buf_len - n;
-                let buf = self.buf.as_mut_slice().as_mut_ptr();
-                // SAFETY: `tmp_bytes` is disjoint from `buf`. The tmp↔buf copies move
-                // `n * size_of::<T>()` raw bytes (no `T` typed access through
-                // the 1-aligned scratch). The buf→buf shift overlaps, so use
-                // `ptr::copy` (memmove); it operates on properly-aligned `*T`.
-                unsafe {
-                    ptr::copy_nonoverlapping(buf.cast::<u8>(), tmp_ptr, n * t_size);
-                    ptr::copy(buf.add(n), buf, m);
-                    ptr::copy_nonoverlapping(tmp_ptr, buf.add(m).cast::<u8>(), n * t_size);
-                }
-                self.head -= n;
-            }
-        }
-        // set unused area to undefined
-        #[cfg(debug_assertions)]
-        {
-            let count = self.count;
-            let unused = &mut self.buf.as_mut_slice()[count..];
-            // SAFETY: the tail past `count` is logically uninitialized; writing
-            // the 0xAA poison pattern there cannot invalidate live items.
-            unsafe {
-                ptr::write_bytes(
-                    unused.as_mut_ptr().cast::<u8>(),
-                    0xAA,
-                    std::mem::size_of_val(unused),
-                );
-            }
-        }
-    }
-
     /// Ensure that the buffer can fit at least `size` items
     pub fn ensure_total_capacity(&mut self, size: usize) -> Result<(), AllocError> {
         if self.buf_len() >= size {
             return Ok(());
         }
         if B::DYNAMIC {
-            self.realign();
             let new_size = if B::POWERS_OF_TWO {
                 size.checked_next_power_of_two().ok_or(AllocError)?
             } else {
                 size
             };
+            let head = self.head;
             let count = self.count;
             let old = self.buf.alloc_swap(new_size)?;
             if count > 0 {
+                // `old[head..head + first]`, then `old[..count - first]` when the items wrap.
+                let first = count.min(old.len() - head);
                 let new = self.buf.as_mut_slice();
-                // After realign(), head==0 so readableSlice(0) == old[0..count].
-                // SAFETY: old and new are disjoint allocations.
-                unsafe {
-                    ptr::copy_nonoverlapping(old.as_ptr().cast::<T>(), new.as_mut_ptr(), count);
-                }
+                new[..first].copy_from_slice(assume_init_slice(&old[head..head + first]));
+                new[first..count].copy_from_slice(assume_init_slice(&old[..count - first]));
             }
             // `self.allocator.free(self.buf)` — `old` drops here.
             self.head = 0;
@@ -436,11 +373,19 @@ impl<T: Copy, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     pub fn writable_with_size(&mut self, size: usize) -> Result<&mut [T], AllocError> {
         self.ensure_unused_capacity(size)?;
 
-        // try to avoid realigning buffer
-        // reshaped for borrowck — check len, drop borrow, maybe
-        // realign, then take the final borrow.
-        if self.writable_slice(0).len() < size {
-            self.realign();
+        let head = self.head;
+        let count = self.count;
+        let tail = head + count;
+        let buf = self.buf.as_mut_slice();
+        // Too few free slots after the tail: move the items to the start of the buffer.
+        if tail < buf.len() && buf.len() - tail < size {
+            buf.copy_within(head..tail, 0);
+            #[cfg(debug_assertions)]
+            {
+                let unused = buf.len() - count;
+                poison(&mut buf[count..], unused);
+            }
+            self.head = 0;
         }
         let slice = self.writable_slice(0);
         debug_assert!(slice.len() >= size);
@@ -677,12 +622,9 @@ mod tests {
 
     type DynFifoU8 = LinearFifo<u8, DynamicBuffer<u8>>;
 
-    // Drives `realign()` down its wrapped-rotation branch (the `else` arm with
-    // the tmp scratch loop). Growing a wrapped Dynamic fifo is the only path
-    // that reaches it: write 8, read 6, write 5 leaves head=6 count=7 in an
-    // 8-slot buffer, then a further write forces a grow → realign.
+    // head=6 count=7 in an 8-slot buffer: the grow copies `old[6..8]`, then `old[..5]`.
     #[test]
-    fn realign_wrapped_rotation_preserves_contents() {
+    fn grow_wrapped_preserves_contents() {
         let mut fifo = DynFifoU8::init();
         fifo.write(b"abcdefgh").unwrap();
         for _ in 0..6 {
@@ -698,6 +640,122 @@ mod tests {
         let mut out = [0u8; 16];
         let n = fifo.read(&mut out);
         assert_eq!(&out[..n], b"ghijklmnop");
+    }
+
+    // #22590: append, append, shift, append, append, append, shift, shift.
+    #[test]
+    fn grow_wrapped_keeps_both_parts() {
+        let mut fifo = DynFifoU8::init();
+        fifo.write_item(b'a').unwrap();
+        fifo.write_item(b'b').unwrap();
+        assert_eq!(fifo.read_item(), Some(b'a'));
+        fifo.write_item(b'c').unwrap();
+        fifo.write_item(b'd').unwrap();
+        fifo.write_item(b'e').unwrap();
+        assert_eq!(fifo.read_item(), Some(b'b'));
+        assert_eq!(fifo.read_item(), Some(b'c'));
+        assert_eq!(fifo.read_item(), Some(b'd'));
+        assert_eq!(fifo.read_item(), Some(b'e'));
+        assert_eq!(fifo.read_item(), None);
+    }
+
+    // An `N`-slot ring (`N` a power of two) with `count` items from slot `head` on.
+    fn ring_with_layout<T: Copy, const N: usize>(
+        head: usize,
+        count: usize,
+        item: impl Fn(usize) -> T,
+    ) -> LinearFifo<T, DynamicBuffer<T>> {
+        let mut fifo = LinearFifo::<T, DynamicBuffer<T>>::init();
+        fifo.ensure_total_capacity(N).unwrap();
+        for i in 0..head {
+            fifo.write_item(item(1000 + i)).unwrap();
+            fifo.read_item().unwrap();
+        }
+        for i in 0..count {
+            fifo.write_item(item(i)).unwrap();
+        }
+        assert_eq!((fifo.head, fifo.count, fifo.buf_len()), (head, count, N));
+        fifo
+    }
+
+    fn grow_from_every_layout<T, const N: usize>(item: impl Fn(usize) -> T)
+    where
+        T: Copy + PartialEq + core::fmt::Debug,
+    {
+        for head in 0..N {
+            for count in 0..=N {
+                let mut fifo = ring_with_layout::<T, N>(head, count, &item);
+
+                fifo.ensure_total_capacity(N + 1).unwrap();
+
+                assert_eq!(
+                    (fifo.head, fifo.count, fifo.buf_len()),
+                    (0, count, 2 * N),
+                    "head={head} count={count}"
+                );
+                for i in 0..count {
+                    assert_eq!(fifo.peek_item(i), item(i), "head={head} count={count}");
+                }
+            }
+        }
+    }
+
+    // Every (head, count) layout, for 4-byte, zero-sized and 3000-byte items.
+    #[test]
+    fn grow_preserves_contents_in_every_layout() {
+        grow_from_every_layout::<u32, 8>(|i| i as u32);
+        grow_from_every_layout::<(), 4>(|_| ());
+        grow_from_every_layout::<[u8; 3000], 4>(|i| [i as u8; 3000]);
+    }
+
+    // Every (head, count) layout of a 4-slot ring, for every size up to two rings.
+    #[test]
+    fn writable_with_size_in_every_layout() {
+        const N: usize = 4;
+        for head in 0..N {
+            for count in 0..=N {
+                for size in 0..=2 * N {
+                    let mut fifo = ring_with_layout::<u8, N>(head, count, |i| i as u8);
+
+                    let writable = fifo.writable_with_size(size).unwrap();
+                    assert_eq!(writable.len(), size);
+                    for (i, slot) in writable.iter_mut().enumerate() {
+                        *slot = (count + i) as u8;
+                    }
+                    fifo.update(size);
+
+                    let expected: Vec<u8> = (0..(count + size) as u8).collect();
+                    let mut out = [0u8; 3 * N];
+                    let n = fifo.read(&mut out);
+                    assert_eq!(
+                        &out[..n],
+                        &expected[..],
+                        "head={head} count={count} size={size}"
+                    );
+                }
+            }
+        }
+    }
+
+    // head=4 count=3 in an 8-slot buffer: 1 free slot after the tail, 4 before the head.
+    #[test]
+    fn writable_with_size_moves_items_to_start_for_short_tail() {
+        let mut fifo = DynFifoU8::init();
+        fifo.write(b"abcdefg").unwrap();
+        for _ in 0..4 {
+            fifo.read_item().unwrap();
+        }
+        assert_eq!((fifo.head, fifo.count, fifo.buf_len()), (4, 3, 8));
+
+        let writable = fifo.writable_with_size(5).unwrap();
+        assert_eq!(writable.len(), 5);
+        writable.copy_from_slice(b"hijkl");
+        fifo.update(5);
+
+        assert_eq!((fifo.head, fifo.count, fifo.buf_len()), (0, 8, 8));
+        let mut out = [0u8; 8];
+        let n = fifo.read(&mut out);
+        assert_eq!(&out[..n], b"efghijkl");
     }
 
     #[test]

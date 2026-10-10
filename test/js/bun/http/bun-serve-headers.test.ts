@@ -265,3 +265,310 @@ describe("response Connection: close closes the socket", () => {
     }
   });
 });
+
+// `Request.url` and `Request.headers` are read from the uWS request the first
+// time JS asks for them. That request only lives while the handler dispatch is
+// on the stack. A handler that responded synchronously used to leave a Request
+// that read back as url "" and an empty Headers once the dispatch ended, so a
+// deferred log hook saw nothing (an async handler that awaited I/O was fine).
+describe("Request.url and Request.headers after the handler returned", () => {
+  const requestHeaders = { "user-agent": "UA/1", cookie: "a=1; b=2", "x-custom": "custom-value" };
+
+  // Reads the request from a timer: the dispatch that created it has returned by then.
+  function readLater(req: Request) {
+    const { promise, resolve } = Promise.withResolvers<Record<string, unknown>>();
+    setTimeout(() => {
+      // The copies read url/headers through the same lazy path as the original.
+      const clone = req.clone();
+      const copy = new Request(req);
+      const copyWithInit = new Request(req, { method: "POST" });
+      resolve({
+        url: req.url,
+        headers: Object.fromEntries(req.headers),
+        ua: req.headers.get("user-agent"),
+        clone: [clone.url, clone.headers.get("user-agent")],
+        copy: [copy.url, copy.headers.get("user-agent")],
+        copyWithInit: [copyWithInit.url, copyWithInit.method, copyWithInit.headers.get("user-agent")],
+        inspectHasUa: Bun.inspect(req).includes("UA/1"),
+      });
+    }, 0);
+    return promise;
+  }
+
+  const handlers: Record<string, (req: Request) => Response | Promise<Response> | undefined> = {
+    "returns a Response": () => new Response("ok"),
+    "returns Promise.resolve(Response)": () => Promise.resolve(new Response("ok")),
+    "resumes from a microtask": async () => {
+      await 0;
+      return new Response("ok");
+    },
+    "awaits a timer": async () => {
+      await Bun.sleep(1);
+      return new Response("ok");
+    },
+    "returns undefined": () => undefined,
+    "throws": () => {
+      throw new Error("boom");
+    },
+  };
+
+  describe.each([false, true])("development: %p", development => {
+    for (const [name, handler] of Object.entries(handlers)) {
+      test(`fetch handler ${name}`, async () => {
+        let later: Promise<Record<string, unknown>> | undefined;
+        let expectedHeaders: Record<string, string> | undefined;
+        using server = Bun.serve({
+          port: 0,
+          development,
+          fetch(req) {
+            if (!later) {
+              later = readLater(req);
+              return handler(req) as Response;
+            }
+            // Control request: a synchronous read of the same headers.
+            expectedHeaders = Object.fromEntries(req.headers);
+            return new Response("control");
+          },
+          error() {
+            return new Response("handled", { status: 500 });
+          },
+        });
+
+        const url = `${server.url}path?q=1`;
+        await (await fetch(url, { headers: requestHeaders })).text();
+        await (await fetch(url, { headers: requestHeaders })).text();
+
+        expect(await later!).toEqual({
+          url,
+          headers: expectedHeaders!,
+          ua: "UA/1",
+          clone: [url, "UA/1"],
+          copy: [url, "UA/1"],
+          copyWithInit: [url, "POST", "UA/1"],
+          inspectHasUa: true,
+        });
+        expect(expectedHeaders!["x-custom"]).toBe("custom-value");
+      });
+    }
+
+    test("routes handler: url, params, headers and cookies", async () => {
+      let later: Promise<Record<string, unknown>> | undefined;
+      using server = Bun.serve({
+        port: 0,
+        development,
+        routes: {
+          "/r/:id": req => {
+            const { promise, resolve } = Promise.withResolvers<Record<string, unknown>>();
+            later = promise;
+            setTimeout(() => {
+              resolve({
+                url: req.url,
+                id: req.params.id,
+                ua: req.headers.get("user-agent"),
+                cookieA: req.cookies.get("a"),
+                cookieB: req.cookies.get("b"),
+              });
+            }, 0);
+            return new Response("ok");
+          },
+        },
+        fetch: () => new Response("not found", { status: 404 }),
+      });
+
+      const url = `${server.url}r/42`;
+      await (await fetch(url, { headers: requestHeaders })).text();
+
+      expect(await later!).toEqual({ url, id: "42", ua: "UA/1", cookieA: "1", cookieB: "2" });
+    });
+  });
+
+  test("a retained Request never shows the next request on the same connection", async () => {
+    const requests: Request[] = [];
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch(req) {
+        requests.push(req);
+        return new Response("ok");
+      },
+    });
+
+    const socket = net.connect(server.port, "127.0.0.1");
+    try {
+      socket.on("error", () => {});
+      await once(socket, "connect");
+      socket.write(
+        "GET /first HTTP/1.1\r\nHost: x\r\nX-Id: first\r\n\r\n" +
+          "GET /second HTTP/1.1\r\nHost: x\r\nX-Id: second\r\n\r\n",
+      );
+
+      let raw = "";
+      await new Promise<void>((resolve, reject) => {
+        socket.on("data", chunk => {
+          raw += chunk.toString("latin1");
+          if ((raw.match(/HTTP\/1\.1 200/g) ?? []).length >= 2) resolve();
+        });
+        socket.on("close", () => reject(new Error("server closed the connection")));
+      });
+    } finally {
+      socket.destroy();
+    }
+
+    expect(requests.map(req => [req.url, req.headers.get("x-id")])).toEqual([
+      ["http://x/first", "first"],
+      ["http://x/second", "second"],
+    ]);
+  });
+
+  test("a late formData() still sees the request's Content-Type", async () => {
+    let later: Promise<string[]> | undefined;
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch(req) {
+        const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+        later = promise;
+        setTimeout(() => req.formData().then(form => resolve([...form.keys()]), reject), 0);
+        return new Response("ok");
+      },
+    });
+
+    await (await fetch(server.url, { headers: { "content-type": "application/x-www-form-urlencoded" } })).text();
+    expect(await later!).toEqual([]);
+  });
+
+  // The response write can close the socket inside the dispatch, and uWS frees the buffer the
+  // request was parsed out of with it (a head split over several reads lives in the parser's
+  // own buffer). The copy has to be taken before that write.
+  test.each([
+    ["head in one write", false],
+    ["head split over three writes", true],
+  ])("a closing response keeps the head readable (%s)", async (_name, split) => {
+    const body = Buffer.alloc(64 * 1024, "b").toString();
+    const later = Promise.withResolvers<Record<string, unknown>>();
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch(req) {
+        setTimeout(
+          () => later.resolve({ url: req.url, id: req.headers.get("x-id"), count: [...req.headers].length }),
+          0,
+        );
+        // Bigger than the cork buffer, so uWS writes it out and the close gate runs here.
+        return new Response(body, { headers: { Connection: "close" } });
+      },
+    });
+
+    const head =
+      ["GET /closing?q=1 HTTP/1.1", "Host: x", "X-Id: closing", "Cookie: " + Buffer.alloc(3000, "c").toString()].join(
+        "\r\n",
+      ) + "\r\n\r\n";
+    const writes = split ? [head.slice(0, 40), head.slice(40, head.length - 20), head.slice(head.length - 20)] : [head];
+
+    const socket = net.connect(server.port, "127.0.0.1");
+    try {
+      socket.on("error", () => {});
+      socket.setNoDelay(true);
+      socket.resume();
+      await once(socket, "connect");
+      for (const write of writes) {
+        await new Promise<void>(written => socket.write(write, () => written()));
+        // Give the server a chance to read this part on its own, so the rest of the head
+        // arrives as a second read. A coalesced write still answers the same way.
+        if (split) await Bun.sleep(10);
+      }
+      // The late read runs after the response write, which is what the close gate rides on.
+      expect(await later.promise).toEqual({ url: "http://x/closing?q=1", id: "closing", count: 3 });
+    } finally {
+      socket.destroy();
+    }
+  });
+
+  // The late read parses a saved copy of the head. It must give what the handler would have read.
+  test("a late read of an unusual head equals the read inside the handler", async () => {
+    const longTarget = "/" + Buffer.alloc(12 * 1024, "t").toString();
+    const heads: Record<string, string[]> = {
+      "absolute-form target": ["GET http://example.com/abs?x=1 HTTP/1.1\r\nHost: other.example\r\n\r\n"],
+      "HTTP/1.0 without Host": ["GET /no-host HTTP/1.0\r\n\r\n"],
+      "IPv6 Host": ["GET /ipv6 HTTP/1.1\r\nHost: [::1]:3000\r\n\r\n"],
+      "empty and padded values": ["GET /empty HTTP/1.1\r\nHost: x\r\nX-Empty:\r\nX-Pad: \t padded \t \r\n\r\n"],
+      "duplicate fields": [
+        "GET /dup HTTP/1.1\r\nHost: x\r\nX-Dup: 1\r\nx-dup: 2\r\nCookie: a=1\r\nCookie: b=2\r\n\r\n",
+      ],
+      "Latin-1 value": ["GET /latin1 HTTP/1.1\r\nHost: x\r\nX-Latin: caf\xe9\r\n\r\n"],
+      "query only": ["GET /?only=query HTTP/1.1\r\nHost: x\r\n\r\n"],
+      // getMethod() lowercases the method in the buffer the copy is taken from.
+      "CONNECT authority-form": ["CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"],
+      "long target": [`GET ${longTarget} HTTP/1.1\r\nHost: x\r\n\r\n`],
+      "head split over three writes": ["GET /split HTT", "P/1.1\r\nHost: x\r\nX-Sp", "lit: yes\r\n\r\n"],
+    };
+
+    const read = (req: Request) => ({ url: req.url, headers: [...req.headers] });
+    const late: Promise<ReturnType<typeof read>>[] = [];
+    const inHandler: ReturnType<typeof read>[] = [];
+    let readLate = true;
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch(req) {
+        if (readLate) {
+          const { promise, resolve } = Promise.withResolvers<ReturnType<typeof read>>();
+          late.push(promise);
+          setTimeout(() => resolve(read(req)), 0);
+        } else {
+          inHandler.push(read(req));
+        }
+        return new Response("ok");
+      },
+    });
+
+    async function send(writes: string[]) {
+      const socket = net.connect(server.port, "127.0.0.1");
+      try {
+        socket.on("error", () => {});
+        socket.setNoDelay(true);
+        await once(socket, "connect");
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        let raw = "";
+        socket.on("data", chunk => {
+          raw += chunk.toString("latin1");
+          if (raw.includes("\r\n\r\nok")) resolve();
+        });
+        socket.on("close", () => reject(new Error("server closed the connection before it answered: " + raw)));
+        for (const [i, write] of writes.entries()) {
+          await new Promise<void>(written => socket.write(Buffer.from(write, "latin1"), () => written()));
+          // Let the server read this part on its own, so the rest of the head arrives as a
+          // second read and uWS parses it out of its own buffer instead of the socket's.
+          if (i < writes.length - 1) await Bun.sleep(10);
+        }
+        await promise;
+      } finally {
+        socket.destroy();
+      }
+    }
+
+    for (const writes of Object.values(heads)) {
+      readLate = true;
+      await send(writes);
+      readLate = false;
+      await send(writes);
+    }
+
+    const names = Object.keys(heads);
+    const byName = (reads: ReturnType<typeof read>[]) => Object.fromEntries(reads.map((r, i) => [names[i], r]));
+    expect(byName(await Promise.all(late))).toEqual(byName(inHandler));
+    // Guards the comparison itself: the reads are not all empty.
+    expect(inHandler.map(r => r.url)).toEqual([
+      "http://other.example/abs?x=1",
+      "/no-host",
+      "http://[::1]:3000/ipv6",
+      "http://x/empty",
+      "http://x/dup",
+      "http://x/latin1",
+      "http://x/?only=query",
+      "example.com:443",
+      "http://x" + longTarget,
+      "http://x/split",
+    ]);
+  });
+});

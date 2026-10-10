@@ -17,6 +17,8 @@
 #[path = "codecs.rs"]
 pub(crate) mod codecs;
 
+mod color_management;
+
 #[path = "codec_jpeg.rs"]
 pub(crate) mod codec_jpeg;
 

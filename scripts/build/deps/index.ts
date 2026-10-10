@@ -16,6 +16,7 @@ import { brotli } from "./brotli.ts";
 import { cares } from "./cares.ts";
 import { hdrhistogram } from "./hdrhistogram.ts";
 import { highway } from "./highway.ts";
+import { lcms2 } from "./lcms2.ts";
 import { libarchive } from "./libarchive.ts";
 import { libdeflate } from "./libdeflate.ts";
 import { libjpegTurbo } from "./libjpeg-turbo.ts";
@@ -57,6 +58,7 @@ export const allDeps: readonly Dependency[] = [
   libjpegTurbo,
   libspng,
   libwebp,
+  lcms2,
   cares,
   hdrhistogram,
   highway,
@@ -85,6 +87,7 @@ export {
   cares,
   hdrhistogram,
   highway,
+  lcms2,
   libarchive,
   libdeflate,
   libjpegTurbo,

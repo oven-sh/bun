@@ -246,9 +246,10 @@ const _appendFile = fs.appendFile.bind(fs);
 // task on its descriptor number. The ref keeps close(), an autoClose teardown and a transfer
 // away from that number until the call settles, and the `finally` keeps a handle that the
 // caller dropped reachable until then. Node v26.3.0 takes no ref here: its close() closes at
-// once, it allows the transfer, and its pending call rejects with ERR_OUT_OF_RANGE because it
-// reads handle.fd for each request. A closed handle takes no ref, so the native call rejects
-// with ERR_OUT_OF_RANGE as in node and [kUnref] does not reach its last-ref arm again.
+// once and it allows the transfer. Node reads handle.fd for each request, so a request that is
+// already issued completes, and a call that makes another request rejects with
+// ERR_OUT_OF_RANGE. A closed handle takes no ref, so the native call rejects with
+// ERR_OUT_OF_RANGE as in node and [kUnref] does not reach its last-ref arm again.
 async function readFileOfHandle(handle, fd, options) {
   if (fd === -1) return _readFile(fd, options);
   try {

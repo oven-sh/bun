@@ -1783,6 +1783,98 @@ describe("Host header field values in request.url", () => {
     expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("/index");
   });
 
+  // RFC 9112 3.2: a server MUST respond 400 to a request with more than one
+  // Host header field line. Served, the request's authority is ambiguous:
+  // request.url is built from the first line and the Host header value is the
+  // join of all of them.
+  describe("more than one Host header field line", () => {
+    test.each([
+      ["two Host lines", "GET /index HTTP/1.1\r\nHost: a.test\r\nHost: b.test\r\nConnection: close\r\n\r\n"],
+      ["two identical Host lines", "GET /index HTTP/1.1\r\nHost: a.test\r\nHost: a.test\r\nConnection: close\r\n\r\n"],
+      [
+        "three Host lines of mixed casing",
+        "GET /index HTTP/1.1\r\nHost: a.test\r\nHOST: b.test\r\nhost: c.test\r\nConnection: close\r\n\r\n",
+      ],
+      ["two Host lines on HTTP/1.0", "GET /index HTTP/1.0\r\nHost: a.test\r\nHost: b.test\r\n\r\n"],
+      [
+        "two Host lines on an upgrade request",
+        "GET /index HTTP/1.1\r\nHost: a.test\r\nHost: b.test\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+      ],
+    ])("Bun.serve answers 400 to a request with %s and never runs fetch", async (_name, payload) => {
+      let handlerReached = false;
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          handlerReached = true;
+          return new Response(req.url, { headers: { Connection: "close" } });
+        },
+      });
+
+      const response = await sendRawRequest(server, payload);
+      expect(response).toStartWith("HTTP/1.1 400");
+      expect(handlerReached).toBe(false);
+    });
+
+    test("Bun.serve answers 400 before a static route is matched", async () => {
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        routes: { "/index": new Response("static") },
+        fetch() {
+          return new Response("fallback");
+        },
+      });
+
+      const response = await sendRawRequest(
+        server,
+        "GET /index HTTP/1.1\r\nHost: a.test\r\nHost: b.test\r\nConnection: close\r\n\r\n",
+      );
+      expect(response).toStartWith("HTTP/1.1 400");
+      expect(response).not.toContain("static");
+    });
+
+    test("a pipelined request with two Host lines is rejected after the valid request before it is served", async () => {
+      const served: string[] = [];
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          served.push(req.url);
+          return new Response("ok");
+        },
+      });
+
+      const response = await sendRawRequest(
+        server,
+        "GET /first HTTP/1.1\r\nHost: a.test\r\n\r\n" +
+          "GET /second HTTP/1.1\r\nHost: a.test\r\nHost: b.test\r\n\r\n" +
+          "GET /third HTTP/1.1\r\nHost: a.test\r\nConnection: close\r\n\r\n",
+      );
+      expect(response).toStartWith("HTTP/1.1 200");
+      expect(response).toContain("HTTP/1.1 400");
+      expect(served).toEqual(["http://a.test/first"]);
+    });
+
+    test("a node:http server keeps the first Host value, like Node.js", async () => {
+      const server = createServer((req, res) => {
+        res.end(String(req.headers.host));
+      });
+      try {
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const response = await sendRawRequest(
+          server.address() as { port: number },
+          "GET / HTTP/1.1\r\nHost: a.test\r\nHost: b.test\r\nConnection: close\r\n\r\n",
+        );
+        expect(response).toContain("HTTP/1.1 200");
+        expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("a.test");
+      } finally {
+        server.close();
+      }
+    });
+  });
+
   test.each([
     [0x21, 0x40],
     [0x41, 0x60],

@@ -800,6 +800,178 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
   });
 });
 
+describe("PUSH_PROMISE ordering (RFC 9113 §6.6)", () => {
+  // A PUSH_PROMISE is only valid on a stream that is open or half-closed (remote) for the
+  // sender, so it has to reach the wire before the parent's END_STREAM. nghttp2 serializes
+  // HEADERS and PUSH_PROMISE ahead of pending DATA, which lets node call end() and then
+  // pushStream() in the same tick. A node client cancels a push that arrives after the
+  // parent's END_STREAM.
+  function push(stream: http2.ServerHttp2Stream) {
+    stream.pushStream({ ":path": "/pushed" }, (err, pushed) => {
+      if (err) {
+        stream.emit("error", err);
+        return;
+      }
+      pushed.on("error", () => {});
+      pushed.respond({ ":status": 200 });
+      pushed.end("pushed");
+    });
+  }
+
+  test.each([
+    [
+      "end() then pushStream()",
+      1,
+      (stream: http2.ServerHttp2Stream) => {
+        stream.end();
+        push(stream);
+      },
+    ],
+    [
+      "pushStream() then end()",
+      1,
+      (stream: http2.ServerHttp2Stream) => {
+        push(stream);
+        stream.end();
+      },
+    ],
+    [
+      'end("body") then pushStream()',
+      1,
+      (stream: http2.ServerHttp2Stream) => {
+        stream.end("body");
+        push(stream);
+      },
+    ],
+    [
+      "end() then pushStream() twice",
+      2,
+      (stream: http2.ServerHttp2Stream) => {
+        stream.end();
+        push(stream);
+        push(stream);
+      },
+    ],
+    // Bodies over the 16 KB cork take the multi-frame path: only the last DATA frame is corked.
+    [
+      "end(16400 bytes) then pushStream()",
+      1,
+      (stream: http2.ServerHttp2Stream) => {
+        stream.end(Buffer.alloc(16400, "x"));
+        push(stream);
+      },
+    ],
+    [
+      "end(40000 bytes) then pushStream()",
+      1,
+      (stream: http2.ServerHttp2Stream) => {
+        stream.end(Buffer.alloc(40000, "x"));
+        push(stream);
+      },
+    ],
+  ])("the PUSH_PROMISE precedes the parent's END_STREAM when the handler runs %s", async (_, pushes, handle) => {
+    const serverError = Promise.withResolvers<never>();
+    const pushServer = http2.createServer();
+    pushServer.on("stream", (stream: http2.ServerHttp2Stream) => {
+      stream.on("error", err => serverError.reject(err));
+      stream.respond({ ":status": 200 });
+      handle(stream);
+    });
+    pushServer.listen(0);
+    await once(pushServer, "listening");
+    const c = await RawH2.connect((pushServer.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x5 /* END_HEADERS | END_STREAM */, 1, requestHeaderBlock("GET"));
+      // The last pushed stream's body: by then every frame of the parent is on the wire too.
+      await Promise.race([
+        c.waitFor(f => f.type === FrameType.DATA && f.streamId === 2 * pushes && (f.flags & 0x1) !== 0),
+        serverError.promise,
+      ]);
+      const order = c.frames
+        .filter(f => f.streamId !== 0)
+        .map(f => {
+          const name = Object.keys(FrameType).find(k => FrameType[k as keyof typeof FrameType] === f.type) ?? f.type;
+          const endStream = (f.type === FrameType.DATA || f.type === FrameType.HEADERS) && (f.flags & 0x1) !== 0;
+          return `${name}(${f.streamId}${endStream ? ",END_STREAM" : ""})`;
+        });
+      const lastPushPromise = order.lastIndexOf("PUSH_PROMISE(1)");
+      const parentEnd = order.indexOf("DATA(1,END_STREAM)");
+      const expected = ["HEADERS(1)", "DATA(1,END_STREAM)"];
+      for (let i = 1; i <= pushes; i++)
+        expected.push("PUSH_PROMISE(1)", `HEADERS(${2 * i})`, `DATA(${2 * i},END_STREAM)`);
+      expect({
+        // A multi-frame parent body adds DATA(1) frames without END_STREAM; their count is not the point.
+        order: order.filter(f => f !== "DATA(1)").toSorted(),
+        pushPromisesBeforeParentEnd: lastPushPromise !== -1 && lastPushPromise < parentEnd,
+      }).toEqual({ order: expected.toSorted(), pushPromisesBeforeParentEnd: true });
+    } finally {
+      serverError.promise.catch(() => {});
+      c.destroy();
+      pushServer.close();
+    }
+  });
+
+  test("a push on the first of two streams ended together does not shift the second stream's frame", async () => {
+    // Two open (POST) streams are responded, ended, and pushed in one synchronous batch, so both
+    // END_STREAM DATA frames sit in the cork together. The first push cuts the cork ahead of its
+    // END_STREAM, which shifts the second stream's END_STREAM. The second push must still land
+    // ahead of that shifted frame (the cut re-marks it), and neither frame may be corrupted.
+    const serverError = Promise.withResolvers<never>();
+    const streams: http2.ServerHttp2Stream[] = [];
+    const pushServer = http2.createServer();
+    pushServer.on("stream", (stream: http2.ServerHttp2Stream) => {
+      stream.on("error", err => serverError.reject(err));
+      streams.push(stream);
+      if (streams.length < 2) return;
+      // Both streams are still open (the client sent no body), so end() half-closes them and
+      // leaves them pushable. Respond on both, then end both, then push on both.
+      for (const s of streams) s.respond({ ":status": 200 });
+      streams[0].end("aa");
+      streams[1].end("bbb");
+      streams.forEach((s, i) => {
+        s.pushStream({ ":path": "/p" + i }, (err, pushed) => {
+          if (err) {
+            s.emit("error", err);
+            return;
+          }
+          pushed.on("error", () => {});
+          pushed.respond({ ":status": 200 });
+          pushed.end("pushed" + i);
+        });
+      });
+    });
+    pushServer.listen(0);
+    await once(pushServer, "listening");
+    const c = await RawH2.connect((pushServer.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      // POST with END_HEADERS but no END_STREAM: both request streams stay open.
+      c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
+      c.sendFrame(FrameType.HEADERS, 0x4, 3, requestHeaderBlock("POST"));
+      // The second push's body (stream 4) is the last frame the server writes.
+      await Promise.race([
+        c.waitFor(f => f.type === FrameType.DATA && f.streamId === 4 && (f.flags & 0x1) !== 0),
+        serverError.promise,
+      ]);
+      expect(c.frames.find(f => f.type === FrameType.GOAWAY)).toBeUndefined();
+      const pos = (type: number, id: number) => c.frames.findIndex(f => f.type === type && f.streamId === id);
+      expect({
+        promise1BeforeEnd1: pos(FrameType.PUSH_PROMISE, 1) < pos(FrameType.DATA, 1),
+        promise3BeforeEnd3: pos(FrameType.PUSH_PROMISE, 3) < pos(FrameType.DATA, 3),
+        body1: c.frames.find(f => f.type === FrameType.DATA && f.streamId === 1)!.payload.toString(),
+        body3: c.frames.find(f => f.type === FrameType.DATA && f.streamId === 3)!.payload.toString(),
+      }).toEqual({ promise1BeforeEnd1: true, promise3BeforeEnd3: true, body1: "aa", body3: "bbb" });
+    } finally {
+      serverError.promise.catch(() => {});
+      c.destroy();
+      pushServer.close();
+    }
+  });
+});
+
 describe("inbound flow control after local end-stream (RFC 9113 §6.9)", () => {
   // Regression coverage for the test-http2-pipe failure mode: the server responds and ends its
   // side before the request body arrives, the request body is piped into a backpressured

@@ -253,6 +253,10 @@ pub(crate) struct Loader<'l> {
     wants_types: OnceLock<Option<bool>>,
     /// The project is one of Vite+ without a configuration file of a linter: [`NAMES_OF_VITE`] are the files that count.
     is_of_vite: OnceLock<bool>,
+    /// Where the search for files began, and the `tsconfig.json` and `jsconfig.json` in the directories that it listed:
+    /// `Inferred` need not ask the system for them.
+    pub(crate) searched_from: Guarded<Vec<Vec<u8>>>,
+    pub(crate) tsconfigs: Guarded<Vec<Vec<u8>>>,
 }
 
 fn object(entries: Vec<(&[u8], Json)>) -> Json {
@@ -440,7 +444,14 @@ impl<'l> Loader<'l> {
             undecided: OnceLock::new(),
             wants_types: OnceLock::new(),
             is_of_vite: OnceLock::new(),
+            searched_from: Default::default(),
+            tsconfigs: Default::default(),
         }
+    }
+
+    /// Whether somebody takes `searched_from` and `tsconfigs`: `InferGlobals::ByOptions`.
+    pub(crate) fn notes_tsconfigs(&self) -> bool {
+        self.options.infer_globals.is_none() && self.options.infers_globals_by_options
     }
 
     /// One that reads the configuration files of ESLint 8, whatever else there is.

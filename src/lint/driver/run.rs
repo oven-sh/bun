@@ -678,6 +678,10 @@ impl Run<'_> {
                 }
                 _ => false,
             });
+            inferred.searched(
+                std::mem::take(&mut *loader.searched_from.lock()),
+                std::mem::take(&mut *loader.tsconfigs.lock()),
+            );
             inferred.files(asking.map(|it| it.path.clone()).collect());
         }
 

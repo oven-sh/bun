@@ -25,6 +25,8 @@ pub(crate) struct Inferred<'e> {
     /// The files of the run that can ask, each as [`bun_lint::ast::File::path`] has it.
     paths: OnceLock<Vec<Vec<u8>>>,
     tables: OnceLock<Tables>,
+    /// `Inferred::searched`
+    searched: OnceLock<[Vec<Vec<u8>>; 2]>,
     /// Made when the first file asks.
     by_options: Option<OnceLock<ByOptions>>,
 }
@@ -161,6 +163,7 @@ impl<'e> Inferred<'e> {
             threads,
             paths: OnceLock::new(),
             tables: OnceLock::new(),
+            searched: OnceLock::new(),
             by_options: by_options.then(OnceLock::new),
         }
     }
@@ -168,6 +171,16 @@ impl<'e> Inferred<'e> {
     /// Called once, before the first file is linted. Nothing is done with them before a file asks.
     pub(crate) fn files(&self, paths: Vec<Vec<u8>>) {
         let _ = self.paths.set(paths);
+    }
+
+    /// Called once, before the first file is linted. `from`: the directories in which the search for files began. All
+    /// that are between one of them and a file that was found have been listed. `configs`: the `tsconfig.json` and
+    /// `jsconfig.json` in those. All as `File::path`.
+    pub(crate) fn searched(&self, from: Vec<Vec<u8>>, configs: Vec<Vec<u8>>) {
+        let _ = self.searched.set([from, configs].map(|paths| {
+            let paths = paths.into_iter().map(crate::paths::to_native);
+            paths.collect()
+        }));
     }
 
     /// For one thread, while the others lint their first files: or else all of them come to ask at the same time, and
@@ -181,7 +194,10 @@ impl<'e> Inferred<'e> {
     /// `path`: as `File::path`.
     fn program(&self, path: &[u8]) -> Option<&Program> {
         let by_options = self.by_options.as_ref()?.get_or_init(|| ByOptions {
-            outlines: Outlines::new(&self.environment.cwd),
+            outlines: match self.searched.get() {
+                Some([from, configs]) => Outlines::new(&self.environment.cwd, from, configs),
+                None => Outlines::new(&self.environment.cwd, &[], &[]),
+            },
             programs: AppendVec::new(),
             known: Default::default(),
         });

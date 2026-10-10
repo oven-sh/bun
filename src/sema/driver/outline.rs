@@ -11,9 +11,9 @@ use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::config::{self, Asked, Roots};
 use bun_sema::program::libs_referenced_by;
-use bun_sema::resolve::{Host, Options, ancestors, inside, is_same_path, join};
+use bun_sema::resolve::{Host, Options, ancestors, contains_path, inside, is_same_path, join};
 use bun_sema::session::Session;
-use bun_sema::util::FxHashMap;
+use bun_sema::util::{FxHashMap, FxHashSet};
 use bun_threading::Guarded;
 use std::sync::{Arc, OnceLock};
 
@@ -42,6 +42,10 @@ struct Project {
 pub struct Outlines {
     host: Asking,
     cwd: Vec<u8>,
+    /// Every directory below one of these in which a file is asked about has been listed, and the directories between.
+    listed_below: Vec<Vec<u8>>,
+    /// The configuration files that were there.
+    listed: FxHashSet<Vec<u8>>,
     /// By directory.
     nearest: Guarded<FxHashMap<Vec<u8>, Option<Vec<u8>>>>,
     /// By configuration file. `None`: it cannot be read.
@@ -51,12 +55,25 @@ pub struct Outlines {
 }
 
 impl Outlines {
-    /// `cwd`: a native path.
-    pub fn new(cwd: &[u8]) -> Outlines {
+    /// All are native paths. `listed_below`, `listed`: who has searched these directories for the files that are asked
+    /// about says which `tsconfig.json` and `jsconfig.json` it has come by, and the system is not asked for them again.
+    pub fn new(cwd: &[u8], listed_below: &[Vec<u8>], listed: &[Vec<u8>]) -> Outlines {
         let cwd = from_native(cwd);
+        let host = Asking::new(&cwd);
+        // Where the case of a name does not count, `Tsconfig.json` is one.
+        let as_it_is_asked_for = |path: &Vec<u8>| {
+            let mut path = from_native(path);
+            let name = path.len().saturating_sub(b"tsconfig.json".len());
+            if !host.is_case_sensitive {
+                path[name..].make_ascii_lowercase();
+            }
+            path
+        };
         Outlines {
-            host: Asking::new(&cwd),
+            host,
             cwd,
+            listed_below: listed_below.iter().map(|it| from_native(it)).collect(),
+            listed: listed.iter().map(as_it_is_asked_for).collect(),
             nearest: Default::default(),
             projects: Default::default(),
             reached: Default::default(),
@@ -110,11 +127,21 @@ impl Outlines {
                 break;
             }
             asked.push(directory);
+            let is_case_sensitive = host.is_case_sensitive();
+            let mut above = self.listed_below.iter();
+            let is_listed = above.any(|it| contains_path(it, directory, is_case_sensitive));
             let names = [&b"tsconfig.json"[..], b"jsconfig.json"];
-            found = (names.iter().map(|name| inside(directory, name))).find(|it| host.is_file(it));
+            let mut configs = names.iter().map(|name| inside(directory, name));
+            found = configs.find(|it| match is_listed {
+                true => self.listed.contains(it),
+                false => host.is_file(it),
+            });
             if found.is_some() || directory.ends_with(b"/node_modules") {
                 break;
             }
+        }
+        if asked.is_empty() {
+            return found;
         }
         let mut nearest = self.nearest.lock();
         for directory in asked {

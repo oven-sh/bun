@@ -229,6 +229,9 @@ fn search(
         let name = paths::basename(&search.base_path);
         if !is_hidden || loader.looks_for_configurations_in(&inherited, name) {
             let real = fs::real_path(&search.base_path);
+            if loader.notes_tsconfigs() {
+                (loader.searched_from.lock()).push(search.base_path.clone());
+            }
             level.push(Directory {
                 path: search.base_path.clone(),
                 way: Arc::new(Way {
@@ -250,6 +253,17 @@ fn search(
                 return;
             };
             let entries = std::mem::take(&mut listing.entries);
+            if loader.notes_tsconfigs() {
+                // One that an ignore file names counts for TypeScript as any other. Who takes them knows whether the
+                // case of a name counts here.
+                let names = [&b"tsconfig.json"[..], b"jsconfig.json"];
+                let files = entries.iter().filter(|it| !it.is_directory);
+                for file in
+                    files.filter(|it| names.iter().any(|name| it.name.eq_ignore_ascii_case(name)))
+                {
+                    (loader.tsconfigs.lock()).push(paths::join(&directory.path, &file.name));
+                }
+            }
             let own = match directory.relative.is_empty() {
                 true => Ok(Arc::clone(&directory.inherited)),
                 false => {

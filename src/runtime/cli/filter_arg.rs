@@ -11,7 +11,7 @@ use bun_install::package_manager::workspace_selection::{
 };
 use bun_parsers::json;
 use bun_paths::path_buffer_pool;
-use bun_paths::{PathBuffer, platform, resolve_path};
+use bun_paths::{PathBuffer, Platform, platform, resolve_path};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 
 use crate::cli::Command;
@@ -177,7 +177,7 @@ pub(crate) fn select_packages(
 
     let mut iter = PackageFilterIterator::init(&glob_patterns, &root_dir)?;
     let mut discovered: Vec<WorkspacePackage> = Vec::new();
-    while let Some(package_json_path) = iter.next()? {
+    while let Some(package_json_path) = iter.next(resolver)? {
         let dir = strings::without_trailing_slash(resolve_path::dirname::<platform::Auto>(
             &package_json_path,
         ));
@@ -351,6 +351,56 @@ impl<'a> PackageFilterIterator<'a> {
         })
     }
 
+    fn can_resolve_pattern_directly(pattern: &[u8]) -> bool {
+        // Keep raw glob tokens on GlobWalker, including escaped tokens that it must unescape.
+        // Relative literals can use the host filesystem's native case semantics directly.
+        !Platform::AUTO.is_absolute(pattern)
+            && pattern.first() != Some(&b'!')
+            && !strings::contains_char(pattern, 0)
+            && strings::index_of_any(pattern, b"*{[?!").is_none()
+            && !strings::split_any(pattern, b"/\\").any(|component| {
+                component.eq_ignore_ascii_case(b"node_modules")
+                    || component.eq_ignore_ascii_case(b".git")
+            })
+    }
+
+    fn resolve_literal_pattern(
+        &mut self,
+        resolver: &mut bun_resolver::Resolver<'_>,
+    ) -> Result<Option<glob::walk::MatchedPath>, crate::Error> {
+        let pattern: &[u8] = &self.patterns[self.pattern_idx];
+        let mut spill = Vec::new();
+        let path =
+            resolve_path::join_z_spill::<platform::Auto>(&mut spill, &[self.root_dir, pattern]);
+        let stat_result = bun_sys::stat(path);
+
+        match stat_result {
+            Ok(stat) if bun_sys::S::ISREG(stat.st_mode as _) => {
+                self.pattern_idx += 1;
+                let path = if cfg!(windows) {
+                    resolver
+                        .resolve_path_with_entry_spelling(path.as_bytes(), self.root_dir)
+                        .unwrap_or_else(|| Box::<[u8]>::from(path.as_bytes()))
+                } else {
+                    Box::<[u8]>::from(path.as_bytes())
+                };
+                Ok(Some(path))
+            }
+            Ok(_) => {
+                self.pattern_idx += 1;
+                Ok(None)
+            }
+            Err(err)
+                if err.get_errno() == bun_sys::E::ENOENT
+                    || err.get_errno() == bun_sys::E::ENOTDIR =>
+            {
+                self.pattern_idx += 1;
+                Ok(None)
+            }
+            Err(err) => Err(err.with_path(path.as_bytes()).into()),
+        }
+    }
+
     fn start_walk(&self) -> Result<ActiveWalk, crate::Error> {
         // pattern_idx < patterns.len() checked by caller.
         let pattern: &[u8] = &self.patterns[self.pattern_idx];
@@ -378,11 +428,27 @@ impl<'a> PackageFilterIterator<'a> {
         })
     }
 
-    fn next(&mut self) -> Result<Option<glob::walk::MatchedPath>, crate::Error> {
+    fn next(
+        &mut self,
+        resolver: &mut bun_resolver::Resolver<'_>,
+    ) -> Result<Option<glob::walk::MatchedPath>, crate::Error> {
         loop {
             let Some(active) = &mut self.active else {
                 if self.pattern_idx >= self.patterns.len() {
                     return Ok(None);
+                }
+                let pattern: &[u8] = &self.patterns[self.pattern_idx];
+                if Self::can_resolve_pattern_directly(pattern) {
+                    match self.resolve_literal_pattern(resolver) {
+                        Ok(Some(path)) => return Ok(Some(path)),
+                        Ok(None) => continue,
+                        Err(_) => {
+                            // Let GlobWalker retain its per-entry warning-and-continue behavior
+                            // for errors other than an ordinary missing path.
+                            self.active = Some(self.start_walk()?);
+                            continue;
+                        }
+                    }
                 }
                 self.active = Some(self.start_walk()?);
                 continue;

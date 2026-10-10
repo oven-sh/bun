@@ -521,18 +521,13 @@ impl CryptoHasher {
 
                 break 'brk CryptoHasher::Hmac(JsCell::new(Some(
                     match HMAC::init(chosen_algorithm, key.slice()) {
-                        Some(h) => h,
-                        None => {
-                            let err = boring_ssl::ERR_get_error();
-                            if err != 0 {
-                                let instance = create_crypto_error(global, err);
-                                boring_ssl::ERR_clear_error();
-                                return Err(global.throw_value(instance));
-                            } else {
-                                return Err(global
-                                    .throw_todo(b"HMAC is not supported for this algorithm yet"));
-                            }
+                        Ok(h) => h,
+                        Err(crate::Error::UnsupportedAlgorithm) => {
+                            return Err(
+                                global.throw_todo(b"HMAC is not supported for this algorithm yet")
+                            );
                         }
+                        Err(_) => return Err(Self::throw_boring_error(global)),
                     },
                 )));
             }

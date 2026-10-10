@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { createHash, createHmac } from "node:crypto";
+import { createSecureContext } from "node:tls";
 
 // Every digest literal in this file was checked against python hashlib (openssl for md4).
 
@@ -355,6 +356,12 @@ describe("HMAC", () => {
   test.each(unsupported)("%s is not supported", algorithm => {
     expect(() => new Bun.CryptoHasher(algorithm, "key")).toThrow("HMAC is not supported for this algorithm yet");
     expect(new Bun.CryptoHasher(algorithm).algorithm).toBe(algorithm);
+  });
+
+  test("the unsupported-algorithm error is not replaced by a stale BoringSSL error", () => {
+    // A failed PEM parse leaves ERR_OSSL_PEM_NO_START_LINE in the error queue.
+    expect(() => createSecureContext({ key: "not a pem", cert: "not a pem" })).toThrow();
+    expect(() => new Bun.CryptoHasher("shake128", "key")).toThrow("HMAC is not supported for this algorithm yet");
   });
 });
 

@@ -646,12 +646,12 @@ describe("constant arguments", () => {
     return { stdout, stderr, exitCode };
   }
 
+  const plainBuild = ["--target=bun"];
   const modes = [
     { mode: "bun run", build: null },
-    { mode: "bun build", build: ["--target=bun"] },
-    { mode: "bun build --minify-syntax", build: ["--target=bun", "--minify-syntax"] },
+    { mode: "bun build", build: plainBuild },
+    { mode: "bun build --minify-syntax", build: [...plainBuild, "--minify-syntax"] },
   ];
-  const plainBuild = modes[1].build;
 
   // Debug builds print "[macro] call id" to stdout, so only the last line is compared.
   async function lastLineOf(
@@ -673,6 +673,7 @@ describe("constant arguments", () => {
 
   const accepted = `
     import { fromOther } from "./other.ts";
+    import * as ns from "./m.ts" with { type: "macro" };
     const out = [];
     const lead = 5;
     out.push(id(lead));
@@ -687,8 +688,14 @@ describe("constant arguments", () => {
     const foo = getFoo();
     out.push(id(foo), id(\`https://example.com/\${foo}\`), id("a/" + foo));
     out.push(id("a/" + getFoo()), id(\`x\${getFoo()}y\`), id("a/" + getObj().b));
+    out.push(id(foo + "/x"), id(getFoo() + "/y"));
     const n = 42;
     out.push(id(\`n=\${n}\`));
+    // Each kind of value, and a call through a namespace import.
+    enum E { A = 1, B = "bee" }
+    const NEG = -5, YES = true, NIL = null, UNDEF = undefined, EA = E.A, EB = E.B;
+    out.push(id(NEG), id(YES), id(NIL), id(UNDEF) === undefined, id(EA), id(\`e/\${EB}\`));
+    out.push(id(\`\${YES}/\${NIL}/\${UNDEF}\`), ns.id(N), ns.id(\`u/\${ns.getFoo()}\`));
     {
       const M = 7;
       out.push(id(N + M));
@@ -714,9 +721,9 @@ describe("constant arguments", () => {
   `;
   const acceptedFiles = {
     "other.ts": `
-      import { id } from "./m.ts" with { type: "macro" };
       console.log("a statement");
       const K = 9;
+      import { id } from "./m.ts" with { type: "macro" };
       export const fromOther = [id(K), K];
     `,
   };
@@ -736,7 +743,18 @@ describe("constant arguments", () => {
     "a/foo",
     "xfooy",
     "a/two",
+    "foo/x",
+    "foo/y",
     "n=42",
+    -5,
+    true,
+    null,
+    true,
+    1,
+    "e/bee",
+    "true/null/undefined",
+    5,
+    "u/foo",
     12,
     40,
     [5, 5, 6, 6, 6],
@@ -794,34 +812,51 @@ describe("constant arguments", () => {
       }
       howLong();
     `;
-    expect(await lastLineOf(entry, plainBuild, files)).toEqual({
-      stdout: "The page is 25 characters long",
-      stderr: expect.any(String),
+    using dir = tempDir("macro-constant-arguments-docs", { ...files, "entry.ts": entry });
+    const [ran, minified] = await Promise.all([
+      lastLineOf(entry, plainBuild, files),
+      bun(String(dir), "build", "--target=bun", "--minify-syntax", "entry.ts"),
+    ]);
+    expect(ran).toEqual({ stdout: "The page is 25 characters long", stderr: expect.any(String), exitCode: 0 });
+    // The output block of the docs page.
+    expect(minified).toMatchObject({
+      stdout: expect.stringContaining('console.log("The page is", 25, "characters long");'),
       exitCode: 0,
     });
   });
 
   // A macro call is replaced when the file is built. It does not read the binding when the
-  // program runs, so the TDZ of the const does not apply to it: plain JS throws in both.
+  // program runs, so the TDZ of the const does not apply to it: plain JS throws here.
   test.concurrent.each(modes)("$mode: an argument is a value at build time", async ({ build }) => {
     const entry = `
       const early = below();
       console.log("a statement");
       const N = 5;
       function below() { return id(N); }
-      function pick(x) {
-        switch (x) {
-          case 1:
-            console.log("a statement");
-            const K = 7;
-            return 0;
-          case 2:
-            return id(K);
-        }
-      }
-      console.log(JSON.stringify([early, pick(2)]));
+      console.log(JSON.stringify([early]));
     `;
-    expect(await lastLineOf(header + entry, build)).toMatchObject({ stdout: "[5,7]", exitCode: 0 });
+    expect(await lastLineOf(header + entry, build)).toMatchObject({ stdout: "[5]", exitCode: 0 });
+  });
+
+  // The macro runtime does not run a macro that a macro module imports. It keeps the call.
+  test.concurrent("a call that the macro runtime keeps reads the const by name", async () => {
+    const files = {
+      "inner.ts": `export function answer(x) { return x; }`,
+      "outer.ts": `
+        import { answer } from "./inner.ts" with { type: "macro" };
+        export function show() {
+          console.log("a statement");
+          const N = 5;
+          const kept = () => answer(N);
+          return kept.toString();
+        }
+      `,
+    };
+    const entry = `
+      import { show } from "./outer.ts" with { type: "macro" };
+      console.log(show());
+    `;
+    expect(await lastLineOf(entry, null, files)).toMatchObject({ stdout: "() => answer(N)", exitCode: 0 });
   });
 
   // The macro gives undefined, so the binding holds its default when the program runs.
@@ -831,13 +866,14 @@ describe("constant arguments", () => {
       const { list: [x = 8, y = 9] } = getUndefined();
       const { a: random = Math.random() } = getUndefined();
       const { a: object = getObj() } = getUndefined();
+      const { a: joined = "x" + "y" } = getUndefined();
       let { a: changed = 5 } = getUndefined();
       changed = 9;
-      const own = [typeof random, random === random, object.a, object === object, changed];
+      const own = [typeof random, random === random, object.a, object === object, changed, joined + "1", joined];
       console.log(JSON.stringify([id(a), a, id(x), x, id(y), y, ...own]));
     `;
     expect(await lastLineOf(header + entry, build)).toMatchObject({
-      stdout: '[5,5,8,8,2,2,"number",true,1,true,9]',
+      stdout: '[5,5,8,8,2,2,"number",true,1,true,9,"xy1","xy"]',
       exitCode: 0,
     });
   });
@@ -885,26 +921,38 @@ describe("constant arguments", () => {
       entry: `const foo = Math.random() ? "foo" : "bar"; console.log(id(foo));`,
       error: identifierError,
     },
-    {
-      what: "a template that holds such a const",
-      entry: `const foo = Math.random() ? "foo" : "bar"; console.log(id(\`https://example.com/\${foo}\`));`,
-      error: argumentError,
-    },
     { what: "a loop const", entry: `for (const i of [1, 2]) console.log(id(i));`, error: identifierError },
+    {
+      what: "a const of a for initializer",
+      entry: `for (const i = 0; ; ) { console.log(id(i)); break; }`,
+      error: identifierError,
+    },
     {
       what: "an array const with an item that is not known",
       entry: `const c = [getFoo(), Math.random()]; console.log(id(c));`,
       error: identifierError,
     },
+    // The position rule: the table holds a const only after the visit reached its declaration.
     {
       what: "a const that stands below the call",
       entry: `const g = () => id(N); const N = 5; console.log(g());`,
       error: identifierError,
     },
+    // The initializer is ordinary code. The table takes it only when the visit leaves a literal.
     {
-      what: "a function that declares a const",
-      entry: `console.log(id(() => { const K = 1; return K; }));`,
-      error: argumentError,
+      what: "a const that copies a const below a statement",
+      entry: `console.log("a statement"); const A = 5; const B = A; console.log(id(B));`,
+      error: identifierError,
+    },
+    {
+      what: "a const that joins a const below a statement",
+      entry: `console.log("a statement"); const base = "https://example.com"; const url = base + "/api"; console.log(id(url));`,
+      error: identifierError,
+    },
+    {
+      what: "a const that holds a template with a macro result",
+      entry: "const foo = getFoo(); const url = `https://example.com/${foo}`; console.log(id(url));",
+      error: identifierError,
     },
     {
       what: "a let binding that holds a macro result, in an argument that folds away",
@@ -937,10 +985,13 @@ describe("constant arguments", () => {
     },
   ];
 
-  test.concurrent.each(rejected)("bun build rejects $what", async ({ entry, error, entryFile }) => {
-    expect(await lastLineOf(header + entry, plainBuild, {}, entryFile)).toMatchObject({
-      stderr: expect.stringContaining(error),
-      exitCode: 1,
+  // Built in this process, with no minify option: one error, and it is the error of the row.
+  test.concurrent.each(rejected)("Bun.build rejects $what", async ({ entry, error, entryFile = "entry.ts" }) => {
+    using dir = tempDir("macro-constant-arguments-rejected", { "m.ts": macroFile, [entryFile]: header + entry });
+    const built = await Bun.build({ entrypoints: [path.join(String(dir), entryFile)], target: "bun", throw: false });
+    expect({ success: built.success, errors: built.logs.map(log => log.message) }).toEqual({
+      success: false,
+      errors: [error],
     });
   });
 
@@ -986,25 +1037,41 @@ describe("constant arguments", () => {
     });
   });
 
-  // Under inlining Bun puts a macro result at every use of a let, a var or a destructured
-  // binding, and a function that an argument holds can fold away.
+  // Under inlining a const can hold a joined string or what a macro returned, and a function
+  // that an argument holds can fold away.
   test.concurrent.each([modes[0], modes[2]])("$mode keeps what inlining accepts", async ({ build }) => {
     const entry = `
-      let x = getFoo();
-      var v = getFoo();
-      let { a } = getObj();
       const base = "https://example.com";
       const url = base + "/api";
+      const o = getObj();
+      const { list } = getUndefined();
+      console.log("a statement");
+      const lateObj = getObj();
       console.log(JSON.stringify([
-        id(x), id(v), id(a), id(url),
+        id(url), id(url + "/x"), id(url + "/y"), url,
+        id(o), id(list), id(lateObj),
         id(typeof (() => { const y = getFoo(); return id(y); })),
         id(typeof function () { const K = 5; return id(K); }),
         id((() => { const y = getFoo(); return id(y); }, 5)),
         id(typeof (() => { console.log("a statement"); const K = 5; return id(K); })),
       ]));
     `;
+    const api = "https://example.com/api";
+    const obj = { a: 1, b: "two" };
     expect(await lastLineOf(header + entry, build)).toMatchObject({
-      stdout: '["foo","foo",1,"https://example.com/api","function","function",5,"function"]',
+      stdout: JSON.stringify([
+        api,
+        api + "/x",
+        api + "/y",
+        api,
+        obj,
+        [null, 2],
+        obj,
+        "function",
+        "function",
+        5,
+        "function",
+      ]),
       exitCode: 0,
     });
   });

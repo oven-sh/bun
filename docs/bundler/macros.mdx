@@ -210,7 +210,7 @@ export function howLong() {
 }
 ```
 
-This outputs:
+With the minify syntax option enabled, this outputs:
 
 ```js
 function howLong() {
@@ -219,7 +219,7 @@ function howLong() {
 export { howLong };
 ```
 
-Bun accepts a `const` as a macro argument when you declare the `const` above the call and its initializer is a number, a string, a boolean, `null`, `undefined`, or a macro call that returns one of these. Bun also joins these values in a template literal or with `+`. Bun does not yet join a piece that contains a non-ASCII character. To pass an object or an array that another macro returns, call that macro inside the argument.
+Bun accepts a `const` as a macro argument when you declare the `const` above the call and its initializer is a number, a string, a boolean, `null`, `undefined`, or a macro call that returns one of these. Inside the argument, Bun also joins these values in a template literal or with `+`. Write the expression inside the argument and not in the initializer of a `const`. Bun does not yet join a piece that contains a non-ASCII character. To pass an object or an array that another macro returns, call that macro inside the argument.
 
 ## Examples
 

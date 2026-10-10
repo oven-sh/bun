@@ -1880,8 +1880,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     #[cold]
     #[inline(never)]
     fn visit_macro_arguments(p: &mut Self, args: &mut [Expr]) -> bool {
-        // A macro call in the arguments of another is inside the outer swap.
-        if p.macro_.in_args {
+        // The macro runtime keeps the call as written. A nested macro call is inside the outer swap.
+        if p.options.features.is_macro_runtime || p.macro_.in_args {
             return false;
         }
         // A `with` object can shadow the `const`.

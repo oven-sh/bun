@@ -618,5 +618,12 @@ pub(crate) fn install_hoisted_packages(
         }
     }
 
+    package_manager::enqueue::report_offline_misses(
+        this,
+        workspace_filters,
+        install_root_dependencies,
+        packages_to_install,
+    );
+
     Ok(summary)
 }

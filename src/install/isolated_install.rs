@@ -2411,6 +2411,15 @@ pub(crate) fn install_isolated_packages(
 
                     let dep = &lockfile_ro.buffers.dependencies[dep_id as usize];
 
+                    // `report_offline_misses` decides which --offline misses are errors.
+                    let not_downloaded = if installer.manager().options.offline
+                        == crate::package_manager_real::options::OfflineMode::Offline
+                    {
+                        installer::CompleteState::OfflineMiss
+                    } else {
+                        installer::CompleteState::Fail
+                    };
+
                     match pkg_res_tag {
                         ResolutionTag::Npm => {
                             match installer.manager_mut().enqueue_package_for_download(
@@ -2434,8 +2443,7 @@ pub(crate) fn install_isolated_packages(
                                     // running on another thread.
                                     entry_steps[entry_id.get() as usize]
                                         .store(installer::Step::Done as u32, Ordering::Relaxed);
-                                    installer
-                                        .on_task_complete(entry_id, installer::CompleteState::Fail);
+                                    installer.on_task_complete(entry_id, not_downloaded);
                                     continue;
                                 }
                                 Err(err) => {
@@ -2465,6 +2473,7 @@ pub(crate) fn install_isolated_packages(
                         ResolutionTag::Git => {
                             if installer.manager_mut().enqueue_git_for_checkout(
                                 dep_id,
+                                pkg_id,
                                 dep.name.slice(string_buf),
                                 &pkg_res,
                                 ctx,
@@ -2474,8 +2483,7 @@ pub(crate) fn install_isolated_packages(
                                 // --offline and not cached: nothing was queued
                                 entry_steps[entry_id.get() as usize]
                                     .store(installer::Step::Done as u32, Ordering::Relaxed);
-                                installer
-                                    .on_task_complete(entry_id, installer::CompleteState::Fail);
+                                installer.on_task_complete(entry_id, not_downloaded);
                                 continue;
                             }
                         }
@@ -2504,8 +2512,7 @@ pub(crate) fn install_isolated_packages(
                                     // running on another thread.
                                     entry_steps[entry_id.get() as usize]
                                         .store(installer::Step::Done as u32, Ordering::Relaxed);
-                                    installer
-                                        .on_task_complete(entry_id, installer::CompleteState::Fail);
+                                    installer.on_task_complete(entry_id, not_downloaded);
                                     continue;
                                 }
                                 Err(err) => {
@@ -2560,8 +2567,7 @@ pub(crate) fn install_isolated_packages(
                                     // running on another thread.
                                     entry_steps[entry_id.get() as usize]
                                         .store(installer::Step::Done as u32, Ordering::Relaxed);
-                                    installer
-                                        .on_task_complete(entry_id, installer::CompleteState::Fail);
+                                    installer.on_task_complete(entry_id, not_downloaded);
                                     continue;
                                 }
                                 Err(err) => {
@@ -2678,6 +2684,13 @@ pub(crate) fn install_isolated_packages(
 
             debug_assert!(done);
         }
+
+        installer.summary.fail += package_manager::enqueue::report_offline_misses(
+            installer.manager_mut(),
+            workspace_filters,
+            install_root_dependencies,
+            packages_to_install,
+        );
 
         let mut summary = core::mem::take(&mut installer.summary);
         summary.successfully_installed = Some(core::mem::take(&mut installer.installed));

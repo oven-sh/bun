@@ -1308,5 +1308,13 @@
   "b.ts typescript(no-unsafe-type-assertion) 32:19+8 \"Original expression has type `[[any, any]]`.\" | 32:31+18 \"Asserted type is `[[string, string]]`.\" | 32:28+21",
   "b.ts typescript(no-unsafe-type-assertion) 8:19+3 \"Original expression has type `[any]`.\" | 8:26+8 \"Asserted type is `[string]`.\" | 8:23+11",
   "b.ts typescript(no-unsafe-type-assertion) 9:19+6 \"Original expression has type `any[]`.\" | 9:29+8 \"Asserted type is `string[]`.\" | 9:26+11"
+ ],
+ "no-unnecessary-type-parameters/an-object-type-that-is-met-twice": [
+  "b.ts typescript(no-unnecessary-type-parameters) 18:69+1 \"This is the only usage of type parameter T in the signature.\" | 18:55+1",
+  "b.ts typescript(no-unnecessary-type-parameters) 2:42+1 \"This is the only usage of type parameter T in the signature.\" | 2:20+1",
+  "b.ts typescript(no-unnecessary-type-parameters) 4:34+1 \"This is the only usage of type parameter T in the signature.\" | 4:20+1",
+  "b.ts typescript(no-unnecessary-type-parameters) 9:43+1 \"This is the only usage of type parameter T in the signature.\" | 9:20+1",
+  "z.ts typescript(no-unnecessary-type-parameters) 1:25+1 \"This is the only usage of type parameter T in the signature.\" | 1:19+1",
+  "z.ts typescript(no-unnecessary-type-parameters) 4:49+1 \"This is the only usage of type parameter T in the signature.\" | 4:19+1"
  ]
 }

@@ -101,12 +101,13 @@ impl Config {
             _ => false,
         };
         let spacing = if is_object_literal { self.object_literal_spaces } else { self.when };
-        self.check(Mode::Start, Span::new(inside.start, second), spacing, cx);
-        self.check(Mode::End, Span::new(penultimate_end, inside.end), spacing, cx);
+        let (first, last) = (Span::before(node.start, inside), Span::after(inside, node.end));
+        self.check(Mode::Start, first, Span::after(first, second), spacing, cx);
+        self.check(Mode::End, last, Span::before(penultimate_end, last), spacing, cx);
     }
 
-    /// `gap`: the white space between a brace and what is next to it.
-    fn check(self, mode: Mode, gap: Span, spacing: Spacing, cx: &mut Cx<'_, JsxCurlySpacing>) {
+    /// `gap`: the white space between the brace `token` and what is next to it.
+    fn check(self, mode: Mode, token: Span, gap: Span, spacing: Spacing, cx: &mut Cx<'_, JsxCurlySpacing>) {
         let is_after = mode == Mode::Start;
         let (problem, message) = if gap.is_empty() {
             if spacing == Spacing::Never {
@@ -124,11 +125,7 @@ impl Config {
             }
             (Problem::Space, if is_after { NO_SPACE_AFTER } else { NO_SPACE_BEFORE })
         };
-        let (token, value) = match mode {
-            Mode::Start => (Span::new(gap.start - 1, gap.start), "{"),
-            Mode::End => (Span::new(gap.end, gap.end + 1), "}"),
-        };
-        cx.report_at(token.start, message).data("token", value).fix(|fixer| {
+        cx.report_at(token.start, message).data("token", cx.slice(token)).fix(|fixer| {
             let file = fixer.file();
             let range = match (problem, mode) {
                 (Problem::SpaceNeeded, _) => return fixer.insert_before(gap, " "),

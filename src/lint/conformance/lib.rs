@@ -335,6 +335,20 @@ fn kind_of(entry: &RuleEntry, case: &Json, is_of_oxlint: bool) -> Kind {
     }
 }
 
+/// What JSON cannot say (`Infinity`, `undefined`, a function) is `null` in a recording.
+fn has_null(options: Option<&Json>) -> bool {
+    let mut left: Vec<&Json> = options.into_iter().collect();
+    while let Some(it) = left.pop() {
+        match it {
+            Json::Null => return true,
+            Json::Array(items) => left.extend(items),
+            Json::Object(entries) => left.extend(entries.iter().map(|it| &it.1)),
+            _ => {}
+        }
+    }
+    false
+}
+
 /// What is wrong with what is reported for `case`, a test of the rule `entry`. `Err`: it cannot be
 /// run here.
 fn run_case(
@@ -357,6 +371,7 @@ fn run_case(
     // A configuration with these options would end the run.
     if flags.schemas
         && let Some(error) = &config.error
+        && !has_null(case.get(b"options"))
     {
         return Ok(Some(Problem {
             summary: "the options are refused",

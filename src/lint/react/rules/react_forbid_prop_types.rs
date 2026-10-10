@@ -31,7 +31,7 @@ struct Packages<'a> {
     is_foreign_prop_types_package: bool,
 }
 
-/// An import that sets something.
+/// An import that sets something, once a foreign package is imported: before that the names do not matter.
 struct Imported<'a> {
     start: u32,
     /// What is set after it.
@@ -89,13 +89,28 @@ impl Rule for ForbidPropTypes {
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        let on = On::new()
+        let mut on = On::new()
             .exprs(&[ExprTag::Assign, ExprTag::Binary])
             .stmts(&[StmtTag::ForIn, StmtTag::ForOf])
-            .members()
-            .props()
             .finish();
-        if file.mentions_any(&["shape", "#shape"]) { on.exprs(&[ExprTag::Call]) } else { on }
+        if file.mentions_any(&["shape", "#shape"]) {
+            on = on.exprs(&[ExprTag::Call]);
+        }
+        let (context, child_context) = (self.check_context_types, self.check_child_context_types);
+        if file.mentions("propTypes")
+            || (context && file.mentions("contextTypes"))
+            || (child_context && file.mentions("childContextTypes"))
+        {
+            return on.members().props();
+        }
+        // Private names, and the fields with a type annotation that upstream takes for declarations.
+        if file.mentions_any(&["#propTypes", "props", "#props"])
+            || (context && file.mentions_any(&["#contextTypes", "context", "#context"]))
+            || (child_context && file.mentions("#childContextTypes"))
+        {
+            on = on.members();
+        }
+        on
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
@@ -106,13 +121,12 @@ impl Rule for ForbidPropTypes {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        match e.kind() {
-            ExprKind::Binary { op: BinOp::Comma, .. } => {}
-            ExprKind::Assign { target: left, value: right, .. } | ExprKind::Binary { left, right, .. } => {
-                self.member_expression(left, right, cx);
-            }
-            ExprKind::Call(call) => self.call_expression(e, call, cx),
-            _ => {}
+        if let Some(call) = e.as_call() {
+            self.call_expression(e, call, cx);
+        } else if let (Some(left), Some(right)) = (e.left(), e.right())
+            && e.binary_op() != Some(BinOp::Comma)
+        {
+            self.member_expression(left, right, cx);
         }
     }
 
@@ -150,7 +164,8 @@ impl Rule for ForbidPropTypes {
 
     /// `ObjectExpression`, for one of its properties.
     fn prop<'a>(&self, property: Prop<'a>, cx: &mut Cx<'a, Self>) {
-        if let Some(ExprKind::Object(properties)) = property.value().map(Expr::kind)
+        if let Some(value) = property.value()
+            && let ExprKind::Object(properties) = value.kind()
             && self.is_checked_declaration(Node::Prop(property))
             && let Node::Expr(object) = property.parent()
             && !object.is_assignment_target()
@@ -170,6 +185,9 @@ impl Rule for ForbidPropTypes {
 
 /// What the listener for `ImportDeclaration` does, for all of the file.
 fn imports_of<'a>(file: &'a File<'a>) -> Vec<Imported<'a>> {
+    if !file.mentions("PropTypes") {
+        return Vec::new();
+    }
     let mut statements: Vec<Stmt<'a>> = file.stmts_of_kind(StmtTag::Import).collect();
     utils::sort::sort_by_key(&mut statements, |it| it.span().start);
     let (mut imports, mut packages) = (Vec::new(), Packages::default());
@@ -199,7 +217,9 @@ fn imports_of<'a>(file: &'a File<'a>) -> Vec<Imported<'a>> {
         } else {
             continue;
         }
-        imports.push(Imported { start: statement.span().start, packages });
+        if packages.is_foreign_prop_types_package {
+            imports.push(Imported { start: statement.span().start, packages });
+        }
     }
     imports
 }
@@ -231,7 +251,7 @@ impl<'a> Packages<'a> {
 
 impl<'a> State<'a> {
     fn listened(&self, span: Span) -> Listened<'a> {
-        let imports = self.imports.iter().rposition(|it| it.start < span.start).map_or(0, |last| last + 1);
+        let imports = self.imports.partition_point(|it| it.start < span.start);
         let packages = imports.checked_sub(1).and_then(|last| self.imports.get(last)).map(|it| it.packages);
         Listened { span, imports, packages: packages.unwrap_or_default() }
     }

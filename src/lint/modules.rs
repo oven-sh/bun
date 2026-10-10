@@ -187,7 +187,7 @@ pub trait Modules: Sync {
     fn record(&self, path: &[u8], requests: &[Request], is_always_checked: bool, flavor: Flavor);
 
     /// With [`Flavor::EslintPluginImport`]: who says what a specifier means, in the files that are linted and in what
-    /// they import: the resolvers of the settings. Before [`Modules::record`]. `make` is called if nobody has said so yet.
+    /// they import: the resolvers of the settings. Before [`Modules::record`]. `make` is called if nobody has said so.
     fn resolve_by(&self, make: &dyn Fn() -> ResolveBy);
 
     /// Takes note of the [`Record`] of `file`, which is linted: `make(file)`, unless it is known. The records of the files that are

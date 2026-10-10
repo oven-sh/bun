@@ -1,4 +1,4 @@
-use crate::module_visitor::{self, Systems, Visitor};
+use crate::module_visitor::{self, Systems};
 use bun_lint_oxlint::import::{import_declarations, import_entries};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -42,7 +42,14 @@ impl Rule for MaxDependencies {
         if file.language().is_oxlint {
             return import_declarations(file).nth(self.max as usize).is_some().then_some(());
         }
-        (self.written_max.is_some() && Visitor::of(SYSTEMS).may_visit(file)).then_some(())
+        // There are no more modules than places that can name one.
+        let declarations = [StmtTag::Import, StmtTag::ExportNamed, StmtTag::ExportStar];
+        let mut places = declarations.iter().map(|it| file.stmts_of_kind(*it).count()).sum::<usize>();
+        places += file.exprs_of_kind(ExprTag::ImportCall).count();
+        if file.mentions("require") {
+            places += file.exprs_of_kind(ExprTag::Call).count();
+        }
+        (places as f64 > self.written_max?).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

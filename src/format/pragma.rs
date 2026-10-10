@@ -283,22 +283,6 @@ impl<'t> Property<'t> {
     }
 }
 
-/// The index that `name` is as a property of an array, if it is one. `Object.keys` has those first,
-/// in ascending order.
-fn as_array_index(name: &[u8]) -> Option<u32> {
-    if name.len() > 10
-        || (name.len() > 1 && name[0] == b'0')
-        || !name.iter().all(u8::is_ascii_digit)
-        || name.is_empty()
-    {
-        return None;
-    }
-    let value = name
-        .iter()
-        .fold(0u64, |value, digit| value * 10 + u64::from(digit - b'0'));
-    u32::try_from(value).ok().filter(|index| *index != u32::MAX)
-}
-
 impl DocBlock {
     /// `comment`: `/* .. */`, or nothing.
     fn parse(comment: &[u8]) -> DocBlock {
@@ -355,7 +339,7 @@ impl DocBlock {
             }
         }
         crate::sort::sort_by_key(&mut pragmas[..], |(name, _)| {
-            as_array_index(name).map_or((1, 0), |index| (0, index))
+            bun_core::fmt::js_array_index(name).map_or((1, 0), |index| (0, index))
         });
         let comments =
             strings::trim_js_whitespace_end(strings::trim_left(&comments, b"\n")).to_vec();
@@ -369,7 +353,7 @@ impl DocBlock {
         let indexes = self
             .pragmas
             .iter()
-            .take_while(|(name, _)| as_array_index(name).is_some())
+            .take_while(|(name, _)| bun_core::fmt::js_array_index(name).is_some())
             .count();
         let (before, after) = self.pragmas.split_at(indexes);
         let added = [(b"format".to_vec(), Vec::new())];

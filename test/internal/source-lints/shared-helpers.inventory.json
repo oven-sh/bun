@@ -410,9 +410,6 @@
       "push_lowercase": 1,
       "unescape": 1
     },
-    "src/format/pragma.rs": {
-      "as_array_index": 1
-    },
     "src/format/range.rs": {
       "offset_of_utf16_index": 1
     },
@@ -595,9 +592,6 @@
     },
     "src/lint/selector/parse.rs": {
       "push_escaped": 1
-    },
-    "src/lint/selector/program.rs": {
-      "array_index": 1
     },
     "src/lint/source.rs": {
       "line_starts": 1

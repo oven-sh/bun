@@ -292,7 +292,7 @@ impl<'a> State<'a> {
         let State { deprecated, namespaces, first_references, .. } = self;
         let first_references = first_references.get_or_insert_with(|| {
             let mut first_references = FxHashMap::default();
-            for reference in node.file().references() {
+            for reference in node.file().references_as_visited() {
                 let name = reference.name();
                 // ESLint has the name of a class declaration once more, in the scope of the class.
                 let is_name_of_class = |it: Scope<'a>| match it.node() {

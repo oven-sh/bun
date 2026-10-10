@@ -281,6 +281,38 @@ describe.concurrent("an eslint.config.js", () => {
   });
 
   // What eslint-plugin-import 2.32.0 reports and writes.
+  // What ESLint 10.12 says with eslint-plugin-import 2.32.0.
+  test.each([
+    [
+      `"error"`,
+      `"import/enforce-node-protocol-usage":\n\tValue [] should NOT have fewer than 1 items.`,
+      "enforce-node-protocol-usage",
+    ],
+    [`["error", "always"]`, null, "enforce-node-protocol-usage"],
+    [`["error", "always", { js: "never", nonsense: 1 }]`, null, "extensions"],
+    [
+      `["error", "nonsense"]`,
+      `"import/first":\n\tValue "nonsense" should be equal to one of the allowed values.`,
+      "first",
+    ],
+    [`["error", { "prefer-inline": 1 }]`, `"import/no-duplicates":\n\tValue 1 should be boolean.`, "no-duplicates"],
+    [`["error", 1]`, `"import/export":\n\tValue [1] should NOT have more than 0 items.`, "export"],
+    [`["error", { devDependencies: ["**/*.test.js"] }]`, null, "no-extraneous-dependencies"],
+  ])(
+    "the options of a rule of eslint-plugin-import are validated by its schema: %s",
+    async (setting, refusal, rule) => {
+      const { stderr, exitCode } = await lint({
+        "eslint.config.mjs": `const rule = { meta: { schema: false }, create: () => ({}) };
+        const plugin = { meta: { name: "eslint-plugin-import", version: "2.32.0" }, rules: { "${rule}": rule } };
+        export default [{ plugins: { import: plugin }, rules: { "import/${rule}": ${setting} } }];`,
+        "a.js": "export {};\n",
+      });
+      if (refusal === null) expect(stderr).not.toContain(`Key "rules"`);
+      else expect(stderr).toContain(`Key "rules": Key ${refusal}`);
+      expect(exitCode).toBe(refusal === null ? 0 : 2);
+    },
+  );
+
   test("import/order: the kinds of modules by their names and by `settings`, path groups, names in braces, the fix", async () => {
     const files = {
       "eslint.config.mjs": `const order = {
@@ -957,6 +989,19 @@ describe.concurrent("an .oxlintrc.json", () => {
         "QuotaExceededError;\nTemporal;\nnavigator;\n$0;\nBun;\nregisterProcessor;\nexpect;\nthrowUnless;\nexport {};\n",
     });
     expect(problems).toEqual(lines.map(line => `a.js:${line}:1 no-undef`));
+  });
+
+  // oxlint 1.87 takes both. The schemas of eslint-plugin-import have neither.
+  test.each([
+    { "import/max-dependencies": ["error", 2] },
+    { "import/consistent-type-specifier-style": ["error", "prefer-top-level-if-only-type-imports"] },
+  ])("the schema that a rule of a plugin has for ESLint refuses nothing: %j", async rules => {
+    const { stderr, exitCode } = await lint({
+      ".oxlintrc.json": JSON.stringify({ plugins: ["import"], categories: { correctness: "off" }, rules }),
+      "a.js": "export {};\n",
+    });
+    expect(stderr).not.toContain(`Key "rules"`);
+    expect(exitCode).toBe(0);
   });
 
   test("only comments that disable rules configure anything", async () => {

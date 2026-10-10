@@ -236,6 +236,23 @@ describe.concurrent("bun lint", () => {
       );
     });
 
+    // TypeScript knows the three in JavaScript without a declaration.
+    test("`require`, `module` and `exports` are defined in a JavaScript file that is no ES module", async () => {
+      const { stdout } = await lint(
+        {
+          "tsconfig.json": options(["es2022"], { allowJs: true }),
+          "a.js": "module.exports = require('x');\nexports.a = __dirname;\n",
+          "b.js": "export default require('x');\nmodule;\n",
+        },
+        ["-f", "unix"],
+      );
+      expect(reports(stdout).sort()).toEqual([
+        "a.js:2:13 __dirname no-undef",
+        "b.js:1:16 require no-undef",
+        "b.js:2:1 module no-undef",
+      ]);
+    });
+
     test("beside a configuration file only with --infer-globals, and besides what it has", async () => {
       const config = `export default [{
         languageOptions: { globals: { nothing: "readonly", MY_CONST: "off" } },

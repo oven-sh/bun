@@ -535,6 +535,14 @@ impl<'s> Validator<'s> {
                 );
             }
         }
+        // A schema for the whole object, where it has the property. The other form, a list of
+        // properties, no rule has.
+        let dependencies = schema.get(b"dependencies").and_then(Json::as_object);
+        for (key, dependent) in dependencies.unwrap_or_default() {
+            if has_rules(dependent) && data.get(key).is_some() && !self.check(dependent, data, cx) {
+                return false;
+            }
+        }
         let patterns: Vec<(Option<Regex>, &'s Json)> = (schema
             .get(b"patternProperties")
             .and_then(Json::as_object)

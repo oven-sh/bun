@@ -6107,7 +6107,9 @@ impl<'s> Files<'s> {
                 && get_resolution_diagnostic(options, extension, hir).is_none()
                 && !options.no_resolve
                 && !(of_program.imports_of_sources_add_no_file
-                    && hir.kind != FileKind::Declaration)
+                    && hir.kind != FileKind::Declaration
+                    && !(resolved.is_external_library_import
+                        && crate::resolve::is_declaration_file_name(found)))
                 && !(is_js_file && !options.allow_js);
             // `parseTask.load`: the declaration file is read in place of a source of a referenced
             // project. Any other file needs an extension that the program supports.

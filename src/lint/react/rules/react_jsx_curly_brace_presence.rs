@@ -137,10 +137,13 @@ impl JsxCurlyBracePresence {
                     let parent_is_attribute = false;
                     self.check_expression_container(inner, parent_is_attribute, has_adjacent, is_oxlint, cx)
                 }
-                JsxChild::Expr(text) if text.tag() == ExprTag::String && self.children == Mode::Always => {
-                    report_missing_curly_for_text_node(text, is_oxlint, cx);
+                _ if self.children != Mode::Always => {}
+                JsxChild::Expr(text) if text.tag() == ExprTag::String => {
+                    report_missing_curly_for_text_node(text.span(), is_oxlint, cx);
                 }
-                _ => {}
+                // Not all that the parser takes for blanks is blank for the rule.
+                JsxChild::Whitespace(text) => report_missing_curly_for_text_node(text, is_oxlint, cx),
+                JsxChild::Expr(_) => {}
             }
         }
     }
@@ -314,8 +317,8 @@ fn for_each_part<'t>(line: &'t [u8], mut visit: impl FnMut(usize, &'t [u8])) {
     visit(from, line.get(from..).unwrap_or_default());
 }
 
-fn report_missing_curly_for_text_node<'a>(text: Expr<'a>, is_oxlint: bool, cx: &Cx<'a, JsxCurlyBracePresence>) {
-    let (span, value) = (text.span(), text.text());
+fn report_missing_curly_for_text_node(span: Span, is_oxlint: bool, cx: &Cx<'_, JsxCurlyBracePresence>) {
+    let value = cx.slice(span);
     // What is a blank is said by Rust for oxlint, by JavaScript for ESLint.
     let trim_start: fn(&[u8]) -> &[u8] =
         if is_oxlint { strings::trim_unicode_whitespace_start } else { strings::trim_js_whitespace_start };

@@ -1,29 +1,42 @@
 use crate::react::is_jsx;
+use crate::util_variable::get_variable_from_context;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use rustc_hash::FxHashMap;
 use smallvec::{SmallVec, smallvec};
 use std::collections::hash_map::Entry;
 
-/// Enforces a maximum depth for nested JSX elements and fragments.
+/// Enforce JSX maximum depth
 pub struct JsxMaxDepth {
     max: u32,
 }
 
+const WRONG_DEPTH: Message =
+    Message::new("wrongDepth", "Expected the depth of nested jsx elements to be <= {{needed}}, but found {{found}}.");
 const JSX_MAX_DEPTH: Message =
     Message::new("", "JSX nesting depth of {{depth}} exceeds the configured maximum of {{max}}");
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// How many elements and fragments are around what comes next.
-    ancestor_depth: u32,
+    /// The depth of each element and fragment around what comes next, the innermost last.
+    depths: Vec<u32>,
     /// `calculate_variable_jsx_depth`. 0 while it is being found out.
     variables: FxHashMap<Symbol<'a>, u32>,
+    found: Vec<Found>,
+}
+
+/// What is reported.
+struct Found {
+    /// Where the node starts at which upstream finds it.
+    listener: u32,
+    node: Span,
+    depth: u32,
 }
 
 impl Rule for JsxMaxDepth {
-    const META: Meta = Meta::oxlint(Plugin::React, "jsx-max-depth", Kind::Suggestion);
-    const ON: On = On::new().enter(NodeTags::new().exprs(&[ExprTag::Jsx])).exit(NodeTags::new().exprs(&[ExprTag::Jsx]));
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-max-depth", Kind::Suggestion);
+    const ON: On =
+        On::new().enter(NodeTags::new().exprs(&[ExprTag::Jsx])).exit(NodeTags::new().exprs(&[ExprTag::Jsx])).finish();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -35,27 +48,109 @@ impl Rule for JsxMaxDepth {
     }
 
     fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        let ancestor_depth = cx.state.ancestor_depth;
-        cx.state.ancestor_depth += 1;
+        let is_oxlint = cx.language().is_oxlint;
+        // `getDepth`. oxlint counts the elements around it, whatever is between.
+        let is_child = || matches!(node.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Jsx);
+        let depth = match cx.state.depths.last() {
+            Some(&around) if is_oxlint || is_child() => around + 1,
+            _ => 0,
+        };
+        cx.state.depths.push(depth);
         let Some(ExprKind::Jsx(jsx)) = node.as_expr().map(Expr::kind) else {
             return;
         };
+        // `hasJSX`. oxlint passes over what is in braces.
+        let has_jsx = |it: Expr<'a>| it.tag() == ExprTag::Jsx && !(is_oxlint && it.jsx_container_span().is_some());
         // Only what has no element in it is looked at.
-        if jsx.children().iter().any(|it| it.tag() == ExprTag::Jsx && it.jsx_container_span().is_none()) {
+        if !jsx.children().iter().any(has_jsx) {
+            // oxlint adds what the variables in it have, where upstream looks into them.
+            let inside = if is_oxlint { Parts::of_element(jsx).depth(&mut cx.state.variables) } else { 0 };
+            if depth + inside > self.max {
+                let node = node.span();
+                cx.state.found.push(Found { listener: node.start, node, depth: depth + inside });
+            }
+        }
+        if is_oxlint {
             return;
         }
-        let total_depth = ancestor_depth + Parts::of_element(jsx).depth(&mut cx.state.variables);
-        if total_depth > self.max {
-            cx.report(node, JSX_MAX_DEPTH).data("depth", total_depth.to_string()).data("max", self.max.to_string());
+        // Each `JSXExpressionContainer`, with its `getDepth`.
+        let values = jsx.attrs().iter().filter(|it| it.kind() != PropKind::Spread).filter_map(Prop::value);
+        let children = jsx.children().iter().map(|it| (it, depth + 1));
+        for (expression, base_depth) in values.map(|it| (it, 0)).chain(children) {
+            if let Some(element) = find_jsx_element_or_fragment(expression) {
+                self.check_descendant(expression.span().start, base_depth, element, &mut cx.state.found);
+            }
         }
     }
 
     fn exit<'a>(&self, _: Node<'a>, cx: &mut Cx<'a, Self>) {
-        cx.state.ancestor_depth -= 1;
+        cx.state.depths.pop();
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let mut found = std::mem::take(&mut cx.state.found);
+        // Several can be at one node.
+        utils::sort::sort_by_key(&mut found, |it| it.listener);
+        // oxlint has a text of its own.
+        let (message, depth, max) = match cx.language().is_oxlint {
+            true => (JSX_MAX_DEPTH, "depth", "max"),
+            false => (WRONG_DEPTH, "found", "needed"),
+        };
+        for it in found {
+            cx.report(it.node, message).data(depth, it.depth).data(max, self.max);
+        }
     }
 }
 
-/// What the depth of an element, or of what a variable is initialized with, is made of.
+impl JsxMaxDepth {
+    /// upstream's `checkDescendant`, for the children of `element`.
+    fn check_descendant(&self, listener: u32, base_depth: u32, element: Jsx<'_>, found: &mut Vec<Found>) {
+        let mut pending: SmallVec<[(Jsx<'_>, u32); 8]> = smallvec![(element, base_depth + 1)];
+        while let Some((element, depth)) = pending.pop() {
+            for node in element.children() {
+                let ExprKind::Jsx(jsx) = node.kind() else {
+                    continue;
+                };
+                match node.jsx_container_span() {
+                    container if depth > self.max => {
+                        found.push(Found { listener, node: container.unwrap_or_else(|| node.span()), depth });
+                    }
+                    // Braces have no children.
+                    Some(_) => {}
+                    None => pending.push((jsx, depth + 1)),
+                }
+            }
+        }
+    }
+}
+
+/// upstream's `findJSXElementOrFragment`, for the identifier in the braces.
+fn find_jsx_element_or_fragment(start_node: Expr<'_>) -> Option<Jsx<'_>> {
+    let (file, mut name) = (start_node.file(), start_node.as_ident()?);
+    // Brent's: a circle is left after about as many steps as it has.
+    let (mut seen, mut steps, mut limit) = (name, 0u32, 1u32);
+    loop {
+        let last_write = match get_variable_from_context(Node::Expr(start_node), name) {
+            Some(variable) => variable.references().rfind(|it| it.is_write()),
+            // What the configuration defines is a variable for upstream.
+            None => {
+                file.global_named(name)?;
+                file.unresolved_references_to(name.bytes()).rfind(|it| it.is_write())
+            }
+        };
+        match last_write?.write_expr()?.kind() {
+            ExprKind::Jsx(jsx) => return Some(jsx),
+            ExprKind::Ident(next) if next != seen => name = next,
+            _ => return None,
+        }
+        steps += 1;
+        if steps == limit {
+            (seen, steps, limit) = (name, 0, limit * 2);
+        }
+    }
+}
+
+/// For oxlint: what the depth of an element, or of what a variable is initialized with, is made of.
 #[derive(Default)]
 struct Parts<'a> {
     /// How deeply elements are nested in it.

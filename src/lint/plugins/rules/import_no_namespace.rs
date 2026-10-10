@@ -6,7 +6,6 @@ use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
-use std::cell::OnceCell;
 
 /// Forbid namespace (a.k.a. "wildcard" `*`) imports.
 pub struct NoNamespace {
@@ -36,24 +35,15 @@ const OF_EVERY_OBJECT: [&[u8]; 12] = [
     b"valueOf",
 ];
 
-pub struct State<'a> {
-    /// The references to what is imported, in the order in which ESLint makes them. They are put so for the first fix.
-    references: OnceCell<FxHashMap<Symbol<'a>, Vec<Reference<'a>>>>,
-}
-
 impl Rule for NoNamespace {
     const META: Meta = Meta::plugin(Plugin::Import, "no-namespace", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().stmts(&[StmtTag::Import]);
-    type State<'a> = State<'a>;
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let ignore = options.object(0).strings("ignore");
         let read = |it: &&str| (Box::<[u8]>::from(it.as_bytes()), Glob::matching_base(it.as_bytes()));
         NoNamespace { ignore: ignore.iter().map(read).collect() }
-    }
-
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        Some(State { references: OnceCell::new() })
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -75,7 +65,7 @@ impl Rule for NoNamespace {
         if is_oxlint {
             cx.report(local, OXLINT);
         } else {
-            cx.report(node, NO_NAMESPACE).fix(|fixer| cx.state.fix(fixer, stmt, local, node));
+            cx.report(node, NO_NAMESPACE).fix(|fixer| fix(fixer, stmt, local, node));
         }
     }
 }
@@ -170,86 +160,68 @@ fn generate_local_name(
     Some(local_name)
 }
 
-impl<'a> State<'a> {
-    /// `variable.references`
-    fn references_to(&self, variable: Symbol<'a>) -> &[Reference<'a>] {
-        let by_variable = self.references.get_or_init(|| {
-            let mut by_variable: FxHashMap<Symbol<'a>, Vec<Reference<'a>>> = FxHashMap::default();
-            let is_imported = |it: &Symbol| it.declaration_kinds().contains(DeclarationKind::ImportBinding.into());
-            for reference in variable.file().references_as_visited() {
-                if let Some(resolved) = reference.symbol().filter(is_imported) {
-                    by_variable.entry(resolved).or_default().push(reference);
-                }
-            }
-            by_variable
+/// Each `namespace.x` becomes a named import. `None`: the namespace is used otherwise or not at all, or upstream
+/// throws.
+#[cold]
+#[inline(never)]
+fn fix<'a>(fixer: Fixer<'a>, declaration: Stmt<'a>, local: Ident<'a>, node: Span) -> Option<Vec<Fix>> {
+    let file = fixer.file();
+    let namespace_variable = Node::Stmt(declaration).scope().get_name(local.name())?;
+    if namespace_variable.declarations().next().and_then(Declaration::name_span) != Some(local.span()) {
+        return None;
+    }
+    let members: Vec<Member<'a>> = namespace_variable.references().map(Member::around).collect::<Option<_>>()?;
+
+    // `importNameConflicts`. In place of the names the scopes that have them: that of a member, and `scope.upper`.
+    let mut import_name_conflicts: FxHashMap<&[u8], Vec<(Scope<'a>, Scope<'a>)>> = FxHashMap::default();
+    let mut import_names: Vec<&[u8]> = Vec::new();
+    for member in &members {
+        let import_name = &*member.property;
+        if OF_EVERY_OBJECT.contains(&import_name) {
+            return None;
+        }
+        let scope = member.node.scope();
+        let local_conflicts = (scope, scope.parent()?);
+        let conflicts = import_name_conflicts.entry(import_name).or_insert_with(|| {
+            import_names.push(import_name);
+            Vec::new()
         });
-        by_variable.get(&variable).map_or(&[][..], Vec::as_slice)
+        if conflicts.last() != Some(&local_conflicts) {
+            conflicts.push(local_conflicts);
+        }
     }
+    // `Object.keys` has the names that are indices of an array first, by their value.
+    let place = |it: &&[u8]| {
+        let is_canonical = |index: &u32| *index != u32::MAX && index.to_string().as_bytes() == *it;
+        parse_decimal::<u32>(it).filter(is_canonical).map_or((true, 0), |index| (false, index))
+    };
+    utils::sort::sort_by_cached_key(&mut import_names, place);
 
-    /// Each `namespace.x` becomes a named import. `None`: the namespace is used otherwise or not at all, or upstream
-    /// throws.
-    #[cold]
-    #[inline(never)]
-    fn fix(&self, fixer: Fixer<'a>, declaration: Stmt<'a>, local: Ident<'a>, node: Span) -> Option<Vec<Fix>> {
-        let file = fixer.file();
-        let namespace_variable = Node::Stmt(declaration).scope().get_name(local.name())?;
-        if namespace_variable.declarations().next().and_then(Declaration::name_span) != Some(local.span()) {
-            return None;
-        }
-        let namespace_references = self.references_to(namespace_variable).iter();
-        let members: Vec<Member<'a>> = namespace_references.map(|it| Member::around(*it)).collect::<Option<_>>()?;
-
-        // `importNameConflicts`. In place of the names the scopes that have them: that of a member, and `scope.upper`.
-        let mut import_name_conflicts: FxHashMap<&[u8], Vec<(Scope<'a>, Scope<'a>)>> = FxHashMap::default();
-        let mut import_names: Vec<&[u8]> = Vec::new();
-        for member in &members {
-            let import_name = &*member.property;
-            if OF_EVERY_OBJECT.contains(&import_name) {
-                return None;
-            }
-            let scope = member.node.scope();
-            let local_conflicts = (scope, scope.parent()?);
-            let conflicts = import_name_conflicts.entry(import_name).or_insert_with(|| {
-                import_names.push(import_name);
-                Vec::new()
-            });
-            if conflicts.last() != Some(&local_conflicts) {
-                conflicts.push(local_conflicts);
-            }
-        }
-        // `Object.keys` has the names that are indices of an array first, by their value.
-        let place = |it: &&[u8]| {
-            let is_canonical = |index: &u32| *index != u32::MAX && index.to_string().as_bytes() == *it;
-            parse_decimal::<u32>(it).filter(is_canonical).map_or((true, 0), |index| (false, index))
+    let mut lookups = MAX_LOOKUPS;
+    let mut import_local_names: FxHashMap<&[u8], Vec<u8>> = FxHashMap::default();
+    let mut named_import_specifiers = Vec::new();
+    for import_name in import_names {
+        let conflicts = import_name_conflicts.get(import_name)?;
+        let mut has = |name: &[u8]| {
+            lookups = lookups.checked_sub(conflicts.len())?;
+            Some(conflicts.iter().any(|it| has_variable(file, it.0, name) || has_variable(file, it.1, name)))
         };
-        utils::sort::sort_by_cached_key(&mut import_names, place);
-
-        let mut lookups = MAX_LOOKUPS;
-        let mut import_local_names: FxHashMap<&[u8], Vec<u8>> = FxHashMap::default();
-        let mut named_import_specifiers = Vec::new();
-        for import_name in import_names {
-            let conflicts = import_name_conflicts.get(import_name)?;
-            let mut has = |name: &[u8]| {
-                lookups = lookups.checked_sub(conflicts.len())?;
-                Some(conflicts.iter().any(|it| has_variable(file, it.0, name) || has_variable(file, it.1, name)))
-            };
-            let local_name = generate_local_name(import_name, &mut has, local.bytes())?;
-            named_import_specifiers.push(match local_name == import_name {
-                true => import_name.to_vec(),
-                false => [import_name, b" as ", &local_name[..]].concat(),
-            });
-            import_local_names.insert(import_name, local_name);
-        }
-        if named_import_specifiers.is_empty() {
-            return None;
-        }
-
-        let mut fixes = Vec::with_capacity(members.len() + 1);
-        let named_import_specifiers = named_import_specifiers.join(&b", "[..]);
-        fixes.push(fixer.replace(node, [b"{ ", &named_import_specifiers[..], b" }"].concat()));
-        for member in &members {
-            fixes.push(fixer.replace(member.span, import_local_names.get(&*member.property)?.as_slice()));
-        }
-        Some(fixes)
+        let local_name = generate_local_name(import_name, &mut has, local.bytes())?;
+        named_import_specifiers.push(match local_name == import_name {
+            true => import_name.to_vec(),
+            false => [import_name, b" as ", &local_name[..]].concat(),
+        });
+        import_local_names.insert(import_name, local_name);
     }
+    if named_import_specifiers.is_empty() {
+        return None;
+    }
+
+    let mut fixes = Vec::with_capacity(members.len() + 1);
+    let named_import_specifiers = named_import_specifiers.join(&b", "[..]);
+    fixes.push(fixer.replace(node, [b"{ ", &named_import_specifiers[..], b" }"].concat()));
+    for member in &members {
+        fixes.push(fixer.replace(member.span, import_local_names.get(&*member.property)?.as_slice()));
+    }
+    Some(fixes)
 }

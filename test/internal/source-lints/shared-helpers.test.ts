@@ -99,7 +99,7 @@ const FAMILIES: [family: string, names: string, use: string, note?: string][] = 
   [
     "numbers and digits",
     "to_number number_to_string parse_float parse_int parse_decimal is_digit is_hex_digit hex_value hex_digit unhex string_to_number decimal_literal_len decimal_digits to_precision array_index as_array_index is_array_index parse_number parse_integer parse_index digit_to_int hex_code hex4 push_hex write_f64 write_js_number format_js_number exact_digits round_digits to_fixed to_exponential integer_value decimal_value",
-    "bun_core::fmt::{js_string_to_number, js_decimal_literal_len, parse_f64, to_fixed, to_precision, to_exponential, dtoa, parse_decimal, parse_int, hex_digit_value, hex_digit_value_u32, hex_pair_value, parse_hex4, parse_hex_prefix, hex_byte_upper, hex_byte_lower, hex_lower, bytes_to_hex_lower_string}",
+    "bun_core::fmt::{js_string_to_number, js_decimal_literal_len, js_array_index, parse_f64, to_fixed, to_precision, to_exponential, dtoa, parse_decimal, parse_int, hex_digit_value, hex_digit_value_u32, hex_pair_value, parse_hex4, parse_hex_prefix, hex_byte_upper, hex_byte_lower, hex_lower, bytes_to_hex_lower_string}",
   ],
   [
     "Base64, hex, percent",

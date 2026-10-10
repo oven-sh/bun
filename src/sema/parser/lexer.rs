@@ -49,6 +49,8 @@ pub(crate) struct Lexer<'a> {
     pub(crate) is_typescript_5: bool,
     /// `Dialect::babel`
     pub(crate) is_babel: bool,
+    /// `Dialect::oxc`
+    pub(crate) is_oxc: bool,
     pub(crate) atoms: &'a dyn Intern,
     pub(crate) names: &'a mut Names,
     /// `hir::File::comment_directives`
@@ -188,6 +190,7 @@ impl<'a> Lexer<'a> {
             is_script: false,
             is_typescript_5: false,
             is_babel: false,
+            is_oxc: false,
             atoms,
             names,
             comment_directives: Vec::new(),
@@ -2158,7 +2161,9 @@ impl Lexer<'_> {
                     self.newline_before = newline_before;
                     return self.set(T::OpenBrace, start, start + 1);
                 }
-                Some(b'<') if src.get(start + 1) == Some(&b'/') && !self.is_ecmascript => {
+                Some(b'<')
+                    if src.get(start + 1) == Some(&b'/') && !self.is_ecmascript && !self.is_oxc =>
+                {
                     self.newline_before = newline_before;
                     return self.set(T::LessThanSlash, start, start + 2);
                 }

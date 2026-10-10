@@ -1,4 +1,4 @@
-use bun_lint::paths::extname;
+use bun_lint::paths::{basename, extname};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint_oxlint::text::file_extension;
@@ -48,7 +48,8 @@ impl Rule for JsxFilenameExtension {
             // oxlint compares what is after the last dot, and takes an extension with its dot or without.
             let ext = file_extension(path).unwrap_or_default();
             self.extensions.iter().any(|it| without_dot(it) == ext)
-        } else if path == b"<text>" {
+        } else if basename(path) == b"<text>" {
+            // ESLint leaves out the directories before a `<text>`.
             return None;
         } else {
             self.extensions.iter().any(|it| !it.is_empty() && path.ends_with(it))

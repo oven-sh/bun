@@ -15,7 +15,7 @@ use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::formats::Reason;
 use bun_lint::js_plugin::{Engine, HEAVY, Host, Loading, Route};
-use bun_lint::language::InferGlobals;
+use bun_lint::language::{InferGlobals, Parser};
 use bun_lint::linter::{FileConfig, LintMessage, Registry, RuleId, is_parse_error};
 use bun_sema::util::FxHashSet;
 use bun_threading::Guarded;
@@ -503,7 +503,10 @@ impl Run<'_> {
                 listed: None,
             });
         }
-        if matches!(route, Route::Processor | Route::Eslint) {
+        // With another parser it shows only when the text is read whether it can be read here.
+        if matches!(route, Route::Processor | Route::Eslint)
+            || config.language.parser == Parser::Other
+        {
             let result = context.verify_processed_text(
                 &loaded,
                 shown,

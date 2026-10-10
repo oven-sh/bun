@@ -535,7 +535,8 @@ pub struct Options {
     /// `noResolve`: `/// <reference path>` and `/// <reference types>` are ignored, and imports add
     /// no files to the program.
     pub no_resolve: bool,
-    /// Only the imports of a declaration file add files to the program. For who asks for its globals and nothing else.
+    /// Of what a file imports that is no declaration file, only the declaration files of packages are added to the program.
+    /// For who asks for its globals and nothing else.
     pub imports_of_sources_add_no_file: bool,
     /// `customConditions`: conditions that match in the `exports` and `imports` of a
     /// `package.json`, in addition to the default ones.

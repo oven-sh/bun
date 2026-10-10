@@ -5080,5 +5080,13 @@
   "b.ts:32:19+8 typescript(no-unsafe-type-assertion)",
   "b.ts:8:19+3 typescript(no-unsafe-type-assertion)",
   "b.ts:9:19+6 typescript(no-unsafe-type-assertion)"
+ ],
+ "no-unnecessary-type-parameters/an-object-type-that-is-met-twice": [
+  "b.ts:18:69+1 typescript(no-unnecessary-type-parameters)",
+  "b.ts:2:42+1 typescript(no-unnecessary-type-parameters)",
+  "b.ts:4:34+1 typescript(no-unnecessary-type-parameters)",
+  "b.ts:9:43+1 typescript(no-unnecessary-type-parameters)",
+  "z.ts:1:25+1 typescript(no-unnecessary-type-parameters)",
+  "z.ts:4:49+1 typescript(no-unnecessary-type-parameters)"
  ]
 }

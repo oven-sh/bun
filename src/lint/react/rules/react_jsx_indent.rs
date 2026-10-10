@@ -53,14 +53,22 @@ impl Rule for JsxIndent {
                 self.handle_attribute(attribute.span().start, container, cx);
             }
         }
-        for child in jsx.children().iter() {
-            match child.jsx_container_span() {
-                Some(container) if child.tag() != ExprTag::Spread && is_first_in_line(file, container) => {
-                    let indent = self.get_node_indent(file, start) + self.indent_size;
-                    self.check_nodes_indent(container, indent, Some(e), cx);
-                }
-                None if child.tag() == ExprTag::String => self.check_literal_node_indent(child, start, cx),
-                _ => {}
+        for child in jsx.children_with_whitespace() {
+            match child {
+                // Not all of it is white space for a regular expression.
+                JsxChild::Whitespace(node) => self.check_literal_node_indent(node, file.slice(node), start, cx),
+                JsxChild::Expr(child) => match child.jsx_container_span() {
+                    Some(container) if child.tag() != ExprTag::Spread && is_first_in_line(file, container) => {
+                        let indent = self.get_node_indent(file, start) + self.indent_size;
+                        self.check_nodes_indent(container, indent, Some(e), cx);
+                    }
+                    Some(_) => {}
+                    None => {
+                        if let Some(value) = child.jsx_text_value() {
+                            self.check_literal_node_indent(child.span(), &value, start, cx);
+                        }
+                    }
+                },
             }
         }
     }
@@ -149,21 +157,20 @@ impl JsxIndent {
     }
 
     /// `handleLiteral`, `checkLiteralNodeIndent`. `parent`: where the element starts.
-    fn check_literal_node_indent<'a>(&self, node: Expr<'a>, parent: u32, cx: &Cx<'a, Self>) {
-        let Some(value) = node.jsx_text_value() else { return };
-        if self.node_indents_per_line(&value).next().is_none() {
+    fn check_literal_node_indent(&self, node: Span, value: &[u8], parent: u32, cx: &Cx<'_, Self>) {
+        if self.node_indents_per_line(value).next().is_none() {
             return;
         }
         let indent = self.get_node_indent(cx.file(), parent) + self.indent_size;
-        if self.node_indents_per_line(&value).all(|it| it == indent) {
+        if self.node_indents_per_line(value).all(|it| it == indent) {
             return;
         }
-        for node_indent in self.node_indents_per_line(&value) {
+        for node_indent in self.node_indents_per_line(value) {
             if cx.has_reported_too_much() {
                 break;
             }
-            self.report(node.span(), indent, node_indent, cx)
-                .fix(|fixer| Some(fixer.replace(node.span(), with_indent(node.text(), &self.indent(indent)?))));
+            self.report(node, indent, node_indent, cx)
+                .fix(|fixer| Some(fixer.replace(node, with_indent(fixer.file().slice(node), &self.indent(indent)?))));
         }
     }
 

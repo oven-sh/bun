@@ -699,8 +699,7 @@ impl Order {
     }
 
     /// `getSorter`. It is no order where a name that starts with `./` meets one that starts with `../`.
-    /// `is_order`: it is to be one.
-    fn compare(&self, a: (&[u8], ImportKind), b: (&[u8], ImportKind), is_order: bool) -> Ordering {
+    fn compare(&self, a: (&[u8], ImportKind), b: (&[u8], ImportKind)) -> Ordering {
         let is_relative = |it: &[u8]| matches!(it, b"." | b"..");
         let (mut of_a, mut of_b) = (strings::split(a.0, b"/"), strings::split(b.0, b"/"));
         let mut is_first = true;
@@ -709,7 +708,7 @@ impl Order {
                 (Some(x), Some(y)) if is_first && is_relative(x) && is_relative(y) && x != y => {
                     // By how many names they have.
                     let (names_of_a, names_of_b) = (strings::count_char(a.0, b'/'), strings::count_char(b.0, b'/'));
-                    break match is_order || (names_of_a, names_of_b) == (0, 0) {
+                    break match (names_of_a, names_of_b) == (0, 0) {
                         true => strings::order_utf16(a.0, b.0),
                         false => names_of_a.cmp(&names_of_b),
                     };
@@ -746,18 +745,13 @@ impl Order {
             let mut order: Vec<u32> = (0..imported.len() as u32).collect();
             let rank = |at: u32| key(at).map_or(0.0, |it| it.0.rank);
             sort_indices(&mut order, &mut |a, b| rank(a).partial_cmp(&rank(b)).unwrap_or(Ordering::Equal));
-            let compare = |a: u32, b: u32, is_order: bool| match (key(a), key(b)) {
-                (Some(a), Some(b)) => self.compare((a.1, a.0.import_kind), (b.1, b.0.import_kind), is_order),
-                _ => Ordering::Equal,
+            let is_before = |a: u32, b: u32| match (key(a), key(b)) {
+                (Some(a), Some(b)) => self.compare((a.1, a.0.import_kind), (b.1, b.0.import_kind)) == Ordering::Less,
+                _ => false,
             };
-            // Each group as `Array.prototype.sort` sorts it, which what is no order depends on. A long one only if that
-            // leaves it as it is.
+            // Each group as `Array.prototype.sort` sorts it, which what is no order depends on.
             for group in order.chunk_by_mut(|a, b| rank(*a) == rank(*b)) {
-                let mut pairs = group.iter().zip(group.iter().skip(1));
-                match group.len() < 64 || pairs.all(|(a, b)| compare(*b, *a, false) != Ordering::Less) {
-                    true => utils::array_sort_by(group, |a, b| compare(a, b, false) == Ordering::Less),
-                    false => sort_indices(group, &mut |a, b| compare(a, b, true)),
-                }
+                utils::array_sort_by(group, &is_before);
             }
             // What has the same name and the same kind gets the rank of the last of them.
             let mut ranks: FxHashMap<(&[u8], ImportKind), f64> = FxHashMap::default();

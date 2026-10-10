@@ -1,6 +1,7 @@
 use crate::import_export_map::ExportMaps;
 use crate::import_export_record::{ImportedSpecifier, recursive_pattern_capture};
 use crate::import_package_path::{is_truthy, read_pkg_up};
+use crate::import_resolve::Resolvers;
 use crate::import_settings::Settings;
 use bun_core::strings;
 use bun_lint::language::Parser;
@@ -199,6 +200,51 @@ fn exports_something(stmt: Stmt) -> bool {
     }
 }
 
+/// Whether `updateImportUsage` makes an export of the file out of what it imports from itself and, as the preparation
+/// has read it, did not import.
+fn imports_from_itself<'a>(file: &'a File<'a>, path: &[u8], is_prepared: bool) -> bool {
+    let (Some(resolvers), Some(maps)) = (Resolvers::of(file.settings()), ExportMaps::of(file)) else { return false };
+    let (mut has_default, mut new_imports) = (false, FxHashMap::<&'a [u8], bool>::default());
+    for stmt in file.body() {
+        let StmtKind::Import(import) = stmt.kind() else { continue };
+        let resolved = resolvers.resolve(file, import.spec().bytes(), false);
+        let Some(resolved_path) = resolved.file().filter(|it| !is_node_module(it)) else { continue };
+        let is_itself = resolved_path == path;
+        has_default |= is_itself && import.default().is_some();
+        new_imports.extend(import.named().iter().map(|it| (it.imported().bytes(), is_itself)));
+    }
+    if !has_default && !new_imports.values().any(|it| *it) {
+        return false;
+    }
+    let (mut had_default, mut old_imports) = (false, FxHashSet::<&'a [u8]>::default());
+    if let Some(current_exports) = is_prepared.then(|| maps.at(path)).flatten() {
+        for reexported in maps.reexports(current_exports) {
+            match (reexported.local, reexported.import) {
+                (Some(DEFAULT), Some(reexport)) => had_default |= reexport.path() == path,
+                (Some(local), Some(_)) => {
+                    old_imports.insert(local);
+                }
+                _ => {}
+            }
+        }
+        for (imported_path, declarations) in maps.imports(current_exports) {
+            if is_node_module(&imported_path) {
+                continue;
+            }
+            for specifier in declarations.into_iter().flat_map(|it| it.imported_specifiers.iter()) {
+                match specifier {
+                    ImportedSpecifier::Default => had_default |= imported_path == path,
+                    ImportedSpecifier::Namespace => {}
+                    ImportedSpecifier::Named(name) => {
+                        old_imports.insert(&**name);
+                    }
+                }
+            }
+        }
+    }
+    has_default && !had_default || new_imports.iter().any(|(name, is_itself)| *is_itself && !old_imports.contains(name))
+}
+
 impl NoUnusedModules {
     /// `doPreparation`. Where `listFilesToProcess` throws nothing is found.
     fn prepare<'a>(&self, file: &'a File<'a>) -> Prepared {
@@ -386,7 +432,10 @@ impl Rule for NoUnusedModules {
         }
         if self.unused_exports {
             let (prepared, path) = (self.prepared(file), paths::portable(file.path(), file.path()));
-            if !prepared.is_listed || prepared.ignored_files.contains(&path[..]) {
+            if !prepared.is_listed
+                || prepared.ignored_files.contains(&path[..])
+                || imports_from_itself(file, &path, prepared.export_list.contains_key(&path[..]))
+            {
                 return;
             }
         }

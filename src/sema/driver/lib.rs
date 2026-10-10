@@ -317,7 +317,8 @@ pub struct PlanOptions {
     /// Nothing is checked: `Report::globals` is what is asked for. Of the root files of a project only those are loaded that can
     /// declare a global, judged by name and text (`may_declare_a_global`), with the libraries and the `types` as always; of
     /// what they import only what declaration files import. A file of `Request::paths` without a configuration file above
-    /// it is in no program, and nothing is said about a program for which `Files::global_names` says nothing.
+    /// it is in no program, and nothing is said about a program for which `Files::global_names` says nothing, or whose
+    /// packages are not installed.
     pub only_the_globals: bool,
     /// The memory of the machine, or of the container that the process is in: the programs of a request run at the same
     /// time as far as a quarter of it goes. 0: it is not known, and they run one after the other.
@@ -3306,11 +3307,42 @@ pub fn check_project(
     )
 }
 
+/// Whether what the project at `config` depends on is not installed: its `package.json` names packages, and there is no
+/// `node_modules`. Then the types of Node, of the test runner and so on are not there to be asked.
+fn lacks_its_packages(host: &dyn Host, config: &[u8]) -> bool {
+    let above = || ancestors(dirname::<Posix>(config));
+    if above().any(|it| host.is_dir(&inside(it, b"node_modules"))) {
+        return false;
+    }
+    let mut manifests = above().map(|it| inside(it, b"package.json"));
+    let text = manifests
+        .find(|it| host.is_file(it))
+        .and_then(|it| host.read(&it));
+    let fields = text.and_then(|it| host.parse_package_json(Session::new().arena(), &it));
+    let names_packages = |field: &[u8]| {
+        let packages = fields.as_ref()?.get(field)?.as_object()?;
+        (!packages.is_empty()).then_some(())
+    };
+    [
+        &b"dependencies"[..],
+        b"devDependencies",
+        b"peerDependencies",
+    ]
+    .into_iter()
+    .any(|field| names_packages(field).is_some())
+}
+
 /// Whether the root file at `path` can add to the globals of its program: it is a declaration file; or a script, which
 /// has neither `import` nor `export`, nor `require` in JavaScript; or it has `declare global`. By the words in its text: one
 /// that is kept for nothing costs its parse. A script that has such a word in a comment is not seen, nor a comment between
-/// `declare` and `global`.
-fn may_declare_a_global(host: &dyn Host, path: &[u8], every_file_is_a_module: bool) -> bool {
+/// `declare` and `global`. `imports`: called with each name of a package that it imports for its effects, which can be
+/// to declare globals.
+fn may_declare_a_global(
+    host: &dyn Host,
+    path: &[u8],
+    every_file_is_a_module: bool,
+    imports: &dyn Fn(&[u8]),
+) -> bool {
     if is_declaration_file_name(path) {
         return true;
     }
@@ -3329,8 +3361,18 @@ fn may_declare_a_global(host: &dyn Host, path: &[u8], every_file_is_a_module: bo
         }
         from += found + b"global".len();
     }
+    let (mut from, mut has_import) = (0, false);
+    while let Some(found) = strings::index_of(&text[from..], b"import") {
+        (from, has_import) = (from + found + b"import".len(), true);
+        if let [quote @ (b'"' | b'\''), name @ ..] = text[from..].trim_ascii_start()
+            && let Some(end) = strings::index_of_char_usize(name, *quote)
+            && !is_relative(&name[..end])
+        {
+            imports(&name[..end]);
+        }
+    }
     !every_file_is_a_module
-        && !has(b"import")
+        && !has_import
         && !has(b"export")
         && !(is_javascript(path) && has(b"require"))
 }
@@ -3429,14 +3471,27 @@ fn check_named_files(
     );
 
     if request.plan_options.only_the_globals {
+        if lacks_its_packages(host, &config_path) {
+            return report;
+        }
         project.options.imports_of_sources_add_no_file = true;
         let is_module = project.options.module_detection == ModuleDetection::Force;
         let roots = &project.files;
         let is_kept: Vec<AtomicBool> = roots.iter().map(|_| AtomicBool::new(false)).collect();
+        // `import "mocha";`: the name and the file.
+        let for_their_effects: Guarded<Vec<(Vec<u8>, usize)>> = Guarded::new(Vec::new());
         host.parallel(roots.len(), &|at| {
-            let may = may_declare_a_global(host, &roots[at], is_module);
+            let imports = |name: &[u8]| for_their_effects.lock().push((name.to_vec(), at));
+            let may = may_declare_a_global(host, &roots[at], is_module, &imports);
             is_kept[at].store(may, Ordering::Relaxed);
         });
+        // One file for each name brings the package in: the first.
+        let mut for_their_effects = std::mem::take(&mut *for_their_effects.lock());
+        for_their_effects.shared_sort_unstable();
+        for_their_effects.dedup_by(|a, b| a.0 == b.0);
+        for (_, at) in for_their_effects {
+            is_kept[at].store(true, Ordering::Relaxed);
+        }
         // A program without a root file has no libraries and no `types`.
         if let Some(first) = is_kept.first()
             && !is_kept.iter().any(|it| it.load(Ordering::Relaxed))

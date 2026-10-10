@@ -1143,6 +1143,23 @@ pub fn js_decimal_literal_len(text: &[u8]) -> usize {
     len
 }
 
+/// The index that the property name `name` is for an array of JavaScript, if it is one: the digits of
+/// a number below 2^32 - 1 as `String(n)` writes it. `Object.keys` has those first, in ascending
+/// order.
+pub fn js_array_index(name: &[u8]) -> Option<u32> {
+    if name.is_empty()
+        || name.len() > 10
+        || (name.len() > 1 && name[0] == b'0')
+        || !name.iter().all(u8::is_ascii_digit)
+    {
+        return None;
+    }
+    let value = name
+        .iter()
+        .fold(0u64, |value, digit| value * 10 + u64::from(digit - b'0'));
+    u32::try_from(value).ok().filter(|index| *index != u32::MAX)
+}
+
 /// `parse_f64` truncated to `f32`.
 #[inline]
 pub fn parse_f32(s: &[u8]) -> Option<f32> {

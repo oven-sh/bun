@@ -228,23 +228,12 @@ impl Key {
             b"unicode" => Property::HasFlag(b'u'),
             b"unicodeSets" => Property::HasFlag(b'v'),
             b"sticky" => Property::HasFlag(b'y'),
-            _ => array_index(name).map_or(Property::None, Property::Index),
+            _ => bun_core::fmt::js_array_index(name).map_or(Property::None, Property::Index),
         };
         Key {
             field: Field::from_name(name),
             property,
         }
-    }
-}
-
-/// The index that the property name `name` is for an array.
-fn array_index(name: &[u8]) -> Option<u32> {
-    let is_canonical =
-        name.iter().all(u8::is_ascii_digit) && (name.len() == 1 || !name.starts_with(b"0"));
-    if is_canonical {
-        std::str::from_utf8(name).ok()?.parse().ok()
-    } else {
-        None
     }
 }
 

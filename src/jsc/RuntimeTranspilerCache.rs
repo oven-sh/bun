@@ -65,7 +65,9 @@ bun_core::declare_scope!(cache, visible);
 /// the cache-HIT path reinstates #33904 for them.
 /// Version 34: An import that a plugin `onResolve` answers is printed as it is written.
 /// Version 35: A decorator on a class static block is a syntax error.
-const EXPECTED_VERSION: u32 = 35;
+/// Version 36: A modifier in front of a class static block, or an escape in its keyword, is a
+/// syntax error.
+const EXPECTED_VERSION: u32 = 36;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

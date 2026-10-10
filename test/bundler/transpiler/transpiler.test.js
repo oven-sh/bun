@@ -3928,6 +3928,205 @@ class Foo {
     expectParseError("class Foo { #x() { this.#x += 1 } }", 'Writing to read-only method "#x" will throw');
   });
 
+  describe("a class static block is the first token of its class element", () => {
+    // Every error of one parse, as [message, the source text it points at].
+    const errorsOf = (code, loader) => {
+      try {
+        new Bun.Transpiler({ loader }).transformSync(code);
+      } catch (e) {
+        return (e instanceof AggregateError ? e.errors : [e]).map(({ message, position: at }) => [
+          message,
+          at.lineText.slice(at.column - 1, at.column - 1 + at.length),
+        ]);
+      }
+      return [];
+    };
+    const inEachKindOfClass = body => [
+      `class Foo { ${body} }`,
+      `(class { ${body} })`,
+      `export default class { ${body} }`,
+    ];
+
+    // After a modifier, `static` is the name of a method or of a field, and the "{" is the error.
+    const noParen = ['Expected "(" but found "{"', "{"];
+    const noSemicolon = ['Expected ";" but found "{"', "{"];
+    const modifiers = firstModifier => ["Modifiers cannot appear here", firstModifier];
+
+    it.each([
+      ["async static {}", noParen],
+      ["static async static {}", noParen],
+      ["static static {}", noSemicolon],
+      ["static\n static {}", noSemicolon],
+      ["static static\n {}", noSemicolon],
+      ["static\n static\n {}", noSemicolon],
+      ["st\\u0061tic {}", noSemicolon],
+      ["static st\\u0061tic {}", noSemicolon],
+    ])("JavaScript rejects %j with one error", (body, error) => {
+      for (const code of inEachKindOfClass(body)) {
+        expect([code, errorsOf(code, "js")]).toEqual([code, [error]]);
+      }
+    });
+
+    it.each([
+      ["public static {}", modifiers("public")],
+      ["private static {}", modifiers("private")],
+      ["protected static {}", modifiers("protected")],
+      ["readonly static {}", modifiers("readonly")],
+      ["override static {}", modifiers("override")],
+      ["declare static {}", modifiers("declare")],
+      ["abstract static {}", modifiers("abstract")],
+      ["static static {}", modifiers("static")],
+      ["static\n static {}", modifiers("static")],
+      ["public static static {}", modifiers("public")],
+      ["static declare static {}", modifiers("static")],
+      ["declare abstract public static {}", modifiers("declare")],
+      ["static st\\u0061tic {}", modifiers("static")],
+      ["async static {}", noParen],
+      ["public async static {}", noParen],
+      ["st\\u0061tic {}", noSemicolon],
+    ])("TypeScript rejects %j with one error", (body, error) => {
+      for (const code of inEachKindOfClass(body)) {
+        expect([code, errorsOf(code, "ts")]).toEqual([code, [error]]);
+      }
+    });
+
+    it("the scan pass rejects them too", () => {
+      expect(() => transpiler.scanImports("class Foo { static static {} }", "js")).toThrow(noSemicolon[0]);
+      expect(() => transpiler.scan("class Foo { public static {} }", "ts")).toThrow("Modifiers cannot appear here");
+      expect(transpiler.scanImports("class Foo { static {} }", "js")).toEqual([]);
+    });
+
+    it("`static` stays a name when the block is the next element", () => {
+      // [class body, printed class body]
+      const kept = [
+        ["static {}", "static {}"],
+        ["static\n {}", "static {}"],
+        ["/* a */ static /* b */ {}", "static {}"],
+        ["static {} static {}", "static {}\n  static {}"],
+        ["static; static {}", "static;\n  static {}"],
+        ["static = 1; static {}", "static = 1;\n  static {}"],
+        ["static() {} static {}", "static() {}\n  static {}"],
+        ["static static; static {}", "static static;\n  static {}"],
+        ["static static() {} static {}", "static static() {}\n  static {}"],
+        ["static static = 1\n static {}", "static static = 1;\n  static {}"],
+        ["static static\n static {}", "static static;\n  static {}"],
+        ["static\n static\n static {}", "static static;\n  static {}"],
+        ["async\n static {}", "async;\n  static {}"],
+        ["static async\n static {}", "static async;\n  static {}"],
+        ["static\n async\n static {}", "static async;\n  static {}"],
+        ["accessor\n static {}", "accessor;\n  static {}"],
+        ["st\\u0061tic; static {}", "static;\n  static {}"],
+        ["st\\u0061tic\n static {}", "static;\n  static {}"],
+        ["static \\u0073tatic\n static {}", "static static;\n  static {}"],
+        ["async static() {} static {}", "async static() {}\n  static {}"],
+        ["static async static() {} static {}", "static async static() {}\n  static {}"],
+      ];
+      for (const [body, printed] of kept) {
+        expectPrinted_(`class Foo { ${body} }`, `class Foo {\n  ${printed}\n}`);
+      }
+
+      // TypeScript: `declare` or `abstract` before a line break is a field, and the block is the next element.
+      const keptInTypeScript = [
+        ["declare\n static {}", "declare;\n  static {}"],
+        ["abstract\n static {}", "abstract;\n  static {}"],
+        ["public static; static {}", "static;\n  static {}"],
+        ["static?: T; static {}", "static;\n  static {}"],
+        ["[key: string]: any; static {}", "static {}"],
+        ["m(): void; static {}", "static {}"],
+      ];
+      for (const [body, printed] of keptInTypeScript) {
+        ts.expectPrinted_(`class Foo { ${body} }`, `class Foo {\n  ${printed}\n}`);
+      }
+    });
+
+    it("an arrow body that the parser reads twice reports the error once", () => {
+      // "(b) : c => class {}" is first read as an arrow function with a return type. That attempt
+      // has the log off, and the parser drops it when no second ":" follows the body.
+      ts.expectPrinted_("x = a ? (b) : c => class { static {} }", "x = a ? b : (c) => class {\n  static {}\n};\n");
+      expect(errorsOf("x = a ? (b) : c => class { static static {} }", "ts")).toEqual([modifiers("static")]);
+      expect(errorsOf("x = a ? (b) : c => class { static static {} } : e", "ts")).toEqual([modifiers("static")]);
+    });
+
+    it("the module loader rejects them in a module and in a script, and runs the valid orders", async () => {
+      const block = "static { globalThis.blockRan = true; }";
+      // [class body, the one error in JavaScript, the one error in TypeScript]. null: the body is valid.
+      const bodies = [
+        [`async ${block}`, noParen[0], noParen[0]],
+        [`static async ${block}`, noParen[0], noParen[0]],
+        [`static ${block}`, noSemicolon[0], "Modifiers cannot appear here"],
+        [`static\n ${block}`, noSemicolon[0], "Modifiers cannot appear here"],
+        [`st\\u0061tic { globalThis.blockRan = true; }`, noSemicolon[0], noSemicolon[0]],
+        [block, null, null],
+        [`static\n static\n ${block}`, null, null],
+        [`async\n ${block}`, null, null],
+        [`static async\n ${block}`, null, null],
+        [`st\\u0061tic\n ${block}`, null, null],
+        [`async static() {} static static() {} ${block}`, null, null],
+      ];
+      const files = bodies.flatMap(([body, inJavaScript, inTypeScript], i) =>
+        [".mjs", ".cjs", ".mts", ".cts"].map(extension => ({
+          file: `body-${i}${extension}`,
+          source: `class A { ${body} }`,
+          error: extension.endsWith("ts") ? inTypeScript : inJavaScript,
+        })),
+      );
+      using dir = tempDir("static-block-first-token", {
+        "driver.mjs": `
+          import { createRequire } from "node:module";
+          const require = createRequire(import.meta.url);
+          const results = [];
+          for (const file of ${JSON.stringify(files.map(({ file }) => file))}) {
+            globalThis.blockRan = false;
+            let error = null;
+            try {
+              if (file.endsWith(".mjs") || file.endsWith(".mts")) await import("./" + file);
+              else require("./" + file);
+            } catch (e) {
+              error = e.message;
+            }
+            results.push({ file, error, blockRan: globalThis.blockRan });
+          }
+          console.log(JSON.stringify(results));
+        `,
+        ...Object.fromEntries(files.map(({ file, source }) => [file, source])),
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "driver.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(files.map(({ file, error }) => ({ file, error, blockRan: error === null })));
+      expect(exitCode).toBe(0);
+    });
+
+    it("bun prints the one error, runs nothing and exits with code 1", async () => {
+      using dir = tempDir("static-block-first-token-cli", {
+        "index.js": `class A { async static { console.log("block"); } }\nconsole.log("ran");\n`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.split("\n").filter(line => line.startsWith("error: "))).toEqual([
+        'error: Expected "(" but found "{"',
+      ]);
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    });
+  });
+
   it("class bodies keep `this` and the class name as written", () => {
     expectPrinted_(
       "class Foo { static x = this; static { this.y = Foo } z = () => this }",

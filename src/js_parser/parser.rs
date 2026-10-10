@@ -1541,7 +1541,8 @@ pub(crate) struct ImportClause<'a> {
 }
 
 pub struct PropertyOpts {
-    pub(crate) declare_range: bun_ast::Range,
+    /// The first token of the class element, decorators included. `Loc::EMPTY` in an object literal.
+    pub(crate) member_start: bun_ast::Loc,
     pub(crate) is_async: bool,
     pub(crate) is_generator: bool,
 
@@ -1559,7 +1560,7 @@ pub struct PropertyOpts {
 impl Default for PropertyOpts {
     fn default() -> Self {
         Self {
-            declare_range: bun_ast::Range::NONE,
+            member_start: bun_ast::Loc::EMPTY,
             is_async: false,
             is_generator: false,
             is_static: false,

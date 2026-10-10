@@ -53,9 +53,7 @@ impl AsyncFormDataExt for AsyncFormData {
     }
 }
 
-/// Raw slices into the caller-owned input buffer. Not `bun_semver::String`:
-/// its inline storage ends a value at the first NUL byte, and its empty value
-/// is the same as no value.
+/// Slices of the caller-owned input buffer.
 #[derive(Default)]
 pub(crate) struct Field<'a> {
     pub value: &'a [u8],
@@ -275,9 +273,7 @@ pub(crate) fn for_each_multipart_entry<C>(
         let mut filename: Option<&[u8]> = None;
         let mut header_chunk = header;
         let mut is_file = false;
-        // Both scans below stop once the part has a filename and a non-empty
-        // name. An empty name keeps them going: a later `name` parameter
-        // replaces it, and the remaining header lines are still read.
+        // An empty name does not end the scan: a later `name` parameter replaces it.
         let scan_is_done = |name: Option<&[u8]>, filename: Option<&[u8]>| {
             filename.is_some() && name.is_some_and(|name| !name.is_empty())
         };

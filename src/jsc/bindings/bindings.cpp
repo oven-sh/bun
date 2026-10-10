@@ -6288,8 +6288,7 @@ extern "C" int JSC__JSValue__DateNowISOString(JSC::JSGlobalObject* globalObject,
 
 #pragma mark - WebCore::DOMFormData
 
-// toStringCopy() gives a null String for an empty slice (a part with `name=""`).
-// An entry name must not be null: toJSON() puts the names in a HashSet.
+// toStringCopy() gives a null String for an empty slice, and a null entry name crashes toJSON().
 static WTF::String toFormDataEntryName(const EncodedSlice& name)
 {
     if (name.len == 0)

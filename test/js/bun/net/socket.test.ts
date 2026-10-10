@@ -1729,12 +1729,13 @@ it.each([
   });
   await done.promise;
   const [accepted, client] = sides;
+  // The server has ended: whether it hears of the client's end ahead of the close is a matter of timing.
   expect({
     client: { received: client.received, events: client.events },
-    server: { received: accepted.received, events: accepted.events },
+    server: { received: accepted.received, closed: accepted.events.at(-1) },
   }).toEqual({
     client: { received: size, events: ["end", "close"] },
-    server: { received: upload, events: ["end", "close"] },
+    server: { received: upload, closed: "close" },
   });
 });
 

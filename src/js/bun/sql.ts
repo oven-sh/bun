@@ -34,8 +34,8 @@ enum ReservedConnectionState {
   acceptQueries = 1 << 0,
   closed = 1 << 1,
   released = 1 << 2,
-  /// The statement that ends the scope (COMMIT, ROLLBACK, RELEASE SAVEPOINT, ROLLBACK TO SAVEPOINT)
-  /// was handed to the connection. Nothing of the scope is written behind it.
+  /// The statement that ends the scope (COMMIT or ROLLBACK of a transaction, ROLLBACK TO SAVEPOINT
+  /// of a savepoint) was handed to the connection. Nothing of the scope is written behind it.
   ended = 1 << 3,
 }
 
@@ -635,7 +635,8 @@ const SQL = function SQL(
             resolve();
           }, timeout * 1000);
           timer.unref(); // dont block the event loop
-          Promise.all([Promise.all(pending_queries), Promise.all(pending_transactions)]).finally(() => {
+          // allSettled: the wait is for all of the work, and the error of a query goes to whoever awaits that query.
+          Promise.allSettled([...pending_queries, ...pending_transactions]).then(() => {
             clearTimeout(timer);
             resolve();
           });
@@ -651,6 +652,13 @@ const SQL = function SQL(
 
       return Promise.$resolve(undefined);
     };
+    function releaseToPool() {
+      // Use adapter method to detach connection close handler
+      if (pool.detachConnectionCloseHandler) {
+        pool.detachConnectionCloseHandler(pooledConnection, onClose);
+      }
+      releaseReservation();
+    }
     reserved_sql.release = () => {
       if (state.connectionState & ReservedConnectionState.released) {
         return Promise.$resolve(undefined);
@@ -658,11 +666,13 @@ const SQL = function SQL(
       // just release the connection back to the pool
       state.connectionState |= ReservedConnectionState.closed;
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
-      // Use adapter method to detach connection close handler
-      if (pool.detachConnectionCloseHandler) {
-        pool.detachConnectionCloseHandler(pooledConnection, onClose);
+      if (reservedTransaction.size > 0) {
+        // A transaction of reserved.begin() still owns the connection. Not awaited: the caller
+        // can be the callback of that transaction.
+        Promise.all(Array.from(reservedTransaction)).then(releaseToPool);
+      } else {
+        releaseToPool();
       }
-      releaseReservation();
       return Promise.$resolve(undefined);
     };
     // this dont need to be async dispose only disposable but we keep compatibility with other types of sql functions
@@ -892,10 +902,14 @@ const SQL = function SQL(
     transaction_sql.close = async function (options?: { timeout?: number }) {
       // we dont actually close the connection here, we just set the state to closed and rollback the transaction
       if (
-        state.connectionState & (ReservedConnectionState.closed | ReservedConnectionState.ended) ||
+        state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
       ) {
         return Promise.$resolve(undefined);
+      }
+      if (state.connectionState & ReservedConnectionState.ended) {
+        // COMMIT or ROLLBACK is on its way. There is nothing to roll back: wait for its answer.
+        return (finished ??= Promise.withResolvers<void>()).promise;
       }
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
       const transactionQueries = state.queries;
@@ -912,6 +926,10 @@ const SQL = function SQL(
           const pending_queries = Array.from(transactionQueries);
           const pending_savepoints = Array.from(transactionSavepoints);
           const timer = setTimeout(async () => {
+            if (state.connectionState & (ReservedConnectionState.closed | ReservedConnectionState.ended)) {
+              // the runner ended the transaction in the meantime
+              return resolve();
+            }
             for (const query of transactionQueries) {
               (query as Query<any, any>).cancel();
             }
@@ -923,7 +941,9 @@ const SQL = function SQL(
             resolve();
           }, timeout * 1000);
           timer.unref(); // dont block the event loop
-          Promise.all([Promise.all(pending_queries), Promise.all(pending_savepoints)]).finally(() => {
+          // allSettled: the wait is for all of the work, and the error of a query or a savepoint goes to
+          // whoever awaits it.
+          Promise.allSettled([...pending_queries, ...pending_savepoints]).then(() => {
             clearTimeout(timer);
             resolve();
           });
@@ -973,14 +993,13 @@ const SQL = function SQL(
             [],
             pooledConnection,
             owner,
-            scope,
+            null,
           );
-        } else {
-          scope.connectionState |= ReservedConnectionState.ended;
         }
+        // A released savepoint is a part of `owner`, and so are the statements its handle makes from now on.
         return result;
       } catch (err) {
-        if (scopeIsOpen(owner)) {
+        try {
           await unsafeQueryFromTransaction(
             `${ROLLBACK_TO_SAVEPOINT_COMMAND} ${save_point_name}`,
             [],
@@ -988,8 +1007,10 @@ const SQL = function SQL(
             owner,
             scope,
           );
-        } else {
-          scope.connectionState |= ReservedConnectionState.ended;
+        } catch (rollbackError) {
+          // `ended` is set when the connection got the statement, so the server refused it. Not set:
+          // `owner` ended first and nothing was sent, and the error of the callback stays.
+          if (scope.connectionState & ReservedConnectionState.ended) throw rollbackError;
         }
         throw err;
       }
@@ -1024,6 +1045,8 @@ const SQL = function SQL(
       transaction_sql.savepoint = (fn: TransactionCallback, name?: string): Promise<any> => savepoint(state, fn, name);
     }
     let needs_rollback = false;
+    // What tx.close() waits for when COMMIT or ROLLBACK is already on its way.
+    let finished: PromiseWithResolvers<void> | undefined;
     try {
       await run_internal_transaction_sql(BEGIN_COMMAND, null);
       needs_rollback = true;
@@ -1069,6 +1092,7 @@ const SQL = function SQL(
       if (!dontRelease) {
         pool.release(pooledConnection);
       }
+      finished?.resolve();
     }
   }
   function sql(

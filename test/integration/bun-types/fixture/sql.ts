@@ -116,7 +116,7 @@ expectType(sql1.unsafe<{ id: string }[]>("SELECT * FROM users")).is<Bun.SQL.Quer
 expectType(sql1.file("query.sql", [1, 2, 3])).is<Bun.SQL.Query<any>>();
 
 sql1.reserve().then(reserved => {
-  reserved.release();
+  expectType(reserved.release()).is<Promise<void>>();
 
   expectType(reserved<[8]>`SELECT 8`).is<Bun.SQL.Query<[8]>>();
 });
@@ -133,19 +133,9 @@ sql1.begin(async txn => {
   });
 });
 
-// The client of a savepoint callback opens nested savepoints.
+// An array of queries that a savepoint callback returns resolves to the results of the queries.
 sql1.begin(async txn => {
-  await txn.savepoint(async sp => {
-    expectType(sp).is<Bun.SavepointSQL>();
-    expectType(
-      sp.savepoint("nested", async nested => {
-        expectType(nested).is<Bun.SavepointSQL>();
-        return 11 as const;
-      }),
-    ).is<Promise<11>>();
-  });
-  // An array of queries that the callback returns resolves to the results of the queries.
-  expectType(await txn.savepoint(sp => [sp<[12]>`SELECT 12`, sp<[13]>`SELECT 13`])).is<([12] | [13])[]>();
+  expectType(await txn.savepoint(sp => [sp<[11]>`SELECT 11`, sp<[12]>`SELECT 12`])).is<([11] | [12])[]>();
 });
 
 // @ts-expect-error

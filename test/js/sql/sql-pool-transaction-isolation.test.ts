@@ -2,15 +2,16 @@
 // The mock servers record every statement per connection, so a transaction that
 // lands on a connection somebody else still holds shows up in the recorded order.
 // They also drop the socket on demand, which a real container will not do.
-// Wire bytes come from ./wire-frames.ts.
-import { SQL } from "bun";
+// Wire bytes come from ./wire-frames.ts. The last block runs on real servers.
+import { SQL, randomUUIDv7 } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, describeWithContainer, tempDir } from "harness";
 import type net from "node:net";
 import { join } from "node:path";
 import {
   listeningServer,
   mysqlAckSessionSetup,
+  mysqlErrPacket,
   mysqlHandshakeV10,
   mysqlOkPacket,
   mysqlReadPackets,
@@ -18,6 +19,7 @@ import {
   pgAuthenticationOk,
   pgBindComplete,
   pgCommandComplete,
+  pgErrorResponse,
   pgNoData,
   pgParameterDescription,
   pgParseComplete,
@@ -25,15 +27,16 @@ import {
 } from "./wire-frames";
 
 type Received = { conn: number; sql: string };
-// `hold` can delay the answer to a statement. Answers keep the order of the statements.
-type Hold = (sql: string) => Promise<void> | void;
+// `hold` can delay the answer to a statement, and "error" makes the answer to a simple query an
+// error. Answers keep the order of the statements.
+type Hold = (sql: string) => Promise<void | "error"> | void | "error";
 type MockServer = (received: Received[], hold?: Hold) => Promise<{ port: number; server: net.Server }>;
 
 function answerInOrder(hold: Hold | undefined) {
   let chain = Promise.resolve();
-  return (sql: string, answer: () => void) => {
+  return (sql: string, answer: () => void, refuse: () => void = answer) => {
     if (!hold) return answer();
-    chain = chain.then(() => hold(sql)).then(answer);
+    chain = chain.then(() => hold(sql)).then(verdict => (verdict === "error" ? refuse() : answer()));
   };
 }
 
@@ -98,7 +101,14 @@ const pgMockServer: MockServer = (received, hold) => {
           socket.destroy();
           return;
         }
-        answer(sql, () => socket.write(Buffer.concat([pgCommandComplete("SELECT 0"), pgReadyForQuery()])));
+        answer(
+          sql,
+          () => socket.write(Buffer.concat([pgCommandComplete("SELECT 0"), pgReadyForQuery()])),
+          () =>
+            socket.write(
+              Buffer.concat([pgErrorResponse({ S: "ERROR", C: "XX000", M: `refused: ${sql}` }), pgReadyForQuery("E")]),
+            ),
+        );
       }
     });
     socket.on("error", () => {});
@@ -134,7 +144,11 @@ const mysqlMockServer: MockServer = (received, hold) => {
             socket.destroy();
             return;
           }
-          answer(sql, () => socket.write(mysqlOkPacket(1)));
+          answer(
+            sql,
+            () => socket.write(mysqlOkPacket(1)),
+            () => socket.write(mysqlErrPacket(1, 1105, "HY000", `refused: ${sql}`)),
+          );
         } else if (payload[0] === COM_STMT_PREPARE) {
           prepared = payload.subarray(1).toString("utf8");
           received.push({ conn: connId, sql: prepared });
@@ -221,13 +235,16 @@ const rejectedBeforeBegin = [
 // handle, and the state of its scope at the moment the statements are made. One letter of the
 // row is one way to make a statement, in the order of `producers`. The letter says what became
 // of the statement:
-//   S  sent ahead of the statement that ends its scope    r  rejected when it ran, nothing sent
-//   L  sent behind it, outside the scope it was made in   c  rejected where it was made (a rejected promise)
-//   i  a fragment: nothing sent and nothing rejected      -  not a call of this handle or adapter
+//   S  sent, and not behind the statement that ended its scope   r  rejected when it ran, nothing sent
+//   L  sent behind the statement that ended its scope            c  rejected where it was made (a rejected promise)
+//   i  a fragment: nothing sent and nothing rejected             -  not a call of this handle or adapter
 //   .  not made in this row
-// The last two letters are the statement that ends the scope itself when a scope around it ended
-// first (S sent ahead of that end, L sent behind it, r never sent), and the promise of the scope
-// (R resolved, E the error of its callback, C closedCode).
+// COMMIT and ROLLBACK end a transaction, ROLLBACK TO SAVEPOINT ends a savepoint, release() and
+// close() end a reservation. RELEASE SAVEPOINT ends nothing: the savepoint becomes a part of the
+// scope around it, and its handle goes on as a handle of that scope.
+// The last two letters are the statement that the runner of the scope sends when its callback
+// settles, in the rows where something around the scope happened first (S, L as above, r never
+// sent), and the promise of the scope (R resolved, E the error of its callback, C closedCode).
 type Step = "begin" | "savepoint" | "reserve" | "beginDistributed";
 const handleKinds = {
   "transaction": ["begin"],
@@ -247,13 +264,16 @@ type ScopeState =
   | "end in flight"
   // the statement that ends it is answered, or the reservation is released
   | "ended"
-  // the scope around it rolled back, or committed, while its own callback was running
+  // the scope around it rolled back while its own callback was running
   | "outer rolled back"
-  | "outer committed"
+  // the scope around it committed, or was released (a savepoint, a reservation), in that time
+  | "outer completed"
   // close({ timeout }) of the outermost handle waits for a scope below it
   | "close waits"
   // close() of the transaction sent ROLLBACK and the server has not answered
   | "close in flight"
+  // the same ROLLBACK, sent by the timer of close({ timeout })
+  | "close timed out"
   // the server dropped the connection, and the pool has a new one
   | "connection lost";
 
@@ -264,28 +284,31 @@ const statementsThatReachTheServer: [HandleKind, ScopeState, fulfils: string, re
   ["transaction", "callback settled",  "SSSSrSrrriiii.R", "SSSSrSrrriiii.E"],
   ["transaction", "end in flight",     "rrrrrrrrriiii.R", "rrrrrrrrriiii.E"],
   ["transaction", "ended",             "crrrrrrrriici.R", "crrrrrrrriici.E"],
-  ["transaction", "close waits",       "cSSSSSrSSiiciSR"],
+  ["transaction", "close waits",       "cSSSSSrSSiiciSR", "cSSSSSrSSiiciSE"],
   ["transaction", "close in flight",   "cr..rrrrriicirC", "cr..rrrrriicirE"],
+  ["transaction", "close timed out",   "cr..rrrrriicirC", "cr..rrrrriicirE"],
   ["transaction", "connection lost",   "crrrrrrrriici.C"],
 
   ["savepoint", "open",                "SSSSSSSSSiiii.R"],
-  ["savepoint", "callback settled",    "SSSSrSrrriiii.R", "SSSSrSrrriiii.E"],
-  ["savepoint", "end in flight",       "rrrrrrrrriiii.R", "rrrrrrrrriiii.E"],
-  ["savepoint", "ended",               "rrrrrrrrriiii.R", "rrrrrrrrriiii.E"],
+  ["savepoint", "callback settled",    "SSSSSSSSSiiii.R", "SSSSrSrrriiii.E"],
+  ["savepoint", "end in flight",       "SSSSSSSSSiiii.R", "rrrrrrrrriiii.E"],
+  ["savepoint", "ended",               "SSSSSSSSSiiii.R", "rrrrrrrrriiii.E"],
   ["savepoint", "outer rolled back",   "rrrrrrrrriiiirC", "rrrrrrrrriiiirE"],
-  ["savepoint", "outer committed",     "rrrrrrrrriiiirC", "rrrrrrrrriiiirE"],
-  ["savepoint", "close waits",         "cSSSSSrSSiiciSR"],
+  ["savepoint", "outer completed",     "rrrrrrrrriiiirC", "rrrrrrrrriiiirE"],
+  ["savepoint", "close waits",         "cSSSSSrSSiiciSR", "cSSSSSrSSiiciSE"],
   ["savepoint", "close in flight",     "cr..rrrrriicirC", "cr..rrrrriicirE"],
+  ["savepoint", "close timed out",     "cr..rrrrriicirC", "cr..rrrrriicirE"],
   ["savepoint", "connection lost",     "crrrrrrrriici.E"],
 
   ["nested savepoint", "open",              "SSSSSSSSSiiii.R"],
-  ["nested savepoint", "callback settled",  "SSSSrSrrriiii.R", "SSSSrSrrriiii.E"],
-  ["nested savepoint", "end in flight",     "rrrrrrrrriiii.R", "rrrrrrrrriiii.E"],
-  ["nested savepoint", "ended",             "rrrrrrrrriiii.R", "rrrrrrrrriiii.E"],
+  ["nested savepoint", "callback settled",  "SSSSSSSSSiiii.R", "SSSSrSrrriiii.E"],
+  ["nested savepoint", "end in flight",     "SSSSSSSSSiiii.R", "rrrrrrrrriiii.E"],
+  ["nested savepoint", "ended",             "SSSSSSSSSiiii.R", "rrrrrrrrriiii.E"],
   ["nested savepoint", "outer rolled back", "rrrrrrrrriiiirC", "rrrrrrrrriiiirE"],
-  ["nested savepoint", "outer committed",   "rrrrrrrrriiiirC", "rrrrrrrrriiiirE"],
-  ["nested savepoint", "close waits",       "cSSSSSrSSiiciSR"],
+  ["nested savepoint", "outer completed",   "SSSSSSSSSiiiiSR", "SSSSrSSSSiiiiSE"],
+  ["nested savepoint", "close waits",       "cSSSSSrSSiiciSR", "cSSSSSrSSiiciSE"],
   ["nested savepoint", "close in flight",   "cr..rrrrriicirC", "cr..rrrrriicirE"],
+  ["nested savepoint", "close timed out",   "cr..rrrrriicirC", "cr..rrrrriicirE"],
   ["nested savepoint", "connection lost",   "crrrrrrrriici.E"],
 
   ["reserved", "open",                 "SSSSSS-SSiiii.."],
@@ -297,8 +320,10 @@ const statementsThatReachTheServer: [HandleKind, ScopeState, fulfils: string, re
   ["transaction on reserved", "callback settled", "SSSSrSrrriiii.R", "SSSSrSrrriiii.E"],
   ["transaction on reserved", "end in flight",    "rrrrrrrrriiii.R", "rrrrrrrrriiii.E"],
   ["transaction on reserved", "ended",            "crrrrrrrriici.R", "crrrrrrrriici.E"],
-  ["transaction on reserved", "close waits",      "SSSSSSSSSiiiiSR"],
+  ["transaction on reserved", "outer completed",  "SSSSrSSSSiiiiSR", "SSSSrSSSSiiiiSE"],
+  ["transaction on reserved", "close waits",      "SSSSSSSSSiiiiSR", "SSSSSSSSSiiiiSE"],
   ["transaction on reserved", "close in flight",  "cr..rrrrriicirC", "cr..rrrrriicirE"],
+  ["transaction on reserved", "close timed out",  "cr..rrrrriicirC", "cr..rrrrriicirE"],
   ["transaction on reserved", "connection lost",  "crrrrrrrriici.C"],
 
   ["distributed transaction", "open",             "SSSSSS-SSiiii.R"],
@@ -393,6 +418,7 @@ async function statementsOf(
     // close({ timeout }) waits for a scope below the handle it is called on.
     const chain: Step[] = [...handleKinds[kind]];
     if (state === "close waits" && chain.length === 1) chain.push(chain[0] === "reserve" ? "begin" : "savepoint");
+    if (state === "close timed out" && chain.at(-1) === "begin") chain.push("savepoint");
 
     // Every callback parks on a promise that the scenario settles, so a scope can outlive the one around it.
     type Level = {
@@ -450,7 +476,7 @@ async function statementsOf(
     const ownEnd = target.end?.[callbackFulfils ? 0 : 1];
     // close() cancels a query that never ran, and a cancelled query never settles.
     const early =
-      state === "close in flight"
+      state === "close in flight" || state === "close timed out"
         ? null
         : [target.handle.unsafe("SELECT 'early unsafe'"), target.handle`SELECT 'early tagged'`];
     // A handler that does not start the query.
@@ -461,7 +487,10 @@ async function statementsOf(
     // A statement at or behind this index of the wire log is late.
     let lateFrom = Infinity;
     let ownEndLetter = ".";
-    const ownEndBehind = (from: number) => (log().indexOf(ownEnd!, from) < 0 ? "r" : "L");
+    // The statement at the end of the target's callback ends its scope, but for RELEASE SAVEPOINT.
+    const ownEndEnds = target.step !== "savepoint" || !callbackFulfils;
+    const ownEndSince = (from: number) =>
+      from === Infinity ? (log().includes(ownEnd!) ? "S" : "r") : log().indexOf(ownEnd!, from) < 0 ? "r" : "L";
 
     if (state === "open") {
       await Promise.all((cells = make()));
@@ -471,7 +500,7 @@ async function statementsOf(
       const react = () => void (cells = make());
       target.park.promise.then(react, react);
       await settle(target, callbackFulfils);
-      lateFrom = log().indexOf(ownEnd!);
+      if (ownEndEnds) lateFrom = log().indexOf(ownEnd!);
     } else if (state === "end in flight") {
       const { seen, gate } = hold(ownEnd!);
       const done = settle(target, callbackFulfils);
@@ -479,38 +508,41 @@ async function statementsOf(
       cells = make();
       gate.resolve();
       await done;
-      lateFrom = log().indexOf(ownEnd!);
+      if (ownEndEnds) lateFrom = log().indexOf(ownEnd!);
     } else if (state === "ended") {
       await settle(target, callbackFulfils);
-      lateFrom = received.length;
+      if (ownEndEnds) lateFrom = received.length;
       cells = make();
-    } else if (state === "outer rolled back" || state === "outer committed") {
-      const { seen, gate } = hold(outer.end![state === "outer committed" ? 0 : 1]);
-      const outerDone = settle(outer, state === "outer committed");
-      await seen.promise;
-      lateFrom = received.length;
+    } else if (state === "outer rolled back" || state === "outer completed") {
+      const outerFulfils = state === "outer completed";
+      // A reservation has no statement at its end: release() leaves the connection to its transaction.
+      const held = outer.end && hold(outer.end[outerFulfils ? 0 : 1]);
+      const outerDone = settle(outer, outerFulfils);
+      await held?.seen.promise;
+      if (outer.step.startsWith("begin") || (outer.step === "savepoint" && !outerFulfils)) lateFrom = received.length;
       cells = make();
       const done = settle(target, callbackFulfils);
-      gate.resolve();
+      held?.gate.resolve();
       await Promise.all([outerDone, done]);
-      ownEndLetter = ownEndBehind(lateFrom);
+      ownEndLetter = ownEndSince(lateFrom);
     } else if (state === "close waits") {
       const closing = levels[0].handle.close({ timeout: 60 });
       await Promise.all((cells = make()));
-      for (const level of levels.slice(1).reverse()) await settle(level, true);
+      for (const level of levels.slice(1).reverse()) await settle(level, level !== target || callbackFulfils);
       await closing;
-      await settle(target, true);
-      if (ownEnd) ownEndLetter = log().includes(ownEnd) ? "S" : "r";
-    } else if (state === "close in flight") {
+      await settle(target, callbackFulfils);
+      if (ownEnd) ownEndLetter = ownEndSince(Infinity);
+    } else if (state === "close in flight" || state === "close timed out") {
       const { seen, gate } = hold(transaction.end![1]);
-      const closing = transaction.handle.close();
+      // The timer of close({ timeout }) starts when there is a scope below the transaction to wait for.
+      const closing = transaction.handle.close(state === "close timed out" ? { timeout: 0.001 } : undefined);
       await seen.promise;
       lateFrom = received.length;
       cells = make();
       gate.resolve();
       await closing;
       await settle(target, callbackFulfils);
-      ownEndLetter = ownEndBehind(lateFrom);
+      ownEndLetter = ownEndSince(lateFrom);
     } else {
       state satisfies "connection lost";
       await target.handle.unsafe("SELECT 'KILL'").then(
@@ -806,6 +838,155 @@ describe.each(adapters)("$adapter", entry => {
     }
   });
 
+  // release() during a reserved.begin() must not hand the connection to the next
+  // holder while the transaction is still open: the nested COMMIT would then commit
+  // the other holder's work. The other transaction's ROLLBACK would roll back nothing.
+  test.each([
+    { outcome: "commits", endCommand: "COMMIT" },
+    { outcome: "rolls back", endCommand: "ROLLBACK" },
+  ])("reserved.release() hands the connection back after the reserved transaction $outcome", async ({ endCommand }) => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      const reserved = await sql.reserve();
+      const started = Promise.withResolvers<void>();
+      const gate = Promise.withResolvers<void>();
+      const nested = reserved
+        .begin(async tx => {
+          await tx.unsafe("SELECT 'N1'");
+          started.resolve();
+          await gate.promise;
+          await tx.unsafe("SELECT 'N2 after release'");
+          if (endCommand === "ROLLBACK") throw new Error("nested-app-error");
+          return "nested";
+        })
+        .catch(err => err.message);
+      await started.promise;
+      const released = reserved.release();
+      // max: 1, so this transaction runs only once the pool has the connection back.
+      const other = sql.begin(async tx => {
+        await tx.unsafe("SELECT 'OTHER'");
+        return "other";
+      });
+      gate.resolve();
+      expect(await nested).toBe(endCommand === "ROLLBACK" ? "nested-app-error" : "nested");
+      await released;
+      expect(await other).toBe("other");
+      expect(received).toEqual([
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'N1'" },
+        { conn: 0, sql: "SELECT 'N2 after release'" },
+        { conn: 0, sql: endCommand },
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'OTHER'" },
+        { conn: 0, sql: "COMMIT" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  test("reserved.release() closes the handle at once while the reserved transaction still runs", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      const reserved = await sql.reserve();
+      const started = Promise.withResolvers<void>();
+      const gate = Promise.withResolvers<void>();
+      const nested = reserved.begin(async tx => {
+        await tx.unsafe("SELECT 'N1'");
+        started.resolve();
+        await gate.promise;
+        return "nested";
+      });
+      await started.promise;
+      const released = reserved.release();
+      const rejected = await Promise.allSettled([reserved`SELECT 'late'`, reserved.begin(async () => {})]);
+      expect(rejected.map(r => (r.status === "rejected" ? r.reason.message : r.status))).toEqual([
+        "Connection closed",
+        "Connection closed",
+      ]);
+      gate.resolve();
+      expect(await nested).toBe("nested");
+      await released;
+      // The second release() is a no-op.
+      await reserved.release();
+      expect(received).toEqual([
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'N1'" },
+        { conn: 0, sql: "COMMIT" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // The promise release() returns must not wait for the caller's own transaction,
+  // or this callback could never return.
+  test("reserved.release() awaited inside the reserved transaction does not deadlock", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      const reserved = await sql.reserve();
+      const nested = reserved.begin(async tx => {
+        await tx.unsafe("SELECT 'N1'");
+        await reserved.release();
+        await tx.unsafe("SELECT 'N2 after release'");
+        return "nested";
+      });
+      const other = sql.begin(async tx => {
+        await tx.unsafe("SELECT 'OTHER'");
+        return "other";
+      });
+      expect(await nested).toBe("nested");
+      expect(await other).toBe("other");
+      expect(received).toEqual([
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'N1'" },
+        { conn: 0, sql: "SELECT 'N2 after release'" },
+        { conn: 0, sql: "COMMIT" },
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'OTHER'" },
+        { conn: 0, sql: "COMMIT" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // close({ timeout }) waits for the queries of the handle, and the wait starts a query that
+  // never ran. The error of a query belongs to whoever awaits the query: bun:test fails this
+  // test if the wait reports it as an unhandled rejection as well.
+  test("reserved.close({ timeout }) does not report the query that release() refused", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      const reserved = await sql.reserve();
+      const lazy = reserved.unsafe("SELECT 'never awaited'");
+      const closed = reserved.close({ timeout: 60 });
+      reserved.release();
+      await closed;
+      expect(
+        await lazy.then(
+          () => "resolved",
+          err => err.code,
+        ),
+      ).toBe(closedCode);
+      await sql.unsafe("SELECT 'pool'");
+      expect(received.map(entry => entry.sql)).toEqual(["SELECT 'pool'"]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
   // A statement that runs while COMMIT or ROLLBACK is in flight would be written behind it on
   // the same connection, and the server would run it outside the transaction.
   test.each(["COMMIT", "ROLLBACK"])(
@@ -858,6 +1039,7 @@ describe.each(adapters)("$adapter", entry => {
 
   // tx.close() rolls the transaction back. Behind COMMIT or ROLLBACK of the runner there is
   // nothing left to roll back, and a ROLLBACK of its own would follow the end of the transaction.
+  // close() then waits for the answer of the server, like begin() does.
   test.each(["COMMIT", "ROLLBACK"])("tx.close() while %s is in flight sends no ROLLBACK of its own", async end => {
     const received: Received[] = [];
     const endReceived = Promise.withResolvers<void>();
@@ -868,6 +1050,7 @@ describe.each(adapters)("$adapter", entry => {
       return endAnswer.promise;
     });
     const sql = new SQL(options(port));
+    const other = new SQL(options(port));
     try {
       let handle!: Bun.TransactionSQL;
       const begun = sql
@@ -882,12 +1065,23 @@ describe.each(adapters)("$adapter", entry => {
           err => err.message,
         );
       await endReceived.promise;
-      const closed = handle.close();
+      let closeSettled = false;
+      const closed = handle.close().then(() => void (closeSettled = true));
+      // A round trip on another connection gives close() the time to settle, and it must not:
+      // the server has not answered.
+      await other.unsafe("SELECT 'ping'");
+      expect(closeSettled).toBe(false);
       endAnswer.resolve();
       expect(await begun).toBe(end === "ROLLBACK" ? "t1-app-error" : "t1");
       await closed;
-      expect(received.map(entry => entry.sql)).toEqual([beginCommand, "SELECT 'T1a'", end]);
+      expect(received).toEqual([
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'T1a'" },
+        { conn: 0, sql: end },
+        { conn: 1, sql: "SELECT 'ping'" },
+      ]);
     } finally {
+      await other.close({ timeout: 0 }).catch(() => {});
       await sql.close({ timeout: 0 }).catch(() => {});
       await new Promise<void>(r => server.close(() => r()));
     }
@@ -1163,6 +1357,260 @@ describe.each(adapters)("$adapter", entry => {
     }
   });
 
+  // The server can refuse the statement at the end of a savepoint. The runner rolls the savepoint
+  // back when RELEASE SAVEPOINT fails, and a ROLLBACK TO SAVEPOINT that fails is the error of the
+  // savepoint. The handle ends when the connection gets ROLLBACK TO SAVEPOINT, whatever the answer.
+  test.each([
+    { refused: "RELEASE SAVEPOINT s0", callbackFails: false },
+    { refused: "ROLLBACK TO SAVEPOINT s0", callbackFails: true },
+  ])("a savepoint rejects with the error of the server when the server refuses $refused", async scenario => {
+    const { refused, callbackFails } = scenario;
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received, sql => (sql === refused ? "error" : undefined));
+    const sql = new SQL(options(port));
+    try {
+      const outcome = await sql.begin(async tx => {
+        let sp!: Bun.SavepointSQL;
+        const savepoint = await tx
+          .savepoint(async handle => {
+            sp = handle;
+            await handle.unsafe("SELECT 'in savepoint'");
+            if (callbackFails) throw new Error("savepoint failed");
+          })
+          .then(
+            () => "resolved",
+            err => err.message,
+          );
+        const late = await sp.unsafe("SELECT 'late'").then(
+          () => "resolved",
+          err => err.code,
+        );
+        await tx.unsafe("SELECT 'after'");
+        return { savepoint, late };
+      });
+      expect(outcome).toEqual({ savepoint: `refused: ${refused}`, late: closedCode });
+      expect(received.map(entry => entry.sql)).toEqual([
+        beginCommand,
+        "SAVEPOINT s0",
+        "SELECT 'in savepoint'",
+        ...(callbackFails ? [] : ["RELEASE SAVEPOINT s0"]),
+        "ROLLBACK TO SAVEPOINT s0",
+        "SELECT 'after'",
+        "COMMIT",
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // A savepoint that runs beside the rest of the callback can fail in the same moment as its
+  // transaction ends. Its ROLLBACK TO SAVEPOINT is sent ahead of COMMIT or ROLLBACK, or not at
+  // all, and the error of the savepoint is the error of its callback in both cases.
+  test("a savepoint that fails while its transaction ends keeps the error of its callback", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      const errors: string[] = [];
+      for (const end of ["COMMIT", "ROLLBACK"]) {
+        // The callback of the savepoint rejects this many microtasks after the one of the transaction settled.
+        for (let turns = 0; turns < 8; turns++) {
+          let savepoint!: Promise<string>;
+          await sql
+            .begin(async tx => {
+              const entered = Promise.withResolvers<void>();
+              const leave = Promise.withResolvers<void>();
+              savepoint = tx
+                .savepoint(async () => {
+                  entered.resolve();
+                  await leave.promise;
+                  for (let i = 0; i < turns; i++) await null;
+                  throw new Error("savepoint failed");
+                })
+                .then(
+                  () => "resolved",
+                  err => err.code ?? err.message,
+                );
+              await entered.promise;
+              leave.resolve();
+              if (end === "ROLLBACK") throw new Error("transaction failed");
+            })
+            .catch(() => {});
+          errors.push(await savepoint);
+        }
+      }
+      expect(errors).toEqual(Array(16).fill("savepoint failed"));
+      const log = received.map(entry => entry.sql);
+      const behindTheEnd = log.filter(
+        (statement, i) => statement.startsWith("ROLLBACK TO") && ["COMMIT", "ROLLBACK"].includes(log[i - 1]),
+      );
+      expect(behindTheEnd).toEqual([]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // tx.close({ timeout }) rolls the transaction back at once when no query of it is pending, and
+  // a statement that was refused is not pending.
+  test("a refused statement does not keep tx.close({ timeout }) from rolling back", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      let late!: string;
+      await sql
+        .begin(async tx => {
+          let sp!: Bun.SavepointSQL;
+          await tx
+            .savepoint(async handle => {
+              sp = handle;
+              throw new Error("savepoint failed");
+            })
+            .catch(() => {});
+          late = await sp.unsafe("SELECT 'late'").then(
+            () => "resolved",
+            err => err.code,
+          );
+          await tx.close({ timeout: 60 });
+        })
+        .catch(() => {});
+      expect(late).toBe(closedCode);
+      expect(received.map(entry => entry.sql)).toEqual([
+        beginCommand,
+        "SAVEPOINT s0",
+        "ROLLBACK TO SAVEPOINT s0",
+        "ROLLBACK",
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // tx.close({ timeout }) waits for the queries of the transaction, and the wait starts a query
+  // that never ran. bun:test fails this test if the wait reports the refusal of that query as an
+  // unhandled rejection.
+  test("tx.close({ timeout }) does not report the query that a rolled-back savepoint refused", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      let lazy!: Bun.SQL.Query<unknown>;
+      await sql.begin(async tx => {
+        await tx
+          .savepoint(async sp => {
+            lazy = sp.unsafe("SELECT 'never awaited'");
+            throw new Error("savepoint failed");
+          })
+          .catch(() => {});
+        await tx.close({ timeout: 60 });
+      });
+      expect(
+        await lazy.then(
+          () => "resolved",
+          err => err.code,
+        ),
+      ).toBe(closedCode);
+      expect(received.map(entry => entry.sql)).not.toContain("SELECT 'never awaited'");
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // The timer of tx.close({ timeout }) rolls the transaction back when a query is still pending.
+  // Here the callback returned in that time, so COMMIT is on its way and there is nothing to roll back.
+  test("the timer of tx.close({ timeout }) sends no ROLLBACK behind COMMIT", async () => {
+    const received: Received[] = [];
+    const answer = Promise.withResolvers<void>();
+    const { port, server } = await mockServer(received, sql => {
+      if (sql === "SELECT 'pending'") return answer.promise;
+    });
+    const sql = new SQL(options(port));
+    try {
+      let closed!: Promise<void>;
+      const begun = sql.begin(async tx => {
+        tx.unsafe("SELECT 'pending'").execute();
+        closed = tx.close({ timeout: 0.001 });
+      });
+      // The timer ran: close() resolves while the server holds the answers.
+      await closed;
+      answer.resolve();
+      await begun;
+      expect(received.map(entry => entry.sql)).toEqual([beginCommand, "SELECT 'pending'", "COMMIT"]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // `await using` releases the reservation when the block is left. A query is lazy: one that the
+  // block returns without an await runs after that, on a connection that is back in the pool.
+  test("a query that leaves an `await using` block of a reservation without an await is rejected", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      const run = async () => {
+        await using reserved = await sql.reserve();
+        await reserved.unsafe("SELECT 'awaited'");
+        return reserved.unsafe("SELECT 'returned'");
+      };
+      expect(
+        await run().then(
+          () => "resolved",
+          err => err.code,
+        ),
+      ).toBe(closedCode);
+      await sql.unsafe("SELECT 'pool'");
+      expect(received.map(entry => entry.sql)).toEqual(["SELECT 'awaited'", "SELECT 'pool'"]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // Runs in a child process: bun:test would turn the unhandled rejection into a test failure, and
+  // the contract is that the statement is not dropped in silence.
+  test("a statement of an ended transaction that nothing awaits is reported as an unhandled rejection", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const reported = [];
+            process.on("unhandledRejection", err => reported.push(err.code));
+            const sql = new Bun.SQL(${JSON.stringify(options(port))});
+            let ended;
+            await sql.begin(async tx => {
+              ended = tx;
+              await tx.unsafe("SELECT 'T1a'");
+            });
+            ended.unsafe("SELECT 'late'").execute();
+            await sql.unsafe("SELECT 'pool'");
+            await sql.close();
+            console.log(JSON.stringify({ reported }));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ reported: [closedCode] });
+      expect(exitCode).toBe(0);
+      expect(received.map(entry => entry.sql)).toEqual([beginCommand, "SELECT 'T1a'", "COMMIT", "SELECT 'pool'"]);
+    } finally {
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
   // Every way to make a statement on a handle, in every state of the scope of the handle.
   // The legend is at `statementsThatReachTheServer`.
   test.each(statementsThatReachTheServer.map(([kind, state, fulfils, rejects]) => ({ kind, state, fulfils, rejects })))(
@@ -1231,3 +1679,127 @@ describe.each(adapters)("$adapter", entry => {
     }
   });
 });
+
+// The same on real servers, where the statement order decides which rows stay. The client has
+// one connection, so the transaction that comes next runs on the connection of the one that ended.
+const servers = [
+  {
+    label: "postgres server",
+    image: "postgres_plain",
+    url: (host: string, port: number) => `postgres://bun_sql_test@${host}:${port}/bun_sql_test`,
+    closedCode: "ERR_POSTGRES_CONNECTION_CLOSED",
+  },
+  {
+    label: "mysql server",
+    image: "mysql_plain",
+    url: (host: string, port: number) => `mysql://root@${host}:${port}/bun_sql_test`,
+    closedCode: "ERR_MYSQL_CONNECTION_CLOSED",
+  },
+];
+for (const { label, image, url, closedCode } of servers) {
+  describeWithContainer(label, { image }, container => {
+    const connect = async () => {
+      await container.ready;
+      return new SQL({ url: url(container.host, container.port), max: 1 });
+    };
+    // A temporary table lives on the one connection of the client.
+    const emptyTable = async (sql: SQL) => {
+      const table = `t_${randomUUIDv7("hex").slice(-12)}`;
+      await sql.unsafe(`CREATE TEMPORARY TABLE ${table} (a int)`);
+      return table;
+    };
+    const rowsOf = async (sql: SQL, table: string) =>
+      (await sql.unsafe(`SELECT a FROM ${table} ORDER BY a`)).map((row: { a: number }) => row.a);
+    const outcome = (work: PromiseLike<unknown>) =>
+      work.then(
+        () => "resolved",
+        err => err.code ?? err.message,
+      );
+    // Three awaited inserts. An invalid item fails behind its first insert.
+    const insertThree = async (handle: Bun.SQL, table: string, item: number, invalid: boolean) => {
+      await handle`INSERT INTO ${handle(table)} VALUES (${item * 10 + 1})`;
+      if (invalid) throw new Error(`item ${item} is invalid`);
+      await handle`INSERT INTO ${handle(table)} VALUES (${item * 10 + 2})`;
+      await handle`INSERT INTO ${handle(table)} VALUES (${item * 10 + 3})`;
+    };
+
+    test("a rejected transaction keeps no row of the tasks that go on after one failed", async () => {
+      await using sql = await connect();
+      const table = await emptyTable(sql);
+      const tasks: Promise<void>[] = [];
+      const begun = sql.begin(tx =>
+        Promise.all(
+          [3, 4, 5].map(item => {
+            tasks.push(insertThree(tx, table, item, item === 3));
+            return tasks.at(-1);
+          }),
+        ),
+      );
+      expect({
+        transaction: await outcome(begun),
+        tasks: await Promise.all(tasks.map(outcome)),
+        rows: await rowsOf(sql, table),
+      }).toEqual({
+        transaction: "item 3 is invalid",
+        tasks: ["item 3 is invalid", closedCode, closedCode],
+        rows: [],
+      });
+    });
+
+    test("a rolled-back savepoint keeps no row of the tasks that go on after one failed", async () => {
+      await using sql = await connect();
+      const table = await emptyTable(sql);
+      const tasks: Promise<void>[] = [];
+      const outcomes = await sql.begin(async tx => {
+        await tx`INSERT INTO ${tx(table)} VALUES (1)`;
+        const savepoint = tx.savepoint(sp =>
+          Promise.all(
+            [3, 4, 5].map(item => {
+              tasks.push(insertThree(sp, table, item, item === 3));
+              return tasks.at(-1);
+            }),
+          ),
+        );
+        const outcomes = { savepoint: await outcome(savepoint), tasks: await Promise.all(tasks.map(outcome)) };
+        await tx`INSERT INTO ${tx(table)} VALUES (2)`;
+        return outcomes;
+      });
+      expect({ ...outcomes, rows: await rowsOf(sql, table) }).toEqual({
+        savepoint: "item 3 is invalid",
+        tasks: ["item 3 is invalid", closedCode, closedCode],
+        rows: [1, 2],
+      });
+    });
+
+    // A timeout wrapper rejects the transaction and does not stop the job. The job goes on with
+    // the handle of the transaction that rolled back, while the next transaction has the connection.
+    test("a job that outlives its transaction writes nothing inside the next transaction", async () => {
+      await using sql = await connect();
+      const table = await emptyTable(sql);
+      const timeout = Promise.withResolvers<never>();
+      const nextHasTheConnection = Promise.withResolvers<void>();
+      let job!: Promise<void>;
+      const timedOut = sql.begin(tx => {
+        job = (async () => {
+          await tx.unsafe(`INSERT INTO ${table} VALUES (1)`);
+          timeout.reject(new Error("timed out"));
+          await nextHasTheConnection.promise;
+          await tx.unsafe(`INSERT INTO ${table} VALUES (2)`);
+        })();
+        return Promise.race([job, timeout.promise]);
+      });
+      const next = sql.begin(async tx => {
+        await tx.unsafe(`INSERT INTO ${table} VALUES (10)`);
+        nextHasTheConnection.resolve();
+        const late = await outcome(job);
+        await tx.unsafe(`INSERT INTO ${table} VALUES (11)`);
+        return late;
+      });
+      expect({
+        transaction: await outcome(timedOut),
+        job: await next,
+        rows: await rowsOf(sql, table),
+      }).toEqual({ transaction: "timed out", job: closedCode, rows: [10, 11] });
+    });
+  });
+}

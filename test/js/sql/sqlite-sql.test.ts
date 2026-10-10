@@ -1228,8 +1228,8 @@ describe("Transactions", () => {
     expect(accounts[1].balance).toBe(600);
   });
 
-  // A statement that runs behind ROLLBACK, ROLLBACK TO SAVEPOINT or RELEASE SAVEPOINT is outside
-  // the scope it was made in: SQLite runs it in autocommit mode, or as part of the outer transaction.
+  // A statement that runs behind COMMIT, ROLLBACK or ROLLBACK TO SAVEPOINT is outside the scope it
+  // was made in: SQLite runs it in autocommit mode, or as part of the outer transaction.
   describe("a statement behind the end of its scope", () => {
     const ids = async () => (await sql`SELECT id FROM accounts ORDER BY id`).map(row => row.id);
     const outcome = (statement: PromiseLike<unknown>) =>
@@ -1304,27 +1304,47 @@ describe("Transactions", () => {
       expect(await ids()).toEqual([1, 2]);
     });
 
-    test("a statement of an ended transaction or savepoint does not run", async () => {
-      using dir = tempDir("sqlite-sql-ended-scope", { "insert.sql": "INSERT INTO accounts VALUES (6, 0)" });
+    test("a statement of an ended transaction or of a rolled-back savepoint does not run", async () => {
+      using dir = tempDir("sqlite-sql-ended-scope", { "insert.sql": "INSERT INTO accounts VALUES (7, 0)" });
       let ended!: Bun.TransactionSQL;
       let early!: PromiseLike<unknown>;
-      let released!: Bun.SavepointSQL;
       await sql.begin(async tx => {
+        let released!: Bun.SavepointSQL;
+        let rolledBack!: Bun.SavepointSQL;
         await tx.savepoint(async sp => {
           released = sp;
         });
-        // The savepoint is released and the transaction is open.
-        expect(await outcome(released`INSERT INTO accounts VALUES (3, 0)`)).toBe("ERR_SQLITE_CONNECTION_CLOSED");
+        await outcome(
+          tx.savepoint(async sp => {
+            rolledBack = sp;
+            throw new Error("savepoint failed");
+          }),
+        );
+        // A savepoint that completed is a part of the transaction, and so is its client.
+        expect(await outcome(released`INSERT INTO accounts VALUES (3, 0)`)).toBe("resolved");
+        expect(await outcome(rolledBack`INSERT INTO accounts VALUES (4, 0)`)).toBe("ERR_SQLITE_CONNECTION_CLOSED");
         ended = tx;
         // A query is lazy. This one is made inside the transaction and first awaited after it.
-        early = tx`INSERT INTO accounts VALUES (4, 0)`;
+        early = tx`INSERT INTO accounts VALUES (5, 0)`;
       });
       expect([
         await outcome(early),
-        await outcome(ended.unsafe("INSERT INTO accounts VALUES (5, 0)")),
+        await outcome(ended.unsafe("INSERT INTO accounts VALUES (6, 0)")),
         await outcome(ended.file(join(String(dir), "insert.sql"))),
       ]).toEqual(["ERR_SQLITE_CONNECTION_CLOSED", "ERR_SQLITE_CONNECTION_CLOSED", "ERR_SQLITE_CONNECTION_CLOSED"]);
-      expect(await ids()).toEqual([1, 2]);
+      expect(await ids()).toEqual([1, 2, 3]);
+    });
+
+    // The client of a savepoint is built member by member from the client of its transaction.
+    // A member that only one of the two has is a member that was added to one builder alone.
+    test("the client of a savepoint has the members of the client of its transaction", async () => {
+      await sql.begin(async tx => {
+        await tx.savepoint(async sp => {
+          expect(sp).not.toBe(tx);
+          expect(Reflect.ownKeys(sp)).toEqual(Reflect.ownKeys(tx));
+          expect(Object.getPrototypeOf(sp)).toBe(Object.getPrototypeOf(tx));
+        });
+      });
     });
 
     test("the queries of an array that a savepoint callback returns run inside the savepoint", async () => {

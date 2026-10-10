@@ -12,9 +12,16 @@ declare module "bun" {
    */
   interface ReservedSQL extends SQL, Disposable {
     /**
-     * Releases the client back to the connection pool
+     * Releases the client back to the connection pool.
+     *
+     * The client closes at once: new queries and `begin()` calls reject. If a
+     * transaction started with `begin()` or `beginDistributed()` on this
+     * client is still running, that transaction keeps the connection until it
+     * commits or rolls back. The pool gets the connection back after that. The
+     * returned promise resolves at once, so `release()` can be awaited from
+     * inside such a transaction.
      */
-    release(): void;
+    release(): Promise<void>;
   }
 
   type ArrayType =
@@ -84,10 +91,10 @@ declare module "bun" {
    * {@link SQL.transaction}). Extends {@link SQL} with savepoints.
    *
    * The client belongs to its transaction. A query of it that runs after
-   * `COMMIT` or `ROLLBACK` was sent rejects with
-   * `ERR_POSTGRES_CONNECTION_CLOSED` (or the `MYSQL` / `SQLITE` code), also
-   * when the query was created inside the callback. Await every query
-   * before the callback returns.
+   * `COMMIT` or `ROLLBACK` was sent never reaches the database: it rejects
+   * with `ERR_POSTGRES_CONNECTION_CLOSED` (or the `MYSQL` / `SQLITE` code),
+   * also when the query was created inside the callback. Await every query
+   * inside the callback, or return the queries in an array.
    */
   interface TransactionSQL extends SQL {
     /**
@@ -1072,13 +1079,16 @@ declare module "bun" {
 
   /**
    * The client passed to {@link TransactionSQL.savepoint} callbacks. It is a
-   * client of its own, not the client of the transaction: its queries belong
-   * to that savepoint.
+   * client of its own, not the client of the transaction.
    *
-   * A query of it that runs after the savepoint was released or rolled back
-   * rejects with `ERR_POSTGRES_CONNECTION_CLOSED` (or the `MYSQL` / `SQLITE`
-   * code), also when the query was created inside the callback. Use the
-   * client of the transaction for queries after the savepoint.
+   * When the savepoint rolls back, a query of this client that runs after
+   * `ROLLBACK TO SAVEPOINT` was sent never reaches the database: it rejects
+   * with `ERR_POSTGRES_CONNECTION_CLOSED` (or the `MYSQL` / `SQLITE` code),
+   * also when the query was created inside the callback. After a savepoint
+   * that completed, the client works like the client of the transaction.
+   *
+   * Run one savepoint of a client at a time: the database nests savepoints in
+   * the order it receives them.
    */
-  interface SavepointSQL extends TransactionSQL {}
+  interface SavepointSQL extends SQL {}
 }

@@ -596,6 +596,11 @@ impl WebWorker {
         self.execution_context_id
     }
 
+    /// The `worker.threadId` node exposes (context ids start at 1 on the main thread).
+    pub(crate) fn thread_id(&self) -> u32 {
+        self.execution_context_id.saturating_sub(1)
+    }
+
     /// The C++ `WorkerMessagingProxy`, handed to `Zig__GlobalObject__create` so
     /// the worker's global is born knowing its options (env, argv, workerData).
     #[inline]

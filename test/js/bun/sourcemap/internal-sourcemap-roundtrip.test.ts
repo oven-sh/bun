@@ -293,6 +293,107 @@ describe("InternalSourceMap.toVLQ", () => {
   });
 });
 
+describe("InternalSourceMap with a damaged body", () => {
+  // A blob read back from disk (a transpiler cache entry, a --compile section)
+  // is only checked against its outer header: total_len, sync_count,
+  // stream_offset. The SyncEntry array and the window stream behind it are read
+  // as they are when a position is looked up, so find() and toVLQ() have to
+  // bounds-check every offset and length they take from those bytes.
+  //
+  // 72 mappings, 8 per line: window 0 holds 64 of them, window 1 the rest. The
+  // 3-line gap and the second source give window 0 both optional sections
+  // (gen-line exceptions, src-idx). Window 1 has neither.
+  function buildTwoWindowVLQ(): string {
+    let out = "";
+    let prev = { col: 0, src: 0, origLine: 0, origCol: 0 };
+    for (let line = 0; line < 9; line++) {
+      for (let k = 0; k < 8; k++) {
+        const cur = { col: k * 5, src: line < 4 ? 0 : 1, origLine: line * 2, origCol: k * 7 + (k & 1) };
+        if (k > 0) out += ",";
+        out +=
+          encodeVLQ(cur.col - prev.col) +
+          encodeVLQ(cur.src - prev.src) +
+          encodeVLQ(cur.origLine - prev.origLine) +
+          encodeVLQ(cur.origCol - prev.origCol);
+        prev = cur;
+      }
+      out += line === 2 ? ";;;" : ";";
+      prev.col = 0;
+    }
+    return out;
+  }
+
+  // Run in a child process so a crash is recorded as a failure here instead of
+  // taking down the test runner.
+  test.concurrent("find() and toVLQ() stay inside the blob", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { internalSourceMap } = require("bun:internal-for-testing");
+         const pristine = internalSourceMap.fromVLQ(process.env.VLQ);
+         const total = pristine.length;
+         const header = new DataView(pristine.buffer);
+         const streamOffset = header.getUint32(28, true);
+         console.log("windows " + header.getUint32(24, true));
+         // A column past every mapping walks the reader to the end of the line.
+         function probe(blob) {
+           let found = 0;
+           for (let line = 0; line < 12; line++) {
+             if (internalSourceMap.find(blob, line, 0x7fffffff) !== null) found++;
+           }
+           return found;
+         }
+         console.log("pristine " + probe(pristine));
+
+         // Whole-section damage. No window fits any more, so every lookup
+         // answers "no mapping". toVLQ() stops at the first window it cannot
+         // read: before it for the first three, after its seed for the last.
+         const fills = {
+           stream_offset_last: b => new DataView(b.buffer).setUint32(28, total - 1, true),
+           sync_ff: b => b.fill(0xff, 32, streamOffset),
+           stream_ff: b => b.fill(0xff, streamOffset),
+           stream_80: b => b.fill(0x80, streamOffset),
+         };
+         for (const [name, damage] of Object.entries(fills)) {
+           const blob = pristine.slice();
+           damage(blob);
+           console.log(name + " " + probe(blob) + " " + JSON.stringify(internalSourceMap.toVLQ(blob)));
+         }
+
+         // Single-byte damage at every body offset. What a lookup returns is
+         // unspecified (the byte can still decode). It has to return.
+         let blobs = 0;
+         for (let at = 32; at < total; at++) {
+           for (const value of [0x00, 0x80, 0xff]) {
+             if (pristine[at] === value) continue;
+             const blob = pristine.slice();
+             blob[at] = value;
+             probe(blob);
+             blobs++;
+           }
+         }
+         console.log("swept " + (blobs > 500));`,
+      ],
+      env: { ...bunEnv, VLQ: buildTwoWindowVLQ() },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.split("\n")).toEqual([
+      "windows 2",
+      "pristine 9",
+      'stream_offset_last 0 ""',
+      'sync_ff 0 ""',
+      'stream_ff 0 ""',
+      'stream_80 0 "AAAA"',
+      "swept true",
+      "",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("InternalSourceMap round-trip", () => {
   test("large blank-line run and many mappings re-encode byte-identically", () => {
     // append_vlq_to() reserves mapping_count * 6 bytes upfront and writes

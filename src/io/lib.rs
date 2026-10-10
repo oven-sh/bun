@@ -1476,14 +1476,7 @@ pub enum Flags {
     /// Poll for writable events
     PollWritable,
 
-    /// Poll for process-related events
-    PollProcess,
-
-    // What did the event loop tell us?
-    Process,
-
     OneShot,
-    NeedsRearm,
 
     WasEverRegistered,
 
@@ -1712,7 +1705,7 @@ impl Poll {
         };
 
         let flags: u32 = match flag {
-            Flags::Process | Flags::PollReadable => {
+            Flags::PollReadable => {
                 linux::EPOLL_IN | linux::EPOLL_HUP | linux::EPOLL_ERR | one_shot_flag
             }
             Flags::PollWritable => {
@@ -1726,9 +1719,7 @@ impl Poll {
             u64: Pollable::init(tag, std::ptr::from_mut::<Poll>(self)).ptr(),
         };
 
-        let op: i32 = if self.flags.contains(Flags::WasEverRegistered)
-            || self.flags.contains(Flags::NeedsRearm)
-        {
+        let op: i32 = if self.flags.contains(Flags::WasEverRegistered) {
             linux::EPOLL_CTL_MOD
         } else {
             linux::EPOLL_CTL_ADD
@@ -1754,19 +1745,7 @@ impl Poll {
         self.flags.insert(Flags::Registered);
         self.flags.insert(Flags::WasEverRegistered);
 
-        self.flags.insert(match flag {
-            Flags::PollReadable => Flags::PollReadable,
-            Flags::PollProcess => {
-                if cfg!(any(target_os = "linux", target_os = "android")) {
-                    Flags::PollReadable
-                } else {
-                    Flags::PollProcess
-                }
-            }
-            Flags::PollWritable => Flags::PollWritable,
-            _ => unreachable!(),
-        });
-        self.flags.remove(Flags::NeedsRearm);
+        self.flags.insert(flag);
 
         Ok(())
     }

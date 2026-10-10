@@ -533,39 +533,22 @@ impl<'a> Parser<'a> {
                         expr.as_bool().expect("infallible: type checked");
                 }
 
-                let mut randomize_from_config: Option<bool> = None;
-
                 if let Some(expr) = test.get(b"randomize") {
                     self.expect(&expr, ExprTag::EBoolean)?;
-                    randomize_from_config = expr.as_bool();
                     self.ctx.test_options.randomize =
                         expr.as_bool().expect("infallible: type checked");
                 }
 
+                // `parse_test_command_options` checks `seed` against `randomize` after the flags apply.
                 if let Some(expr) = test.get(b"seed") {
                     self.expect(&expr, ExprTag::ENumber)?;
-                    let seed_value =
-                        num_to_u32(expr.as_number().expect("infallible: type checked"));
-
-                    // Validate that randomize is true when seed is specified
-                    let has_randomize_true =
-                        randomize_from_config.unwrap_or(self.ctx.test_options.randomize);
-                    if !has_randomize_true {
-                        self.add_error(
-                            expr.loc,
-                            b"\"seed\" can only be used when \"randomize\" is true",
-                        )?;
-                    }
-
-                    self.ctx.test_options.seed = Some(seed_value);
+                    self.ctx.test_options.seed = Some(num_to_u32(
+                        expr.as_number().expect("infallible: type checked"),
+                    ));
                 }
 
                 if let Some(expr) = test.get(b"rerunEach") {
                     self.expect(&expr, ExprTag::ENumber)?;
-                    if self.ctx.test_options.retry != 0 {
-                        self.add_error(expr.loc, b"\"rerunEach\" cannot be used with \"retry\"")?;
-                        return Ok(());
-                    }
                     self.ctx.test_options.repeat_count =
                         num_to_u32(expr.as_number().expect("infallible: type checked"));
                 }
@@ -670,10 +653,6 @@ impl<'a> Parser<'a> {
 
                 if let Some(expr) = test.get(b"pathIgnorePatterns") {
                     'brk: {
-                        // Only skip if --path-ignore-patterns was explicitly passed via CLI
-                        if self.ctx.test_options.path_ignore_patterns_from_cli {
-                            break 'brk;
-                        }
                         match &expr.data {
                             ExprData::EString(s) => {
                                 self.ctx.test_options.path_ignore_patterns =
@@ -706,6 +685,61 @@ impl<'a> Parser<'a> {
                             }
                         }
                     }
+                }
+
+                if let Some(expr) = test.get(b"filePatterns") {
+                    match &expr.data {
+                        ExprData::EString(s) => {
+                            if s.len() == 0 {
+                                self.add_error(
+                                    expr.loc,
+                                    b"filePatterns cannot be an empty string",
+                                )?;
+                                return Ok(());
+                            }
+                            self.ctx.test_options.file_patterns =
+                                vec![estring_to_owned(s, self.bump)];
+                        }
+                        ExprData::EArray(arr) => {
+                            let items = arr.items.slice();
+                            if items.is_empty() {
+                                self.add_error(expr.loc, b"filePatterns array cannot be empty")?;
+                                return Ok(());
+                            }
+                            let mut patterns: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
+                            for item in items {
+                                let ExprData::EString(s) = &item.data else {
+                                    self.add_error(
+                                        item.loc,
+                                        b"filePatterns array must contain only strings",
+                                    )?;
+                                    return Ok(());
+                                };
+                                if s.len() == 0 {
+                                    self.add_error(
+                                        item.loc,
+                                        b"filePatterns patterns cannot be empty strings",
+                                    )?;
+                                    return Ok(());
+                                }
+                                patterns.push(estring_to_owned(s, self.bump));
+                            }
+                            self.ctx.test_options.file_patterns = patterns;
+                        }
+                        _ => {
+                            self.add_error(
+                                expr.loc,
+                                b"filePatterns must be a string or array of strings",
+                            )?;
+                            return Ok(());
+                        }
+                    }
+                }
+
+                if let Some(expr) = test.get(b"isolate") {
+                    self.expect(&expr, ExprTag::EBoolean)?;
+                    self.ctx.test_options.isolate =
+                        expr.as_bool().expect("infallible: type checked");
                 }
             }
         }

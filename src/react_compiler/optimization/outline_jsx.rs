@@ -56,6 +56,10 @@ fn outline_jsx_impl(
     env: &mut Environment,
     outlined_fns: &mut Vec<HirFunction>,
 ) {
+    if !env.has_stack() {
+        return;
+    }
+
     // Collect LoadGlobal instructions (tag -> instr)
     let mut globals: HashMap<IdentifierId, usize> = HashMap::new(); // id -> instr_idx
 

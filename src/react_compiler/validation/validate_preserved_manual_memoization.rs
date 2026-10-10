@@ -77,6 +77,10 @@ fn is_named(ident: &Identifier) -> bool {
 }
 
 fn visit_block(block: &ReactiveBlock, state: &mut VisitorState) {
+    if !state.env.has_stack() {
+        return;
+    }
+
     for stmt in block {
         visit_statement(stmt, state);
     }

@@ -175,6 +175,18 @@ impl RefAccessType {
 struct Joins {
     /// `EnvironmentConfig::joined_ref_values_keep_their_place`
     keeps_place: bool,
+    stack: bun_core::StackCheck,
+    is_out_of_stack: std::cell::Cell<bool>,
+}
+
+impl Joins {
+    /// As `Environment::has_stack`, which `validate_no_ref_access_in_render` tells in the end.
+    fn has_stack(&self) -> bool {
+        if !self.stack.is_safe_to_recurse() {
+            self.is_out_of_stack.set(true);
+        }
+        !self.is_out_of_stack.get()
+    }
 }
 
 fn join_ref_access_ref_types(
@@ -182,6 +194,9 @@ fn join_ref_access_ref_types(
     b: &RefAccessRefType,
     joins: &Joins,
 ) -> RefAccessRefType {
+    if !joins.has_stack() {
+        return a.clone();
+    }
     let keeps_place = joins.keeps_place;
     match (a, b) {
         (
@@ -304,7 +319,11 @@ struct Env {
 impl Env {
     fn new(keeps_place: bool, looks_into_functions: bool) -> Self {
         Self {
-            joins: Joins { keeps_place },
+            joins: Joins {
+                keeps_place,
+                stack: bun_core::StackCheck::init(),
+                is_out_of_stack: std::cell::Cell::new(false),
+            },
             looks_into_functions,
             changed: false,
             data: IdMap::default(),
@@ -381,12 +400,14 @@ fn is_ref_value_type(id: IdentifierId, identifiers: &[Identifier], types: &[Type
 }
 
 fn destructure(ty: &RefAccessType) -> RefAccessType {
-    match ty {
-        RefAccessType::Structure {
-            value: Some(inner), ..
-        } => destructure(&RefAccessType::from_ref_type(inner)),
-        other => other.clone(),
+    let mut ty = ty.clone();
+    while let RefAccessType::Structure {
+        value: Some(inner), ..
+    } = &ty
+    {
+        ty = RefAccessType::from_ref_type(inner);
     }
+    ty
 }
 
 // --- Validation helpers ---
@@ -551,6 +572,9 @@ pub(crate) fn validate_no_ref_access_in_render(func: &HirFunction, env: &mut Env
         &mut ref_env,
         &mut errors,
     );
+    if !ref_env.joins.has_stack() {
+        env.ran_out_of_stack();
+    }
     for diagnostic in errors {
         env.record_diagnostic(diagnostic);
     }
@@ -563,6 +587,9 @@ fn collect_temporaries_sidemap(
     types: &[Type],
     functions: &[HirFunction],
 ) {
+    if !env.joins.has_stack() {
+        return;
+    }
     for (_, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
@@ -621,6 +648,10 @@ fn validate_no_ref_access_in_render_impl(
     ref_env: &mut Env,
     errors: &mut Vec<CompilerDiagnostic>,
 ) -> RefAccessType {
+    if !env.has_stack() {
+        return RefAccessType::None;
+    }
+
     let mut return_values: Vec<RefAccessType> = Vec::new();
 
     // Process params

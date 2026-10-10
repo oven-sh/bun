@@ -24,6 +24,10 @@ use crate::utils::DisjointSet;
 ///
 /// Corresponds to TS `alignMethodCallScopes(fn: HIRFunction): void`.
 pub(crate) fn align_method_call_scopes(func: &mut HirFunction, env: &mut Environment) {
+    if !env.has_stack() {
+        return;
+    }
+
     // Maps an identifier to the scope it should be assigned to (or None to remove scope)
     let mut scope_mapping: HashMap<IdentifierId, Option<ScopeId>> = HashMap::new();
     let mut merged_scopes = DisjointSet::<ScopeId>::new();

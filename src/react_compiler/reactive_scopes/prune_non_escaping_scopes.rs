@@ -353,6 +353,10 @@ impl<'a> CollectDependenciesVisitor<'a> {
         lvalue: Option<IdentifierId>,
         state: &mut CollectState,
     ) -> (Vec<LValueMemoization>, Vec<(IdentifierId, EvaluationOrder)>) {
+        if !self.env.has_stack() {
+            return (Vec::new(), Vec::new());
+        }
+
         match value {
             ReactiveValue::ConditionalExpression {
                 consequent,

@@ -91,6 +91,10 @@ pub(crate) fn align_object_method_scopes(
     func: &mut HirFunction,
     env: &mut Environment,
 ) -> Result<(), CompilerDiagnostic> {
+    if !env.has_stack() {
+        return Err(crate::lowering::nested_too_deeply());
+    }
+
     // Handle inner functions first (TS recurses before processing the outer function)
     for (_block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {

@@ -23,6 +23,10 @@ fn eliminate_redundant_phi_impl(
     env: &mut Environment,
     rewrites: &mut IdMap<IdentifierId, IdentifierId>,
 ) {
+    if !env.has_stack() {
+        return;
+    }
+
     let ir = &mut func.body;
 
     let mut has_back_edge = false;

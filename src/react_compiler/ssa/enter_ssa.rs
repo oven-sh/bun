@@ -455,6 +455,10 @@ fn enter_ssa_impl(
     env: &mut Environment,
     root_entry: BlockId,
 ) -> Result<(), CompilerDiagnostic> {
+    if !env.has_stack() {
+        return Err(crate::lowering::nested_too_deeply());
+    }
+
     let mut visited_blocks: HashSet<BlockId> = HashSet::new();
     let block_ids: Vec<BlockId> = func.body.blocks.keys().copied().collect();
 

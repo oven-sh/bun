@@ -702,6 +702,10 @@ fn returns_non_node_in_stmts(stmts: &[Stmt]) -> bool {
 }
 
 fn returns_non_node_in_stmt(stmt: &Stmt, result: &mut bool) {
+    if !crate::lowering::thread_has_stack() {
+        return;
+    }
+
     match &stmt.data {
         StmtData::SReturn(ret) => {
             // Visit folds `return undefined` → bare `return;`, so None ≡ undefined here.
@@ -762,6 +766,10 @@ fn calls_hooks_or_creates_jsx_in_stmts(host: &dyn Host, stmts: &[Stmt]) -> bool 
 }
 
 fn calls_hooks_or_creates_jsx_in_stmt(host: &dyn Host, stmt: &Stmt) -> bool {
+    if !crate::lowering::thread_has_stack() {
+        return false;
+    }
+
     match &stmt.data {
         StmtData::SExpr(e) => calls_hooks_or_creates_jsx_in_expr(host, &e.value),
         StmtData::SReturn(ret) => ret
@@ -849,6 +857,10 @@ fn calls_hooks_or_creates_jsx_in_stmt(host: &dyn Host, stmt: &Stmt) -> bool {
 }
 
 fn calls_hooks_or_creates_jsx_in_expr(host: &dyn Host, expr: &Expr) -> bool {
+    if !crate::lowering::thread_has_stack() {
+        return false;
+    }
+
     match &expr.data {
         ExprData::EJsxElement(_) => true,
         ExprData::ECall(call) => {

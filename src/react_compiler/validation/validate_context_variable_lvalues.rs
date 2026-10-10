@@ -67,6 +67,10 @@ fn validate_context_variable_lvalues_impl(
     identifiers: &[Identifier],
     errors: &mut CompilerError,
 ) -> Result<(), CompilerDiagnostic> {
+    if !crate::lowering::thread_has_stack() {
+        return Err(crate::lowering::nested_too_deeply());
+    }
+
     let mut inner_function_ids: Vec<FunctionId> = Vec::new();
 
     for (_block_id, block) in &func.body.blocks {

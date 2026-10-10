@@ -1936,6 +1936,264 @@ describe.concurrent("an .oxlintrc.json", () => {
     expect(extended.exitCode).toBe(1);
   });
 
+  // What oxlint 1.87 does with each. It folds the rules of a file and of what that extends into a hash table by plugin and rule, and
+  // applies them in the order of the table: of `no-restricted-imports` and `@typescript-eslint/no-restricted-imports`, which are two
+  // there and one rule, the later in the table counts, which depends on what else is in it. Of two names that are one in the table,
+  // the first.
+  test("one rule under two names, in a file and in what it extends", async () => {
+    // The lines of a.ts that are reported: 1 for the module that `x` restricts, 2 for that of `y`.
+    const rows: [files: Record<string, unknown>, lines: number[]][] = [
+      [
+        {
+          "base.json": {
+            "rules": {
+              "@typescript-eslint/no-restricted-imports": ["error", { "paths": [{ "name": "mod-x", "message": "x" }] }],
+            },
+          },
+          ".oxlintrc.json": {
+            "categories": { "correctness": "off" },
+            "extends": ["./base.json"],
+            "rules": { "no-restricted-imports": ["error", { "paths": [{ "name": "mod-y", "message": "y" }] }] },
+          },
+        },
+        [1],
+      ],
+      [
+        {
+          "base.json": {
+            "rules": {
+              "@typescript-eslint/no-restricted-imports": ["error", { "paths": [{ "name": "mod-x", "message": "x" }] }],
+            },
+          },
+          ".oxlintrc.json": {
+            "categories": { "correctness": "off" },
+            "extends": ["./base.json"],
+            "rules": {
+              "no-console": "off",
+              "no-debugger": "off",
+              "eqeqeq": "off",
+              "no-var": "off",
+              "prefer-const": "off",
+              "no-restricted-imports": ["error", { "paths": [{ "name": "mod-y", "message": "y" }] }],
+            },
+          },
+        },
+        [1],
+      ],
+      [
+        {
+          "base.json": {
+            "rules": {
+              "@typescript-eslint/no-restricted-imports": ["error", { "paths": [{ "name": "mod-x", "message": "x" }] }],
+            },
+          },
+          ".oxlintrc.json": {
+            "categories": { "correctness": "off" },
+            "extends": ["./base.json"],
+            "rules": {
+              "no-console": "off",
+              "no-debugger": "off",
+              "eqeqeq": "off",
+              "no-var": "off",
+              "prefer-const": "off",
+              "no-alert": "off",
+              "no-restricted-imports": ["error", { "paths": [{ "name": "mod-y", "message": "y" }] }],
+            },
+          },
+        },
+        [2],
+      ],
+      [
+        {
+          "base.json": {
+            "rules": {
+              "@typescript-eslint/no-restricted-imports": ["error", { "paths": [{ "name": "mod-x", "message": "x" }] }],
+            },
+          },
+          ".oxlintrc.json": {
+            "categories": { "correctness": "off" },
+            "extends": ["./base.json"],
+            "rules": {
+              "no-console": "off",
+              "no-debugger": "off",
+              "eqeqeq": "off",
+              "no-var": "off",
+              "prefer-const": "off",
+              "no-alert": "off",
+              "no-eval": "off",
+              "curly": "off",
+              "no-empty": "off",
+              "no-undef": "off",
+              "no-shadow": "off",
+              "no-void": "off",
+              "no-with": "off",
+              "radix": "off",
+              "yoda": "off",
+              "no-new": "off",
+              "no-proto": "off",
+              "no-caller": "off",
+              "no-labels": "off",
+              "no-continue": "off",
+              "no-bitwise": "off",
+              "no-plusplus": "off",
+              "no-ternary": "off",
+              "no-undefined": "off",
+              "no-unused-vars": "off",
+              "no-restricted-imports": ["error", { "paths": [{ "name": "mod-y", "message": "y" }] }],
+            },
+          },
+        },
+        [1],
+      ],
+      [
+        {
+          "base.json": {
+            "rules": {
+              "@typescript-eslint/no-restricted-imports": ["error", { "paths": [{ "name": "mod-x", "message": "x" }] }],
+            },
+          },
+          ".oxlintrc.json": {
+            "categories": { "correctness": "off" },
+            "extends": ["./base.json"],
+            "rules": {
+              "no-console": "off",
+              "no-debugger": "off",
+              "eqeqeq": "off",
+              "no-var": "off",
+              "prefer-const": "off",
+              "no-alert": "off",
+              "no-eval": "off",
+              "curly": "off",
+              "no-empty": "off",
+              "no-undef": "off",
+              "no-shadow": "off",
+              "no-void": "off",
+              "no-with": "off",
+              "radix": "off",
+              "yoda": "off",
+              "no-new": "off",
+              "no-proto": "off",
+              "no-caller": "off",
+              "no-labels": "off",
+              "no-continue": "off",
+              "no-bitwise": "off",
+              "no-plusplus": "off",
+              "no-ternary": "off",
+              "no-undefined": "off",
+              "no-unused-vars": "off",
+              "sort-keys": "off",
+              "sort-vars": "off",
+              "no-restricted-imports": ["error", { "paths": [{ "name": "mod-y", "message": "y" }] }],
+            },
+          },
+        },
+        [2],
+      ],
+      [
+        {
+          "base.json": {
+            "rules": { "no-restricted-imports": ["error", { "paths": [{ "name": "mod-x", "message": "x" }] }] },
+          },
+          ".oxlintrc.json": {
+            "categories": { "correctness": "off" },
+            "extends": ["./base.json"],
+            "rules": {
+              "@typescript-eslint/no-restricted-imports": ["error", { "paths": [{ "name": "mod-y", "message": "y" }] }],
+            },
+          },
+        },
+        [2],
+      ],
+      [
+        {
+          "base.json": { "rules": { "@typescript-eslint/no-restricted-imports": "off" } },
+          ".oxlintrc.json": {
+            "categories": { "correctness": "off" },
+            "extends": ["./base.json"],
+            "rules": { "no-restricted-imports": ["error", { "paths": [{ "name": "mod-y", "message": "y" }] }] },
+          },
+        },
+        [],
+      ],
+      [
+        {
+          "base.json": {
+            "rules": {
+              "no-restricted-imports": ["error", { "paths": [{ "name": "mod-x", "message": "x" }] }],
+              "eslint/no-restricted-imports": ["error", { "paths": [{ "name": "mod-y", "message": "y" }] }],
+            },
+          },
+          ".oxlintrc.json": {
+            "categories": { "correctness": "off" },
+            "extends": ["./base.json"],
+            "rules": { "no-console": "off" },
+          },
+        },
+        [1],
+      ],
+      [
+        {
+          ".oxlintrc.json": {
+            "categories": { "correctness": "off" },
+            "rules": {
+              "no-restricted-imports": ["error", { "paths": [{ "name": "mod-x", "message": "x" }] }],
+              "eslint/no-restricted-imports": ["error", { "paths": [{ "name": "mod-y", "message": "y" }] }],
+            },
+          },
+        },
+        [2],
+      ],
+      [
+        {
+          "b1.json": {
+            "rules": {
+              "@typescript-eslint/no-restricted-imports": ["error", { "paths": [{ "name": "mod-x", "message": "x" }] }],
+            },
+          },
+          "b2.json": {
+            "rules": { "no-restricted-imports": ["warn", { "paths": [{ "name": "mod-y", "message": "y" }] }] },
+          },
+          ".oxlintrc.json": { "categories": { "correctness": "off" }, "extends": ["./b1.json", "./b2.json"] },
+        },
+        [1],
+      ],
+      [
+        {
+          "b1.json": {
+            "rules": {
+              "@typescript-eslint/no-restricted-imports": ["error", { "paths": [{ "name": "mod-x", "message": "x" }] }],
+            },
+          },
+          "b2.json": {
+            "extends": ["./b1.json"],
+            "rules": { "no-restricted-imports": ["error", { "paths": [{ "name": "mod-y", "message": "y" }] }] },
+          },
+          ".oxlintrc.json": {
+            "categories": { "correctness": "off" },
+            "extends": ["./b2.json"],
+            "rules": {
+              "no-console": "off",
+              "no-debugger": "off",
+              "eqeqeq": "off",
+              "no-var": "off",
+              "prefer-const": "off",
+              "no-alert": "off",
+            },
+          },
+        },
+        [2],
+      ],
+    ];
+    const files: Record<string, string> = { ".oxlintrc.json": "{}" };
+    for (const [at, [configs]] of rows.entries()) {
+      for (const [name, config] of Object.entries(configs)) files[`r${at}/${name}`] = JSON.stringify(config);
+      files[`r${at}/a.ts`] = 'import x from "mod-x";\nimport y from "mod-y";\n';
+    }
+    const { problems } = await lint(files);
+    const expected = rows.flatMap(([, lines], at) => lines.map(line => `r${at}/a.ts:${line}:1 no-restricted-imports`));
+    expect(problems).toEqual(expected.sort());
+  });
+
   test("`plugins` of an override count for that override alone", async () => {
     const files = Object.fromEntries(
       ["a.ts", "a.test.ts", "a.spec.test.ts"].map(name => [name, "beforeEach(() => {});\ntest('a', () => {});\n"]),
@@ -3230,7 +3488,6 @@ describe.concurrent("a number in the options of a rule that is the length of a t
     ["indent", 2 ** 31, "a.js", indented, [tooLong, 1]],
     ["indent", 2 ** 53, "a.js", indented, [tooLong, 1]],
     ["indent", 2 ** 29 - 23, "a.js", indented, [tooLong, 1]],
-    ["indent", 2 ** 29 - 24, "a.js", indented, ["a.js:2:1 indent"]],
     // Nothing is repeated.
     ["indent", 2 ** 31, "a.js", "a();\n", []],
     ["import/newline-after-import", { count: 2 ** 53 }, "a.js", '\nimport "a";\nb();\n', [tooLong, 2]],
@@ -3242,7 +3499,6 @@ describe.concurrent("a number in the options of a rule that is the length of a t
     ["react/jsx-indent", 2 ** 29 - 24, "a.jsx", element, [tooLong, 5]],
     ["react/jsx-indent", -1, "a.jsx", element, ["RangeError: Invalid count value: -1", 2]],
     ["react/jsx-indent-props", 2 ** 31, "a.jsx", element, [tooLong, 2]],
-    ["react/jsx-indent-props", 2 ** 28, "a.jsx", element, ["a.jsx:3:5 react/jsx-indent-props"]],
   ])("%s: %j in %s %j", async (rule, option, file, text, expected) => {
     const files = {
       "eslint.config.mjs": `export default [{

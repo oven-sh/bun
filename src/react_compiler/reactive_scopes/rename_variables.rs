@@ -280,6 +280,10 @@ fn collect_globals_block(
     globals: &mut HashSet<StoreStr>,
     env: &Environment,
 ) {
+    if !env.has_stack() {
+        return;
+    }
+
     for stmt in block {
         match stmt {
             crate::hir::ReactiveStatement::Instruction(instr) => {
@@ -303,6 +307,10 @@ fn collect_globals_value(
     globals: &mut HashSet<StoreStr>,
     env: &Environment,
 ) {
+    if !env.has_stack() {
+        return;
+    }
+
     match value {
         ReactiveValue::Instruction(iv) => {
             if let InstructionValue::LoadGlobal { binding, .. } = iv {
@@ -353,6 +361,10 @@ fn collect_globals_hir_function(
     globals: &mut HashSet<StoreStr>,
     env: &Environment,
 ) {
+    if !env.has_stack() {
+        return;
+    }
+
     let inner_func = &env.functions[func_id.0 as usize];
     let block_ids: Vec<_> = inner_func.body.blocks.keys().copied().collect();
     for block_id in block_ids {

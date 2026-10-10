@@ -31,6 +31,10 @@ pub(crate) fn merge_consecutive_blocks(
     func: &mut HirFunction,
     functions: &mut [HirFunction],
 ) -> Result<(), CompilerDiagnostic> {
+    if !crate::lowering::thread_has_stack() {
+        return Err(crate::lowering::nested_too_deeply());
+    }
+
     // Collect inner function IDs for recursive processing
     let inner_func_ids: Vec<usize> = func
         .body

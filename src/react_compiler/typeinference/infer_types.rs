@@ -125,6 +125,10 @@ fn pre_resolve_globals_recursive(
     env: &mut Environment,
     global_types: &mut HashMap<(u32, InstructionId), Type>,
 ) {
+    if !env.has_stack() {
+        return;
+    }
+
     // Collect LoadGlobal bindings and child function IDs in one pass to avoid
     // borrow conflicts (we need &env.functions to read, then &mut env for
     // get_global_declaration).
@@ -288,22 +292,27 @@ fn is_ref_like_name(object_name: &[u8], property_name: &PropertyNameKind) -> boo
 /// which ignores `shapeId` and `isConstructor`). Phi equality always returns false
 /// because the TS `phiTypeEquals` has a bug where `return false` is outside the
 /// `if` block, so it unconditionally returns false.
-fn type_equals(a: &Type, b: &Type) -> bool {
-    match (a, b) {
-        (Type::TypeVar { id: id_a }, Type::TypeVar { id: id_b }) => id_a == id_b,
-        (Type::Primitive, Type::Primitive) => true,
-        (Type::Poly, Type::Poly) => true,
-        (Type::ObjectMethod, Type::ObjectMethod) => true,
-        (Type::Object { shape_id: sa }, Type::Object { shape_id: sb }) => sa == sb,
-        (
-            Type::Function {
-                return_type: ra, ..
-            },
-            Type::Function {
-                return_type: rb, ..
-            },
-        ) => type_equals(ra, rb),
-        _ => false,
+fn type_equals(mut a: &Type, mut b: &Type) -> bool {
+    loop {
+        return match (a, b) {
+            (Type::TypeVar { id: id_a }, Type::TypeVar { id: id_b }) => id_a == id_b,
+            (Type::Primitive, Type::Primitive) => true,
+            (Type::Poly, Type::Poly) => true,
+            (Type::ObjectMethod, Type::ObjectMethod) => true,
+            (Type::Object { shape_id: sa }, Type::Object { shape_id: sb }) => sa == sb,
+            (
+                Type::Function {
+                    return_type: ra, ..
+                },
+                Type::Function {
+                    return_type: rb, ..
+                },
+            ) => {
+                (a, b) = (ra, rb);
+                continue;
+            }
+            _ => false,
+        };
     }
 }
 
@@ -478,6 +487,10 @@ fn generate_for_function_id(
     shapes: &ShapeRegistry,
     unifier: &mut Unifier,
 ) -> Result<(), CompilerDiagnostic> {
+    if let Some(why) = unifier.gave_up() {
+        return Err(why);
+    }
+
     // Take the function out temporarily to avoid borrow conflicts
     let inner = std::mem::replace(&mut functions[func_id.0 as usize], placeholder_function());
 
@@ -998,6 +1011,10 @@ fn apply_function(
     types: &mut Vec<Type>,
     unifier: &Unifier,
 ) {
+    if !unifier.has_stack() {
+        return;
+    }
+
     for (_block_id, block) in &func.body.blocks {
         // Phi places
         for phi in &block.phis {

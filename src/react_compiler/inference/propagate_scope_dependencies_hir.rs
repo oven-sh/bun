@@ -277,6 +277,10 @@ fn collect_temporaries_sidemap_impl(
     temporaries: &mut IdMap<IdentifierId, ReactiveScopeDependency>,
     inner_fn_context: Option<EvaluationOrder>,
 ) {
+    if !env.has_stack() {
+        return;
+    }
+
     for (_block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
@@ -454,6 +458,10 @@ fn traverse_function_optional(
     env: &Environment,
     ctx: &mut OptionalTraversalContext,
 ) {
+    if !env.has_stack() {
+        return;
+    }
+
     for (_block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
@@ -570,6 +578,10 @@ fn traverse_optional_block(
     ctx: &mut OptionalTraversalContext,
     outer_alternate: Option<BlockId>,
 ) -> Option<IdentifierId> {
+    if !env.has_stack() {
+        return None;
+    }
+
     ctx.seen_optionals.insert(optional_block.id);
 
     let (test_block_id, is_optional, fallthrough_block_id) = match &optional_block.terminal {
@@ -1099,6 +1111,10 @@ fn get_assumed_invoked_functions_impl(
     env: &Environment,
     temporaries: &mut IdMap<IdentifierId, (FunctionId, HashSet<FunctionId>)>,
 ) -> HashSet<FunctionId> {
+    if !env.has_stack() {
+        return HashSet::default();
+    }
+
     let mut hoistable: HashSet<FunctionId> = HashSet::default();
 
     // Step 1: Collect identifier to function expression mappings
@@ -1235,6 +1251,10 @@ fn collect_non_nulls_in_blocks(
     ctx: &CollectHoistableContext,
     registry: &mut PropertyPathRegistry,
 ) -> IdMap<BlockId, BlockInfo> {
+    if !env.has_stack() {
+        return IdMap::default();
+    }
+
     // Known non-null identifiers (e.g. component props)
     let mut known_non_null = NodeSet::default();
     if func.fn_type == ReactFunctionType::Component && !func.params.is_empty() {
@@ -1776,22 +1796,27 @@ impl ReactiveScopeDependencyTreeHIR {
         );
     }
 
-    fn derive_minimal_dependencies(&self, _env: &Environment) -> Vec<ReactiveScopeDependency> {
+    fn derive_minimal_dependencies(&self, env: &Environment) -> Vec<ReactiveScopeDependency> {
         let mut results = Vec::new();
         for (&root_id, (root_node, reactive)) in &self.dep_roots {
-            collect_minimal_deps_in_subtree(root_node, *reactive, root_id, &[], &mut results);
+            collect_minimal_deps_in_subtree(env, root_node, *reactive, root_id, &[], &mut results);
         }
         results
     }
 }
 
 fn collect_minimal_deps_in_subtree(
+    env: &Environment,
     node: &DependencyNode,
     reactive: bool,
     root_id: IdentifierId,
     path: &[DependencyPathEntry],
     results: &mut Vec<ReactiveScopeDependency>,
 ) {
+    if !env.has_stack() {
+        return;
+    }
+
     if is_dependency_access(node.access_type) {
         results.push(ReactiveScopeDependency {
             identifier: root_id,
@@ -1808,6 +1833,7 @@ fn collect_minimal_deps_in_subtree(
                 loc: child_entry.node.loc,
             });
             collect_minimal_deps_in_subtree(
+                env,
                 &child_entry.node,
                 reactive,
                 root_id,
@@ -2095,6 +2121,10 @@ fn visit_inner_function_blocks(
     ctx: &mut DependencyCollectionContext,
     env: &mut Environment,
 ) {
+    if !env.has_stack() {
+        return;
+    }
+
     let semantic_only =
         find_semantic_only_caught_instructions(&env.functions[func_id.0 as usize], env);
 

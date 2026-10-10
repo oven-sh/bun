@@ -86,6 +86,10 @@ fn constant_propagation_impl(
     env: &mut Environment,
     constants: &mut Constants,
 ) {
+    if !env.has_stack() {
+        return;
+    }
+
     loop {
         let have_terminals_changed = apply_constant_propagation(func, env, constants);
         if !have_terminals_changed {

@@ -683,13 +683,10 @@ impl<'a> Converter<'a, '_> {
     /// The compiler refuses a class. It looks into one for what it refers to.
     fn class(&mut self, class: Class<'a>) -> Converts<G::Class> {
         self.nested(|this| {
-            let class_name = match class.name() {
-                Some(name) => Some(LocRef {
-                    loc: this.loc(name.span()),
-                    ref_: this.declared(class.symbol(), name.name()),
-                }),
-                None => None,
-            };
+            let class_name = class.name().map(|name| LocRef {
+                loc: this.loc(name.span()),
+                ref_: this.declared(class.symbol(), name.name()),
+            });
             let extends = class.extends().map(|it| this.expr(it)).transpose()?;
             let mut properties: AstVec<G::Property> =
                 AstAlloc::vec_with_capacity(class.members().len());
@@ -1164,13 +1161,10 @@ impl<'a> Converter<'a, '_> {
         }
     }
 
-    fn label(&mut self, stmt: Stmt<'a>) -> Converts<Option<LocRef>> {
-        Ok(match stmt.label() {
-            Some(label) => Some(LocRef {
-                loc: self.loc(label.span()),
-                ref_: self.ref_of_name(Named::Label, label.name()),
-            }),
-            None => None,
+    fn label(&mut self, stmt: Stmt<'a>) -> Option<LocRef> {
+        stmt.label().map(|label| LocRef {
+            loc: self.loc(label.span()),
+            ref_: self.ref_of_name(Named::Label, label.name()),
         })
     }
 
@@ -1424,18 +1418,18 @@ impl<'a> Converter<'a, '_> {
             ),
             StmtKind::Break(_) => JsStmt::alloc(
                 S::Break {
-                    label: self.label(stmt)?,
+                    label: self.label(stmt),
                 },
                 loc,
             ),
             StmtKind::Continue(_) => JsStmt::alloc(
                 S::Continue {
-                    label: self.label(stmt)?,
+                    label: self.label(stmt),
                 },
                 loc,
             ),
             StmtKind::Labeled { label, body } => {
-                let name = match self.label(stmt)? {
+                let name = match self.label(stmt) {
                     Some(name) => name,
                     None => LocRef {
                         loc,

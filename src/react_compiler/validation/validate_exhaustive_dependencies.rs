@@ -476,6 +476,10 @@ fn collect_dependencies(
     callbacks: &mut Option<&mut Callbacks<'_>>,
     is_function_expression: bool,
 ) -> Result<Temporary, CompilerDiagnostic> {
+    if !crate::lowering::thread_has_stack() {
+        return Err(crate::lowering::nested_too_deeply());
+    }
+
     let optionals = find_optional_places(func)?;
     let mut locals: HashSet<IdentifierId> = HashSet::new();
 

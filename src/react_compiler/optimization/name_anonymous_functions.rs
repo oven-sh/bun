@@ -127,6 +127,10 @@ struct Node {
 }
 
 fn name_anonymous_functions_impl(func: &HirFunction, env: &Environment) -> Vec<Node> {
+    if !env.has_stack() {
+        return Vec::new();
+    }
+
     // Functions that we track to generate names for
     let mut functions: HashMap<IdentifierId, usize> = HashMap::new();
     // Tracks temporaries that read from variables/globals/properties

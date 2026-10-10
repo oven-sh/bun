@@ -89,6 +89,10 @@ fn null_unused_lvalues(
     env: &Environment,
     unused: &HashSet<DeclarationId>,
 ) {
+    if !env.has_stack() {
+        return;
+    }
+
     for stmt in block.iter_mut() {
         match stmt {
             ReactiveStatement::Instruction(instr) => {
@@ -126,6 +130,10 @@ fn null_unused_in_value(
     env: &Environment,
     unused: &HashSet<DeclarationId>,
 ) {
+    if !env.has_stack() {
+        return;
+    }
+
     match value {
         ReactiveValue::SequenceExpression {
             instructions,

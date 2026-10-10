@@ -41,6 +41,10 @@ pub(crate) fn analyse_functions<F>(
 where
     F: FnMut(&HirFunction, &Environment),
 {
+    if !env.has_stack() {
+        return Err(crate::lowering::nested_too_deeply());
+    }
+
     // Collect FunctionIds from FunctionExpression/ObjectMethod instructions.
     // We collect first to avoid borrow conflicts with env.functions.
     let mut inner_func_ids: Vec<FunctionId> = Vec::new();

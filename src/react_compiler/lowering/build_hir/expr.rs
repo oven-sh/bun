@@ -617,6 +617,10 @@ fn lower_sequence(
 
     let sequence_block = builder.try_enter(BlockKind::Sequence, |builder, _block_id| {
         fn flatten_comma(builder: &mut HirBuilder, e: &Expr) -> Result<Place, CompilerError> {
+            if !builder.environment().has_stack() {
+                return Err(crate::lowering::nested_too_deeply().into());
+            }
+
             if let Data::EBinary(b) = &e.data {
                 if b.op == OpCode::BinComma {
                     flatten_comma(builder, &b.left)?;

@@ -83,7 +83,9 @@ pub(crate) trait ReactiveFunctionVisitor {
     }
 
     fn traverse_value(&self, id: EvaluationOrder, value: &ReactiveValue, state: &mut Self::State) {
-        debug_assert!(self.env().has_stack(), "took more stack than the builder");
+        if !self.env().has_stack() {
+            return;
+        }
         match value {
             ReactiveValue::OptionalExpression { value: inner, .. } => {
                 self.visit_value(id, inner, state);
@@ -277,7 +279,9 @@ pub(crate) trait ReactiveFunctionVisitor {
     }
 
     fn traverse_block(&self, block: &ReactiveBlock, state: &mut Self::State) {
-        debug_assert!(self.env().has_stack(), "took more stack than the builder");
+        if !self.env().has_stack() {
+            return;
+        }
         for stmt in block {
             match stmt {
                 ReactiveStatement::Instruction(instr) => {
@@ -380,7 +384,9 @@ pub(crate) trait ReactiveFunctionTransform {
         value: &mut ReactiveValue,
         state: &mut Self::State,
     ) -> Result<(), CompilerError> {
-        debug_assert!(self.env().has_stack(), "took more stack than the builder");
+        if !self.env().has_stack() {
+            return Err(crate::lowering::nested_too_deeply().into());
+        }
         match value {
             ReactiveValue::OptionalExpression { value: inner, .. } => {
                 self.transform_value(id, inner, state)?;
@@ -672,7 +678,9 @@ pub(crate) trait ReactiveFunctionTransform {
         block: &mut ReactiveBlock,
         state: &mut Self::State,
     ) -> Result<(), CompilerError> {
-        debug_assert!(self.env().has_stack(), "took more stack than the builder");
+        if !self.env().has_stack() {
+            return Err(crate::lowering::nested_too_deeply().into());
+        }
         let mut next_block: Option<Vec<ReactiveStatement>> = None;
         let len = block.len();
         for i in 0..len {

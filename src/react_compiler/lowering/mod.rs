@@ -23,5 +23,10 @@ pub(crate) fn nested_too_deeply() -> crate::diagnostics::CompilerDiagnostic {
     )
 }
 
+/// [`Environment::has_stack`](crate::hir::environment::Environment::has_stack) for what has no `Environment` at hand.
+pub(crate) fn thread_has_stack() -> bool {
+    bun_core::StackCheck::init().is_safe_to_recurse()
+}
+
 pub use hir_builder::FunctionNode;
 pub(crate) use hir_builder::convert_loc;

@@ -231,6 +231,19 @@ impl Environment {
         !self.is_out_of_stack.get()
     }
 
+    /// For a pass that asks the stack by itself.
+    pub(crate) fn ran_out_of_stack(&self) {
+        self.is_out_of_stack.set(true);
+    }
+
+    /// Fails if a pass had not the stack to go on, and left something out.
+    pub(crate) fn stack_held(&self) -> Result<(), CompilerError> {
+        match self.is_out_of_stack.get() {
+            true => Err(crate::lowering::nested_too_deeply().into()),
+            false => Ok(()),
+        }
+    }
+
     /// [`Environment::has_stack`], and `level` is within [`MAX_NESTING`], which is the same on every platform.
     pub(crate) fn can_nest(&self, level: u32) -> bool {
         if level > MAX_NESTING {

@@ -578,7 +578,9 @@ fn codegen_block_no_reset(
     cx: &mut Context,
     block: &ReactiveBlock,
 ) -> Result<Vec<Stmt>, CompilerError> {
-    debug_assert!(cx.env.has_stack(), "took more stack than the builder");
+    if !cx.env.has_stack() {
+        return Err(crate::lowering::nested_too_deeply().into());
+    }
     let mut statements: Vec<Stmt> = Vec::new();
     for item in block {
         match item {

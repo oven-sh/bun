@@ -3859,6 +3859,10 @@ fn get_hook_kind_for_type<'a>(
 
 /// Format a Type for printPlace-style output, matching TS's `printType()`.
 fn format_type_for_print(ty: &Type) -> String {
+    if !crate::lowering::thread_has_stack() {
+        return String::new();
+    }
+
     match ty {
         Type::Primitive => String::new(),
         Type::Function {

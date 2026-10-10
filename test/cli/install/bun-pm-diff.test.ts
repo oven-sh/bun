@@ -482,6 +482,28 @@ diffme@1.0.0 → diffme@2.0.0
     expect(many.stderr).toContain("no file in either side matches diffme@3");
     expect(many.exitCode).toBe(1);
   });
+
+  test("bun pm help lists diff and its flags", async () => {
+    using dir = tempDir("pm-diff-help", { "package.json": `{"name":"proj"}` });
+    for (const args of [["--help"], []]) {
+      await using p = Bun.spawn({
+        cmd: [bunExe(), "pm", ...args],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+      expect(stdout).toMatch(/^ {2}bun pm diff \[a\] \[b\] {2,}show what changed/m);
+      const start = stdout.indexOf("bun pm diff");
+      const end = stdout.indexOf("bun pm licenses");
+      expect(end).toBeGreaterThan(start);
+      const block = stdout.slice(start, end);
+      for (const flag of ["--stat", "--name-only", "-U", "--json"]) expect(block).toContain(flag);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    }
+  });
 });
 
 // The terminal view re-prints JS/CSS/JSON through Bun's parser and printer before diffing, so only changes in

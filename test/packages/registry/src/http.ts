@@ -205,7 +205,7 @@ export async function readJson(request: Request): Promise<unknown> {
   if (type !== "application/json") {
     throw new RegistryError(415, `Unsupported Media Type: expected application/json, got ${type ?? "no Content-Type"}`);
   }
-  let bytes = await request.bytes();
+  let bytes: ArrayBuffer | Uint8Array<ArrayBuffer> = await request.arrayBuffer();
   const encoding = request.headers.get("content-encoding")?.trim().toLowerCase();
   try {
     if (encoding === "gzip" || encoding === "x-gzip") bytes = Bun.gunzipSync(bytes);

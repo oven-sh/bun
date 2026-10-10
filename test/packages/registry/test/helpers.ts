@@ -104,7 +104,7 @@ export interface Reply {
 /** Sends one request and reads the answer whole. The body stays as the server encoded it. */
 export async function request(url: string | URL, init: RequestInit = {}): Promise<Reply> {
   const response = await fetch(url, { ...init, decompress: false } as RequestInit);
-  const bytes = await response.bytes();
+  const bytes = new Uint8Array(await response.arrayBuffer());
   const headers = Object.fromEntries(response.headers);
   delete headers.date;
   const encoding = headers["content-encoding"];

@@ -357,7 +357,7 @@ describe("publish", () => {
     const manifest = { name: "typed", version: "1.0.0" };
     const body = JSON.stringify(publishBody(manifest, await pack(manifest)));
     const authorization = `Bearer ${token("alice")}`;
-    const send = (headers: Record<string, string>, content: BodyInit = body) =>
+    const send = (headers: Record<string, string>, content: Bun.BodyInit = body) =>
       request(`${registry.url}typed`, { method: "PUT", headers: { authorization, ...headers }, body: content });
 
     // The type must be `application/json`, character for character. This is the check of verdaccio, and it is

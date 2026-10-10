@@ -210,7 +210,7 @@ export class Registry {
   async fetch(request: Request): Promise<Response> {
     let response: Response;
     try {
-      const intercepted = await this.options.intercept?.(request.clone(), this);
+      const intercepted = await this.options.intercept?.(request.clone() as Request, this);
       response = intercepted instanceof Response ? intercepted : await this.#route(request, new URL(request.url));
     } catch (error) {
       if (error instanceof RegistryError) {

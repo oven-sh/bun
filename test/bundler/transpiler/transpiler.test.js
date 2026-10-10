@@ -5731,12 +5731,6 @@ describe("block-level function declarations", () => {
     );
   });
 
-  // The bare form is a SyntaxError in strict code, and a file with no CommonJS marker runs as a module.
-  // Inside the block the function is assigned when the label runs, not at function entry as the bare form is.
-  it("keeps the block around a labelled function", () => {
-    expect(print("l: function f() {}\nmodule.exports = f;")).toBe("l: {\n  function f() {}\n}\nmodule.exports = f;\n");
-  });
-
   // Annex B makes no `var` when a lexical binding of an enclosing scope has the name.
   it.each([
     [

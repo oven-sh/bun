@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 use std::borrow::Cow;
 use std::io::Write as _;
 
@@ -137,7 +137,9 @@ pub struct Entry {
     pub mutex: Mutex,
     pub need_stat: AtomicBool,
 
-    pub abs_path: Interned,
+    // One `Interned`, written once under `mutex`: the length, then the pointer that publishes it.
+    abs_path_ptr: AtomicPtr<u8>,
+    abs_path_len: AtomicUsize,
 }
 
 impl Entry {
@@ -181,15 +183,47 @@ impl Entry {
         self.dir
     }
 
-    /// `Interned` is `Copy`.
-    #[inline]
-    pub fn abs_path(&self) -> Interned {
-        self.abs_path
+    fn published_abs_path(&self) -> Option<Interned> {
+        let ptr = self.abs_path_ptr.load(Ordering::Acquire);
+        if ptr.is_null() {
+            return None;
+        }
+        // Relaxed: the Acquire load above orders this after the length store.
+        let len = self.abs_path_len.load(Ordering::Relaxed);
+        // SAFETY: `abs_path_or_try_fill` stored the length and then the pointer of one
+        // `Interned`, so the pair is that process-lifetime slice.
+        Some(unsafe { Interned::assume(core::slice::from_raw_parts(ptr, len)) })
     }
 
+    /// Lock-free. `Interned::EMPTY` until a fill has been published.
     #[inline]
-    pub fn set_abs_path(&mut self, p: Interned) {
-        self.abs_path = p;
+    pub fn abs_path(&self) -> Interned {
+        self.published_abs_path().unwrap_or(Interned::EMPTY)
+    }
+
+    /// The only writer of `abs_path`. A failed `fill` publishes nothing. `fill` runs under `mutex`.
+    pub fn abs_path_or_try_fill<E>(
+        &self,
+        fill: impl FnOnce() -> Result<Interned, E>,
+    ) -> Result<Interned, E> {
+        if let Some(p) = self.published_abs_path() {
+            return Ok(p);
+        }
+        let _guard = self.mutex.lock_guard();
+        if let Some(p) = self.published_abs_path() {
+            return Ok(p);
+        }
+        let p = fill()?;
+        // Relaxed: the Release store of the pointer publishes the length too.
+        self.abs_path_len.store(p.len(), Ordering::Relaxed);
+        self.abs_path_ptr
+            .store(p.as_bytes().as_ptr().cast_mut(), Ordering::Release);
+        Ok(p)
+    }
+
+    pub fn abs_path_or_fill(&self, fill: impl FnOnce() -> Interned) -> Interned {
+        let Ok(p) = self.abs_path_or_try_fill(|| Ok::<_, core::convert::Infallible>(fill()));
+        p
     }
 
     /// Stat-on-first-use.
@@ -272,8 +306,7 @@ impl Entry {
 
 // `entry` is a RAW `*mut Entry`. A safe
 // `&self → &mut Entry` accessor would let two `get()` calls produce coexisting
-// aliased `&mut Entry` (PORTING.md §Forbidden). Callers `unsafe { &mut *entry }`
-// at each write site under the per-entry `Entry.mutex`.
+// aliased `&mut Entry` (PORTING.md §Forbidden).
 pub struct EntryLookup<'a> {
     pub(crate) entry: *mut Entry,
     // tie the lookup's nominal lifetime to the DirEntry it came from
@@ -285,9 +318,9 @@ impl<'a> EntryLookup<'a> {
     ///
     /// # Safety (encapsulated)
     /// `self.entry` is a slot in the process-lifetime `EntryStore` BSSMap
-    /// singleton (see `dir_entry::EntryStore`); never freed. `Entry`'s
-    /// only mutable state (`cache`) is behind `Cell`, so interior
-    /// writes via `set_cache*()` do not alias this `&Entry`. The
+    /// singleton (see `dir_entry::EntryStore`); never freed. `cache` is
+    /// behind `Cell` and `abs_path` is atomic, so the interior writes through
+    /// `set_cache*()` / `abs_path_or_fill()` do not alias this `&Entry`. The
     /// `PhantomData<&'a Entry>` ties the borrow to the `DirEntry` it was
     /// looked up from.
     #[inline(always)]
@@ -295,13 +328,6 @@ impl<'a> EntryLookup<'a> {
         // SAFETY: ARENA — EntryStore-owned slot; see fn doc.
         unsafe { &*self.entry }
     }
-
-    // former `entry_mut() -> &'a mut Entry` accessor removed
-    // (zero callers). `Entry`'s only mutable state (`cache`) is `Cell`-backed,
-    // so all mutation goes through `entry().set_cache*()` on a shared borrow;
-    // no `&mut Entry` escape hatch is needed. Write sites that bypass the
-    // accessor go through the raw `self.entry` field directly under the
-    // per-entry `Entry.mutex` (see struct doc above).
 }
 
 /// `DirEntry` companion items: the entry map, the global entry store, and the
@@ -459,14 +485,10 @@ impl DirEntry {
                 // `name_hash` instead of re-hashing.
                 if let Some(&existing_ptr) = map.get_hashed(name_hash, name_lc) {
                     // SAFETY: EntryStore-owned pointer, valid for lifetime of store
-                    let existing = unsafe { &mut *existing_ptr };
-                    // `MutexGuard` stores a `BackRef<Mutex>` (lifetime-erased), so
-                    // holding it does not borrow `existing` — the field writes
-                    // below remain unconstrained. Replaces the manual
-                    // `lock()` + `scopeguard(addr_of!(mutex), |m| (*m).unlock())`
-                    // backref-deref pair.
+                    let existing = unsafe { &*existing_ptr };
                     let _guard = existing.mutex.lock_guard();
-                    existing.dir = self.dir;
+                    // An in-place refresh keeps the slot's `dir`, so there is nothing to store.
+                    debug_assert!(core::ptr::eq(existing.dir, self.dir));
 
                     // No cache rewrite here, even when the kind changed: a
                     // lock-free `kind()`/`symlink()` reader that already
@@ -538,7 +560,8 @@ impl DirEntry {
                     kind: found_kind.unwrap_or(EntryKind::File),
                     fd: Fd::INVALID,
                 }));
-                addr_of_mut!((*p).abs_path).write(Interned::EMPTY);
+                addr_of_mut!((*p).abs_path_ptr).write(AtomicPtr::new(core::ptr::null_mut()));
+                addr_of_mut!((*p).abs_path_len).write(AtomicUsize::new(0));
                 p
             }
         };
@@ -678,9 +701,8 @@ impl ModKey {
     }
 }
 
-// SAFETY: ARENA — `Entry` lives in the `BSSList` singleton; `*mut Entry` raw
-// pointers are the only !Send/!Sync field. All access is serialized through
-// `RealFS.entries_mutex`.
+// SAFETY: `cache` is the only `!Sync` field. It is shared under the per-entry
+// `mutex` discipline described on `Entry`.
 unsafe impl Sync for Entry {}
 // SAFETY: same invariant as the `Sync` impl above.
 unsafe impl Send for Entry {}
@@ -1061,3 +1083,79 @@ pub struct PathContentsPair<'buf> {
 
 #[path = "fs/stat_hash.rs"]
 pub mod stat_hash;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry() -> Entry {
+        Entry {
+            cache: core::cell::Cell::new(EntryCache {
+                symlink: Interned::EMPTY,
+                fd: Fd::INVALID,
+                kind: EntryKind::File,
+            }),
+            dir: b"/dir/",
+            base_: strings::StringOrTinyString::init(b"a.ts"),
+            base_lowercase_: strings::StringOrTinyString::init(b"a.ts"),
+            mutex: Mutex::new(),
+            need_stat: AtomicBool::new(false),
+            abs_path_ptr: AtomicPtr::new(core::ptr::null_mut()),
+            abs_path_len: AtomicUsize::new(0),
+        }
+    }
+
+    // Fails if two fills interleave or a reader sees a published pointer without its length.
+    #[test]
+    fn abs_path_fills_once_and_publishes_whole() {
+        const PATHS: [&[u8]; 2] = [b"/dir/a.ts", b"/real/dir/a.tsx"];
+        // One schedule does not always put the reader between the two stores.
+        for _ in 0..8 {
+            let entry = entry();
+            let (started, fills) = (AtomicUsize::new(0), AtomicUsize::new(0));
+            std::thread::scope(|s| {
+                for path in PATHS {
+                    let (entry, started, fills) = (&entry, &started, &fills);
+                    s.spawn(move || {
+                        started.fetch_add(1, Ordering::SeqCst);
+                        let filled = entry.abs_path_or_fill(|| {
+                            // Hold the first fill open until the other filler contends.
+                            while started.load(Ordering::SeqCst) < PATHS.len() {
+                                std::thread::yield_now();
+                            }
+                            fills.fetch_add(1, Ordering::SeqCst);
+                            Interned::from_static(path)
+                        });
+                        assert!(filled == entry.abs_path());
+                    });
+                }
+                s.spawn(|| {
+                    loop {
+                        // Only the pointer's publish orders this reader with the fill.
+                        let seen = entry.abs_path().as_bytes();
+                        if PATHS
+                            .iter()
+                            .any(|path| core::ptr::eq(path.as_ptr(), seen.as_ptr()))
+                        {
+                            assert!(PATHS.contains(&seen));
+                            break;
+                        }
+                        std::thread::yield_now();
+                    }
+                });
+            });
+            assert_eq!(fills.load(Ordering::SeqCst), 1);
+        }
+    }
+
+    #[test]
+    fn failed_abs_path_fill_publishes_nothing() {
+        let entry = entry();
+        assert!(entry.abs_path_or_try_fill(|| Err(())).is_err());
+        assert!(entry.abs_path().is_empty());
+        let first = entry.abs_path_or_fill(|| Interned::from_static(b"/dir/a.ts"));
+        let second = entry.abs_path_or_try_fill(|| Err(()));
+        assert!(first.as_bytes() == b"/dir/a.ts" && second.is_ok_and(|p| p == first));
+        assert!(entry.abs_path() == first);
+    }
+}

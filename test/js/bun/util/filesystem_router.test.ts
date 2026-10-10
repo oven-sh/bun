@@ -873,6 +873,9 @@ it("reload() while Bun.build() resolves the same directory", async () => {
         entrypoints.push(path.join(pagesDir, "p" + i + ".tsx"));
         entrypoints.push(path.join(pagesDir, "sub", "s" + i + ".tsx"));
       }
+      for (let i = 1; i <= 4; i++) {
+        entrypoints.push(path.join(pagesDir, "via" + i + ".tsx"));
+      }
       const router = new Bun.FileSystemRouter({
         dir: pagesDir,
         style: "nextjs",
@@ -903,6 +906,18 @@ it("reload() while Bun.build() resolves the same directory", async () => {
   for (let i = 1; i <= 40; i++) {
     files[`pages/p${i}.tsx`] = `export default ${i};\n`;
     files[`pages/sub/s${i}.tsx`] = `export default ${i};\n`;
+  }
+  // The resolver fills a cached entry's absolute path at more sites than the
+  // entry-point lookup: the extension probe, the directory index, and the
+  // .js to .tsx rewrite. These pages import through each of them.
+  files["pages/sub/index.tsx"] = "export default 0;\n";
+  for (let i = 1; i <= 4; i++) {
+    files[`pages/sub/t${i}.tsx`] = `export default ${i};\n`;
+    files[`pages/via${i}.tsx`] =
+      `import s from "./sub/s${i}";\n` +
+      `import sub from "./sub";\n` +
+      `import t from "./sub/t${i}.js";\n` +
+      `export default s + sub + t;\n`;
   }
   using dir = tempDir("fsr-reload-build-race", files);
 

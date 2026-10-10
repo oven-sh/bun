@@ -251,6 +251,19 @@ impl FileResponseStream {
             this_ref.fail_with(err);
             return;
         }
+        // A failed poll registration arrives through `on_reader_error`, not the result.
+        if this_ref.state.get().contains(State::FINISHED) {
+            return;
+        }
+
+        // The reader closes the fd: only it can wait for a threadpool read in flight.
+        #[cfg(windows)]
+        if opts.auto_close {
+            this_ref
+                .reader
+                .with_mut(|reader| reader.flags.insert(ReaderFlags::CLOSE_HANDLE));
+            this_ref.auto_close.set(false);
+        }
 
         // SAFETY: as above — `update_ref` re-enters `event_loop` through the parent pointer.
         this_ref.reader_mut().update_ref(true);
@@ -588,6 +601,13 @@ impl FileResponseStream {
             // gate will run the close check; do it here, after `on_complete`
             // like `end_sendfile`, so the callbacks see a live socket.
             resp.close_if_done_and_marked();
+        }
+
+        if self.mode.get() == Mode::Reader {
+            // Unregisters the poll and keeps the read loop from arming it again.
+            self.reader_mut().pause();
+            // No reader callback is coming to adopt the in-flight read ref.
+            drop(self.take_read_ref());
         }
 
         // Release the owner ref from `heap::into_raw` in `start()`. Every entry

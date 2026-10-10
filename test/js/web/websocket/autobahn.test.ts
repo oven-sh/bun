@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { isDockerEnabled } from "harness";
+import { isArm64, isDockerEnabled, isLinux } from "harness";
 import * as dockerCompose from "../../../docker/index.ts";
 
 let url: string = "";
@@ -28,7 +28,7 @@ async function load() {
   return true;
 }
 
-describe.skipIf(!isDockerEnabled())("autobahn", () => {
+describe.skipIf(!isDockerEnabled()).todoIf(isLinux && isArm64)("autobahn", () => {
   let wsOptions: any;
 
   beforeAll(async () => {

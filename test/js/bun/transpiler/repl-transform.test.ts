@@ -180,12 +180,13 @@ describe("Bun.Transpiler replMode", () => {
     });
   });
 
-  describe("object literal detection", () => {
+  // transform() parses off the JS thread and makes its own source, so each case runs through both methods.
+  describe.each(["transformSync", "transform"] as const)("object literal detection with %s()", method => {
     const transpiler = new Bun.Transpiler({ loader: "tsx", replMode: true });
 
-    async function runRepl(code: string, context?: object) {
+    async function runRepl(code: string | Uint8Array, context?: object) {
       const ctx = vm.createContext(context ?? { console, Promise });
-      const transformed = transpiler.transformSync(code);
+      const transformed = await transpiler[method](code);
       return await vm.runInContext(transformed, ctx);
     }
 
@@ -203,14 +204,14 @@ describe("Bun.Transpiler replMode", () => {
       const ctx = vm.createContext({
         bar: async () => 42,
       });
-      const code = transpiler.transformSync("{foo: await bar()}");
+      const code = await transpiler[method]("{foo: await bar()}");
       const result = await vm.runInContext(code, ctx);
       expect(result.value).toEqual({ foo: 42 });
     });
 
     test("{x: 1}; is NOT wrapped (has trailing semicolon)", async () => {
       // With semicolon, it's explicitly a block statement
-      const code = transpiler.transformSync("{x: 1};");
+      const code = await transpiler[method]("{x: 1};");
       // The output should NOT treat this as an object literal
       // It should be a block with a labeled statement, no value wrapper
       expect(code).not.toContain("value:");
@@ -221,6 +222,59 @@ describe("Bun.Transpiler replMode", () => {
       const result = await runRepl("  { a: 1 }  ");
       expect(result.value).toEqual({ a: 1 });
     });
+
+    test("Uint8Array input is parsed as object literal", async () => {
+      expect(await runRepl(new TextEncoder().encode("{a: 1}"))).toEqual({ value: { a: 1 } });
+    });
+  });
+
+  test.each(["{ a: 1 }", "{a: 1, b: 2}", "{foo: await bar()}", "  {}  ", "{x: 1};", "42"])(
+    "transform(%j) returns the same code as transformSync()",
+    async code => {
+      const transpiler = new Bun.Transpiler({ loader: "ts", replMode: true });
+      expect(await transpiler.transform(code)).toBe(transpiler.transformSync(code));
+    },
+  );
+
+  test("scan() and scanImports() parse an object literal too", () => {
+    const transpiler = new Bun.Transpiler({ loader: "tsx", replMode: true });
+    // As a block statement, each input is a syntax error at the second ":".
+    expect(transpiler.scan("{a: 1, b: 2}")).toEqual({ exports: [], imports: [] });
+    expect(transpiler.scanImports("{a: 1, b: require('y')}")).toEqual([{ kind: "require-call", path: "y" }]);
+  });
+
+  test("every method reports a syntax error in an object literal at the same position", async () => {
+    const transpiler = new Bun.Transpiler({ loader: "tsx", replMode: true });
+    // The column and the line text count the added "(".
+    const thrown = { name: "BuildMessage", message: "Unexpected }", line: 1, column: 7, lineText: "({ a: })" };
+    const actual: Record<string, unknown> = {};
+    for (const api of ["scan", "scanImports", "transformSync", "transform"] as const) {
+      try {
+        await transpiler[api]("{ a: }");
+        actual[api] = "did not throw";
+      } catch (e: any) {
+        const { line, column, lineText } = e.position ?? {};
+        actual[api] = { name: e.name, message: e.message, line, column, lineText };
+      }
+    }
+    expect(actual).toEqual({ scan: thrown, scanImports: thrown, transformSync: thrown, transform: thrown });
+  });
+
+  // The heuristic is for JavaScript. A data loader reads the input as it is.
+  test.each([
+    ["json", '{"a":1}'],
+    ["jsonc", '{"a":1}'],
+    ["json5", '{"a":1}'],
+    ["yaml", "{a: 1}"],
+    ["text", "{hi}"],
+    ["md", "{hi}"],
+  ])("the %s loader does not get %j in parentheses", async (loader: any, code) => {
+    const transpiler = new Bun.Transpiler({ replMode: true });
+    const printed = new Bun.Transpiler().transformSync(code, loader);
+    expect({
+      transformSync: transpiler.transformSync(code, loader),
+      transform: await transpiler.transform(code, loader),
+    }).toEqual({ transformSync: printed, transform: printed });
   });
 
   describe("edge cases", () => {
@@ -303,6 +357,24 @@ describe("Bun.Transpiler replMode", () => {
       const result = transpiler.transformSync("42");
       // With replMode, value wrapper should be present
       expect(result).toContain("value:");
+    });
+
+    test("replMode false: every method parses { foo() } as a block", async () => {
+      const transpiler = new Bun.Transpiler({ loader: "tsx" });
+      // Wrapped in parentheses, this input is a syntax error.
+      const code = "{ foo() }";
+      const printed = "{\n  foo();\n}\n";
+      expect({
+        transformSync: transpiler.transformSync(code),
+        transform: await transpiler.transform(code),
+        scan: transpiler.scan(code),
+        scanImports: transpiler.scanImports(code),
+      }).toEqual({
+        transformSync: printed,
+        transform: printed,
+        scan: { exports: [], imports: [] },
+        scanImports: [],
+      });
     });
   });
 });

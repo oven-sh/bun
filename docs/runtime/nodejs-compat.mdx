@@ -41,6 +41,8 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 
+`readSync`, callback `read`, `FileHandle.read`, `writeSync`, and callback `write` preserve Node's overload-specific defaults for explicit `undefined` and `null`. Read positions are validated even for zero-length reads.
+
 🟢 Fully implemented. 98% of Node.js's test suite passes. `Stats` objects lack the `Temporal.Instant` getters (`atimeInstant` and friends).
 
 ### [`node:http`](https://nodejs.org/api/http.html)

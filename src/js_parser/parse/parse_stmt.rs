@@ -1656,8 +1656,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     ));
                 }
 
+                // "@" is in the lookahead set that rules out an expression after
+                // "export default": a decorator here starts a class declaration.
                 if p.lexer.token == T::TFunction
                     || p.lexer.token == T::TClass
+                    || p.lexer.token == T::TAt
                     || p.lexer.is_contextual_keyword(b"interface")
                 {
                     let mut _opts = ParseStatementOptions {
@@ -1666,6 +1669,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         lexical_decl: LexicalDecl::AllowAll,
                         ..Default::default()
                     };
+                    let errors_before_decorators =
+                        (p.lexer.token == T::TAt).then(|| p.log().errors);
                     let stmt = p.parse_stmt(&mut _opts)?;
 
                     let default_name: LocRef = 'default_name_getter: {
@@ -1695,11 +1700,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                             // declaration: the nested statement came back as an
                             // expression statement ("export default interface = 2",
                             // "export default interface => 1") or a labeled statement
-                            // ("export default interface: 0"). None of these can be a
-                            // default export value, so report a syntax error instead of
-                            // building an S.ExportDefault that the visit and print
-                            // passes don't support.
+                            // ("export default interface: 0"). Decorators that no class
+                            // follows end here too ("export default @dec abstract = 1").
+                            // None of these can be a default export value, so report a
+                            // syntax error instead of building an S.ExportDefault that the
+                            // visit and print passes don't support.
                             _ => {
+                                // `t_at` has reported the token that is not a class.
+                                if errors_before_decorators
+                                    .is_some_and(|errors| p.log().errors > errors)
+                                {
+                                    return Err(crate::Error::SyntaxError);
+                                }
                                 let r =
                                     js_lexer::range_of_identifier(p.source, p.real_loc(stmt.loc));
                                 p.log().add_range_error_fmt(

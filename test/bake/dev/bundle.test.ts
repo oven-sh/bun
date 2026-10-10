@@ -940,3 +940,35 @@ devTest("a render() that does not return a Response is reported as that", {
     }).toEqual({ status: 500, saysWhatIsWrong: true, referenceError: false });
   },
 });
+// A "use client" module without a separate SSR graph exports `registerClientReference(value, ...)`.
+// The statements that decorator lowering puts after a class assign to the class by name, so the
+// class has to stay a declaration: as the wrapped value it left `Df = ...` with no binding
+// ("ReferenceError: Df is not defined").
+for (const spelling of [
+  "@dec export default class Df {}",
+  "export default @dec class Df {}",
+  "export default @dec class {}",
+]) {
+  devTest(`a "use client" module keeps the binding of \`${spelling}\` (experimentalDecorators)`, {
+    framework: minimalFramework,
+    files: {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { experimentalDecorators: true } }),
+      "client.ts": `
+        "use client";
+        function dec(cls: any) {
+          globalThis.decorated = (globalThis.decorated ?? 0) + 1;
+        }
+        ${spelling}
+      `,
+      "routes/index.ts": `
+        import Client from "../client";
+        export default function (req, meta) {
+          return new Response(JSON.stringify([typeof Client.value, Client.uid, globalThis.decorated]));
+        }
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals('["function","default",1]');
+    },
+  });
+}

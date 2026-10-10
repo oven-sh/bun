@@ -798,7 +798,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                 replace_expr,
                             ) = entry
                             {
+                                // The class is discarded. Lowering it would put it back
+                                // in `data.value`.
                                 data.value = js_ast::StmtOrExpr::Expr(replace_expr);
+                                stmts.push(*stmt);
                             } else {
                                 let _ = p.inject_replacement_export(
                                     stmts,
@@ -806,22 +809,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                     bun_ast::Loc::EMPTY,
                                     &entry,
                                 );
-                                restore_dead!();
-                                record_on_exit!();
-                                return Ok(());
                             }
+                            restore_dead!();
+                            record_on_exit!();
+                            return Ok(());
                         }
 
                         if !data.default_name.ref_.is_symbol() {
                             data.default_name = p.create_default_name(stmt.loc);
                         }
 
-                        // We only inject a name into classes when decorator lowering
-                        // needs one: legacy TS decorators (`has_decorators`) or
-                        // standard decorator lowering, which also covers classes with
-                        // only auto-accessor fields and no decorators.
+                        // The legacy TS decorator lowering reads `class_name`, so an
+                        // anonymous class takes the default export's symbol as its name.
+                        // The standard lowering takes that symbol as an argument.
                         if class.class.has_decorators
-                            || class.class.should_lower_standard_decorators
+                            && !class.class.should_lower_standard_decorators
                         {
                             if class.class.class_name.is_none()
                                 || class.class.class_name.unwrap().ref_.is_empty()
@@ -833,7 +835,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         // Lower the class (handles both TS legacy and standard decorators).
                         // Standard decorator lowering may produce prefix statements
                         // (variable declarations) before the class statement.
-                        let class_stmts = p.lower_class(js_ast::StmtOrExpr::Stmt(s2_copy));
+                        let class_stmts = if class.class.should_lower_standard_decorators {
+                            let mut lowered: StmtList<'a> = BumpVec::new_in(p.arena);
+                            p.lower_standard_decorators_stmt(
+                                s2_copy,
+                                Some(data.default_name),
+                                &mut lowered,
+                            );
+                            lowered.into_bump_slice_mut()
+                        } else {
+                            p.lower_class(js_ast::StmtOrExpr::Stmt(s2_copy))
+                        };
 
                         // Find the s_class statement in the returned list
                         let mut class_stmt_idx: usize = 0;
@@ -847,13 +859,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         // Emit any prefix statements before the export default
                         stmts.extend_from_slice(&class_stmts[0..class_stmt_idx]);
 
+                        let after_class = &class_stmts[class_stmt_idx + 1..];
+                        if p.options.features.server_components.wraps_exports()
+                            && !after_class.is_empty()
+                        {
+                            // Decorator lowering assigns to the class by name after it, so
+                            // the class stays a declaration and the export wraps its binding.
+                            let name = class
+                                .class
+                                .class_name
+                                .expect("decorator lowering names the class");
+                            stmts.push(class_stmts[class_stmt_idx]);
+                            stmts.extend_from_slice(after_class);
+                            p.record_usage(name.ref_);
+                            data.value = js_ast::StmtOrExpr::Expr(
+                                p.wrap_value_for_server_component_reference(
+                                    Expr::init_identifier(name.ref_, name.loc),
+                                    b"default",
+                                ),
+                            );
+                            stmts.push(*stmt);
+                            restore_dead!();
+                            record_on_exit!();
+                            return Ok(());
+                        }
+
                         data.value = js_ast::StmtOrExpr::Stmt(class_stmts[class_stmt_idx]);
                         stmts.push(*stmt);
 
                         // Emit any suffix statements after the export default
-                        if class_stmt_idx + 1 < class_stmts.len() {
-                            stmts.extend_from_slice(&class_stmts[class_stmt_idx + 1..]);
-                        }
+                        stmts.extend_from_slice(after_class);
 
                         if p.options.features.server_components.wraps_exports() {
                             // `data.value` is mutated *after* pushing `stmt`; the pushed

@@ -1,8 +1,7 @@
-//! The names in `\p{..}`. What they stand for is JavaScriptCore's to know: [`property`].
+//! The names in `\p{..}`. What they stand for is JavaScriptCore's to know.
 
 use super::unicode_tables as tables;
 use bun_core::strings;
-pub use bun_yarr::{Property, case_classes, property};
 
 /// The index of `name` in `names`, which are separated by spaces.
 fn index_of_name(names: &'static [u8], name: &[u8]) -> Option<usize> {

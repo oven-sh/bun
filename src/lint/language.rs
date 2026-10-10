@@ -97,6 +97,8 @@ pub struct LanguageOptions {
     /// The names that `globals` itself turns on, without those of an `env`. Sorted.
     pub written_globals: Vec<Box<[u8]>>,
     pub parser: Parser,
+    /// It is `@babel/eslint-parser`, which analyzes the scopes itself: see [`LanguageOptions::has_function_scope_at_top_level`].
+    pub is_babel: bool,
     /// `parserOptions.ecmaFeatures.globalReturn`
     pub global_return: bool,
     /// `parserOptions.ecmaFeatures.impliedStrict`
@@ -282,20 +284,19 @@ impl LanguageOptions {
         };
         let flag = |name: &[u8]| parser_options.get(name).and_then(Json::as_bool) == Some(true);
         let name = |value: Option<&Json>| value.and_then(Json::as_str).map(Box::from);
-        let parser = match language_options.get(b"parser").and_then(Json::as_str) {
-            None => Parser::Espree,
-            Some(written) => {
-                let version =
-                    bun_core::strings::last_index_of_char(written, b'@').filter(|at| *at > 0);
-                match &written[..version.unwrap_or(written.len())] {
-                    b"espree" => Parser::Espree,
-                    b"typescript" | b"@typescript-eslint/parser" | b"typescript-eslint/parser" => {
-                        Parser::TypeScript
-                    }
-                    _ => Parser::Other,
-                }
+        let written = language_options.get(b"parser").and_then(Json::as_str);
+        let written = written.map(|it| {
+            let version = bun_core::strings::last_index_of_char(it, b'@').filter(|at| *at > 0);
+            &it[..version.unwrap_or(it.len())]
+        });
+        let parser = match written {
+            None | Some(b"espree") => Parser::Espree,
+            Some(b"typescript" | b"@typescript-eslint/parser" | b"typescript-eslint/parser") => {
+                Parser::TypeScript
             }
+            Some(_) => Parser::Other,
         };
+        let is_babel = written == Some(&b"@babel/eslint-parser"[..]);
         let source_type =
             source_type_of(language_options.get(b"sourceType")).unwrap_or(SourceType::Module);
         let mut globals: Vec<(Box<[u8]>, Global)> = Vec::new();
@@ -342,9 +343,10 @@ impl LanguageOptions {
             globals,
             written_globals,
             parser,
-            // ESLint turns it off for espree in a module.
+            is_babel,
+            // ESLint turns it off for espree in a module. Babel's parser passes over it there.
             global_return: feature(b"globalReturn")
-                && !(parser == Parser::Espree && source_type == SourceType::Module),
+                && !((parser == Parser::Espree || is_babel) && source_type == SourceType::Module),
             implied_strict: feature(b"impliedStrict"),
             jsx: feature(b"jsx"),
             parser_source_type: source_type_of(parser_options.get(b"sourceType")),
@@ -404,9 +406,10 @@ impl LanguageOptions {
     }
 
     /// ESLint's `scopeManager.isGlobalReturn()`: between the global scope and the code of the file
-    /// is the scope of a function.
+    /// is the scope of a function. For Babel's parser `"commonjs"` alone does not make one: there `const { Symbol } = a;` at the
+    /// top level defines the global variable.
     pub fn has_function_scope_at_top_level(&self) -> bool {
-        self.global_return || self.scope_source_type() == SourceType::CommonJs
+        self.global_return || (self.scope_source_type() == SourceType::CommonJs && !self.is_babel)
     }
 
     /// What to tell the parser about the file at `path`.
@@ -456,6 +459,7 @@ impl Default for LanguageOptions {
             globals: Vec::new(),
             written_globals: Vec::new(),
             parser: Parser::Espree,
+            is_babel: false,
             global_return: false,
             implied_strict: false,
             jsx: false,

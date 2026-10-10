@@ -179,8 +179,6 @@ plugins! {
     Bun: ["bun"], Always, Whole;
     /// `prettier/prettier`
     Prettier: ["prettier"], InPlaceOf(Some("eslint-plugin-prettier"), "5.5.6"), Whole;
-    /// `regexp/no-dupe-disjunctions`
-    Regexp: ["regexp"], Package, Part;
 }
 
 impl Plugin {

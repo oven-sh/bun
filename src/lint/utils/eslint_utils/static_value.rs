@@ -2,7 +2,6 @@
 //! comparisons that ECMAScript defines on them.
 
 use super::builtins::Builtin;
-use crate::ast::BinOp;
 use crate::utils::text::number_to_string;
 use bun_core::strings;
 use std::borrow::Cow;
@@ -246,12 +245,6 @@ impl<'a> StaticValue<'a> {
     #[inline]
     pub fn js_compare(&self, other: &StaticValue<'a>) -> Option<Option<Ordering>> {
         self.compare(other).ok()
-    }
-
-    /// `a + b`. `None` if that throws: a symbol, a bigint and a number.
-    #[inline]
-    pub fn js_add(&self, other: &StaticValue<'a>) -> Option<StaticValue<'a>> {
-        super::operators::binary(BinOp::Add, self, other).ok()
     }
 
     /// `ToPrimitive`. The objects here have no `valueOf` that returns a primitive value, so the

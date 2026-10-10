@@ -2,9 +2,6 @@
 #include "headers-handwritten.h"
 #include <JavaScriptCore/Options.h>
 #include <JavaScriptCore/YarrInterpreter.h>
-#include <JavaScriptCore/YarrUnicodeProperties.h>
-#include <unicode/uchar.h>
-#include <unicode/ustring.h>
 #include <wtf/BumpPointerAllocator.h>
 
 namespace Bun {
@@ -109,51 +106,4 @@ extern "C" Bun::RegularExpression* Yarr__RegularExpression__compile(const void* 
 extern "C" bool Yarr__RegularExpression__exec(Bun::RegularExpression* re, const void* characters, uint32_t length, bool is8Bit, uint32_t start, uint32_t* offsets)
 {
     return re->exec(WTF::StringView(characters, length, is8Bit), start, offsets) != JSC::Yarr::offsetNoMatch;
-}
-
-// The characters of `\p{name=value}`, or of `\p{name}` if `value` is null: not sorted, as they are without the flag `i`. `string` is
-// called with each string of a property of strings. False if there is no such property. The names are ASCII.
-extern "C" bool Yarr__unicodeProperty(const void* name, uint32_t nameLength, const void* value, uint32_t valueLength, void* context, void (*range)(void*, uint32_t, uint32_t), void (*string)(void*, const char32_t*, uint32_t))
-{
-    using namespace JSC::Yarr;
-    auto nameString = WTF::StringView(name, nameLength, true).toString();
-    auto id = value
-        ? unicodeMatchPropertyValue(nameString, WTF::StringView(value, valueLength, true).toString())
-        : unicodeMatchProperty(nameString, CompileMode::UnicodeSets);
-    if (!id)
-        return false;
-    const CharacterClass* characters = sharedUnicodeCharacterClassFor(*id);
-    for (char32_t it : characters->m_matches8)
-        range(context, it, it);
-    for (auto& it : characters->m_ranges8)
-        range(context, it.begin, it.end);
-    for (char32_t it : characters->m_matches32)
-        range(context, it, it);
-    for (auto& it : characters->m_ranges32)
-        range(context, it.begin, it.end);
-    for (auto& it : characters->m_strings)
-        string(context, it.span().data(), it.size());
-    return true;
-}
-
-// Calls `pair` with each character that `Canonicalize` of ECMAScript maps to another one, and with that one. `unicode`: with the flag
-// `u` or `v`, which is simple case folding. Without them it is `toUppercase` of a UTF-16 code unit.
-extern "C" void Yarr__canonicalized(bool unicode, void* context, void (*pair)(void*, uint32_t, uint32_t))
-{
-    if (unicode) {
-        for (UChar32 it = 0; it <= UCHAR_MAX_VALUE; it++) {
-            UChar32 folded = u_foldCase(it, U_FOLD_CASE_DEFAULT);
-            if (folded != it)
-                pair(context, it, folded);
-        }
-        return;
-    }
-    for (UChar32 it = 0; it <= 0xFFFF; it++) {
-        UChar unit = static_cast<UChar>(it);
-        UChar upper[4];
-        UErrorCode status = U_ZERO_ERROR;
-        int32_t length = u_strToUpper(upper, 4, &unit, 1, "", &status);
-        if (U_SUCCESS(status) && length == 1 && upper[0] != unit && !(it >= 128 && upper[0] < 128))
-            pair(context, it, upper[0]);
-    }
 }

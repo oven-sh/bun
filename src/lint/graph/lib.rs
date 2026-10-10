@@ -1070,7 +1070,8 @@ impl Modules for Graph<'_> {
                 let named = join(directory_of(&from), specifier);
                 let is_in_directory = |it: &[u8]| {
                     let rest = it.strip_prefix(&named[..]);
-                    specifier.starts_with(b".") && rest.is_some_and(|it| it.starts_with(b"/"))
+                    let may_be_file = specifier.starts_with(b".") && !specifier.ends_with(b"/");
+                    may_be_file && rest.is_some_and(|it| it.starts_with(b"/"))
                 };
                 match found {
                     Some(found) if is_in_directory(&found.0) => {

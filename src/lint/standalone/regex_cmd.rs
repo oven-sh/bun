@@ -1,6 +1,6 @@
 //! `bun-lint regex ..`, driven by the scripts in test/cli/lint/oracle/regex.
 //!
-//! Every subcommand reads a file of requests, one per line, and prints one line of JSON for each. What is no file is the request. The
+//! Every subcommand reads a file of requests, one per line, and prints one line of JSON for each. The
 //! fields of a request are separated by tabs. A string is written as the hexadecimal UTF-16 code
 //! units of the JavaScript string, four digits each, so that lone surrogates survive.
 //!
@@ -12,9 +12,6 @@
 //!   `split`. The result of the JavaScript method, with `matchAll` as the list of the lists of indices.
 //! - `charset <file>`: `pattern  flags`. The characters `c` for which `^(?:pattern)$` matches the string of only `c`, as
 //!   `"first-last first-last .."` in hexadecimal.
-//! - `property <file>`: `name` or `name=value`, as between the braces of `\p{..}`, in plain text. `null`, or `{"ranges": "first-last ..",
-//!   "strings": ["character character ..", ..]}` in hexadecimal: [`regex::unicode::property`].
-//! - `case-classes <file>`: `u`, or `-` for without the flag. The list of `"character character .."`: [`regex::unicode::case_classes`].
 //! - `raw <file>`: `pattern  flags  text`, each as hexadecimal bytes, which need not be UTF-8. Parses, compiles and runs all
 //!   operations on a thread with a stack of 512 KiB, and prints `true`: nothing may panic, overflow or go on forever.
 //! - `bench <file> <repeat>`: requests as for `exec`. Compiles each once, and prints the time of `repeat` searches.
@@ -545,53 +542,6 @@ fn charset(line: &str) -> String {
     out
 }
 
-/// `"41 61"`
-fn characters(out: &mut String, characters: &[u32]) {
-    out.push('"');
-    for (i, character) in characters.iter().enumerate() {
-        let blank = if i > 0 { " " } else { "" };
-        write!(out, "{blank}{character:x}").unwrap();
-    }
-    out.push('"');
-}
-
-/// `["41 61", "42 62"]`
-fn lists_of_characters(out: &mut String, lists: &[Vec<u32>]) {
-    out.push('[');
-    for (i, list) in lists.iter().enumerate() {
-        if i > 0 {
-            out.push_str(", ");
-        }
-        characters(out, list);
-    }
-    out.push(']');
-}
-
-fn property(line: &str) -> String {
-    let (name, value) = match host::split_once(line, "=") {
-        Some((name, value)) => (name, Some(value.as_bytes())),
-        None => (line, None),
-    };
-    let Some(property) = regex::unicode::property(name.as_bytes(), value) else {
-        return "null".to_owned();
-    };
-    let mut out = "{\"ranges\": \"".to_owned();
-    for (i, (first, last)) in property.ranges.iter().enumerate() {
-        let blank = if i > 0 { " " } else { "" };
-        write!(out, "{blank}{first:x}-{last:x}").unwrap();
-    }
-    out.push_str("\", \"strings\": ");
-    lists_of_characters(&mut out, &property.strings);
-    out.push('}');
-    out
-}
-
-fn case_classes(line: &str) -> String {
-    let mut out = String::new();
-    lists_of_characters(&mut out, &regex::unicode::case_classes(line == "u"));
-    out
-}
-
 fn raw(line: &str) -> String {
     let decode = |hex: &str| -> Vec<u8> {
         hex.as_bytes()
@@ -672,12 +622,10 @@ fn bench(requests: &str, repeat: usize) {
 
 pub(crate) fn run(args: &[String]) {
     let (Some(command), Some(path)) = (args.first(), args.get(1)) else {
-        error_line!(
-            "usage: bun-lint regex parse|exec|ops|charset|property|case-classes|raw|bench <requests>"
-        );
+        error_line!("usage: bun-lint regex parse|exec|ops|charset|raw|bench <requests>");
         return;
     };
-    let requests = host::read_text(path).unwrap_or_else(|_| path.clone());
+    let requests = host::read_text(path).unwrap_or_default();
     if command == "bench" {
         return bench(
             &requests,
@@ -692,8 +640,6 @@ pub(crate) fn run(args: &[String]) {
             "exec" => exec(line),
             "ops" => ops(line),
             "charset" => charset(line),
-            "property" => property(line),
-            "case-classes" => case_classes(line),
             "raw" => std::thread::scope(|scope| {
                 let small = std::thread::Builder::new().stack_size(512 << 10);
                 small

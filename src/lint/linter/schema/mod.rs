@@ -149,12 +149,10 @@ pub fn validate_by_id(id: &[u8], options: &[Json]) -> Result<(), Vec<u8>> {
     .map(drop)
 }
 
-/// Whether a rule that `data.rs` does not list may take options all the same: of these plugins not every rule's schema is there
+/// Whether a rule that `data.rs` does not list may take options all the same: of this plugin not every rule's schema is there
 /// yet, and to refuse options that the rule reads ends the run.
 fn may_lack_its_schema(id: &[u8]) -> bool {
-    [&b"react/"[..], b"regexp/"]
-        .iter()
-        .any(|it| id.starts_with(it))
+    id.starts_with(b"react/")
 }
 
 /// `meta.schema` of the rule that ESLint calls `id`. `None`: it takes no options, or there is no such rule.

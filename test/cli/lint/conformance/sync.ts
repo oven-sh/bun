@@ -41,7 +41,7 @@ const PACKAGES = [
 ] as const;
 
 /** What is in the bundle rule by rule, with the projects that the cases are files of. */
-const RECORDED = ["import/", "import-project/", "react/", "regexp/", "prettier/", "prettier-project/"];
+const RECORDED = ["import/", "import-project/", "react/", "prettier/", "prettier-project/"];
 
 function directoryOf(variable: string): string {
   const directory = process.env[variable];
@@ -52,7 +52,8 @@ function directoryOf(variable: string): string {
 /** The directory of `name`, as Node.js finds it from `from`. */
 function resolvePackage(name: string, from: string): string {
   for (let directory = realpathSync(from); ; directory = join(directory, "..")) {
-    if (existsSync(join(directory, "node_modules", name, "package.json"))) return realpathSync(join(directory, "node_modules", name));
+    if (existsSync(join(directory, "node_modules", name, "package.json")))
+      return realpathSync(join(directory, "node_modules", name));
     if (directory === "/") throw new Error(`${name} is not installed`);
   }
 }
@@ -102,7 +103,8 @@ if (first === "--extract" && rest.length === 2) {
   }
   clean(found, [directory]);
   // The files that the cases of `import` are next to are not tests.
-  for (const [path, bytes] of found) files.set(path.startsWith("import-project/") ? `oxlint-${path}` : `oxlint/${path}`, bytes);
+  for (const [path, bytes] of found)
+    files.set(path.startsWith("import-project/") ? `oxlint-${path}` : `oxlint/${path}`, bytes);
   writeBundle(bundle, files);
   console.log(`oxlint: ${summary(found)}. In all: ${summary(files)}`);
 } else if (first?.startsWith("--")) {
@@ -112,14 +114,18 @@ if (first === "--extract" && rest.length === 2) {
   process.exit(1);
 } else {
   const fixtures = first ?? join(here, "fixtures");
-  const files = kept(path => path.startsWith("more/") || path.startsWith("oxlint") || RECORDED.some(it => path.startsWith(it)));
+  const files = kept(
+    path => path.startsWith("more/") || path.startsWith("oxlint") || RECORDED.some(it => path.startsWith(it)),
+  );
   for (const directory of ["eslint", "typescript-eslint", "react-hooks", "n", "oxc"]) {
     collect(fixtures, directory, files, () => false);
   }
   for (const directory of ["typescript-eslint-project", "n-project"]) collect(fixtures, directory, files, () => false);
 
   // What is not from one of `SOURCES` and `PACKAGES` stays as it is.
-  const version: Record<string, { version?: string; commit?: string }> = JSON.parse(readFileSync(join(here, "version.json"), "utf8"));
+  const version: Record<string, { version?: string; commit?: string }> = JSON.parse(
+    readFileSync(join(here, "version.json"), "utf8"),
+  );
   mkdirSync(join(here, "licenses"), { recursive: true });
   for (const [name, variable, manifest] of SOURCES) {
     const checkout = directoryOf(variable);

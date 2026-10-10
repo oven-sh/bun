@@ -24,19 +24,6 @@ mod module_visitor;
 mod n;
 mod oxlint;
 mod prettier;
-mod regexp_ast_utils;
-mod regexp_char_env;
-mod regexp_char_map;
-mod regexp_char_set;
-mod regexp_expression_references;
-mod regexp_pattern_source;
-mod regexp_raa_basic;
-mod regexp_raa_follow;
-mod regexp_refa_ast;
-mod regexp_replacements;
-mod regexp_syntax;
-mod regexp_type_builtins;
-mod regexp_type_data;
 
 bun_lint::rules! {
     bun_consistent_directive_prefix::ConsistentDirectivePrefix,

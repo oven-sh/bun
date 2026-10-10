@@ -68,7 +68,7 @@
 pub mod ast;
 mod parser;
 mod subject;
-pub mod unicode;
+mod unicode;
 mod unicode_tables;
 mod validator;
 mod wtf8;

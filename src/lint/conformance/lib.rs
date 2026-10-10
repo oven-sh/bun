@@ -147,7 +147,7 @@ const SUITES: [(&str, &str); 5] = [
 ];
 
 /// The directories of a suite that have the tests of rules.
-const PLUGINS: [(&str, Plugin); 20] = [
+const PLUGINS: [(&str, Plugin); 19] = [
     ("eslint", Plugin::Eslint),
     ("typescript-eslint", Plugin::TypeScript),
     ("react-hooks", Plugin::ReactHooks),
@@ -166,7 +166,6 @@ const PLUGINS: [(&str, Plugin); 20] = [
     ("vitest", Plugin::Vitest),
     ("jsdoc", Plugin::Jsdoc),
     ("vue", Plugin::Vue),
-    ("regexp", Plugin::Regexp),
     ("prettier", Plugin::Prettier),
 ];
 

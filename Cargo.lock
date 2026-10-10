@@ -1115,7 +1115,6 @@ name = "bun_lint_plugins"
 version = "0.0.0"
 dependencies = [
  "bstr",
- "bun_collections",
  "bun_core",
  "bun_glob",
  "bun_lint",

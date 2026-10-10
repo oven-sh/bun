@@ -175,8 +175,11 @@ describe("addEventListener({ signal }) does not leak abort algorithms", () => {
 // listener owns it. These are the orders in which the two sides go away.
 describe("addEventListener({ signal }) lifetimes", () => {
   // Subprocesses: an ASAN report or a debug ASSERT is a non-zero exit. System
-  // malloc, so that ASAN sees a write into a freed AbortSignal.
-  const env = isWindows ? bunEnv : { ...bunEnv, Malloc: "1" };
+  // malloc, so that ASAN sees a write into a freed AbortSignal. No leak check
+  // at exit: with system malloc, LeakSanitizer scans the whole heap for seconds.
+  const env = isWindows
+    ? bunEnv
+    : { ...bunEnv, Malloc: "1", ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") };
 
   test("the signal is collected before its listeners", async () => {
     await using proc = Bun.spawn({

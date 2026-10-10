@@ -97,7 +97,8 @@ fn is_index_only_used_with_array<'a>(body: Stmt<'a>, index_var: Symbol<'a>, arra
 
 impl Rule for PreferForOf {
     const META: Meta =
-        Meta::typescript("prefer-for-of", Kind::Suggestion).presets(Presets::STYLISTIC);
+        Meta::typescript("prefer-for-of", Kind::Suggestion).presets(Presets::STYLISTIC)
+        .reports_on_exit();
     const ON: On = On::new().stmts(&[StmtTag::For]);
     type State<'a> = References<'a>;
 

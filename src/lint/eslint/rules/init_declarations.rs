@@ -135,7 +135,7 @@ fn is_inside_declared_namespace<'a>(statement: Stmt<'a>, state: &mut State<'a>) 
 }
 
 impl Rule for InitDeclarations {
-    const META: Meta = Meta::eslint("init-declarations", Kind::Suggestion);
+    const META: Meta = Meta::eslint("init-declarations", Kind::Suggestion).reports_on_exit();
     const ON: On = On::new().var_decls();
     type State<'a> = State<'a>;
 

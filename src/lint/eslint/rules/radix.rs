@@ -48,7 +48,7 @@ fn is_valid_radix_for_oxlint(radix: Expr) -> bool {
 }
 
 impl Rule for Radix {
-    const META: Meta = Meta::eslint("radix", Kind::Suggestion).has_suggestions();
+    const META: Meta = Meta::eslint("radix", Kind::Suggestion).has_suggestions().reports_at_the_end();
     const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 

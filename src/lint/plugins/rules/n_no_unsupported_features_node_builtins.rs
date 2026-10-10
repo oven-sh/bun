@@ -6,7 +6,9 @@ use bun_lint::rule::Plugin;
 pub struct NodeBuiltins(Builtins);
 
 impl Rule for NodeBuiltins {
-    const META: Meta = Meta::plugin(Plugin::Node, "no-unsupported-features/node-builtins", Kind::Problem).recommended();
+    const META: Meta = Meta::plugin(Plugin::Node, "no-unsupported-features/node-builtins", Kind::Problem)
+        .recommended()
+        .reports_on_exit();
     const ON: On = On::new().finish();
     type State<'a> = ();
 

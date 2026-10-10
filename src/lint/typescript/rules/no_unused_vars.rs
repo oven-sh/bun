@@ -1660,7 +1660,8 @@ impl Rule for NoUnusedVars {
         .fixable(Fixable::Code)
         .has_suggestions()
         .recommended()
-        .extends_base_rule("no-unused-vars");
+        .extends_base_rule("no-unused-vars")
+        .reports_at_the_end();
     const ON: On = On::new()
         .stmts(&[StmtTag::Module])
         .finish()

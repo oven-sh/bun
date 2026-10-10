@@ -113,7 +113,7 @@ impl NoParamReassign {
 }
 
 impl Rule for NoParamReassign {
-    const META: Meta = Meta::eslint("no-param-reassign", Kind::Suggestion);
+    const META: Meta = Meta::eslint("no-param-reassign", Kind::Suggestion).reports_on_exit();
     const ON: On = On::new().params();
     /// `is_modifying_prop`
     type State<'a> = AncestorMemo<'a, bool>;

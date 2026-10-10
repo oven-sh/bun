@@ -32,7 +32,7 @@ const MAX_STEPS: u32 = 100_000;
 pub(crate) struct RangeError;
 
 /// What `object[undefined] = ..` calls the property.
-const UNDEFINED: &[u8] = b"undefined";
+pub(crate) const UNDEFINED: &[u8] = b"undefined";
 
 const ANY_KEY: &[u8] = b"__ANY_KEY__";
 
@@ -95,7 +95,7 @@ impl<'a> ReactTypeImports<'a> {
 
 /// `key`, which is `getKeyValue(context, property)`, as `[.., key].join(".")` has it: `undefined`
 /// and `null` are nothing there.
-fn key_in_full_name<'k>(property: Prop<'_>, key: Option<&'k [u8]>) -> &'k [u8] {
+pub(crate) fn key_in_full_name<'k>(property: Prop<'_>, key: Option<&'k [u8]>) -> &'k [u8] {
     let is_null = match property.key().map(Key::kind) {
         Some(KeyKind::Computed(it)) => it.tag() == ExprTag::Null,
         _ => false,

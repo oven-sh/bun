@@ -806,6 +806,8 @@ _bun_lint_completion() {
         '--pass-on-no-patterns[Exit with 0 if there are no arguments, instead of linting .]' \
         '--exit-on-fatal-error[Exit with 2 if a file cannot be parsed]' \
         '--allow-unsupported[Only warn about rules and files of the configuration that cannot be linted yet]' \
+        '--native-plugin-rules[The plugins whose built-in rules run in place of the installed package\: import,react-hooks (default\: all)]:native-plugin-rules' \
+        '--no-native-plugin-rules[Run the rules of the installed plugins, in JavaScript, not the built-in ones]' \
         '--print-config[Print the configuration of a file, and lint nothing]:print-config:_files' \
         '--type-aware[Run the rules that need types, whatever the configuration says]' \
         '--no-type-aware[Skip the rules that need types]' \
@@ -849,6 +851,7 @@ _bun_format_completion() {
         '--no-editorconfig[Do not read .editorconfig]' \
         '--config-precedence[cli-override (default), file-override, or prefer-file]:config-precedence' \
         '--ignore-path[Files with patterns to ignore (default\: .gitignore and .prettierignore)]:ignore-path:_files' \
+        '--ignore-pattern[Ignore the files that match, as a line of .prettierignore does]:ignore-pattern' \
         '--with-node-modules[Format files in node_modules too]' \
         '--no-error-on-unmatched-pattern[Do not fail if an argument matches no file]' \
         '--ignore-unknown[Say nothing about a file that there is no parser for]' \

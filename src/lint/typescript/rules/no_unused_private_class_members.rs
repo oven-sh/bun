@@ -11,7 +11,8 @@ const UNUSED_PRIVATE_CLASS_MEMBER: Message = Message::new(
 
 impl Rule for NoUnusedPrivateClassMembers {
     const META: Meta = Meta::typescript("no-unused-private-class-members", Kind::Problem)
-        .extends_base_rule("no-unused-private-class-members");
+        .extends_base_rule("no-unused-private-class-members")
+        .reports_at_the_end();
     const ON: On = On::new().finish();
     type State<'a> = ();
 

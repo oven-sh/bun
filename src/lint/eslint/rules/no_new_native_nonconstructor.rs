@@ -9,7 +9,7 @@ const NO_NEW_NONCONSTRUCTOR: Message = Message::new(
 );
 
 impl Rule for NoNewNativeNonconstructor {
-    const META: Meta = Meta::eslint("no-new-native-nonconstructor", Kind::Problem).recommended();
+    const META: Meta = Meta::eslint("no-new-native-nonconstructor", Kind::Problem).recommended().reports_at_the_end();
     const ON: On = On::new().exprs(&[ExprTag::New]);
     type State<'a> = ();
 

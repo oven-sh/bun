@@ -75,7 +75,7 @@ impl Indent {
 }
 
 impl Rule for Indent {
-    const META: Meta = Meta::eslint("indent", Kind::Layout).fixable(Fixable::Whitespace).deprecated();
+    const META: Meta = Meta::eslint("indent", Kind::Layout).fixable(Fixable::Whitespace).deprecated().reports_at_the_end();
     const ON: On = On::new().nodes(NodeTags::ALL).finish();
     /// The nodes that `ignoredNodes` selects: where each starts and ends, and its type.
     type State<'a> = Vec<(u32, u32, &'static str)>;

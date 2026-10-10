@@ -29,7 +29,7 @@ fn lines_without_code<'a>(file: &'a File<'a>, comment: Token<'a>) -> (u32, u32) 
 }
 
 impl Rule for MaxLines {
-    const META: Meta = Meta::eslint("max-lines", Kind::Suggestion);
+    const META: Meta = Meta::eslint("max-lines", Kind::Suggestion).reports_at_the_end();
     const ON: On = On::new().finish();
     no_state!();
 

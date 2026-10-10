@@ -652,7 +652,7 @@ impl Checker {
 }
 
 impl Rule for NoShadow {
-    const META: Meta = Meta::eslint("no-shadow", Kind::Suggestion);
+    const META: Meta = Meta::eslint("no-shadow", Kind::Suggestion).reports_at_the_end();
     const ON: On = On::new().finish();
     no_state!();
 

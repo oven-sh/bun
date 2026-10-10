@@ -48,7 +48,7 @@ impl Complexity {
 }
 
 impl Rule for Complexity {
-    const META: Meta = Meta::eslint("complexity", Kind::Suggestion);
+    const META: Meta = Meta::eslint("complexity", Kind::Suggestion).reports_on_exit();
     const ON: On = On::new()
         .exprs(&[
             ExprTag::Cond,

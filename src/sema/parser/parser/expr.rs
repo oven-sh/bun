@@ -398,7 +398,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 ..
             }) = self.f.exprs.get(expression.idx())
                 && !self.is_parenthesized(expression)
-                && !self.recovers()
+                && (!self.recovers() || self.is_ecmascript)
             {
                 self.report();
             }

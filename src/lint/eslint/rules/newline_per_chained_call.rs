@@ -18,7 +18,8 @@ fn object_of(member: Expr<'_>) -> Option<Expr<'_>> {
 impl Rule for NewlinePerChainedCall {
     const META: Meta = Meta::eslint("newline-per-chained-call", Kind::Layout)
         .fixable(Fixable::Whitespace)
-        .deprecated();
+        .deprecated()
+        .reports_on_exit();
     const ON: On = On::new().exprs(&[ExprTag::Call]);
     no_state!();
 

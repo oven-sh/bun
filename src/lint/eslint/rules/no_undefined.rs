@@ -47,7 +47,7 @@ impl NoUndefined {
 }
 
 impl Rule for NoUndefined {
-    const META: Meta = Meta::eslint("no-undefined", Kind::Suggestion);
+    const META: Meta = Meta::eslint("no-undefined", Kind::Suggestion).reports_at_the_end();
     const ON: On = On::new().symbols().finish();
     type State<'a> = ();
 

@@ -7,7 +7,7 @@ const MISSING_YIELD: Message =
     Message::new("missingYield", "This generator function does not have 'yield'.");
 
 impl Rule for RequireYield {
-    const META: Meta = Meta::eslint("require-yield", Kind::Suggestion).recommended();
+    const META: Meta = Meta::eslint("require-yield", Kind::Suggestion).recommended().reports_on_exit();
     const ON: On = On::new().funcs();
     no_state!();
 

@@ -450,7 +450,7 @@ impl PreferConst {
 }
 
 impl Rule for PreferConst {
-    const META: Meta = Meta::eslint("prefer-const", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta = Meta::eslint("prefer-const", Kind::Suggestion).fixable(Fixable::Code).reports_at_the_end();
     const ON: On = On::new().stmts(&[StmtTag::Var]).finish();
     /// The `let` declarations.
     type State<'a> = Vec<Stmt<'a>>;

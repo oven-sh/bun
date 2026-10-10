@@ -195,7 +195,7 @@ fn fix_as_oxlint<'a>(fixer: Fixer<'a>, e: Expr<'a>, func: Func<'a>, is_lexical_t
 }
 
 impl Rule for PreferArrowCallback {
-    const META: Meta = Meta::eslint("prefer-arrow-callback", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta = Meta::eslint("prefer-arrow-callback", Kind::Suggestion).fixable(Fixable::Code).reports_on_exit();
     const ON: On = On::new().exprs(&[ExprTag::Fn]);
     type State<'a> = Values<'a>;
 

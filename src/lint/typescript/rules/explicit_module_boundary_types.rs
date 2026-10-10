@@ -388,7 +388,7 @@ impl<'a> Checker<'a, '_> {
 }
 
 impl Rule for ExplicitModuleBoundaryTypes {
-    const META: Meta = Meta::typescript("explicit-module-boundary-types", Kind::Problem);
+    const META: Meta = Meta::typescript("explicit-module-boundary-types", Kind::Problem).reports_on_exit();
     const ON: On = On::new()
         .stmts(&[
             StmtTag::Var,

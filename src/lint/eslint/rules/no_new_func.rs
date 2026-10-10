@@ -7,7 +7,7 @@ const NO_FUNCTION_CONSTRUCTOR: Message =
     Message::new("noFunctionConstructor", "The Function constructor is eval.");
 
 impl Rule for NoNewFunc {
-    const META: Meta = Meta::eslint("no-new-func", Kind::Suggestion);
+    const META: Meta = Meta::eslint("no-new-func", Kind::Suggestion).reports_at_the_end();
     const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]);
     type State<'a> = ();
 

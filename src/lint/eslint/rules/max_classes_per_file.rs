@@ -12,7 +12,7 @@ const MAXIMUM_EXCEEDED: Message = Message::new(
 );
 
 impl Rule for MaxClassesPerFile {
-    const META: Meta = Meta::eslint("max-classes-per-file", Kind::Suggestion);
+    const META: Meta = Meta::eslint("max-classes-per-file", Kind::Suggestion).reports_at_the_end();
     const ON: On = On::new().classes().finish();
     /// The number of classes that count.
     type State<'a> = usize;

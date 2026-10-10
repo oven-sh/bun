@@ -188,7 +188,8 @@ impl NoUnnecessaryParameterPropertyAssignment {
 
 impl Rule for NoUnnecessaryParameterPropertyAssignment {
     const META: Meta =
-        Meta::typescript("no-unnecessary-parameter-property-assignment", Kind::Suggestion);
+        Meta::typescript("no-unnecessary-parameter-property-assignment", Kind::Suggestion)
+        .reports_on_exit();
     const ON: On = On::new().exprs(&[ExprTag::Assign]).finish();
     /// Whether there is a `this.x = x`.
     type State<'a> = bool;

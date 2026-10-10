@@ -52,7 +52,8 @@ fn is_fixable<'a>(
 impl Rule for NoUnusedLabels {
     const META: Meta = Meta::eslint("no-unused-labels", Kind::Suggestion)
         .fixable(Fixable::Code)
-        .recommended();
+        .recommended()
+        .reports_on_exit();
     const ON: On = On::new()
         .stmts(&[StmtTag::Labeled, StmtTag::Break, StmtTag::Continue])
         .finish();

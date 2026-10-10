@@ -40,7 +40,7 @@ impl<'a> State<'a> {
 }
 
 impl Rule for PreferRestParams {
-    const META: Meta = Meta::eslint("prefer-rest-params", Kind::Suggestion);
+    const META: Meta = Meta::eslint("prefer-rest-params", Kind::Suggestion).reports_on_exit();
     const ON: On = On::new().exprs(&[ExprTag::Ident]);
     type State<'a> = State<'a>;
 

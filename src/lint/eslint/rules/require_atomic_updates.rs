@@ -577,7 +577,7 @@ impl RequireAtomicUpdates {
 }
 
 impl Rule for RequireAtomicUpdates {
-    const META: Meta = Meta::eslint("require-atomic-updates", Kind::Problem);
+    const META: Meta = Meta::eslint("require-atomic-updates", Kind::Problem).reports_on_exit();
     const ON: On = On::new().funcs();
     type State<'a> = State<'a>;
 

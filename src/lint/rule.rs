@@ -122,7 +122,7 @@ macro_rules! plugins {
         }
 
         impl Plugin {
-            const ALL: &'static [Plugin] = &[$(Plugin::$plugin),*];
+            pub(crate) const ALL: &'static [Plugin] = &[$(Plugin::$plugin),*];
 
             const fn names(self) -> Names {
                 use UnderEslint::{Always, Here, InPlaceOf, Package};
@@ -302,6 +302,19 @@ bitflags::bitflags! {
     }
 }
 
+/// When the original reports: it decides about the order of what starts at one place.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum When {
+    /// In a listener that is called on entering a node: the longer first.
+    Entering,
+    /// [`Report::shorter_first`](crate::context::Report::shorter_first)
+    EnteringShorterFirst,
+    /// [`Meta::reports_on_exit`]
+    Leaving,
+    /// [`Meta::reports_at_the_end`]
+    AtTheEnd,
+}
+
 /// ESLint's `meta`.
 #[derive(Copy, Clone, Debug)]
 pub struct Meta {
@@ -326,8 +339,7 @@ pub struct Meta {
     /// The rule stands in for that of a package only for some files: for the others it calls `File::hand_back`, and the
     /// rule of the package is asked.
     pub hands_back: bool,
-    /// The original reports when it leaves a node: see [`Meta::reports_on_exit`].
-    pub reports_on_exit: bool,
+    pub reports: When,
     /// A hash of `name`.
     pub(crate) key: u32,
 }
@@ -347,7 +359,7 @@ impl Meta {
             needs_modules: false,
             follows_oxlint: false,
             hands_back: false,
-            reports_on_exit: false,
+            reports: When::Entering,
             key: hash_const(0, name.as_bytes()) as u32,
         }
     }
@@ -410,7 +422,14 @@ impl Meta {
     /// Of what starts at one place, what this rule reports comes last, and of that the shorter first: as from a listener that
     /// is called on leaving a node, the inner node first. Without it the longer comes first.
     pub const fn reports_on_exit(mut self) -> Meta {
-        self.reports_on_exit = true;
+        self.reports = When::Leaving;
+        self
+    }
+
+    /// Of what starts at one place, what this rule reports comes after all that is reported for a node, by the order of the rules:
+    /// as from a listener that is called when the program ends.
+    pub const fn reports_at_the_end(mut self) -> Meta {
+        self.reports = When::AtTheEnd;
         self
     }
 

@@ -185,7 +185,7 @@ fn returning_statement(statement: Stmt<'_>) -> Option<Stmt<'_>> {
 }
 
 impl Rule for NoElseReturn {
-    const META: Meta = Meta::eslint("no-else-return", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta = Meta::eslint("no-else-return", Kind::Suggestion).fixable(Fixable::Code).reports_on_exit();
     const ON: On = On::new().stmts(&[StmtTag::If]);
     no_state!();
 

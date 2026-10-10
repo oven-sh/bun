@@ -613,6 +613,7 @@ pub(crate) fn run_reactive_scope_passes(
         "PruneUnusedLabelsHIR",
         crate::optimization::prune_unused_labels_hir(hir)
     )?;
+    crate::hir::assert_terminal_blocks_exist::assert_terminal_successors_exist(hir)?;
 
     timed!(
         "AlignReactiveScopesToBlockScopesHIR",
@@ -627,6 +628,7 @@ pub(crate) fn run_reactive_scope_passes(
         "BuildReactiveScopeTerminalsHIR",
         crate::inference::build_reactive_scope_terminals_hir(hir, env)
     )?;
+    crate::hir::assert_terminal_blocks_exist::assert_terminal_successors_exist(hir)?;
 
     timed!(
         "FlattenReactiveLoopsHIR",

@@ -109,7 +109,7 @@ fn fix<'a>(fixer: Fixer<'a>, call: Expr<'a>, member: Expr<'a>, function: Expr<'a
 }
 
 impl Rule for NoExtraBind {
-    const META: Meta = Meta::eslint("no-extra-bind", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta = Meta::eslint("no-extra-bind", Kind::Suggestion).fixable(Fixable::Code).reports_on_exit();
     const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 

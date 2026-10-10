@@ -25,6 +25,12 @@ pub enum NativePlugins {
 }
 
 impl NativePlugins {
+    /// The names that [`NativePlugins::Only`] can have.
+    pub fn names() -> impl Iterator<Item = &'static str> {
+        let in_place_of_a_package = Plugin::ALL.iter().filter(|it| it.follows().is_some());
+        in_place_of_a_package.map(|it| it.prefix())
+    }
+
     /// `true`, `false`, or names with commas between them. `Err`: a name of no plugin that is implemented here in place of a
     /// package.
     pub fn parse(text: &[u8]) -> Result<NativePlugins, &[u8]> {

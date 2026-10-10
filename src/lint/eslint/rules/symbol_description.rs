@@ -7,7 +7,7 @@ pub struct SymbolDescription;
 const EXPECTED: Message = Message::new("expected", "Expected Symbol to have a description.");
 
 impl Rule for SymbolDescription {
-    const META: Meta = Meta::eslint("symbol-description", Kind::Suggestion);
+    const META: Meta = Meta::eslint("symbol-description", Kind::Suggestion).reports_at_the_end();
     const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 

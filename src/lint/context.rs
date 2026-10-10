@@ -4,7 +4,7 @@
 use crate::ast::{File, Ident, Name};
 use crate::fix::{Fix, Fixer, IntoFix, SuggestionKind};
 use crate::oxlint_help::{self, Edits, Found, Help, Part};
-use crate::rule::{Message, Meta, Rule};
+use crate::rule::{Message, Meta, Rule, When};
 use crate::span::{Position, Span, Spanned};
 use smallvec::SmallVec;
 use std::borrow::Cow;
@@ -28,8 +28,7 @@ pub struct Diagnostic {
     pub span: Span,
     /// ESLint was given a position, not a range: it reports no `endLine` and `endColumn`.
     pub has_no_end: bool,
-    /// [`Meta::reports_on_exit`](crate::rule::Meta::reports_on_exit)
-    pub is_reported_on_exit: bool,
+    pub when: When,
     pub details: Option<Box<Details>>,
     /// What oxlint says besides the message, where `details` does not say it. What of it has values is in `details` once the report
     /// is complete.
@@ -212,7 +211,7 @@ impl<'a> CxBase<'a> {
             message: Vec::new(),
             span,
             has_no_end: false,
-            is_reported_on_exit: self.meta.reports_on_exit,
+            when: self.meta.reports,
             details: None,
             constant_help,
             fix: None,
@@ -320,7 +319,18 @@ impl<'a> Report<'a> {
     /// leaving a node.
     pub fn on_exit(mut self, is_on_exit: bool) -> Self {
         if let Some(diagnostic) = &mut self.diagnostic {
-            diagnostic.is_reported_on_exit = is_on_exit;
+            diagnostic.when = match is_on_exit {
+                true => When::Leaving,
+                false => When::Entering,
+            };
+        }
+        self
+    }
+
+    /// Of what the rule reports at one start, this comes with the shorter first.
+    pub fn shorter_first(mut self) -> Self {
+        if let Some(diagnostic) = &mut self.diagnostic {
+            diagnostic.when = When::EnteringShorterFirst;
         }
         self
     }

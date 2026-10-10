@@ -309,7 +309,7 @@ impl ObjectShorthand {
 }
 
 impl Rule for ObjectShorthand {
-    const META: Meta = Meta::eslint("object-shorthand", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta = Meta::eslint("object-shorthand", Kind::Suggestion).fixable(Fixable::Code).reports_on_exit();
     const ON: On = On::new().exprs(&[ExprTag::Object]).props();
     no_state!();
 

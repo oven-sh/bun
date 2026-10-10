@@ -1032,7 +1032,8 @@ impl NoUnusedVars {
 
 impl Rule for NoUnusedVars {
     const META: Meta =
-        Meta::eslint("no-unused-vars", Kind::Problem).has_suggestions().recommended();
+        Meta::eslint("no-unused-vars", Kind::Problem).has_suggestions().recommended()
+        .reports_at_the_end();
     const ON: On = On::new().finish();
     no_state!();
 

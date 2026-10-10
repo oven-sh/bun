@@ -217,7 +217,7 @@ fn oxlint_returns_functions(func: Func) -> bool {
 }
 
 impl Rule for ExplicitFunctionReturnType {
-    const META: Meta = Meta::typescript("explicit-function-return-type", Kind::Problem);
+    const META: Meta = Meta::typescript("explicit-function-return-type", Kind::Problem).reports_on_exit();
     const ON: On = On::new().funcs();
     /// For oxlint: whether what is around a node has a return type.
     type State<'a> = AncestorMemo<'a, bool>;

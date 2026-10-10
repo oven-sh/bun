@@ -310,7 +310,8 @@ impl NoUnusedPrivateClassMembers {
 impl Rule for NoUnusedPrivateClassMembers {
     const META: Meta = Meta::eslint("no-unused-private-class-members", Kind::Problem)
         .has_suggestions()
-        .recommended();
+        .recommended()
+        .reports_on_exit();
     const ON: On = On::new()
         .classes()
         .exprs(&[ExprTag::Dot, ExprTag::PrivateIdentifier])

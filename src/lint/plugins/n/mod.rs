@@ -221,8 +221,11 @@ fn named_in<'a>(file: &'a File<'a>, entries: &[Entry]) -> Roots<data::Builtin> {
 }
 
 fn is_named_in(file: &File, entry: &Entry) -> bool {
+    // `export * from "os"` is all of `os`.
     file.mentions_bit(entry.bit)
-        && (entry.is_reported || entry.reported.iter().any(|it| file.mentions_bit(*it)))
+        && (entry.is_reported
+            || file.has_stmts([StmtTag::ExportStar])
+            || entry.reported.iter().any(|it| file.mentions_bit(*it)))
 }
 
 /// The options of a rule, and what follows from them.

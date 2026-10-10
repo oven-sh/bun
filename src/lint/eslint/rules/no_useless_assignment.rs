@@ -2209,7 +2209,7 @@ impl NoUselessAssignment {
 }
 
 impl Rule for NoUselessAssignment {
-    const META: Meta = Meta::eslint("no-useless-assignment", Kind::Problem).recommended();
+    const META: Meta = Meta::eslint("no-useless-assignment", Kind::Problem).recommended().reports_at_the_end();
     const ON: On = On::new().symbols().finish();
     type State<'a> = State<'a>;
 

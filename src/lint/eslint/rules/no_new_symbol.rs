@@ -7,7 +7,7 @@ const NO_NEW_SYMBOL: Message =
     Message::new("noNewSymbol", "`Symbol` cannot be called as a constructor.");
 
 impl Rule for NoNewSymbol {
-    const META: Meta = Meta::eslint("no-new-symbol", Kind::Problem).deprecated();
+    const META: Meta = Meta::eslint("no-new-symbol", Kind::Problem).deprecated().reports_at_the_end();
     const ON: On = On::new().exprs(&[ExprTag::New]);
     type State<'a> = ();
 

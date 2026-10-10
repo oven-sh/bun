@@ -311,19 +311,18 @@ impl NoMisleadingCharacterClass {
             self.check_sequence(&sequence, &node, &mut found);
         }
 
-        let whole = node.node.span();
         let report = |kind: usize, span: Span| {
             let Some(&message) = KINDS.get(kind) else {
                 return;
             };
             // Two kinds start together only at an escape that is two code units, and the kind that is about that alone is the
             // first of `KINDS`: the shorter first.
-            let report = cx.report(span, message).on_exit(span.start != whole.start);
+            let report = cx.report(span, message).shorter_first();
             if kind == SURROGATE_PAIR_WITHOUT_U_FLAG {
                 report.suggest(SUGGEST_UNICODE_FLAG, &unicode_fixer);
             }
         };
-        let text = cx.text();
+        let (text, whole) = (cx.text(), node.node.span());
         for (kind, matches) in found.iter().enumerate() {
             if node.literal.is_none() {
                 if !matches.is_empty() {

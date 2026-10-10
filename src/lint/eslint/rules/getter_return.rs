@@ -148,7 +148,7 @@ impl GetterReturn {
 }
 
 impl Rule for GetterReturn {
-    const META: Meta = Meta::eslint("getter-return", Kind::Problem).recommended();
+    const META: Meta = Meta::eslint("getter-return", Kind::Problem).recommended().reports_on_exit();
     const ON: On = On::new().funcs();
     type State<'a> = ();
 

@@ -76,7 +76,7 @@ impl NoConsole {
 }
 
 impl Rule for NoConsole {
-    const META: Meta = Meta::eslint("no-console", Kind::Suggestion).has_suggestions();
+    const META: Meta = Meta::eslint("no-console", Kind::Suggestion).has_suggestions().reports_at_the_end();
     const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]);
     type State<'a> = ();
 

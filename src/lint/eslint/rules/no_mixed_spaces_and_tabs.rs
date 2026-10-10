@@ -33,7 +33,7 @@ impl NoMixedSpacesAndTabs {
 }
 
 impl Rule for NoMixedSpacesAndTabs {
-    const META: Meta = Meta::eslint("no-mixed-spaces-and-tabs", Kind::Layout).deprecated();
+    const META: Meta = Meta::eslint("no-mixed-spaces-and-tabs", Kind::Layout).deprecated().reports_at_the_end();
     const ON: On = On::new().finish();
     type State<'a> = ();
 

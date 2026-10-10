@@ -57,7 +57,8 @@ impl CommaSpacing {
 impl Rule for CommaSpacing {
     const META: Meta = Meta::eslint("comma-spacing", Kind::Layout)
         .fixable(Fixable::Whitespace)
-        .deprecated();
+        .deprecated()
+        .reports_at_the_end();
     const ON: On = On::new().exprs(&[ExprTag::Array]).pats(&[PatTag::Array]).finish();
     /// Where the commas start that end a hole in an array.
     type State<'a> = Vec<u32>;

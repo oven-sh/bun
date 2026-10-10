@@ -51,7 +51,7 @@ fn is_global_object(object: Expr<'_>) -> bool {
 }
 
 impl Rule for NoImpliedEval {
-    const META: Meta = Meta::eslint("no-implied-eval", Kind::Suggestion);
+    const META: Meta = Meta::eslint("no-implied-eval", Kind::Suggestion).reports_at_the_end();
     const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 

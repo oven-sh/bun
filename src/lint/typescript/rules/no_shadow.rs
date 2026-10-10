@@ -6,7 +6,8 @@ pub struct NoShadow(Checker);
 
 impl Rule for NoShadow {
     const META: Meta =
-        Meta::typescript("no-shadow", Kind::Suggestion).extends_base_rule("no-shadow");
+        Meta::typescript("no-shadow", Kind::Suggestion).extends_base_rule("no-shadow")
+        .reports_at_the_end();
     const ON: On = On::new().finish();
     no_state!();
 

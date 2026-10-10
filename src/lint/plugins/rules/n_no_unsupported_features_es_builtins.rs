@@ -7,7 +7,9 @@ use bun_lint::rule::Plugin;
 pub struct EsBuiltins(Builtins);
 
 impl Rule for EsBuiltins {
-    const META: Meta = Meta::plugin(Plugin::Node, "no-unsupported-features/es-builtins", Kind::Problem).recommended();
+    const META: Meta = Meta::plugin(Plugin::Node, "no-unsupported-features/es-builtins", Kind::Problem)
+        .recommended()
+        .reports_on_exit();
     const ON: On = On::new().finish();
     type State<'a> = ();
 

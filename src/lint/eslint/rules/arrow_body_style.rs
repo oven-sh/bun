@@ -358,7 +358,7 @@ impl ArrowBodyStyle {
 }
 
 impl Rule for ArrowBodyStyle {
-    const META: Meta = Meta::eslint("arrow-body-style", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta = Meta::eslint("arrow-body-style", Kind::Suggestion).fixable(Fixable::Code).reports_on_exit();
     const ON: On = On::new().exprs(&[ExprTag::Fn]);
     type State<'a> = State<'a>;
 

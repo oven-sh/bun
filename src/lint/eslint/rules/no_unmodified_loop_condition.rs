@@ -320,7 +320,7 @@ impl NoUnmodifiedLoopCondition {
 }
 
 impl Rule for NoUnmodifiedLoopCondition {
-    const META: Meta = Meta::eslint("no-unmodified-loop-condition", Kind::Problem);
+    const META: Meta = Meta::eslint("no-unmodified-loop-condition", Kind::Problem).reports_at_the_end();
     const ON: On = On::new().stmts(&[StmtTag::While, StmtTag::DoWhile, StmtTag::For]).finish();
     type State<'a> = State<'a>;
 

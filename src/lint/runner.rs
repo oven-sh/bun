@@ -7,7 +7,7 @@ use crate::ast::{
 };
 use crate::context::{Cx, CxBase, Diagnostic, Severity};
 use crate::literal::Literal;
-use crate::rule::{Meta, NodeTags, On, Rule};
+use crate::rule::{Meta, NodeTags, On, Rule, When};
 use crate::rule_set::{RuleBits, RuleSet};
 use crate::span::Span;
 use bun_sema::hir;
@@ -1077,18 +1077,24 @@ pub fn run<'a, S: Starts>(
 
 fn sorted(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
     // ESLint sorts by line and column alone, which leaves what starts at the same place in the order it was reported: for a
-    // listener that is called on entering a node, the outer node first; then, for one that is called on leaving, the inner.
-    let end = |it: &Diagnostic| match it.is_reported_on_exit {
-        true => (1 << 32) | u64::from(it.span.end),
-        false => u64::from(u32::MAX - it.span.end),
+    // listener that is called on entering a node, the outer node first; then, for one that is called on leaving, the inner;
+    // then what is reported when the program ends, rule by rule. 50 bits.
+    let within_start = |it: &Diagnostic| {
+        let (end, rule) = (u64::from(it.span.end), u64::from(it.rule));
+        match it.when {
+            When::Entering => ((u64::from(u32::MAX) - end) << 16) | rule,
+            When::EnteringShorterFirst => (end << 16) | rule,
+            When::Leaving => (1 << 48) | (end << 16) | rule,
+            When::AtTheEnd => (2 << 48) | (rule << 32) | end,
+        }
     };
-    if diagnostics.is_sorted_by_key(|it| (it.span.start, end(it), it.rule)) {
+    if diagnostics.is_sorted_by_key(|it| (it.span.start, within_start(it))) {
         return diagnostics;
     }
     // The keys are sorted, not what is reported, which is many times as large. The place in the list is the low 32 bits.
     let key = |at: usize, it: &Diagnostic| {
-        let place = (u128::from(it.span.start) << 33) | u128::from(end(it));
-        (place << 48) | (u128::from(it.rule) << 32) | at as u128
+        let place = (u128::from(it.span.start) << 50) | u128::from(within_start(it));
+        (place << 32) | at as u128
     };
     let mut order: Vec<u128> = diagnostics
         .iter()

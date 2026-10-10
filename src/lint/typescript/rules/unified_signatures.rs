@@ -754,7 +754,7 @@ impl UnifiedSignatures {
 }
 
 impl Rule for UnifiedSignatures {
-    const META: Meta = Meta::typescript("unified-signatures", Kind::Suggestion).presets(Presets::STRICT);
+    const META: Meta = Meta::typescript("unified-signatures", Kind::Suggestion).presets(Presets::STRICT).reports_on_exit();
     const ON: On = On::new().classes().stmts(&[StmtTag::Interface, StmtTag::Module]).types(&[TypeTag::Object]).finish();
     no_state!();
 

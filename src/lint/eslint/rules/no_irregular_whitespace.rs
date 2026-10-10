@@ -117,7 +117,7 @@ impl NoIrregularWhitespace {
 }
 
 impl Rule for NoIrregularWhitespace {
-    const META: Meta = Meta::eslint("no-irregular-whitespace", Kind::Problem).recommended();
+    const META: Meta = Meta::eslint("no-irregular-whitespace", Kind::Problem).recommended().reports_at_the_end();
     const ON: On = On::new().finish();
     no_state!();
 

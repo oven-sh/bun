@@ -605,7 +605,12 @@ impl Options {
                     return error(&[
                         b"Option native-plugin-rules: '",
                         name,
-                        b"' is not a plugin with built-in rules.",
+                        b"' not one of ",
+                        NativePlugins::names()
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                            .as_bytes(),
+                        b".",
                     ]);
                 }
             },

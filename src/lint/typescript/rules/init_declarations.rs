@@ -11,7 +11,8 @@ pub struct InitDeclarations {
 
 impl Rule for InitDeclarations {
     const META: Meta =
-        Meta::typescript("init-declarations", Kind::Suggestion).extends_base_rule("init-declarations");
+        Meta::typescript("init-declarations", Kind::Suggestion).extends_base_rule("init-declarations")
+        .reports_on_exit();
     const ON: On = On::new().var_decls();
     type State<'a> = ();
 

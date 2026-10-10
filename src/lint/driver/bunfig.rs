@@ -202,22 +202,24 @@ fn give(param: &'static Param, value: &Expr, set: &mut Set) -> Result<(), Refusa
     match (param.takes_value, &value.data) {
         (Values::None, Data::EBoolean(it)) => set(name, None, it.value).map_err(at(value)),
         (Values::None, _) => expected("boolean", value),
-        (Values::Many, Data::EArray(items)) => items
-            .slice()
-            .iter()
-            .try_for_each(|item| set(name, Some(&text_of(param, item)?), true).map_err(at(item))),
-        _ => set(name, Some(&text_of(param, value)?), true).map_err(at(value)),
+        (Values::Many, Data::EArray(items)) => items.slice().iter().try_for_each(|item| {
+            set(name, Some(&text_of(param, item, "string")?), true).map_err(at(item))
+        }),
+        (Values::Many, _) => {
+            set(name, Some(&text_of(param, value, "array")?), true).map_err(at(value))
+        }
+        _ => set(name, Some(&text_of(param, value, "string")?), true).map_err(at(value)),
     }
 }
 
 /// What is written after the flag `param` for `value`. A flag takes a number if the help calls what it takes `<n>`.
-fn text_of(param: &Param, value: &Expr) -> Result<Vec<u8>, Refusal> {
+/// `what`: what is expected where it is a string that is taken.
+fn text_of(param: &Param, value: &Expr, what: &str) -> Result<Vec<u8>, Refusal> {
     match (bun_lint::json::from_parsed(value), param.id.value) {
         (Some(Json::Number(number)), b"n") => Ok(number_to_string(number)),
         (_, b"n") => expected("number", value),
         (Some(Json::String(text)), _) => Ok(text),
-        _ if param.takes_value == Values::Many => expected("array", value),
-        _ => expected("string", value),
+        _ => expected(what, value),
     }
 }
 
@@ -509,7 +511,8 @@ pub fn lint(section: &Expr) -> Result<crate::cli::Options, Refusal> {
                     // With a comma at the end it is a list, whatever is in it.
                     Data::EArray(items) => {
                         let names = items.slice().iter();
-                        let names = names.map(|it| text_of(LINT.param(NATIVE_PLUGIN_RULES), it));
+                        let names =
+                            names.map(|it| text_of(LINT.param(NATIVE_PLUGIN_RULES), it, "string"));
                         [
                             names.collect::<Result<Vec<_>, _>>()?.join(&b","[..]),
                             b",".to_vec(),

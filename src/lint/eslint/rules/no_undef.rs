@@ -16,7 +16,7 @@ fn has_typeof_operator(reference: Reference) -> bool {
 }
 
 impl Rule for NoUndef {
-    const META: Meta = Meta::eslint("no-undef", Kind::Problem).recommended();
+    const META: Meta = Meta::eslint("no-undef", Kind::Problem).recommended().reports_at_the_end();
     const ON: On = On::new().finish();
     no_state!();
 

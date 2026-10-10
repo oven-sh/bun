@@ -3648,9 +3648,39 @@ describe.concurrent("what bun format takes from Bun", () => {
     expect(await bun(files, ["format", "-l", "b.js"])).toEqual({ stdout: "b.js\n", stderr: "", exitCode: 1 });
   });
 
-  test("the bunfig.toml of the project is not read", async () => {
+  test("what the bunfig.toml of the project has for other commands is not read", async () => {
     const result = await bun({ "bunfig.toml": "[install]\nglobalDir = 1\n", "a.js": ugly }, ["format", "-l"]);
     expect(result).toEqual({ stdout: "a.js\n", stderr: "", exitCode: 1 });
+  });
+
+  test("--config= before format names another file than bunfig.toml", async () => {
+    const files = {
+      "bunfig.toml": "[format]\nsemi = false\n",
+      "other.toml": "[format]\nsingleQuote = true\n",
+      "a.js": "a('b');\n",
+    };
+    const results = await Promise.all([
+      bun(files, ["format", "-l"]),
+      bun(files, ["--config=other.toml", "format", "-l"]),
+      bun(files, ["-c=other.toml", "format", "-l"]),
+      bun(files, ["--config=none.toml", "format", "-l"]),
+    ]);
+    expect(results.map(it => [it.stdout, it.exitCode])).toEqual([
+      ["a.js\n", 1],
+      ["", 0],
+      ["", 0],
+      ["", 2],
+    ]);
+    expect(results[3].stderr).toContain(`while reading config "`);
+  });
+
+  test("what is wrong with [format] is shown where it is, as for every other section", async () => {
+    const files = { "bunfig.toml": `[format]\nsemi = false\nprintWidth = "wide"\n`, "a.js": ugly };
+    const result = await bun(files, ["format", "-l"]);
+    expect(result.stderr).toContain(`3 | printWidth = "wide"\n`);
+    expect(result.stderr).toMatch(/error: expected number but received string\n\s+at .*bunfig\.toml:3:14\n/);
+    expect(result.stdout).toBe("");
+    expect(result.exitCode).toBe(2);
   });
 
   const count = isDebug || isASAN ? 20_000 : 300_000;
@@ -4284,5 +4314,281 @@ describe("bun format on Windows, macOS and Linux", () => {
       },
       slow ? 240_000 : 30_000,
     );
+  });
+});
+
+// A key of `[format]` is the default of the flag of the same name.
+describe.concurrent("[format] in bunfig.toml", () => {
+  /** What a run leaves behind: what it prints but for the times, how it ends, and the files. */
+  async function run(files: Record<string, string>, args: string[]) {
+    const reads = Object.keys(files).filter(name => name !== "bunfig.toml");
+    const result = await format(files, args, { reads });
+    const text = (printed: string) => printed.replace(/\d+(\.\d+)?m?s\b/g, "0ms");
+    return { stdout: text(result.stdout), stderr: text(result.stderr), exitCode: result.exitCode, files: result.files };
+  }
+
+  const toml = (value: unknown) => JSON.stringify(value);
+  const flagOf = (key: string, value: unknown) => {
+    const name = key.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`);
+    return value === true ? `--${name}` : value === false ? `--no-${name}` : `--${name}=${value}`;
+  };
+
+  const element = `<div className="some-class-name" id="some-identifier" title="some title that is long">\n  text\n</div>;\n`;
+  const long = JSON.stringify(Buffer.alloc(40, "a").toString());
+  const paragraph = `${Array(30).fill("word").join(" ")}\n`;
+  const sum = `const total = ${Array(8).fill("someLongOperandName").join(" + ")};\n`;
+  const choice = `const message = someCondition ? someValueThatIsRatherLong(withAnArgument) : anotherCondition ? anotherValue : last;\n`;
+
+  // An option of Prettier, a value that is not the default, another value, and a file that each of the two prints in its way.
+  const options: [key: string, value: unknown, other: unknown, name: string, source: string][] = [
+    ["printWidth", 40, 120, "a.js", `${wide}const other = someFunction(argumentOne, argumentTwo, three);\n`],
+    ["tabWidth", 4, 8, "a.js", "function f() {\n  return 1;\n}\n"],
+    ["useTabs", true, false, "a.js", "function f() {\n  return 1;\n}\n"],
+    ["semi", false, true, "a.js", "a;\n"],
+    ["singleQuote", true, false, "a.js", `a("b");\n`],
+    ["jsxSingleQuote", true, false, "a.jsx", `<a b="c" />;\n`],
+    ["quoteProps", "consistent", "preserve", "a.js", `a = { b: 1, "c-d": 2, "e": 3 };\n`],
+    ["trailingComma", "none", "es5", "a.js", `f(\n  ${long},\n  ${long},\n);\na = [\n  ${long},\n  ${long},\n];\n`],
+    ["bracketSpacing", false, true, "a.js", "a = { b: 1 };\n"],
+    ["bracketSameLine", true, false, "a.jsx", element],
+    ["arrowParens", "avoid", "always", "a.js", "a = (b) => b;\n"],
+    ["objectWrap", "collapse", "preserve", "a.js", "a = {\n  b: 1,\n};\n"],
+    ["singleAttributePerLine", true, false, "a.jsx", `<a b="1" c="2" />;\n`],
+    ["htmlWhitespaceSensitivity", "ignore", "strict", "a.html", `<span>${paragraph.trim()}</span><span>b</span>\n`],
+    ["vueIndentScriptAndStyle", true, false, "a.vue", "<script>\nlet a;\n</script>\n"],
+    ["proseWrap", "always", "never", "a.md", `${paragraph}${paragraph}`],
+    ["embeddedLanguageFormatting", "off", "auto", "a.js", "a = css`a{b:c}`;\n"],
+    ["endOfLine", "crlf", "cr", "a.js", "a;\n"],
+    ["requirePragma", true, false, "a.js", "a  ;\n"],
+    ["checkIgnorePragma", true, false, "a.js", "/** @noformat */\na  ;\n"],
+    ["insertPragma", true, false, "a.js", "a;\n"],
+    ["experimentalTernaries", true, false, "a.js", choice],
+    ["experimentalOperatorPosition", "start", "end", "a.js", sum],
+  ];
+
+  test.each(options)("%s", async (key, value, other, name, source) => {
+    const files = { [name]: source };
+    const bunfig = { "bunfig.toml": `[format]\n${key} = ${toml(value)}\n` };
+    const rc = { ".prettierrc": JSON.stringify({ [key]: other }) };
+    const [plain, byKey, byFlag, underFlag, byOtherFlag, overFile, flagOverFile] = await Promise.all([
+      run(files, [name]),
+      run({ ...files, ...bunfig }, [name]),
+      run(files, [flagOf(key, value), name]),
+      run({ ...files, ...bunfig }, [flagOf(key, other), name]),
+      run(files, [flagOf(key, other), name]),
+      run({ ...files, ...rc, ...bunfig }, [name]),
+      run({ ...files, ...rc }, [flagOf(key, value), name]),
+    ]);
+    expect(byKey).toEqual(byFlag);
+    expect(byKey.files).not.toEqual(plain.files);
+    expect(underFlag).toEqual(byOtherFlag);
+    expect(overFile).toEqual(flagOverFile);
+    expect(overFile.files[name]).toBe(byKey.files[name]);
+    expect(byKey.exitCode).toBe(0);
+  });
+
+  // A key, the flags that say the same, flags that say otherwise, the files, and the arguments.
+  const semicolons = {
+    ".prettierrc": `{ "semi": false }`,
+    "other.json": `{ "singleQuote": true }`,
+    "a.js": `a("b");\n`,
+  };
+  const others: [line: string, flags: string[], opposite: string[], files: Record<string, string>, args: string[]][] = [
+    [`config = "other.json"`, ["--config=other.json"], ["--no-config"], semicolons, ["a.js"]],
+    [`config = false`, ["--no-config"], ["--config=other.json"], semicolons, ["a.js"]],
+    [`flavor = "oxfmt"`, ["--flavor=oxfmt"], ["--flavor=prettier"], { "a.js": wide }, ["a.js"]],
+    [
+      `configPrecedence = "prefer-file"`,
+      ["--config-precedence=prefer-file"],
+      ["--config-precedence=file-override"],
+      { ".prettierrc": "{}", "a.js": `a("b");\n` },
+      ["--single-quote", "a.js"],
+    ],
+    [
+      `editorconfig = false`,
+      ["--no-editorconfig"],
+      ["--editorconfig"],
+      { ".editorconfig": "[*]\nindent_size = 8\n", "a.js": "function f() {\n  return 1;\n}\n" },
+      ["a.js"],
+    ],
+    [`ignorePath = ["mine"]`, ["--ignore-path=mine"], [], { "mine": "b.js\n", "a.js": ugly, "b.js": ugly }, ["."]],
+    [`ignorePath = "mine"`, ["--ignore-path=mine"], [], { "mine": "b.js\n", "a.js": ugly, "b.js": ugly }, ["."]],
+    [
+      `ignorePatterns = ["b.js", "sub/"]`,
+      ["--ignore-pattern=b.js", "--ignore-pattern", "sub/"],
+      [],
+      { "a.js": ugly, "b.js": ugly, "sub/c.js": ugly },
+      ["."],
+    ],
+    [
+      `withNodeModules = true`,
+      ["--with-node-modules"],
+      ["--no-with-node-modules"],
+      { "node_modules/a/a.js": ugly, "b.js": ugly },
+      ["."],
+    ],
+    [
+      `ignoreUnknown = true`,
+      ["-u"],
+      ["--no-ignore-unknown"],
+      { "a.unknown": "a", "b.js": ugly },
+      ["a.unknown", "b.js"],
+    ],
+    [
+      `errorOnUnmatchedPattern = false`,
+      ["--no-error-on-unmatched-pattern"],
+      ["--error-on-unmatched-pattern"],
+      { "a.js": ugly },
+      ["a.js", "none.js"],
+    ],
+    [
+      `disableNestedConfig = true`,
+      ["--disable-nested-config"],
+      ["--no-disable-nested-config"],
+      { ".prettierrc": "{}", "sub/.prettierrc": `{ "semi": false }`, "sub/a.js": "a;\n" },
+      ["sub/a.js"],
+    ],
+    [`logLevel = "silent"`, ["--log-level=silent"], ["--log-level=log"], { "a.js": ugly }, ["--check", "a.js"]],
+    [
+      `allowUnsupported = true`,
+      ["--allow-unsupported"],
+      ["--no-allow-unsupported"],
+      { ".prettierrc": `{ "plugins": ["prettier-plugin-of-nobody"] }`, "a.js": ugly },
+      ["a.js"],
+    ],
+  ];
+
+  test.each(others)("%s", async (line, flags, opposite, files, args) => {
+    const bunfig = { "bunfig.toml": `[format]\n${line}\n` };
+    const [plain, byKey, byFlag, underFlag, byOtherFlag] = await Promise.all([
+      run(files, args),
+      run({ ...files, ...bunfig }, args),
+      run(files, [...flags, ...args]),
+      run({ ...files, ...bunfig }, [...opposite, ...args]),
+      run(files, [...(opposite.length ? opposite : flags), ...args]),
+    ]);
+    expect(byKey).toEqual(byFlag);
+    expect(byKey).not.toEqual(plain);
+    expect(underFlag).toEqual(byOtherFlag);
+  });
+
+  test("threads", async () => {
+    const files = { "a.js": ugly, "b.js": ugly };
+    const [byKey, byFlag, zero] = await Promise.all([
+      run({ ...files, "bunfig.toml": "[format]\nthreads = 1\n" }, ["a.js", "b.js"]),
+      run(files, ["--threads=1", "a.js", "b.js"]),
+      run({ ...files, "bunfig.toml": "[format]\nthreads = 0\n" }, ["a.js", "b.js"]),
+    ]);
+    expect(byKey).toEqual(byFlag);
+    expect(zero.stderr).toContain(`--threads takes a number above zero, not "0".`);
+    expect(zero.exitCode).toBe(2);
+  });
+
+  test("a list on the command line is added to the list of the file", async () => {
+    const files = { "a.js": ugly, "b.js": ugly, "c.js": ugly, "bunfig.toml": `[format]\nignorePatterns = ["b.js"]\n` };
+    expect(await different(files, ["--ignore-pattern=c.js", "."])).toEqual(["a.js"]);
+  });
+
+  test("with configPrecedence = prefer-file the section counts only where there is no configuration file", async () => {
+    const bunfig = `[format]\nconfigPrecedence = "prefer-file"\nsemi = false\n`;
+    const [alone, beside] = await Promise.all([
+      run({ "bunfig.toml": bunfig, "a.js": "a;\n" }, ["a.js"]),
+      run({ "bunfig.toml": bunfig, ".prettierrc": "{}", "a.js": "a;\n" }, ["a.js"]),
+    ]);
+    expect([alone.files["a.js"], beside.files["a.js"]]).toEqual(["a\n", "a;\n"]);
+  });
+
+  test("the file is that of the working directory, after --cwd", async () => {
+    const files = { "bunfig.toml": "[format]\nsemi = false\n", "sub/bunfig.toml": "[format]\nsingleQuote = true\n" };
+    const source = { "a.js": `a("b");\n`, "sub/a.js": `a("b");\n` };
+    const [above, below, inside] = await Promise.all([
+      run({ ...files, ...source }, ["sub/a.js"]),
+      run({ ...files, ...source }, ["--cwd=sub", "a.js"]),
+      format({ ...files, ...source }, ["a.js"], { cwd: "sub", reads: ["sub/a.js"] }),
+    ]);
+    expect(above.files["sub/a.js"]).toBe(`a("b")\n`);
+    expect(below.files["sub/a.js"]).toBe(`a('b');\n`);
+    expect(inside.files["sub/a.js"]).toBe(`a('b');\n`);
+  });
+
+  // The flags that say what one run does.
+  test.each([
+    ["check = true", "--check"],
+    ["listDifferent = true", "--list-different"],
+    ["write = true", "--write"],
+    [`stdinFilepath = "a.js"`, "--stdin-filepath"],
+    [`findConfigPath = "a.js"`, "--find-config-path"],
+    ["rangeStart = 1", "--range-start"],
+    ["rangeEnd = 1", "--range-end"],
+    ["cursorOffset = 1", "--cursor-offset"],
+    ["init = true", "--init"],
+    ["timing = true", "--timing"],
+    ["color = true", "--color"],
+    [`cwd = "sub"`, "--cwd"],
+  ])("%s is refused, and nothing is written", async (line, flag) => {
+    const key = line.split(" ")[0];
+    const result = await run({ "bunfig.toml": `[format]\n${line}\n`, "a.js": ugly }, ["a.js"]);
+    expect(result.stderr).toContain(
+      `"${key}" cannot be set in bunfig.toml, it says what one run does. Pass ${flag} on the command line`,
+    );
+    expect(result.files["a.js"]).toBe(ugly);
+    expect(result.exitCode).toBe(2);
+  });
+
+  test.each([
+    ["semi = 1", "expected boolean but received number"],
+    [`semi = "no"`, "expected boolean but received string"],
+    [`printWidth = "80"`, "expected number but received string"],
+    ["printWidth = true", "expected number but received boolean"],
+    ["printWidth = 1.5", "Invalid printWidth value: 1.5."],
+    ["printWidth = -1", "Invalid printWidth value: -1."],
+    ["trailingComma = 5", "expected string but received number"],
+    [`trailingComma = "some"`, "Invalid trailingComma value: some."],
+    [`endOfLine = ["lf"]`, "expected string but received array"],
+    ["config = true", "expected string but received boolean"],
+    ["ignorePatterns = 1", "expected array but received number"],
+    ["ignorePatterns = [1]", "expected string but received number"],
+    [`flavor = "biome"`, `Invalid --flavor value. Expected "oxfmt" or "prettier", but received "biome".`],
+    [`logLevel = "loud"`, `Invalid --log-level value.`],
+    [`configPrecedence = "mine"`, `Invalid --config-precedence value.`],
+    ["semicolons = false", `unknown key "semicolons" in [format]. Did you mean "semi"?`],
+    ["printwidth = 80", `unknown key "printwidth" in [format]. Did you mean "printWidth"?`],
+    [`plugins = ["a"]`, `unknown key "plugins" in [format].`],
+    [`parser = "babel"`, `unknown key "parser" in [format].`],
+    ["overrides = []", `unknown key "overrides" in [format].`],
+  ])("%s is refused: %s", async (line, message) => {
+    const result = await run({ "bunfig.toml": `[format]\n${line}\n`, "a.js": ugly }, ["a.js"]);
+    expect(result.stderr).toContain(message);
+    expect(result.files["a.js"]).toBe(ugly);
+    expect(result.exitCode).toBe(2);
+  });
+
+  test("a file that is not TOML", async () => {
+    const result = await run({ "bunfig.toml": "[format\nsemi = false\n", "a.js": ugly }, ["a.js"]);
+    expect(result.files["a.js"]).toBe(ugly);
+    expect(result.exitCode).toBe(2);
+  });
+
+  test("format that is no table", async () => {
+    const result = await run({ "bunfig.toml": `format = "prettier"\n`, "a.js": ugly }, ["a.js"]);
+    expect(result.stderr).toContain("expected object but received string");
+    expect(result.exitCode).toBe(2);
+  });
+
+  test("every flag in the help is a key, or is refused as a key with its name", async () => {
+    const help = await format({}, ["--help"]);
+    const flags = [...help.stdout.matchAll(/^\s+(?:-\w, )?--([a-z-]+)/gm)].map(it => it[1]);
+    expect(flags.length).toBeGreaterThan(40);
+    const answers = await Promise.all(
+      flags.map(async flag => {
+        const positive = flag.replace(/^no-/, "");
+        const key =
+          positive === "ignore-pattern" ? "ignorePatterns" : positive.replace(/-(\w)/g, (_, it) => it.toUpperCase());
+        // Of a type that no key takes: one that exists says what it expects.
+        const { stderr } = await run({ "bunfig.toml": `[format]\n${key} = {}\n` }, ["--list-files"]);
+        return [flag, /expected \w+ but received object|cannot be set in bunfig\.toml/.test(stderr)];
+      }),
+    );
+    expect(answers.filter(it => !it[1])).toEqual([]);
   });
 });

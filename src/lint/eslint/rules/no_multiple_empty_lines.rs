@@ -33,7 +33,8 @@ fn start_of_line(file: &File, line: u32) -> u32 {
 impl Rule for NoMultipleEmptyLines {
     const META: Meta = Meta::eslint("no-multiple-empty-lines", Kind::Layout)
         .fixable(Fixable::Whitespace)
-        .deprecated();
+        .deprecated()
+        .reports_at_the_end();
     const ON: On = On::new().exprs(&[ExprTag::Template]).finish();
     /// The pieces of text of the templates that have a line break in them.
     type State<'a> = Vec<Span>;

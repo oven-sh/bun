@@ -81,6 +81,9 @@ pub struct WebWorker {
     exec_argv_ptr: *const WTFStringImpl,
     exec_argv_len: usize,
     inherit_exec_argv: bool,
+    /// The worker VM's [`VirtualMachine::has_eval_string`]: the parent's when
+    /// `inherit_exec_argv`, else what `exec_argv` says.
+    has_eval_string: bool,
     unresolved_specifier: Box<[u8]>,
     preloads: Vec<Box<[u8]>>,
     name: bun_core::ZBox,
@@ -352,6 +355,7 @@ impl WebWorker {
         // SAFETY: `parent` is the calling thread's live VM.
         let parent_ref = unsafe { &*parent };
         let mut transform_options = (*parent_ref.transpiler.options.transform_options).clone();
+        let mut has_eval_string = parent_ref.has_eval_string;
         if !inherit_exec_argv {
             let hooks = runtime_hooks().expect("RuntimeHooks not installed");
             // SAFETY: caller passed valid (ptr,len) borrowed from C++ WorkerOptions;
@@ -362,6 +366,7 @@ impl WebWorker {
                     exec_argv_len,
                 ))
             };
+            has_eval_string = parsed.is_some_and(|flags| flags.has_eval_string);
             if let Some(flags) = parsed {
                 if let Some(invalid) = flags.invalid {
                     use bun_core::WTFStringImplExt as _;
@@ -420,6 +425,7 @@ impl WebWorker {
             exec_argv_ptr,
             exec_argv_len,
             inherit_exec_argv,
+            has_eval_string,
             unresolved_specifier: spec_slice.slice().to_vec().into_boxed_slice(),
             preloads,
             name: if name_str.is_empty() {
@@ -584,6 +590,11 @@ impl WebWorker {
     #[inline]
     pub(crate) fn hot_reload(&self) -> crate::virtual_machine::HotReload {
         self.hot_reload
+    }
+
+    #[inline]
+    pub(crate) fn has_eval_string(&self) -> bool {
+        self.has_eval_string
     }
 
     #[inline]

@@ -1,14 +1,14 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
+    // Tests never emit declarations, and they import files from all over the repository.
+    "composite": false,
     "lib": ["ESNext"],
-    // baseUrl needed until resolver fix propagates to system Bun used during build
-    "ignoreDeprecations": "6.0",
-    "baseUrl": ".",
     "paths": {
       "harness": ["./harness.ts"],
       "mkfifo": ["./mkfifo.ts"],
       "node-harness": ["./js/node/harness.ts"],
+      "s3-server": ["./packages/s3-server/index.ts"],
       "deno:harness": ["./js/deno/harness.ts"],
       "bun:internal-for-testing": ["../src/js/internal-for-testing.ts"],
       "foo/bar": ["./js/bun/resolve/baz.js"],
@@ -20,7 +20,9 @@
     },
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
-    "types": ["../packages/bun-types"]
+    // bun-types comes in through `include` below. A `types` entry is looked up from the directory of the tsconfig.json
+    // that extends this one, so bundler/transpiler/tsconfig.json would not find it.
+    "types": []
   },
   "include": [
     //
@@ -28,12 +30,12 @@
     "**/*.tsx",
     "**/*.mts",
     "**/*.cts",
+    "../packages/bun-types/index.d.ts",
     "../src/js/internal-for-testing.ts",
     "../scripts/glob-sources.ts",
     "../scripts/build/error.ts",
     "bake/exit-code-map.mjs",
-    "docker/prestart-map.mjs",
-    "../src/runtime/bake/client/**.ts"
+    "docker/prestart-map.mjs"
   ],
   "exclude": [
     "fixtures",
@@ -41,6 +43,21 @@
     "./snapshots",
     "./js/deno",
     "./node.js", // entire node.js upstream repository
-    "regression/issue/14477/*-mismatch.tsx" // deliberately-mismatched JSX, the test asserts the parse error
+    "./js/node/test", // vendored from Node.js
+    "bundler/transpiler/react-compiler-fixtures", // vendored from the React Compiler
+    "bundler/transpiler/esbuild-decorator-tests.ts", // standard decorators, this project sets experimentalDecorators
+    "regression/issue/14477/*-mismatch.tsx", // deliberately-mismatched JSX, the test asserts the parse error
+    "integration/bun-types/fixture", // declares globals, bun-types.test.ts checks it with its own tsconfig.json
+    // Apps with their own package.json and tsconfig.json. Their dependencies are installed by the test.
+    "integration/expo-app/app",
+    "integration/expo-app/components",
+    "integration/expo-app/constants",
+    "integration/expo-app/hooks",
+    "integration/next-pages/src",
+    "integration/next-pages/tailwind.config.ts",
+    "integration/vite-build/the-test-app",
+    "js/third_party/astro/fixtures",
+    "js/third_party/next-auth/fixture",
+    "js/third_party/pnpm/install_fixture"
   ]
 }

@@ -45,20 +45,9 @@ describe.skipIf(!canBuildNodeAddons())("#30205", () => {
     if (!install.success) throw new Error("node-gyp build failed");
   }, 120_000);
 
-  // CI's ASAN lane runs this file with BUN_JSC_validateExceptionChecks=1,
-  // which leaks into the spawned subprocesses via bunEnv → process.env.
-  // The napi layer has a known unchecked ThrowScope between
-  // napi_create_function and napi_set_named_property (see the "3rd party
-  // napi" section in test/no-validate-exceptions.txt — every napi test is
-  // excluded); under collectContinuously the simulated-throw counter lands
-  // on the addon's init path and the subprocess aborts before the fixture
-  // even runs. That's orthogonal to the GC UAF this test covers, so strip
-  // the validator from the child env only.
   const env = {
     ...bunEnv,
     BUN_JSC_collectContinuously: "1",
-    BUN_JSC_validateExceptionChecks: undefined,
-    BUN_JSC_dumpSimulatedThrows: undefined,
   };
 
   // The crash is a GC-timing race; collectContinuously + per-file

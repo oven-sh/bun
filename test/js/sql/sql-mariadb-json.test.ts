@@ -26,6 +26,7 @@ import {
   MYSQL_CLIENT_SSL,
   MYSQL_DEFAULT_CAPABILITIES,
   listeningServer,
+  mysqlAckSessionSetup,
   mysqlColumnDefinition,
   mysqlHandshakeV10,
   mysqlLenencStr,
@@ -98,6 +99,7 @@ async function mariadbMockServer(opts: {
         socket.write(mysqlOkPacket(seq + 1));
         return;
       }
+      if (mysqlAckSessionSetup(socket, payload)) return;
       const negotiated = (state.clientExtendedCaps & MARIADB_CLIENT_EXTENDED_TYPE_INFO) !== 0;
       switch (payload[0]) {
         case COM_STMT_PREPARE:

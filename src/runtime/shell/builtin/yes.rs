@@ -5,11 +5,10 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::states::cmd::Exec;
 use crate::shell::yield_::Yield;
 
-use bun_event_loop::ConcurrentTask::AutoDeinit;
 use bun_event_loop::{EventLoopTask, TaskTag, Taskable, task_tag};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
-pub enum State {
+pub(crate) enum State {
     #[default]
     Idle,
     WaitingWriteErr,
@@ -18,7 +17,7 @@ pub enum State {
 }
 
 #[derive(Default)]
-pub struct Yes {
+pub(crate) struct Yes {
     pub(crate) state: State,
     /// One repetition of the output (`"y\n"` or joined argv + `'\n'`), tiled
     /// out to ~BUFSIZ.
@@ -190,7 +189,7 @@ impl Yes {
 /// Re-queues `yes` onto the event loop after a burst of no-IO writes so we
 /// don't block the main thread forever.
 #[repr(C)]
-pub struct YesTask {
+pub(crate) struct YesTask {
     /// Back-ref to the owning [`Interpreter`].
     pub(crate) interp: *mut Interpreter,
     pub(crate) cmd: NodeId,
@@ -203,6 +202,10 @@ impl Taskable for YesTask {
     /// Lives inside the builtin's `Box<Yes>` (freed with the interpreter) and
     /// took nothing for the bounce; nothing to do.
     unsafe fn release_unrun(_: *mut Self) {}
+    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 impl YesTask {
@@ -217,14 +220,9 @@ impl YesTask {
         // backrefs (single-threaded shell).
         unsafe {
             match (*this).evtloop {
+                // Next loop iteration, after I/O has had a turn.
                 EventLoopHandle::Js { owner } => {
-                    owner.tick();
-                    let ct = core::ptr::NonNull::from(match &mut (*this).concurrent_task {
-                        EventLoopTask::Js(ct) => ct.from(this, AutoDeinit::ManualDeinit),
-                        EventLoopTask::Mini(_) => unreachable!(),
-                    });
-                    // Same-thread bounce on the loop's own thread: always accepted.
-                    let _ = owner.js_poster().post(ct);
+                    owner.enqueue_task_after_yield(bun_jsc::Task::init(this));
                 }
                 EventLoopHandle::Mini(mut mini) => {
                     (*mini.loop_).tick();

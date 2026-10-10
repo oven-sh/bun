@@ -20,10 +20,11 @@ use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_core::ZBox;
 use bun_core::base64;
 use bun_core::zstr;
-use bun_core::{ZStr, strings};
+use bun_core::{EncodedSlice, ZStr, strings};
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsClass as _,
-    JsRef, JsResult, StringJsc as _, Strong, SysErrorJsc as _,
+    self as jsc, ArrayBuffer, CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSPromise, JSValue,
+    JsCell, JsClass as _, JsRef, JsResult, StringJsc as _, Strong, SysErrorJsc as _,
 };
 use bun_sys as sys;
 
@@ -52,13 +53,13 @@ fn format_name(f: codecs::Format) -> &'static str {
 // `sourceJS` cached-value accessors are emitted by `generate-classes.ts` into
 // `generated_classes.rs::js_Image`; re-export that module here so callers use
 // `js::source_js_set_cached` / `js::source_js_get_cached`.
-pub use crate::generated_classes::js_Image as js;
+pub(crate) use crate::generated_classes::js_Image as js;
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). `max_pixels`
 // / `auto_orient` are read-only after construction so stay bare.
 #[bun_jsc::JsClass]
-pub struct Image {
+pub(crate) struct Image {
     source: JsCell<Source>,
     pipeline: Cell<Pipeline>,
     /// Decompression-bomb guard. Checked against the *header* dimensions before
@@ -94,7 +95,7 @@ impl Default for Image {
     }
 }
 
-pub enum Source {
+pub(crate) enum Source {
     /// Input is a JS ArrayBuffer/TypedArray held in the wrapper's `sourceJS`
     /// cached slot. We never cache the raw pointer here — it could be detached
     /// or (for resizable, which we reject) reallocated. Each use re-fetches:
@@ -129,9 +130,9 @@ pub enum Source {
 unsafe extern "C" {
     fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
     /// 0 = detached/null, 1 = FastTypedArray (≤~1 KB, GC-movable — dupe),
-    /// 2 = pinned ArrayBuffer (caller must unpin). For OversizeTypedArray the
-    /// helper adopts the storage in-place (createAdopted — no byte copy) and
-    /// pins; once adopted it's detachable, so it MUST be pinned, not borrowed.
+    /// 2 = pinned an existing ArrayBuffer (caller must unpin). 3 = held a
+    /// bufferless OversizeTypedArray: valid for the op, nothing to unpin (the
+    /// caller roots the value as it does for 2).
     fn JSC__JSValue__borrowBytesForOffThread(
         v: JSValue,
         out_ptr: *mut *const u8,
@@ -169,7 +170,7 @@ impl jsc::FromJsEnum for codecs::Filter {
 }
 
 #[derive(Clone, Copy)]
-pub struct Resize {
+pub(crate) struct Resize {
     pub(crate) w: u32,
     pub(crate) h: u32,
     pub(crate) filter: codecs::Filter,
@@ -198,7 +199,7 @@ impl Default for Resize {
 /// → modulate. Rotate precedes resize so the target box is interpreted in
 /// upright space; modulate runs last so it operates on the fewest pixels.
 #[derive(Clone, Copy, Default)]
-pub struct Pipeline {
+pub(crate) struct Pipeline {
     pub(crate) rotate: u16, // 0/90/180/270
     pub(crate) flip: bool,  // vertical
     pub(crate) flop: bool,  // horizontal
@@ -210,7 +211,7 @@ pub struct Pipeline {
 }
 
 #[derive(Clone, Copy)]
-pub struct Modulate {
+pub(crate) struct Modulate {
     /// Multiplier; 1.0 = identity.
     pub(crate) brightness: f32,
     /// 0 = greyscale, 1 = identity, >1 = boost.
@@ -306,15 +307,6 @@ impl Image {
         Ok(img.to_js(global))
     }
 
-    // Codegen's `host_fn_finalize` calls this via `|b| Image::finalize(b)`
-    // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
-    // false positive on that contract.
-    #[allow(clippy::boxed_local)]
-    pub fn finalize(self: Box<Self>) {
-        self.this_ref.with_mut(|r| r.finalize());
-        // `source` is dropped by Box drop.
-    }
-
     pub(crate) fn estimated_size(&self) -> usize {
         // Only the bytes WE own. .js_buffer is the caller's ArrayBuffer (already
         // counted via the cached value slot); the worker's RGBA scratch is
@@ -364,7 +356,7 @@ fn source_from_js(
 ) -> JsResult<Source> {
     // String → file path or data:/base64 URL. Everything else → bytes.
     if value.is_string() {
-        let str = bun_core::OwnedString::new(value.to_bun_string(global)?);
+        let str = value.to_bun_string(global)?;
         let utf8 = str.to_utf8();
         let s = utf8.slice();
         // `data:[<mime>][;base64],<payload>` — accept any image MIME (we sniff
@@ -668,9 +660,10 @@ fn reject_error(global: &JSGlobalObject, e: codecs::Error) -> JSValue {
     error_with_code(global, error_code(e), error_message(e))
 }
 
-fn error_with_code(global: &JSGlobalObject, code: &ZStr, msg: &ZStr) -> JSValue {
-    let err = global.create_error_instance(format_args!("{}", bstr::BStr::new(msg.as_bytes())));
-    let code_js = jsc::bun_string_jsc::create_utf8_for_js(global, code.as_bytes())
+fn error_with_code(global: &JSGlobalObject, code: &'static ZStr, msg: &'static ZStr) -> JSValue {
+    let err = EncodedSlice::utf8(msg.as_bytes()).to_error_instance(global);
+    let code_js = bun_core::String::static_(code.as_bytes())
+        .to_js(global)
         .unwrap_or(JSValue::UNDEFINED);
     err.put(global, b"code", code_js);
     err
@@ -758,15 +751,14 @@ impl Image {
                             ))
                         }
                     }
-                    // Oversize/Wasteful/DataView/JSArrayBuffer: pinned by the
-                    // helper. For Oversize, possiblySharedBuffer() adopts the
-                    // existing fastMalloc storage in-place (zero byte copy);
-                    // pinning then keeps it alive even if JS does `.buffer` →
-                    // `transfer()` while the worker reads.
-                    2 => {
+                    // 2: Wasteful/DataView/JSArrayBuffer, pinned by the helper (unpin when done).
+                    // 3: OversizeTypedArray held without adopting an ArrayBuffer; nothing to unpin.
+                    kind @ (2 | 3) => {
                         if len == 0 {
-                            // SAFETY: helper pinned `v`; unpin before erroring.
-                            unsafe { JSC__JSValue__unpinArrayBuffer(v) };
+                            if kind == 2 {
+                                // SAFETY: helper pinned `v`; unpin before erroring.
+                                unsafe { JSC__JSValue__unpinArrayBuffer(v) };
+                            }
                             Err(PinError::Detached)
                         } else {
                             // SAFETY: pinned until the returned `Pin` drops (with the job's
@@ -777,7 +769,7 @@ impl Image {
                                     bytes: bun_ptr::RawSlice::new(bytes),
                                     ..Default::default()
                                 },
-                                Pin(v),
+                                if kind == 2 { Pin(v) } else { Pin::NONE },
                             ))
                         }
                     }
@@ -934,6 +926,7 @@ impl Image {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let cx = global.js_thread_of_caller(callframe);
         // Header-only probe is a few dozen byte reads — when the bytes are already
         // in memory it's cheaper to do it inline than to bounce off the WorkPool
         // (~0.4 ms roundtrip). Path-backed sources still go async for the file I/O.
@@ -956,10 +949,7 @@ impl Image {
                     obj.put(
                         global,
                         b"format",
-                        jsc::bun_string_jsc::create_utf8_for_js(
-                            global,
-                            format_name(p.format).as_bytes(),
-                        )?,
+                        bun_core::String::static_(format_name(p.format)).to_js(global)?,
                     );
                     return Ok(JSPromise::resolved_promise_value(global, obj));
                 }
@@ -971,18 +961,14 @@ impl Image {
                 }
             }
         }
-        self.schedule(
-            global,
-            callframe.this(),
-            Kind::Metadata,
-            Deliver::Uint8Array,
-        )
+        self.schedule(&cx, callframe.this(), Kind::Metadata, Deliver::Uint8Array)
     }
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_bytes(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        let cx = global.js_thread_of_caller(cf);
         self.schedule(
-            global,
+            &cx,
             cf.this(),
             Kind::Encode(self.pipeline.get().output),
             Deliver::Uint8Array,
@@ -991,8 +977,9 @@ impl Image {
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_buffer(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        let cx = global.js_thread_of_caller(cf);
         self.schedule(
-            global,
+            &cx,
             cf.this(),
             Kind::Encode(self.pipeline.get().output),
             Deliver::Buffer,
@@ -1001,8 +988,9 @@ impl Image {
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_blob(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        let cx = global.js_thread_of_caller(cf);
         self.schedule(
-            global,
+            &cx,
             cf.this(),
             Kind::Encode(self.pipeline.get().output),
             Deliver::Blob,
@@ -1015,8 +1003,9 @@ impl Image {
         global: &JSGlobalObject,
         cf: &CallFrame,
     ) -> JsResult<JSValue> {
+        let cx = global.js_thread_of_caller(cf);
         self.schedule(
-            global,
+            &cx,
             cf.this(),
             Kind::Encode(self.pipeline.get().output),
             Deliver::Base64,
@@ -1027,8 +1016,9 @@ impl Image {
     /// MIME prefix, so it drops straight into `<img src>`.
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_data_url(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        let cx = global.js_thread_of_caller(cf);
         self.schedule(
-            global,
+            &cx,
             cf.this(),
             Kind::Encode(self.pipeline.get().output),
             Deliver::DataUrl,
@@ -1046,19 +1036,20 @@ impl Image {
         global: &JSGlobalObject,
         cf: &CallFrame,
     ) -> JsResult<JSValue> {
+        let cx = global.js_thread_of_caller(cf);
         let args = cf.arguments();
         // Single positional `"dataurl"` for now — leaves room for `"hash"` /
         // `"color"` without growing methods. Anything else throws so the
         // option space isn't accidentally squatted.
         if args.len() > 0 && !args[0].is_undefined_or_null() {
-            let s = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
-            if !s.eql_comptime(b"dataurl") {
+            let s = args[0].to_bun_string(global)?;
+            if !s.eq_ascii(b"dataurl") {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Image.placeholder(): only \"dataurl\" is supported",
                 )));
             }
         }
-        self.schedule(global, cf.this(), Kind::Placeholder, Deliver::DataUrl)
+        self.schedule(&cx, cf.this(), Kind::Placeholder, Deliver::DataUrl)
     }
 
     /// Terminal: encode and write to `path` on the work pool (no round-trip of
@@ -1069,6 +1060,7 @@ impl Image {
     /// the source format — so `img.resize(100).write("thumb.webp")` Just Works.
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_write(&self, global: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
+        let cx = global.js_thread_of_caller(cf);
         let args = cf.arguments();
         if args.len() < 1 || args[0].is_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -1081,7 +1073,7 @@ impl Image {
         // carry no extension contract, so the explicit `.png()` etc. (or source
         // format) decides.
         if output.is_none() && args[0].is_string() {
-            let str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
+            let str = args[0].to_bun_string(global)?;
             let utf8 = str.to_utf8();
             if let Some(f) = codecs::Format::from_extension(utf8.slice()) {
                 match f {
@@ -1102,7 +1094,7 @@ impl Image {
             }
         }
         self.schedule(
-            global,
+            &cx,
             cf.this(),
             Kind::Encode(output),
             Deliver::WriteDest(Strong::create(args[0], global)),
@@ -1113,27 +1105,27 @@ impl Image {
 impl Image {
     fn schedule(
         &self,
-        global: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         this_value: JSValue,
         kind: Kind,
         deliver: Deliver,
     ) -> JsResult<JSValue> {
         if matches!(self.source.get(), Source::Blob(_)) {
-            return BlobReadChain::start(self, global, this_value, kind, deliver);
+            return BlobReadChain::start(self, cx, this_value, kind, deliver);
         }
-        let (input, pin) = match self.pin_for_task(this_value, global) {
+        let (input, pin) = match self.pin_for_task(this_value, cx.global()) {
             Ok(i) => i,
             Err(PinError::Detached) => {
                 drop(deliver);
                 return Ok(JSPromise::rejected_promise(
-                    global,
+                    cx.global(),
                     error_with_code(
-                        global,
+                        cx.global(),
                         zstr!("ERR_INVALID_STATE"),
                         zstr!("Image: source ArrayBuffer was detached"),
                     ),
                 )
-                .as_value(global));
+                .as_value(cx.global()));
             }
         };
         let work = PipelineTask {
@@ -1144,17 +1136,16 @@ impl Image {
             auto_orient: self.auto_orient,
             result: TaskResult::Err(codecs::Error::DecodeFailed),
         };
-        let cx = global.js_thread();
-        let promise = jsc::JSPromiseStrong::init(global);
+        let promise = jsc::JSPromiseStrong::init(cx.global());
         let promise_value = promise.value();
         jsc::Job::<PipelineTask>::schedule(
-            &cx,
+            cx,
             work,
             PipelineJs {
                 promise,
                 deliver,
                 _pin: pin,
-                image: PendingTask::new(self, this_value, global),
+                image: PendingTask::new(self, this_value, cx.global()),
             },
         );
         Ok(promise_value)
@@ -1253,6 +1244,8 @@ impl Image {
 struct BlobReadChain<'a> {
     image: *const Image,
     global: &'a JSGlobalObject,
+    /// The context of the script that asked: the task the read is followed by is that script's.
+    context: jsc::ContextId,
     kind: Kind,
     deliver: Deliver,
     outer: jsc::JSPromiseStrong,
@@ -1261,7 +1254,7 @@ struct BlobReadChain<'a> {
 impl<'a> BlobReadChain<'a> {
     fn start(
         image: &Image,
-        global: &'a JSGlobalObject,
+        cx: &bun_jsc::JsThread<'a>,
         this_value: JSValue,
         kind: Kind,
         deliver: Deliver,
@@ -1275,7 +1268,9 @@ impl<'a> BlobReadChain<'a> {
         let blob_js = strong.get();
         let Some(blob) = blob_js.as_::<Blob>() else {
             drop(deliver);
-            return Err(global.throw(format_args!("Image: Blob source is no longer a Blob")));
+            return Err(cx
+                .global()
+                .throw(format_args!("Image: Blob source is no longer a Blob")));
         };
         // SAFETY: `as_` returned a non-null `*mut Blob` rooted by `blob_js`.
         let blob = unsafe { &mut *blob };
@@ -1285,16 +1280,17 @@ impl<'a> BlobReadChain<'a> {
         if image.pending_tasks.get() == 0 {
             image
                 .this_ref
-                .with_mut(|r| r.set_strong(this_value, global));
+                .with_mut(|r| r.set_strong(this_value, cx.global()));
         }
         image.pending_tasks.set(image.pending_tasks.get() + 1);
 
         let chain = Box::new(BlobReadChain {
             image: std::ptr::from_ref::<Image>(image),
-            global,
+            global: cx.global(),
+            context: cx.context().id(),
             kind,
             deliver,
-            outer: jsc::JSPromiseStrong::init(global),
+            outer: jsc::JSPromiseStrong::init(cx.global()),
         });
         let promise = chain.outer.value();
         // `read_bytes_to_handler` stores the handler pointer and calls
@@ -1304,14 +1300,14 @@ impl<'a> BlobReadChain<'a> {
         let raw = bun_core::heap::into_raw(chain);
         // SAFETY: `raw` is freshly leaked and not used again here; the read
         // dispatch hands it to `on_read_bytes` below exactly once, also when it
-        // returns `Err` (a termination hit while delivering synchronously, i.e.
-        // after the chain has already been reclaimed).
-        unsafe { blob.read_bytes_to_handler(raw, global) }.map_err(jsc::JsError::from)?;
+        // returns `Err` (an exception left pending while delivering synchronously,
+        // i.e. after the chain has already been reclaimed).
+        unsafe { blob.read_bytes_to_handler(raw, cx) }?;
         Ok(promise)
     }
 
     /// JS thread — `read_bytes_to_handler` guarantees this. `r.ok` is owned by us.
-    fn on_read_bytes_impl(self, r: ReadBytesResult) {
+    fn on_read_bytes_impl(self, r: ReadBytesResult) -> JsResult<()> {
         let global = self.global;
         // SAFETY: `image` is a BACKREF kept alive by the Strong `this_ref`
         // bump in `start()`; we are on the JS thread. R-2: shared deref —
@@ -1344,53 +1340,45 @@ impl<'a> BlobReadChain<'a> {
                     drop(bytes);
                 }
                 let Some(this_value) = image.this_ref.get().try_get() else {
-                    let _ = outer.reject(
+                    drop(deliver);
+                    return outer.reject(
                         global,
                         Ok(global.create_error_instance(format_args!(
                             "Image: collected before read completed"
                         ))),
                     );
-                    drop(deliver);
-                    return;
                 };
-                // Source is now `.owned`; this re-entry takes the regular path.
-                let inner = match image.schedule(global, this_value, kind, deliver) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        // `deliver` was moved into `schedule()`; on
-                        // error it has already been dropped there.
-                        let _ = outer.reject(
-                            global,
-                            Ok(global.create_error_instance(format_args!(
-                                "Image: pipeline schedule failed"
-                            ))),
-                        );
-                        return;
-                    }
-                };
-                let _ = outer.resolve(global, inner);
+                // Source is now `.owned`; this re-entry takes the regular path. If `schedule()` threw,
+                // `deliver` was already dropped there and the pending exception is the rejection.
+                let inner = image.schedule(
+                    &global.js_thread(global.bun_vm().context_of(self.context)),
+                    this_value,
+                    kind,
+                    deliver,
+                );
+                outer.settle(global, inner)
             }
             ReadBytesResult::Err(e) => {
                 drop(deliver);
-                let _ = outer.reject(global, Ok(e.to_error_instance(global)));
+                outer.reject(global, Ok(e.to_error_instance(global)))
             }
         }
     }
 }
 
 impl<'a> ReadBytesHandler for BlobReadChain<'a> {
-    unsafe fn on_read_bytes(this: *mut Self, result: ReadBytesResult) {
+    unsafe fn on_read_bytes(this: *mut Self, result: ReadBytesResult) -> JsResult<()> {
         // SAFETY: `this` is the Box `start()` leaked into `read_bytes_to_handler`,
         // handed back to us exactly once (trait contract); nothing else points
         // at it, so reclaiming it here is the chain's one and only free.
         let boxed = unsafe { bun_core::heap::take(this) };
-        boxed.on_read_bytes_impl(result);
+        boxed.on_read_bytes_impl(result)
     }
 }
 
 /// The pool-side work of one `Image` operation: decode → pipeline → encode
 /// (or probe). Also run synchronously by `encode_for_body`.
-pub struct PipelineTask {
+pub(crate) struct PipelineTask {
     pipeline: Pipeline,
     input: Input,
     kind: Kind,
@@ -1404,7 +1392,7 @@ unsafe impl Send for PipelineTask {}
 
 /// The JS-thread half of a scheduled `PipelineTask`.
 #[derive(bun_jsc::JsAffine)]
-pub struct PipelineJs {
+pub(crate) struct PipelineJs {
     promise: jsc::JSPromiseStrong,
     deliver: Deliver,
     _pin: Pin,
@@ -1413,7 +1401,7 @@ pub struct PipelineJs {
 
 /// An ArrayBuffer pinned by `JSC__JSValue__borrowBytesForOffThread` (mode 2)
 /// so user code cannot transfer/detach it while the pool reads; unpinned on drop.
-pub struct Pin(JSValue);
+pub(crate) struct Pin(JSValue);
 // SAFETY: a pin on a heap cell; gone with the heap.
 unsafe impl bun_jsc::job::JsAffine for Pin {}
 impl Pin {
@@ -1430,7 +1418,7 @@ impl Drop for Pin {
 
 /// One pending operation's hold on its `Image`: keeps the wrapper Strong while
 /// any are pending, and lets the completion reach the `Image` (JS thread).
-pub struct PendingTask(jsc::JsPtr<Image>);
+pub(crate) struct PendingTask(jsc::JsPtr<Image>);
 // SAFETY: the Image is its wrapper's m_ctx; the Strong we hold keeps that alive.
 unsafe impl bun_jsc::job::JsAffine for PendingTask {}
 impl PendingTask {
@@ -1465,21 +1453,17 @@ impl Drop for PendingTask {
 impl jsc::JobContext for PipelineTask {
     type OffThread = Self;
     type Js = PipelineJs;
-    fn run(
-        this: &mut Self,
-        _vm: &jsc::vm_handle::Borrow,
-        done: bun_jsc::Completion<Self>,
-    ) -> Option<bun_jsc::Completion<Self>> {
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         this.run();
         Some(done)
     }
     fn then(this: Self, js: PipelineJs, cx: &jsc::JsThread<'_>) -> jsc::JsResult<()> {
-        Ok(PipelineTask::then(this, js, cx)?)
+        PipelineTask::then(this, js, cx)
     }
 }
 
 /// Bytes for the worker: a pinned/owned slice, a copy, or a path to read there.
-pub struct Input {
+pub(crate) struct Input {
     // Borrows pinned ArrayBuffer or `image.source.owned`; the owning `Image`
     // is held via BACKREF for the task's lifetime — `RawSlice` invariant.
     bytes: bun_ptr::RawSlice<u8>,
@@ -1510,7 +1494,7 @@ impl Input {
 }
 
 #[derive(bun_jsc::JsAffine)]
-pub enum Deliver {
+pub(crate) enum Deliver {
     Uint8Array,
     Buffer,
     Blob,
@@ -1526,7 +1510,7 @@ pub enum Deliver {
 // `Deliver::deinit` is just `Strong::Drop` on the `WriteDest` arm — handled
 // automatically.
 
-pub enum Kind {
+pub(crate) enum Kind {
     /// `None` ⇒ re-encode in the source format (resolved after decode).
     Encode(Option<codecs::EncodeOptions>),
     Metadata,
@@ -1537,7 +1521,7 @@ pub enum Kind {
     Placeholder,
 }
 
-pub enum TaskResult {
+pub(crate) enum TaskResult {
     Encoded {
         out: codecs::Encoded,
         format: codecs::Format,
@@ -1772,11 +1756,7 @@ impl PipelineTask {
 
     /// Back on the JS thread: publish dims, deliver the result. The pin and
     /// the hold on the Image are released when `js` drops at the end.
-    pub(crate) fn then(
-        mut self,
-        mut js: PipelineJs,
-        cx: &jsc::JsThread<'_>,
-    ) -> Result<(), jsc::JsTerminated> {
+    pub(crate) fn then(mut self, mut js: PipelineJs, cx: &jsc::JsThread<'_>) -> JsResult<()> {
         let global = cx.global();
         let promise = js.promise.swap();
         let image = js.image.image(cx);
@@ -1885,11 +1865,10 @@ impl PipelineTask {
                         let mut buf = vec![0u8; pre.len() + base64::encode_len(out_slice)];
                         buf[..pre.len()].copy_from_slice(pre);
                         let wrote = pre.len() + base64::encode(&mut buf[pre.len()..], out_slice);
-                        let str =
-                            match jsc::bun_string_jsc::create_utf8_for_js(global, &buf[..wrote]) {
-                                Ok(s) => s,
-                                Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
-                            };
+                        let str = match bun_string_jsc::create_utf8_for_js(global, &buf[..wrote]) {
+                            Ok(s) => s,
+                            Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
+                        };
                         promise.resolve(global, str)?;
                     }
                     // `.write(dest)` — wrap the codec buffer as a Buffer (codec's
@@ -1918,17 +1897,17 @@ impl PipelineTask {
                         // valid for the JS thread; `ArgumentsSlice::init` wants `&`.
                         let args = [dest_js];
                         let mut arg_slice = jsc::ArgumentsSlice::init(global.bun_vm(), &args);
-                        let mut path_or_blob = match crate::node::PathOrBlob::from_js_no_copy(
+                        let mut path_or_blob = match crate::webcore::blob::write_destination_from_js(
                             global,
                             &mut arg_slice,
                         ) {
                             Ok(p) => p,
-                            Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
+                            Err(e) => return promise.reject(global, Err(e)),
                         };
                         // `PathOrBlob::Path` owns its `PathOrFileDescriptor`
                         // and frees on Drop — no explicit `path.deinit()` needed.
                         let write_promise = match crate::webcore::blob::write_file_internal(
-                            global,
+                            cx,
                             &mut path_or_blob,
                             data,
                             Default::default(),
@@ -1944,9 +1923,9 @@ impl PipelineTask {
                 let obj = JSValue::create_empty_object(global, 3);
                 obj.put(global, b"width", JSValue::js_number(f64::from(w)));
                 obj.put(global, b"height", JSValue::js_number(f64::from(h)));
-                let fmt_js =
-                    jsc::bun_string_jsc::create_utf8_for_js(global, format_name(format).as_bytes())
-                        .unwrap_or(JSValue::UNDEFINED);
+                let fmt_js = bun_core::String::static_(format_name(format))
+                    .to_js(global)
+                    .unwrap_or(JSValue::UNDEFINED);
                 obj.put(global, b"format", fmt_js);
                 promise.resolve(global, obj)?;
             }

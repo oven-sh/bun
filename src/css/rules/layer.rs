@@ -18,26 +18,6 @@ pub struct LayerName {
     pub v: SmallList<&'static [u8], 1>,
 }
 
-// The inline hash/eql context is replaced by `Hash`/`PartialEq` impls on `LayerName` below.
-// Iteration order is insertion order (collections/array_hash_map.rs)
-// regardless of hash function.
-
-impl core::hash::Hash for LayerName {
-    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        // Hash each part's bytes.
-        for part in self.v.slice() {
-            state.write(part);
-        }
-    }
-}
-
-impl PartialEq for LayerName {
-    fn eq(&self, other: &Self) -> bool {
-        self.eql(other)
-    }
-}
-impl Eq for LayerName {}
-
 // Trait `Clone` (not just inherent `deep_clone`) so the bundler's
 // `Chunk::Layers::to_owned` can `deep_clone_with(|l| l.clone())`. Segments are
 // arena-borrowed `&'static [u8]` (Copy), so this is the same shallow
@@ -89,13 +69,13 @@ impl LayerName {
             let try_parse_fn =
                 |i: &mut css::css_parser::Parser<'_>| -> css::css_parser::CssResult<&'static [u8]> {
                     let start_location = i.current_source_location();
-                    let tok = i.next_including_whitespace()?.clone();
+                    let tok = *i.next_including_whitespace()?;
                     if !matches!(tok, css::Token::Delim(c) if c == u32::from(b'.')) {
                         return Err(start_location.new_basic_unexpected_token_error(tok));
                     }
 
                     let start_location = i.current_source_location();
-                    let tok = i.next_including_whitespace()?.clone();
+                    let tok = *i.next_including_whitespace()?;
                     if let css::Token::Ident(ident) = tok {
                         return Ok(ident);
                     }

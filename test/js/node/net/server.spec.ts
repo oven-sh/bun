@@ -20,6 +20,30 @@ describe("net.createServer(connectionListener)", () => {
     expect(server).toBeInstanceOf(net.Server);
   });
 
+  // https://github.com/oven-sh/bun/issues/40917
+  it("registers the callback as a regular 'connection' listener", () => {
+    expect(server.listenerCount("connection")).toBe(1);
+    expect(server.listeners("connection")).toContain(onListen);
+
+    const socket = new net.Socket();
+    server.emit("connection", socket);
+    expect(onListen).toHaveBeenCalledTimes(1);
+    expect(onListen).toHaveBeenCalledWith(socket);
+  });
+
+  it("stays a single 'connection' listener across accepted connections", async () => {
+    await new Promise<void>(resolve => server.listen(0, () => resolve()));
+    const address = server.address() as net.AddressInfo;
+    for (let i = 0; i < 2; i++) {
+      const { promise, resolve } = Promise.withResolvers<net.Socket>();
+      server.once("connection", resolve);
+      await using client = net.createConnection(address as any);
+      await promise;
+    }
+    expect(onListen).toHaveBeenCalledTimes(2);
+    expect(server.listenerCount("connection")).toBe(1);
+  });
+
   it("calls the connection listener when a socket connects", async () => {
     await new Promise<void>(resolve => server.listen(() => resolve()));
 
@@ -27,7 +51,7 @@ describe("net.createServer(connectionListener)", () => {
     const address = server.address();
     expect(address).not.toBeNull();
     expect(address).not.toBeTypeOf("string");
-    await using client = net.createConnection(address as net.AddressInfo, resolve);
+    await using client = net.createConnection(address as any, resolve);
     await promise;
     await Bun.sleep(1); // next event loop cycle
     expect(onListen).toHaveBeenCalled();
@@ -39,7 +63,7 @@ describe("net.Server", () => {
 
   it("extends EventEmitter", () => {
     expect(defaultServer).toBeInstanceOf(EventEmitter);
-    expect(net.Server.__proto__).toBe(EventEmitter);
+    expect((net.Server as any).__proto__).toBe(EventEmitter);
   });
 
   // @ts-expect-error -- Types lie. Server constructor is callable
@@ -79,13 +103,13 @@ describe("net.Server.prototype", () => {
   });
 
   it("has EventEmitter methods", () => {
-    expect(net.Server.prototype.__proto__).toBe(EventEmitter.prototype);
+    expect((net.Server.prototype as any).__proto__).toBe(EventEmitter.prototype);
     expect(net.Server.prototype).toMatchObject(EventEmitter.prototype);
   });
 }); // </net.Server.prototype>
 
 describe("new net.Server()", () => {
-  let server: net.Server;
+  let server: net.Server & Record<string, any>;
 
   beforeAll(() => {
     server = new net.Server();
@@ -152,13 +176,13 @@ describe("server.address()", () => {
     });
 
     it("address defaults to ipv6 any address", () => {
-      const address = server.address();
+      const address = server.address() as net.AddressInfo;
       expect(address.address).toBe("::");
       expect(address.family).toBe("IPv6");
     });
 
     it("picks a random, valid port", () => {
-      const port = server.address().port;
+      const port = (server.address() as net.AddressInfo).port;
       expect(port).toBeTypeOf("number");
       expect(port).not.toBeNaN();
       expect(port).toBeGreaterThan(0);
@@ -249,7 +273,7 @@ describe("server.close()", () => {
           onError(e);
           resolve();
         });
-        client.connect(address as SocketConnectOpts, () => {
+        client.connect(address as unknown as SocketConnectOpts, () => {
           onConnect();
           resolve();
         });

@@ -9,8 +9,8 @@
       "domain": "Audit",
       "description": "",
       "version": 4,
-      "debuggableTypes": ["itml", "javascript", "page", "service-worker", "web-page"],
-      "targetTypes": ["itml", "javascript", "page", "service-worker", "worker"],
+      "debuggableTypes": ["itml", "javascript", "service-worker", "web-page", "wasm-debugger"],
+      "targetTypes": ["itml", "javascript", "page", "service-worker", "worker", "wasm-debugger"],
       "commands": [
         {
           "name": "setup",
@@ -61,10 +61,196 @@
       ]
     },
     {
+      "domain": "BunFrontendDevServer",
+      "description": "Provides an interface for tools to interact with Bun's development server.",
+      "debuggableTypes": ["itml", "javascript"],
+      "targetTypes": ["itml", "javascript"],
+      "types": [
+        {
+          "id": "ServerId",
+          "type": "integer",
+          "description": "Unique identifier for Bun.serve"
+        },
+        {
+          "id": "ConnectionId",
+          "type": "integer",
+          "description": "Unique identifier for a connected HMR WebSocket client."
+        },
+        {
+          "id": "RouteBundleId",
+          "type": "integer",
+          "description": "Identifier for a specific route bundle within DevServer."
+        },
+        {
+          "id": "SerializedPayloadBase64",
+          "type": "string",
+          "description": "A base64 encoded string representing a binary payload originally defined by DevServer's WebSocket protocol (MessageId enum in DevServer.zig)."
+        }
+      ],
+      "commands": [
+        {
+          "name": "enable",
+          "description": "Enables the BunFrontendDevServer domain, sending events as they occur."
+        },
+        {
+          "name": "disable",
+          "description": "Disables the BunFrontendDevServer domain, stopping further events from being sent."
+        }
+      ],
+      "events": [
+        {
+          "name": "clientConnected",
+          "description": "Fired when a new HMR WebSocket client connects.",
+          "parameters": [
+            {
+              "name": "serverId",
+              "$ref": "ServerId",
+              "description": "Server ID"
+            },
+            {
+              "name": "connectionId",
+              "$ref": "ConnectionId",
+              "description": "Identifier for the newly connected client."
+            }
+          ]
+        },
+        {
+          "name": "clientDisconnected",
+          "description": "Fired when an HMR WebSocket client disconnects.",
+          "parameters": [
+            {
+              "name": "serverId",
+              "$ref": "ServerId",
+              "description": "Server ID"
+            },
+            {
+              "name": "connectionId",
+              "$ref": "ConnectionId",
+              "description": "Identifier for the disconnected client."
+            }
+          ]
+        },
+        {
+          "name": "bundleStart",
+          "description": "Fired when the DevServer starts processing a new bundle.",
+          "parameters": [
+            {
+              "name": "serverId",
+              "$ref": "ServerId",
+              "description": "Server ID"
+            },
+            {
+              "name": "triggerFiles",
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "List of file paths that triggered this bundle."
+            }
+          ]
+        },
+        {
+          "name": "bundleComplete",
+          "description": "Fired when the DevServer successfully completes a bundle without build errors.",
+          "parameters": [
+            {
+              "name": "serverId",
+              "$ref": "ServerId",
+              "description": "Server ID"
+            },
+            {
+              "name": "durationMs",
+              "type": "number",
+              "description": "Time taken for the bundle in milliseconds."
+            }
+          ]
+        },
+        {
+          "name": "bundleFailed",
+          "description": "Fired when the DevServer completes a bundle with build errors. The payload is the base64 encoded binary data corresponding to the 'errors' MessageId.",
+          "parameters": [
+            {
+              "name": "serverId",
+              "$ref": "ServerId",
+              "description": "Server ID"
+            },
+            {
+              "name": "buildErrorsPayloadBase64",
+              "$ref": "SerializedPayloadBase64",
+              "description": "Base64 encoded binary payload containing serialized build errors (MessageId.errors format)."
+            }
+          ]
+        },
+        {
+          "name": "clientNavigated",
+          "description": "Fired when a connected client navigates to a new URL (via history API or initial load).",
+          "parameters": [
+            {
+              "name": "serverId",
+              "$ref": "ServerId",
+              "description": "Server ID"
+            },
+            {
+              "name": "connectionId",
+              "$ref": "ConnectionId",
+              "description": "Identifier for the client that navigated."
+            },
+            {
+              "name": "url",
+              "type": "string",
+              "description": "The new URL the client navigated to."
+            },
+            {
+              "name": "routeBundleId",
+              "$ref": "RouteBundleId",
+              "optional": true,
+              "description": "The DevServer route bundle ID associated with this URL, if matched."
+            }
+          ]
+        },
+        {
+          "name": "clientErrorReported",
+          "description": "Fired when an error reported by a client (via the /_bun/report_error endpoint) has been processed and potentially remapped by the server. The payload is the base64 encoded binary data corresponding to the remapped error format (similar to MessageId.errors but potentially containing only one error).",
+          "parameters": [
+            {
+              "name": "serverId",
+              "$ref": "ServerId",
+              "description": "Server ID"
+            },
+            {
+              "name": "clientErrorPayloadBase64",
+              "$ref": "SerializedPayloadBase64",
+              "description": "Base64 encoded binary payload containing the processed/remapped client error."
+            }
+          ]
+        },
+        {
+          "name": "consoleLog",
+          "description": "Fired when the client logs a message to the console.",
+          "parameters": [
+            {
+              "name": "serverId",
+              "$ref": "ServerId"
+            },
+            {
+              "name": "kind",
+              "type": "number",
+              "description": "The kind of log message."
+            },
+            {
+              "name": "message",
+              "type": "string",
+              "description": "The log message."
+            }
+          ]
+        }
+      ]
+    },
+    {
       "domain": "Console",
       "description": "Console domain defines methods and events for interaction with the JavaScript console. Console collects messages created by means of the <a href='http://getfirebug.com/wiki/index.php/Console_API'>JavaScript Console API</a>. One needs to enable this domain using <code>enable</code> command in order to start receiving the console messages. Browser collects messages issued while console domain is not enabled as well and reports them using <code>messageAdded</code> notification upon enabling.",
-      "debuggableTypes": ["itml", "javascript", "page", "service-worker", "web-page"],
-      "targetTypes": ["itml", "javascript", "page", "service-worker", "worker"],
+      "debuggableTypes": ["itml", "javascript", "service-worker", "web-page", "wasm-debugger"],
+      "targetTypes": ["itml", "javascript", "frame", "page", "service-worker", "worker", "wasm-debugger"],
       "types": [
         {
           "id": "ChannelSource",
@@ -75,9 +261,9 @@
             "network",
             "console-api",
             "storage",
-            "appcache",
             "rendering",
             "css",
+            "accessibility",
             "security",
             "content-blocker",
             "media",
@@ -303,6 +489,7 @@
         {
           "name": "getLoggingChannels",
           "description": "List of the different message sources that are non-default logging channels.",
+          "targetTypes": ["frame", "page"],
           "returns": [
             {
               "name": "channels",
@@ -317,6 +504,7 @@
         {
           "name": "setLoggingChannelLevel",
           "description": "Modify the level of a channel.",
+          "targetTypes": ["frame", "page"],
           "parameters": [
             {
               "name": "source",
@@ -397,8 +585,8 @@
     {
       "domain": "Debugger",
       "description": "Debugger domain exposes JavaScript debugging capabilities. It allows setting and removing breakpoints, stepping through execution, exploring stack traces, etc.",
-      "debuggableTypes": ["itml", "javascript", "page", "service-worker", "web-page"],
-      "targetTypes": ["itml", "javascript", "page", "service-worker", "worker"],
+      "debuggableTypes": ["itml", "javascript", "service-worker", "web-page", "wasm-debugger"],
+      "targetTypes": ["frame", "itml", "javascript", "page", "service-worker", "worker", "wasm-debugger"],
       "types": [
         {
           "id": "BreakpointId",
@@ -414,6 +602,11 @@
           "id": "ScriptId",
           "type": "string",
           "description": "Unique script identifier."
+        },
+        {
+          "id": "ScriptType",
+          "type": "string",
+          "enum": ["program", "module", "webassembly"]
         },
         {
           "id": "CallFrameId",
@@ -439,7 +632,7 @@
               "name": "columnNumber",
               "type": "integer",
               "optional": true,
-              "description": "Column number in the script (0-based)."
+              "description": "Column number in the script (0-based) or bytecode offset for WebAssembly modules (0-based)."
             }
           ]
         },
@@ -1175,13 +1368,13 @@
               "name": "caseSensitive",
               "type": "boolean",
               "optional": true,
-              "description": "If <code>true</code>, <code>url</code> is case sensitive."
+              "description": "If <code>true</code>, <code>url</code> is case sensitive. Defaults to true."
             },
             {
               "name": "isRegex",
               "type": "boolean",
               "optional": true,
-              "description": "If <code>true</code>, treat <code>url</code> as regular expression."
+              "description": "If <code>true</code>, treat <code>url</code> as regular expression. Defaults to false."
             },
             {
               "name": "sourceRanges",
@@ -1242,7 +1435,17 @@
             {
               "name": "endColumn",
               "type": "integer",
-              "description": "Length of the last line of the script."
+              "description": "Length of the last line of the script or the end bytecode offset for WebAssembly modules."
+            },
+            {
+              "name": "executionContextId",
+              "$ref": "Runtime.ExecutionContextId",
+              "description": "Identifier of the execution context in which this script was parsed."
+            },
+            {
+              "name": "scriptType",
+              "$ref": "ScriptType",
+              "description": "Type of script."
             },
             {
               "name": "isContentScript",
@@ -1263,10 +1466,16 @@
               "description": "URL of source map associated with script (if any)."
             },
             {
-              "name": "module",
-              "type": "boolean",
+              "name": "displayName",
+              "type": "string",
               "optional": true,
-              "description": "True if this script was parsed as a module."
+              "description": "Human-readable name of the script."
+            },
+            {
+              "name": "requestId",
+              "$ref": "Network.RequestId",
+              "optional": true,
+              "description": "Identifier of the network request associated with this script (if any)."
             }
           ]
         },
@@ -1397,8 +1606,8 @@
     {
       "domain": "Heap",
       "description": "Heap domain exposes JavaScript heap attributes and capabilities.",
-      "debuggableTypes": ["itml", "javascript", "page", "service-worker", "web-page"],
-      "targetTypes": ["itml", "javascript", "page", "service-worker", "worker"],
+      "debuggableTypes": ["itml", "javascript", "service-worker", "web-page", "wasm-debugger"],
+      "targetTypes": ["itml", "javascript", "page", "service-worker", "worker", "wasm-debugger"],
       "types": [
         {
           "id": "GarbageCollection",
@@ -1562,9 +1771,432 @@
       ]
     },
     {
+      "domain": "HTTPServer",
+      "description": "Provides events and commands for debugging server-side HTTP requests and responses within the Bun runtime.",
+      "debuggableTypes": ["itml", "javascript"],
+      "targetTypes": ["itml", "javascript"],
+      "types": [
+        {
+          "id": "ServerId",
+          "type": "integer",
+          "description": "Unique identifier for an HTTP server instance."
+        },
+        {
+          "id": "RequestId",
+          "type": "integer",
+          "description": "Unique identifier for an HTTP request."
+        },
+        {
+          "id": "RouteId",
+          "type": "integer",
+          "description": "Unique identifier for a server route."
+        },
+        {
+          "id": "HotReloadId",
+          "type": "integer",
+          "description": "Identifier for a hot reload instance of a server. Increments each time the server associated with a ServerId is reloaded."
+        },
+        {
+          "id": "Headers",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Request / response headers as a flat array of key/value strings. [key1, value1, key2, value2, ...]"
+        },
+        {
+          "id": "RequestParams",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Request route parameters as a flat array of key/value strings. [key1, value1, key2, value2, ...]"
+        },
+        {
+          "id": "HTTPMethod",
+          "type": "integer",
+          "description": "HTTP request method represented as an integer. (Mapping to be defined, e.g., 1=GET, 2=POST, ...)"
+        },
+        {
+          "id": "RouteType",
+          "type": "string",
+          "enum": ["default", "api", "html", "static"],
+          "description": "Type of the server route."
+        },
+        {
+          "id": "Route",
+          "type": "object",
+          "description": "Represents a defined server route.",
+          "properties": [
+            {
+              "name": "routeId",
+              "$ref": "RouteId",
+              "description": "Unique identifier for the route."
+            },
+            {
+              "name": "path",
+              "type": "string",
+              "description": "The path pattern for the route (e.g., '/users/:id')."
+            },
+            {
+              "name": "type",
+              "$ref": "RouteType",
+              "description": "The type of the route."
+            },
+            {
+              "name": "paramNames",
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "optional": true,
+              "description": "Names of the parameters defined in the path pattern."
+            },
+            {
+              "name": "filePath",
+              "type": "string",
+              "optional": true,
+              "description": "Filesystem path associated with 'static' or 'html' routes."
+            },
+            {
+              "name": "method",
+              "$ref": "HTTPMethod",
+              "description": "The HTTP method associated with the route.",
+              "optional": true
+            },
+            {
+              "name": "scriptUrl",
+              "type": "string",
+              "description": "url of the script the route is in. Available when the debugger is not attached.",
+              "optional": true
+            },
+            {
+              "name": "scriptLine",
+              "type": "integer",
+              "description": "Line number in the script that started the route. Available when the debugger is not attached."
+            }
+          ]
+        },
+        {
+          "id": "Request",
+          "type": "object",
+          "description": "Metadata about an incoming server request.",
+          "properties": [
+            {
+              "name": "requestId",
+              "$ref": "RequestId",
+              "description": "Unique identifier for this request."
+            },
+            {
+              "name": "serverId",
+              "$ref": "ServerId",
+              "description": "Identifier of the server processing this request."
+            },
+            {
+              "name": "routeId",
+              "$ref": "RouteId",
+              "description": "Identifier of the route that matched this request. 0 means no route matched."
+            },
+            {
+              "name": "url",
+              "type": "string",
+              "description": "Request URL (path and query string)."
+            },
+            {
+              "name": "fullUrl",
+              "type": "string",
+              "description": "Full request URL including host and protocol."
+            },
+            {
+              "name": "method",
+              "$ref": "HTTPMethod",
+              "description": "HTTP method as an integer."
+            },
+            {
+              "name": "headers",
+              "$ref": "Headers",
+              "description": "HTTP request headers."
+            },
+            {
+              "name": "params",
+              "$ref": "RequestParams",
+              "optional": true,
+              "description": "Matched route parameters."
+            },
+            {
+              "name": "hasBody",
+              "type": "boolean",
+              "description": "Indicates if the request has a body."
+            },
+            {
+              "name": "timestamp",
+              "type": "number",
+              "description": "Timestamp when the request was received by the server (Unix epoch milliseconds)."
+            }
+          ]
+        },
+        {
+          "id": "Response",
+          "type": "object",
+          "description": "Metadata about an outgoing server response.",
+          "properties": [
+            {
+              "name": "requestId",
+              "$ref": "RequestId",
+              "description": "Identifier of the request this response corresponds to."
+            },
+            {
+              "name": "serverId",
+              "$ref": "ServerId",
+              "description": "Identifier of the server sending this response."
+            },
+            {
+              "name": "statusCode",
+              "type": "integer",
+              "description": "HTTP status code."
+            },
+            {
+              "name": "statusText",
+              "type": "string",
+              "description": "HTTP status text."
+            },
+            {
+              "name": "headers",
+              "$ref": "Headers",
+              "description": "HTTP response headers."
+            },
+            {
+              "name": "hasBody",
+              "type": "boolean",
+              "description": "Indicates if the response has a body."
+            },
+            {
+              "name": "timestamp",
+              "type": "number",
+              "description": "Timestamp when the response headers were sent (Unix epoch milliseconds)."
+            }
+          ]
+        },
+        {
+          "id": "BodyChunk",
+          "type": "object",
+          "description": "A chunk of a request or response body.",
+          "properties": [
+            {
+              "name": "requestId",
+              "$ref": "RequestId",
+              "description": "Identifier of the request this chunk belongs to."
+            },
+            {
+              "name": "serverId",
+              "$ref": "ServerId",
+              "description": "Identifier of the server handling the request."
+            },
+            {
+              "name": "flags",
+              "type": "integer",
+              "description": "Flags indicating the type of chunk. Bit 0: 1 if this chunk belongs to the request body, 0 for response body. Bit 1: 1 if this is the final chunk of the body, Bit 2: 1 if the chunk is base64 encoded. 0 otherwise."
+            },
+            {
+              "name": "chunk",
+              "type": "string",
+              "description": "The body chunk data"
+            },
+            {
+              "name": "timestamp",
+              "type": "number",
+              "description": "Timestamp when the chunk was received/sent (Unix epoch milliseconds)."
+            }
+          ]
+        },
+        {
+          "id": "RequestHandlerError",
+          "type": "object",
+          "description": "Details about an unhandled exception in a request handler.",
+          "properties": [
+            {
+              "name": "requestId",
+              "$ref": "RequestId",
+              "description": "Identifier of the request where the error occurred."
+            },
+            {
+              "name": "serverId",
+              "$ref": "ServerId",
+              "description": "Identifier of the server processing the request."
+            },
+            {
+              "name": "message",
+              "type": "string",
+              "description": "Error message."
+            },
+            {
+              "name": "timestamp",
+              "type": "number",
+              "description": "Timestamp when the error occurred (Unix epoch milliseconds)."
+            },
+            {
+              "name": "url",
+              "type": "string",
+              "description": "url of the script the route is in. Available when the debugger is not attached.",
+              "optional": true
+            },
+            {
+              "name": "line",
+              "type": "integer",
+              "description": "Line number in the script that started the route."
+            }
+          ]
+        }
+      ],
+      "commands": [
+        {
+          "name": "enable",
+          "description": "Enables the HTTPServer domain, clearing any previous data."
+        },
+        {
+          "name": "disable",
+          "description": "Disables the HTTPServer domain."
+        }
+      ],
+      "events": [
+        {
+          "name": "listen",
+          "description": "Fired when an HTTP server starts listening.",
+          "parameters": [
+            {
+              "name": "serverId",
+              "$ref": "ServerId",
+              "description": "Unique identifier for this server instance."
+            },
+            {
+              "name": "url",
+              "type": "string",
+              "description": "A URL you can fetch from the server. Example: 'http://localhost:3000' or 'https://localhost:3000'"
+            },
+            {
+              "name": "startTime",
+              "type": "number",
+              "description": "Timestamp when the server started (Unix epoch milliseconds)."
+            }
+          ]
+        },
+        {
+          "name": "close",
+          "description": "Fired when an HTTP server stops listening.",
+          "parameters": [
+            {
+              "name": "serverId",
+              "$ref": "ServerId",
+              "description": "Identifier of the server that stopped."
+            },
+            {
+              "name": "timestamp",
+              "type": "number",
+              "description": "Timestamp when the server stopped (Unix epoch milliseconds)."
+            }
+          ]
+        },
+        {
+          "name": "serverRoutesUpdated",
+          "description": "Fired when a server starts or its routes are updated (e.g., via hot reload). Provides the complete list of current routes.",
+          "parameters": [
+            {
+              "name": "serverId",
+              "$ref": "ServerId",
+              "description": "Identifier of the server whose routes were updated."
+            },
+            {
+              "name": "hotReloadId",
+              "$ref": "HotReloadId",
+              "description": "The number of times Bun has hot reloaded. When hot reloading server-side code, the server ID will be the same and the hotReloadId will increment. When not hot reloading, the server ID will be different and the hotReloadId will not increment."
+            },
+            {
+              "name": "routes",
+              "type": "array",
+              "items": {
+                "$ref": "Route"
+              },
+              "description": "The complete list of routes currently served."
+            }
+          ]
+        },
+        {
+          "name": "requestWillBeSent",
+          "description": "Fired when the server receives an HTTP request, before the handler is invoked. Body content is not included by default.",
+          "parameters": [
+            {
+              "name": "request",
+              "$ref": "Request",
+              "description": "Request metadata."
+            }
+          ]
+        },
+        {
+          "name": "responseReceived",
+          "description": "Fired when the server begins sending an HTTP response. Body content is not included by default.",
+          "parameters": [
+            {
+              "name": "response",
+              "$ref": "Response",
+              "description": "Response metadata."
+            }
+          ]
+        },
+        {
+          "name": "bodyChunkReceived",
+          "description": "Fired when a chunk of the request or response body is available, after being requested via `getRequestBody` or `getResponseBody`.",
+          "parameters": [
+            {
+              "name": "chunk",
+              "$ref": "BodyChunk",
+              "description": "The body chunk data."
+            }
+          ]
+        },
+        {
+          "name": "requestFinished",
+          "description": "Fired when the server has finished processing a request and sent the response.",
+          "parameters": [
+            {
+              "name": "requestId",
+              "$ref": "RequestId",
+              "description": "Identifier of the finished request."
+            },
+            {
+              "name": "serverId",
+              "$ref": "ServerId",
+              "description": "Identifier of the server handling the request."
+            },
+            {
+              "name": "timestamp",
+              "type": "number",
+              "description": "Timestamp when the request finished (Unix epoch milliseconds)."
+            },
+            {
+              "name": "duration",
+              "type": "number",
+              "optional": true,
+              "description": "Total duration of the request handling in milliseconds."
+            }
+          ]
+        },
+        {
+          "name": "requestHandlerException",
+          "description": "Fired when an unhandled exception occurs within a request handler.",
+          "parameters": [
+            {
+              "name": "error",
+              "$ref": "RequestHandlerError",
+              "description": "Details about the error."
+            }
+          ]
+        }
+      ]
+    },
+    {
       "domain": "Inspector",
-      "debuggableTypes": ["itml", "javascript", "page", "web-page"],
-      "targetTypes": ["itml", "javascript", "page"],
+      "debuggableTypes": ["itml", "javascript", "service-worker", "web-page", "wasm-debugger"],
+      "targetTypes": ["itml", "javascript", "page", "service-worker", "wasm-debugger"],
       "commands": [
         {
           "name": "enable",
@@ -1609,7 +2241,6 @@
       "description": "LifecycleReporter domain allows reporting of lifecycle events.",
       "debuggableTypes": ["itml", "javascript"],
       "targetTypes": ["itml", "javascript"],
-      "types": [],
       "commands": [
         {
           "name": "enable",
@@ -1626,6 +2257,49 @@
         {
           "name": "stopPreventingExit",
           "description": "Does not prevent the process from exiting."
+        },
+        {
+          "name": "getModuleGraph",
+          "description": "Returns the current module graph containing ESM and CJS modules.",
+          "returns": [
+            {
+              "name": "esm",
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Array of ESM module paths."
+            },
+            {
+              "name": "cjs",
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Array of CJS module paths."
+            },
+            {
+              "name": "cwd",
+              "type": "string",
+              "items": {
+                "type": "string"
+              },
+              "description": "Current working directory"
+            },
+            {
+              "name": "main",
+              "type": "string",
+              "description": "The main file"
+            },
+            {
+              "name": "argv",
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "argv that launched the process"
+            }
+          ]
         }
       ],
       "events": [
@@ -1677,8 +2351,8 @@
     {
       "domain": "Runtime",
       "description": "Runtime domain exposes JavaScript runtime by means of remote evaluation and mirror objects. Evaluation results are returned as mirror object that expose object type, string representation and unique identifier that can be used for further object reference. Original objects are maintained in memory unless they are either explicitly released or are released along with the other objects in their object group.",
-      "debuggableTypes": ["itml", "javascript", "page", "service-worker", "web-page"],
-      "targetTypes": ["itml", "javascript", "page", "service-worker", "worker"],
+      "debuggableTypes": ["itml", "javascript", "service-worker", "web-page", "wasm-debugger"],
+      "targetTypes": ["frame", "itml", "javascript", "page", "service-worker", "worker", "wasm-debugger"],
       "types": [
         {
           "id": "RemoteObjectId",
@@ -2839,8 +3513,8 @@
     {
       "domain": "ScriptProfiler",
       "description": "Profiler domain exposes JavaScript evaluation timing and profiling.",
-      "debuggableTypes": ["itml", "javascript", "page", "web-page"],
-      "targetTypes": ["itml", "javascript", "page"],
+      "debuggableTypes": ["itml", "javascript", "web-page", "wasm-debugger"],
+      "targetTypes": ["itml", "javascript", "page", "worker", "wasm-debugger"],
       "types": [
         {
           "id": "EventType",

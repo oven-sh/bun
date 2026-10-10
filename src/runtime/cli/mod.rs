@@ -4,8 +4,6 @@
 //! against lower-tier crates. `Command::start()` (full dispatch) and
 //! per-command exec bodies live in the sibling `*_command.rs` modules.
 
-use core::cell::Cell;
-
 use bun_core::strings;
 use bun_core::{self as bun, Global, Output};
 use bun_core::{pretty, pretty_error, pretty_errorln};
@@ -210,21 +208,21 @@ pub(crate) mod ci_info_generated {
 }
 
 #[path = "add_completions.rs"]
-pub mod add_completions;
+pub(crate) mod add_completions;
 #[path = "colon_list_type.rs"]
-pub mod colon_list_type;
+pub(crate) mod colon_list_type;
 #[path = "discord_command.rs"]
 pub(crate) mod discord_command;
 #[path = "shell_completions.rs"]
-pub mod shell_completions;
+pub(crate) mod shell_completions;
 #[path = "which_npm_client.rs"]
-pub mod which_npm_client;
+pub(crate) mod which_npm_client;
 
 // ─── open (open_url wrapper; Editor/EditorContext live in open.rs) ───────────
 #[path = "open.rs"]
 mod open_full;
-pub mod open {
-    pub use super::open_full::{Editor, EditorContext};
+pub(crate) mod open {
+    pub(crate) use super::open_full::{Editor, EditorContext};
     use bun_core::Output;
 
     #[cfg(target_os = "macos")]
@@ -258,134 +256,149 @@ pub mod open {
 // `Command::start()` below. `install_completions_command.rs` is fully wired
 // via `exec_install_completions` (its `exec()` takes no Context).
 #[path = "init_command.rs"]
-pub mod init_command;
+pub(crate) mod init_command;
 #[path = "install_completions_command.rs"]
-pub mod install_completions_command;
+pub(crate) mod install_completions_command;
 #[path = "package_manager_command.rs"]
-pub mod package_manager_command;
+pub(crate) mod package_manager_command;
 
 // Surfaced for `crate::test_runner::{bun_test,jest,Execution}` which
 // need `CommandLineReporter`. This is the sole live mount of the file.
 #[path = "test_command.rs"]
-pub mod test_command;
+pub(crate) mod test_command;
 /// `bun test` support modules (Scanner / ChangedFilesFilter / ParallelRunner).
 /// Mounted here so `test_command.rs` can `use crate::cli::test::scanner` etc.
-pub mod test {
+pub(crate) mod test {
     #[path = "Scanner.rs"]
-    pub mod scanner;
+    pub(crate) mod scanner;
 
     /// `bun test --changed`: git-diff → bundler module graph → reverse-import
     /// walk to filter test files.
     #[path = "ChangedFilesFilter.rs"]
-    pub mod changed_files_filter;
+    pub(crate) mod changed_files_filter;
 
     /// `bun test --timings` / `--update-timings`: per-file duration table.
     #[path = "Timings.rs"]
-    pub mod timings;
+    pub(crate) mod timings;
 
     /// `bun test --parallel`: process-pool coordinator/worker entry points.
     /// Thin façade re-exporting from `parallel::runner`.
     #[path = "ParallelRunner.rs"]
-    pub mod parallel_runner;
+    pub(crate) mod parallel_runner;
 
     /// `test/parallel/` submodule directory (no `mod.rs` on disk; declared
     /// inline). `ParallelRunner.rs`
     /// re-exports the public entry points from `runner`; the rest are
     /// implementation detail of the coordinator/worker split.
-    pub mod parallel {
+    pub(crate) mod parallel {
         #[path = "aggregate.rs"]
-        pub mod aggregate;
+        pub(crate) mod aggregate;
         #[path = "Channel.rs"]
-        pub mod channel;
+        pub(crate) mod channel;
         #[path = "Coordinator.rs"]
-        pub mod coordinator;
+        pub(crate) mod coordinator;
         #[path = "FileRange.rs"]
-        pub mod file_range;
+        pub(crate) mod file_range;
         #[path = "Frame.rs"]
-        pub mod frame;
+        pub(crate) mod frame;
         #[path = "runner.rs"]
-        pub mod runner;
+        pub(crate) mod runner;
         #[path = "Worker.rs"]
-        pub mod worker;
+        pub(crate) mod worker;
     }
 }
 #[path = "Arguments.rs"]
-pub mod arguments;
-pub use arguments as Arguments;
+pub(crate) mod arguments;
+pub(crate) use arguments as Arguments;
 #[path = "run_command.rs"]
-pub mod run_command;
+pub(crate) mod run_command;
 
 // ─── per-subcommand bodies ───────────────────────────────────────────────────
 #[path = "build_command.rs"]
-pub mod build_command;
+pub(crate) mod build_command;
 #[path = "bunx_command.rs"]
-pub mod bunx_command;
+pub(crate) mod bunx_command;
 #[path = "create_command.rs"]
-pub mod create_command;
+pub(crate) mod create_command;
 #[path = "exec_command.rs"]
-pub mod exec_command;
+pub(crate) mod exec_command;
 #[path = "fuzzilli_command.rs"]
 pub(crate) mod fuzzilli_command;
 #[path = "install_command.rs"]
-pub mod install_command;
+pub(crate) mod install_command;
 #[path = "repl_command.rs"]
-pub mod repl_command;
+pub(crate) mod repl_command;
 #[path = "upgrade_command.rs"]
-pub mod upgrade_command;
+pub(crate) mod upgrade_command;
 // MOVE_UP: `--analyze` branch + `Cli.log_` access of
 // `bun_install::update_package_json_and_install{,_catch_error}` — see file header.
 #[path = "add_command.rs"]
 pub(crate) mod add_command;
 #[path = "audit_command.rs"]
-pub mod audit_command;
+pub(crate) mod audit_command;
+#[path = "check_command.rs"]
+pub(crate) mod check_command;
+#[path = "dedupe_command.rs"]
+pub(crate) mod dedupe_command;
 #[path = "filter_arg.rs"]
-pub mod filter_arg;
+pub(crate) mod filter_arg;
 #[path = "filter_run.rs"]
-pub mod filter_run;
+pub(crate) mod filter_run;
 #[path = "link_command.rs"]
-pub mod link_command;
+pub(crate) mod link_command;
 #[path = "multi_run.rs"]
-pub mod multi_run;
+pub(crate) mod multi_run;
 #[path = "outdated_command.rs"]
-pub mod outdated_command;
+pub(crate) mod outdated_command;
 #[path = "pack_command.rs"]
-pub mod pack_command;
+pub(crate) mod pack_command;
 #[path = "patch_command.rs"]
 pub(crate) mod patch_command;
 #[path = "patch_commit_command.rs"]
 pub(crate) mod patch_commit_command;
+#[path = "pm_diff_command.rs"]
+pub(crate) mod pm_diff_command;
+pub(crate) mod pm_diff_normalize;
+pub(crate) mod pm_diff_profile;
+pub(crate) mod pm_diff_relayout;
+pub(crate) mod pm_diff_semantic;
+#[path = "pm_licenses_command.rs"]
+pub(crate) mod pm_licenses_command;
 #[path = "pm_pkg_command.rs"]
-pub mod pm_pkg_command;
+pub(crate) mod pm_pkg_command;
 #[path = "pm_trusted_command.rs"]
-pub mod pm_trusted_command;
-pub mod pm_update_package_json;
+pub(crate) mod pm_trusted_command;
+pub(crate) mod pm_update_package_json;
 #[path = "pm_version_command.rs"]
-pub mod pm_version_command;
+pub(crate) mod pm_version_command;
 #[path = "pm_view_command.rs"]
-pub mod pm_view_command;
+pub(crate) mod pm_view_command;
 #[path = "pm_why_command.rs"]
 pub(crate) mod pm_why_command;
+#[path = "prune_command.rs"]
+pub(crate) mod prune_command;
 #[path = "publish_command.rs"]
-pub mod publish_command;
+pub(crate) mod publish_command;
 #[path = "remove_command.rs"]
 pub(crate) mod remove_command;
 #[path = "scan_command.rs"]
-pub mod scan_command;
+pub(crate) mod scan_command;
+mod typescript_libs;
 #[path = "unlink_command.rs"]
-pub mod unlink_command;
+pub(crate) mod unlink_command;
 #[path = "update_command.rs"]
 pub(crate) mod update_command;
 #[path = "update_interactive_command.rs"]
-pub mod update_interactive_command;
+pub(crate) mod update_interactive_command;
 #[path = "why_command.rs"]
-pub mod why_command;
+pub(crate) mod why_command;
 
 // ─── crate-local helper for param-table concatenation ────────────────────────
 // `bun_clap::parse_param!` is a real proc-macro (const `Param<Help>` literal),
 // and `bun_clap::concat_params!` is a const-fn slice concat,
 // so combined tables (`AUTO_PARAMS`, `RUN_PARAMS`, …) are baked into rodata —
 // no `LazyLock`, no init closure in `.text`, no startup heap allocation.
-pub use ::bun_clap::concat_params;
+pub(crate) use ::bun_clap::concat_params;
 
 // ─── process-lifetime globals ────────────────────────────────────────────────
 /// Written once in `Cli::start`
@@ -420,15 +433,14 @@ pub(crate) static Bun__Node__DisabledWarnings: std::sync::OnceLock<Vec<Box<[u8]>
 /// Backing storage for [`cli_arena`]. Written exactly once in [`Cli::start`]
 /// during single-threaded process startup (before `Command::start`, hence
 /// before any `cli_arena()` / `cli_dupe` caller), then read freely — same
-/// "init once in `start()`" shape as `cli::LOG_` and [`CMD`].
+/// "init once in `start()`" shape as `cli::LOG_`.
 ///
 /// `RacyCell<MaybeUninit<…>>`, **not** `std::sync::LazyLock`: `LazyLock`'s init
 /// thunk and the `std::sync::Once` poison/slow path it forces are `#[cold]`, and
-/// fat-LTO parks them tens of MB away from the startup symbol cluster (the same
-/// pathology documented for `OnceLock::set` on [`CMD`]). `cli_arena()` is on the
-/// hot `bun <file>` / `bun run <script>` path (via `cli_dupe` / `cli_dupe_z` /
-/// `runner_arena`), so a `LazyLock` there faults a fresh cold page on every
-/// `bun` invocation; a plain cell is the correct shape.
+/// fat-LTO parks them tens of MB away from the startup symbol cluster.
+/// `cli_arena()` is on the hot `bun <file>` / `bun run <script>` path (via
+/// `cli_dupe` / `cli_dupe_z` / `runner_arena`), so a `LazyLock` there faults a
+/// fresh cold page on every `bun` invocation; a plain cell is the correct shape.
 static CLI_ARENA: bun_core::RacyCell<core::mem::MaybeUninit<bun_alloc::Arena>> =
     bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
@@ -484,27 +496,12 @@ fn cli_dupe_z(s: &[u8]) -> *const core::ffi::c_char {
     buf.as_ptr().cast::<core::ffi::c_char>()
 }
 
-thread_local! {
-    pub(crate) static IS_MAIN_THREAD: Cell<bool> = const { Cell::new(false) };
-}
-
-/// `Cli.cmd` — set in `create_context_data` so crash reports / debug logging
-/// can ask "which subcommand are we in". Set once during single-threaded
-/// startup; read freely thereafter.
-///
-/// `RacyCell`, not `OnceLock`: `OnceLock::set` routes through stdlib's
-/// `#[cold] fn initialize`, which fat-LTO places ~36 MB away from the
-/// startup.order cluster and faults a fresh page on every `bun` invocation.
-/// The write happens before any
-/// thread is spawned, so a bare cell is the correct shape.
-static CMD: bun_core::RacyCell<Option<command::Tag>> = bun_core::RacyCell::new(None);
-
 /// This is set `true` during `Command.which()` if argv0 is "node", in which the CLI is going
 /// to pretend to be node.js by always choosing RunCommand with a relative filepath.
 ///
 /// Canonical static lives in `bun_install` so both crates read/write the SAME
 /// flag (`RunCommand::create_fake_temporary_node_executable` lives there).
-pub use bun_install::PRETEND_TO_BE_NODE;
+pub(crate) use bun_install::PRETEND_TO_BE_NODE;
 
 /// This is set `true` during `Command.which()` if argv0 is "bunx"
 static IS_BUNX_EXE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
@@ -535,17 +532,17 @@ fn invalid_target(diag: &mut bun_clap::Diagnostic, _target: &[u8]) -> ! {
 }
 
 // ─── Cli (entry point) ───────────────────────────────────────────────────────
-pub mod cli {
+pub(crate) mod cli {
     use super::*;
 
-    pub use bun_options_types::compile_target::CompileTarget;
+    pub(crate) use bun_options_types::compile_target::CompileTarget;
 
     // Process-global, init in start().
     pub(crate) static LOG_: bun_core::RacyCell<core::mem::MaybeUninit<bun_ast::Log>> =
         bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
 
     /// `#[inline(never)]`: this is the first Rust call after `main()` (see
-    /// `src/bun_bin/lib.rs`) and the head of the `bun <file>` / `bun run`
+    /// `src/runtime/bin_entry/mod.rs`) and the head of the `bun <file>` / `bun run`
     /// startup chain. It must stay a concrete symbol so lld's
     /// `--symbol-ordering-file` (`src/startup.order`) can cluster it — and the
     /// callees it walks (`Command::start` → `which` → `create_context_data` →
@@ -554,13 +551,9 @@ pub mod cli {
     /// crate-alphabetical order, scattering the cold-start path across pages
     /// shared with bundler/install/css/panic-format bodies.
     #[inline(never)]
-    pub fn start() {
-        IS_MAIN_THREAD.with(|c| c.set(true));
-        // Mirror the threadlocal into the crash-handler crate's global so
+    pub(crate) fn start() {
         // `bun_crash_handler::cli_state::is_main_thread()` (used to print the
-        // `panic(main thread): …` header) returns true on this thread. The
-        // crash handler lives in a lower tier and can't read `IS_MAIN_THREAD`
-        // directly, so it compares against a stored OS tid instead.
+        // `panic(main thread): …` header) compares against a stored OS tid.
         bun_crash_handler::cli_state::set_main_thread_id(bun_threading::current_thread_id());
         bun_core::set_start_time(bun_core::time::nano_timestamp());
         // SAFETY: single-threaded process startup
@@ -572,7 +565,7 @@ pub mod cli {
         // SAFETY: single-threaded process startup; `mimalloc` is already init.
         unsafe { (*super::CLI_ARENA.get()).write(bun_alloc::Arena::new()) };
 
-        // (The panic hook is installed by `bun_crash_handler::init()` in bun_bin.)
+        // (The panic hook is installed by `bun_crash_handler::init()` in `bin_entry::main`.)
         // SAFETY: just initialized above; single-threaded for the lifetime of `log`.
         let log = unsafe { (*LOG_.get()).assume_init_mut() };
         if let Err(err) = Command::start(log) {
@@ -584,18 +577,18 @@ pub mod cli {
             let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
                 bun_core::Output::error_writer(),
             ));
-            bun_crash_handler::handle_root_error(err, None);
+            bun_crash_handler::handle_root_error(err);
         }
     }
 }
-pub use cli as Cli;
+pub(crate) use cli as Cli;
 
 // ─── HelpCommand ─────────────────────────────────────────────────────────────
-pub mod help_command {
+pub(crate) mod help_command {
     use super::*;
 
     #[derive(Copy, Clone, PartialEq, Eq)]
-    pub enum Reason {
+    pub(crate) enum Reason {
         Explicit,
         InvalidCommand,
     }
@@ -654,6 +647,7 @@ pub mod help_command {
   <b><magenta>run<r>       <d>./my-script.ts<r>       Execute a file with Bun
             <d>lint<r>                 Run a package.json script
   <b><magenta>test<r>                           Run unit tests with Bun
+  <b><magenta>check<r>                          Type check a TypeScript project
   <b><magenta>x<r>         <d>{:<16}<r>     Execute a package binary (CLI), installing if needed <d>(bunx)<r>
   <b><magenta>repl<r>                           Start a REPL session with Bun
   <b><magenta>exec<r>                           Run a shell script directly with Bun
@@ -663,6 +657,8 @@ pub mod help_command {
   <b><blue>remove<r>    <d>{:<16}<r>     Remove a dependency from package.json <d>(bun rm)<r>
   <b><blue>update<r>    <d>{:<16}<r>     Update outdated dependencies
   <b><blue>audit<r>                          Check installed packages for vulnerabilities
+  <b><blue>dedupe<r>                         Remove duplicate versions from the lockfile
+  <b><blue>prune<r>                          Remove packages that are not in the lockfile from node_modules
   <b><blue>outdated<r>                       Display latest versions of outdated dependencies
   <b><blue>link<r>      <d>[\\<package\\>]<r>          Register or link a local npm package
   <b><blue>unlink<r>                         Unregister a local npm package
@@ -677,7 +673,6 @@ pub mod help_command {
   <b><cyan>init<r>                           Start an empty Bun project from a built-in template
   <b><cyan>create<r>    <d>{:<16}<r>     Create a new project from a template <d>(bun c)<r>
   <b><cyan>upgrade<r>                        Upgrade to latest version of Bun.
-  <b><cyan>feedback<r>  <d>./file1 ./file2<r>      Provide feedback to the Bun team.
 
   <d>\\<command\\><r> <b><cyan>--help<r>               Print help text for command.
 "),
@@ -756,9 +751,9 @@ Join our Discord community:      <blue>https://bun.com/discord<r>\n"
         Global::exit(0);
     }
 }
-pub use help_command as HelpCommand;
+pub(crate) use help_command as HelpCommand;
 
-pub mod reserved_command {
+pub(crate) mod reserved_command {
     use super::*;
 
     #[cold]
@@ -785,13 +780,11 @@ pub mod reserved_command {
         Global::exit(1);
     }
 }
-pub use reserved_command as ReservedCommand;
+pub(crate) use reserved_command as ReservedCommand;
 
 // ─── Command (Tag + which() + dispatch skeleton) ─────────────────────────────
-pub mod command {
+pub(crate) mod command {
     use super::*;
-    // Self-referential alias so `crate::command::Command` resolves.
-    pub use super::Command;
 
     /// Collect `bun::argv()` into an indexable slice of `&'static ZStr`.
     /// `Argv` only exposes `.get(i)` / `.iter() -> &[u8]`; several call
@@ -802,9 +795,9 @@ pub mod command {
         (0..a.len()).map(|i| a.get(i).unwrap()).collect()
     }
 
-    pub use bun_options_types::command_tag::Tag;
-    pub use bun_options_types::command_tag::{LOADS_CONFIG, USES_GLOBAL_OPTIONS};
-    pub use bun_options_types::context::{Context, ContextData, HotReload, TestOptions};
+    pub(crate) use bun_options_types::command_tag::Tag;
+    pub(crate) use bun_options_types::command_tag::{LOADS_CONFIG, USES_GLOBAL_OPTIONS};
+    pub(crate) use bun_options_types::context::{Context, ContextData, HotReload, TestOptions};
 
     // Process-lifetime
     // storage, written exactly once in `create_context_data` during
@@ -815,7 +808,7 @@ pub mod command {
 
     /// Process-global CLI context handle.
     #[inline]
-    pub fn get() -> Context<'static> {
+    pub(crate) fn get() -> Context<'static> {
         // SAFETY: only called after `create_context_data` published the ctx
         // during single-threaded startup; callers treat the result as read-mostly.
         unsafe { &mut *bun_options_types::context::global_ptr() }
@@ -1020,7 +1013,7 @@ pub mod command {
         if x == RootCommandMatcher::case(b"add") || x == RootCommandMatcher::case(b"a") {
             return Tag::AddCommand;
         }
-        if x == RootCommandMatcher::case(b"update") {
+        if x == RootCommandMatcher::case(b"update") || x == RootCommandMatcher::case(b"up") {
             return Tag::UpdateCommand;
         }
         if x == RootCommandMatcher::case(b"patch") {
@@ -1054,8 +1047,20 @@ pub mod command {
         if x == RootCommandMatcher::case(b"audit") {
             return Tag::AuditCommand;
         }
+        if x == RootCommandMatcher::case(b"check") {
+            return match super::check_command::is_package_script() {
+                true => Tag::AutoCommand,
+                false => Tag::CheckCommand,
+            };
+        }
         if x == RootCommandMatcher::case(b"info") {
             return Tag::InfoCommand;
+        }
+        if x == RootCommandMatcher::case(b"dedupe") {
+            return Tag::DedupeCommand;
+        }
+        if x == RootCommandMatcher::case(b"prune") {
+            return Tag::PruneCommand;
         }
         // reserved
         if x == RootCommandMatcher::case(b"deploy")
@@ -1065,7 +1070,6 @@ pub mod command {
             || x == RootCommandMatcher::case(b"auth")
             || x == RootCommandMatcher::case(b"login")
             || x == RootCommandMatcher::case(b"logout")
-            || x == RootCommandMatcher::case(b"prune")
         {
             return Tag::ReservedCommand;
         }
@@ -1129,12 +1133,6 @@ pub mod command {
         cmd: Tag,
         log: &mut bun_ast::Log,
     ) -> crate::Result<&'static mut ContextData> {
-        // SAFETY: single-threaded CLI startup — no other thread exists yet.
-        // `CMD` is read by debug logging and `run_command` (feedback dispatch).
-        unsafe { CMD.write(Some(cmd)) };
-        // The crash handler can't read `CMD` (lower-tier crate); mirror the
-        // one-byte command tag into its `cli_state` so crash-report trace
-        // strings encode the running subcommand (Zig: `Cli.cmd = command`).
         bun_crash_handler::cli_state::set_cmd_char(cmd.char());
 
         let ctx = write_context_no_parse(log);
@@ -1315,6 +1313,9 @@ pub mod command {
             Tag::UpdateInteractiveCommand => exec_update_interactive(log),
             Tag::PublishCommand => exec_publish(log),
             Tag::AuditCommand => exec_audit(log),
+            Tag::CheckCommand => exec_check(log),
+            Tag::DedupeCommand => exec_dedupe(log),
+            Tag::PruneCommand => exec_prune(log),
             Tag::WhyCommand => exec_why(log),
             Tag::BunxCommand => exec_bunx(log),
             Tag::ReplCommand => exec_repl(log),
@@ -1353,7 +1354,7 @@ pub mod command {
         let offset_for_passthrough: usize;
 
         let ctx: &mut ContextData = 'brk: {
-            // The entry point (`bun_bin::main`) defers argv
+            // The entry point (`bin_entry::main`) defers argv
             // init to `bun_core::argv()`'s lazy `Once`, so force that init
             // now — otherwise `bun_options_argc()` reads 0 here and the
             // standalone executable silently drops `BUN_OPTIONS` flags.
@@ -1363,6 +1364,10 @@ pub mod command {
                 let mut argv_list: Vec<&'static bun_core::ZStr> = bun::argv().to_vec();
                 if !graph.compile_exec_argv.is_empty() {
                     bun::append_options_env(graph.compile_exec_argv, &mut argv_list);
+                    // Inserted from index 1.
+                    arguments::disallow_code_generation_from_strings_as_compiled(
+                        &argv_list[1..][..argv_list.len() - original_argv_len],
+                    );
                 }
 
                 // Store the full argv including user arguments
@@ -1422,20 +1427,19 @@ pub mod command {
     /// pair — kept out-of-line so `start` is a jump table, but *not* `#[cold]`.
     #[inline(never)]
     fn exec_auto_or_run(tag: Tag, log: &mut bun_ast::Log) -> CmdResult {
-        // The AutoCommand arm swallows
-        // `error.MissingEntryPoint` from `Command.init` and prints help;
-        // every other tag (including RunCommand) propagates the error.
-        // Note: nothing currently produces `MissingEntryPoint`; bare
-        // `bun` help is served by the empty-positionals fallthrough. This arm
-        // exists in case a producer is ever added (Arguments.rs).
-        let ctx = match init(tag, log) {
-            Ok(ctx) => ctx,
-            Err(e) if tag == Tag::AutoCommand && matches!(e, crate::Error::MissingEntryPoint) => {
-                return HelpCommand::exec();
-            }
-            Err(e) => return Err(e),
-        };
+        // Bare `bun` help is served by the empty-positionals fallthrough.
+        let ctx = init(tag, log)?;
         ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
+
+        // Scripts have no entry point to start from: the project is checked, as by `bun check`.
+        let runs_several =
+            ctx.parallel || ctx.sequential || !ctx.filters.is_empty() || ctx.workspaces;
+        if runs_several
+            && ctx.runtime_options.check
+            && !super::check_command::check_project_before()
+        {
+            Global::exit(1);
+        }
 
         if ctx.parallel || ctx.sequential {
             // Result<Infallible, _>: if this returns at all, it's Err.
@@ -1455,19 +1459,18 @@ pub mod command {
         // REPL (via process._eval). `-i -p` is not yet threaded through the
         // bootstrap (Node prints AND enters the REPL), so `-p` currently
         // bypasses the REPL. RunCommand's positionals carry a leading "run".
-        if ctx.runtime_options.interactive && !ctx.runtime_options.eval.eval_and_print {
-            let no_target = match tag {
-                Tag::AutoCommand => ctx.positionals.is_empty(),
-                Tag::RunCommand => match ctx.positionals.as_slice() {
-                    [] => true,
-                    [r] => r.as_ref() == b"run",
-                    _ => false,
-                },
+        let no_target = match tag {
+            Tag::AutoCommand => ctx.positionals.is_empty(),
+            Tag::RunCommand => match ctx.positionals.as_slice() {
+                [] => true,
+                [r] => r.as_ref() == b"run",
                 _ => false,
-            };
-            if no_target {
-                return run_command::RunCommand::exec_node_repl(ctx);
-            }
+            },
+            _ => false,
+        };
+        if ctx.runtime_options.interactive && !ctx.runtime_options.eval.eval_and_print && no_target
+        {
+            return run_command::RunCommand::exec_node_repl(ctx);
         }
 
         if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
@@ -1479,6 +1482,11 @@ pub mod command {
             if extension == b".lockb" {
                 return bun_lockb(ctx);
             }
+        }
+
+        // `bun --check` and `bun run --check` are `bun check`, also where that is a script.
+        if no_target && ctx.runtime_options.check && ctx.runtime_options.eval.script.is_empty() {
+            super::check_command::CheckCommand::exec_without_arguments();
         }
 
         if !ctx.positionals.is_empty() {
@@ -1566,10 +1574,20 @@ pub mod command {
 
     #[cold]
     #[inline(never)]
+    fn exec_check(log: &mut bun_ast::Log) -> CmdResult {
+        // CheckCommand parses its own argv.
+        init(Tag::CheckCommand, log)?;
+        let argv = argv_zslice();
+        // After the flags of `bun`, and those of `BUN_OPTIONS`.
+        let check = argv.iter().position(|arg| arg.as_bytes() == b"check");
+        super::check_command::CheckCommand::exec(&argv[check.map_or(argv.len(), |at| at + 1)..])
+    }
+
+    #[cold]
+    #[inline(never)]
     fn exec_audit(log: &mut bun_ast::Log) -> CmdResult {
         let ctx = init(Tag::AuditCommand, log)?;
-        super::audit_command::AuditCommand::exec(ctx)?;
-        Ok(())
+        match super::audit_command::AuditCommand::exec(ctx)? {}
     }
 
     #[cold]
@@ -1619,6 +1637,8 @@ pub mod command {
         exec_update_interactive => (UpdateInteractiveCommand, super::update_interactive_command::UpdateInteractiveCommand::exec),
         exec_publish            => (PublishCommand,        super::publish_command::PublishCommand::exec),
         exec_why                => (WhyCommand,            super::why_command::WhyCommand::exec),
+        exec_dedupe             => (DedupeCommand,         super::dedupe_command::DedupeCommand::exec),
+        exec_prune              => (PruneCommand,          super::prune_command::PruneCommand::exec),
         exec_remove             => (RemoveCommand,         super::remove_command::RemoveCommand::exec),
         exec_link               => (LinkCommand,           super::link_command::LinkCommand::exec),
         exec_unlink             => (UnlinkCommand,         super::unlink_command::UnlinkCommand::exec),
@@ -1903,7 +1923,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
 
         for arg in bun::argv() {
             if arg == b"--hash" {
-                let mut path_buf = bun_paths::PathBuffer::uninit();
+                let mut path_buf = bun_paths::path_buffer_pool::get();
                 let entry = &ctx.args.entry_points[0];
                 path_buf[..entry.len()].copy_from_slice(entry);
                 path_buf[entry.len()] = 0;
@@ -2057,6 +2077,9 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
   <d>Run all test files, only including tests whose names includes \"baz\"<r>
   <b><green>bun test<r> <cyan>--test-name-pattern<r> <blue>baz<r>
 
+  <d>Type check the test files and what they import, then run them<r>
+  <b><green>bun test<r> <cyan>--check<r>
+
 Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
 "
                 );
@@ -2176,6 +2199,51 @@ Execute a shell script directly from Bun.
             Tag::AuditCommand => {
                 pm_print_help(PmSubcommand::Audit);
             }
+            Tag::CheckCommand => {
+                pretty!(
+                    "\
+<b>Usage<r>: <b><green>bun check<r> <cyan>[flags]<r> <blue>[...files or directories]<r>
+  Type check a TypeScript project.
+
+  Uses the nearest <b>tsconfig.json<r> and reports the same errors as <b>tsc<r>, using all CPU cores.
+  Pass files or directories to check only those and their imports.
+  Project <b>references<r> are followed, like <b>tsc -b<r>, and nothing has to be built first.
+
+<b>Flags:<r>"
+                );
+                Output::flush();
+                bun_clap::simple_help(crate::cli::check_command::PARAMS);
+                pretty!(
+                    "
+      <cyan>--strict<r>, <cyan>--target<r><d><cyan>=\\<val\\><r>, ...  Any compiler option, as for <b>tsc<r>. Overrides tsconfig.json
+
+<b>Examples:<r>
+  <d>Check the current project<r>
+  <b><green>bun check<r>
+
+  <d>Check one file and everything it imports<r>
+  <b><green>bun check<r> <blue>src/index.ts<r>
+
+  <d>Check another project<r>
+  <b><green>bun check<r> <cyan>-p<r> <blue>packages/server<r>
+
+  <d>Try a stricter option without editing tsconfig.json<r>
+  <b><green>bun check<r> <cyan>--noUncheckedIndexedAccess<r>
+
+  <d>Check a file, then run it<r>
+  <b><green>bun<r> <cyan>--check<r> <blue>src/index.ts<r>
+
+Full documentation is available at <magenta>https://bun.com/docs/runtime/check<r>
+"
+                );
+                Output::flush();
+            }
+            Tag::DedupeCommand => {
+                pm_print_help(PmSubcommand::Dedupe);
+            }
+            Tag::PruneCommand => {
+                pm_print_help(PmSubcommand::Prune);
+            }
             Tag::InfoCommand => {
                 pretty!(
                     "\
@@ -2285,7 +2353,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>
         bun_install::package_manager_real::CommandLineArguments::print_help(subcommand);
     }
 }
-pub use command as Command;
+pub(crate) use command as Command;
 
 // NOT `#[cold]` — `bun --version` is the most-benchmarked startup path, and
 // `#[cold]` relocates the body to `.text.unlikely` ~40 MB past the

@@ -12,9 +12,9 @@ afterEach(() => {
 
 test("fetch, Response, Request can be overriden", async () => {
   const { Response, Request } = globalThis;
-  globalThis.Response = class BadResponse {};
-  globalThis.Request = class BadRequest {};
-  globalThis.fetch = function badFetch() {};
+  globalThis.Response = class BadResponse {} as any;
+  globalThis.Request = class BadRequest {} as any;
+  globalThis.fetch = function badFetch() {} as any;
 
   const fetch = require("node-fetch").fetch;
 

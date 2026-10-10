@@ -30,8 +30,9 @@ describe("SocketAddress constructor", () => {
   });
 
   describe.each([
+    // @ts-expect-error -- types are wrong.
     new SocketAddress(),
-    new SocketAddress(undefined),
+    new SocketAddress(undefined as any),
     new SocketAddress({}),
     new SocketAddress({ family: undefined }),
     new SocketAddress({ family: "ipv4" }),
@@ -137,8 +138,8 @@ describe("SocketAddress constructor", () => {
 describe("SocketAddress.isSocketAddress", () => {
   it("is a function that takes 1 argument", () => {
     expect(SocketAddress).toHaveProperty("isSocketAddress");
-    expect(SocketAddress.isSocketAddress).toBeInstanceOf(Function);
-    expect(SocketAddress.isSocketAddress).toHaveLength(1);
+    expect((SocketAddress as any).isSocketAddress).toBeInstanceOf(Function);
+    expect((SocketAddress as any).isSocketAddress).toHaveLength(1);
   });
 
   it("has the correct property descriptor", () => {
@@ -152,8 +153,8 @@ describe("SocketAddress.isSocketAddress", () => {
   });
 
   it("returns true for a SocketAddress instance", () => {
-    expect(SocketAddress.isSocketAddress(v4)).toBeTrue();
-    expect(SocketAddress.isSocketAddress(v6)).toBeTrue();
+    expect((SocketAddress as any).isSocketAddress(v4)).toBeTrue();
+    expect((SocketAddress as any).isSocketAddress(v6)).toBeTrue();
   });
 
   it("returns false for POJOs that look like a SocketAddress", () => {
@@ -163,7 +164,7 @@ describe("SocketAddress.isSocketAddress", () => {
       family: "ipv4",
       flowlabel: 0,
     };
-    expect(SocketAddress.isSocketAddress(notASocketAddress)).toBeFalse();
+    expect((SocketAddress as any).isSocketAddress(notASocketAddress)).toBeFalse();
   });
 
   it("returns false for faked SocketAddresses", () => {
@@ -172,12 +173,13 @@ describe("SocketAddress.isSocketAddress", () => {
       fake[key] = v4[key];
     }
     expect(fake instanceof SocketAddress).toBeTrue();
-    expect(SocketAddress.isSocketAddress(fake)).toBeFalse();
+    expect((SocketAddress as any).isSocketAddress(fake)).toBeFalse();
   });
 
   it("returns false for subclasses", () => {
     class NotASocketAddress extends SocketAddress {}
-    expect(SocketAddress.isSocketAddress(new NotASocketAddress())).toBeFalse();
+    // @ts-expect-error -- types are wrong.
+    expect((SocketAddress as any).isSocketAddress(new NotASocketAddress())).toBeFalse();
   });
 }); // </SocketAddress.isSocketAddress>
 
@@ -210,7 +212,7 @@ describe("SocketAddress.parse", () => {
   ])("(%s) == %o", (input, expected) => {
     const sa = SocketAddress.parse(input);
     expect(sa).toBeDefined();
-    expect(sa.toJSON()).toMatchObject(expected);
+    expect((sa as any).toJSON()).toMatchObject(expected);
   });
 
   it.each([
@@ -239,6 +241,7 @@ describe("SocketAddress.prototype.address", () => {
   });
 
   it("is read-only", () => {
+    // @ts-expect-error -- types are wrong.
     const addr = new SocketAddress();
     // @ts-expect-error -- ofc it's read-only
     expect(() => (addr.address = "1.2.3.4")).toThrow();
@@ -284,8 +287,8 @@ describe("SocketAddress.prototype.flowlabel", () => {
 describe("SocketAddress.prototype.toJSON", () => {
   it("is a function that takes 0 arguments", () => {
     expect(SocketAddress.prototype).toHaveProperty("toJSON");
-    expect(SocketAddress.prototype.toJSON).toBeInstanceOf(Function);
-    expect(SocketAddress.prototype.toJSON).toHaveLength(0);
+    expect((SocketAddress.prototype as any).toJSON).toBeInstanceOf(Function);
+    expect((SocketAddress.prototype as any).toJSON).toHaveLength(0);
   });
 
   it("has the correct property descriptor", () => {
@@ -299,13 +302,13 @@ describe("SocketAddress.prototype.toJSON", () => {
   });
 
   it("returns an object with address, port, family, and flowlabel", () => {
-    expect(v4.toJSON()).toEqual({
+    expect((v4 as any).toJSON()).toEqual({
       address: "127.0.0.1",
       port: 0,
       family: "ipv4",
       flowlabel: 0,
     });
-    expect(v6.toJSON()).toEqual({
+    expect((v6 as any).toJSON()).toEqual({
       address: "::",
       port: 0,
       family: "ipv6",
@@ -317,11 +320,11 @@ describe("SocketAddress.prototype.toJSON", () => {
     let address: Record<string, any>;
 
     beforeEach(() => {
-      address = v4.toJSON();
+      address = (v4 as any).toJSON();
     });
 
     it("SocketAddress.isSocketAddress() returns false", () => {
-      expect(SocketAddress.isSocketAddress(address)).toBeFalse();
+      expect((SocketAddress as any).isSocketAddress(address)).toBeFalse();
     });
 
     it("does not have SocketAddress as its prototype", () => {

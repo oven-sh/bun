@@ -53,74 +53,75 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
         JSObject* header = constructEmptyObject(globalObject, globalObject->objectPrototype());
         RETURN_IF_EXCEPTION(scope, {});
 
-        header->putDirect(vm, Identifier::fromString(vm, "reportVersion"_s), jsNumber(3), 0);
-        header->putDirect(vm, Identifier::fromString(vm, "event"_s), jsString(vm, String("JavaScript API"_s)), 0);
-        header->putDirect(vm, Identifier::fromString(vm, "trigger"_s), jsString(vm, String("GetReport"_s)), 0);
-        header->putDirect(vm, Identifier::fromString(vm, "filename"_s), jsNull(), 0);
+        Bun::putDirectNamed(vm, header, "reportVersion"_s, jsNumber(3));
+        Bun::putDirectNamed(vm, header, "event"_s, jsString(vm, String("JavaScript API"_s)));
+        Bun::putDirectNamed(vm, header, "trigger"_s, jsString(vm, String("GetReport"_s)));
+        Bun::putDirectNamed(vm, header, "filename"_s, jsNull());
 
         // Timestamps
         double time = WTF::jsCurrentTime();
         char timeBuf[64] = { 0 };
         Bun::toISOString(vm, time, timeBuf);
 
-        header->putDirect(vm, Identifier::fromString(vm, "dumpEventTime"_s), JSC::numberToString(vm, time, 10), 0);
-        header->putDirect(vm, Identifier::fromString(vm, "dumpEventTimeStamp"_s), jsString(vm, String::fromLatin1(timeBuf)), 0);
+        Bun::putDirectNamed(vm, header, "dumpEventTime"_s, JSC::numberToString(vm, time, 10));
+        Bun::putDirectNamed(vm, header, "dumpEventTimeStamp"_s, jsString(vm, String::fromLatin1(timeBuf)));
 
         // Process info
-        header->putDirect(vm, Identifier::fromString(vm, "processId"_s), jsNumber(GetCurrentProcessId()), 0);
-        header->putDirect(vm, Identifier::fromString(vm, "threadId"_s), jsNumber(0), 0);
+        Bun::putDirectNamed(vm, header, "processId"_s, jsNumber(GetCurrentProcessId()));
+        Bun::putDirectNamed(vm, header, "threadId"_s, jsNumber(0));
 
         // Working directory
         {
             WCHAR cwd[MAX_PATH];
             DWORD len = GetCurrentDirectoryW(MAX_PATH, cwd);
             if (len > 0 && len < MAX_PATH) {
-                header->putDirect(vm, Identifier::fromString(vm, "cwd"_s), jsString(vm, String({ reinterpret_cast<const char16_t*>(cwd), static_cast<size_t>(len) })), 0);
+                Bun::putDirectNamed(vm, header, "cwd"_s, jsString(vm, String({ reinterpret_cast<const char16_t*>(cwd), static_cast<size_t>(len) })));
             } else {
-                header->putDirect(vm, Identifier::fromString(vm, "cwd"_s), jsString(vm, String("."_s)), 0);
+                Bun::putDirectNamed(vm, header, "cwd"_s, jsString(vm, String("."_s)));
             }
         }
 
         // Command line
-        header->putDirect(vm, Identifier::fromString(vm, "commandLine"_s), JSValue::decode(Bun__Process__createExecArgv(globalObject)), 0);
+        JSValue commandLine = JSValue::decode(Bun__Process__createExecArgv(globalObject));
         RETURN_IF_EXCEPTION(scope, {});
+        Bun::putDirectNamed(vm, header, "commandLine"_s, commandLine);
 
         // Node version
-        header->putDirect(vm, Identifier::fromString(vm, "nodejsVersion"_s), jsString(vm, String::fromLatin1(REPORTED_NODEJS_VERSION)), 0);
-        header->putDirect(vm, Identifier::fromString(vm, "wordSize"_s), jsNumber(64), 0);
+        Bun::putDirectNamed(vm, header, "nodejsVersion"_s, jsString(vm, String::fromLatin1(REPORTED_NODEJS_VERSION)));
+        Bun::putDirectNamed(vm, header, "wordSize"_s, jsNumber(64));
 
         // Platform info
 #if CPU(X86_64)
-        header->putDirect(vm, Identifier::fromString(vm, "arch"_s), jsString(vm, String("x64"_s)), 0);
+        Bun::putDirectNamed(vm, header, "arch"_s, jsString(vm, String("x64"_s)));
 #elif CPU(ARM64)
-        header->putDirect(vm, Identifier::fromString(vm, "arch"_s), jsString(vm, String("arm64"_s)), 0);
+        Bun::putDirectNamed(vm, header, "arch"_s, jsString(vm, String("arm64"_s)));
 #endif
-        header->putDirect(vm, Identifier::fromString(vm, "platform"_s), jsString(vm, String("win32"_s)), 0);
+        Bun::putDirectNamed(vm, header, "platform"_s, jsString(vm, String("win32"_s)));
 
         // Component versions - just add the minimum needed
         JSObject* versions = constructEmptyObject(globalObject, globalObject->objectPrototype());
-        versions->putDirect(vm, Identifier::fromString(vm, "node"_s), jsString(vm, String(REPORTED_NODEJS_VERSION ""_s)), 0);
-        versions->putDirect(vm, Identifier::fromString(vm, "v8"_s), jsString(vm, String(ASCIILiteral::fromLiteralUnsafe(REPORTED_NODEJS_V8_VERSION))), 0);
-        versions->putDirect(vm, Identifier::fromString(vm, "uv"_s), jsString(vm, String::fromLatin1(uv_version_string())), 0);
-        versions->putDirect(vm, Identifier::fromString(vm, "modules"_s), jsString(vm, String(ASCIILiteral::fromLiteralUnsafe(STRINGIFY(REPORTED_NODEJS_ABI_VERSION)))), 0);
-        header->putDirect(vm, Identifier::fromString(vm, "componentVersions"_s), versions, 0);
+        Bun::putDirectNamed(vm, versions, "node"_s, jsString(vm, String(REPORTED_NODEJS_VERSION ""_s)));
+        Bun::putDirectNamed(vm, versions, "v8"_s, jsString(vm, String(ASCIILiteral::fromLiteralUnsafe(REPORTED_NODEJS_V8_VERSION))));
+        Bun::putDirectNamed(vm, versions, "uv"_s, jsString(vm, String::fromLatin1(uv_version_string())));
+        Bun::putDirectNamed(vm, versions, "modules"_s, jsString(vm, String(ASCIILiteral::fromLiteralUnsafe(STRINGIFY(REPORTED_NODEJS_ABI_VERSION)))));
+        Bun::putDirectNamed(vm, header, "componentVersions"_s, versions);
         RETURN_IF_EXCEPTION(scope, {});
 
         // Release info
         JSObject* release = constructEmptyObject(globalObject, globalObject->objectPrototype());
         RETURN_IF_EXCEPTION(scope, {});
-        release->putDirect(vm, Identifier::fromString(vm, "name"_s), jsString(vm, String("node"_s)), 0);
-        release->putDirect(vm, Identifier::fromString(vm, "sourceUrl"_s), jsString(vm, String("https://nodejs.org/download/release/v" REPORTED_NODEJS_VERSION "/node-v" REPORTED_NODEJS_VERSION ".tar.gz"_s)), 0);
-        release->putDirect(vm, Identifier::fromString(vm, "headersUrl"_s), jsString(vm, String("https://nodejs.org/download/release/v" REPORTED_NODEJS_VERSION "/node-v" REPORTED_NODEJS_VERSION "-headers.tar.gz"_s)), 0);
+        Bun::putDirectNamed(vm, release, "name"_s, jsString(vm, String("node"_s)));
+        Bun::putDirectNamed(vm, release, "sourceUrl"_s, jsString(vm, String("https://nodejs.org/download/release/v" REPORTED_NODEJS_VERSION "/node-v" REPORTED_NODEJS_VERSION ".tar.gz"_s)));
+        Bun::putDirectNamed(vm, release, "headersUrl"_s, jsString(vm, String("https://nodejs.org/download/release/v" REPORTED_NODEJS_VERSION "/node-v" REPORTED_NODEJS_VERSION "-headers.tar.gz"_s)));
 #if CPU(X86_64)
-        release->putDirect(vm, Identifier::fromString(vm, "libUrl"_s), jsString(vm, String("https://nodejs.org/download/release/v" REPORTED_NODEJS_VERSION "/win-x64/node.lib"_s)), 0);
+        Bun::putDirectNamed(vm, release, "libUrl"_s, jsString(vm, String("https://nodejs.org/download/release/v" REPORTED_NODEJS_VERSION "/win-x64/node.lib"_s)));
 #elif CPU(ARM64)
-        release->putDirect(vm, Identifier::fromString(vm, "libUrl"_s), jsString(vm, String("https://nodejs.org/download/release/v" REPORTED_NODEJS_VERSION "/win-arm64/node.lib"_s)), 0);
+        Bun::putDirectNamed(vm, release, "libUrl"_s, jsString(vm, String("https://nodejs.org/download/release/v" REPORTED_NODEJS_VERSION "/win-arm64/node.lib"_s)));
 #endif
-        header->putDirect(vm, Identifier::fromString(vm, "release"_s), release, 0);
+        Bun::putDirectNamed(vm, header, "release"_s, release);
 
         // OS info
-        header->putDirect(vm, Identifier::fromString(vm, "osName"_s), jsString(vm, String("Windows_NT"_s)), 0);
+        Bun::putDirectNamed(vm, header, "osName"_s, jsString(vm, String("Windows_NT"_s)));
 
         // Windows version info
         OSVERSIONINFOEXW osvi;
@@ -137,21 +138,21 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
         osvi.dwBuildNumber = 0;
 
         if (VerifyVersionInfoW(&osvi, VER_MAJORVERSION | VER_MINORVERSION | VER_BUILDNUMBER, conditionMask)) {
-            header->putDirect(vm, Identifier::fromString(vm, "osRelease"_s), jsString(vm, String("10.0"_s)), 0);
+            Bun::putDirectNamed(vm, header, "osRelease"_s, jsString(vm, String("10.0"_s)));
         } else {
-            header->putDirect(vm, Identifier::fromString(vm, "osRelease"_s), jsString(vm, String("6.1"_s)), 0);
+            Bun::putDirectNamed(vm, header, "osRelease"_s, jsString(vm, String("6.1"_s)));
         }
 
-        header->putDirect(vm, Identifier::fromString(vm, "osVersion"_s), jsString(vm, String("Windows"_s)), 0);
+        Bun::putDirectNamed(vm, header, "osVersion"_s, jsString(vm, String("Windows"_s)));
 
         // Host name
         {
             WCHAR hostname[MAX_COMPUTERNAME_LENGTH + 1];
             DWORD size = static_cast<DWORD>(std::size(hostname));
             if (GetComputerNameW(hostname, &size)) {
-                header->putDirect(vm, Identifier::fromString(vm, "host"_s), jsString(vm, String({ reinterpret_cast<const char16_t*>(hostname), static_cast<size_t>(size) })), 0);
+                Bun::putDirectNamed(vm, header, "host"_s, jsString(vm, String({ reinterpret_cast<const char16_t*>(hostname), static_cast<size_t>(size) })));
             } else {
-                header->putDirect(vm, Identifier::fromString(vm, "host"_s), jsEmptyString(vm), 0);
+                Bun::putDirectNamed(vm, header, "host"_s, jsEmptyString(vm));
             }
         }
 
@@ -165,19 +166,21 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
 
             for (int i = 0; i < count; i++) {
                 JSObject* cpu = constructEmptyObject(globalObject);
-                cpu->putDirect(vm, Identifier::fromString(vm, "model"_s), jsString(vm, String::fromUTF8(cpu_infos[i].model)), 0);
-                cpu->putDirect(vm, Identifier::fromString(vm, "speed"_s), jsNumber(cpu_infos[i].speed), 0);
-                cpu->putDirect(vm, Identifier::fromString(vm, "user"_s), jsNumber(cpu_infos[i].cpu_times.user), 0);
-                cpu->putDirect(vm, Identifier::fromString(vm, "nice"_s), jsNumber(cpu_infos[i].cpu_times.nice), 0);
-                cpu->putDirect(vm, Identifier::fromString(vm, "sys"_s), jsNumber(cpu_infos[i].cpu_times.sys), 0);
-                cpu->putDirect(vm, Identifier::fromString(vm, "idle"_s), jsNumber(cpu_infos[i].cpu_times.idle), 0);
-                cpu->putDirect(vm, Identifier::fromString(vm, "irq"_s), jsNumber(cpu_infos[i].cpu_times.irq), 0);
+                Bun::putDirectNamed(vm, cpu, "model"_s, jsString(vm, String::fromUTF8(cpu_infos[i].model)));
+                Bun::putDirectNamed(vm, cpu, "speed"_s, jsNumber(cpu_infos[i].speed));
+                Bun::putDirectNamed(vm, cpu, "user"_s, jsNumber(cpu_infos[i].cpu_times.user));
+                Bun::putDirectNamed(vm, cpu, "nice"_s, jsNumber(cpu_infos[i].cpu_times.nice));
+                Bun::putDirectNamed(vm, cpu, "sys"_s, jsNumber(cpu_infos[i].cpu_times.sys));
+                Bun::putDirectNamed(vm, cpu, "idle"_s, jsNumber(cpu_infos[i].cpu_times.idle));
+                Bun::putDirectNamed(vm, cpu, "irq"_s, jsNumber(cpu_infos[i].cpu_times.irq));
                 cpuArray->putDirectIndex(globalObject, i, cpu);
                 RETURN_IF_EXCEPTION(scope, {});
             }
-            header->putDirect(vm, Identifier::fromString(vm, "cpus"_s), cpuArray, 0);
+            Bun::putDirectNamed(vm, header, "cpus"_s, cpuArray);
         } else {
-            header->putDirect(vm, Identifier::fromString(vm, "cpus"_s), constructEmptyArray(globalObject, nullptr), 0);
+            JSArray* emptyCpus = constructEmptyArray(globalObject, nullptr);
+            RETURN_IF_EXCEPTION(scope, {});
+            Bun::putDirectNamed(vm, header, "cpus"_s, emptyCpus);
         }
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -190,29 +193,29 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
 
             for (int i = 0; i < count; i++) {
                 JSObject* iface = constructEmptyObject(globalObject);
-                iface->putDirect(vm, Identifier::fromString(vm, "name"_s), jsString(vm, String::fromUTF8(interfaces[i].name)), 0);
-                iface->putDirect(vm, Identifier::fromString(vm, "internal"_s), jsBoolean(interfaces[i].is_internal), 0);
+                Bun::putDirectNamed(vm, iface, "name"_s, jsString(vm, String::fromUTF8(interfaces[i].name)));
+                Bun::putDirectNamed(vm, iface, "internal"_s, jsBoolean(interfaces[i].is_internal));
 
                 char addr[INET6_ADDRSTRLEN];
                 if (interfaces[i].address.address4.sin_family == AF_INET) {
                     uv_inet_ntop(AF_INET, &interfaces[i].address.address4.sin_addr, addr, sizeof(addr));
-                    iface->putDirect(vm, Identifier::fromString(vm, "address"_s), jsString(vm, String::fromUTF8(addr)), 0);
+                    Bun::putDirectNamed(vm, iface, "address"_s, jsString(vm, String::fromUTF8(addr)));
 
                     char netmask[INET_ADDRSTRLEN];
                     uv_inet_ntop(AF_INET, &interfaces[i].netmask.netmask4.sin_addr, netmask, sizeof(netmask));
-                    iface->putDirect(vm, Identifier::fromString(vm, "netmask"_s), jsString(vm, String::fromUTF8(netmask)), 0);
+                    Bun::putDirectNamed(vm, iface, "netmask"_s, jsString(vm, String::fromUTF8(netmask)));
 
-                    iface->putDirect(vm, Identifier::fromString(vm, "family"_s), jsString(vm, String::fromLatin1("IPv4")), 0);
+                    Bun::putDirectNamed(vm, iface, "family"_s, jsString(vm, String::fromLatin1("IPv4")));
                 } else if (interfaces[i].address.address6.sin6_family == AF_INET6) {
                     uv_inet_ntop(AF_INET6, &interfaces[i].address.address6.sin6_addr, addr, sizeof(addr));
-                    iface->putDirect(vm, Identifier::fromString(vm, "address"_s), jsString(vm, String::fromUTF8(addr)), 0);
+                    Bun::putDirectNamed(vm, iface, "address"_s, jsString(vm, String::fromUTF8(addr)));
 
                     char netmask[INET6_ADDRSTRLEN];
                     uv_inet_ntop(AF_INET6, &interfaces[i].netmask.netmask6.sin6_addr, netmask, sizeof(netmask));
-                    iface->putDirect(vm, Identifier::fromString(vm, "netmask"_s), jsString(vm, String::fromUTF8(netmask)), 0);
+                    Bun::putDirectNamed(vm, iface, "netmask"_s, jsString(vm, String::fromUTF8(netmask)));
 
-                    iface->putDirect(vm, Identifier::fromString(vm, "family"_s), jsString(vm, String::fromLatin1("IPv6")), 0);
-                    iface->putDirect(vm, Identifier::fromString(vm, "scopeid"_s), jsNumber(interfaces[i].address.address6.sin6_scope_id), 0);
+                    Bun::putDirectNamed(vm, iface, "family"_s, jsString(vm, String::fromLatin1("IPv6")));
+                    Bun::putDirectNamed(vm, iface, "scopeid"_s, jsNumber(interfaces[i].address.address6.sin6_scope_id));
                 }
 
                 // MAC address
@@ -224,17 +227,19 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
                     static_cast<unsigned char>(interfaces[i].phys_addr[3]),
                     static_cast<unsigned char>(interfaces[i].phys_addr[4]),
                     static_cast<unsigned char>(interfaces[i].phys_addr[5]));
-                iface->putDirect(vm, Identifier::fromString(vm, "mac"_s), jsString(vm, String::fromUTF8(mac)), 0);
+                Bun::putDirectNamed(vm, iface, "mac"_s, jsString(vm, String::fromUTF8(mac)));
 
                 interfacesArray->putDirectIndex(globalObject, i, iface);
                 RETURN_IF_EXCEPTION(scope, {});
             }
-            header->putDirect(vm, Identifier::fromString(vm, "networkInterfaces"_s), interfacesArray, 0);
+            Bun::putDirectNamed(vm, header, "networkInterfaces"_s, interfacesArray);
         } else {
-            header->putDirect(vm, Identifier::fromString(vm, "networkInterfaces"_s), constructEmptyArray(globalObject, nullptr), 0);
+            JSArray* emptyInterfaces = constructEmptyArray(globalObject, nullptr);
+            RETURN_IF_EXCEPTION(scope, {});
+            Bun::putDirectNamed(vm, header, "networkInterfaces"_s, emptyInterfaces);
         }
 
-        report->putDirect(vm, Identifier::fromString(vm, "header"_s), header, 0);
+        Bun::putDirectNamed(vm, report, "header"_s, header);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -258,6 +263,7 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
             vm, globalObject, globalObject, name, message,
             line, column,
             sourceURL, stackFrames, nullptr);
+        RETURN_IF_EXCEPTION(scope, {});
 
         WTF::String stack;
         size_t firstLine = stackProperty.find('\n');
@@ -278,10 +284,10 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
 
         JSObject* errorProperties = constructEmptyObject(globalObject, globalObject->objectPrototype());
         RETURN_IF_EXCEPTION(scope, {});
-        errorProperties->putDirect(vm, Identifier::fromString(vm, "code"_s), jsString(vm, String("ERR_SYNTHETIC"_s)), 0);
-        javascriptStack->putDirect(vm, Identifier::fromString(vm, "errorProperties"_s), errorProperties, 0);
+        Bun::putDirectNamed(vm, errorProperties, "code"_s, jsString(vm, String("ERR_SYNTHETIC"_s)));
+        Bun::putDirectNamed(vm, javascriptStack, "errorProperties"_s, errorProperties);
 
-        report->putDirect(vm, Identifier::fromString(vm, "javascriptStack"_s), javascriptStack, 0);
+        Bun::putDirectNamed(vm, report, "javascriptStack"_s, javascriptStack);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -291,24 +297,24 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
         RETURN_IF_EXCEPTION(scope, {});
 
         JSObject* heapSpaces = constructEmptyObject(globalObject);
-        heapSpaces->putDirect(vm, Identifier::fromString(vm, "read_only_space"_s), constructEmptyObject(globalObject), 0);
-        heapSpaces->putDirect(vm, Identifier::fromString(vm, "new_space"_s), constructEmptyObject(globalObject), 0);
-        heapSpaces->putDirect(vm, Identifier::fromString(vm, "old_space"_s), constructEmptyObject(globalObject), 0);
-        heapSpaces->putDirect(vm, Identifier::fromString(vm, "code_space"_s), constructEmptyObject(globalObject), 0);
-        heapSpaces->putDirect(vm, Identifier::fromString(vm, "shared_space"_s), constructEmptyObject(globalObject), 0);
-        heapSpaces->putDirect(vm, Identifier::fromString(vm, "trusted_space"_s), constructEmptyObject(globalObject), 0);
-        heapSpaces->putDirect(vm, Identifier::fromString(vm, "new_large_object_space"_s), constructEmptyObject(globalObject), 0);
-        heapSpaces->putDirect(vm, Identifier::fromString(vm, "large_object_space"_s), constructEmptyObject(globalObject), 0);
-        heapSpaces->putDirect(vm, Identifier::fromString(vm, "code_large_object_space"_s), constructEmptyObject(globalObject), 0);
-        heapSpaces->putDirect(vm, Identifier::fromString(vm, "shared_large_object_space"_s), constructEmptyObject(globalObject), 0);
-        heapSpaces->putDirect(vm, Identifier::fromString(vm, "trusted_large_object_space"_s), constructEmptyObject(globalObject), 0);
+        Bun::putDirectNamed(vm, heapSpaces, "read_only_space"_s, constructEmptyObject(globalObject));
+        Bun::putDirectNamed(vm, heapSpaces, "new_space"_s, constructEmptyObject(globalObject));
+        Bun::putDirectNamed(vm, heapSpaces, "old_space"_s, constructEmptyObject(globalObject));
+        Bun::putDirectNamed(vm, heapSpaces, "code_space"_s, constructEmptyObject(globalObject));
+        Bun::putDirectNamed(vm, heapSpaces, "shared_space"_s, constructEmptyObject(globalObject));
+        Bun::putDirectNamed(vm, heapSpaces, "trusted_space"_s, constructEmptyObject(globalObject));
+        Bun::putDirectNamed(vm, heapSpaces, "new_large_object_space"_s, constructEmptyObject(globalObject));
+        Bun::putDirectNamed(vm, heapSpaces, "large_object_space"_s, constructEmptyObject(globalObject));
+        Bun::putDirectNamed(vm, heapSpaces, "code_large_object_space"_s, constructEmptyObject(globalObject));
+        Bun::putDirectNamed(vm, heapSpaces, "shared_large_object_space"_s, constructEmptyObject(globalObject));
+        Bun::putDirectNamed(vm, heapSpaces, "trusted_large_object_space"_s, constructEmptyObject(globalObject));
 
-        heap->putDirect(vm, Identifier::fromString(vm, "totalMemory"_s), jsNumber(WTF::ramSize()), 0);
-        heap->putDirect(vm, Identifier::fromString(vm, "usedMemory"_s), jsNumber(vm.heap.size()), 0);
-        heap->putDirect(vm, Identifier::fromString(vm, "memoryLimit"_s), jsNumber(WTF::ramSize()), 0);
-        heap->putDirect(vm, Identifier::fromString(vm, "heapSpaces"_s), heapSpaces, 0);
+        Bun::putDirectNamed(vm, heap, "totalMemory"_s, jsNumber(WTF::ramSize()));
+        Bun::putDirectNamed(vm, heap, "usedMemory"_s, jsNumber(vm.heap.size()));
+        Bun::putDirectNamed(vm, heap, "memoryLimit"_s, jsNumber(WTF::ramSize()));
+        Bun::putDirectNamed(vm, heap, "heapSpaces"_s, heapSpaces);
 
-        report->putDirect(vm, Identifier::fromString(vm, "javascriptHeap"_s), heap, 0);
+        Bun::putDirectNamed(vm, report, "javascriptHeap"_s, heap);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -323,11 +329,11 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
         pmc.cb = sizeof(pmc);
 
         if (GetProcessMemoryInfo(hProcess, (PROCESS_MEMORY_COUNTERS*)&pmc, sizeof(pmc))) {
-            resourceUsage->putDirect(vm, Identifier::fromString(vm, "rss"_s), jsNumber(pmc.WorkingSetSize), 0);
-            resourceUsage->putDirect(vm, Identifier::fromString(vm, "maxRss"_s), jsNumber(pmc.PeakWorkingSetSize), 0);
+            Bun::putDirectNamed(vm, resourceUsage, "rss"_s, jsNumber(pmc.WorkingSetSize));
+            Bun::putDirectNamed(vm, resourceUsage, "maxRss"_s, jsNumber(pmc.PeakWorkingSetSize));
         } else {
-            resourceUsage->putDirect(vm, Identifier::fromString(vm, "rss"_s), jsNumber(0), 0);
-            resourceUsage->putDirect(vm, Identifier::fromString(vm, "maxRss"_s), jsNumber(0), 0);
+            Bun::putDirectNamed(vm, resourceUsage, "rss"_s, jsNumber(0));
+            Bun::putDirectNamed(vm, resourceUsage, "maxRss"_s, jsNumber(0));
         }
 
         FILETIME createTime, exitTime, kernelTime, userTime;
@@ -341,19 +347,19 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
             double userSeconds = ul_user.QuadPart / 10000000.0;
             double kernelSeconds = ul_kernel.QuadPart / 10000000.0;
 
-            resourceUsage->putDirect(vm, Identifier::fromString(vm, "userCpuSeconds"_s), jsNumber(userSeconds), 0);
-            resourceUsage->putDirect(vm, Identifier::fromString(vm, "kernelCpuSeconds"_s), jsNumber(kernelSeconds), 0);
+            Bun::putDirectNamed(vm, resourceUsage, "userCpuSeconds"_s, jsNumber(userSeconds));
+            Bun::putDirectNamed(vm, resourceUsage, "kernelCpuSeconds"_s, jsNumber(kernelSeconds));
         } else {
-            resourceUsage->putDirect(vm, Identifier::fromString(vm, "userCpuSeconds"_s), jsNumber(0), 0);
-            resourceUsage->putDirect(vm, Identifier::fromString(vm, "kernelCpuSeconds"_s), jsNumber(0), 0);
+            Bun::putDirectNamed(vm, resourceUsage, "userCpuSeconds"_s, jsNumber(0));
+            Bun::putDirectNamed(vm, resourceUsage, "kernelCpuSeconds"_s, jsNumber(0));
         }
 
         JSObject* pageFaults = constructEmptyObject(globalObject);
-        pageFaults->putDirect(vm, Identifier::fromString(vm, "IORequired"_s), jsNumber(pmc.PageFaultCount), 0);
-        pageFaults->putDirect(vm, Identifier::fromString(vm, "IONotRequired"_s), jsNumber(0), 0);
-        resourceUsage->putDirect(vm, Identifier::fromString(vm, "pageFaults"_s), pageFaults, 0);
+        Bun::putDirectNamed(vm, pageFaults, "IORequired"_s, jsNumber(pmc.PageFaultCount));
+        Bun::putDirectNamed(vm, pageFaults, "IONotRequired"_s, jsNumber(0));
+        Bun::putDirectNamed(vm, resourceUsage, "pageFaults"_s, pageFaults);
 
-        report->putDirect(vm, Identifier::fromString(vm, "resourceUsage"_s), resourceUsage, 0);
+        Bun::putDirectNamed(vm, report, "resourceUsage"_s, resourceUsage);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -379,24 +385,27 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
             }
         }
 
-        report->putDirect(vm, Identifier::fromString(vm, "sharedObjects"_s), sharedObjects, 0);
+        Bun::putDirectNamed(vm, report, "sharedObjects"_s, sharedObjects);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
     // Native stack (empty for now)
-    report->putDirect(vm, Identifier::fromString(vm, "nativeStack"_s), constructEmptyArray(globalObject, nullptr), 0);
+    JSArray* nativeStack = constructEmptyArray(globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
+    Bun::putDirectNamed(vm, report, "nativeStack"_s, nativeStack);
 
     // libuv (empty for now)
-    report->putDirect(vm, Identifier::fromString(vm, "libuv"_s), constructEmptyArray(globalObject, nullptr), 0);
+    JSArray* libuvArray = constructEmptyArray(globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
+    Bun::putDirectNamed(vm, report, "libuv"_s, libuvArray);
 
     // Workers (empty for now)
-    report->putDirect(vm, Identifier::fromString(vm, "workers"_s), constructEmptyArray(globalObject, nullptr), 0);
+    JSArray* workersArray = constructEmptyArray(globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, {});
+    Bun::putDirectNamed(vm, report, "workers"_s, workersArray);
 
     // Environment variables
-    report->putDirect(vm, Identifier::fromString(vm, "environmentVariables"_s), globalObject->processEnvObject(), 0);
+    Bun::putDirectNamed(vm, report, "environmentVariables"_s, globalObject->processEnvObject());
     RETURN_IF_EXCEPTION(scope, {});
 
     return report;

@@ -234,12 +234,6 @@ impl Behavior {
     }
 
     #[inline]
-    #[cfg(debug_assertions)]
-    pub fn eq(lhs: Behavior, rhs: Behavior) -> bool {
-        lhs.bits() == rhs.bits()
-    }
-
-    #[inline]
     pub fn add(self, kind: Behavior) -> Behavior {
         self | kind
     }
@@ -264,6 +258,12 @@ impl Behavior {
             || (features.dev_dependencies && self.is_dev())
             || (features.peer_dependencies && self.is_peer())
             || (features.workspaces && self.is_workspace())
+    }
+
+    /// False when the installers filter the dependency, and with it everything below.
+    #[inline]
+    pub fn is_placed(self, features: Features) -> bool {
+        !self.is_bundled() && self.is_enabled(features)
     }
 
     pub fn cmp(self, rhs: Self) -> core::cmp::Ordering {
@@ -388,15 +388,6 @@ pub struct TagInfo {
 pub struct TarballInfo {
     pub uri: URI,
     pub package_name: SemverString,
-}
-
-impl Default for TarballInfo {
-    fn default() -> Self {
-        TarballInfo {
-            uri: URI::Local(SemverString::default()),
-            package_name: SemverString::default(),
-        }
-    }
 }
 
 impl TarballInfo {
@@ -1155,13 +1146,6 @@ pub union ResolutionValue<I: VersionInt> {
     pub single_file_module: SemverString,
 }
 
-impl<I: VersionInt> Default for ResolutionValue<I> {
-    #[inline]
-    fn default() -> Self {
-        ResolutionValue { uninitialized: () }
-    }
-}
-
 /// Layout is `{ tag: u8, _pad: [7]u8, value: Value }` so the on-disk lockfile
 /// encoding stays byte-compatible.
 #[repr(C)]
@@ -1170,17 +1154,6 @@ pub struct Resolution {
     pub tag: ResolutionTag,
     pub _padding: [u8; 7],
     pub value: ResolutionValue<u64>,
-}
-
-impl Default for Resolution {
-    #[inline]
-    fn default() -> Self {
-        Self {
-            tag: ResolutionTag::Uninitialized,
-            _padding: [0; 7],
-            value: ResolutionValue { uninitialized: () },
-        }
-    }
 }
 
 // ─── PreinstallState / Features / misc ────────────────────────────────────
@@ -1527,7 +1500,6 @@ pub trait AutoInstaller {
 pub trait PackageJsonView {
     fn name(&self) -> &[u8];
     fn version(&self) -> &[u8];
-    fn source_path(&self) -> &[u8];
     /// Backing string-bytes buffer the dependency `SemverString`s slice into.
     fn dependency_source_buf(&self) -> &[u8];
     fn arch(&self) -> Architecture;

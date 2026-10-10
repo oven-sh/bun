@@ -2046,19 +2046,22 @@ mod posix_impl {
         }
     }
     pub fn stat(path: &ZStr) -> Maybe<Stat> {
+        stat_no_path(path).map_err(|e| e.with_path(path.as_bytes()))
+    }
+    /// [`stat`] with an error that has no `path`: a failure does not allocate.
+    pub fn stat_no_path(path: &ZStr) -> Maybe<Stat> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             return super::linux_syscall::stat(path)
-                .map_err(|e| Error::from_code_int(e, Tag::stat).with_path(path.as_bytes()));
+                .map_err(|e| Error::from_code_int(e, Tag::stat));
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let mut st = core::mem::MaybeUninit::<Stat>::uninit();
-            check_p!(
+            check!(
                 // SAFETY: `path` is NUL-terminated; `st` is a valid out-param.
                 unsafe { libc::stat(path.as_ptr(), st.as_mut_ptr()) },
-                Tag::stat,
-                path
+                Tag::stat
             );
             // SAFETY: rc == 0 ⇒ kernel populated `st`.
             Ok(unsafe { st.assume_init() })

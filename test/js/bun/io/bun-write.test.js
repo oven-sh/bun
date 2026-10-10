@@ -7,6 +7,7 @@ import {
   exampleSite,
   gcTick,
   isASAN,
+  isLinux,
   isWindows,
   tempDir,
   withoutAggressiveGC,
@@ -299,6 +300,219 @@ const IS_UV_FS_COPYFILE_DISABLED =
     await Bun.write(small, new Uint8Array(100).fill(9));
     expect(await Bun.write(Bun.file(existing).slice(0, 1000), Bun.file(small))).toBe(100);
     expect(fs.statSync(existing).size).toBe(100);
+  });
+
+  // https://github.com/oven-sh/bun/issues/20462
+  describe("Bun.write(dest, Bun.file(src)) where dest is the same file as src", () => {
+    const content = Buffer.alloc(100_000, "0123456789").toString();
+
+    // Outside of tests, the Windows read/write loop only runs for pipes and devices.
+    it.skipIf(IS_UV_FS_COPYFILE_DISABLED).each([
+      ["the same path", ({ file }) => Bun.write(file, Bun.file(file))],
+      [
+        "one BunFile as both arguments",
+        ({ file }) => {
+          const bunFile = Bun.file(file);
+          return Bun.write(bunFile, bunFile);
+        },
+      ],
+      ["two BunFile objects", ({ file }) => Bun.write(Bun.file(file), Bun.file(file))],
+      ["BunFile.write()", ({ file }) => Bun.file(file).write(Bun.file(file))],
+      ["a symlink as the destination", ({ file, symlink }) => Bun.write(symlink, Bun.file(file))],
+      ["a symlink as the source", ({ file, symlink }) => Bun.write(file, Bun.file(symlink))],
+      ["a hard link as the destination", ({ file, hardlink }) => Bun.write(hardlink, Bun.file(file))],
+      ["a relative and an absolute path", ({ file }) => Bun.write(path.relative(process.cwd(), file), Bun.file(file))],
+      // The first open fails, Bun makes `new`, and only then does the path name the file.
+      [
+        "a path through a directory that does not exist yet",
+        ({ file, dir }) => Bun.write(`${dir}/new/../file.txt`, Bun.file(file)),
+      ],
+      [
+        "an open fd as the source",
+        async ({ file }) => {
+          const fd = fs.openSync(file, "r");
+          try {
+            return await Bun.write(file, Bun.file(fd));
+          } finally {
+            fs.closeSync(fd);
+          }
+        },
+      ],
+      ["a Response around the file as the source", ({ file }) => Bun.write(file, new Response(Bun.file(file)))],
+    ])("%s leaves the file intact", async (_, write) => {
+      using dir = tempDir("bun-write-same-file", { "file.txt": content });
+      const file = join(String(dir), "file.txt");
+      const symlink = join(String(dir), "symlink.txt");
+      const hardlink = join(String(dir), "hardlink.txt");
+      fs.symlinkSync(file, symlink);
+      fs.linkSync(file, hardlink);
+
+      const written = await write({ file, symlink, hardlink, dir: String(dir) });
+      expect({ written, intact: fs.readFileSync(file, "utf8") === content }).toEqual({
+        written: content.length,
+        intact: true,
+      });
+    });
+
+    it.skipIf(IS_UV_FS_COPYFILE_DISABLED)("a build output written to its own path stays intact", async () => {
+      using dir = tempDir("bun-write-same-file-artifact", { "entry.js": "console.log(0.1 + 0.2);" });
+      const build = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], outdir: join(String(dir), "out") });
+      const [output] = build.outputs;
+      const built = fs.readFileSync(output.path, "utf8");
+      expect(built).toContain("0.1 + 0.2");
+
+      const written = await Bun.write(output.path, output);
+      expect({ written, intact: fs.readFileSync(output.path, "utf8") === built }).toEqual({
+        written: Buffer.byteLength(built),
+        intact: true,
+      });
+    });
+
+    // The copy is a no-op, so it does not open the file for writing. The mode option still applies.
+    it.skipIf(isWindows)("a file without write permission stays intact and gets the mode option", async () => {
+      using dir = tempDir("bun-write-same-file-mode", { "file.txt": content });
+      const file = join(String(dir), "file.txt");
+      fs.chmodSync(file, 0o444);
+
+      const written = await Bun.write(file, Bun.file(file), { mode: 0o640 });
+      expect({
+        written,
+        mode: fs.statSync(file).mode & 0o777,
+        intact: fs.readFileSync(file, "utf8") === content,
+      }).toEqual({ written: content.length, mode: 0o640, intact: true });
+    });
+
+    // Compared with another destination, so the row holds once the copy honours a source slice().
+    it.skipIf(IS_UV_FS_COPYFILE_DISABLED)(
+      "a slice of the file as the source gives the same result as for another destination",
+      async () => {
+        using dir = tempDir("bun-write-same-file-slice", { "file.txt": content });
+        const file = join(String(dir), "file.txt");
+        const other = join(String(dir), "other.txt");
+
+        const onOther = await Bun.write(other, Bun.file(file).slice(10, 20));
+        const expected = fs.readFileSync(other, "utf8");
+        const onItself = await Bun.write(file, Bun.file(file).slice(10, 20));
+        const actual = fs.readFileSync(file, "utf8");
+        expect({ written: onItself, length: actual.length, same: actual === expected }).toEqual({
+          written: onOther,
+          length: expected.length,
+          same: true,
+        });
+      },
+    );
+
+    // Windows still cuts the file to the size the destination BunFile cached.
+    it.todoIf(isWindows)("a destination that cached its size before the file grew does not cut the file", async () => {
+      using dir = tempDir("bun-write-same-file-stale-size", { "file.txt": "0123456789" });
+      const file = join(String(dir), "file.txt");
+      const destination = Bun.file(file);
+      expect(destination.size).toBe(10);
+      fs.appendFileSync(file, "ABCDEFGHIJ");
+
+      const written = await Bun.write(destination, Bun.file(file));
+      expect({ written, content: fs.readFileSync(file, "utf8") }).toEqual({
+        written: 20,
+        content: "0123456789ABCDEFGHIJ",
+      });
+    });
+
+    it.skipIf(!isLinux)("one character device as the source and the destination is still copied", async () => {
+      expect(fs.statSync("/dev/full").isCharacterDevice()).toBe(true);
+      await expect(Bun.write("/dev/full", Bun.file("/dev/full"))).rejects.toThrow(
+        expect.objectContaining({ code: "ENOSPC" }),
+      );
+    });
+  });
+
+  describe("Bun.write(dest, Bun.file(src)) with a source that cannot be copied", () => {
+    const content = Buffer.alloc(100_000, "0123456789").toString();
+
+    it.skipIf(isWindows).each(["path", "fd"])(
+      "a directory %s rejects and leaves the destination as it was",
+      async kind => {
+        using dir = tempDir("bun-write-directory-source", { "dest.txt": content });
+        const dest = join(String(dir), "dest.txt");
+        const missing = join(String(dir), "missing.txt");
+        const fd = kind === "fd" ? fs.openSync(String(dir), "r") : undefined;
+        try {
+          for (const destination of [dest, missing]) {
+            await expect(Bun.write(destination, Bun.file(fd ?? String(dir)))).rejects.toThrow(
+              "That doesn't work on folders",
+            );
+          }
+        } finally {
+          if (fd !== undefined) fs.closeSync(fd);
+        }
+        expect({ intact: fs.readFileSync(dest, "utf8") === content, created: fs.existsSync(missing) }).toEqual({
+          intact: true,
+          created: false,
+        });
+      },
+    );
+
+    it.skipIf(isWindows)("a source fd that is not open rejects and leaves the destination as it was", async () => {
+      using dir = tempDir("bun-write-bad-source-fd", { "dest.txt": content, "open.txt": content });
+      const dest = join(String(dir), "dest.txt");
+      const open = join(String(dir), "open.txt");
+      const missing = join(String(dir), "missing.txt");
+      fs.chmodSync(dest, 0o644);
+      fs.chmodSync(open, 0o644);
+
+      const fd = fs.openSync(open, "r+");
+      try {
+        for (const destination of [dest, missing, Bun.file(fd)]) {
+          await expect(Bun.write(destination, Bun.file(987_654), { mode: 0o600 })).rejects.toThrow(
+            expect.objectContaining({ code: "EBADF" }),
+          );
+        }
+      } finally {
+        fs.closeSync(fd);
+      }
+      expect({
+        modes: [dest, open].map(file => fs.statSync(file).mode & 0o777),
+        intact: [dest, open].every(file => fs.readFileSync(file, "utf8") === content),
+        created: fs.existsSync(missing),
+      }).toEqual({ modes: [0o644, 0o644], intact: true, created: false });
+    });
+  });
+
+  describe("Bun.write(dest, Bun.file(src)) onto an existing dest", () => {
+    it("a longer destination is replaced", async () => {
+      using dir = tempDir("bun-write-shorter-source", {
+        "src.txt": "short",
+        "dest.txt": Buffer.alloc(100_000, "0123456789").toString(),
+      });
+      const dest = join(String(dir), "dest.txt");
+      const written = await Bun.write(dest, Bun.file(join(String(dir), "src.txt")));
+      expect({ written, content: fs.readFileSync(dest, "utf8") }).toEqual({ written: 5, content: "short" });
+    });
+
+    it.skipIf(isWindows)("a destination path that is not a regular file is written", async () => {
+      expect(fs.statSync("/dev/null").isCharacterDevice()).toBe(true);
+      using dir = tempDir("bun-write-dev-null", { "src.txt": "short" });
+      expect(await Bun.write("/dev/null", Bun.file(join(String(dir), "src.txt")))).toBe(5);
+    });
+
+    it.skipIf(!isLinux)("a destination that cannot be opened does not leave the source open", async () => {
+      using dir = tempDir("bun-write-dest-open-fails", { "src.txt": "short", "file.txt": "not a directory" });
+      const src = fs.realpathSync(join(String(dir), "src.txt"));
+      const openSources = () =>
+        fs.readdirSync("/proc/self/fd").filter(fd => {
+          try {
+            return fs.readlinkSync(`/proc/self/fd/${fd}`) === src;
+          } catch {
+            return false;
+          }
+        }).length;
+
+      for (let i = 0; i < 20; i++) {
+        await expect(Bun.write(join(String(dir), "file.txt", "below-a-file"), Bun.file(src))).rejects.toThrow(
+          expect.objectContaining({ code: "ENOTDIR" }),
+        );
+      }
+      expect(openSources()).toBe(0);
+    });
   });
 
   it("Bun.file", async () => {

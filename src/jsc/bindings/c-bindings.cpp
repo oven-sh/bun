@@ -487,6 +487,41 @@ size_t lshpack_wrapper_encode(lshpack_wrapper* self,
     return ptr - start;
 }
 
+// Returns the bytes written, 0 if the block is refused (encoder untouched), or SIZE_MAX if lshpack ran out of memory mid-block.
+size_t lshpack_wrapper_encode_block(lshpack_wrapper* self,
+    const unsigned char* bytes, const uint32_t* fields, size_t field_count,
+    unsigned char* dst, size_t dst_len)
+{
+    size_t needed = 0;
+    for (size_t i = 0; i < field_count; i++) {
+        size_t name_len = fields[i * 2] & 0x7fffffffu;
+        size_t val_len = fields[i * 2 + 1];
+        if (name_len > LSXPACK_MAX_STRLEN || val_len > LSXPACK_MAX_STRLEN || name_len + val_len > LSHPACK_MAX_HEADER_SIZE)
+            return 0;
+        needed += name_len + val_len + 32;
+    }
+    if (dst_len < needed)
+        return 0;
+
+    unsigned char* cursor = dst;
+    unsigned char* const end = dst + dst_len;
+    for (size_t i = 0; i < field_count; i++) {
+        size_t name_len = fields[i * 2] & 0x7fffffffu;
+        size_t val_len = fields[i * 2 + 1];
+        lsxpack_header_t hdr;
+        lsxpack_header_set_offset2(&hdr, reinterpret_cast<const char*>(bytes), 0, name_len, name_len, val_len);
+        if (fields[i * 2] >> 31) {
+            hdr.indexed_type = 2;
+        }
+        auto* next = lshpack_enc_encode(&self->enc, cursor, end, &hdr);
+        if (next == cursor)
+            return SIZE_MAX;
+        cursor = next;
+        bytes += name_len + val_len;
+    }
+    return cursor - dst;
+}
+
 size_t lshpack_wrapper_decode(lshpack_wrapper* self,
     const unsigned char* src, size_t src_len,
     lshpack_header* output)

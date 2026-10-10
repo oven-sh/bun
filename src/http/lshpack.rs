@@ -48,6 +48,79 @@ pub enum HpackError {
     UnableToEncode,
 }
 
+/// The fields of one outbound header block, staged for [`HPACK::encode_block`].
+#[derive(Default)]
+pub struct HeaderBlock {
+    /// Each name followed by its value, in field order.
+    bytes: Vec<u8>,
+    /// Two entries per field: the name length with `never_index` in bit 31, then the value length.
+    fields: Vec<u32>,
+}
+
+impl HeaderBlock {
+    const NEVER_INDEX: u32 = 1 << 31;
+
+    pub fn push(
+        &mut self,
+        name: &[u8],
+        value: &[u8],
+        never_index: bool,
+    ) -> Result<(), bun_alloc::AllocError> {
+        // A length that does not fit its entry fails like a reservation of that size.
+        let (Ok(name_len), Ok(value_len)) = (u32::try_from(name.len()), u32::try_from(value.len()))
+        else {
+            return Err(bun_alloc::AllocError);
+        };
+        if name_len >= Self::NEVER_INDEX {
+            return Err(bun_alloc::AllocError);
+        }
+        self.bytes
+            .try_reserve(name.len() + value.len())
+            .map_err(|_| bun_alloc::AllocError)?;
+        self.fields
+            .try_reserve(2)
+            .map_err(|_| bun_alloc::AllocError)?;
+        self.bytes.extend_from_slice(name);
+        self.bytes.extend_from_slice(value);
+        self.fields.push(if never_index {
+            name_len | Self::NEVER_INDEX
+        } else {
+            name_len
+        });
+        self.fields.push(value_len);
+        Ok(())
+    }
+
+    pub fn clear(&mut self) {
+        self.bytes.clear();
+        self.fields.clear();
+    }
+
+    /// Number of fields.
+    pub fn len(&self) -> usize {
+        self.fields.len() / 2
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.fields.is_empty()
+    }
+
+    /// Heap bytes the block keeps while it is empty.
+    pub fn capacity(&self) -> usize {
+        self.bytes.capacity() + self.fields.capacity() * core::mem::size_of::<u32>()
+    }
+
+    /// https://github.com/nodejs/node/blob/v26.3.0/deps/nghttp2/lib/nghttp2_hd.c#L1578-L1603
+    pub fn deflate_bound(&self) -> usize {
+        12 + 12 * self.len() + self.bytes.len()
+    }
+
+    /// Output space [`HPACK::encode_block`] asks for.
+    pub fn encode_bound(&self) -> usize {
+        self.bytes.len() + 32 * self.len()
+    }
+}
+
 impl HPACK {
     /// `name` and `value` point into a thread-local buffer that every `HPACK` on this thread decodes and encodes
     /// through. The borrow only stops this instance from overwriting them.
@@ -85,9 +158,44 @@ impl HPACK {
         })
     }
 
+    /// Encodes all of `block` into `dst`'s spare capacity, or none: `Err` leaves the table as is.
+    pub fn encode_block(
+        &mut self,
+        block: &HeaderBlock,
+        dst: &mut Vec<u8>,
+    ) -> Result<(), HpackError> {
+        if block.is_empty() {
+            return Ok(());
+        }
+        let spare = dst.spare_capacity_mut();
+        // SAFETY: `HeaderBlock::push` is the only writer of `bytes` and `fields`, so the lengths
+        // in `fields` add up to `bytes`. The C side writes at most `spare.len()` bytes at `spare`.
+        let written = unsafe {
+            lshpack_wrapper_encode_block(
+                self,
+                block.bytes.as_ptr(),
+                block.fields.as_ptr(),
+                block.len(),
+                spare.as_mut_ptr().cast::<u8>(),
+                spare.len(),
+            )
+        };
+        match written {
+            0 => Err(HpackError::UnableToEncode),
+            // lshpack could not allocate a table entry after it inserted earlier fields.
+            usize::MAX => bun_core::out_of_memory(),
+            written => {
+                // SAFETY: the C side initialized `written <= spare.len()` bytes of the spare capacity.
+                unsafe { dst.set_len(dst.len() + written) };
+                Ok(())
+            }
+        }
+    }
+
     /// encode name, value with never_index option into dst_buffer
     /// if name + value length is greater than LSHPACK_MAX_HEADER_SIZE this will return UnableToEncode
-    pub fn encode(
+    /// A later field can fail after earlier ones are in the table: see [`Self::encode_block`].
+    pub(crate) fn encode(
         &mut self,
         name: &[u8],
         value: &[u8],
@@ -234,5 +342,14 @@ unsafe extern "C" {
         buffer: *mut u8,
         buffer_len: usize,
         buffer_offset: usize,
+    ) -> usize;
+    // `fields` holds `field_count` pairs of u32 that describe `bytes` (see `HeaderBlock`).
+    fn lshpack_wrapper_encode_block(
+        self_: &mut HPACK,
+        bytes: *const u8,
+        fields: *const u32,
+        field_count: usize,
+        dst: *mut u8,
+        dst_len: usize,
     ) -> usize;
 }

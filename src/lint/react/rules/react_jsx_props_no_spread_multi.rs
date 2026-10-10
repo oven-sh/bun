@@ -7,14 +7,16 @@ use rustc_hash::{FxHashMap, FxHasher};
 use smallvec::{SmallVec, smallvec};
 use std::hash::Hasher;
 
-/// Enforces that any unique expression is only spread once.
+/// Disallow JSX prop spreading the same identifier multiple times
 pub struct JsxPropsNoSpreadMulti;
 
+const NO_MULTI_SPREADING: Message =
+    Message::new("noMultiSpreading", "Spreading the same expression multiple times is forbidden");
 const MULTIPLE_IDENTIFIERS: Message = Message::new("", "Prop '{{prop_name}}' is spread multiple times.");
 const MULTIPLE_MEMBER_EXPRESSIONS: Message = Message::new("", "'{{member_name}}' is spread multiple times.");
 
 impl Rule for JsxPropsNoSpreadMulti {
-    const META: Meta = Meta::oxlint(Plugin::React, "jsx-props-no-spread-multi", Kind::Problem).fixable(Fixable::Code);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-props-no-spread-multi", Kind::Problem).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 
@@ -23,7 +25,8 @@ impl Rule for JsxPropsNoSpreadMulti {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        is_jsx(file).then_some(())
+        // oxlint goes by the name of the file.
+        (!file.language().is_oxlint || is_jsx(file)).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -44,15 +47,23 @@ fn check<'a>(_: &JsxPropsNoSpreadMulti, e: Expr<'a>, cx: &mut Cx<'a, JsxPropsNoS
     let mut identifiers: FxHashMap<Name<'a>, Vec<Span>> = FxHashMap::default();
     // Those that are the same are in the same list.
     let mut member_expressions: FxHashMap<u64, Vec<(Expr<'a>, Span)>> = FxHashMap::default();
+    let is_oxlint = cx.language().is_oxlint;
     for &(argument, span) in &spread_attrs {
-        if let Some(name) = get_inner_expression(argument).as_ident() {
+        // oxlint looks through `a!`, `a as T` and the like, and compares member expressions as well.
+        let seen = if is_oxlint { get_inner_expression(argument) } else { argument };
+        if let Some(name) = seen.as_ident() {
             identifiers.entry(name).or_default().push(span);
-        } else if matches!(argument.tag(), ExprTag::Dot | ExprTag::Index) && !argument.is_chain_root() {
+        } else if is_oxlint && matches!(argument.tag(), ExprTag::Dot | ExprTag::Index) && !argument.is_chain_root() {
             member_expressions.entry(hash_of_names(argument)).or_default().push((argument, span));
         }
     }
     for (name, spans) in identifiers {
-        if let [first, .., _] = spans[..] {
+        // oxlint reports the first one, once, and removes all but the last.
+        if !is_oxlint {
+            for span in spans.iter().skip(1) {
+                cx.report(*span, NO_MULTI_SPREADING);
+            }
+        } else if let [first, .., _] = spans[..] {
             (spans.iter().skip(1))
                 .fold(cx.report(first, MULTIPLE_IDENTIFIERS), |report, span| report.label(*span, ""))
                 .data("prop_name", name)

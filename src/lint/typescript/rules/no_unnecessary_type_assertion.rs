@@ -316,7 +316,9 @@ impl<'a> Contained<'a> {
             true => |t| is_type_flag_set(t, TypeFlags::TYPE_VARIABLE | TypeFlags::INDEX),
             false => |t| is_type_flag_set(t, TypeFlags::ANY),
         };
-        let ask = || type_contains(ty, predicate, &mut Met::default(), 0).unwrap_or(false);
+        // What upstream says of `any` in an infinite type, once it has run out of stack, changes with the rest of the
+        // file. Mostly it is that there is one, which is also what reports nothing.
+        let ask = || type_contains(ty, predicate, &mut Met::default(), 0).unwrap_or(!is_about_type_variables);
         match ty.is_union_or_intersection() && ty.types().len() > 16 {
             true => *self.0.entry((ty, is_about_type_variables)).or_insert_with(ask),
             false => ask(),

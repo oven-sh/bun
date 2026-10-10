@@ -29,7 +29,15 @@ impl Rule for JsxNoCommentTextnodes {
             return;
         };
         let is_oxlint = cx.language().is_oxlint;
-        let texts = jsx.children().iter().filter(|it| it.tag() == ExprTag::String && it.jsx_container_span().is_none());
+        // A string that is spread is a `Literal` whose parent is of JSX as well. oxlint looks at text only.
+        let spread = |it: Expr<'a>| match it.kind() {
+            ExprKind::Spread(argument) if !is_oxlint => argument,
+            _ => it,
+        };
+        let is_string = |it: &Expr| it.tag() == ExprTag::String;
+        let attributes = jsx.attrs().iter().filter(|it| !is_oxlint && it.kind() == PropKind::Spread);
+        let texts = jsx.children().iter().map(spread).filter(|it| is_string(it) && it.jsx_container_span().is_none());
+        let texts = texts.chain(attributes.filter_map(Prop::value).filter(is_string));
         for jsx_text in texts.filter(|it| has_comment_pattern(it.text(), is_oxlint)) {
             cx.report(jsx_text, if is_oxlint { JSX_NO_COMMENT_TEXTNODES } else { PUT_COMMENT_IN_BRACES });
         }

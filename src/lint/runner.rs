@@ -1069,25 +1069,39 @@ pub fn run<'a, S: Starts>(
     rules: &[Enabled<'_, S>],
     wants_fixes: bool,
 ) -> Vec<Diagnostic> {
+    run_in_order(file, rules, wants_fixes, &[])
+}
+
+/// [`run`], in the order of a tool that runs its rules in another way than ESLint. `when`: for each of `rules`, in
+/// place of what the rule and its reports say. Empty: as they say.
+pub fn run_in_order<'a, S: Starts>(
+    file: &'a File<'a>,
+    rules: &[Enabled<'_, S>],
+    wants_fixes: bool,
+    when: &[When],
+) -> Vec<Diagnostic> {
     file.sink.wants_fixes.set(wants_fixes);
     file.sink.bytes.borrow_mut().clear();
     run_rules(file, rules);
-    sorted(file.sink.diagnostics.take())
+    sorted(file.sink.diagnostics.take(), when)
 }
 
-fn sorted(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
+fn sorted(diagnostics: Vec<Diagnostic>, when: &[When]) -> Vec<Diagnostic> {
     // ESLint sorts by line and column alone, which leaves what starts at the same place in the order it was reported: for a
     // listener that is called on entering a node, the outer node first; then, for one that is called on leaving, the inner;
-    // then what is reported when the program ends, rule by rule. 50 bits.
+    // then what is reported when the program ends, rule by rule. 51 bits.
     let within_start = |it: &Diagnostic| {
         let (end, rule) = (u64::from(it.span.end), u64::from(it.rule));
-        match it.when {
-            When::Entering => ((u64::from(u32::MAX) - end) << 16) | rule,
-            When::EnteringShorterFirst => (end << 16) | rule,
-            When::Leaving => (1 << 48) | (end << 16) | rule,
+        let longer_first = ((u64::from(u32::MAX) - end) << 16) | rule;
+        match when.get(it.rule as usize).copied().unwrap_or(it.when) {
+            When::Once => rule << 32,
+            When::Entering => (1 << 48) | longer_first,
+            When::EnteringShorterFirst => (1 << 48) | (end << 16) | rule,
+            When::Leaving => (2 << 48) | (end << 16) | rule,
             // There are fewer than 1 << 15 rules.
-            When::LeavingCodePath => (1 << 48) | (end << 16) | (1 << 15) | rule,
-            When::AtTheEnd => (2 << 48) | (rule << 32) | end,
+            When::LeavingCodePath => (2 << 48) | (end << 16) | (1 << 15) | rule,
+            When::AtTheEnd => (3 << 48) | (rule << 32) | end,
+            When::Last => (4 << 48) | longer_first,
         }
     };
     if diagnostics.is_sorted_by_key(|it| (it.span.start, within_start(it))) {
@@ -1095,7 +1109,7 @@ fn sorted(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
     }
     // The keys are sorted, not what is reported, which is many times as large. The place in the list is the low 32 bits.
     let key = |at: usize, it: &Diagnostic| {
-        let place = (u128::from(it.span.start) << 50) | u128::from(within_start(it));
+        let place = (u128::from(it.span.start) << 51) | u128::from(within_start(it));
         (place << 32) | at as u128
     };
     let mut order: Vec<u128> = diagnostics

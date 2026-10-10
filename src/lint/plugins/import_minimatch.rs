@@ -3,7 +3,7 @@
 //! `minimatch(path, pattern)` alone is `Pattern::new(pattern, Options::MINIMATCH_3).matches(path)`.
 
 use bun_core::strings;
-use bun_glob::{Options as GlobOptions, Pattern};
+use bun_glob::{How, Options as GlobOptions, Pattern};
 use bun_lint::options::{Json, Object};
 use bun_lint::paths;
 use std::sync::OnceLock;
@@ -13,6 +13,8 @@ pub(crate) struct Glob {
     pattern: Pattern,
     /// `matchBase`
     matches_base: bool,
+    /// `flipNegate`, `partial`
+    how: How,
 }
 
 impl Glob {
@@ -22,6 +24,7 @@ impl Glob {
         Glob {
             pattern: Pattern::new(&written, options),
             matches_base,
+            how: How::default(),
         }
     }
 
@@ -33,10 +36,21 @@ impl Glob {
             nocomment: !group.has("patternOptions") || is_set("nocomment"),
             nonegate: is_set("nonegate"),
             dot: is_set("dot"),
+            nocase: is_set("nocase"),
+            noext: is_set("noext"),
+            nobrace: is_set("nobrace"),
+            noglobstar: is_set("noglobstar"),
             ..GlobOptions::MINIMATCH_3
         };
+        let how = How {
+            flip_negate: is_set("flipNegate"),
+            partial: is_set("partial"),
+        };
         let pattern = group.str("pattern").unwrap_or_default().as_bytes();
-        Glob::new(pattern, asked, is_set("matchBase"))
+        Glob {
+            how,
+            ..Glob::new(pattern, asked, is_set("matchBase"))
+        }
     }
 
     /// `minimatch(path, pattern, { matchBase: true })`
@@ -47,8 +61,8 @@ impl Glob {
     /// `match`. `path` is separated by `/`.
     pub(crate) fn matches(&self, path: &[u8]) -> bool {
         match self.matches_base {
-            true => self.pattern.matches_base(path),
-            false => self.pattern.matches(path),
+            true => self.pattern.matches_base_with(path, self.how),
+            false => self.pattern.matches_with(path, self.how),
         }
     }
 }

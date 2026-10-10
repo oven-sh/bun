@@ -1455,6 +1455,22 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     });
   });
 
+  // As Prettier 3.9.9 and oxfmt 0.72.
+  test.each(["prettier.config.mjs", "oxfmt.config.ts"])(
+    "`process.cwd()` in %s is where the command runs, not where the file is",
+    async name => {
+      const files = {
+        [name]: `import { basename } from "node:path";\nexport default { semi: basename(process.cwd()) !== "sub" };\n`,
+        "sub/a.js": "a\n",
+      };
+      const [below, beside] = await Promise.all([
+        format(files, ["a.js"], { cwd: "sub", reads: ["sub/a.js"] }),
+        format(files, ["sub/a.js"], { reads: ["sub/a.js"] }),
+      ]);
+      expect([below.files["sub/a.js"], beside.files["sub/a.js"]]).toEqual(["a\n", "a;\n"]);
+    },
+  );
+
   test("an oxfmt.config.ts that imports defineConfig from oxfmt works without the package", async () => {
     const files = {
       "oxfmt.config.ts": 'import { defineConfig } from "oxfmt";\nexport default defineConfig({ semi: false });\n',

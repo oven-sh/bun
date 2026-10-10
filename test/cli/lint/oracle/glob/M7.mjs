@@ -24,8 +24,9 @@ export function* cases(seed, count) {
     let { pattern, paths } = made.pattern_and_paths();
     if (rnd(30) === 0) pattern = pick([" ", "\n", "\u00a0", "\ufeff"]) + pattern + pick(["", " ", "\t"]);
     if (rnd(8) === 0) pattern = pick(["!", "!!", "#", "!#", "!(", "!)", "!]", "!|"]) + pattern;
-    const more = { ...(rnd(4) === 0 && { nocomment: true }), ...(rnd(4) === 0 && { nonegate: true }) };
-    for (const names of paths) if (!takes_minutes(pattern, names)) yield { it: { mode, pattern, path: names.join("/"), ...more }, want: ask(pattern, dot, names.join("/"), more) };
+    const more = Object.fromEntries(["nocomment", "nonegate", "nocase", "noext", "nobrace", "noglobstar"].filter(() => rnd(4) === 0).map(it => [it, true]));
+    const cased = path => (more.nocase ? path.replace(/\p{L}/gu, c => (rnd(2) ? c : c === c.toUpperCase() ? c.toLowerCase() : c.toUpperCase())) : path);
+    for (const names of paths) if (!takes_minutes(pattern, names)) { const path = cased(names.join("/")); yield { it: { mode, pattern, path, ...more }, want: ask(pattern, dot, path, more) }; }
     const soup = Array.from({ length: 1 + rnd(8) }, () => pick(pieces));
     for (let n = 0; n < 3; n++) {
       const path = soup.map(it => (rnd(3) ? it : pick(["a", "b", "ab", "", ".", "undefined", "/"]))).join("") + pick(["", "", "undefined"]);

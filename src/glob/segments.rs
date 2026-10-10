@@ -213,7 +213,7 @@ pub(crate) fn has_braces(pattern: &[u8]) -> bool {
 pub(crate) fn read(pattern: &[u8], options: Options) -> Option<Vec<Expansion>> {
     // 3.1.5 has no `levelOneOptimize`.
     let (is_3, dot) = (options.syntax == Syntax::Minimatch3, options.dot);
-    let mut globs = match has_braces(pattern) {
+    let mut globs = match has_braces(pattern) && !(is_3 && options.nobrace) {
         true => braces::expand(pattern)?,
         false => vec![pattern.to_vec()],
     };
@@ -243,7 +243,7 @@ pub(crate) fn read(pattern: &[u8], options: Options) -> Option<Vec<Expansion>> {
             names.push(b"");
         }
         let parts = names.into_iter().map(|it| match is_3 {
-            true => read_minimatch3::part(it, dot),
+            true => read_minimatch3::part(it, options),
             false => read_minimatch::part(it, dot),
         });
         // A name without magic is compared byte by byte.
@@ -426,12 +426,18 @@ fn match_globstar(
 }
 
 /// The same with the option `matchBase`: an expansion of one name is about the last name of the path that is not empty.
-pub(crate) fn matches_base(set: &[Expansion], path: &Candidate<'_>, dot: bool) -> bool {
+pub(crate) fn matches_base(
+    set: &[Expansion],
+    path: &Candidate<'_>,
+    partial: bool,
+    dot: bool,
+) -> bool {
     let last = path.names.iter().rfind(|it| !it.is_empty());
     let name = Candidate::new(last.copied().unwrap_or_default());
     set.iter().any(|it| {
         let path = if it.parts.len() == 1 { &name } else { path };
-        path.text.is_none_or(|text| it.can_match(text)) && it.matches_names(path, false, dot)
+        let text = path.text.filter(|_| !partial);
+        text.is_none_or(|text| it.can_match(text)) && it.matches_names(path, partial, dot)
     })
 }
 

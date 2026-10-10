@@ -1,8 +1,10 @@
 use crate::util_ast::{get_property_name, is_assignment_lhs};
 use crate::util_components::Components;
 use crate::util_components_list::{At, Queue};
+use crate::util_jsx::Branches;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::source::mention_bit;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::estree_span;
 use rustc_hash::FxHashSet;
@@ -30,6 +32,18 @@ const USE_DESTRUCT_ASSIGNMENT: Message =
     Message::new("useDestructAssignment", "Must use destructuring {{type}} assignment");
 const DESTRUCTURE_IN_SIGNATURE: Message =
     Message::new("destructureInSignature", "Must destructure props in the function signature.");
+
+/// What can follow `this.`. The `name` of a `PrivateIdentifier` is without the `#`.
+const THIS_MEMBERS: [u32; 6] = [
+    mention_bit(b"props"),
+    mention_bit(b"context"),
+    mention_bit(b"state"),
+    mention_bit(b"#props"),
+    mention_bit(b"#context"),
+    mention_bit(b"#state"),
+];
+/// Where upstream calls `getRelatedComponent`, which makes a component of any function.
+const RELATED: [u32; 3] = [mention_bit(b"propTypes"), mention_bit(b"defaultProps"), mention_bit(b"getDefaultProps")];
 
 /// An element of what upstream's `evalParams` returns.
 #[derive(Copy, Clone)]
@@ -106,8 +120,6 @@ struct SfcParams<'a> {
 
 pub struct State<'a> {
     components: Components<'a>,
-    /// All that `sfcParams` can answer.
-    names_of_params: FxHashSet<Name<'a>>,
     /// What is reported if it is in a component.
     candidates: Vec<Node<'a>>,
     sfc_params: Vec<SfcParams<'a>>,
@@ -116,6 +128,36 @@ pub struct State<'a> {
 }
 
 impl<'a> State<'a> {
+    /// Makes a candidate of each `x.a` where `sfcParams` can answer `x`. Whether there is one.
+    fn add_sfc_usages(&mut self, file: &'a File<'a>) -> bool {
+        let is_any_related = RELATED.iter().any(|&bit| file.mentions_bit(bit));
+        let mut names_of_params = FxHashSet::default();
+        for func in file.funcs().filter(|it| ast_utils::is_function_with_body(*it)) {
+            let node = Node::Func(func);
+            let names = func.params_with_this().take(2).filter_map(|it| EvaluatedParam::of(it).name());
+            let mut names = names.peekable();
+            // No function is a component that does not return JSX or `null`.
+            if names.peek().is_some()
+                && (is_any_related
+                    || (self.components.is_returning_jsx_or_null(node, Branches::Any)
+                        && self.components.get_stateless_component(node) == Some(node)))
+            {
+                names_of_params.extend(names);
+            }
+        }
+        if names_of_params.is_empty() {
+            return false;
+        }
+        let others = self.candidates.len();
+        let members = [ExprTag::Dot, ExprTag::Index].map(|tag| file.exprs_of_kind(tag));
+        for e in members.into_iter().flatten() {
+            if e.object().and_then(Expr::as_ident).is_some_and(|it| names_of_params.contains(&it)) {
+                self.candidates.push(Node::Expr(e));
+            }
+        }
+        self.candidates.len() > others
+    }
+
     /// upstream's `isInClassProperty`
     fn is_in_class_property(&mut self, node: Expr<'a>) -> bool {
         let found = self.class_properties.find(Node::Expr(node), |_, parent| {
@@ -127,7 +169,7 @@ impl<'a> State<'a> {
 
 impl Rule for DestructuringAssignment {
     const META: Meta = Meta::plugin(Plugin::React, "destructuring-assignment", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]).funcs().var_decls().finish();
+    const ON: On = On::new().exprs(&[ExprTag::This]).funcs().var_decls().finish();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -143,58 +185,34 @@ impl Rule for DestructuringAssignment {
         }
     }
 
-    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         if self.configuration == Configuration::Never {
             return On::new().funcs().var_decls().finish();
         }
-        let on = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]).finish();
+        let mut on = On::new().finish();
+        if THIS_MEMBERS.iter().any(|&bit| file.mentions_bit(bit)) {
+            on = on.exprs(&[ExprTag::This]);
+        }
         if self.destructure_in_signature { on.var_decls() } else { on }
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        if !Components::may_have_any(file) {
-            return None;
-        }
-        let mut components = Components::new(file);
-        let mut names_of_params = FxHashSet::default();
-        if self.configuration == Configuration::Always {
-            // `getRelatedComponent` makes a component of any function.
-            let is_any_related = file.mentions_any(&["propTypes", "defaultProps", "getDefaultProps"]);
-            for func in file.funcs().filter(|it| ast_utils::is_function_with_body(*it)) {
-                let node = Node::Func(func);
-                let names = func.params_with_this().take(2).filter_map(|it| EvaluatedParam::of(it).name());
-                let mut names = names.peekable();
-                if names.peek().is_none() {
-                    continue;
-                }
-                if is_any_related || components.get_stateless_component(node) == Some(node) {
-                    names_of_params.extend(names);
-                }
-            }
-            let names = ["props", "context", "state", "#props", "#context", "#state"];
-            if names_of_params.is_empty() && !file.mentions_any(&names) {
-                return None;
-            }
-        }
-        Some(State {
-            components,
-            names_of_params,
+        Components::may_have_any(file).then(|| State {
+            components: Components::new(file),
             candidates: Vec::new(),
             sfc_params: Vec::new(),
             class_properties: AncestorMemo::default(),
         })
     }
 
-    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(object) = e.object() else {
-            return;
-        };
-        let is_candidate = match object.as_ident() {
-            Some(name) => cx.state.names_of_params.contains(&name),
-            None => name_of_this_member(object).is_some(),
-        };
-        if is_candidate {
-            cx.state.candidates.push(Node::Expr(e));
+    /// `this.props.a`
+    fn expr<'a>(&self, this: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Node::Expr(object) = this.parent()
+            && let Node::Expr(node) = object.parent()
+            && node.object() == Some(object)
+            && name_of_this_member(object).is_some()
+        {
+            cx.state.candidates.push(Node::Expr(node));
         }
     }
 
@@ -217,6 +235,8 @@ impl Rule for DestructuringAssignment {
 
     /// The candidates in the order of ESLint's walk, each when the list of components is what it is then.
     fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let file = cx.file();
+        let has_sfc_usages = self.configuration == Configuration::Always && cx.state.add_sfc_usages(file);
         if cx.state.candidates.is_empty() {
             return;
         }
@@ -224,8 +244,9 @@ impl Rule for DestructuringAssignment {
         for node in std::mem::take(&mut cx.state.candidates) {
             queue.push(At::enter(node), 0, node);
         }
-        if self.configuration == Configuration::Always {
-            let functions = cx.file().funcs().filter(|it| ast_utils::is_function_with_body(*it));
+        // For `sfcParams`.
+        if has_sfc_usages {
+            let functions = file.funcs().filter(|it| ast_utils::is_function_with_body(*it));
             for node in functions.map(Node::Func) {
                 queue.push(At::enter(node), 0, node);
                 queue.push(At::exit(node), 0, node);

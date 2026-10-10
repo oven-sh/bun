@@ -438,6 +438,10 @@ impl Tokens {
     }
 
     pub(crate) fn longest_literal(&self) -> &[u8] {
+        // It is searched for byte by byte.
+        if self.text.folds {
+            return b"";
+        }
         let lits = self.toks.iter().filter_map(|tok| match tok {
             Tok::Lit { start, len, .. } => Some(self.lit(*start, *len)),
             _ => None,

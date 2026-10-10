@@ -6,8 +6,8 @@ import { J, M3, require } from "./refs.mjs";
 const m3 = require(M3 + "minimatch");
 const { minimatch: m10 } = require(J + "minimatch");
 // prettier-ignore
-const more = [".*", ".*/**", ".*/*", ".**", "a/../b", "*/..", "{.,..}/a", "a/?(b)", "a/*(b)", "a/!(b)", "*(a|b)", "*.js\\#", "*\\#", " a", "a ", "\ta\n", " #a", " !a", "**/**", "a/**/**/b", "{a/b,*}", "a{*,*/**}", "*)", "[}[*"];
-const paths = ["..", ".", "../a", "./a", "../a/b.css", "a/../b", "a/..", "b", "a/", "", "a", "a.js#", "a#", "#a", "!a", "a/b", "x/a", "x/y/b", "a/x/b", "ab", "a/b/c"];
+const more = [".*", ".*/**", ".*/*", ".**", "a/../b", "*/..", "{.,..}/a", "a/?(b)", "a/*(b)", "a/!(b)", "*(a|b)", "*.js\\#", "*\\#", " a", "a ", "\ta\n", " #a", " !a", "**/**", "a/**/**/b", "{a/b,*}", "a{*,*/**}", "*)", "[}[*", "ß", "SS", "ſ*", "s", "\u212a", "k?", "İ", "[é]", "[a-z]x", "É*", "ǆ", "σ", "ς"];
+const paths = ["..", ".", "../a", "./a", "../a/b.css", "a/../b", "a/..", "b", "a/", "", "a", "a.js#", "a#", "#a", "!a", "a/b", "x/a", "x/y/b", "a/x/b", "ab", "a/b/c", "ß", "ss", "SS", "ſ", "S", "s", "K", "k", "\u212a", "i", "I", "İ", "ı", "é", "É", "Ax", "ǅ", "Ǆ", "Σ", "ς", "σ"];
 export function* cases(seed, count) {
   const { rnd, pick, pattern_and_paths } = generator(seed);
   for (let k = 0; k < (count || 60000); k++) {
@@ -20,6 +20,11 @@ export function* cases(seed, count) {
     for (const path of made) {
       const ask = (f, options) => { try { return f(path, pattern, options); } catch { return undefined; } };
       yield { it: { mode: dot ? "minimatch3" : "minimatch3-nodot", pattern, path, ...(matchBase && { matchBase }), ...flags }, want: ask(m3, { dot, matchBase, ...flags }) };
+      // The options that only 3.1.5's modes read, and the two of `How`. A letter of the path in the other case for `nocase`.
+      const other = Object.fromEntries(["nocase", "noext", "nobrace", "noglobstar", "partial", "flipNegate"].filter(() => rnd(4) === 0).map(it => [it, true]));
+      const cased = other.nocase ? path.replace(/\p{L}/gu, c => (rnd(2) ? c : c === c.toUpperCase() ? c.toLowerCase() : c.toUpperCase())) : path;
+      let want; try { want = m3(cased, pattern, { dot, matchBase, ...flags, ...other }); } catch {}
+      yield { it: { mode: dot ? "minimatch3" : "minimatch3-nodot", pattern, path: cased, ...(matchBase && { matchBase }), ...flags, ...other }, want };
       if (matchBase || flags.nocomment || flags.nonegate) yield { it: { mode: dot ? "minimatch" : "minimatch-nodot", pattern, path, ...(matchBase && { matchBase }), ...flags }, want: ask(m10, { dot, matchBase, ...flags }) };
     }
   }

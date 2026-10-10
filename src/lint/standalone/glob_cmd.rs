@@ -3,7 +3,7 @@
 //!
 //! | Case | Answer |
 //! |---|---|
-//! | `{ mode: "bun" \| "oxc" \| "minimatch" \| "minimatch-nodot" \| "micromatch" \| "micromatch-nodot" \| "fast-glob" \| "minimatch3" \| "minimatch3-nodot" \| "minimatch3-makere" \| "minimatch3-makere-dot", pattern, path, flipNegate?, partial?, matchBase?, nocomment?, nonegate? }` | `true`, `false` |
+//! | `{ mode: "bun" \| "oxc" \| "minimatch" \| "minimatch-nodot" \| "micromatch" \| "micromatch-nodot" \| "fast-glob" \| "minimatch3" \| "minimatch3-nodot" \| "minimatch3-makere" \| "minimatch3-makere-dot", pattern, path, flipNegate?, partial?, matchBase?, nocomment?, nonegate?, nocase?, noext?, nobrace?, noglobstar? }` | `true`, `false` |
 //! | the same with `ask: "heads"` | an array, `null` |
 //! | `{ mode: "globset-glob", pattern, path }` | `true`, `false`, `null`: it is refused |
 //! | `{ mode: "git" \| "globset" \| "npm5" \| "npm705" \| "npm7012", lines or text, ignoreCase?, path, directory?, ask: "verdict" \| "parents" }` | `"ignored"`, `"kept"`, `"none"` |
@@ -105,13 +105,25 @@ fn answer(case: &Json, memory: &mut Kept) -> Json {
         let written = case.get(b"pattern");
         let key = key_of(
             mode,
-            &[written, case.get(b"nocomment"), case.get(b"nonegate")],
+            &[
+                written,
+                case.get(b"nocomment"),
+                case.get(b"nonegate"),
+                case.get(b"nocase"),
+                case.get(b"noext"),
+                case.get(b"nobrace"),
+                case.get(b"noglobstar"),
+            ],
         );
         let pattern = kept(&mut memory.pattern, key, || match options_of(mode) {
             Some(options) => {
                 let options = Options {
                     nocomment: is_set(b"nocomment"),
                     nonegate: is_set(b"nonegate"),
+                    nocase: is_set(b"nocase"),
+                    noext: is_set(b"noext"),
+                    nobrace: is_set(b"nobrace"),
+                    noglobstar: is_set(b"noglobstar"),
                     ..options
                 };
                 Pattern::new(&bytes_of(written), options)
@@ -122,13 +134,13 @@ fn answer(case: &Json, memory: &mut Kept) -> Json {
             let heads = |all: Vec<&[u8]>| Json::Array(all.into_iter().map(string).collect());
             return pattern.heads().map_or(Json::Null, heads);
         }
-        if is_set(b"matchBase") {
-            return Json::Bool(pattern.matches_base(&path));
-        }
         let how = How {
             flip_negate: is_set(b"flipNegate"),
             partial: is_set(b"partial"),
         };
+        if is_set(b"matchBase") {
+            return Json::Bool(pattern.matches_base_with(&path, how));
+        }
         return Json::Bool(pattern.matches_with(&path, how));
     }
     if let Some(syntax) = syntax_of(mode) {

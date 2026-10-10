@@ -750,7 +750,7 @@ impl Order {
                 _ => false,
             };
             // Each group as `Array.prototype.sort` sorts it, which what is no order depends on.
-            for group in order.chunk_by_mut(|a, b| rank(*a) == rank(*b)) {
+            for group in order.chunk_by_mut(|a, b| rank(*a) == rank(*b)).filter(|it| it.len() > 1) {
                 utils::array_sort_by(group, &is_before);
             }
             // What has the same name and the same kind gets the rank of the last of them.

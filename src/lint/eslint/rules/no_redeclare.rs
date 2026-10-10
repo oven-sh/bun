@@ -150,6 +150,11 @@ pub fn check_symbol<'a, R: Rule>(config: Config, symbol: Symbol<'a>, cx: &Cx<'a,
     if !is_oxlint && (count < 2 && !is_global || !is_checked(scope, config)) {
         return;
     }
+    // With `globalReturn` a module has two scopes of the whole file under the global one: that of a function and, in
+    // it, the module's. Both rules look at the first of them only.
+    if !is_oxlint && scope.kind() == ScopeKind::Module && cx.language().global_return {
+        return;
+    }
     let name = symbol.name().bytes();
     let global = match is_oxlint {
         // For oxlint, outside of a module whatever has the name of a global redeclares it, in whatever scope.

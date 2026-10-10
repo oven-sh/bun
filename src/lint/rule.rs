@@ -305,6 +305,8 @@ bitflags::bitflags! {
 /// When the original reports: it decides about the order of what starts at one place.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum When {
+    /// Before any node, rule by rule: `run_once` of a rule of oxlint.
+    Once,
     /// In a listener that is called on entering a node: the longer first.
     Entering,
     /// [`Report::shorter_first`](crate::context::Report::shorter_first)
@@ -315,6 +317,8 @@ pub enum When {
     LeavingCodePath,
     /// [`Meta::reports_at_the_end`]
     AtTheEnd,
+    /// After everything else, the longer first: what tsgolint reports.
+    Last,
 }
 
 /// ESLint's `meta`.

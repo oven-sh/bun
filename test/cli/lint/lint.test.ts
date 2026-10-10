@@ -304,6 +304,21 @@ describe.concurrent("bun lint", () => {
     expect([read.exitCode, unread.exitCode]).toEqual([1, 2]);
   });
 
+  // As ESLint 10.12 and oxlint 1.87.
+  test.each(["eslint.config.mjs", "oxlint.config.ts"])(
+    "`process.cwd()` in %s is where the command runs, not where the file is",
+    async name => {
+      const rules = `{ "no-debugger": basename(process.cwd()) === "sub" ? "error" : "off" }`;
+      const config = name.startsWith("eslint") ? `[{ rules: ${rules} }]` : `{ rules: ${rules} }`;
+      const files = {
+        [name]: `import { basename } from "node:path";\nexport default ${config};\n`,
+        "sub/a.js": "debugger;\n",
+      };
+      const [below, beside] = await Promise.all([lint(files, ["a.js"], { cwd: "sub" }), lint(files, ["sub/a.js"])]);
+      expect([below.exitCode, beside.exitCode]).toEqual([1, 0]);
+    },
+  );
+
   test("without a configuration file: eslint:recommended, and typescript-eslint/recommended for TypeScript", async () => {
     const { stdout, exitCode } = await lint(
       {
@@ -3469,6 +3484,39 @@ describe.concurrent("bun lint", () => {
     const files = Object.fromEntries(Object.entries(cases).map(([name, [code]]) => [name, code + "\n"]));
     const oxlintrc = JSON.stringify({ categories: { correctness: "off" } });
     const { stdout } = await lint({ ".oxlintrc.json": oxlintrc, ...files }, ["-f", "unix"]);
+    expect(
+      stdout
+        .split("\n")
+        .filter(line => line.endsWith("]"))
+        .sort(),
+    ).toEqual(Object.entries(cases).flatMap(([name, [, at]]) => (at ? [`${name}:${at}: ${refused} [Error]`] : [])));
+  });
+
+  // The same.
+  test("`export =` beside another export is refused as oxc refuses it", async () => {
+    const cases: Record<string, [code: string, at?: string]> = {
+      "a0.ts": ["export const a = 1;\nexport = a;", "2:1"],
+      "a1.ts": ["const a = 1;\nexport = a;\nexport const b = 2;", "2:1"],
+      "a2.ts": ["const a = 1; export type T = 1; export = a;", "1:33"],
+      "a3.ts": ['const a = 1; export * from "x"; export = a;', "1:33"],
+      "a4.ts": ["const a = 1; export default 1; export = a;", "1:32"],
+      "a5.ts": ["const a = 1; export { a }; export = a;", "1:28"],
+      "a6.ts": ["const a = 1; export interface I {} export = a;", "1:36"],
+      "a7.ts": ['const a = 1; export import x = require("y"); export = a;', "1:46"],
+      "a8.d.ts": ["declare const a: 1; export const b: 1; export = a;", "1:40"],
+      "a9.ts": ["const a = 1; export namespace N {} export = a;", "1:36"],
+      "b0.ts": ['const a = 1; export type { T } from "x"; export = a;', "1:42"],
+      "b1.cts": ["export const a = 1;\nexport = a;", "2:1"],
+      "c0.ts": ["const a = 1; export {}; export = a;"],
+      "c1.ts": ["const a = 1; export = a; export = a;"],
+      "c2.ts": ["const a = 1; export as namespace N; export = a;"],
+      "c3.ts": ["const a = 1; export = a;"],
+      "c4.ts": ['import x from "y"; export = x;'],
+    };
+    const files = Object.fromEntries(Object.entries(cases).map(([name, [code]]) => [name, code + "\n"]));
+    const oxlintrc = JSON.stringify({ categories: { correctness: "off" } });
+    const { stdout } = await lint({ ".oxlintrc.json": oxlintrc, ...files }, ["-f", "unix"]);
+    const refused = "An export assignment cannot be used in a module with other exported elements";
     expect(
       stdout
         .split("\n")

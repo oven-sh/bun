@@ -179,7 +179,7 @@ pub(crate) enum Unread {
 }
 
 /// The pieces of a written text. Of the pattern: `\x`, a class, `(`, `(?:`, `(?=`, `(?!`, `)`, `|`, `?`, `+`, `*`, `.`, `^`, `$`.
-pub(crate) fn read_written(written: &[u16], dot: bool) -> Result<Vec<Piece>, Unread> {
+pub(crate) fn read_written(written: &[u16], dot: bool, text: Text) -> Result<Vec<Piece>, Unread> {
     let mut out = Vec::with_capacity(written.len());
     let assert = |assertion: Assertion| Piece::Node(Node::Assert(assertion));
     // A class and an escape are read from bytes.
@@ -221,9 +221,10 @@ pub(crate) fn read_written(written: &[u16], dot: bool) -> Result<Vec<Piece>, Unr
                         (Piece::Node(Node::Lit(half.to_vec())), len)
                     }
                     Escape::Unit { unit, len } => (Piece::Node(Node::of_unit(unit)), len),
-                    Escape::Ranges(ranges) => {
-                        (Piece::Node(Node::Class(Class::of_ranges(ranges, false))), 2)
-                    }
+                    Escape::Ranges(ranges) => (
+                        Piece::Node(Node::Class(Class::of_ranges(ranges, text.folds))),
+                        2,
+                    ),
                     Escape::WordBoundary { negated: true } => {
                         (assert(Assertion::NotWordBoundary), 2)
                     }
@@ -237,7 +238,8 @@ pub(crate) fn read_written(written: &[u16], dot: bool) -> Result<Vec<Piece>, Unr
                 piece
             }
             OPEN_SQUARE => {
-                let Read::Class { class, len, .. } = class::javascript(&bytes, i - 1, false) else {
+                let Read::Class { class, len, .. } = class::javascript(&bytes, i - 1, text.folds)
+                else {
                     return Err(Unread::NoExpression);
                 };
                 let inside = written.get(i - 1..i - 1 + len).unwrap_or_default();
@@ -1441,7 +1443,7 @@ fn expand_range(args: Vec<Written>, dot: bool) -> Written {
     // JavaScript's order of strings is that of UTF-16 units. For what is here the order of bytes is the same but beyond U+FFFF.
     args.sort();
     let value = [&[OPEN_SQUARE][..], &args.join(&MINUS), &[CLOSE_SQUARE]].concat();
-    let is_expression = match read_written(&value, dot) {
+    let is_expression = match read_written(&value, dot, Text::UTF16) {
         Ok(pieces) => nest(pieces).is_some(),
         Err(Unread::NotTaken) => true,
         Err(Unread::NoExpression) => false,
@@ -1611,7 +1613,7 @@ pub(crate) fn pattern(bytes: &[u8], dot: bool, posix: bool) -> (Program, bool) {
         return never;
     };
     let whole = [&[CARET, OPEN][..], &output, &[CLOSE_PAREN, DOLLAR]].concat();
-    match read_written(&whole, dot).map(nest) {
+    match read_written(&whole, dot, Text::UTF16).map(nest) {
         Ok(Some(tree)) => (lower(tree, Text::UTF16), negated),
         // It is an expression, and one that is not followed. It matches nothing, so negated it matches all.
         Err(Unread::NotTaken) => (Program::Never, negated),

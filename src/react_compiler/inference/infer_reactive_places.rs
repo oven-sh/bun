@@ -63,6 +63,27 @@ pub(crate) fn infer_reactive_places(
     // per block) is a function of the CFG only, so compute it once here instead
     // of inside the fixpoint loop.
     let frontiers = post_dominator_frontiers(func, &post_dominators)?;
+    // Not in upstream: whether something in a `try` throws decides what runs next, as a test does.
+    let mut read_by_what_may_throw: IdMap<BlockId, Vec<IdentifierId>> = IdMap::new();
+    for (block_id, block) in &func.body.blocks {
+        if let Terminal::MaybeThrow {
+            handler: Some(_), ..
+        } = &block.terminal
+        {
+            let mut read = Vec::new();
+            for instr_id in &block.instructions {
+                let value = &func.instructions[instr_id.0 as usize].value;
+                if value_may_throw(value) {
+                    read.extend(
+                        visitors::each_instruction_value_operand(value, env)
+                            .into_iter()
+                            .map(|place| place.identifier),
+                    );
+                }
+            }
+            read_by_what_may_throw.insert(*block_id, read);
+        }
+    }
     let mut control_tests: IdMap<BlockId, Vec<IdentifierId>> = IdMap::new();
     for &block_id in &block_ids {
         let mut tests = Vec::new();
@@ -80,19 +101,9 @@ pub(crate) fn infer_reactive_places(
                         }
                     }
                 }
-                // Not in upstream: whether something in a `try` throws decides what runs next, as a test does.
-                Terminal::MaybeThrow {
-                    handler: Some(_), ..
-                } => {
-                    for instr_id in &control_block.instructions {
-                        let value = &func.instructions[instr_id.0 as usize].value;
-                        if value_may_throw(value) {
-                            tests.extend(
-                                visitors::each_instruction_value_operand(value, env)
-                                    .into_iter()
-                                    .map(|place| place.identifier),
-                            );
-                        }
+                Terminal::MaybeThrow { .. } => {
+                    if let Some(read) = read_by_what_may_throw.get(*frontier_block_id) {
+                        tests.extend_from_slice(read);
                     }
                 }
                 _ => {}

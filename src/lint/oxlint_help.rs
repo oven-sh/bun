@@ -146,7 +146,6 @@ static INDEX: &[(u32, u32)] = &[
     (0x071D498B, at(40790, 76)), // no-promise-in-callback
     (0x07C91B4B, at(33195, 193)), // no-importing-vitest-globals
     (0x07D3DAF0, at(25293, 111)), // no-control-regex unexpected
-    (0x07ECF9F2, OF_THE_FIX), // function-component-definition function-expression
     (0x0811C395, at(36785, 54)), // no-misused-spread noMapSpreadInObject
     (0x0858A4B1, at(44763, 74)), // no-unassigned-import
     (0x0872DEF5, at(7069, 46)), // consistent-existence-index-check
@@ -239,7 +238,6 @@ static INDEX: &[(u32, u32)] = &[
     (0x1B56DF94, at(47423, 45)), // no-unused-expressions unusedExpression
     (0x1BB099A0, at(50682, 62)), // padding-around-after-all-blocks
     (0x1BD891E7, WITH_DATA | at(37534, 113)), // no-named-as-default
-    (0x1C258AFA, OF_THE_FIX), // function-component-definition function-declaration
     (0x1C50F8CB, at(14126, 76)), // func-name-matching notMatchVariable
     (0x1CB82C2D, at(2026, 57)), // arrow-body-style unexpectedObjectBlock
     (0x1D322BFB, at(58230, 36)), // prefer-type-error
@@ -263,7 +261,6 @@ static INDEX: &[(u32, u32)] = &[
     (0x24AD54E2, at(25989, 35)), // no-deprecated-data-object-declaration
     (0x24E68FCA, OF_THE_FIX), // prefer-to-be
     (0x250F790D, WITH_DATA | at(7537, 75)), // consistent-test-it
-    (0x255C78DD, at(6473, 44)), // checked-requires-onchange-or-readonly exclusiveCheckedAttribute
     (0x25AAA242, at(47937, 140)), // no-useless-backreference nested
     (0x25ADCBD5, at(14815, 107)), // guard-for-in wrap
     (0x25AF89B7, at(38439, 232)), // no-new-array
@@ -399,6 +396,7 @@ static INDEX: &[(u32, u32)] = &[
     (0x4AE7B876, WITH_DATA | at(6984, 85)), // consistent-each-for
     (0x4B164347, at(49288, 41)), // no-useless-return unnecessaryReturn
     (0x4BA3B55F, at(49725, 53)), // no-webpack-loader-syntax
+    (0x4BD8F9C6, at(15257, 97)), // hook-use-state
     (0x4BF1674B, more(25)), // bad-match-all-arg
     (0x4C73543E, at(32750, 97)), // no-implicit-globals globalNonLexicalBinding
     (0x4C8838ED, at(51544, 53)), // prefer-as-const preferConstAssertion
@@ -517,6 +515,7 @@ static INDEX: &[(u32, u32)] = &[
     (0x67CED70F, at(18495, 82)), // max-params exceed
     (0x67D5835A, at(56494, 69)), // prefer-object-spread useLiteralMessage
     (0x680FDFE8, at(14126, 76)), // func-name-matching notMatchVariable
+    (0x686191F3, OF_THE_FIX), // function-component-definition
     (0x686EEEB2, at(25404, 48)), // no-css-tags
     (0x68A1A5BB, at(12346, 147)), // exhaustive-deps
     (0x68B710EF, at(49081, 142)), // no-useless-promise-resolve-reject
@@ -539,13 +538,13 @@ static INDEX: &[(u32, u32)] = &[
     (0x6DA49EAF, at(5565, 51)), // ban-types
     (0x6DE8A23F, OF_THE_FIX), // no-empty-named-blocks
     (0x6E4044E9, at(44269, 94)), // no-this-in-sfc
+    (0x6E5C6A36, OF_THE_FIX), // function-component-definition
     (0x6E682581, WITH_DATA | at(59227, 83)), // require-mock-type-parameters
     (0x6E72D2C7, at(58266, 82)), // preserve-caught-error missingCause
     (0x6EB15CD7, OF_THE_FIX), // no-null
     (0x6ECB24E9, at(41527, 99)), // no-required-prop-with-default
     (0x6F0AB04C, WITH_DATA | at(41746, 17)), // no-restricted-imports everythingWithAllowedImportNamePatternWithCustomMessage
     (0x6F1DD394, OF_THE_FIX), // object-shorthand expectedMethodShorthand
-    (0x6F27F556, at(15724, 50)), // iframe-missing-sandbox attributeMissing
     (0x6FF55E58, at(48636, 29)), // no-useless-default-assignment uselessUndefined
     (0x70393C91, at(18905, 73)), // missing-throw
     (0x7043F91E, at(34351, 63)), // no-labels unexpectedLabelInContinue
@@ -564,6 +563,7 @@ static INDEX: &[(u32, u32)] = &[
     (0x7316FAB1, at(39725, 83)), // no-noninteractive-element-interactions
     (0x7350C08B, at(63379, 49)), // valid-describe-callback
     (0x7370F353, OF_THE_FIX), // consistent-type-assertions as
+    (0x73ADA4DE, OF_THE_FIX), // function-component-definition
     (0x73BD2A09, at(62802, 45)), // use-isnan comparisonWithNaN
     (0x73DAE700, at(50373, 86)), // number-literal-case
     (0x73E689A2, at(14754, 61)), // grouped-accessor-pairs invalidOrder
@@ -640,6 +640,7 @@ static INDEX: &[(u32, u32)] = &[
     (0x838A42D5, OF_THE_FIX), // prefer-string-replace-all
     (0x83E2D9AC, OF_THE_FIX), // prefer-string-replace-all
     (0x841A2F88, at(13065, 141)), // explicit-member-accessibility missingAccessibility
+    (0x84551859, at(6473, 44)), // checked-requires-onchange-or-readonly
     (0x8471437D, at(60525, 65)), // require-test-timeout
     (0x8484729E, at(38178, 53)), // no-nested-ternary
     (0x84AB82D0, at(57200, 128)), // prefer-snapshot-hint
@@ -822,6 +823,7 @@ static INDEX: &[(u32, u32)] = &[
     (0xADEA61F1, at(33, 33)), // accessor-pairs missingSetterInClass
     (0xAE5D281B, more(60)), // no-dupe-keys unexpected
     (0xAE60BBEC, at(6922, 62)), // consistent-date-clone
+    (0xAE6C3BCE, at(15724, 50)), // iframe-missing-sandbox
     (0xAECB2492, at(50289, 47)), // number-literal-case
     (0xAEDB1D74, at(33388, 26)), // no-inferrable-types noInferrableType
     (0xAF7C8CF2, at(33, 33)), // accessor-pairs missingSetterInObjectLiteral
@@ -923,7 +925,6 @@ static INDEX: &[(u32, u32)] = &[
     (0xC5ECFCBE, at(40866, 64)), // no-proto unexpectedProto
     (0xC5F3BE7B, at(55424, 46)), // prefer-literal-enum-member notLiteralOrBitwiseExpression
     (0xC6329069, WITH_DATA | at(41774, 8)), // no-restricted-properties restrictedObjectProperty
-    (0xC63D9620, at(6517, 36)), // checked-requires-onchange-or-readonly missingProperty
     (0xC63E95BF, at(33956, 94)), // no-invalid-void-type invalidVoidNotReturnOrThisParamOrGeneric
     (0xC647D82B, WITH_DATA | at(41261, 68)), // no-redundant-roles
     (0xC685CA97, at(62802, 45)), // use-isnan comparisonWithNaN
@@ -937,6 +938,7 @@ static INDEX: &[(u32, u32)] = &[
     (0xC9719D8B, at(17206, 87)), // jsx-no-literals
     (0xC996806F, at(43213, 32)), // no-string-refs
     (0xC9D5923E, at(52271, 82)), // prefer-catch
+    (0xCA374218, at(6517, 36)), // checked-requires-onchange-or-readonly
     (0xCA492FE3, at(57397, 57)), // prefer-spread
     (0xCA4A3180, at(60129, 36)), // require-returns
     (0xCA94982D, WITH_DATA | at(41746, 17)), // no-restricted-imports patternAndEverythingWithRegexImportNameAndCustomMessage
@@ -956,7 +958,6 @@ static INDEX: &[(u32, u32)] = &[
     (0xCD7F4FBF, at(2348, 102)), // await-thenable awaitUsingOfNonAsyncDisposable
     (0xCDE5A417, at(29265, 95)), // no-export
     (0xCDF86BF9, at(48077, 41)), // no-useless-call unnecessaryCall
-    (0xCE62BDE3, at(15257, 97)), // hook-use-state useStateErrorMessage
     (0xCEE2352D, WITH_DATA | at(20090, 42)), // no-amd
     (0xCF7B7BEF, at(43633, 112)), // no-thenable
     (0xCF8B528E, at(52520, 32)), // prefer-classlist-toggle
@@ -1086,7 +1087,6 @@ static INDEX: &[(u32, u32)] = &[
     (0xF1A58E09, at(33414, 35)), // no-inline-comments unexpectedInlineComment
     (0xF1EB9AE8, at(26433, 21)), // no-disabled-tests
     (0xF2BC9BE9, at(5984, 47)), // button-has-type
-    (0xF3806E76, OF_THE_FIX), // function-component-definition arrow-function
     (0xF3BF69FE, more(81)), // no-duplicate-imports importAs
     (0xF43B393B, more(82)), // prefer-global-this
     (0xF486CAA1, at(17634, 26)), // jsx-props-no-spread-multi

@@ -11,12 +11,12 @@
 
 use bun_fuzz::{Input, Run, show, shows};
 use bun_lint_driver::js_plugin::{Engine, Vm};
-use bun_lint_driver::{Environment, Outcome, Script, Stream};
+use bun_lint_driver::{Environment, Outcome, Script, Stream, bunfig};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
 /// The name of the file that the text is written to, and whether `bun lint` reads it.
-const FILES: [(&str, bool); 24] = [
+const FILES: [(&str, bool); 29] = [
     (".prettierrc", false),
     (".prettierrc.json", false),
     (".prettierrc.json5", false),
@@ -41,6 +41,20 @@ const FILES: [(&str, bool); 24] = [
     (".eslintignore", true),
     (".gitignore", true),
     ("sub/.oxlintrc.json", true),
+    // The defaults of the flags.
+    ("bunfig.toml", true),
+    ("bunfig.toml", false),
+    // Where the globals of a file come from, for `no-undef`: with `GLOBALS`.
+    ("tsconfig.json", true),
+    ("jsconfig.json", true),
+    ("sub/tsconfig.json", true),
+];
+
+/// Beside a tsconfig.json: a rule that asks for the globals, and files that declare some.
+const GLOBALS: [(&str, &str); 3] = [
+    (".eslintrc.json", "{\"root\":true,\"rules\":{\"no-undef\":\"error\"}}"),
+    ("globals.d.ts", "declare var one: number;\ndeclare global {\n  var two: string;\n}\nexport {};\n"),
+    ("sub/i.js", "one; two; three; process;\n"),
 ];
 
 /// What is formatted and linted, unless the input has a text of its own for `a.ts`.
@@ -84,16 +98,26 @@ fn directory() -> &'static PathBuf {
     })
 }
 
-fn format(how: &[u8], environment: &Environment) -> Option<Outcome> {
-    let options = bun_lint_driver::fmt::cli::Options::parse(&[b"--threads=1", how, b"."]).ok()?;
-    Some(bun_lint_driver::fmt::run(&options, environment))
+/// `bunfig`: the text of bunfig.toml, which Bun's reader of that file finds. `None`: the command stops before it begins.
+fn format(how: &[u8], bunfig: Option<&[u8]>, environment: &Environment) -> Option<Outcome> {
+    use bun_lint_driver::fmt::cli::Options;
+    let arguments: [&[u8]; 3] = [b"--threads=1", how, b"."];
+    let options = match bunfig.map(|it| bunfig::of_text(it, bunfig::format)) {
+        Some(defaults) => defaults.ok()?.map_or_else(|| Options::parse(&arguments), |it| Options::parse_over(it, &arguments)),
+        None => Options::parse(&arguments),
+    };
+    Some(bun_lint_driver::fmt::run(&options.ok()?, environment))
 }
 
-fn lint(more: &[&[u8]], environment: &Environment) -> Option<Outcome> {
+fn lint(more: &[&[u8]], bunfig: Option<&[u8]>, environment: &Environment) -> Option<Outcome> {
+    use bun_lint_driver::cli::Options;
     let mut arguments: Vec<&[u8]> = vec![b"--threads=1", b"."];
     arguments.extend_from_slice(more);
-    let options = bun_lint_driver::cli::Options::parse(&arguments).ok()?;
-    Some(bun_lint_driver::run(&options, environment))
+    let options = match bunfig.map(|it| bunfig::of_text(it, bunfig::lint)) {
+        Some(defaults) => defaults.ok()?.map_or_else(|| Options::parse(&arguments), |it| Options::parse_over(it, &arguments)),
+        None => Options::parse(&arguments),
+    };
+    Some(bun_lint_driver::run(&options.ok()?, environment))
 }
 
 fn run(data: &[u8]) {
@@ -117,6 +141,11 @@ fn run(data: &[u8]) {
         None => (config, None),
     };
     let _ = std::fs::write(directory.join(name), config);
+    let bunfig = (name == "bunfig.toml").then_some(config);
+    let has_globals = name.ends_with("sconfig.json");
+    for (name, text) in GLOBALS.iter().filter(|_| has_globals) {
+        let _ = std::fs::write(directory.join(name), text);
+    }
     let _ = std::fs::write(directory.join("a.ts"), source);
     if let Some(base) = base {
         let _ = std::fs::write(directory.join("base.json"), base);
@@ -148,7 +177,7 @@ fn run(data: &[u8]) {
     let has_parsing_error = |it: &Outcome| [&it.stdout, &it.stderr].iter().any(|it| it.windows(13).any(|it| it == b"Parsing error"));
     // Whether all files are parsed before anything is fixed.
     let parsed_before = (writes && is_for_lint)
-        .then(|| run.guarded(|| lint(&[], &environment)).flatten())
+        .then(|| run.guarded(|| lint(&[], bunfig, &environment)).flatten())
         .flatten()
         .is_some_and(|it| !has_parsing_error(&it));
     let outcome: Option<Outcome> = run.guarded(|| match is_for_lint {
@@ -160,14 +189,14 @@ fn run(data: &[u8]) {
             if writes {
                 more.push(b"--fix");
             }
-            lint(&more, &environment)
+            lint(&more, bunfig, &environment)
         }
-        false => format(if writes { b"--write" } else { b"--check" }, &environment),
+        false => format(if writes { b"--write" } else { b"--check" }, bunfig, &environment),
     })
     .flatten();
     // What has been written is formatted. Not a text of the fuzzer's: Prettier itself does not always print what it leaves alone.
     if let Some(first) = outcome.as_ref().filter(|it| writes && !is_for_lint && it.exit_code == 0 && source == SOURCES[0].1.as_bytes())
-        && let Some(Some(second)) = run.guarded(|| format(b"--check", &environment))
+        && let Some(Some(second)) = run.guarded(|| format(b"--check", bunfig, &environment))
         && second.exit_code != 0
         // Not the files of the fuzzer's, which are formatted too: garbage is not always printed as what is left alone.
         && SOURCES.iter().any(|(name, _)| {
@@ -180,13 +209,16 @@ fn run(data: &[u8]) {
     }
     // No fix that is written makes a text that is not parsed of one that was.
     if parsed_before
-        && let Some(Some(after)) = run.guarded(|| lint(&[], &environment))
+        && let Some(Some(after)) = run.guarded(|| lint(&[], bunfig, &environment))
         && has_parsing_error(&after)
     {
         run.report("fix-breaks-the-syntax", name, &String::from_utf8_lossy(&[&after.stdout[..], &after.stderr].concat()));
     }
     let _ = std::fs::remove_file(directory.join(name));
     let _ = std::fs::remove_file(directory.join("base.json"));
+    for (name, _) in GLOBALS.iter().filter(|_| has_globals) {
+        let _ = std::fs::remove_file(directory.join(name));
+    }
     if writes {
         for (name, text) in SOURCES {
             let _ = std::fs::write(directory.join(name), text);

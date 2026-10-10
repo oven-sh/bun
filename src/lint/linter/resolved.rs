@@ -6,7 +6,7 @@ use crate::context::Severity;
 use crate::js_plugin::{self, Route};
 use crate::language::{LanguageOptions, Parser};
 use crate::options::Json;
-use crate::rule::{Meta, Plugin};
+use crate::rule::{Meta, Plugin, When};
 use crate::rule_set::RuleBits;
 use crate::runner::RuleEntry;
 use std::sync::{Arc, OnceLock};
@@ -45,12 +45,6 @@ pub fn severity_of(value: &Json) -> Option<Severity> {
         },
         _ => return None,
     })
-}
-
-/// Whether the options are valid for the rule of ESLint that `meta` extends: `"max-params": ["error", 2]`.
-fn is_valid_for_base_rule(meta: &Meta, options: &[Json]) -> bool {
-    (meta.extends_base_rule)
-        .is_some_and(|base| super::schema::validate_by_id(base.as_bytes(), options).is_ok())
 }
 
 /// An entry of ESLint's `rules`.
@@ -153,7 +147,8 @@ pub(crate) fn find_js_rule<'p>(
 pub(super) struct Prepared {
     /// The rules that are on.
     pub(super) on: RuleBits,
-    /// They, in the order of the configuration.
+    /// They, in the order of the configuration. Those of a configuration of oxlint: by the numbers that oxlint gives
+    /// its rules.
     pub(super) order: Box<[Slot]>,
     /// What the first of them that refuses its options throws.
     pub(super) refusal: Option<Arc<[u8]>>,
@@ -167,6 +162,8 @@ pub(super) struct Slot {
     pub(super) at: u32,
     /// In the set of the rules of the linter.
     pub(super) number: u16,
+    /// With a configuration of oxlint: when oxlint reports what the rule reports.
+    pub(super) when: When,
 }
 
 /// Whether the rule finds the files that imports name as `settings["import/resolver"]` says.
@@ -283,21 +280,15 @@ impl ResolvedConfig {
         severity: Severity,
         options: &[Json],
     ) {
-        // The schemas are those of the rules for ESLint. oxlint passes over a property that its rule does not know, and its
-        // rules have options that the schema does not know: the rule gets them. Its ports of the rules of other plugins take
-        // other values and other shapes, too: `"import/max-dependencies": ["error", 2]`.
-        let is_like_in_oxlint = matches!(
-            entry.meta.plugin,
-            Plugin::Eslint | Plugin::TypeScript | Plugin::ReactHooks
-        );
+        // The schemas are those of the rules for ESLint, and a poor witness of what oxlint refuses: its rules take other values
+        // and other shapes (`"import/max-dependencies": ["error", 2]`, `"sort-keys": ["asc", { "minKeys": 1 }]`) and pass over
+        // what they do not know. To refuse what it takes ends a run that works with it: beside its configuration they refuse
+        // nothing, and the rule gets the options.
         if severity != Severity::Off
             && self.error.is_none()
             && !entry.meta.follows_oxlint
-            && (is_like_in_oxlint || !self.prefers_typescript_rules)
+            && !self.prefers_typescript_rules
             && let Err(lines) = super::schema::validate(entry.meta, options)
-            && !(self.prefers_typescript_rules
-                && (super::schema::validate_known_properties(entry.meta, options).is_ok()
-                    || is_valid_for_base_rule(entry.meta, options)))
         {
             let id = name.map_or_else(|| super::RuleId::Known(entry.meta).to_vec(), <[u8]>::to_vec);
             self.error = Some([b"Key \"rules\": Key \"", &id[..], b"\":\n", &lines].concat());

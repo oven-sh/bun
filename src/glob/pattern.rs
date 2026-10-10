@@ -40,6 +40,14 @@ pub struct Options {
     pub nocomment: bool,
     /// `nonegate` of minimatch: so is a `!`.
     pub nonegate: bool,
+    /// These four are read for minimatch 3.1.5 only. `nocase`: the flag `i`.
+    pub nocase: bool,
+    /// `noext`: `+(` is two characters.
+    pub noext: bool,
+    /// `nobrace`: braces are characters.
+    pub nobrace: bool,
+    /// `noglobstar`: `**` is `*`.
+    pub noglobstar: bool,
 }
 
 impl Options {
@@ -51,6 +59,10 @@ impl Options {
         expands_braces_first: false,
         nocomment: false,
         nonegate: false,
+        nocase: false,
+        noext: false,
+        nobrace: false,
+        noglobstar: false,
     };
     /// `new Minimatch(pattern, { dot: true })`: @eslint/config-array, the command line of ESLint, `.editorconfig`.
     pub const MINIMATCH_DOT: Options = Options {
@@ -60,6 +72,10 @@ impl Options {
         expands_braces_first: true,
         nocomment: false,
         nonegate: false,
+        nocase: false,
+        noext: false,
+        nobrace: false,
+        noglobstar: false,
     };
     /// `minimatch(path, pattern)`: @trivago/prettier-plugin-sort-imports.
     pub const MINIMATCH: Options = Options {
@@ -89,6 +105,10 @@ impl Options {
         expands_braces_first: false,
         nocomment: false,
         nonegate: false,
+        nocase: false,
+        noext: false,
+        nobrace: false,
+        noglobstar: false,
     };
     /// What fast-glob makes of a pattern with `{ dot: true }`: the command line of Prettier.
     pub const FAST_GLOB_DOT: Options = Options {
@@ -291,11 +311,16 @@ impl Pattern {
 
     /// `matches` with the option `matchBase` of minimatch.
     pub fn matches_base(&self, path: &[u8]) -> bool {
+        self.matches_base_with(path, How::default())
+    }
+
+    pub fn matches_base_with(&self, path: &[u8], how: How) -> bool {
         match &self.kind {
-            Kind::Minimatch(set, dot) => {
-                segments::matches_base(set, &Candidate::new(path), *dot) != self.is_negated
+            Kind::Minimatch(set, dot) if !(how.partial && path == b"/") => {
+                let hit = segments::matches_base(set, &Candidate::new(path), how.partial, *dot);
+                hit != (self.is_negated && !how.flip_negate)
             }
-            _ => self.matches(path),
+            _ => self.matches_with(path, how),
         }
     }
 

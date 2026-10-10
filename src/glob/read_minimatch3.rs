@@ -38,14 +38,22 @@ fn is_re_special(c: u8) -> bool {
     )
 }
 
-fn pieces_of(source: &[u8], dot: bool) -> Result<Vec<Piece>, Unread> {
+/// The flag `i`, without `u`.
+fn text_of(options: Options) -> Text {
+    Text {
+        folds: options.nocase,
+        ..Text::UTF16
+    }
+}
+
+fn pieces_of(source: &[u8], options: Options) -> Result<Vec<Piece>, Unread> {
     let written: Vec<u16> = source.iter().map(|it| u16::from(*it)).collect();
-    read_written(&written, dot)
+    read_written(&written, options.dot, text_of(options))
 }
 
 /// Whether `new RegExp(source)` does not throw.
 fn is_expression(source: &[u8]) -> bool {
-    match pieces_of(source, false) {
+    match pieces_of(source, Options::MINIMATCH_3) {
         Ok(pieces) => nest(pieces).is_some(),
         Err(Unread::NotTaken) => true,
         Err(Unread::NoExpression) => false,
@@ -99,6 +107,16 @@ struct Parsed {
     has_magic: bool,
 }
 
+impl Parsed {
+    /// What `sp[0]` and `sp[1]` are of what is no array.
+    fn undefined() -> Parsed {
+        Parsed {
+            re: b"undefined".to_vec(),
+            has_magic: false,
+        }
+    }
+}
+
 /// What `parse` is writing.
 struct Writer {
     re: Vec<u8>,
@@ -124,10 +142,14 @@ impl Writer {
 }
 
 /// `Minimatch.prototype.parse`. `depth`: above 0 it is `SUBPARSE`. `None`: beyond a limit.
-fn parse(pattern: &[u8], dot: bool, depth: usize) -> Option<Parsed> {
+fn parse(pattern: &[u8], options: Options, depth: usize) -> Option<Parsed> {
+    let pattern = match pattern {
+        b"**" if options.noglobstar => &b"*"[..],
+        _ => pattern,
+    };
     let mut w = Writer {
         re: Vec::with_capacity(pattern.len() * 2),
-        has_magic: false,
+        has_magic: options.nocase,
         state_char: None,
     };
     let mut escaping = false;
@@ -136,11 +158,9 @@ fn parse(pattern: &[u8], dot: bool, depth: usize) -> Option<Parsed> {
     let (mut lists, mut negative_lists): (Vec<List>, Vec<List>) = (Vec::new(), Vec::new());
     let sub = |cs: &[u8]| match cs {
         // `parse` gives `''` and `GLOBSTAR` for these. Neither has a `[0]`, and `'\\[' + undefined` is written.
-        b"" | b"**" => Some(Parsed {
-            re: b"undefined".to_vec(),
-            has_magic: false,
-        }),
-        _ if depth < MAX_DEPTH => parse(cs, dot, depth + 1),
+        b"" => Some(Parsed::undefined()),
+        b"**" if !options.noglobstar => Some(Parsed::undefined()),
+        _ if depth < MAX_DEPTH => parse(cs, options, depth + 1),
         _ => None,
     };
     for (i, &c) in pattern.iter().enumerate() {
@@ -166,6 +186,9 @@ fn parse(pattern: &[u8], dot: bool, depth: usize) -> Option<Parsed> {
             b'?' | b'*' | b'+' | b'@' | b'!' => {
                 w.clear_state_char();
                 w.state_char = Some(c);
+                if options.noext {
+                    w.clear_state_char();
+                }
             }
             b'(' if class.is_some() => w.re.push(b'('),
             b'(' => match w.state_char.take() {
@@ -295,7 +318,7 @@ fn parse(pattern: &[u8], dot: bool, depth: usize) -> Option<Parsed> {
         re.splice(0..0, *b"(?=.)");
     }
     if adds_pattern_start {
-        let pattern_start: &[u8] = match (pattern.first(), dot) {
+        let pattern_start: &[u8] = match (pattern.first(), options.dot) {
             (Some(b'.'), _) => b"",
             (_, true) => br"(?!(?:^|\/)\.{1,2}(?:$|\/))",
             (_, false) => br"(?!\.)",
@@ -342,7 +365,7 @@ fn source(pattern: &[u8], options: Options) -> Option<Vec<u8>> {
         .take_while(|it| **it == b'!' && !options.nonegate)
         .count();
     let rest = &pattern[bangs..];
-    let globs = match has_braces(rest) {
+    let globs = match has_braces(rest) && !options.nobrace {
         true => braces::expand(rest)?,
         false => vec![rest.to_vec()],
     };
@@ -365,11 +388,15 @@ fn source(pattern: &[u8], options: Options) -> Option<Vec<u8>> {
             if !std::mem::take(&mut is_first) {
                 re.extend_from_slice(b"\\/");
             }
-            if part == b"**" {
+            if part == b"**" && !options.noglobstar {
                 re.extend_from_slice(if dot { TWO_STAR_DOT } else { TWO_STAR_NO_DOT });
                 continue;
             }
-            let parsed = parse(part, dot, 0)?;
+            // `if (pattern === '') return ''`
+            if part.is_empty() {
+                continue;
+            }
+            let parsed = parse(part, options, 0)?;
             // What `RegExp` refuses is `/$./`, which has no `_src`: nothing is written.
             if !parsed.has_magic {
                 write_characters(part, &mut re);
@@ -386,26 +413,30 @@ fn source(pattern: &[u8], options: Options) -> Option<Vec<u8>> {
 }
 
 /// `None`: `RegExp` refuses it.
-fn program_of(written: &[u8], dot: bool) -> Option<Program> {
-    let tree = match pieces_of(written, dot) {
+fn program_of(written: &[u8], options: Options) -> Option<Program> {
+    let tree = match pieces_of(written, options) {
         Ok(pieces) => nest(pieces),
         Err(Unread::NotTaken) => Some(Node::Fail),
         Err(Unread::NoExpression) => None,
     };
-    tree.map(|it| lower(it, Text::UTF16))
+    tree.map(|it| lower(it, text_of(options)))
 }
 
 pub(crate) fn pattern(bytes: &[u8], options: Options) -> Program {
-    let program = source(bytes, options).and_then(|it| program_of(&it, options.dot));
+    let program = source(bytes, options).and_then(|it| program_of(&it, options));
     program.unwrap_or(Program::Never)
 }
 
 /// What `make` makes of a name, for `match`.
-pub(crate) fn part(name: &[u8], dot: bool) -> Part {
-    if name == b"**" {
+pub(crate) fn part(name: &[u8], options: Options) -> Part {
+    if name == b"**" && !options.noglobstar {
         return Part::GlobStar;
     }
-    match parse(name, dot, 0) {
+    // `if (pattern === '') return ''`
+    if name.is_empty() {
+        return Part::Literal(Box::default());
+    }
+    match parse(name, options, 0) {
         None => Part::Never,
         Some(parsed) if !parsed.has_magic => {
             let mut characters = Vec::with_capacity(name.len());
@@ -413,8 +444,7 @@ pub(crate) fn part(name: &[u8], dot: bool) -> Part {
             Part::Literal(characters.into())
         }
         // What `RegExp` refuses is `/$./`.
-        Some(parsed) => {
-            program_of(&[b"^", &parsed.re[..], b"$"].concat(), dot).map_or(Part::Never, Part::Name)
-        }
+        Some(parsed) => program_of(&[b"^", &parsed.re[..], b"$"].concat(), options)
+            .map_or(Part::Never, Part::Name),
     }
 }

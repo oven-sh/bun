@@ -256,6 +256,27 @@ fn duplicate_parameter<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     })
 }
 
+/// `import defer a from "b"`, `import defer { a } from "b"`: only a namespace can be deferred.
+fn deferred_import<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+    let refused = file.hir.imports.iter().filter_map(|it| {
+        // `import source a from "b"` is marked so, too.
+        let clause = file.text().get(it.clause_start as usize..)?;
+        let message: &[u8] = match it.is_deferred && clause.starts_with(b"defer") {
+            true if it.default.is_some() => {
+                b"Default imports are not allowed in a deferred import."
+            }
+            true if it.has_named_imports => b"Named imports are not allowed in a deferred import.",
+            _ => return None,
+        };
+        Some((it.clause_start, message))
+    });
+    let (at, message) = refused.min_by_key(|it| it.0)?;
+    Some(SyntaxError {
+        at,
+        message: message.to_vec(),
+    })
+}
+
 /// The error for which oxlint refuses a file in which TypeScript's parser has found none.
 pub(super) fn first_error<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     // acorn's checks have these for JavaScript.
@@ -273,6 +294,7 @@ pub(super) fn first_error<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
         espree::first_error_of_oxc(file),
         espree::using_in_script(file),
         espree::with_in_strict_code(file),
+        deferred_import(file),
         reserved_word(file),
         duplicate_parameter(file),
     ];

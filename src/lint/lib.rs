@@ -29,6 +29,7 @@ pub mod modules;
 pub mod options;
 pub mod oxlint_help;
 pub(crate) mod oxlint_messages;
+pub(crate) mod oxlint_order;
 pub mod paths;
 pub mod regex;
 pub mod rule;

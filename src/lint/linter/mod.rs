@@ -73,7 +73,7 @@ use crate::ast::File;
 use crate::context::{Diagnostic, Severity};
 use crate::js_plugin;
 use crate::options::{Json, Options};
-use crate::rule::Meta;
+use crate::rule::{Meta, When};
 use crate::rule_set::{RuleBits, RuleSet};
 use crate::runner::{Enabled, RuleEntry};
 use crate::span::Span;
@@ -187,6 +187,8 @@ struct Running<'r, S> {
     /// [`ConfiguredRule::or_else`]
     or_else: Option<&'r ConfiguredJsRule>,
     severity: Severity,
+    /// [`Slot::when`]
+    when: When,
     rule: RuleRef<'r, S>,
     /// [`ConfiguredRule::refusal`]
     refusal: Option<Cow<'r, [u8]>>,
@@ -362,10 +364,12 @@ impl<S: RuleSet> Linter<S> {
                 continue;
             };
             on.insert(number);
-            order.push(Slot {
-                at: at as u32,
-                number,
-            });
+            let (when, oxlint_number) = match config.language.is_oxlint {
+                true => crate::oxlint_order::of(rule.reported_as()),
+                false => (rule.entry.meta.reports, 0),
+            };
+            let at = at as u32;
+            order.push((oxlint_number, Slot { at, number, when }));
             if rule.entry.meta.requires_types {
                 typed.push(rule.entry.meta);
             }
@@ -373,9 +377,10 @@ impl<S: RuleSet> Linter<S> {
                 refusal = self.refusal(rule).map(Arc::from);
             }
         }
+        order.sort_by_key(|it| it.0);
         Prepared {
             on,
-            order: order.into(),
+            order: order.into_iter().map(|it| it.1).collect(),
             refusal,
             typed: typed.into(),
         }
@@ -484,6 +489,7 @@ impl<S: RuleSet> Linter<S> {
                     name: rule.name(),
                     or_else: rule.or_else(),
                     severity: rule.severity,
+                    when: slot.when,
                     rule: RuleRef::Shared(instance),
                     refusal: match is_plain {
                         true => None,
@@ -688,7 +694,11 @@ impl<S: RuleSet> Linter<S> {
         }
         let of_js = problems.len() - before_js;
         file.sink.wants_help.set(options.wants_help);
-        let diagnostics = crate::runner::run(file, &enabled, options.wants_fixes);
+        let when: Vec<When> = match file.language().is_oxlint {
+            true => running.iter().map(|it| it.when).collect(),
+            false => Vec::new(),
+        };
+        let diagnostics = crate::runner::run_in_order(file, &enabled, options.wants_fixes, &when);
         problems.reserve(diagnostics.len());
         // What becomes of what the last rule and `messageId` change that change something.
         let mut changes = (None, config::OxlintChanges::default());
@@ -1369,6 +1379,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 name,
                 or_else: existing.and_then(ConfiguredRule::or_else),
                 severity,
+                when: entry.meta.reports,
                 rule,
                 refusal,
             };

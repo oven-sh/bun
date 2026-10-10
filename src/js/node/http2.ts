@@ -3599,7 +3599,8 @@ class ServerHttp2Stream extends Http2Stream {
       const headersObject = { __proto__: null };
       for (let i = 0; i < rawHeadersList.length; i += 2) {
         const key = rawHeadersList[i];
-        const value = rawHeadersList[i + 1];
+        let value = rawHeadersList[i + 1];
+        if (typeof value === "object" && $isArray(value)) value = copyHeaderValueArray(value);
         const existing = headersObject[key];
         if (existing === undefined) headersObject[key] = value;
         else if ($isArray(existing)) existing.push(value);
@@ -3912,6 +3913,15 @@ function buildSensitiveNames(headers, sensitives): Record<string, boolean> {
     }
   }
   return map;
+}
+
+// Unlike node, a later duplicate is pushed into a copy: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2173
+function copyHeaderValueArray(values: any[]): any[] {
+  // ToLength, as in Array.prototype.join: a Proxy of an array can report any length.
+  const length = $toLength(values.length);
+  const copy = $newArrayWithSize(length);
+  for (let i = 0; i < length; i++) $putByValDirect(copy, i, values[i]);
+  return copy;
 }
 
 function toHeaderObject(headers, sensitiveHeadersValue) {
@@ -6039,7 +6049,8 @@ class ClientHttp2Session extends Http2Session {
         const headersObject = { __proto__: null };
         for (let i = 0; i < rawHeadersList.length; i += 2) {
           const key = rawHeadersList[i];
-          const value = rawHeadersList[i + 1];
+          let value = rawHeadersList[i + 1];
+          if (typeof value === "object" && $isArray(value)) value = copyHeaderValueArray(value);
           const existing = headersObject[key];
           if (existing === undefined) headersObject[key] = value;
           else if ($isArray(existing)) existing.push(value);

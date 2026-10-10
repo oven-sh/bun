@@ -14,7 +14,8 @@
 // ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 // IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "path";
 import { unsortedPrereleases } from "./semver-fixture.js";
 const { satisfies, order } = Bun.semver;
 
@@ -38,6 +39,12 @@ function testSatisfies(right: any, left: any, expected: boolean) {
   expect(satisfies(leftBuffer, rightBuffer)).toBe(expected);
   expect(satisfies(leftBuffer, right)).toBe(expected);
   expect(satisfies(left, rightBuffer)).toBe(expected);
+}
+
+function testSatisfiesTable(cases: [version: string, range: string, expected: boolean][]) {
+  expect(cases.map(([version, range]) => ({ version, range, satisfies: satisfies(version, range) }))).toEqual(
+    cases.map(([version, range, expected]) => ({ version, range, satisfies: expected })),
+  );
 }
 
 describe("Bun.semver.order()", () => {
@@ -806,9 +813,115 @@ describe("Bun.semver.satisfies()", () => {
     }
   });
 
+  test("space-separated comparators are an intersection, not alternatives", () => {
+    // Every expectation is node-semver 7's answer for the same input.
+    testSatisfiesTable([
+      ["2.5.0", "1.x 2.x", false],
+      ["1.0.1", "<1.0.0 1.x", false],
+      ["1.2.3", ">=2.0.0 1.2.3", false],
+      ["1.2.3", "1.2.3 4.5.6", false],
+      ["4.5.6", "1.2.3 4.5.6", false],
+      ["1.2.3", ">=2.0.0 =1.2.3", false],
+      ["1.2.3", ">=2.0.0 v1.2.3", false],
+      ["1.0.0", ">=2.0.0 *", false],
+      ["1.0.0", ">=2.0.0 x", false],
+      ["1.0.0", ">=2.0.0 x.x.x", false],
+      ["1.5.0", ">=1.0.0 1.x <1.4.0", false],
+      ["4.5.6", "4.5.6 7.8.9 || 1.2.3", false],
+      // fstream@1.0.12 declares "mkdirp": ">=0.5 0"
+      ["0.4.2", ">=0.5 0", false],
+      ["1.0.0", ">=0.5 0", false],
+      ["3.0.1", ">=0.5 0", false],
+      ["0.5.6", ">=0.5 0", true],
+      ["3.0.1", ">=0.5 v0", false],
+      ["3.0.1", ">=0.5 = 0", false],
+      ["3.0.1", " >=0.5   0 ", false],
+      ["0.5.6", " >=0.5   0 ", true],
+      ["9.9.9", "~1.0.0 x", false],
+      ["1.0.5", "~1.0.0 x", true],
+      ["0.1.0", ">=1.0.0 <2.0.0 x", false],
+      // the intersection holds, or an "||" alternative holds
+      ["1.3.0", ">=1.0.0 1.x <1.4.0", true],
+      ["2.5.0", "1.x || 2.x", true],
+      ["1.0.1", "<1.0.0 || 1.x", true],
+      ["1.2.3", ">=2.0.0 || 1.2.3", true],
+      ["1.2.3", "1.2.3 4.5.6 || 1.2.3", true],
+      ["1.2.3", "~1.2.1 1.2.3", true],
+      ["1.2.3", "~1.2.1 =1.2.3", true],
+      ["1.2.3", ">=1.2.1 1.2.3", true],
+      ["1.2.3", "1.2.3 >=1.2.1", true],
+      ["1.2.3-beta", "1.2.3-beta 1.x", true],
+      ["1.5.0", "1.2.3-beta 1.x", false],
+    ]);
+  });
+
+  test("malformed text next to a comparator still starts an alternative", () => {
+    // Packages publish ranges like these: adaptableblotter-react-aggrid@4.2.0 has the peer range "=>16.8.0".
+    testSatisfiesTable([
+      ["18.2.0", "=>16.8.0", true],
+      ["18.2.0", "=> 16.0.0", true],
+      ["18.2.0", ">=18.0.0 - <19.0.0", true],
+      ["5.0.0", ">=1.0.0 1.2.3.4", true],
+      ["1.5.0", "^2 1.2.3 - 2.3.4", true],
+      ["4.5.6", "1.2.3 - 2.3.4 4.5.6", true],
+      ["4.5.6", "1.2.3 foo 4.5.6", true],
+      ["4.5.6", "1.2.3-beta|4.5.6", true],
+      ["1.0.0", "*1.0.0", true],
+    ]);
+  });
+
   test("pre-release snapshot", () => {
     expect(unsortedPrereleases.sort(Bun.semver.order)).toMatchSnapshot();
   });
+});
+
+test("bun install resolves a space-separated range as an intersection", async () => {
+  // fstream@1.0.12 declares "mkdirp": ">=0.5 0", and npm installs mkdirp 0.5.6 for it.
+  const range = ">=0.5 0";
+  await using registry = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const { origin, pathname } = new URL(req.url);
+      const name = pathname.slice(1);
+      const versions: Record<string, object> =
+        name === "parent"
+          ? { "1.0.0": { dependencies: { transitive: range } } }
+          : { "0.4.2": {}, "0.5.6": {}, "1.0.0": {}, "3.0.1": {} };
+      return Response.json({
+        name,
+        "dist-tags": { latest: Object.keys(versions).at(-1) },
+        versions: Object.fromEntries(
+          Object.entries(versions).map(([version, manifest]) => [
+            version,
+            { name, version, ...manifest, dist: { tarball: `${origin}/${name}-${version}.tgz` } },
+          ]),
+        ),
+      });
+    },
+  });
+  using dir = tempDir("semver-space-range", {
+    "package.json": JSON.stringify({
+      name: "root",
+      version: "1.0.0",
+      dependencies: { direct: range, parent: "1.0.0" },
+    }),
+    "bunfig.toml": `[install]\ncache = false\nregistry = "${registry.url.href}"\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "install", "--lockfile-only"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) expect(stderr).toBe("");
+  const lockfile = await Bun.file(join(String(dir), "bun.lock")).text();
+  expect({
+    direct: lockfile.match(/"direct@([^"]+)"/)?.[1],
+    transitive: lockfile.match(/"transitive@([^"]+)"/)?.[1],
+  }).toEqual({ direct: "0.5.6", transitive: "0.5.6" });
+  expect(exitCode).toBe(0);
 });
 
 test("a version range with >=256 || comparators does not abort", async () => {

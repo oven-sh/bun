@@ -285,7 +285,6 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
                         ),
                     )?;
                 }
-                let _ = dependency_behavior_change_count;
             }
         }
     }

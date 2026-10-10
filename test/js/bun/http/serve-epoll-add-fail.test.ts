@@ -291,7 +291,7 @@ test.concurrent.skipIf(!isLinux || !cc)(
     expect({ stderr, line }).toEqual({ stderr: expect.any(String), line: expect.stringContaining("{") });
     const result = JSON.parse(line);
     expect(result.settled).toBe("rejected");
-    expect(result.code).toBe("FailedToOpenSocket");
+    expect(result.code).toBe("ENOSPC");
     expect(exitCode).toBe(0);
   },
 );

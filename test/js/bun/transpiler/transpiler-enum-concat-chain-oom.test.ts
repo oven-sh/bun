@@ -11,7 +11,7 @@ import { bunEnv, bunExe } from "harness";
 
 test.concurrent("long `+` chain of inlined enum members folds in linear memory", async () => {
   const fixture = /* js */ `
-    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+    const rss = process.memoryUsage.rss;
     const n = 4096;
     // The same chain twice: at top level (folds because target is "bun") and
     // as an enum member initializer (always folds).

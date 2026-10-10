@@ -388,13 +388,13 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalOb
     }
     Bun::NapiModuleMeta* meta = (Bun::NapiModuleMeta*)napi_external->value();
     void* dlopen_handle = meta->dlopenHandle;
-    CString utf8 = on_before_parse_symbol.utf8();
+    UTF8CString utf8 = on_before_parse_symbol.utf8();
 
 #if OS(WINDOWS)
-    void* on_before_parse_symbol_ptr = GetProcAddress((HMODULE)dlopen_handle, utf8.data());
+    void* on_before_parse_symbol_ptr = GetProcAddress((HMODULE)dlopen_handle, utf8.legacyCStringPointer());
     const char** native_plugin_name = (const char**)GetProcAddress((HMODULE)dlopen_handle, "BUN_PLUGIN_NAME");
 #else
-    void* on_before_parse_symbol_ptr = dlsym(dlopen_handle, utf8.data());
+    void* on_before_parse_symbol_ptr = dlsym(dlopen_handle, utf8.legacyCStringPointer());
     const char** native_plugin_name = (const char**)dlsym(dlopen_handle, "BUN_PLUGIN_NAME");
 #endif
 

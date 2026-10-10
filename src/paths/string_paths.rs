@@ -438,11 +438,6 @@ pub fn path_contains_node_modules_folder(path: &[u8]) -> bool {
 pub use crate::is_sep_any as char_is_any_slash;
 
 #[inline(always)]
-pub fn starts_with_windows_drive_letter(s: &[u8]) -> bool {
-    starts_with_windows_drive_letter_t(s)
-}
-
-#[inline(always)]
 pub fn starts_with_windows_drive_letter_t<T: Ch>(s: &[T]) -> bool {
     s.len() > 2 && s[1] == ch(b':') && {
         let c = s[0];
@@ -470,10 +465,6 @@ pub fn without_trailing_slash_windows_path(input: &[u8]) -> &[u8] {
     );
 
     path
-}
-
-pub fn without_leading_slash(this: &[u8]) -> &[u8] {
-    strings::trim_left(this, b"/")
 }
 
 pub fn without_leading_path_separator(this: &[u8]) -> &[u8] {

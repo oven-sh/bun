@@ -514,9 +514,7 @@ _bun_run_completion() {
         '-i[Automatically install dependencies and use global cache in bun'"'"'s runtime, equivalent to --install=fallback'] \
         '--prefer-offline[Skip staleness checks for packages in bun'"'"'s JavaScript runtime and resolve from disk]' \
         '--prefer-latest[Use the latest matching versions of packages in bun'"'"'s JavaScript runtime, always checking npm]' \
-        '--silent[Don'"'"'t repeat the command for bun run]' \
-        '--dump-environment-variables[Dump environment variables from .env and process as JSON and quit. Useful for debugging]' \
-        '--dump-limits[Dump system limits. Userful for debugging]' &&
+        '--silent[Don'"'"'t repeat the command for bun run]' &&
         ret=0
 
     case $state in
@@ -749,6 +747,23 @@ _bun_prune_completion() {
         ret=0
 }
 
+_bun_check_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '*: :_files' \
+        '--project[Path to a tsconfig.json or its directory]:project:_files' \
+        '-p[Path to a tsconfig.json or its directory]:project:_files' \
+        '--pretty[Show source code around each error]' \
+        '--no-pretty[One line per error]' \
+        '--all[Show every error]' \
+        '--threads[Number of threads]:threads' \
+        '--timing[Print load and check times]' \
+        '--cwd[Set the working directory]:cwd:_files -/' \
+        '--help[Print this help menu]' \
+        '-h[Print this help menu]' &&
+        ret=0
+}
+
 _bun_audit_completion() {
     _arguments -s -C \
         '1: :->cmd1' \
@@ -883,6 +898,7 @@ _bun() {
             'remove\:"Remove a dependency from package.json (bun rm)" '
             'update\:"Update outdated dependencies & save to package.json" '
             'audit\:"Check installed packages for vulnerabilities" '
+            'check\:"Type check a TypeScript project" '
             'dedupe\:"Remove duplicate versions from the lockfile" '
             'prune\:"Remove packages that are not in the lockfile from node_modules" '
             'outdated\:"Display the latest versions of outdated dependencies" '
@@ -968,6 +984,10 @@ _bun() {
             ;;
         audit)
             _bun_audit_completion
+
+            ;;
+        check)
+            _bun_check_completion
 
             ;;
         dedupe)
@@ -1067,6 +1087,10 @@ _bun() {
                     ;;
                 audit)
                     _bun_audit_completion
+
+                    ;;
+                check)
+                    _bun_check_completion
 
                     ;;
                 dedupe)

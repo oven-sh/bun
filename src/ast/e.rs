@@ -631,6 +631,9 @@ pub struct JSXElement {
     pub flags: crate::flags::JSXElementBitset,
 
     pub close_tag_loc: crate::Loc,
+
+    /// The rest of the source syntax, if the parser saves TypeScript syntax. `NONE` otherwise.
+    pub syntax: crate::ts_syntax::JsxId,
 }
 impl Default for JSXElement {
     fn default() -> Self {
@@ -641,6 +644,7 @@ impl Default for JSXElement {
             key_prop_index: -1,
             flags: crate::flags::JSXElementBitset::default(),
             close_tag_loc: crate::Loc::EMPTY,
+            syntax: crate::ts_syntax::JsxId::NONE,
         }
     }
 }
@@ -693,12 +697,6 @@ impl Number {
     #[inline(always)]
     pub const fn value(self) -> f64 {
         self.value
-    }
-}
-impl From<f64> for Number {
-    #[inline]
-    fn from(v: f64) -> Self {
-        Number::new(v)
     }
 }
 

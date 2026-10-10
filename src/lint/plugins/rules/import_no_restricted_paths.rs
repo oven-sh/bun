@@ -1,5 +1,6 @@
 use crate::import_resolve::{Resolved, Resolvers};
 use crate::module_visitor::{self, Systems};
+use bun_core::strings;
 use bun_glob::scan::is_glob;
 use bun_glob::{Options as GlobOptions, Pattern};
 use bun_lint::context::interpolate_text;
@@ -59,8 +60,9 @@ struct Zone {
     message: Box<str>,
 }
 
+/// minimatch 3 trims the pattern.
 fn minimatch(pattern: &[u8]) -> Pattern {
-    Pattern::new(pattern, GlobOptions::MINIMATCH)
+    Pattern::new(strings::trim_js_whitespace(pattern), GlobOptions::MINIMATCH)
 }
 
 /// `containsPath`. Both are absolute and resolved.

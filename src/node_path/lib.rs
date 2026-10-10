@@ -212,6 +212,7 @@ fn get_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
 
 /// Based on Node v21.6.1 path.posix.basename:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1309
+#[inline(always)]
 pub fn basename_posix_t<'a, T: PathCharCwd>(path: &'a [T], suffix: Option<&[T]>) -> &'a [T] {
     // validateString of `path` is performed in pub fn basename.
     let len = path.len();
@@ -313,6 +314,7 @@ pub fn basename_posix_t<'a, T: PathCharCwd>(path: &'a [T], suffix: Option<&[T]>)
 
 /// Based on Node v21.6.1 path.win32.basename:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L753
+#[inline(always)]
 pub fn basename_windows_t<'a, T: PathCharCwd>(
     path: &'a [T],
     suffix: Option<&[T]>,
@@ -464,6 +466,7 @@ pub fn dirname_posix_t<T: PathCharCwd>(path: &[T]) -> &[T] {
 
 /// Based on Node v21.6.1 path.win32.dirname:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L657
+#[inline(always)]
 pub fn dirname_windows_t<T: PathCharCwd>(path: &[T]) -> &[T] {
     // validateString of `path` is performed in pub fn dirname.
     let len = path.len();
@@ -577,6 +580,7 @@ pub fn dirname_windows_t<T: PathCharCwd>(path: &[T]) -> &[T] {
 
 /// Based on Node v21.6.1 path.posix.extname:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1388
+#[inline(always)]
 pub fn extname_posix_t<T: PathCharCwd>(path: &[T]) -> &[T] {
     // validateString of `path` is performed in pub fn extname.
     let len = path.len();
@@ -651,6 +655,7 @@ pub fn extname_posix_t<T: PathCharCwd>(path: &[T]) -> &[T] {
 
 /// Based on Node v21.6.1 path.win32.extname:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L840
+#[inline(always)]
 pub fn extname_windows_t<T: PathCharCwd>(path: &[T]) -> &[T] {
     // validateString of `path` is performed in pub fn extname.
     let len = path.len();

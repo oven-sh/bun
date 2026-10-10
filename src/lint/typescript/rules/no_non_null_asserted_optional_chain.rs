@@ -49,8 +49,8 @@ fn check_as_oxlint<'a>(e: Expr<'a>, operand: Expr<'a>, cx: &mut Cx<'a, NoNonNull
         let mark = Span::new(assertion.end.saturating_sub(1), assertion.end);
         cx.report(mark, NO_NON_NULL_OPTIONAL_CHAIN)
             .labels_with(|labels| {
-                if let Some(end) = end_before_optional_link(inner) {
-                    labels.push(Span::new(end, end + 1), "optional chain used");
+                if let Some(link) = end_before_optional_link(inner) {
+                    labels.push(Span::new(link, link + 1), "optional chain used");
                 }
             })
             .suggest(SUGGEST_REMOVING_NON_NULL, |fixer| fixer.remove(mark));

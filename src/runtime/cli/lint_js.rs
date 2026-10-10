@@ -307,10 +307,19 @@ fn limit_of_the_groups() -> Option<usize> {
     None
 }
 
-/// What all engines together may take: two thirds of the memory of the machine, or of the container: what is left is for the rest
-/// of this process, and for what they grow by before that is seen.
+/// What all engines together may take: half of the memory that is to be had, in the machine and in the container. A linter does
+/// not take the machine.
 fn memory_for_engines() -> usize {
-    memory() / 3 * 2
+    // On macOS next to nothing is ever free.
+    let free = match cfg!(any(target_os = "linux", windows)) {
+        true => crate::node::os::freemem() as usize,
+        false => 0,
+    };
+    (if free == 0 {
+        memory()
+    } else {
+        memory().min(free)
+    }) / 2
 }
 
 /// The memory of the machine, or of the container. `BUN_LINT_MEMORY`: for tests.

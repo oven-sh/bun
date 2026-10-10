@@ -142,6 +142,12 @@
     "non_snake_case",
     "non_upper_case_globals"
   ],
+  "src/lint/plugins/import_doctrine.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/plugins/import_export_record.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
   "src/lint/plugins/import_minimatch.rs": [
     "dead_code, until every rule of the plugin is written"
   ],
@@ -178,6 +184,9 @@
   "src/lint/react/util_ast.rs": [
     "dead_code, until every rule of the plugin is written"
   ],
+  "src/lint/react/util_component_util.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
   "src/lint/react/util_components_list.rs": [
     "dead_code, until every rule of the plugin is written"
   ],
@@ -194,6 +203,9 @@
     "dead_code, until every rule of the plugin is written"
   ],
   "src/lint/react/util_is_destructured_from_pragma_import.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_is_first_letter_capitalized.rs": [
     "dead_code, until every rule of the plugin is written"
   ],
   "src/lint/react/util_jsx.rs": [

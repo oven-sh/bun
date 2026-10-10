@@ -519,8 +519,20 @@ test.concurrent.each([
   ["webpack", "webpack", ["a.js:1:1 import/no-cycle"]],
   ["webpack beside node", { node: {}, webpack: { config: "webpack.config.js" } }, ["a.js:1:1 import/no-cycle"]],
   ["in a list", ["node", { alias: {} }], ["a.js:1:1 import/no-cycle"]],
-  ["the parsers that are here", undefined, [], { "espree": [".js"], "@typescript-eslint/parser": [".ts"] }],
-  ["another parser", "node", ["a.js:1:1 import/no-cycle"], { "@babel/eslint-parser": [".js"] }],
+  ["in a list in a list", [["node"], [["webpack"]]], ["a.js:1:1 import/no-cycle"]],
+  ["lists of what is known", [["node"], [], null], []],
+  ["what counts as none", 0, []],
+  // The package reports that.
+  ["what is no resolver", true, ["a.js:1:1 import/no-cycle"]],
+  ["what is no resolver, in a list", ["node", 0], ["a.js:1:1 import/no-cycle"]],
+  ["core modules that are no list", "node", ["a.js:1:1 import/no-cycle"], { "import/core-modules": 5 }],
+  [
+    "the parsers that are here",
+    undefined,
+    [],
+    { "import/parsers": { "espree": [".js"], "@typescript-eslint/parser": [".ts"] } },
+  ],
+  ["another parser", "node", ["a.js:1:1 import/no-cycle"], { "import/parsers": { "@babel/eslint-parser": [".js"] } }],
   // As eslint-config-next writes them: `[require.resolve("eslint-import-resolver-node")]`.
   [
     "paths of the packages",
@@ -529,7 +541,7 @@ test.concurrent.each([
       "C:\\p\\node_modules\\eslint-import-resolver-typescript\\lib\\index.cjs": {},
     },
     [],
-    { "/p/node_modules/.pnpm/a/node_modules/@typescript-eslint/parser/dist/index.js": [".ts"] },
+    { "import/parsers": { "/p/node_modules/.pnpm/a/node_modules/@typescript-eslint/parser/dist/index.js": [".ts"] } },
   ],
   [
     "the path of another",
@@ -539,10 +551,10 @@ test.concurrent.each([
 ] as [string, unknown, string[], object?][])(
   "import/resolver: the package answers for a resolver that is not known here: %s",
   // With four parameters the fourth is `done` for a row of three.
-  async (_, resolver, expected, parsers = undefined) => {
+  async (_, resolver, expected, more = undefined) => {
     const theirs = `{ create: context => ({ Program(node) { context.report({ node, message: "theirs" }); } }) }`;
     const config = `export default [
-    { settings: ${JSON.stringify({ "import/resolver": resolver, "import/parsers": parsers })} },
+    { settings: ${JSON.stringify({ "import/resolver": resolver, ...more })} },
     { plugins: { import: { meta: { name: "eslint-plugin-import" }, rules: { "no-cycle": ${theirs} } } }, rules: { "import/no-cycle": "error" } },
   ];`;
     const { problems } = await lint({ "eslint.config.mjs": config, "a.js": "export {};\n" }, ["a.js"]);

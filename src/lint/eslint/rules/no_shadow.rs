@@ -602,7 +602,11 @@ impl Checker {
             .data("name", name)
             .data("shadowedLine", position.line)
             .data("shadowedColumn", position.column + 1)
-            .labels_with(|labels| labels.push(shadowed.identifier, "shadowed declaration is here"));
+            .labels_with(|labels| {
+                // The name without its type.
+                let start = shadowed.identifier.start;
+                labels.push(Span::new(start, start + name.bytes().len() as u32), "shadowed declaration is here");
+            });
     }
 
     /// Reports every variable of the file that shadows another. What is declared in the global

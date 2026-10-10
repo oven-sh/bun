@@ -123,17 +123,6 @@ fn take(json: &mut Json, key: &[u8]) -> Option<Json> {
     Some(entries.remove(at).1)
 }
 
-/// `Boolean(value)`
-fn is_truthy(value: &Json) -> bool {
-    match value {
-        Json::Null => false,
-        Json::Bool(value) => *value,
-        Json::Number(value) => *value != 0.0 && !value.is_nan(),
-        Json::String(value) => !value.is_empty(),
-        Json::Array(_) | Json::Object(_) => true,
-    }
-}
-
 // ───────────────────────────── what has changed since ESLint 8 ─────────────────────────────
 
 /// The options that rules had by default in ESLint 8 and no longer have.
@@ -1944,7 +1933,7 @@ fn edition_of(options: &Json) -> Result<u32, Vec<u8>> {
         return Err(b"Invalid sourceType.".to_vec());
     }
     let allows_reserved = options.get(b"allowReserved");
-    if version != 3 && allows_reserved.is_some_and(is_truthy) {
+    if version != 3 && allows_reserved.is_some_and(Json::is_truthy) {
         return Err(b"`allowReserved` is only supported when ecmaVersion is 3".to_vec());
     }
     if allows_reserved.is_some_and(|it| it.as_bool().is_none()) {
@@ -2145,7 +2134,7 @@ pub(super) fn resolve(language_options: &mut Json) -> Result<Eslint8, Vec<u8>> {
             .filter_map(|it| Some(it.as_str()?.into()))
             .collect(),
         env: (env.unwrap_or_default().iter())
-            .map(|(name, value)| (name[..].into(), is_truthy(value)))
+            .map(|(name, value)| (name[..].into(), value.is_truthy()))
             .collect(),
         environments: own.get(b"environments").cloned().unwrap_or(Json::Null),
         defaults: own.get(b"defaults").cloned().unwrap_or(Json::Null),

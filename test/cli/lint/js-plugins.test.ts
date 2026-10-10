@@ -1885,7 +1885,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         };
         const text = `foo;\n/*${Buffer.alloc(250_000, "x")}*/\n`;
         for (let i = 0; i < count; i++) files[`src/${i}.js`] = text;
-        // Two thirds of it are for the engines, of which each grows to 320 MB.
+        // Half of it is for the engines, of which each grows to 320 MB.
         const variables = { BUN_LINT_MEMORY: String(768 << 20) };
         const { raw, stderr, exitCode } = await lint(
           files,

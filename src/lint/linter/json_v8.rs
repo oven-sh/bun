@@ -31,13 +31,6 @@ struct Parser<'t> {
 
 type Parsed<T> = Result<T, Vec<u8>>;
 
-fn push_utf16(out: &mut Vec<u8>, units: &[u16]) {
-    for c in char::decode_utf16(units.iter().copied()) {
-        let c = c.unwrap_or(char::REPLACEMENT_CHARACTER);
-        out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
-    }
-}
-
 impl Parser<'_> {
     fn current(&self) -> Option<u16> {
         self.text.get(self.at).copied()
@@ -115,7 +108,7 @@ impl Parser<'_> {
             .any(is)
         {
             let mut out = vec![b'"'];
-            push_utf16(&mut out, self.text);
+            bun_core::strings::to_utf8_append_to_list(&mut out, self.text);
             out.extend_from_slice(b"\" is not valid JSON");
             return out;
         }
@@ -129,11 +122,11 @@ impl Parser<'_> {
             ("...", at - CONTEXT, len, "")
         };
         let mut out = b"Unexpected token '".to_vec();
-        push_utf16(&mut out, &self.text[at..at + 1]);
+        bun_core::strings::to_utf8_append_to_list(&mut out, &self.text[at..at + 1]);
         out.extend_from_slice(b"', ");
         out.extend_from_slice(before.as_bytes());
         out.push(b'"');
-        push_utf16(&mut out, &self.text[start..end]);
+        bun_core::strings::to_utf8_append_to_list(&mut out, &self.text[start..end]);
         out.push(b'"');
         out.extend_from_slice(after.as_bytes());
         out.extend_from_slice(b" is not valid JSON");
@@ -221,7 +214,7 @@ impl Parser<'_> {
                 0x22 => {
                     self.at += 1;
                     let mut out = Vec::with_capacity(units.len());
-                    push_utf16(&mut out, &units);
+                    bun_core::strings::to_utf8_append_to_list(&mut out, &units);
                     return Ok(out);
                 }
                 0x5C => {

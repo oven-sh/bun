@@ -1963,6 +1963,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
     let of_run = Session::new();
     let at_once = match request.plan_options.memory {
         0 => 1,
+        _ if !RUNS_PROGRAMS_AT_ONCE => 1,
         _ => disk.threads().min(by_project.len()),
     };
     let shares_every_file = request.plan_options.shares_every_file;
@@ -2080,6 +2081,10 @@ struct OfProject<'a, 'u> {
     place: Option<&'a Place<'a>>,
 }
 
+/// Not yet. A run with types over 110 programs takes 29 s in place of 45, with the same output, and 2.7 GB in place of 2.0. But
+/// that the bound by memory binds is not shown: told that there are 8 GB, so that 2 GB are the bound, that run peaks at 3.1 GB.
+const RUNS_PROGRAMS_AT_ONCE: bool = false;
+
 /// How many programs of a request run at the same time: as many as there is memory for. What a program takes is not known
 /// before its files are found. Until then it counts for as much as the largest so far has taken, and it is the only one of
 /// which that is so: files are found for one program at a time anyway (`WAITS_ACROSS_POOLS`). From then on it counts for what
@@ -2130,12 +2135,13 @@ impl<'a> Room<'a> {
         }
     }
 
-    /// What is left of `bytes`, and no more than lets the request take a third as much again as with one program after the
-    /// other, which is what they have in common and the largest.
+    /// What is left of `bytes`, and no more than lets the request take half as much again as with one program after the other,
+    /// which is what they have in common and the largest. With a third there is room for too few: 110 programs take as long as
+    /// one after the other.
     fn for_programs(&self, taken: &Taken) -> usize {
         let in_common = (self.in_common)();
         let left = self.bytes.saturating_sub(in_common);
-        left.min(taken.largest + (in_common + taken.largest) / 3)
+        left.min(taken.largest + (in_common + taken.largest) / 2)
     }
 
     /// Waits until there is room for one more, or nothing else runs.

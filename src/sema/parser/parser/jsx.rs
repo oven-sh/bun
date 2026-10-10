@@ -27,7 +27,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// What `parseUpdateExpression` does at a `<`.
     pub(crate) fn jsx_element_or_fragment(&mut self) -> ExprId {
         if self.recovers() && !self.is_at_jsx_element() {
-            return self.update_expression_at_less_than();
+            return match self.is_ecmascript {
+                // There an element is a primary expression, and this is none.
+                true => self.missing_expression(1109),
+                false => self.update_expression_at_less_than(),
+            };
         }
         self.jsx_elements(false)
     }

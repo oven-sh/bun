@@ -48,7 +48,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintShape, (JSGlobalObject * globalObject, CallFrame*
 namespace {
 
 // The message of `ast::write`: ten words, then the parts whose lengths these are.
-struct Tree {
+struct LintTree {
     uint32_t count, fieldCount, listCount, stringCount;
     std::span<const uint8_t> numbers;
     std::span<const uint32_t> starts, ends, parents, fields, lists, strings;
@@ -89,9 +89,9 @@ struct Tree {
     }
 };
 
-class NodeMaker {
+class LintNodeMaker {
 public:
-    NodeMaker(JSGlobalObject* globalObject, const Tree& tree, JSArray* nodes, JSString* text, JSArray* knownStrings, JSObject* slow)
+    LintNodeMaker(JSGlobalObject* globalObject, const LintTree& tree, JSArray* nodes, JSString* text, JSArray* knownStrings, JSObject* slow)
         : m_globalObject(globalObject)
         , m_vm(globalObject->vm())
         , m_tree(tree)
@@ -195,7 +195,7 @@ private:
 
     JSGlobalObject* m_globalObject;
     VM& m_vm;
-    const Tree& m_tree;
+    const LintTree& m_tree;
     JSArray* m_nodes;
     JSString* m_text;
     uint32_t m_textLength;
@@ -227,7 +227,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintNodes, (JSGlobalObject * globalObject, CallFrame*
     text->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    Tree tree;
+    LintTree tree;
     if (!tree.read(buffer->impl()->span()))
         return outOfStep();
     uint32_t count = tree.count;
@@ -282,7 +282,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintNodes, (JSGlobalObject * globalObject, CallFrame*
         return {};
     }
     Structure* rangeStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithInt32);
-    NodeMaker maker(globalObject, tree, nodes, text, knownStrings, slow);
+    LintNodeMaker maker(globalObject, tree, nodes, text, knownStrings, slow);
 
     // What is in a node has a higher number.
     for (uint32_t id = count; id--;) {

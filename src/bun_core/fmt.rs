@@ -1105,34 +1105,42 @@ pub fn js_string_to_number(text: &[u8]) -> f64 {
             f64::INFINITY
         };
     }
-    // `StrUnsignedDecimalLiteral`
+    match js_decimal_literal_len(unsigned) == unsigned.len() {
+        true => parse_f64(text).unwrap_or(f64::NAN),
+        false => f64::NAN,
+    }
+}
+
+/// The length of the `StrUnsignedDecimalLiteral` of ECMAScript that `text` starts with, `Infinity`
+/// apart: what `parseFloat` reads behind the sign. 0: none.
+pub fn js_decimal_literal_len(text: &[u8]) -> usize {
     let digits = |from: usize| {
-        unsigned[from..]
+        text.get(from..)
+            .unwrap_or_default()
             .iter()
             .take_while(|c| c.is_ascii_digit())
             .count()
     };
     let whole = digits(0);
-    let mut at = whole;
+    let mut len = whole;
     let mut fraction = 0;
-    if unsigned.get(at) == Some(&b'.') {
-        fraction = digits(at + 1);
-        at += 1 + fraction;
-    }
-    if whole + fraction == 0 {
-        return f64::NAN;
-    }
-    if let Some(b'e' | b'E') = unsigned.get(at) {
-        let sign = usize::from(matches!(unsigned.get(at + 1), Some(b'+' | b'-')));
-        match digits(at + 1 + sign) {
-            0 => return f64::NAN,
-            exponent => at += 1 + sign + exponent,
+    if text.get(len) == Some(&b'.') {
+        fraction = digits(len + 1);
+        if whole + fraction > 0 {
+            len += 1 + fraction;
         }
     }
-    match at == unsigned.len() {
-        true => parse_f64(text).unwrap_or(f64::NAN),
-        false => f64::NAN,
+    if whole + fraction == 0 {
+        return 0;
     }
+    if matches!(text.get(len), Some(b'e' | b'E')) {
+        let sign = usize::from(matches!(text.get(len + 1), Some(b'+' | b'-')));
+        let exponent = digits(len + 1 + sign);
+        if exponent > 0 {
+            len += 1 + sign + exponent;
+        }
+    }
+    len
 }
 
 /// `parse_f64` truncated to `f32`.

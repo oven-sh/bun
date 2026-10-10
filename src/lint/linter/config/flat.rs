@@ -146,16 +146,27 @@ pub(super) fn names_unknown_resolver(settings: &Json) -> bool {
             .unwrap_or(name);
         matches!(name, b"node" | b"typescript")
     };
-    let is_unknown = |it: &Json| match it {
-        Json::String(name) => !is_known(name),
-        Json::Object(entries) => entries.iter().any(|it| !is_known(&it.0)),
-        _ => false,
-    };
-    match settings.get(b"import/resolver") {
-        Some(Json::Array(items)) => items.iter().any(is_unknown),
-        Some(one) => is_unknown(one),
-        None => false,
+    // `new Set(..)` throws at it.
+    let core_modules = settings.get(b"import/core-modules");
+    if matches!(
+        core_modules,
+        Some(Json::Bool(_) | Json::Number(_) | Json::Object(_))
+    ) {
+        return true;
     }
+    // `resolverReducer`: it goes into arrays, and throws at what is no string and no object.
+    let written = settings.get(b"import/resolver");
+    let mut pending: Vec<&Json> = written.filter(|it| it.is_truthy()).into_iter().collect();
+    while let Some(it) = pending.pop() {
+        match it {
+            Json::Array(items) => pending.extend(items),
+            Json::String(name) if is_known(name) => {}
+            Json::Object(entries) if entries.iter().all(|it| is_known(&it.0)) => {}
+            Json::Null => {}
+            _ => return true,
+        }
+    }
+    false
 }
 
 /// The same for what a configuration file exports, or a part of it.

@@ -291,7 +291,7 @@ pub fn requests_of<'a>(file: &'a File<'a>, flavor: Flavor) -> Vec<Request<'a>> {
 
 /// Whether an `import` in `text` is followed by something other than a name, a string, a `{` or a `*`. To look at the text costs far
 /// less than to look for the expressions of a kind, which few files have.
-fn may_have_import_call(text: &[u8]) -> bool {
+pub fn may_have_import_call(text: &[u8]) -> bool {
     let mut rest = text;
     while let Some(at) = strings::index_of(rest, b"import") {
         rest = &rest[at + 6..];

@@ -248,13 +248,13 @@ impl<'a> Writer<'a, '_> {
                     let (node, span, id, to) = (open.node, open.span, open.id, open.at);
                     open.at += 1;
                     let value = (entry.get)(node);
-                    let word = match (value, open.last_child) {
+                    let word = match (&value, &open.last_child) {
                         // For espree both names of `import { a }` are one node.
-                        (Value::Node(child), Some((last, last_id))) if child == last => {
+                        (Value::Node(child), &Some((last, last_id))) if *child == last => {
                             self.tree.twice.push(last_id);
                             word(Tag::Node, last_id as usize)
                         }
-                        (Value::Node(child), _) => {
+                        (&Value::Node(child), _) => {
                             open.last_child = Some((child, self.tree.types.len() as u32));
                             word(Tag::Node, self.start_node(child, id) as usize)
                         }

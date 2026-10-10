@@ -26,7 +26,8 @@ impl Unit for u16 {
     }
 }
 
-/// `text.toLowerCase()`
+/// Each character in lower case by itself, which is how the crate `natord` ignores case. Not `text.toLowerCase()`, in which a
+/// sigma at the end of a word is another letter.
 pub(super) fn lowercase(text: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.len());
     for lower in text.chars().flat_map(char::to_lowercase) {
@@ -36,14 +37,9 @@ pub(super) fn lowercase(text: &[u8]) -> Vec<u8> {
 }
 
 fn utf16(text: &[u8], is_lowercased: bool) -> Vec<u16> {
-    let units = |text: &[u8]| {
-        text.chars()
-            .flat_map(|it| it.encode_utf16(&mut [0; 2]).to_vec())
-            .collect()
-    };
     match is_lowercased {
-        true => units(&lowercase(text)),
-        false => units(text),
+        true => bun_core::strings::wtf8_to_utf16(&crate::text::to_lower_case(text)),
+        false => bun_core::strings::wtf8_to_utf16(text),
     }
 }
 

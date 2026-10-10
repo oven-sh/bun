@@ -215,7 +215,7 @@ impl<'e> ForRules<'e> {
         if is_prettier && configs.is_oxfmt_for(&scope) {
             return Err(Reason::Configuration);
         }
-        if !configs.missing_plugins(&scope).is_empty() {
+        if !configs.missing_plugins(&scope, path).is_empty() {
             return Err(Reason::Plugin);
         }
         match language_of(configs, &scope, path) {

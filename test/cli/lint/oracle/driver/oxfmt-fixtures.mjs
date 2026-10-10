@@ -24,7 +24,7 @@ const show = process.argv.includes("--show");
 // Commands that `bun format` does not have, and what `vp` tells oxfmt through the environment.
 const leftOut = /^(migrate_|vite_plus)/;
 const compared =
-  /(\.([cm]?[jt]sx?|jsonc?|json5|css|scss|less|graphql|gql|ya?ml|md|markdown|hbs|handlebars|html?|vue|svelte|mjml|toml|toml\.example|toml\.orig)|(^|\/)Pipfile)$/;
+  /(\.([cm]?[jt]sx?|jsonc?|json5|css|scss|less|graphql|gql|ya?ml|mdx?|markdown|hbs|handlebars|html?|vue|svelte|mjml|toml|toml\.example|toml\.orig)|(^|\/)Pipfile)$/;
 
 function readAll(root) {
   const files = {};

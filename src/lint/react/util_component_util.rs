@@ -7,6 +7,7 @@
 use crate::util_is_create_element::is_member_called;
 use crate::util_pragma::{get_create_class_from_context, get_from_context};
 use bun_core::strings;
+use bun_lint::language::Parser;
 use bun_lint::prelude::*;
 use bun_lint::utils::estree_compat::{estree_parent, estree_span, normalize};
 
@@ -28,9 +29,17 @@ impl<'a> Pragmas<'a> {
     fn create_class_name(&self) -> &'a str {
         std::str::from_utf8(self.create_class).unwrap_or_default()
     }
+
+    /// `object.name === pragma`
+    fn is_pragma(&self, object: Expr<'_>) -> bool {
+        object
+            .as_ident()
+            .is_some_and(|it| it.bytes() == self.pragma)
+    }
 }
 
-/// A node of ESTree on the way up from an expression or a statement. Upstream counts parents.
+/// A node of ESTree on the way up from an expression or a statement: upstream counts parents.
+/// Not all that are no nodes here are counted: no `Decorator`, no `TSModuleBlock`, none of a type.
 #[derive(Copy, Clone)]
 enum Above<'a> {
     /// One that is a node here, [`normalize`]d.
@@ -94,6 +103,10 @@ impl<'a> Above<'a> {
                 Node::Class(class) => Above::Part(class.body_span().start, Node::Class(class)),
                 parent => Above::Node(parent),
             },
+            // The `JSXOpeningElement`.
+            Node::Prop(prop) if prop.is_jsx_attribute() => {
+                Above::Part(prop.parent().span().start, prop.parent())
+            }
             _ => Above::Node(estree_parent(written)),
         }
     }
@@ -101,8 +114,11 @@ impl<'a> Above<'a> {
     /// `node.range[0]`
     fn start(self) -> u32 {
         match self {
-            // A `Program` starts with its first token.
-            Above::Node(Node::File(file)) => file.body().first().map_or(0, |it| it.span().start),
+            // espree's `Program` is the whole text, typescript-estree's starts with a token.
+            Above::Node(Node::File(file)) => match file.language().parser {
+                Parser::Espree if file.is_javascript() => 0,
+                _ => file.program_span().start,
+            },
             Above::Node(node) => estree_span(node).start,
             Above::Chain(e) => e.span().start,
             Above::Part(start, _) => start,
@@ -134,9 +150,7 @@ impl<'a> Above<'a> {
         if let Some(object) = callee.object()
             && !callee.is_chain_root()
         {
-            return object
-                .as_ident()
-                .is_some_and(|it| it.bytes() == pragmas.pragma)
+            return pragmas.is_pragma(object)
                 && is_member_called(callee, pragmas.create_class_name());
         }
         // createClass({})
@@ -209,9 +223,7 @@ fn has_component_as_super_class(class: Class<'_>, pragmas: &Pragmas<'_>) -> bool
         return false;
     };
     if let Some(object) = super_class.object() {
-        return object
-            .as_ident()
-            .is_some_and(|it| it.bytes() == pragmas.pragma)
+        return pragmas.is_pragma(object)
             && (is_member_called(super_class, "Component")
                 || is_member_called(super_class, "PureComponent"));
     }

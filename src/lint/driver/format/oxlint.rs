@@ -150,6 +150,9 @@ impl<'t> Offsets<'t> {
         let after_start = (column as usize).saturating_sub(1);
         let at = if self.is_ascii {
             (start + after_start).min(self.text.len())
+        } else if after_start <= Self::STEP {
+            // Counted from the start of the line. The marks are for a line that is long.
+            self.forward((start, 0), after_start)
         } else if let Some(&before) = self
             .marks
             .get(start / Self::STEP)

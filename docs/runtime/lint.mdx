@@ -133,9 +133,27 @@ Plugins run inside `bun lint`, on threads of their own, as they run inside `esli
 - Its `process.on("exit")` handlers run after the report.
 - A rule that throws ends the run with exit code `2`. With an `.oxlintrc.json` the error is reported for the file, and the run goes on.
 - Each thread that runs rules in JavaScript loads the plugins for itself, so state at the top level of a module is per thread, and so are the handlers.
-- The rules in JavaScript run on as many threads as still find work when they have loaded the plugins, which each has to do again: one for a small project, one per CPU core for a large one. Files of 256 KB and more are not counted: they all go to one of these threads, one at a time. Together they stay within two thirds of the memory of the machine, or of the container: there are fewer of them if the plugins are large.
+- The rules in JavaScript run on as many threads as still find work when they have loaded the plugins, which each has to do again: one for a small project, one per CPU core for a large one. Files of 256 KB and more are not counted: they all go to one of these threads, one at a time. Together they plan to stay within half of the memory that is free, in the machine and in the container: there are fewer of them if the plugins are large.
 
 Types are not there for a rule in JavaScript. `parserServices.program` is `null`, also with `--type-aware`. A rule that asks for types with `getParserServices()` of typescript-eslint does not run. See [what cannot be linted](#what-cannot-be-linted).
+
+#### `prettier/prettier`
+
+The rule of [eslint-plugin-prettier](https://github.com/prettier/eslint-plugin-prettier) is built in. It compares each file with what [`bun format`](/runtime/format) prints, so no Prettier is started. The options, the messages, the places and the fixes are those of the package.
+
+```js eslint.config.js icon="file-code"
+import prettier from "eslint-plugin-prettier";
+
+export default [{ plugins: { prettier }, rules: { "prettier/prettier": "error" } }];
+```
+
+It answers only where its text is Prettier's, byte for byte. For every other file the rule of the package runs in JavaScript, and a note says why:
+
+- `prettier` 3.9 and `eslint-plugin-prettier` 5 are not what is installed
+- a plugin of Prettier that `bun format` does not have may print the file
+- the rule or the configuration has an option that `bun format` does not know
+- the file is not JavaScript or TypeScript
+- `bun format` finds a syntax error in the file
 
 ### Other languages
 
@@ -713,6 +731,20 @@ The type is found in arrays, tuples and unions, under another name, through `imp
 | `mint`     | The functions of the module that make a value of the type without a check     |
 | `mintedIn` | The ends of the paths of the files that may import them, besides the module   |
 
+### `bun/format`
+
+The same rule for a project without Prettier: it reports where a file differs from what `bun format` prints, whatever is installed.
+
+```json .oxlintrc.json icon="file-json"
+{ "rules": { "bun/format": "error" } }
+```
+
+| Option            | Default | Meaning                                                             |
+| ----------------- | ------- | ------------------------------------------------------------------- |
+| the first         | `{}`    | Options of Prettier, which win over those of the configuration file |
+| `usePrettierrc`   | `true`  | Whether the configuration file and `.editorconfig` count            |
+| `fileInfoOptions` | `{}`    | `ignorePath`, `withNodeModules`                                     |
+
 ## What cannot be linted
 
 A configuration can ask for more than `bun lint` can do:
@@ -906,7 +938,7 @@ With [lint-staged](https://github.com/lint-staged/lint-staged):
 
 Your script wins. `bun lint` runs it, like `bun run lint`.
 
-A `lint` script in `package.json`, a file such as `lint.ts`, or `node_modules/.bin/lint` keeps the name: `bun lint` runs that, as it did before.
+A `lint` script in `package.json`, a file such as `lint.ts`, or `node_modules/.bin/lint` keeps the name: `bun lint` runs that, as it did before. A package called lint somewhere in node_modules, or a directory called lint without an index file, does not.
 
 ```json package.json icon="file-json"
 {

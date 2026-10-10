@@ -332,7 +332,7 @@ The first line of the output tells you that the script ran: `$ bun format`.
 
 In another script, `bun format` runs the `format` script too, with the flags added. So `"format:check": "bun format --check"` runs the `format` script with `--check`.
 
-A file such as `format.ts`, a directory `format/` with an `index.js`, or `node_modules/.bin/format` keeps the name too: `bun format` runs that, as it did before.
+A file such as `format.ts`, a directory `format/` with an `index.js`, or `node_modules/.bin/format` keeps the name too: `bun format` runs that, as it did before. A package called `format` somewhere in `node_modules`, or a directory called `format` without an index file, does not.
 
 ## Differences from Prettier
 

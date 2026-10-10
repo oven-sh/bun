@@ -496,6 +496,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     fn declaration(&mut self) -> StmtId {
         let start = self.start();
         let base = self.s.modifiers.len();
+        // acorn stops here, whatever is wrong further on.
+        if GENERAL && self.lx.is_script && matches!(self.token(), T::Import | T::Export) {
+            self.error_at_token(1128, &[]);
+        }
         // The common declarations have no modifier.
         let flags = match self.token() {
             T::Var

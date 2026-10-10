@@ -7,7 +7,7 @@
 // `--check`: writes nothing, and fails if `data.rs` is not what would be written.
 //
 // Those of the rules of other plugins are taken from `meta` in test/cli/lint/conformance/fixtures/<plugin>, those of Bun's own
-// rules from `own.json`.
+// rules, and that of eslint-plugin-prettier's one, from `own.json`.
 //
 // A subtree that occurs more than once is written once, in `SHARED`, and `{"$":<index>}` stands for it. A long list of strings
 // is in `NAMES`, each as the number of bytes that it has in common with the one before it, the number of the others, and these;
@@ -68,7 +68,7 @@ for (const plugin of ["react-hooks", "import", "n", "oxc", "react"]) {
     });
   }
 }
-// Bun's own rules are of no package: their schemas are written here.
+// Bun's own rules are of no package: their schemas are written here. So is that of `prettier/prettier`, which has no fixtures there.
 for (const [id, schema] of Object.entries(JSON.parse(readFileSync(join(import.meta.dirname, "own.json"), "utf8"))))
   add(id, { meta: { schema } });
 // The rules of the React Compiler in eslint-plugin-react-hooks, which have no fixtures there.

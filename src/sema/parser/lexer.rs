@@ -1492,7 +1492,7 @@ impl<'a> Lexer<'a> {
                     };
                 }
                 Some(_) => {
-                    let end = end_of_run_before(src, pos + 1, [b'`', b'$', b'\\', b'\r']);
+                    let end = end_of_run_before(src, pos + 1, *b"`$\\\r");
                     let written = src.get(pos..end).unwrap_or_default();
                     is_ascii &= written.is_ascii();
                     text.extend_from_slice(written);

@@ -59,6 +59,11 @@ pub(crate) fn unit_at(s: &[u8], i: usize) -> (u32, usize) {
     if b < 0x80 {
         return (u32::from(b), 1);
     }
+    unit_outside_ascii_at(s, i, b)
+}
+
+/// Apart, so that what is before it is inlined.
+fn unit_outside_ascii_at(s: &[u8], i: usize, b: u8) -> (u32, usize) {
     if b & 0xC0 == 0x80 {
         return match astral_around(s, i) {
             Some(cp) => (trail_surrogate(cp), 2),

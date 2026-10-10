@@ -1795,7 +1795,8 @@ describe.concurrent("the plugin bun", () => {
   test("--rules lists them, without a category and without a page", async () => {
     const { stdout } = await lint({ ".oxlintrc.json": "{}" }, ["--rules", "-f", "json"]);
     const listed = (JSON.parse(stdout) as Record<string, unknown>[]).filter(it => it.scope === "bun");
-    expect(listed.map(it => it.value)).toEqual(Object.keys(rules).toSorted());
+    // `bun/format` is tested with `prettier/prettier`: prettier-rule.test.ts.
+    expect(listed.map(it => it.value)).toEqual([...Object.keys(rules), "format"].toSorted());
     expect([...new Set(listed.map(it => JSON.stringify([it.category, it.default, it.docs_url])))]).toEqual([
       "[null,false,null]",
     ]);

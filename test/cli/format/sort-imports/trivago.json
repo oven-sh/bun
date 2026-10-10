@@ -4933,5 +4933,50 @@
   "options": {},
   "input": "import { $x, a } from \"z101ü\";\nimport { a1, B } from \"#\";\nimport { éZ, Bba, BA10 } from \"A\";\nimport { Ba } from \"😀\";\nimport { é2, éZx, $ßa } from \"øb日本\";\nimport { $Aß, Béé } from \"ü1A\";\nimport { BxZ, $日 } from \"x2.\";\nimport { _xx, B1é, _z } from \"~x2\";\n",
   "output": "import { a1, B } from \"#\";\nimport { éZ, Bba, BA10 } from \"A\";\nimport { BxZ, $日 } from \"x2.\";\nimport { $x, a } from \"z101ü\";\nimport { _xx, B1é, _z } from \"~x2\";\nimport { é2, éZx, $ßa } from \"øb日本\";\nimport { $Aß, Béé } from \"ü1A\";\nimport { Ba } from \"😀\";\n"
+ },
+ {
+  "name": "fuzz-sigma/27/2",
+  "filename": "fuzz.ts",
+  "options": {
+   "importOrder": [
+    "<BUILTIN_MODULES>",
+    "<THIRD_PARTY_MODULES>",
+    "^[./]"
+   ],
+   "importOrderSideEffects": false,
+   "importOrderCaseInsensitive": true
+  },
+  "input": "import { B, $, é_ς } from \"ασοδος\";\nimport { $A, _1z, é2 } from \"οδοσ\";\nimport { é } from \"οδοσ~1e3οδοσ\";\nimport { _, $é, $σ } from \"ςοδος\";\nimport { a } from \"x10\";\nimport { $2, a$$ } from \"οδοσß~\";\nimport { éa } from \"ñ-ø\";\nimport { _ΣB } from \"ΟΔΟΣ$@οδοσ\";\n",
+  "output": "import { a } from \"x10\";\nimport { éa } from \"ñ-ø\";\nimport { B, $, é_ς } from \"ασοδος\";\nimport { _ΣB } from \"ΟΔΟΣ$@οδοσ\";\nimport { $A, _1z, é2 } from \"οδοσ\";\nimport { é } from \"οδοσ~1e3οδοσ\";\nimport { $2, a$$ } from \"οδοσß~\";\nimport { _, $é, $σ } from \"ςοδος\";\n"
+ },
+ {
+  "name": "fuzz-sigma/67/2",
+  "filename": "fuzz.ts",
+  "options": {
+   "importOrder": [
+    "<BUILTIN_MODULES>",
+    "<THIRD_PARTY_MODULES>",
+    "^[./]"
+   ],
+   "importOrderSideEffects": false,
+   "importOrderCaseInsensitive": true
+  },
+  "input": "import { Bßς } from \"b\";\nimport { é2, $é } from \"ς\";\nimport { $x, _10b, é } from \"ς0x1fασa\";\nimport { éσ, $é日, _ } from \"ΟΔΟΣ@😀\";\nimport { _ß, _10z, $1 } from \"οδοςς\";\nimport { B, _1σ, $, é2ß } from \"ñx1/ς\";\nimport { é_ } from \"02ςA1\";\nimport { B_x } from \"É\";\n",
+  "output": "import { é_ } from \"02ςA1\";\nimport { Bßς } from \"b\";\nimport { B_x } from \"É\";\nimport { B, _1σ, $, é2ß } from \"ñx1/ς\";\nimport { éσ, $é日, _ } from \"ΟΔΟΣ@😀\";\nimport { _ß, _10z, $1 } from \"οδοςς\";\nimport { é2, $é } from \"ς\";\nimport { $x, _10b, é } from \"ς0x1fασa\";\n"
+ },
+ {
+  "name": "fuzz-sigma/227/2",
+  "filename": "fuzz.ts",
+  "options": {
+   "importOrder": [
+    "<BUILTIN_MODULES>",
+    "<THIRD_PARTY_MODULES>",
+    "^[./]"
+   ],
+   "importOrderSideEffects": false,
+   "importOrderCaseInsensitive": true
+  },
+  "input": "import { $, Bx, _b } from \"οδοςB\";\nimport { _2日, é } from \"x1æΟΔΟΣ\";\nimport { a } from \"ΣοδοςΟΔΟΣ02\";\nimport { _Σ, é2 } from \"ς\";\nimport { Bß, $ς, B } from \"ΟΔΟΣ2\";\nimport { B$, $bB } from \"x10@$x1\";\nimport { _, _$Σ, az } from \"æ\";\nimport { _Z, é10 } from \"x1ΟΔΟΣ\";\n",
+  "output": "import { _2日, é } from \"x1æΟΔΟΣ\";\nimport { _Z, é10 } from \"x1ΟΔΟΣ\";\nimport { B$, $bB } from \"x10@$x1\";\nimport { _, _$Σ, az } from \"æ\";\nimport { Bß, $ς, B } from \"ΟΔΟΣ2\";\nimport { $, Bx, _b } from \"οδοςB\";\nimport { _Σ, é2 } from \"ς\";\nimport { a } from \"ΣοδοςΟΔΟΣ02\";\n"
  }
 ]

@@ -803,6 +803,16 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     }
 
     /// `parseParenthesizedArrowFunctionExpression`. `is_one`: what the tokens ahead have said.
+    /// `parseParenthesizedArrowFunctionExpression` at a `=>`: the `(` is missed.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn arrow_function_without_parameters(
+        &mut self,
+        allow_return_type: bool,
+    ) -> Option<ExprId> {
+        self.parenthesized_arrow_function(Tristate::True, allow_return_type)
+    }
+
     fn parenthesized_arrow_function(
         &mut self,
         is_one: Tristate,

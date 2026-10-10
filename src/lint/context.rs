@@ -390,16 +390,22 @@ impl<'a> Report<'a> {
         self
     }
 
+    #[inline]
     fn reads_fixes(&self) -> bool {
-        self.diagnostic.as_ref().is_some_and(|it| {
-            let help = it.constant_help.map(|it| it.found(Part::Help));
-            let makes_help = matches!(help, Some(Found::OfTheFix { .. }));
-            makes_help || self.file.sink.wants_fixes.get()
-        })
+        self.diagnostic.is_some() && (self.file.sink.wants_fixes.get() || self.makes_help_of_fix())
+    }
+
+    #[inline]
+    fn makes_help_of_fix(&self) -> bool {
+        let help = self.diagnostic.as_ref().and_then(|it| it.constant_help);
+        help.is_some_and(Help::is_of_the_fix)
     }
 
     /// [`IntoFix::into_fix`], and the help that oxlint makes of the fix.
     fn merged<F: IntoFix>(&mut self, fix: F) -> Option<Fix> {
+        if !self.makes_help_of_fix() {
+            return fix.into_fix(self.file);
+        }
         self.take_help_of(fix.first_fix(), Edits::First);
         let fix = fix.into_fix(self.file);
         self.take_help_of(fix.as_ref(), Edits::All);

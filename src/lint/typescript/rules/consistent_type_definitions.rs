@@ -44,6 +44,10 @@ fn fix_interface<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, interface: Interface
         fixes.push(fixer.replace(first_token, "type"));
         fixes.push(fixer.replace(Span::before(head_end, body), " = "));
     }
+    // oxlint replaces all of the declaration, so that no other fix is made in it at the same time.
+    if file.language().is_oxlint {
+        fixes.push(fixer.replace(body, file.slice(body).to_vec()));
+    }
     for heritage in interface.extends() {
         fixes.push(fixer.insert_after(body, [&b" & "[..], heritage.text()].concat()));
     }

@@ -10,6 +10,27 @@
       "additionalProperties": false
     }
   ],
+  "bun/format": [
+    {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "properties": {
+        "usePrettierrc": {
+          "type": "boolean"
+        },
+        "fileInfoOptions": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    }
+  ],
   "bun/jsx-no-forbidden-nesting": [
     {
       "type": "object",
@@ -381,5 +402,26 @@
     }
   ],
   "bun/react-no-namespace-hooks": [],
-  "bun/react-prefer-updater-function": []
+  "bun/react-prefer-updater-function": [],
+  "prettier/prettier": [
+    {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "properties": {
+        "usePrettierrc": {
+          "type": "boolean"
+        },
+        "fileInfoOptions": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    }
+  ]
 }

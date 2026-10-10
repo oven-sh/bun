@@ -296,8 +296,21 @@ impl<'h> Graph<'h> {
         written: &[&[u8]],
         module_directories: &[&[u8]],
     ) -> Option<Vec<u8>> {
+        let (cwd, disk) = (&self.store.cwd[..], self.store.disk());
+        // `loadpkg` of `resolve` goes up from where the file would be until there is a `package.json`. On a relative
+        // path it never comes further than `.`, and runs out of stack there: nothing is found, in it or after it.
+        let ends = |path: &[u8], as_written: &[u8]| {
+            let candidate = join(path, specifier);
+            let directory = directory_of(&candidate);
+            let is_end = |it: &[u8]| {
+                it.ends_with(b"/node_modules") || disk.is_file(&join(it, b"package.json"))
+            };
+            let below = ancestors(directory).take_while(|it| !cwd.starts_with(it));
+            is_absolute(as_written) || !disk.is_dir(directory) || below.chain([cwd]).any(is_end)
+        };
+        let paths = written.iter().map(|it| (join(cwd, it), *it));
         let paths: SmallVec<[Vec<u8>; 2]> =
-            (written.iter().map(|it| join(&self.store.cwd, it))).collect();
+            (paths.take_while(|it| ends(&it.0, it.1)).map(|it| it.0)).collect();
         let paths: SmallVec<[&[u8]; 2]> = paths.iter().map(Vec::as_slice).collect();
         let how = AsRequire {
             extensions,
@@ -305,14 +318,14 @@ impl<'h> Graph<'h> {
             paths: &paths,
         };
         // No configuration of TypeScript has a say.
-        let plain = self.resolver_of(b"", &self.store.cwd);
+        let plain = self.resolver_of(b"", cwd);
         let (found, at) = (plain.resolver).resolve_as_require(specifier, from, &how)?;
         // `path.join(written, specifier)`
         let is_relative = at
             .and_then(|at| written.get(at))
             .is_some_and(|it| !is_absolute(it));
         Some(match is_relative {
-            true => relative(&self.store.cwd, &found),
+            true => relative(cwd, &found),
             false => found,
         })
     }

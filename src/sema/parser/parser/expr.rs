@@ -332,6 +332,13 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     return arrow;
                 }
             }
+            // `isParenthesizedArrowFunctionExpression`: "If we see a standalone => try to parse it as an
+            // arrow function expression as that's likely what the user intended to write."
+            T::EqualsGreaterThan if self.recovers() => {
+                if let Some(arrow) = self.arrow_function_without_parameters(allow_return_type) {
+                    return arrow;
+                }
+            }
             T::Yield => {
                 if self.has_context(ctx::YIELD) {
                     return self.yield_expression();
@@ -995,10 +1002,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
     }
 
-    /// `meta`, `defer` or `source`, or nothing. For TypeScript's parser a name is what it is with an
-    /// escape too, for acorn and Babel it is an error.
+    /// `meta`, `defer` or `source`, or nothing. A name is what it is with an escape too: who follows
+    /// acorn or Babel finds the escape in the text.
     fn name_after_import_and_dot(&self) -> &'static [u8] {
-        let name = match self.lx.has_escape && !self.is_ecmascript {
+        let name = match self.lx.has_escape {
             true => self.lx.text_of(self.lx.atom),
             false => self.lx.text(),
         };
@@ -1108,14 +1115,17 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// `checkGrammarMetaProperty`, `checkGrammarImportCallExpression`
     #[cold]
     fn other_meta_property_of_import(&mut self, start: u32) -> ExprId {
-        if !self.token().is_identifier_or_keyword()
-            || self.token() == T::PrivateIdentifier
-            || self.lx.has_escape
-        {
+        if !self.token().is_identifier_or_keyword() || self.token() == T::PrivateIdentifier {
             self.refuse(Refusal::Unsupported);
         }
-        let (name, at, word) = (self.lx.atom, (self.lx.start, self.lx.end), self.lx.text());
-        self.next();
+        let (name, at) = (self.lx.atom, (self.lx.start, self.lx.end));
+        let word = match self.lx.has_escape {
+            true => self.lx.text_of(name).to_vec(),
+            false => self.lx.text().to_vec(),
+        };
+        let word = &word[..];
+        // `parseIdentifierName`
+        self.next_after_name();
         // Type arguments, and a call with `?.`, are looked at on the way.
         if matches!(
             self.token(),

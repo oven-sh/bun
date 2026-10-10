@@ -188,6 +188,8 @@ describe.concurrent(`bun lint: the rules of the React Compiler report what oxlin
           it.message,
           it.help,
         ]);
+      // Nothing is wrong in the two whose types are made of each other.
+      expect(Object.keys(diagnostics)).toEqual(["refs.jsx"]);
       expect(said("refs.jsx")).toEqual([
         ["react(todo)", "Support functions of this size", "Its refs are too complex to follow"],
       ]);

@@ -24,38 +24,7 @@ pub fn to_uint32(n: f64) -> u32 {
     n.trunc().rem_euclid(4_294_967_296.0) as u32
 }
 
-/// The length of the `StrUnsignedDecimalLiteral` that `text` starts with, without `Infinity`.
-fn decimal_literal_len(text: &[u8]) -> usize {
-    let digits = |from: usize| {
-        text.get(from..)
-            .unwrap_or_default()
-            .iter()
-            .take_while(|c| c.is_ascii_digit())
-            .count()
-    };
-    let whole = digits(0);
-    let mut len = whole;
-    let mut fraction = 0;
-    if text.get(len) == Some(&b'.') {
-        fraction = digits(len + 1);
-        if whole + fraction > 0 {
-            len += 1 + fraction;
-        }
-    }
-    if whole + fraction == 0 {
-        return 0;
-    }
-    if matches!(text.get(len), Some(b'e' | b'E')) {
-        let sign = usize::from(matches!(text.get(len + 1), Some(b'+' | b'-')));
-        let exponent = digits(len + 1 + sign);
-        if exponent > 0 {
-            len += 1 + sign + exponent;
-        }
-    }
-    len
-}
-
-/// The value of ASCII text that `decimal_literal_len` accepts.
+/// The value of ASCII text that `js_decimal_literal_len` accepts.
 fn decimal_value(text: &[u8]) -> f64 {
     std::str::from_utf8(text)
         .ok()
@@ -93,7 +62,7 @@ pub fn parse_float(text: &[u8]) -> f64 {
     if unsigned.starts_with(b"Infinity") {
         return sign * f64::INFINITY;
     }
-    match decimal_literal_len(unsigned) {
+    match bun_core::fmt::js_decimal_literal_len(unsigned) {
         0 => f64::NAN,
         len => sign * decimal_value(&unsigned[..len]),
     }

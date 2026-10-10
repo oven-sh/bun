@@ -141,36 +141,9 @@ impl<'a> ImportTypes<'a> {
 
     /// `isExternalPath`
     fn is_external_path(&self, found: &[u8], package: &[u8]) -> bool {
-        let is_outside_package = !is_below(package, found);
-        self.folders.iter().any(|folder| {
-            if folder.starts_with(b"/") {
-                return is_below(folder, found);
-            }
-            if is_below(&paths::resolve(package, folder), found) {
-                return true;
-            }
-            let end = folder
-                .iter()
-                .rev()
-                .take_while(|it| matches!(it, b'/' | b'\\'))
-                .count();
-            let name = &folder[..folder.len() - end];
-            is_outside_package && strings::contains(found, &[b"/", name, b"/"].concat())
-        })
-    }
-
-    /// `isInExternalModuleFolder`: a package that is a link is found elsewhere.
-    fn is_in_external_module_folder(&self, name: &[u8], package: &[u8]) -> bool {
-        let Some(base) = base_module(name) else {
-            return false;
-        };
-        self.folders.iter().any(|folder| {
-            if folder.starts_with(b"/") {
-                return self.exists(&paths::resolve(folder, base));
-            }
-            let mut directories = std::iter::successors(Some(package), |it| parent_of(it));
-            directories.any(|it| self.exists(&paths::resolve(&paths::resolve(it, folder), base)))
-        })
+        let mut folders = self.folders.iter();
+        !is_below(package, found)
+            || folders.any(|folder| is_below(&paths::resolve(package, folder), found))
     }
 
     /// `importType(name, context)`
@@ -209,9 +182,7 @@ impl<'a> ImportTypes<'a> {
         let Some(package) = self.package() else {
             return ImportType::Internal;
         };
-        let is_external = self.is_external_path(&found, package)
-            || is_external_looking_name(name) && self.is_in_external_module_folder(name, package);
-        if is_external {
+        if self.is_external_path(&found, package) {
             ImportType::External
         } else {
             ImportType::Internal

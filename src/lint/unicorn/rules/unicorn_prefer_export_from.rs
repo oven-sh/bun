@@ -84,6 +84,8 @@ struct Violation<'a> {
     needs_source: bool,
     /// Which of the specifiers of the import it is.
     specifier_index: usize,
+    /// The name where it is exported.
+    reference: Span,
 }
 
 /// What a reference to something imported is directly in.
@@ -165,14 +167,9 @@ impl PreferExportFrom {
         for (violations, is_namespace) in [(namespace_violations, true), (regular_violations, false)] {
             let group = Group { import_decl, specifiers: &specifiers, violations: &violations, re_export_decl, is_namespace };
             for violation in &violations {
-                let specifier = specifiers.get(violation.specifier_index).map(|it| match it.specifier {
-                    Specifier::Default(name) => name.span(),
-                    Specifier::Namespace(span) => span,
-                    Specifier::Named(specifier) => specifier.span(),
-                });
                 cx.report(statement, PREFER_EXPORT_FROM)
                     .first_label("Imported here.")
-                    .label(specifier.unwrap_or_default(), "Re-exported here.")
+                    .label(violation.reference, "Re-exported here.")
                     .suggest(USE_EXPORT_FROM, |fixer| group.fix(fixer, violation));
             }
         }
@@ -208,6 +205,7 @@ fn analyze_import_usage<'a>(specifiers: &mut [SpecifierSpec<'a>], import_decl: I
                         is_typescript_type: false,
                         needs_source: false,
                         specifier_index,
+                        reference: reference.span(),
                     })
                 }
                 Usage::ExportSpecifier(export_specifier) => {
@@ -232,6 +230,7 @@ fn analyze_import_usage<'a>(specifiers: &mut [SpecifierSpec<'a>], import_decl: I
                         is_typescript_type: is_type_import || is_namespace && export_decl.is_type_only(),
                         needs_source: !is_type_import && export_decl.is_type_only(),
                         specifier_index,
+                        reference: reference.span(),
                     })
                 }
                 Usage::VariableDeclarator(var_decl) => exported_const_statement(var_decl).and_then(|export_node| {
@@ -247,6 +246,7 @@ fn analyze_import_usage<'a>(specifiers: &mut [SpecifierSpec<'a>], import_decl: I
                         is_typescript_type: false,
                         needs_source: false,
                         specifier_index,
+                        reference: reference.span(),
                     })
                 }),
                 _ => None,

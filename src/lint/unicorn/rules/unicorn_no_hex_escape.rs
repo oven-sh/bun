@@ -61,7 +61,10 @@ impl Rule for NoHexEscape {
 /// `escapes`: where the text with the escapes is.
 fn check<'a>(escapes: Span, place: Span, cx: &Cx<'a, NoHexEscape>) {
     if let Some(fixed) = check_escape(cx.slice(escapes)) {
-        cx.report(place, NO_HEX_ESCAPE).fix(|fixer| fixer.replace(escapes, fixed));
+        // With the quotes, as oxlint replaces it.
+        let (before, after) = (Span::new(place.start, escapes.start), Span::new(escapes.end, place.end));
+        let fixed = [cx.slice(before), &fixed, cx.slice(after)].concat();
+        cx.report(place, NO_HEX_ESCAPE).fix(|fixer| fixer.replace(place, fixed));
     }
 }
 

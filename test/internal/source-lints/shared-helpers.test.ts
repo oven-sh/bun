@@ -44,19 +44,19 @@ const SHARED = [
 const FAMILIES: [family: string, names: string, use: string, note?: string][] = [
   [
     "white space and lines",
-    "trim trim_start trim_end trim_left trim_right is_blank is_space is_whitespace is_white_space white_space_len skip_blanks skip_spaces skip_whitespace skip_white_space is_line_terminator is_line_break has_line_break lines split_lines line_starts space_len space_len_back white_space_len_back white_space_run leading_white_space_len leading_whitespace_count trailing_whitespace_count is_html_whitespace is_html_white_space html_trim html_trim_start html_trim_end trim_html_whitespace_start trim_html_whitespace_end has_white_space has_html_whitespace has_html_white_space starts_with_white_space ends_with_white_space without_blanks without_spaces remove_spaces leading_blanks is_space_or_tab is_unicode_whitespace is_unicode_blank is_white_space_like is_jsx_whitespace trim_bytes split_whitespace line_break_len line_terminator_len line_terminator_len_back find_line_break has_newline has_line_terminator has_linebreak skip_newline skip_newline_backwards without_line_break count_line_breaks count_new_lines line_breaks normalize_line_breaks normalize_end_of_line push_with_normalized_newlines line_end line_start",
-    "bun_core::strings::{trim, trim_left, trim_right, is_whitespace, starts_with_line_break, split}",
-    "one function for each SET of white space, named for the set",
+    "trim trim_start trim_end trim_left trim_right is_blank is_space is_whitespace is_white_space white_space_len skip_blanks skip_spaces skip_whitespace skip_white_space is_line_terminator is_line_break has_line_break lines split_lines line_starts space_len space_len_back white_space_len_back white_space_run leading_white_space_len leading_whitespace_count trailing_whitespace_count is_html_whitespace is_html_white_space html_trim html_trim_start html_trim_end trim_html_whitespace_start trim_html_whitespace_end has_white_space has_html_whitespace has_html_white_space starts_with_white_space ends_with_white_space without_blanks without_spaces remove_spaces leading_blanks is_space_or_tab is_unicode_whitespace is_unicode_blank is_white_space_like is_jsx_whitespace trim_bytes split_whitespace line_break_len line_terminator_len line_terminator_len_back find_line_break has_newline has_line_terminator has_linebreak skip_newline skip_newline_backwards without_line_break count_line_breaks count_new_lines line_breaks normalize_line_breaks normalize_end_of_line push_with_normalized_newlines line_end line_start without_last_line find_line_end count_spaces without_spaces_at_end without_line_breaks_at_start len_without_line_end find_ascii_whitespace",
+    "bun_core::strings::{trim, trim_left, trim_right, is_whitespace, starts_with_line_break, split, trim_js_whitespace, trim_js_whitespace_start, trim_js_whitespace_end, is_all_js_whitespace, is_js_whitespace, js_whitespace_len, js_whitespace_len_back, without_js_whitespace, trim_unicode_whitespace, trim_unicode_whitespace_start, trim_unicode_whitespace_end, is_all_unicode_whitespace, split_unicode_whitespace, is_js_line_terminator, js_line_break_len, js_line_break_len_back, find_js_line_break, contains_js_line_break, js_lines, split_crlf_lines, crlf_as_lf, push_crlf_as_lf, is_white_space_like, is_white_space_single_line}",
+    "one function for each SET of white space, named for the set: `js` is `\\s` of a regular expression, `unicode` is White_Space, which Rust's `str::trim` goes by; HTML's and CSS's five bytes are std's `trim_ascii*` and `u8::is_ascii_whitespace`",
   ],
   [
     "UTF-8, UTF-16, code points",
     "push_code_point push_codepoint encode_code_point encode_utf8 utf16_len utf8_len utf16_length utf8_length to_utf16 from_utf16 to_utf8 utf16_index byte_offset code_point_at code_point_len decode_code_point bom_len strip_bom without_bom len_utf16 count_units units_to_bytes offset_of_utf16_index utf16_offset_to_byte code_points code_points_of first_char last_char decode_last multibyte_at char_len push_char push_utf16 push_well_formed to_well_formed has_surrogate lead_surrogate trail_surrogate is_lead_surrogate is_trail_surrogate combine_surrogate_pair is_surrogate_pair",
-    "bun_core::strings::{push_codepoint_wtf8, encode_wtf8_rune, push_codepoint_utf16, decode_wtf8_rune_t, wtf8_byte_sequence_length, element_length_utf8_into_utf16, element_length_utf16_into_utf8, to_utf16_alloc, to_utf8_alloc, without_utf8_bom}",
+    "bun_core::strings::{push_codepoint_wtf8, push_codepoint_wtf8_joined, push_wtf8, push_wtf8_well_formed, wtf8_has_surrogate, wtf8_codepoint_at, wtf8_codepoints, wtf8_first_codepoint, wtf8_codepoint_count, codepoint_len_utf16, wtf8_len_utf16, utf8_lossy_len_utf16, wtf8_offset_of_utf16_index, wtf8_slice_by_utf16, wtf8_to_utf16, wtf16_to_wtf8, encode_wtf8_rune, push_codepoint_utf16, decode_wtf8_rune_t, wtf8_byte_sequence_length, element_length_utf8_into_utf16, element_length_utf16_into_utf8, to_utf16_alloc, to_utf8_alloc, to_utf8_append_to_list, without_utf8_bom}",
   ],
   [
     "identifiers",
     "is_identifier is_identifier_start is_identifier_part is_identifier_continue is_valid_identifier is_id_start is_id_continue is_identifier_name is_valid_js_identifier is_identifier_byte is_name_byte is_word_character is_regex_word is_regex_word_byte is_es5_identifier_name",
-    "bun_core::strings::{is_identifier, is_identifier_start, is_identifier_part, is_identifier_utf16}",
+    "bun_core::strings::{is_identifier, is_identifier_start, is_identifier_part, is_identifier_utf16, is_regexp_word_byte}",
   ],
   [
     "width of text",
@@ -72,12 +72,12 @@ const FAMILIES: [family: string, names: string, use: string, note?: string][] = 
   ],
   [
     "comparison",
-    "compare locale_compare natural_compare order eq_ignore_case eql_ignore_case equals_ignore_case eq_ignore_ascii_case cmp_ignore_case is_less_than collator_compare collate_base_numeric collation_key primary_weight cmp_ascii_case_insensitive natural_sort natord",
-    "bun_core::strings::{order, order_utf16, cmp_strings_asc, eql, eql_long, eql_case_insensitive_ascii, has_prefix_case_insensitive}",
+    "compare locale_compare natural_compare order eq_ignore_case eql_ignore_case equals_ignore_case eq_ignore_ascii_case cmp_ignore_case is_less_than collator_compare collate_base_numeric collation_key primary_weight cmp_ascii_case_insensitive natural_sort natord collation_element",
+    "bun_core::strings::{order, order_utf16, locale_compare, locale_compare_numeric_base, cmp_strings_asc, eql, eql_long, eql_case_insensitive_ascii, has_prefix_case_insensitive}",
   ],
   [
     "search and split",
-    "index_of last_index_of contains starts_with ends_with split split_once replace replace_all count strip_prefix strip_suffix includes index_of_from index_of_char_from index_from",
+    "index_of last_index_of contains starts_with ends_with split split_once replace replace_all count strip_prefix strip_suffix includes index_of_from index_of_char_from index_from without_hash trim_backticks",
     "bun_core::strings::{index_of, index_of_char, index_of_any, last_index_of, contains, contains_char, starts_with, ends_with, has_prefix, split, split_once, split_any, replace, count_char, without_prefix}",
   ],
   [
@@ -97,8 +97,8 @@ const FAMILIES: [family: string, names: string, use: string, note?: string][] = 
   ],
   [
     "numbers and digits",
-    "to_number number_to_string parse_float parse_int parse_decimal is_digit is_hex_digit hex_value hex_digit unhex string_to_number decimal_literal_len decimal_digits to_precision array_index as_array_index is_array_index parse_number parse_integer parse_index digit_to_int hex_code hex4 push_hex write_f64",
-    "bun_core::fmt::{parse_decimal, parse_int, hex_digit_value, hex_digit_value_u32, hex_pair_value, parse_hex4, parse_hex_prefix, hex_byte_upper, hex_byte_lower, hex_lower, bytes_to_hex_lower_string}",
+    "to_number number_to_string parse_float parse_int parse_decimal is_digit is_hex_digit hex_value hex_digit unhex string_to_number decimal_literal_len decimal_digits to_precision array_index as_array_index is_array_index parse_number parse_integer parse_index digit_to_int hex_code hex4 push_hex write_f64 write_js_number format_js_number exact_digits round_digits to_fixed to_exponential integer_value decimal_value",
+    "bun_core::fmt::{js_string_to_number, js_decimal_literal_len, parse_f64, to_fixed, to_precision, to_exponential, dtoa, parse_decimal, parse_int, hex_digit_value, hex_digit_value_u32, hex_pair_value, parse_hex4, parse_hex_prefix, hex_byte_upper, hex_byte_lower, hex_lower, bytes_to_hex_lower_string}",
   ],
   [
     "Base64, hex, percent",

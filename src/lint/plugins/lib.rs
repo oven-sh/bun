@@ -160,6 +160,7 @@ bun_lint::rules! {
     oxc_number_arg_out_of_range::NumberArgOutOfRange,
     oxc_only_used_in_recursion::OnlyUsedInRecursion,
     oxc_uninvoked_array_callback::UninvokedArrayCallback,
+    prettier_bun_format::Format,
     prettier_prettier::Prettier,
     promise_always_return::AlwaysReturn,
     promise_avoid_new::AvoidNew,

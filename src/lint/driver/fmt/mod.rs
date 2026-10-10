@@ -863,14 +863,18 @@ struct Run<'r> {
 fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Language {
     // The `parser` option says what it is. One that Prettier does not have is that of a plugin.
     match configs.parser_for(scope, path) {
-        Some(parser) if &*parser == b"svelte" && !configs.has_our_svelte(scope) => Language::Other,
+        Some(parser) if &*parser == b"svelte" && !configs.has_our_svelte(scope, path) => {
+            Language::Other
+        }
         Some(parser) if Kind::of_parser(&parser).is_none() => Language::Other,
         Some(_) => Language::Supported,
         None if configs.is_oxfmt_for(scope) => {
             files::language_for_oxfmt(path, configs.formats_svelte(scope, path))
         }
         None => match files::language_of(path) {
-            Language::Unknown if path.ends_with(b".svelte") && configs.has_our_svelte(scope) => {
+            Language::Unknown
+                if path.ends_with(b".svelte") && configs.has_our_svelte(scope, path) =>
+            {
                 Language::Supported
             }
             Language::Unknown if configs.is_read_by_plugin(scope, path) => Language::Other,
@@ -1025,7 +1029,7 @@ impl Run<'_> {
             && configs.plugin_that_reads(&scope, &path).is_some()
             && [&b"prettier"[..]]
                 .into_iter()
-                .chain(configs.packages_of_plugins(&scope))
+                .chain(configs.packages_of_plugins(&scope, &path))
                 .all(|it| prettier::is_installed(&self.environment.cwd, it))
         {
             let size = (1, text.len() as u64);
@@ -1201,7 +1205,7 @@ impl Run<'_> {
             };
             let missing_plugins = match options.allow_unsupported {
                 true => &[][..],
-                false => configs.missing_plugins(&target.scope),
+                false => configs.missing_plugins(&target.scope, &target.path),
             };
             match language_of(configs, &target.scope, &target.path) {
                 _ if !is_wanted(target) => {}
@@ -1218,7 +1222,7 @@ impl Run<'_> {
                     if (configs.plugin_that_reads(&target.scope, &target.path)).is_some()
                         && [&b"prettier"[..]]
                             .into_iter()
-                            .chain(configs.packages_of_plugins(&target.scope))
+                            .chain(configs.packages_of_plugins(&target.scope, &target.path))
                             .all(&mut has_package) =>
                 {
                     handed_over.push((index, target));
@@ -1230,7 +1234,7 @@ impl Run<'_> {
                     {
                         for package in [&b"prettier"[..]]
                             .into_iter()
-                            .chain(configs.packages_of_plugins(&target.scope))
+                            .chain(configs.packages_of_plugins(&target.scope, &target.path))
                         {
                             if !has_package(package) && !not_installed.contains(&package) {
                                 not_installed.push(package);

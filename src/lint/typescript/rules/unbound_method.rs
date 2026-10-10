@@ -269,6 +269,17 @@ fn check_if_method(symbol: TsSymbol, ignore_static: bool) -> Option<Message> {
     }
 }
 
+/// [`check_if_method`]. tsgolint takes the first parameter of a function that is the value of a property of a class
+/// for `this`.
+fn message_of(symbol: TsSymbol, ignore_static: bool, is_oxlint: bool) -> Option<Message> {
+    let message = check_if_method(symbol, ignore_static)?;
+    let declaration = symbol.value_declaration().filter(|_| is_oxlint);
+    Some(match declaration.is_some_and(|it| it.kind() == SyntaxKind::PropertyDeclaration) {
+        true => UNBOUND,
+        false => message,
+    })
+}
+
 fn is_member_of(node: Expr, is_object: fn(ExprKind) -> bool) -> bool {
     match node.kind() {
         ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => is_object(obj.kind()),
@@ -345,18 +356,9 @@ struct ObjectPattern<'a> {
 }
 
 impl UnboundMethod {
-    /// [`check_if_method`]. tsgolint takes the first parameter of a function that is the value of a property of a class for `this`.
-    fn message_of<'a>(&self, cx: &Cx<'a, Self>, symbol: TsSymbol<'a>) -> Option<Message> {
-        let message = check_if_method(symbol, self.ignore_static)?;
-        let declaration = symbol.value_declaration().filter(|_| cx.language().is_oxlint);
-        Some(match declaration.is_some_and(|it| it.kind() == SyntaxKind::PropertyDeclaration) {
-            true => UNBOUND,
-            false => message,
-        })
-    }
-
     fn check_if_method_and_report<'a>(&self, cx: &Cx<'a, Self>, node: Span, symbol: Option<TsSymbol<'a>>) -> bool {
-        let Some(message) = symbol.and_then(|symbol| self.message_of(cx, symbol)) else {
+        let is_oxlint = cx.language().is_oxlint;
+        let Some(message) = symbol.and_then(|symbol| message_of(symbol, self.ignore_static, is_oxlint)) else {
             return false;
         };
         cx.report(node, message);
@@ -370,9 +372,10 @@ impl UnboundMethod {
         property_name: &[u8],
         ty: Type<'a>,
     ) -> bool {
+        let is_oxlint = cx.language().is_oxlint;
         let find_message = || {
             union_constituents(ty).iter().flat_map(intersection_constituents).find_map(|intersection_part| {
-                check_if_method(intersection_part.get_property(property_name)?, self.ignore_static)
+                message_of(intersection_part.get_property(property_name)?, self.ignore_static, is_oxlint)
             })
         };
         let message = match ty.types().len() > 16 {
@@ -406,7 +409,7 @@ impl UnboundMethod {
                 // of an intersection declare it in different places, as in `window.print`. It points at the name.
                 if cx.language().is_oxlint {
                     let symbol = node.ts_symbol();
-                    if let Some(message) = symbol.and_then(|it| self.message_of(cx, it)) {
+                    if let Some(message) = symbol.and_then(|it| message_of(it, self.ignore_static, cx.language().is_oxlint)) {
                         cx.report(name.span(), message).comments_apply_at(node);
                     }
                     return;

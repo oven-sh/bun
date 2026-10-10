@@ -2014,7 +2014,7 @@ test.each([
 // The same weighing for what is opened many times on one line, with many lines behind it that do not close it.
 test("a line does not look through the block quotes that are open", async () => {
   const script = `
-    const count = ${isDebug || isASAN ? 4_000 : 40_000};
+    const count = ${isDebug || isASAN ? 10_000 : 40_000};
     const lines = ${JSON.stringify(["a\n", "a b\n", "*a*\n", "[a]\n", "<a>\n", "<!-- a\n", "&amp;\n", "\\\n", ":::\n", "a |\n"])};
     const texts = [">", "> "].flatMap(mark => lines.map(line => mark.repeat(count) + "a\\n" + line.repeat(count)));
     const prose = "The quick brown fox jumps over the lazy dog, and *then* it \`rests\` for a [while](u).\\n\\n";
@@ -2039,6 +2039,7 @@ test("a line does not look through the block quotes that are open", async () => 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(Number(stdout)).toBeLessThan(6);
+  // 4 to 5 when all is well: opening and closing the quotes is most of it. 75 and 300 when each line walks them.
+  expect(Number(stdout)).toBeLessThan(15);
   expect(exitCode).toBe(0);
 }, 90_000);

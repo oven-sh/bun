@@ -4784,5 +4784,37 @@
  ],
  "no-unnecessary-condition/a-conditional-type-that-is-not-resolved": [
   "a.ts:8:84+6 typescript(no-unnecessary-condition)"
+ ],
+ "strict-boolean-expressions/what-is-no-object": [
+  "a.ts:10:52+1 typescript(strict-boolean-expressions)",
+  "a.ts:11:46+1 typescript(strict-boolean-expressions)",
+  "a.ts:12:37+1 typescript(strict-boolean-expressions)",
+  "a.ts:13:37+1 typescript(strict-boolean-expressions)",
+  "a.ts:14:37+4 typescript(strict-boolean-expressions)",
+  "a.ts:15:44+1 typescript(strict-boolean-expressions)",
+  "a.ts:16:73+1 typescript(strict-boolean-expressions)",
+  "a.ts:1:75+4 typescript(strict-boolean-expressions)",
+  "a.ts:2:91+4 typescript(strict-boolean-expressions)",
+  "a.ts:3:69+1 typescript(strict-boolean-expressions)",
+  "a.ts:4:92+1 typescript(strict-boolean-expressions)",
+  "a.ts:5:72+1 typescript(strict-boolean-expressions)",
+  "a.ts:7:83+1 typescript(strict-boolean-expressions)",
+  "a.ts:9:41+1 typescript(strict-boolean-expressions)"
+ ],
+ "prefer-optional-chain/a-question-mark-in-what-the-second-adds": [
+  "a.ts:12:19+45 typescript(prefer-optional-chain)",
+  "a.ts:14:19+44 typescript(prefer-optional-chain)",
+  "a.ts:16:19+15 typescript(prefer-optional-chain)",
+  "a.ts:18:19+28 typescript(prefer-optional-chain)",
+  "a.ts:23:19+42 typescript(prefer-optional-chain)",
+  "a.ts:24:19+25 typescript(prefer-optional-chain)",
+  "a.ts:3:19+91 typescript(prefer-optional-chain)",
+  "a.ts:5:19+54 typescript(prefer-optional-chain)",
+  "a.ts:6:19+65 typescript(prefer-optional-chain)",
+  "a.ts:8:19+69 typescript(prefer-optional-chain)"
+ ],
+ "no-deprecated/what-follows-the-tag": [
+  "a.ts:29:13+1 typescript(no-deprecated)",
+  "a.ts:29:38+1 typescript(no-deprecated)"
  ]
 }

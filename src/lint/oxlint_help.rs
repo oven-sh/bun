@@ -84,6 +84,11 @@ impl Help {
     pub(crate) fn has_values(self) -> bool {
         self.0.get() & WITH_DATA != 0
     }
+
+    /// The help is [`Found::OfTheFix`].
+    pub(crate) fn is_of_the_fix(self) -> bool {
+        self.0.get() & OF_THE_FIX != 0
+    }
 }
 
 /// What there is for `message`, which is as oxlint says it, of `rule`.
@@ -1028,6 +1033,7 @@ static INDEX: &[(u32, u32)] = &[
     (0xE306EC1A, at(36820, 223)), // no-misused-spread noStringSpread
     (0xE47FB7DA, at(34717, 167)), // no-loop-func unsafeRefs
     (0xE498E2B0, at(22625, 67)), // no-bitwise unexpected
+    (0xE4D0D7C0, OF_THE_FIX), // no-hex-escape
     (0xE4EC54A3, more(78)), // no-constant-condition unexpected
     (0xE4FCAE99, at(27295, 110)), // no-duplicate-hooks
     (0xE50EA630, at(47271, 59)), // no-unwanted-polyfillio

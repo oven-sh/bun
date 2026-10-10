@@ -101,6 +101,9 @@ pub(crate) enum ImportedSpecifier {
 
 const DEFAULT: &[u8] = b"default";
 
+/// How much `typeScriptExport` does again for names that it has exported before. Without a limit: the square of the file.
+const SAID_AGAIN: usize = 1024;
+
 /// `unambiguous.test`: `/(^|[;})])\s*(export|import)((\s+\w)|(\s*[{*=]))|import\(/m`
 pub(crate) fn may_be_module(text: &[u8]) -> bool {
     let mut from = 0;
@@ -179,18 +182,13 @@ pub(crate) fn recursive_pattern_capture<'a>(pattern: Pat<'a>, callback: &mut dyn
     }
 }
 
-/// `captureDoc`, of the nodes that start at `nodes`: "parse docs from the first node that has leading comments".
-fn capture_doc<'a>(file: &'a File<'a>, nodes: &[u32]) -> Docs {
-    for &start in nodes {
-        let comments: SmallVec<[Token<'a>; 4]> = file.comments_before(Span::empty(start)).collect();
-        if !comments.is_empty() {
-            return Docs {
-                jsdoc: capture_js_doc(&comments),
-                tomdoc: capture_tom_doc(&comments),
-            };
-        }
-    }
-    Docs::default()
+/// What `captureDoc` makes of the node that starts at `node`. `None`: no comments are before it, and it goes on to the next.
+fn capture_doc<'a>(file: &'a File<'a>, node: u32) -> Option<Docs> {
+    let comments: SmallVec<[Token<'a>; 4]> = file.comments_before(Span::empty(node)).collect();
+    (!comments.is_empty()).then(|| Docs {
+        jsdoc: capture_js_doc(&comments),
+        tomdoc: capture_tom_doc(&comments),
+    })
 }
 
 /// The last that does not throw.
@@ -260,8 +258,9 @@ struct Visitor<'a> {
     getters: Vec<(usize, Name<'a>)>,
     /// The statements of the file that `typeScriptExport` takes for declarations of a name.
     declarations: Option<FxHashMap<Name<'a>, SmallVec<[Stmt<'a>; 1]>>>,
-    /// What `typeScriptExport` has exported the declarations of.
-    exported: FxHashSet<(Name<'a>, When)>,
+    /// What `typeScriptExport` has exported the declarations of, and how much that was.
+    exported: FxHashMap<(Name<'a>, When), usize>,
+    said_again: usize,
     /// The names of one `importedSpecifiers`.
     imported: FxHashSet<Name<'a>>,
 }
@@ -356,10 +355,10 @@ impl<'a> Visitor<'a> {
         &mut self,
         declarations: List<'a, VarDecl<'a>>,
         when: When,
-        doc_of: &dyn Fn(VarDecl<'a>) -> Docs,
+        doc_of: &dyn Fn(VarDecl<'a>) -> Option<Docs>,
     ) {
         for d in declarations {
-            let doc = doc_of(d);
+            let doc = doc_of(d).unwrap_or_default();
             recursive_pattern_capture(d.pat(), &mut |id| {
                 self.set(id.as_ident().map(Name::bytes), doc.clone(), when);
             });
@@ -371,7 +370,8 @@ impl<'a> Visitor<'a> {
         let (file, start) = (self.file, start_of(ast_node));
         match ast_node.kind() {
             StmtKind::ExportDefault(declaration) => {
-                let object = self.set(Some(DEFAULT), capture_doc(file, &[start]), When::Always);
+                let export_meta = capture_doc(file, start).unwrap_or_default();
+                let object = self.set(Some(DEFAULT), export_meta, When::Always);
                 if let Some(identifier) = declaration.as_ident() {
                     self.add(object, identifier);
                 }
@@ -415,15 +415,18 @@ impl<'a> Visitor<'a> {
                 self.type_script_export(ast_node, Some(name), When::WithInterop);
             }
             _ if ast_node.is_default_export() => {
-                self.set(Some(DEFAULT), capture_doc(file, &[start]), When::Always);
+                let doc = capture_doc(file, start).unwrap_or_default();
+                self.set(Some(DEFAULT), doc, When::Always);
             }
             StmtKind::Var(declarations) if ast_node.is_exported() => {
-                let doc_of = |d: VarDecl<'a>| capture_doc(file, &[d.span().start, start]);
-                self.set_variables(declarations, When::Always, &doc_of);
+                let of_ast_node = capture_doc(file, start);
+                self.set_variables(declarations, When::Always, &|d| {
+                    capture_doc(file, d.span().start).or_else(|| of_ast_node.clone())
+                });
             }
             _ if ast_node.is_exported() => {
                 if let Some(name) = id_name(ast_node) {
-                    let doc = capture_doc(file, &[start]);
+                    let doc = capture_doc(file, start).unwrap_or_default();
                     self.set(name.map(Name::bytes), doc, When::Always);
                 }
             }
@@ -469,38 +472,38 @@ impl<'a> Visitor<'a> {
         when: When,
     ) {
         let file = self.file;
+        if let Some(&cost) = exported_name.and_then(|it| self.exported.get(&(it, when))) {
+            self.said_again = self.said_again.saturating_add(cost);
+            if self.said_again > SAID_AGAIN {
+                return;
+            }
+        }
         let exported_decls = exported_name.map(|it| (it, self.exported_decls(it)));
         let Some((exported_name, exported_decls)) = exported_decls.filter(|it| !it.1.is_empty())
         else {
             // "Export is not referencing any local declaration, must be re-exporting"
-            self.set(
-                Some(DEFAULT),
-                capture_doc(file, &[ast_node.span().start]),
-                when,
-            );
+            let doc = capture_doc(file, ast_node.span().start).unwrap_or_default();
+            self.set(Some(DEFAULT), doc, when);
             return;
         };
-        // What is said twice would take the square of the time. TypeScript refuses it.
-        if !self.exported.insert((exported_name, when)) {
-            return;
-        }
+        let (before, count) = (self.export_map.namespace.len(), exported_decls.len());
         self.set(Some(DEFAULT), Docs::default(), When::WithInteropIfAbsent);
         for decl in exported_decls {
+            let of_decl = capture_doc(file, decl.span().start);
             let StmtKind::Module(module) = decl.kind() else {
                 // "Export as default"
-                self.set(Some(DEFAULT), capture_doc(file, &[decl.span().start]), when);
+                self.set(Some(DEFAULT), of_decl.unwrap_or_default(), when);
                 continue;
             };
-            let has_comments = file.comments_before(decl).next().is_some();
-            let of_decl = has_comments.then(|| capture_doc(file, &[decl.span().start]));
             for module_block_node in module.body() {
                 // "Export-assignment exports all members in the namespace, explicitly exported or not."
                 let start = start_of(module_block_node);
                 let name = match module_block_node.kind() {
                     StmtKind::Var(declarations) => {
                         let namespace_decl = module_block_node.span_without_export().start;
-                        let of_node = || capture_doc(file, &[namespace_decl, start]);
-                        let doc = of_decl.clone().unwrap_or_else(of_node);
+                        let doc = (of_decl.clone())
+                            .or_else(|| capture_doc(file, namespace_decl))
+                            .or_else(|| capture_doc(file, start));
                         self.set_variables(declarations, when, &|_| doc.clone());
                         continue;
                     }
@@ -511,9 +514,12 @@ impl<'a> Visitor<'a> {
                         None => continue,
                     },
                 };
-                self.set(name.map(Name::bytes), capture_doc(file, &[start]), when);
+                let doc = capture_doc(file, start).unwrap_or_default();
+                self.set(name.map(Name::bytes), doc, when);
             }
         }
+        let cost = count + self.export_map.namespace.len() - before;
+        self.exported.insert((exported_name, when), cost);
     }
 }
 
@@ -579,7 +585,8 @@ pub(crate) fn read<'a>(file: &'a File<'a>) -> ExportRecord {
         namespaces: FxHashMap::default(),
         getters: Vec::new(),
         declarations: None,
-        exported: FxHashSet::default(),
+        exported: FxHashMap::default(),
+        said_again: 0,
         imported: FxHashSet::default(),
     };
     for ast_node in file.body() {

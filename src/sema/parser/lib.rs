@@ -60,7 +60,7 @@ pub enum Refusal {
 
 impl Refusal {
     /// The scanner has met what is no token.
-    fn is_of_scanner(self) -> bool {
+    pub(crate) fn is_of_scanner(self) -> bool {
         matches!(
             self,
             Refusal::NotUtf8
@@ -183,14 +183,18 @@ impl Scratch {
         self.recycled = file;
     }
 
-    /// An error in the text that was refused last, if the parser had reported one before it gave up:
-    /// the first in the text, or the one that was reported first.
+    /// An error in the text that was refused last, which has `len` bytes, if the parser had reported
+    /// one before it gave up: the first in the text, or the one that was reported first.
     pub fn error_before_refusal(
         &self,
         is_first_in_text: bool,
+        len: usize,
     ) -> Option<&bun_sema::hir::Diagnostic> {
         let errors = self.recycled.diagnostics.iter();
-        let mut errors = errors.filter(|it| it.kind == bun_sema::hir::DiagnosticKind::Parse);
+        // From a refusal on the parser is at the end of the text.
+        let mut errors = errors.filter(|it| {
+            it.kind == bun_sema::hir::DiagnosticKind::Parse && (it.start as usize) < len
+        });
         match is_first_in_text {
             true => errors.min_by_key(|it| it.start),
             false => errors.next(),

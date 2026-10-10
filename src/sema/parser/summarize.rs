@@ -87,6 +87,22 @@ fn is_json(path: &[u8], script_kind: Option<ScriptKind>) -> bool {
             .is_some_and(|dot| path[dot..].eq_ignore_ascii_case(b".json"))
 }
 
+/// Where the error is in a text that both parsers have refused: the one for `why` at `at`, after the token that ends at
+/// `after`, the one that recovers at `of_recovery`.
+fn place_of_refusal(text: &[u8], (why, at, after): (Refusal, u32, u32), of_recovery: u32) -> u32 {
+    match why {
+        // What is no token, behind the blanks after the last one.
+        _ if why.is_of_scanner() => {
+            let rest = text.get(after as usize..).unwrap_or_default();
+            let is_blank = |c: &&u8| matches!(**c, b' ' | b'\t' | b'\n' | b'\r');
+            after + rest.iter().take_while(is_blank).count() as u32
+        }
+        // What TypeScript only reports is noticed when all of it is read.
+        Refusal::Reported => of_recovery,
+        _ => at,
+    }
+}
+
 /// The file as the parser leaves it. Without `atoms`, the file has its own, which `scratch` knows.
 fn file_of(
     scratch: &mut Scratch,
@@ -122,7 +138,7 @@ fn file_of(
         None => crate::parse_with_own_atoms(text, options, scratch),
     };
     let attempt = |mut options: Options, scratch: &mut Scratch| {
-        let first = once(options, scratch).map_err(|it| (it.why, it.at))?;
+        let first = once(options, scratch).map_err(|it| (it.why, it.at, it.after))?;
         // `parseSourceFileWorker`: only a file with an `ExternalModuleIndicator` has an [Await]
         // context at its top level.
         let parse_again = first.has_top_level_await
@@ -139,7 +155,9 @@ fn file_of(
         scratch.recycle(first.file);
         options.await_is_a_name = true;
         let second = once(options, scratch);
-        second.map(|it| it.file).map_err(|it| (it.why, it.at))
+        second
+            .map(|it| it.file)
+            .map_err(|it| (it.why, it.at, it.after))
     };
     let is_flow = dialect.flow && is_js;
     let parsed = attempt(options, scratch).or_else(|refused| {
@@ -153,7 +171,8 @@ fn file_of(
             recovers,
             ..options
         };
-        let file = attempt(general, scratch).or(Err(refused))?;
+        let file = attempt(general, scratch)
+            .map_err(|given_up| (refused.0, place_of_refusal(text, refused, given_up.1), 0))?;
         // TypeScript's parser takes `var;`, `class {}` and `catch (a = 1)`, and leaves them to its checker. For acorn
         // and Babel they are no JavaScript, and the parser that refuses a text knows what is.
         let is_an_error = matches!(refused.0, Refusal::Syntax | Refusal::Reported);
@@ -166,9 +185,10 @@ fn file_of(
     let mut file = match parsed {
         Ok(file) => file,
         // The file is not looked at any further: its first error is all that is said about it.
-        Err((why, at)) => {
+        Err((why, at, _)) => {
             let is_too_deep = why == Refusal::TooDeep;
-            let error = match scratch.error_before_refusal(dialect == Dialect::default()) {
+            let is_first_in_text = dialect == Dialect::default();
+            let error = match scratch.error_before_refusal(is_first_in_text, text.len()) {
                 Some(error) => error.clone(),
                 None => Diagnostic::new(DiagnosticKind::Parse, (at, 0), 1128, &[]),
             };

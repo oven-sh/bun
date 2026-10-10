@@ -20,6 +20,7 @@
     "code_points",
     "code_points_of",
     "collate_base_numeric",
+    "collation_element",
     "collation_key",
     "collator_compare",
     "combine_surrogate_pair",
@@ -28,11 +29,13 @@
     "count",
     "count_line_breaks",
     "count_new_lines",
+    "count_spaces",
     "count_units",
     "cow_to_ascii_lowercase",
     "damerau_levenshtein",
     "decimal_digits",
     "decimal_literal_len",
+    "decimal_value",
     "decode_code_point",
     "decode_last",
     "decode_uri",
@@ -62,13 +65,17 @@
     "escape_regex_source",
     "escape_source",
     "escaped_source",
+    "exact_digits",
     "extension",
     "extension_of_path",
     "extname",
     "file_extension",
     "file_name",
+    "find_ascii_whitespace",
     "find_line_break",
+    "find_line_end",
     "first_char",
+    "format_js_number",
     "from_native",
     "from_utf16",
     "has_html_white_space",
@@ -100,6 +107,7 @@
     "index_of",
     "index_of_char_from",
     "index_of_from",
+    "integer_value",
     "is_absolute",
     "is_array_index",
     "is_blank",
@@ -150,6 +158,7 @@
     "leading_white_space_len",
     "leading_whitespace_count",
     "len_utf16",
+    "len_without_line_end",
     "levenshtein",
     "line_break_len",
     "line_breaks",
@@ -199,6 +208,7 @@
     "replace",
     "replace_all",
     "resolve",
+    "round_digits",
     "skip_blanks",
     "skip_newline",
     "skip_newline_backwards",
@@ -224,6 +234,8 @@
     "strip_bom",
     "strip_prefix",
     "strip_suffix",
+    "to_exponential",
+    "to_fixed",
     "to_lower",
     "to_lower_case",
     "to_lowercase",
@@ -239,6 +251,7 @@
     "trail_surrogate",
     "trailing_whitespace_count",
     "trim",
+    "trim_backticks",
     "trim_bytes",
     "trim_end",
     "trim_html_whitespace_end",
@@ -263,11 +276,16 @@
     "white_space_run",
     "without_blanks",
     "without_bom",
+    "without_hash",
+    "without_last_line",
     "without_line_break",
+    "without_line_breaks_at_start",
     "without_spaces",
+    "without_spaces_at_end",
     "without_unicode_escapes",
     "write_escaped",
     "write_f64",
+    "write_js_number",
     "write_json_string",
     "write_string",
     "write_xml_escaped"
@@ -350,6 +368,9 @@
       "line_terminator_len_back": 1,
       "white_space_len": 1,
       "white_space_len_back": 1
+    },
+    "src/format/js/trivia.rs": {
+      "without_last_line": 1
     },
     "src/format/js/utils/jsx.rs": {
       "has_line_break": 1,
@@ -509,9 +530,6 @@
     "src/lint/linter/config/presets.rs": {
       "kebab_case": 1
     },
-    "src/lint/linter/json_v8.rs": {
-      "push_utf16": 1
-    },
     "src/lint/linter/syntax/espree.rs": {
       "is_identifier_byte": 1
     },
@@ -546,6 +564,9 @@
     },
     "src/lint/react/rules/react_jsx_handler_names.rs": {
       "starts_with_upper": 1
+    },
+    "src/lint/react/util_ast.rs": {
+      "without_hash": 1
     },
     "src/lint/regex/validator.rs": {
       "combine_surrogate_pair": 1,
@@ -613,6 +634,9 @@
       "code_points": 1,
       "is_whitespace": 1
     },
+    "src/lint/tokens/scan.rs": {
+      "find_line_end": 1
+    },
     "src/lint/types/tsutils.rs": {
       "is_array_index": 1
     },
@@ -636,7 +660,8 @@
       "unescape": 1
     },
     "src/lint/utils/eslint_utils/js_number.rs": {
-      "decimal_literal_len": 1,
+      "decimal_value": 1,
+      "integer_value": 1,
       "parse_float": 1,
       "parse_int": 1
     },

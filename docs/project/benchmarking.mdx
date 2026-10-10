@@ -150,6 +150,8 @@ Bun.gc(true); // synchronous
 Bun.gc(false); // asynchronous
 ```
 
+`Bun.gc(true)` waits for this VM's concurrent JavaScript compilation plans before collecting. This releases values that only those plans retain. The `bun:jsc` functions `fullGC()` and `gcAndSweep()` also wait for compilation before collecting.
+
 Heap snapshots show which objects are not being freed. Use `Bun.generateHeapSnapshot()` to take a heap snapshot, then view it with Safari or WebKit GTK developer tools. To generate a heap snapshot:
 
 ```ts

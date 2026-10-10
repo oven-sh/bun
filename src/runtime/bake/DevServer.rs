@@ -5110,24 +5110,34 @@ impl DevServer {
         let _g = self.graph_safety_lock.guard();
 
         macro_rules! check {
-            ($g:expr) => {{
+            ($g:expr, |$file:ident| $bundled_for_side:expr) => {{
                 let g = $g;
                 let index = g.bundled_files.get_index(path)?;
-                if !g.stale_files.is_set(index) {
-                    return Some(CacheEntry {
-                        kind: g
-                            .get_file_by_index(incremental_graph::FileIndex::init(
-                                u32::try_from(index).expect("int cast"),
-                            ))
-                            .file_kind(),
-                    });
+                if g.stale_files.is_set(index) {
+                    return None;
                 }
-                return None;
+                let $file = g.get_file_by_index(incremental_graph::FileIndex::init(
+                    u32::try_from(index).expect("int cast"),
+                ));
+                if !$bundled_for_side {
+                    return None;
+                }
+                return Some(CacheEntry {
+                    kind: $file.file_kind(),
+                });
             }};
         }
         match side {
-            bake::Graph::Client => check!(&self.client_graph),
-            bake::Graph::Server | bake::Graph::Ssr => check!(&self.server_graph),
+            bake::Graph::Client => check!(&self.client_graph, |_file| true),
+            // One server record stands for both server-side graphs. Only a JS record says which bundled it.
+            bake::Graph::Server | bake::Graph::Ssr => check!(&self.server_graph, |file| {
+                file.file_kind() != FileKind::Js
+                    || if side == bake::Graph::Ssr {
+                        file.is_ssr
+                    } else {
+                        file.is_rsc
+                    }
+            }),
         }
     }
 

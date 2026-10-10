@@ -60,6 +60,31 @@ function isValidSemver(string: string): boolean {
 }
 
 describe("ChildProcess.spawn()", () => {
+  it("allows stdio properties to be assigned before lazy access", () => {
+    const proc = new ChildProcess();
+    const replacements = {
+      stdin: { name: "stdin" },
+      stdout: { name: "stdout" },
+      stderr: { name: "stderr" },
+      stdio: [{ name: "stdin" }, { name: "stdout" }, { name: "stderr" }],
+    };
+    Object.assign(proc, replacements);
+
+    expect({
+      stdin: proc.stdin,
+      stdout: proc.stdout,
+      stderr: proc.stderr,
+      stdio: proc.stdio,
+    }).toEqual(replacements);
+    for (const name of Object.keys(replacements)) {
+      expect(Object.getOwnPropertyDescriptor(proc, name)).toMatchObject({
+        configurable: true,
+        enumerable: true,
+        writable: true,
+      });
+    }
+  });
+
   it("should emit `spawn` on spawn", async () => {
     const proc = new ChildProcess();
     const result = await new Promise(resolve => {

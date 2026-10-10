@@ -1762,7 +1762,8 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
   if (refuses) socketFaultInjection.clear();
   await once(destroyed, "close");
 
-  const drip = setInterval(() => peers[DRIPPING].resume(), 2000);
+  // Three reads of at most 512 KiB ahead of the deadline: progress that does not put it off, and well short of what is left.
+  const drip = setInterval(() => peers[DRIPPING].resume(), 3000);
   try {
     const before = { fdIsOpen: openAfterDestroy, wrote: probeBatching(probe) };
     const waitedFrom = performance.now();
@@ -1785,6 +1786,8 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
         after,
         timeouts,
         cutShort: [missing(SILENT) > 0, missing(DRIPPING) > 0],
+        // 10 s on a 4 s tick is 8 to 12 s, counted from a little after the end().
+        atTheDeadline: measured.closedAfterMs.slice(0, 2).map(ms => ms > 7_000 && ms < 16_000),
         missing: missing(UNANSWERING),
       },
       JSON.stringify(measured),
@@ -1795,6 +1798,7 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
       timeouts: 0,
       // Outside Linux the loopback buffers can take all that a writer has left, and then its peer stalls nothing.
       cutShort: isLinux ? [true, true] : [expect.any(Boolean), expect.any(Boolean)],
+      atTheDeadline: isLinux ? [true, true] : [expect.any(Boolean), expect.any(Boolean)],
       missing: 0,
     });
   } finally {

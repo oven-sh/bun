@@ -22,9 +22,12 @@ The script (`scripts/ci-slowest-tests.ts`) does the heavy lifting:
 - Lists `test-bun` jobs from `bk build view <N>`, skipping `retried: true`.
 - Fetches each job's `raw_log_url` directly with `Authorization: Bearer $BUILDKITE_TOKEN`. **Do not use `bk job log` — it hangs indefinitely on some Windows/alpine jobs.**
 - Caches logs to `$TMPDIR/bun-ci-logs-<build>/` so re-runs are instant.
+- Retries a 429 or a 5xx. Buildkite limits REST requests per minute and one build is about 160 requests, so a run can pause for up to a minute (`waiting Ns for Buildkite` on stderr).
 - Parses `_bk;t=<ms> ... --- [N/TOTAL] <file>` group headers, normalising backslashes to `/` and stripping `[attempt #N]` retries.
 - Aggregates each file's duration as the **max across all platforms** (a file appears once per platform; shards within a platform are disjoint).
 - Drops `package.json` / non-JS entries — those are setup steps, not tests.
+
+**Exit code 2 means the table is computed from partial data.** Some job logs were still missing after the retries. The script prints a `warning:` on stderr that names the platforms, and `--json` carries `jobs`, `jobsFailed` and `failedJobs: [{ id, platform, error }]`. Run the same command again before you use the numbers: only the missing logs are fetched. `--allow-partial` keeps exit 0 for a log that stays unavailable.
 
 If the script can't find a build automatically (rare — it walks the last 10 merged PRs), pick one yourself: `gh pr list --state merged --limit 10 --json number,headRefName`, then `bk build list --branch <headRefName>` and pass the first build with a `finished_at`. Merged-PR builds usually report `state: failed` because of flaky tests — that's fine, the timing data is still valid.
 

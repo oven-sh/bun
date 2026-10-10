@@ -2599,7 +2599,7 @@ it("http2 server handles multiple concurrent requests", async () => {
   });
 });
 
-// Node's alias of utf16le, in the spellings that only the native write resolves.
+// Node's alias of utf16le. The native write resolves the name, in any case.
 it.each(["UTF-16LE", "Utf-16le"])("http2 stream.end(string, %s) sends UTF-16LE", async encoding => {
   const { promise, resolve } = Promise.withResolvers();
   const server = http2.createServer();

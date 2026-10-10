@@ -122,6 +122,8 @@
     macro(quicDatagramAcknowledged, "acknowledged") \
     macro(quicDatagramLost, "lost") \
     macro(s3Error, "S3Error") \
+    macro(mySQLError, "MySQLError") \
+    macro(postgresError, "PostgresError") \
     macro(strict, "strict") \
     macro(jwkCrv, "crv") \
     macro(jwkD, "d") \

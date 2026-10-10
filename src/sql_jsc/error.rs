@@ -61,22 +61,6 @@ impl Error {
     }
 }
 
-/// Crate-local mirror of `bun_jsc::JSGlobalObject::throw_error` that accepts
-/// this crate's [`Error`] instead of `bun_jsc::CrateError`.
-pub trait ThrowSqlError {
-    fn throw_sql_error(&self, err: Error, fmt: &'static str) -> bun_jsc::JsError;
-}
-
-impl ThrowSqlError for bun_jsc::JSGlobalObject {
-    fn throw_sql_error(&self, err: Error, fmt: &'static str) -> bun_jsc::JsError {
-        if matches!(err, Error::Alloc(_)) {
-            return self.throw_out_of_memory();
-        }
-        debug_assert!(err != Error::JSError);
-        self.throw(format_args!("{} {}", err.name(), fmt))
-    }
-}
-
 impl bun_core::output::ErrName for Error {
     fn name(&self) -> &[u8] {
         (*self).name().as_bytes()

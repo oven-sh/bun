@@ -68,6 +68,19 @@ test("postgres: connection refused is reported distinctly and fails fast", async
   expect(Date.now() - start).toBeLessThan(900);
 });
 
+// The state today: native code makes the error with no stack frames, so the
+// print has no source of Bun's own modules.
+test("postgres: connection refused prints as the name, the message and the code", async () => {
+  const port = await closedPort();
+  const err = await connectError(`postgres://postgres@127.0.0.1:${port}/postgres`);
+  expect(Bun.inspect(err, { colors: false })).toMatchInlineSnapshot(`
+    "PostgresError: Failed to connect
+     code: "ERR_POSTGRES_CONNECTION_REFUSED"
+
+    "
+  `);
+});
+
 test("postgres: connection closed before handshake completes is a connect failure", async () => {
   // What a docker port proxy does while the database inside is still
   // initializing: accept, then close with no data.
@@ -187,6 +200,17 @@ test("mysql: connection refused is reported distinctly and fails fast", async ()
   expect(err.code).toBe("ERR_MYSQL_CONNECTION_REFUSED");
   // refused is not retried: nothing is listening, fail well inside the budget
   expect(Date.now() - start).toBeLessThan(900);
+});
+
+test("mysql: connection refused prints as the name, the message and the code", async () => {
+  const port = await closedPort();
+  const err = await connectError(`mysql://root@127.0.0.1:${port}/mysql`);
+  expect(Bun.inspect(err, { colors: false })).toMatchInlineSnapshot(`
+    "MySQLError: Failed to connect
+     code: "ERR_MYSQL_CONNECTION_REFUSED"
+
+    "
+  `);
 });
 
 test("mysql: connection closed before handshake completes is a connect failure", async () => {

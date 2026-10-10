@@ -430,6 +430,23 @@ pub(super) fn using_in_script<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     })
 }
 
+/// `export = a` at the top level of a file that exports something else, in the words of OXC.
+pub(super) fn export_assignment_beside_exports<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+    let is_assignment = |it: &Stmt| it.tag() == StmtTag::ExportAssign;
+    let assignment = file.body().iter().find(is_assignment)?;
+    let exports = |it: Stmt| match it.kind() {
+        _ if matches!(it.tag(), StmtTag::ExportAssign | StmtTag::ExportAsNamespace) => false,
+        StmtKind::ExportNamed(export) => !export.items().is_empty(),
+        StmtKind::ExportStar { .. } | StmtKind::ExportDefault(_) => true,
+        _ => it.is_exported(),
+    };
+    file.body().iter().any(exports).then(|| SyntaxError {
+        at: assignment.span().start,
+        message: b"An export assignment cannot be used in a module with other exported elements"
+            .to_vec(),
+    })
+}
+
 /// `with` where the code is strict for OXC, and anywhere in TypeScript, in its words.
 pub(super) fn with_in_strict_code<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     if file.hir.with_bodies.is_empty() {

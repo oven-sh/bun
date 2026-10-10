@@ -245,44 +245,61 @@ fn get_type_arguments<'a>(ty: Type<'a>) -> impl ExactSizeIterator<Item = Type<'a
     }
 }
 
+/// What [`type_contains`] has met.
+#[derive(Default)]
+struct Met<'a> {
+    seen: FxHashSet<Type<'a>>,
+    /// The declarations of the signatures that are being looked into. Only tsgolint has them.
+    active_signatures: SmallVec<[TsNode<'a>; 8]>,
+}
+
 /// `None`: the type is infinite.
-fn type_contains<'a>(
-    ty: Type<'a>,
-    predicate: fn(Type<'a>) -> bool,
-    seen: &mut FxHashSet<Type<'a>>,
-    depth: u32,
-) -> Option<bool> {
+fn type_contains<'a>(ty: Type<'a>, predicate: fn(Type<'a>) -> bool, met: &mut Met<'a>, depth: u32) -> Option<bool> {
     if depth > MAX_DEPTH {
         return None;
     }
-    if !seen.insert(ty) {
+    if !met.seen.insert(ty) {
         return Some(false);
     }
     if predicate(ty) {
         return Some(true);
     }
-    let mut contains = |nested: Type<'a>| type_contains(nested, predicate, seen, depth + 1);
     if ty.is_union_or_intersection() {
         for part in ty.types() {
-            if contains(part)? {
+            if type_contains(part, predicate, met, depth + 1)? {
                 return Some(true);
             }
         }
         return Some(false);
     }
     for type_argument in get_type_arguments(ty) {
-        if contains(type_argument)? {
+        if type_contains(type_argument, predicate, met, depth + 1)? {
             return Some(true);
         }
     }
+    let is_oxlint = ty.file().language().is_oxlint;
     for signature in ty.get_call_signatures() {
-        if contains(signature.get_return_type())? {
+        // An instantiation of a signature in what that signature takes or returns: tsgolint takes it that the type is
+        // infinite and that it may contain what is looked for. All instantiations have one declaration.
+        let declaration = signature.declaration().filter(|_| is_oxlint);
+        if declaration.is_some_and(|it| met.active_signatures.contains(&it)) {
+            return Some(true);
+        }
+        met.active_signatures.extend(declaration);
+        // tsgolint begins with the parameters. What is met first matters: it is looked into once.
+        if !is_oxlint && type_contains(signature.get_return_type(), predicate, met, depth + 1)? {
             return Some(true);
         }
         for parameter in signature.parameters() {
-            if contains(parameter.get_type())? {
+            if type_contains(parameter.get_type(), predicate, met, depth + 1)? {
                 return Some(true);
             }
+        }
+        if is_oxlint && type_contains(signature.get_return_type(), predicate, met, depth + 1)? {
+            return Some(true);
+        }
+        if declaration.is_some() {
+            met.active_signatures.pop();
         }
     }
     Some(false)
@@ -299,7 +316,7 @@ impl<'a> Contained<'a> {
             true => |t| is_type_flag_set(t, TypeFlags::TYPE_VARIABLE | TypeFlags::INDEX),
             false => |t| is_type_flag_set(t, TypeFlags::ANY),
         };
-        let ask = || type_contains(ty, predicate, &mut FxHashSet::default(), 0).unwrap_or(false);
+        let ask = || type_contains(ty, predicate, &mut Met::default(), 0).unwrap_or(false);
         match ty.is_union_or_intersection() && ty.types().len() > 16 {
             true => *self.0.entry((ty, is_about_type_variables)).or_insert_with(ask),
             false => ask(),

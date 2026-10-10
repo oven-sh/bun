@@ -111,6 +111,8 @@ fn agree_one(
     };
     match (strict, general, error) {
         (Ok(_), _, Some(error)) => Some(("strict-accepts-an-error", error)),
+        // It has only the diagnostic that is left out above, which the other has not.
+        (Ok(_), Ok(general), None) if general.file.has_parse_diagnostics => None,
         (Ok(strict), Ok(general), None) => {
             let mut comparison = compare::Comparison::new(&general.file, &strict.file);
             comparison.compares_jsdoc = reads_jsdoc;

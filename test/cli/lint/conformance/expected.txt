@@ -2,4 +2,4 @@
 0 cases have their messages in another order
 
 441 rules, 441 without failures, 0 not implemented
-67831 cases passed, 0 failed, 70 skipped
+67825 cases passed, 0 failed, 70 skipped

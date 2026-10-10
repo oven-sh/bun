@@ -2,6 +2,7 @@
 import React, { at, nextRender, render, unmount } from "react";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const [directory, names] = process.argv.slice(2);
 // The compiler moves functions out and renames them.
@@ -15,7 +16,7 @@ const results = {};
 for (const name of JSON.parse(readFileSync(names, "utf8"))) {
   let entry;
   try {
-    entry = (await import(join(directory, name + ".js"))).FIXTURE_ENTRYPOINT;
+    entry = (await import(pathToFileURL(join(directory, name + ".js")).href)).FIXTURE_ENTRYPOINT;
   } catch (error) {
     results[name] = ["does not load", error?.name];
     continue;

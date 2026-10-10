@@ -165,8 +165,15 @@ pub struct Listed {
 pub type ListFiles<'h> =
     Box<dyn Fn(&[&[u8]], &[&[u8]]) -> Result<Vec<Listed>, Vec<u8>> + Send + Sync + 'h>;
 
-/// [`Modules::resolve_by`]: the file that has the specifier, the specifier, whether it is in a `require`: the path.
-pub type ResolveBy = Box<dyn Fn(&dyn Modules, &[u8], &[u8], bool) -> Option<Vec<u8>> + Send + Sync>;
+/// The file that has the specifier, the specifier, whether it is in a `require`: the path.
+pub type Resolve = Box<dyn Fn(&dyn Modules, &[u8], &[u8], bool) -> Option<Vec<u8>> + Send + Sync>;
+
+/// [`Modules::resolve_by`]
+pub struct ResolveBy {
+    pub resolve: Resolve,
+    /// Whether anything is known of what the file at a path imports, which has this text.
+    pub is_known: Box<dyn Fn(&[u8], &[u8]) -> bool + Send + Sync>,
+}
 
 /// How a plugin reads a file that is not the one that is linted.
 #[derive(Copy, Clone)]

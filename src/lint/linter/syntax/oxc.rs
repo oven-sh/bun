@@ -260,8 +260,9 @@ fn duplicate_parameter<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
 pub(super) fn first_error<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     // acorn's checks have these for JavaScript.
     let of_typescript = match file.is_javascript() {
-        true => [None, None, None, None],
+        true => [None, None, None, None, None],
         false => [
+            espree::export_assignment_beside_exports(file),
             declaration_without_initializer(file),
             declaration_list(file),
             class_without_name(file),

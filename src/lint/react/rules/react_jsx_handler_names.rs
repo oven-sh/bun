@@ -16,11 +16,11 @@ pub struct JsxHandlerNames {
     /// Empty: the names of the handlers are not looked at.
     event_handler_prefixes: Vec<Box<[u8]>>,
     ignore_component_names: Vec<Box<[u8]>>,
-    original: Original,
+    /// `None`: [`Rule::validate`] has refused the options, and the rule does not run.
+    original: Option<Original>,
 }
 
 /// What upstream reads otherwise than oxlint.
-#[derive(Default)]
 struct Original {
     /// Whatever is truthy is `true`.
     check_inline_function: bool,
@@ -37,13 +37,15 @@ struct Regexes {
     prop_event_handler: Regex,
 }
 
-/// Where in the file something follows a character: the character, and the end of what makes it that.
+/// What has been looked up in the text of the file.
 #[derive(Default)]
-pub struct Followed {
-    /// The name of a handler follows a `.`.
+pub struct Known {
+    /// Each `.` that the name of a handler follows, and the end of what makes it such a name.
     dots: OnceCell<Vec<(u32, u32)>>,
-    /// A `:` follows a `:`.
+    /// Each `:` that a `:` follows, and the end of that.
     colons: OnceCell<Vec<(u32, u32)>>,
+    /// Whether `EVENT_HANDLER_REGEX` matches all of it.
+    is_handler_name: OnceCell<bool>,
 }
 
 const BAD_HANDLER_NAME: Message = Message::new(
@@ -67,7 +69,7 @@ enum HandlerName<'a> {
 impl Rule for JsxHandlerNames {
     const META: Meta = Meta::plugin(Plugin::React, "jsx-handler-names", Kind::Suggestion);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
-    type State<'a> = Followed;
+    type State<'a> = Known;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -98,7 +100,7 @@ impl Rule for JsxHandlerNames {
                 .into_iter()
                 .map(|it| it.as_bytes().into())
                 .collect(),
-            original: Original::new(options).unwrap_or_default(),
+            original: Original::new(options).ok(),
         }
     }
 
@@ -106,10 +108,11 @@ impl Rule for JsxHandlerNames {
         Original::new(options.object(0)).map(|_| ()).map_err(|error| error.message.into_bytes())
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Followed> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Known> {
         // Without the one there is neither.
         let has_prefixes = !self.event_handler_prop_prefixes.is_empty();
-        (has_prefixes || (!file.language().is_oxlint && self.original.regexes.is_some())).then(Followed::default)
+        let has_regexes = self.original.as_ref()?.regexes.is_some();
+        (has_prefixes || (!file.language().is_oxlint && has_regexes)).then(Known::default)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -191,8 +194,11 @@ impl JsxHandlerNames {
         let ExprKind::Jsx(jsx) = e.kind() else {
             return;
         };
+        let Some(original) = &self.original else {
+            return;
+        };
         let is_oxlint = cx.language().is_oxlint;
-        let regexes = self.original.regexes.as_ref().filter(|_| !is_oxlint);
+        let regexes = original.regexes.as_ref().filter(|_| !is_oxlint);
         let mut is_ignored = None;
         for attribute in jsx.attrs() {
             let Some(AttributeValue::ExpressionContainer(value_expr)) = get_prop_value(attribute) else {
@@ -201,7 +207,7 @@ impl JsxHandlerNames {
             let handler = match is_oxlint {
                 true => self.handler(value_expr),
                 // For upstream the name is the text of a node, whatever that is.
-                false => self.original.handler(value_expr).map(|span| (HandlerName::Text(span), span, false)),
+                false => original.handler(value_expr).map(|span| (HandlerName::Text(span), span, false)),
             };
             let Some((handler_name, handler_span, is_props_handler)) = handler else {
                 continue;
@@ -232,7 +238,10 @@ impl JsxHandlerNames {
                 HandlerName::Name(name) => self.match_event_handler_name(name),
                 HandlerName::Text(span) => match regexes {
                     Some(regexes) => {
-                        Some(regexes.event_handler.test(&normalize_handler_name(cx.slice(span), is_oxlint)))
+                        let test = || regexes.event_handler.test(&normalize_handler_name(cx.slice(span), is_oxlint));
+                        // That of the file is the name in each arrow function that is no call.
+                        let is_file = span == cx.file().span();
+                        Some(if is_file { *cx.state.is_handler_name.get_or_init(test) } else { test() })
                     }
                     None => self.match_event_handler_name_in(span, cx),
                 },
@@ -249,11 +258,11 @@ impl JsxHandlerNames {
                     true => cx
                         .report(attribute.span(), BAD_HANDLER_NAME)
                         .data("propKey", prop_key)
-                        .data("handlerPrefix", self.original.event_handler_prefix.clone()),
+                        .data("handlerPrefix", original.event_handler_prefix.clone()),
                     false => cx
                         .report(attribute.span(), BAD_PROP_KEY)
                         .data("propValue", normalize_handler_name(cx.slice(handler_span), is_oxlint))
-                        .data("handlerPropPrefix", self.original.event_handler_prop_prefix.clone()),
+                        .data("handlerPropPrefix", original.event_handler_prop_prefix.clone()),
                 };
                 continue;
             }
@@ -453,8 +462,8 @@ impl JsxHandlerNames {
         // upstream asks minimatch, which throws for what it has of `<a.b>` and `<a:b>`.
         if !is_oxlint {
             let name = get_jsx_element_name(jsx);
-            return strings::index_of_any(&name, b".:").is_none()
-                && self.original.ignore_component_names.iter().any(|it| it.matches(&name));
+            let mut ignored = self.original.iter().flat_map(|it| &it.ignore_component_names);
+            return strings::index_of_any(&name, b".:").is_none() && ignored.any(|it| it.matches(&name));
         }
         if self.ignore_component_names.is_empty() {
             return false;

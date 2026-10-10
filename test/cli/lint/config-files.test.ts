@@ -313,6 +313,108 @@ describe.concurrent("an eslint.config.js", () => {
     },
   );
 
+  // The same. Its schema says with `dependencies` which options need which.
+  test.each<[string, string[] | null]>([
+    [
+      "{sortTypesGroup:true}",
+      [
+        'Value {"sortTypesGroup":true,"distinctGroup":true,"named":false,"warnOnUnassignedImports":false} should have required property \'groups\'.',
+        "Value true should be equal to one of the allowed values.",
+        'Value {"sortTypesGroup":true,"distinctGroup":true,"named":false,"warnOnUnassignedImports":false} should match exactly one schema in oneOf.',
+      ],
+    ],
+    [
+      '{consolidateIslands:"inside-groups"}',
+      [
+        'Value {"consolidateIslands":"inside-groups","distinctGroup":true,"sortTypesGroup":false,"named":false,"warnOnUnassignedImports":false} should have required property \'newlines-between\'.',
+        'Value {"consolidateIslands":"inside-groups","distinctGroup":true,"sortTypesGroup":false,"named":false,"warnOnUnassignedImports":false} should have required property \'newlines-between-types\'.',
+        'Value {"consolidateIslands":"inside-groups","distinctGroup":true,"sortTypesGroup":false,"named":false,"warnOnUnassignedImports":false} should match some schema in anyOf.',
+        'Value "inside-groups" should be equal to one of the allowed values.',
+        'Value {"consolidateIslands":"inside-groups","distinctGroup":true,"sortTypesGroup":false,"named":false,"warnOnUnassignedImports":false} should match exactly one schema in oneOf.',
+      ],
+    ],
+    ['{"newlines-between-types":"always"}', ["Value false should be equal to one of the allowed values."]],
+    [
+      '{sortTypesGroup:true,groups:["builtin"]}',
+      [
+        'Value ["builtin"] should NOT be valid.',
+        "Value true should be equal to one of the allowed values.",
+        'Value {"sortTypesGroup":true,"groups":["builtin"],"distinctGroup":true,"named":false,"warnOnUnassignedImports":false} should match exactly one schema in oneOf.',
+      ],
+    ],
+    [
+      '{sortTypesGroup:true,groups:[["builtin","external"],"index"]}',
+      [
+        'Value [["builtin","external"],"index"] should NOT be valid.',
+        "Value true should be equal to one of the allowed values.",
+        'Value {"sortTypesGroup":true,"groups":[["builtin","external"],"index"],"distinctGroup":true,"named":false,"warnOnUnassignedImports":false} should match exactly one schema in oneOf.',
+      ],
+    ],
+    [
+      '{sortTypesGroup:true,groups:["type"],"newlines-between-types":"never",consolidateIslands:"inside-groups"}',
+      [
+        'Value {"sortTypesGroup":true,"groups":["type"],"newlines-between-types":"never","consolidateIslands":"inside-groups","distinctGroup":true,"named":false,"warnOnUnassignedImports":false} should have required property \'newlines-between\'.',
+        'Value "never" should be equal to one of the allowed values.',
+        'Value {"sortTypesGroup":true,"groups":["type"],"newlines-between-types":"never","consolidateIslands":"inside-groups","distinctGroup":true,"named":false,"warnOnUnassignedImports":false} should match some schema in anyOf.',
+        'Value "inside-groups" should be equal to one of the allowed values.',
+        'Value {"sortTypesGroup":true,"groups":["type"],"newlines-between-types":"never","consolidateIslands":"inside-groups","distinctGroup":true,"named":false,"warnOnUnassignedImports":false} should match exactly one schema in oneOf.',
+      ],
+    ],
+    [
+      '{sortTypesGroup:false,"newlines-between-types":"never"}',
+      ["Value false should be equal to one of the allowed values."],
+    ],
+    [
+      '{consolidateIslands:"inside-groups","newlines-between":"always"}',
+      [
+        'Value "always" should be equal to one of the allowed values.',
+        'Value {"consolidateIslands":"inside-groups","newlines-between":"always","distinctGroup":true,"sortTypesGroup":false,"named":false,"warnOnUnassignedImports":false} should have required property \'newlines-between-types\'.',
+        'Value {"consolidateIslands":"inside-groups","newlines-between":"always","distinctGroup":true,"sortTypesGroup":false,"named":false,"warnOnUnassignedImports":false} should match some schema in anyOf.',
+        'Value "inside-groups" should be equal to one of the allowed values.',
+        'Value {"consolidateIslands":"inside-groups","newlines-between":"always","distinctGroup":true,"sortTypesGroup":false,"named":false,"warnOnUnassignedImports":false} should match exactly one schema in oneOf.',
+      ],
+    ],
+    ['{consolidateIslands:"never"}', null],
+    ['{sortTypesGroup:true,groups:["type"]}', null],
+    ['{sortTypesGroup:true,groups:[["type","builtin"]],"newlines-between-types":"ignore"}', null],
+    ['{consolidateIslands:"inside-groups","newlines-between":"always-and-inside-groups"}', null],
+    [
+      "{sortTypesGroup:true,groups:[]}",
+      [
+        "Value [] should NOT be valid.",
+        "Value true should be equal to one of the allowed values.",
+        'Value {"sortTypesGroup":true,"groups":[],"distinctGroup":true,"named":false,"warnOnUnassignedImports":false} should match exactly one schema in oneOf.',
+      ],
+    ],
+    ["{sortTypesGroup:false}", null],
+    [
+      '{sortTypesGroup:true,groups:["type"],consolidateIslands:"inside-groups","newlines-between-types":"always-and-inside-groups"}',
+      null,
+    ],
+    [
+      '{sortTypesGroup:true,groups:["type","type"]}',
+      ['Value ["type","type"] should NOT have duplicate items (items ## 0 and 1 are identical).'],
+    ],
+    [
+      '{consolidateIslands:"x"}',
+      [
+        'Value "x" should be equal to one of the allowed values.',
+        'Value "x" should be equal to one of the allowed values.',
+        'Value {"consolidateIslands":"x","distinctGroup":true,"sortTypesGroup":false,"named":false,"warnOnUnassignedImports":false} should match exactly one schema in oneOf.',
+      ],
+    ],
+  ])("import/order: options that need others: %s", async (options, refusal) => {
+    const { stderr, exitCode } = await lint({
+      "eslint.config.mjs": `const order = { meta: { schema: false }, create: () => ({}) };
+        const plugin = { meta: { name: "eslint-plugin-import", version: "2.32.0" }, rules: { order } };
+        export default [{ plugins: { import: plugin }, rules: { "import/order": ["error", ${options}] } }];`,
+      "a.js": "export {};\n",
+    });
+    if (refusal === null) expect(stderr).not.toContain(`Key "rules"`);
+    else expect(stderr).toEndWith(`Key "rules": Key "import/order":\n\t${refusal.join("\n\t")}`);
+    expect(exitCode).toBe(refusal === null ? 0 : 2);
+  });
+
   test("import/order: the kinds of modules by their names and by `settings`, path groups, names in braces, the fix", async () => {
     const files = {
       "eslint.config.mjs": `const order = {

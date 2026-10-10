@@ -1,14 +1,18 @@
 use bun_core::strings;
+use crate::import_export_record::may_be_module;
 use crate::import_resolve::Resolvers;
 use crate::import_settings::Settings;
 use crate::import_type::ImportTypes;
 use crate::module_visitor::{self, Systems};
 use crate::oxlint;
-use bun_lint::modules::{Declaration, Flavor, Import, ModuleId, Modules, Request, RequestKind, requests_of, set_lines};
+use bun_lint::modules::{
+    Declaration, Flavor, ModuleId, Modules, Request, RequestKind, ResolveBy, requests_of, set_lines,
+};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use rustc_hash::FxHashSet;
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 /// Forbid a module from importing a module with a dependency path back to itself.
 pub struct NoCycle {
@@ -76,12 +80,21 @@ impl Rule for NoCycle {
         // What a name means is a matter of the settings, in every file that the graph comes to.
         Resolvers::of(file.settings())?;
         modules.resolve_by(&|| {
-            let settings = file.settings().clone();
-            Box::new(move |modules, from, specifier, is_require| {
-                let found = Resolvers::of(&settings)?.resolve_from(modules, from, specifier, is_require);
-                found.file().map(<[u8]>::to_vec)
-            })
+            let settings = Arc::new(file.settings().clone());
+            let same = Arc::clone(&settings);
+            ResolveBy {
+                resolve: Box::new(move |modules, from, specifier, is_require| {
+                    let found = Resolvers::of(&settings)?.resolve_from(modules, from, specifier, is_require);
+                    found.file().map(<[u8]>::to_vec)
+                }),
+                is_known: Box::new(move |path, text| has_export_map(&Settings::new(&same), path, text)),
+            }
         });
+        if !has_export_map(&Settings::new(file.settings()), file.path(), file.text()) {
+            requests.clear();
+        }
+        // A way back can lead through a package.
+        modules.follow_packages();
         let checks = if self.commonjs || self.amd { self.checks(file) } else { Vec::new() };
         let known = requests.len();
         requests.extend(checks.iter().filter(|it| it.is_require).map(|it| Request {
@@ -129,6 +142,11 @@ fn oxlint_allows_self_reference<'a>(file: &'a File<'a>, specifier: &[u8]) -> boo
         }
         _ => false,
     })
+}
+
+/// Whether `ExportMapBuilder.for` has something for the file at `path`, which has this text.
+fn has_export_map(settings: &Settings, path: &[u8], text: &[u8]) -> bool {
+    !settings.is_ignored(path) && may_be_module(text)
 }
 
 /// What is the same for all the imports of a file.
@@ -327,9 +345,11 @@ impl NoCycle {
         };
         let search = Search { rule: self, modules, settings: Settings::new(file.settings()), types, file, me };
         // `scc` has the modules that imports of values lead to from here. Without any it is empty: all are alike in it.
-        let imports_values = |it: &Import| !it.declarations.iter().all(|it| it.is_only_importing_types);
-        let has_components =
-            !search.settings.is_ignored(modules.path(me)) && modules.imports(me).iter().any(imports_values);
+        let imports_value = |it: &Request| {
+            !it.is_only_importing_types && modules.resolve(file.path(), it.specifier, false).is_some()
+        };
+        let has_components = has_export_map(&search.settings, file.path(), file.text())
+            && requests_of(file, Flavor::EslintPluginImport).iter().any(imports_value);
         let uses_components = !self.disable_scc && self.ignore_types && has_components;
         let mut traversed = FxHashSet::default();
         for check in self.checks(file) {

@@ -46,7 +46,8 @@ pub(crate) fn evaluate_with(
     let script = Script {
         source,
         arguments: &arguments[usize::from(argument.is_empty())..],
-        cwd: paths::dirname(path),
+        // As for the tools: `process.cwd()` is where the command runs, not where the file is.
+        cwd: &environment.cwd,
         stdin: b"",
     };
     run(environment, &script).map_err(|why| {

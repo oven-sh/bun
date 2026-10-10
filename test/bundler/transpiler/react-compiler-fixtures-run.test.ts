@@ -7,7 +7,7 @@
 // `react-compiler-fixtures-run/react.js` stands for React. It renders child components and runs no effects.
 
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -83,8 +83,7 @@ async function renderAll(root: string, side: string): Promise<Results> {
   return await Bun.file(join(root, side + ".json")).json();
 }
 
-// About 1,700 modules are loaded: too slow for a test where JavaScriptCore is a debug build.
-describe.skipIf(isDebug || isASAN)("react-compiler upstream fixtures, run", () => {
+describe("react-compiler upstream fixtures, run", () => {
   beforeAll(
     async () => {
       const everything = { ".": "./index.js", "./compiler-runtime": "./index.js", "./jsx-runtime": "./index.js", "./jsx-dev-runtime": "./index.js" }; // prettier-ignore

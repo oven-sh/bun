@@ -3,15 +3,16 @@ use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
-/// This rule prevents comment strings (e.g. beginning with `//` or `/*`) from being accidentally injected as a text
-/// node in JSX statements.
+/// Disallow comments from being inserted as text nodes.
 pub struct JsxNoCommentTextnodes;
 
+const PUT_COMMENT_IN_BRACES: Message =
+    Message::new("putCommentInBraces", "Comments inside children section of tag should be placed inside braces");
 const JSX_NO_COMMENT_TEXTNODES: Message =
     Message::new("", "Comments inside children section of tag should be placed inside braces");
 
 impl Rule for JsxNoCommentTextnodes {
-    const META: Meta = Meta::oxlint(Plugin::React, "jsx-no-comment-textnodes", Kind::Problem);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-no-comment-textnodes", Kind::Problem).recommended();
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 
@@ -20,24 +21,30 @@ impl Rule for JsxNoCommentTextnodes {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        is_jsx(file).then_some(())
+        (!file.language().is_oxlint || is_jsx(file)).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Jsx(jsx) = e.kind() else {
             return;
         };
+        let is_oxlint = cx.language().is_oxlint;
         let texts = jsx.children().iter().filter(|it| it.tag() == ExprTag::String && it.jsx_container_span().is_none());
-        for jsx_text in texts.filter(|it| has_comment_pattern(it.text())) {
-            cx.report(jsx_text, JSX_NO_COMMENT_TEXTNODES);
+        for jsx_text in texts.filter(|it| has_comment_pattern(it.text(), is_oxlint)) {
+            cx.report(jsx_text, if is_oxlint { JSX_NO_COMMENT_TEXTNODES } else { PUT_COMMENT_IN_BRACES });
         }
     }
 }
 
-/// A line of the text starts with `//` or `/*`.
-fn has_comment_pattern(text: &[u8]) -> bool {
-    strings::contains_char(text, b'/')
-        && strings::split(text, b"\n")
-            .map(strings::trim_unicode_whitespace)
-            .any(|line| line.starts_with(b"//") || line.starts_with(b"/*"))
+/// A line of the text starts with `//` or `/*`: `/^\s*\/(\/|\*)/m`
+fn has_comment_pattern(text: &[u8], is_oxlint: bool) -> bool {
+    let starts_comment = |line: &[u8]| line.starts_with(b"//") || line.starts_with(b"/*");
+    if !strings::contains_char(text, b'/') {
+        return false;
+    }
+    // For oxlint only `\n` ends a line, U+0085 is a blank and U+FEFF is none.
+    match is_oxlint {
+        true => strings::split(text, b"\n").map(strings::trim_unicode_whitespace).any(starts_comment),
+        false => strings::js_lines(text).map(strings::trim_js_whitespace_start).any(starts_comment),
+    }
 }

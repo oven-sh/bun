@@ -494,8 +494,8 @@ impl<'h> Graph<'h> {
         if specifier.len() > 4096 {
             return None;
         }
-        if let (Flavor::EslintPluginImport, Some(resolve)) = (self.flavor(), self.resolver.get()) {
-            let found = resolve(self, from, specifier, is_require)?;
+        if let (Flavor::EslintPluginImport, Some(by)) = (self.flavor(), self.resolver.get()) {
+            let found = (by.resolve)(self, from, specifier, is_require)?;
             return Some((Cow::Owned(join(&self.store.cwd, &found)), false));
         }
         self.resolve_any_path(from, specifier, is_require)
@@ -699,6 +699,11 @@ impl<'h> Graph<'h> {
     /// Reads the file at `path`, which is not linted, for what it imports.
     fn read(&self, path: &[u8]) -> Option<Recorded<'h>> {
         let text = self.store.disk().read(path)?;
+        if let (Flavor::EslintPluginImport, Some(by)) = (self.flavor(), self.resolver.get())
+            && !(by.is_known)(path, &text)
+        {
+            return Some(self.make_record(path.to_vec(), &[], false, None));
+        }
         // Whatever can be parsed.
         let language = LanguageOptions {
             parser: Parser::TypeScript,

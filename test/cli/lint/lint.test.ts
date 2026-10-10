@@ -285,6 +285,25 @@ describe.concurrent("bun lint", () => {
     });
   });
 
+  test("--stdin: what only the parser of the configuration can read is named, as for a file", async () => {
+    const files = {
+      "eslint.config.mjs": `export default [{
+        languageOptions: { parser: { meta: { name: "@babel/eslint-parser" }, parseForESLint() { throw new Error("called"); } } },
+        rules: { "no-var": "error" },
+      }];`,
+    };
+    const [read, unread] = await Promise.all([
+      lint(files, ["-f", "unix", "--stdin", "--stdin-filename", "a.mjs"], { stdin: "var a = 1;\nexport { a };\n" }),
+      lint(files, ["-f", "unix", "--stdin", "--stdin-filename", "b.mjs"], {
+        stdin: "const b = await import.source('./b.wasm');\nexport { b };\n",
+        mayFail: true,
+      }),
+    ]);
+    expect(read.stdout).toContain("<dir>/a.mjs:1:1: Unexpected var, use let or const instead. [Error/no-var]");
+    expect(unread.stderr).toContain("1 file was not linted, only the parser of the configuration can read it: b.mjs.");
+    expect([read.exitCode, unread.exitCode]).toEqual([1, 2]);
+  });
+
   test("without a configuration file: eslint:recommended, and typescript-eslint/recommended for TypeScript", async () => {
     const { stdout, exitCode } = await lint(
       {

@@ -383,14 +383,14 @@ impl PackageJSON {
         // TODO: remove this extra copy
         let parts: [&[u8]; 2] = [input_path, b"package.json"];
         let package_json_path_ = r_fs.abs(&parts);
-        let package_json_path = r_fs
-            .dirname_store
+        let package_json_path = r
+            .dir_cache()
+            .dirname_store()
             .append_slice(package_json_path_)
             .expect("unreachable");
 
-        // DirInfo cache is reused globally
-        // So we cannot free these
-        // (allocator dropped — global mimalloc)
+        // The path and the parsed file live as long as the resolver's
+        // directory cache, which holds both.
 
         let mut entry = match r.caches.fs.read_file_with_allocator(
             r_fs,

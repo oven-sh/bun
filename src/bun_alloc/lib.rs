@@ -1515,9 +1515,34 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
         }
     }
 
+    /// [`init_counters_at`](Self::init_counters_at) for storage that is not zeroed.
+    ///
+    /// SAFETY: `slot` must be a valid, exclusive, aligned `*mut Self`.
+    #[inline]
+    pub(crate) unsafe fn init_at_uninit(slot: *mut Self) {
+        // SAFETY: caller contract; all-zeros is `[None; _]` for `list.ptrs`.
+        unsafe {
+            slot.write_bytes(0, 1);
+            Self::init_counters_at(slot);
+        }
+    }
+
     #[inline]
     fn len(&self) -> u32 {
         self.count
+    }
+
+    /// Every appended value, in no particular order.
+    fn for_each(&self, mut f: impl FnMut(&ValueType)) {
+        for block in self.list.ptrs[..self.list.allocated as usize]
+            .iter()
+            .flatten()
+        {
+            for item in &block.items[..block.used as usize] {
+                // SAFETY: `[..used]` was initialized by `append`.
+                f(unsafe { item.assume_init_ref() });
+            }
+        }
     }
 
     #[inline]
@@ -1677,6 +1702,21 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
             // Self-referential `head = &tail`; raw NonNull.
             let tail_ptr = addr_of_mut!((*slot).tail);
             addr_of_mut!((*slot).head).write(Some(NonNull::new_unchecked(tail_ptr)));
+        }
+    }
+
+    /// [`init_at`](Self::init_at) for storage that is not zeroed and does not
+    /// live for `'static`: an instance that its owner drops.
+    ///
+    /// SAFETY: `slot` must point to writable, properly-aligned storage of
+    /// `size_of::<Self>()` bytes that does not move while the list is in use.
+    pub unsafe fn init_at_uninit(slot: *mut Self) {
+        // SAFETY: caller contract. These are the fields `init_at` takes from
+        // the zeroed storage.
+        unsafe {
+            addr_of_mut!((*slot).used).write(0);
+            BSSListOverflowBlock::zero(addr_of_mut!((*slot).tail));
+            Self::init_at(slot);
         }
     }
 
@@ -1890,6 +1930,61 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
     /// responsibility — use `bss_string_list!` for the canonical singleton.
     pub fn init() -> NonNull<Self> {
         bss_heap_init(Self::init_at)
+    }
+
+    /// [`init_at`](Self::init_at) for an instance that its owner frees with
+    /// [`deinit_heap`](Self::deinit_heap): `slot` need not be zeroed, and the
+    /// two buffers come from the global allocator, not from the
+    /// process-lifetime mapping.
+    ///
+    /// SAFETY: `slot` must point to writable, properly-aligned storage of
+    /// `size_of::<Self>()` bytes.
+    pub unsafe fn init_at_heap(slot: *mut Self) {
+        // SAFETY: caller contract.
+        unsafe {
+            addr_of_mut!((*slot).mutex).write(Mutex::new());
+            addr_of_mut!((*slot).backing_buf).write(NonNull::new_unchecked(Box::into_raw(
+                Box::<[u8]>::new_uninit_slice(COUNT * ITEM_LENGTH),
+            )));
+            addr_of_mut!((*slot).backing_buf_used).write(0);
+            addr_of_mut!((*slot).slice_buf).write(NonNull::new_unchecked(Box::into_raw(
+                Box::<[&'static [u8]]>::new_uninit_slice(COUNT),
+            )));
+            addr_of_mut!((*slot).slice_buf_used).write(0);
+            OverflowList::init_at_uninit(addr_of_mut!((*slot).overflow_list));
+        }
+    }
+
+    /// Frees what [`init_at_heap`](Self::init_at_heap) and every later
+    /// `append` allocated. Every slice the list returned dangles afterwards.
+    ///
+    /// SAFETY: `slot` was initialized by `init_at_heap`, and no other thread
+    /// uses the list.
+    pub unsafe fn deinit_heap(slot: *mut Self) {
+        // SAFETY: caller contract — exclusive access to a live instance.
+        let this = unsafe { &mut *slot };
+        // A string that did not fit `backing_buf` has its own allocation.
+        let free_spilled = |stored: &&'static [u8]| {
+            if !this.exists(stored) {
+                // SAFETY: `do_append` took it from `default_alloc::malloc`.
+                unsafe { default_alloc::free(stored.as_ptr().cast_mut().cast()) };
+            }
+        };
+        // SAFETY: `[..slice_buf_used]` was written by `do_append`.
+        unsafe {
+            let slices = this.slice_buf.as_ptr().cast::<&'static [u8]>();
+            for i in 0..this.slice_buf_used as usize {
+                free_spilled(&*slices.add(i));
+            }
+        }
+        this.overflow_list.for_each(free_spilled);
+        // SAFETY: both buffers came from `Box::into_raw` in `init_at_heap`, and
+        // the overflow list is not used again.
+        unsafe {
+            drop(Box::from_raw(this.backing_buf.as_ptr()));
+            drop(Box::from_raw(this.slice_buf.as_ptr()));
+            core::ptr::drop_in_place(addr_of_mut!(this.overflow_list));
+        }
     }
 
     // Singleton is process-lifetime; never freed.
@@ -2207,6 +2302,22 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     /// responsibility — use `bss_map_inner!` for the canonical singleton.
     pub fn init() -> NonNull<Self> {
         bss_heap_init(Self::init_at)
+    }
+
+    /// [`init_at`](Self::init_at) for storage that is not zeroed and does not
+    /// live for `'static`: an instance that its owner drops in place. The
+    /// drop frees the index and the overflow blocks. It does not drop the
+    /// values.
+    ///
+    /// SAFETY: `slot` must point to writable, properly-aligned storage of
+    /// `size_of::<Self>()` bytes.
+    pub unsafe fn init_at_uninit(slot: *mut Self) {
+        // SAFETY: caller contract. The overflow list is the one field that
+        // `init_at` takes from the zeroed storage.
+        unsafe {
+            OverflowList::init_at_uninit(addr_of_mut!((*slot).overflow_list));
+            Self::init_at(slot);
+        }
     }
 
     // With `IndexMap = HashMap`, Drop frees it; singleton Box drop frees instance.

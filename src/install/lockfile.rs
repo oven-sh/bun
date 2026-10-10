@@ -1787,7 +1787,7 @@ impl<'a> Printer<'a> {
         // Erase to raw so the `entries_mutex` reborrow below doesn't conflict
         // with the `&mut self` borrow `read_directory` took.
         let entries_option: *const Fs::EntriesOption =
-            fs.fs.read_directory(top_level_dir, None, 0, true)?;
+            fs.fs.read_directory(top_level_dir, None, true)?;
         // Copy the listing's basenames out under `entries_mutex`; `.data` must
         // only be probed while the lock is held.
         let entries = {

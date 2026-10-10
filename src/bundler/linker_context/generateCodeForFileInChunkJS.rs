@@ -194,6 +194,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                     &source_ref.path,
                     c.options.target,
                     top_level_dir,
+                    c.resolver().dir_cache(),
                     arena,
                 ));
                 source_storage = bun_ast::Source {

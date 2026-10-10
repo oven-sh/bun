@@ -1294,6 +1294,13 @@ impl CompletionStruct for JSBundleCompletionTask {
         let log: *mut bun_ast::Log = &raw mut self.log;
         let t = Transpiler::init(bump, log, opts, Some(self.env))?;
         let transpiler: &'a mut Transpiler<'a> = bump.alloc(t);
+        // The build reads every directory from disk: it does not start from
+        // what the process has cached, and it leaves nothing behind in that
+        // cache. `configure_bundler` already reads the root tsconfig.json and
+        // the .env files through the resolver, so bind before it runs.
+        transpiler
+            .resolver
+            .bind_dir_cache(bun_resolver::DirCacheRef::owned());
 
         // Post-init field wiring.
         // Reborrow through a raw ptr so `&mut self` is usable
@@ -1301,7 +1308,17 @@ impl CompletionStruct for JSBundleCompletionTask {
         // not `self`) to the trait method.
         let tp: *mut Transpiler<'a> = transpiler;
         // SAFETY: `tp` aliases nothing in `self`; lives in `bump`.
-        self.configure_bundler(unsafe { &mut *tp }, bump)?;
+        if let Err(err) = self.configure_bundler(unsafe { &mut *tp }, bump) {
+            // A message can borrow a path from the directory cache, which goes
+            // with the transpiler. Copy the messages first.
+            let mut log = bun_ast::Log::init();
+            self.log.append_to_with_recycled(&mut log, true);
+            self.log = log;
+            // SAFETY: `tp` is the unique slot from `bump.alloc`, and nothing
+            // else has seen it. The arena does not run `Drop`.
+            unsafe { core::ptr::drop_in_place(tp) };
+            return Err(err);
+        }
         // SAFETY: `tp` was the unique `&'a mut` slot from `bump.alloc`; the
         // reborrow above has ended.
         Ok(unsafe { &mut *tp })

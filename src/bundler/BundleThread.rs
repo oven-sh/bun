@@ -49,7 +49,6 @@ pub(crate) struct BundleThread<C: Node> {
     // `bun.UnboundedQueue(CompletionStruct, .next)` — intrusive over `C.next`;
     // the field offset is encoded via the `Node` supertrait on `CompletionStruct`.
     pub(crate) queue: UnboundedQueue<C>,
-    pub(crate) generation: bun_core::Generation,
 }
 
 /// Trait capturing the interface a completion task must satisfy.
@@ -128,7 +127,6 @@ impl<C: CompletionStruct> BundleThread<C> {
         Self {
             waker: Async::Waker::placeholder(),
             queue: UnboundedQueue::new(),
-            generation: 0,
             ready_event: ResetEvent::default(),
         }
     }
@@ -154,7 +152,7 @@ impl<C: CompletionStruct> BundleThread<C> {
                 let ptr = ptr;
                 // SAFETY: caller guarantees `instance` is valid for 'static; `thread_main`
                 // accesses fields only via raw-ptr projection (never `&Self`/`&mut Self`)
-                // and is the sole writer of `waker`/`generation`, so concurrent `enqueue()`
+                // and is the sole writer of `waker`, so concurrent `enqueue()`
                 // from other threads is sound.
                 unsafe { Self::thread_main(ptr.0) }
             })?;
@@ -233,12 +231,10 @@ impl<C: CompletionStruct> BundleThread<C> {
                 }
                 // SAFETY: as above; started ⇒ the owner waits for us.
                 let completion = unsafe { &mut *completion };
-                // SAFETY: `generation` is only read/written on this (bundle) thread.
-                let generation = unsafe { (*instance).generation };
                 // `panic = "abort"` → a Rust panic on this thread enters the
                 // crash-handler hook and aborts the whole process.
                 // No `catch_unwind` — there is nothing to catch.
-                match Self::generate_in_new_thread(completion, generation) {
+                match Self::generate_in_new_thread(completion) {
                     Ok(()) => {}
                     Err(err) => {
                         completion.set_result(BundleV2Result::Err(err));
@@ -246,11 +242,6 @@ impl<C: CompletionStruct> BundleThread<C> {
                     }
                 }
                 has_bundled = true;
-            }
-            // SAFETY: `generation` is only read/written on this (bundle) thread.
-            unsafe {
-                let g = core::ptr::addr_of_mut!((*instance).generation);
-                *g = (*g).saturating_add(1);
             }
 
             if has_bundled {
@@ -265,10 +256,7 @@ impl<C: CompletionStruct> BundleThread<C> {
     }
 
     /// This is called from `Bun.build` in JavaScript.
-    fn generate_in_new_thread(
-        completion: &mut C,
-        generation: bun_core::Generation,
-    ) -> Result<(), crate::Error> {
+    fn generate_in_new_thread(completion: &mut C) -> Result<(), crate::Error> {
         let heap = Arena::new();
 
         let bump = &heap;
@@ -279,8 +267,6 @@ impl<C: CompletionStruct> BundleThread<C> {
 
         // Allocate + configure folded — see `create_and_configure_transpiler` doc.
         let transpiler = completion.create_and_configure_transpiler(bump)?;
-
-        transpiler.resolver.generation = generation;
 
         // Construction + run delegated — see
         // `init_and_run` doc. Reborrow `transpiler` through a raw ptr so

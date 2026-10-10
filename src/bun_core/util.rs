@@ -2278,9 +2278,6 @@ impl StackCheck {
 // Small helpers that downstream crates need.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Bumped each rebuild/rescan to invalidate stale cache entries.
-pub type Generation = u16;
-
 // ── Ordinal ───────────────────────────────────────────────────────────────
 // ABI-equivalent of WTF::OrdinalNumber:
 // a zero-based index where -1 means "invalid". Represented as a transparent

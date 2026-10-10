@@ -678,17 +678,11 @@ impl<'a> Transpiler<'a> {
                     merge_tsconfig_jsx_into(&tsconfig, &mut self.options.jsx);
                 }
 
-                // Copy the listing's basenames out under `entries_mutex`,
-                // refreshing it at our generation in the same critical
-                // section: concurrent resolvers rewrite the `DirEntry` map in
-                // place under that lock, and `dot_env::Loader::load` does
-                // file I/O between probes.
+                // Copy the listing's basenames out under `entries_mutex`:
+                // `dot_env::Loader::load` does file I/O between probes.
                 let dir = {
-                    let _entries_lock = bun_resolver::fs::FileSystem::instance()
-                        .fs
-                        .entries_mutex
-                        .lock_guard();
-                    match dir_info.get_entries_ref_locked(self.resolver.generation) {
+                    let _entries_lock = self.resolver.dir_cache().entries_mutex.lock_guard();
+                    match dir_info.get_entries_ref_locked() {
                         Some(entries) => dot_env::DirEntryKeys(
                             entries.data.iter().map(|(k, _)| Box::from(&**k)).collect(),
                         ),

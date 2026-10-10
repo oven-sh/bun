@@ -2960,7 +2960,11 @@ pub mod bv2_impl {
                     // HTML is only allowed at the entry point.
                 };
                 let mut tmp_source = bun_ast::Source {
-                    path: path_as_static(&path.dupe_alloc(self.arena()).expect("oom")),
+                    path: path_as_static(
+                        &path
+                            .dupe_alloc(self.transpiler.resolver.dir_cache(), self.arena())
+                            .expect("oom"),
+                    ),
                     contents: std::borrow::Cow::Borrowed(&b""[..]),
                     ..Default::default()
                 };
@@ -3163,7 +3167,9 @@ pub mod bv2_impl {
             // surfacing as "Failed to load bundled module
             // 'bun-framework-react/server.tsx'" when the worker can no longer match
             // `built_in_modules`.
-            path = path.dupe_alloc(self.arena()).expect("oom");
+            path = path
+                .dupe_alloc(self.transpiler.resolver.dir_cache(), self.arena())
+                .expect("oom");
             // The borrowck-reshape
             // above cloned `path` out, which left `result.path_pair` with the
             // unrelativized `pretty` — and `ParseTask::init(&result, ..)` reads
@@ -6352,6 +6358,7 @@ pub mod bv2_impl {
                 path,
                 target,
                 self.transpiler.fs().top_level_dir,
+                self.transpiler.resolver.dir_cache(),
                 bump,
             )?;
             Ok(out)
@@ -7613,7 +7620,9 @@ pub mod bv2_impl {
                         let bun_watcher = this.bun_watcher_mut().unwrap();
                         // The watcher keeps the path past this bundle; borrow it
                         // only when it is interned for the process lifetime
-                        // (`dupe_alloc` leaves other paths in the bundle arena).
+                        // (`dupe_alloc` leaves other paths in the bundle arena,
+                        // and a bundle with its own directory cache interns
+                        // nothing for the process).
                         let _ = if Fs::as_interned_path(source_path).is_some() {
                             bun_watcher.add_file::<{ cfg!(windows) }>(
                                 fd,
@@ -8198,10 +8207,13 @@ pub mod bv2_impl {
         None
     }
 
+    /// `cache` is the directory cache of the resolver that `path` came from:
+    /// the result lives as long as `cache` and `bump` do.
     pub fn generic_path_with_pretty_initialized(
         path: &bun_paths::fs::Path<'static>,
         target: options::Target,
         top_level_dir: &[u8],
+        cache: &bun_resolver::DirCache,
         bump: &bun_alloc::Arena,
     ) -> crate::Result<bun_paths::fs::Path<'static>> {
         use crate::bun_fs::PathResolverExt as _;
@@ -8234,7 +8246,9 @@ pub mod bv2_impl {
             } else {
                 path_clone.pretty = rel;
             }
-            path_clone.dupe_alloc_fix_pretty(bump).map_err(Into::into)
+            path_clone
+                .dupe_alloc_fix_pretty(cache, bump)
+                .map_err(Into::into)
         } else {
             let mut path_clone: crate::bun_fs::Path<'_> = *path;
             let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
@@ -8246,7 +8260,9 @@ pub mod bv2_impl {
             let _ = fbs.write_all(path_clone.text);
             let written = fbs.pos;
             path_clone.pretty = &buf.0[..written];
-            path_clone.dupe_alloc_fix_pretty(bump).map_err(Into::into)
+            path_clone
+                .dupe_alloc_fix_pretty(cache, bump)
+                .map_err(Into::into)
         }
     }
 

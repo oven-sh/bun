@@ -1873,7 +1873,7 @@ pub fn init(
 
     // Returns the resolver's BSSMap-owned
     // `*EntriesOption` slot.
-    let entries_option = match fs.read_directory(fs.top_level_dir(), 0, true)? {
+    let entries_option = match fs.read_directory(fs.top_level_dir(), true)? {
         fs::EntriesOption::Entries(e) => {
             // SAFETY: the BSSMap singleton owns `*e` for the process
             // lifetime, and `init()` runs single-threaded before any other
@@ -2429,7 +2429,7 @@ fn init_with_runtime_once(
     // leaves `holder::RAW_PTR` null rather than pointing at an uninitialized
     // manager. Returns the resolver's BSSMap-owned `*EntriesOption` slot.
     let fs_instance = FileSystem::instance();
-    let root_dir = match fs_instance.read_directory(fs_instance.top_level_dir(), 0, true)? {
+    let root_dir = match fs_instance.read_directory(fs_instance.top_level_dir(), true)? {
         // SAFETY: the BSSMap singleton owns `*e` for the process lifetime,
         // and runtime init runs once on the main thread before any other access.
         fs::EntriesOption::Entries(e) => unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) },

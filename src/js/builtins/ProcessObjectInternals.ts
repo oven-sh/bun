@@ -60,6 +60,9 @@ export function getStdioWriteStream(
     // to match Node.js behavior where they become Duplex streams (Socket)
     // But when redirected to a file, they shouldn't have it
     if (fdType === BunProcessStdinFdType.pipe || fdType === BunProcessStdinFdType.socket) {
+      // Windows pipes remain writable after end(): finish must reach the
+      // stdio _destroy override below, which resets Writable state.
+      if (process.platform === "win32") stream._writableState.autoDestroy = true;
       stream[Symbol.asyncIterator] = function () {
         return (async function* () {
           // stdout/stderr don't produce readable data, so yield nothing

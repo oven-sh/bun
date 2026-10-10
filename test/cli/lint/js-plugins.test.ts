@@ -20,7 +20,7 @@ const env = {
 };
 
 async function lint(
-  files: Record<string, string>,
+  files: Record<string, string | Buffer>,
   args: string[],
   reads: string[] = [],
   variables: Record<string, string> = {},
@@ -1876,6 +1876,36 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         "again.js": "\uFEFF//\r\nvar a;\r\n",
       });
       expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  test(
+    "what is no UTF-8 is as long for the places of nodes as in the text",
+    async () => {
+      const files = {
+        "eslint.config.mjs": `const p = { rules: { r: { meta: { fixable: "code" }, create: context => ({ VariableDeclarator({ id }) {
+            const at = context.sourceCode.text.indexOf(id.name);
+            context.report({ node: id, message: [id.name, id.range, context.sourceCode.getText(id), at].join(" "), fix: fixer => fixer.replaceTextRange([at, at + id.name.length], "renamed") });
+          } }) } } };
+          export default [{ plugins: { p }, rules: { "p/r": "error" } }];`,
+        "a.js": Buffer.from(
+          "// \xe9 \xf0\x9f \xf0\x9f\x98 \xc3 \xed\xa0\x80 \x80 \xe2\x82 \xf5 \xc0\xaf \xf0\x9f\x98\x80 \xc3\xa9\nconst oldName = 1;\n",
+          "latin1",
+        ),
+      };
+      const { raw, exitCode } = await lint(files, ["-f", "json", "a.js"]);
+      const [{ message, line, column, fix }] = JSON.parse(raw)[0].messages;
+      // What ESLint 10.12 says.
+      expect({ message, line, column, fix }).toEqual({
+        message: "oldName 35,42 oldName 35",
+        line: 2,
+        column: 7,
+        fix: { range: [35, 42], text: "renamed" },
+      });
+      expect(exitCode).toBe(1);
+      const fixed = await lint(files, ["--fix", "a.js"], ["a.js"]);
+      expect(fixed.files["a.js"].split("\n")[1]).toBe("const renamed = 1;");
     },
     timeout,
   );

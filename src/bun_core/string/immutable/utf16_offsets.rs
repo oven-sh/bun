@@ -39,18 +39,29 @@ impl Utf16OffsetTable {
             (at, shift) = (bom as usize, bom);
             shifts.push((bom, bom));
         }
-        while let Some(&byte) = text.get(at) {
-            let (bytes, units) = match byte {
-                0xF0.. => (4, 2),
-                0xE0.. => (3, 1),
-                0xC0.. => (2, 1),
-                // ASCII, or a stray continuation byte.
-                _ => (1, 1),
-            };
+        let rest = &text[at..];
+        let mut passes = |bytes: usize, units: usize| {
             at += bytes;
             if bytes != units {
                 shift += (bytes - units) as u32;
                 shifts.push((at as u32, shift));
+            }
+        };
+        for chunk in rest.utf8_chunks() {
+            let mut valid = chunk.valid().as_bytes();
+            while let Some(&byte) = valid.first() {
+                let (bytes, units) = match byte {
+                    0xF0.. => (4, 2),
+                    0xE0.. => (3, 1),
+                    0xC0.. => (2, 1),
+                    _ => (1, 1),
+                };
+                passes(bytes, units);
+                valid = &valid[bytes..];
+            }
+            // As `TextDecoder` reads it: one U+FFFD for the start of a sequence that does not go on.
+            if !chunk.invalid().is_empty() {
+                passes(chunk.invalid().len(), 1);
             }
         }
         Utf16OffsetTable { shifts }
@@ -79,6 +90,32 @@ impl Utf16OffsetTable {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_is_no_utf8_is_as_long_as_what_it_is_replaced_with() {
+        let parts: [&[u8]; 11] = [
+            b"\xE9",
+            b"\xF0\x9F",
+            b"\xF0\x9F\x98",
+            b"\xC3",
+            b"\xED\xA0\x80",
+            b"\x80",
+            b"\xE2\x82",
+            b"\xF5",
+            b"\xC0\xAF",
+            "😀".as_bytes(),
+            "é".as_bytes(),
+        ];
+        let mut text = Vec::new();
+        for part in parts {
+            text.extend_from_slice(part);
+            text.push(b'.');
+            let units = String::from_utf8_lossy(&text).encode_utf16().count() as u32;
+            let offsets = Utf16OffsetTable::new(&text);
+            assert_eq!(offsets.to_utf16(text.len() as u32), units, "{text:?}");
+            assert_eq!(offsets.to_bytes(units), text.len() as u32, "{text:?}");
+        }
+    }
 
     #[test]
     fn both_ways_at_every_start_of_a_character() {

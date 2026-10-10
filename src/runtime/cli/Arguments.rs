@@ -1038,16 +1038,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
 
     ctx.passthrough = slice_to_owned(args.remaining());
 
-    if matches!(
-        cmd,
-        CommandTag::AutoCommand
-            | CommandTag::RunCommand
-            | CommandTag::BuildCommand
-            | CommandTag::TestCommand
-    ) {
-        if !args.options(b"--conditions").is_empty() {
-            opts.conditions = slice_to_owned(args.options(b"--conditions"));
-        }
+    // Declared in both RUNTIME_PARAMS_ and BUILD_ONLY_PARAMS, so every table has it.
+    if !args.options(b"--conditions").is_empty() {
+        opts.conditions = slice_to_owned(args.options(b"--conditions"));
     }
 
     // runtime commands

@@ -1,6 +1,6 @@
 // Test SSG pages router functionality
 import { expect } from "bun:test";
-import { devTest } from "../bake-harness";
+import { devTest, minimalFramework } from "../bake-harness";
 
 devTest("SSG pages router - multiple static pages", {
   framework: "react",
@@ -386,5 +386,40 @@ devTest("SSG pages router - catch-all routes [...slug]", {
     expect(await c4.elemText("h1")).toBe("Catch-all Route");
     expect(await c4.elemText("#params")).toBe('{"slug":["blog","2024","january","new-features"]}');
     expect(await c4.elemsText("li")).toEqual(["blog", "2024", "january", "new-features"]);
+  },
+});
+
+const paramsAsJson = `
+  export default function (req, meta) {
+    return Response.json(meta.params);
+  }
+`;
+
+// `params` is a plain object, so it inherits `constructor`, `toString`,
+// `valueOf` and `__proto__` from Object.prototype. An inherited property is
+// not an earlier capture of the same route.
+devTest("SSG pages router - params ignore properties inherited from Object.prototype", {
+  framework: minimalFramework,
+  files: {
+    "routes/a/[constructor].ts": paramsAsJson,
+    "routes/b/[toString].ts": paramsAsJson,
+    "routes/c/[__proto__].ts": paramsAsJson,
+    "routes/d/[...valueOf].ts": paramsAsJson,
+    // The first request puts an array on Object.prototype. The capture of the
+    // second request must not go into that array.
+    "routes/e/[polluted].ts": `
+      export default function (req, meta) {
+        Object.prototype.polluted ??= [];
+        return Response.json({ params: meta.params, inherited: Object.prototype.polluted });
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/a/x").equals({ constructor: "x" });
+    await dev.fetch("/b/y").equals({ toString: "y" });
+    await dev.fetch("/c/z").equals('{"__proto__":"z"}');
+    await dev.fetch("/d/p/q").equals({ valueOf: ["p", "q"] });
+    await dev.fetch("/e/one").equals({ params: { polluted: "one" }, inherited: [] });
+    await dev.fetch("/e/two").equals({ params: { polluted: "two" }, inherited: [] });
   },
 });

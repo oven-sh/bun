@@ -694,11 +694,12 @@ fn generate_entry_point(_vm: &VirtualMachine, watch: bool, entry_path: &[u8]) ->
 }
 
 /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
-/// preload promise if any, else null.
+/// preload promise if any, else null. A preload the module loader refuses
+/// (`JSModuleLoader.import` throws) is a rejected one.
 ///
 /// Error mapping: resolver `Failure` returns the resolver error,
-/// `Pending`/`NotFound` returns `error.ModuleNotFound`,
-/// `JSModuleLoader.import` throwing returns `error.JSError`.
+/// `Pending`/`NotFound` returns `error.ModuleNotFound`, both with their text
+/// in `vm.log`.
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.
@@ -744,7 +745,8 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // `vm.transpiler.resolver`, not `vm.preload`).
         let preload: *const [u8] = unsafe { &raw const *(&(*vm).preload)[i] };
         // SAFETY: `preload` points at a live boxed slice for this iteration
-        // (heap-stable `Box<[u8]>` payload; nothing below mutates `vm.preload`).
+        // (heap-stable `Box<[u8]>` payload; nothing below mutates `vm.preload`:
+        // a reload that lands in the tick is deferred while `is_in_preload`).
         let preload_slice: &[u8] = unsafe { &*preload };
         // Strip "file://".
         let normalized: &[u8] = preload_slice
@@ -816,11 +818,10 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         let promise: *mut JSInternalPromise = match JSModuleLoader::import_ptr(global, &module_name)
         {
             Ok(p) => p.as_ptr(),
-            Err(_) => {
-                // The exception is
-                // already pending on `global`; bubble the tag so
-                // `reload_entry_point` forwards it.
-                return Err(bun_jsc::CrateError::JSError);
+            // The loader threw before this preload had a promise. That is the preload's
+            // failure, like one while it loads.
+            Err(err) => {
+                JSModuleLoader::rejected_load(JSGlobalObject::opaque_ref(global), err)?.as_ptr()
             }
         };
 
@@ -896,6 +897,10 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     }
 
     Ok(ptr::null_mut())
+}
+
+fn entry_point_load_failed(vm: &mut VirtualMachine, err: bun_jsc::CrateError) -> ! {
+    crate::cli::run_command::entry_point_load_failed(vm, &err.into())
 }
 
 /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
@@ -1493,6 +1498,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     deinit_runtime_state,
     generate_entry_point,
     load_preloads,
+    entry_point_load_failed,
     ensure_debugger,
     auto_tick,
     auto_tick_active,

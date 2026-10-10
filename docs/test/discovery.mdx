@@ -22,6 +22,21 @@ By default, `bun test` ignores:
 - Hidden directories (those starting with a period `.`)
 - Files that don't have JavaScript-like extensions (based on available [loaders](/bundler/loaders))
 
+## Symbolic Links
+
+`bun test` follows symbolic links to directories, and it scans each directory once.
+
+- `bun test` does not follow a link to a directory that the scan already covers. A link to a parent directory is one example.
+- `bun test` scans a directory that only a link leads to under the real path of that directory.
+
+Filters and [`pathIgnorePatterns`](/test/configuration#path-ignore-patterns) match the path that the scan recorded. For example, if `latest` is a link to `packages/v2`, then `bun test packages/v2` runs the tests in that directory, and `bun test latest` matches nothing.
+
+To run the tests behind a link by the name of the link, pass the link as a path:
+
+```bash terminal icon="terminal"
+bun test ./latest
+```
+
 ## Customizing Test Discovery
 
 ### Position Arguments as Filters

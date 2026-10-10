@@ -30,8 +30,6 @@ use crate::socket::{SSLConfig, SSLConfigFromJs};
 use crate::socket::WindowsNamedPipeContext;
 
 #[cfg(windows)]
-use bun_node_path as node_path;
-#[cfg(windows)]
 use bun_boringssl as boringssl;
 #[cfg(windows)]
 use bun_core::strings;
@@ -39,6 +37,8 @@ use bun_core::strings;
 use bun_jsc::GlobalRef;
 #[cfg(windows)]
 use bun_libuv_sys::UvHandle as _;
+#[cfg(windows)]
+use bun_node_path as node_path;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 

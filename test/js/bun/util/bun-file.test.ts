@@ -110,6 +110,53 @@ test("Bun.file().arrayBuffer() errors include async stack frames", async () => {
   expect(caught.stack).toContain("at async caller");
 });
 
+// Runs in a child process: each trigger takes JSC off its promise fast paths for
+// the rest of the process.
+test.concurrent.each([
+  "defining Object.prototype.then",
+  "replacing Promise.prototype.then",
+  "freezing Promise.prototype",
+])("native rejections keep their async stack after %s", async trigger => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "native-rejection-async-stack-fixture.js"), trigger],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const shapes = [
+    "fsPromises",
+    "asyncFunctionReturn",
+    "resolveWithPromise",
+    "race",
+    "thenChain",
+    "promiseSubclass",
+    "forwardingThenable",
+    "thenResolveReject",
+    "catchReject",
+    "thenResolveRejectResult",
+    "catchRejectResult",
+    "catchRejectResultLongChain",
+    "catchRejectResultManyTargets",
+  ];
+  const frames = {
+    ...Object.fromEntries(shapes.map(shape => [shape, [shape, "asyncFramesOf"]])),
+    // One frame for worker(), although the chain leads back to it.
+    failFastWorker: ["worker", "failFastWorker", "asyncFramesOf"],
+  };
+  expect({ result: stdout && JSON.parse(stdout), stderr }).toEqual({
+    result: {
+      "before": frames,
+      "before, in AsyncLocalStorage.run()": frames,
+      "after": frames,
+      "after, in AsyncLocalStorage.run()": frames,
+    },
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async () => {
   // When a file starts with EF BB BF, the BOM is stripped before parsing and
   // the temporary read buffer is freed. Previously the *post-strip* slice was

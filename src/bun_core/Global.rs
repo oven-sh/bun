@@ -41,6 +41,20 @@ pub fn top_level_dir() -> &'static [u8] {
     *TOP_LEVEL_DIR.read()
 }
 
+static LAUNCH_DIR: crate::Once<&'static [u8]> = crate::Once::new();
+
+/// Records the working directory before bun leaves it. The first call wins.
+#[inline]
+pub fn set_launch_dir(dir: &'static [u8]) {
+    let _ = LAUNCH_DIR.set(dir);
+}
+
+/// The directory bun was started in, or `None` while bun is still there.
+#[inline]
+pub fn launch_dir() -> Option<&'static [u8]> {
+    LAUNCH_DIR.get().copied()
+}
+
 /// Set by `bun_crash_handler::init()` once it has installed its segfault
 /// handlers. `raise_ignoring_panic_handler` consults this to decide whether
 /// the crash signals need resetting to `SIG_DFL` before re-raising.

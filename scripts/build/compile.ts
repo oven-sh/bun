@@ -217,8 +217,8 @@ export interface CompileOpts {
   /**
    * Extra implicit deps. Use for generated headers this specific .cpp needs
    * (e.g. ErrorCode.cpp depends on ErrorCode+List.h), and for dep outputs
-   * (lib*.a) — local sub-builds rewrite forwarding headers as undeclared
-   * side effects, so the lib is the invalidation signal; order-only would
+   * (fetch stamps, lib*.a) — a fetch writes headers as undeclared side
+   * effects, so its output is the invalidation signal; order-only would
    * lag one build behind.
    */
   implicitInputs?: string[];
@@ -371,11 +371,11 @@ export function pch(
      * libs (libJavaScriptCore.a etc.).
      *
      * Can't be order-only: the depfile tracks headers, but ninja stats at
-     * startup. Local WebKit headers live in buildDir and get regenerated
-     * by dep_build MID-RUN. At startup ninja sees old headers → thinks
-     * PCH is fresh → cxx fails with "file modified since PCH was built"
-     * → needs a second build. With these implicit, restat propagates the
-     * lib change to PCH and it rebuilds in the same run.
+     * startup. A dep's headers are rewritten by its fetch MID-RUN. At
+     * startup ninja sees old headers → thinks PCH is fresh → cxx fails with
+     * "file modified since PCH was built" → needs a second build. With these
+     * implicit, restat propagates the change to PCH and it rebuilds in the
+     * same run.
      *
      * Cost: PCH also rebuilds on unrelated dep bumps (brotli etc.). Rare
      * enough to accept for correctness.

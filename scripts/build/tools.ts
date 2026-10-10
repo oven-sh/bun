@@ -512,7 +512,6 @@ export function resolveLlvmToolchain(
   | "hostCc"
   | "hostCxx"
   | "ar"
-  | "ranlib"
   | "ld"
   | "ld64Lld"
   | "rustLlvmVersion"
@@ -527,7 +526,6 @@ export function resolveLlvmToolchain(
   | "dsymutil"
   | "ccache"
   | "rc"
-  | "mt"
   | "nasm"
   | "clangVersion"
   | "clangResourceDir"
@@ -594,17 +592,6 @@ export function resolveLlvmToolchain(
     required: true,
   })?.path;
 
-  // ranlib: llvm-ranlib (unix hosts only — llvm-lib targets don't need it).
-  // Needed for nested cmake builds (CMAKE_RANLIB). llvm-ar's `s` flag does the
-  // same thing for our direct archives, but deps may call ranlib explicitly.
-  let ranlib: string | undefined;
-  if (os !== "windows") {
-    ranlib = findLlvmTool("llvm-ranlib", paths, os, {
-      checkVersion: false,
-      required: true,
-    })?.path;
-  }
-
   // ld: lld-link for windows targets, ld.lld on Linux (passed as --ld-path=).
   // On Darwin clang drives the system linker directly.
   let ld: string;
@@ -658,18 +645,10 @@ export function resolveLlvmToolchain(
     dsymutil = findLlvmTool("dsymutil", paths, os, { checkVersion: false, required: false })?.path;
   }
 
-  // rc/mt: windows targets only. Passed to nested cmake — when
-  // CMAKE_C_COMPILER is an explicit path, cmake's find_program for these
-  // may not search the compiler's directory, so we resolve them here and
-  // pass explicitly. rc is required (cmake's try_compile on windows uses
-  // it, and the final link embeds windows-app-info.res); mt is optional
-  // (not all LLVM distros ship it — source.ts sets
-  // CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY as fallback).
+  // rc: windows targets only (the final link embeds windows-app-info.res).
   let rc: string | undefined;
-  let mt: string | undefined;
   if (msvcTarget) {
     rc = findLlvmTool("llvm-rc", paths, os, { checkVersion: false, required: true })?.path;
-    mt = findLlvmTool("llvm-mt", paths, os, { checkVersion: false, required: false })?.path;
   }
 
   // nasm: BoringSSL win-x64 and libjpeg-turbo x86_64 SIMD; compile.ts:nasm() asserts at the use site.
@@ -704,7 +683,6 @@ export function resolveLlvmToolchain(
     hostCc,
     hostCxx,
     ar,
-    ranlib,
     ld,
     ld64Lld,
     rustLlvmVersion,
@@ -719,7 +697,6 @@ export function resolveLlvmToolchain(
     dsymutil,
     ccache,
     rc,
-    mt,
     nasm,
   };
 }

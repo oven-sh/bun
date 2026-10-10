@@ -197,7 +197,8 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(isAscii(new Buffer(""))).toBeTrue();
         expect(isAscii(new Buffer([32, 32, 128]))).toBeFalse();
         expect(isAscii(new Buffer("What did the 🦊 say?"))).toBeFalse();
-        expect(new isAscii(new Buffer("What did the 🦊 say?"))).toBeFalse();
+        expect(() => new isAscii(new Buffer("abc"))).toThrow(TypeError);
+        expect(() => Reflect.construct(isAscii, [new Buffer("abc")])).toThrow(TypeError);
         expect(isAscii(new Buffer("").buffer)).toBeTrue();
         expect(isAscii(new Buffer([32, 32, 128]).buffer)).toBeFalse();
       });
@@ -207,6 +208,8 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(isAscii(new Buffer(""))).toBeTrue();
         expect(isUtf8(new Buffer("What did the 🦊 say?"))).toBeTrue();
         expect(isUtf8(new Buffer([129, 129, 129]))).toBeFalse();
+        expect(() => new isUtf8(new Buffer("abc"))).toThrow(TypeError);
+        expect(() => Reflect.construct(isUtf8, [new Buffer("abc")])).toThrow(TypeError);
 
         expect(isUtf8(new Buffer("abc").buffer)).toBeTrue();
         expect(isAscii(new Buffer("").buffer)).toBeTrue();
@@ -2899,6 +2902,8 @@ for (let withOverridenBufferWrite of [false, true]) {
       it("transcode", () => {
         expect(typeof BufferModule.transcode).toBe("function");
         const transcode = BufferModule.transcode;
+        expect(() => Reflect.construct(transcode, [Buffer.from("a"), "latin1", "utf8"])).toThrow(TypeError);
+        expect(Bun.inspect(transcode)).toBe("[Function: transcode]");
 
         expect(transcode(Buffer.from("hä", "latin1"), "latin1", "utf8")).toStrictEqual(Buffer.from("hä", "utf8"));
         expect(() => transcode(Buffer.from("a"), "b", "utf8")).toThrow(

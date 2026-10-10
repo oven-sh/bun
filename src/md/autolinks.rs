@@ -17,58 +17,12 @@ pub struct Autolink {
 
 pub(crate) type AutolinkResult = Option<Autolink>;
 
-/// Check that emphasis chars at autolink boundaries are actually resolved delimiters.
-/// Called when the relaxed (allow_emph) pass found an autolink but the strict pass didn't.
-pub(crate) fn is_emph_boundary_resolved(
-    content: &[u8],
-    al: Autolink,
-    resolved: &[EmphDelim],
-) -> bool {
-    // Check left boundary: if it's an emphasis char, it must be a resolved delimiter
-    if al.beg > 0 {
-        let prev = content[al.beg - 1];
-        if prev == b'*' || prev == b'_' || prev == b'~' {
-            if !check_left_boundary(content, al.beg, false) {
-                // Left boundary failed strict check, emphasis char caused the relaxed match.
-                // Verify it's actually resolved.
-                let mut found_resolved = false;
-                for d in resolved {
-                    if d.pos < al.beg
-                        && al.beg - 1 < d.pos + d.count
-                        && (d.open_count + d.close_count > 0)
-                    {
-                        found_resolved = true;
-                        break;
-                    }
-                }
-                if !found_resolved {
-                    return false;
-                }
-            }
-        }
-    }
-    // Check right boundary: if it's an emphasis char, it must be a resolved delimiter
-    if al.end < content.len() {
-        let next = content[al.end];
-        if next == b'*' || next == b'_' || next == b'~' {
-            if !check_right_boundary(content, al.end, false) {
-                let mut found_resolved = false;
-                for d in resolved {
-                    if d.pos <= al.end
-                        && al.end < d.pos + d.count
-                        && (d.open_count + d.close_count > 0)
-                    {
-                        found_resolved = true;
-                        break;
-                    }
-                }
-                if !found_resolved {
-                    return false;
-                }
-            }
-        }
-    }
-    true
+/// True if `at` lies in a delimiter run of `resolved` (sorted by position) that was paired.
+fn is_paired_delimiter(resolved: &[EmphDelim], at: usize) -> bool {
+    let idx = resolved.partition_point(|d| d.pos + d.count <= at);
+    resolved
+        .get(idx)
+        .is_some_and(|d| d.pos <= at && d.open_count + d.close_count > 0)
 }
 
 #[derive(Copy, Clone)]
@@ -184,23 +138,23 @@ const LEFT_BOUNDARY: ByteSet = ByteSet::of(b" \t\n\r\x0B\x0C({[");
 const RIGHT_BOUNDARY: ByteSet = ByteSet::of(b" \t\n\r\x0B\x0C)}]<.!?,;&");
 
 /// Check left boundary for permissive autolinks.
-/// When `allow_emph` is true, emphasis delimiters (*_~) are also valid boundaries.
-fn check_left_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool {
+/// An emphasis delimiter (*_~) is a boundary if its run in `resolved` was paired.
+fn check_left_boundary(content: &[u8], pos: usize, resolved: &[EmphDelim]) -> bool {
     if pos == 0 {
         return true;
     }
     let c = content[pos - 1];
-    LEFT_BOUNDARY.contains(c) || (allow_emph && EMPH_DELIMS.contains(c))
+    LEFT_BOUNDARY.contains(c) || (EMPH_DELIMS.contains(c) && is_paired_delimiter(resolved, pos - 1))
 }
 
 /// Check right boundary for permissive autolinks.
-/// When `allow_emph` is true, emphasis delimiters (*_~) are also valid boundaries.
-fn check_right_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool {
+/// An emphasis delimiter (*_~) is a boundary if its run in `resolved` was paired.
+fn check_right_boundary(content: &[u8], pos: usize, resolved: &[EmphDelim]) -> bool {
     if pos >= content.len() {
         return true;
     }
     let c = content[pos];
-    RIGHT_BOUNDARY.contains(c) || (allow_emph && EMPH_DELIMS.contains(c))
+    RIGHT_BOUNDARY.contains(c) || (EMPH_DELIMS.contains(c) && is_paired_delimiter(resolved, pos))
 }
 
 struct Scheme {
@@ -208,158 +162,139 @@ struct Scheme {
     suffix: &'static [u8],
 }
 
-/// Detect permissive autolinks at the given position in content.
-/// `pos` is the position of the trigger character ('@', ':', or '.').
-pub(crate) fn find_permissive_autolink(
+/// Detect a permissive URL autolink. `pos` is the position of the ':' after the scheme.
+pub(crate) fn find_url_autolink(
     content: &[u8],
     pos: usize,
-    allow_emph: bool,
+    resolved: &[EmphDelim],
 ) -> AutolinkResult {
-    if pos >= content.len() {
-        return None;
-    }
-    let c = content[pos];
+    // URL autolink: check for http://, https://, ftp://
+    const SCHEMES: [Scheme; 3] = [
+        Scheme {
+            name: b"http",
+            suffix: b"//",
+        },
+        Scheme {
+            name: b"https",
+            suffix: b"//",
+        },
+        Scheme {
+            name: b"ftp",
+            suffix: b"//",
+        },
+    ];
 
-    if c == b':' {
-        // URL autolink: check for http://, https://, ftp://
-        const SCHEMES: [Scheme; 3] = [
-            Scheme {
-                name: b"http",
-                suffix: b"//",
-            },
-            Scheme {
-                name: b"https",
-                suffix: b"//",
-            },
-            Scheme {
-                name: b"ftp",
-                suffix: b"//",
-            },
-        ];
-
-        for scheme in &SCHEMES {
-            let slen = scheme.name.len();
-            let suflen = scheme.suffix.len();
-            if pos >= slen && pos + 1 + suflen < content.len() {
-                if helpers::ascii_case_eql(&content[pos - slen..pos], scheme.name)
-                    && &content[pos + 1..pos + 1 + suflen] == scheme.suffix
-                {
-                    let beg = pos - slen;
-                    if !check_left_boundary(content, beg, allow_emph) {
-                        continue;
-                    }
-
-                    let mut end = pos + 1 + suflen;
-                    // Scan URL components: host (mandatory), path, query, fragment
-                    let host = scan_url_component(content, end, 0, b'.', b".-_", 2, 0);
-                    if !host.ok {
-                        continue;
-                    }
-                    end = host.end;
-
-                    let path = scan_url_component(content, end, b'/', b'/', b"/.-_~*+%", 0, b'/');
-                    end = path.end;
-
-                    let query = scan_url_component(content, end, b'?', b'&', b"&.-+_=()~*%", 1, 0);
-                    end = query.end;
-
-                    let frag = scan_url_component(content, end, b'#', 0, b".-+_~*%", 1, 0);
-                    end = frag.end;
-
-                    end = post_process_autolink_end(content, beg, end);
-
-                    if !check_right_boundary(content, end, allow_emph) {
-                        continue;
-                    }
-
-                    return Some(Autolink { beg, end });
+    for scheme in &SCHEMES {
+        let slen = scheme.name.len();
+        let suflen = scheme.suffix.len();
+        if pos >= slen && pos + 1 + suflen < content.len() {
+            if helpers::ascii_case_eql(&content[pos - slen..pos], scheme.name)
+                && &content[pos + 1..pos + 1 + suflen] == scheme.suffix
+            {
+                let beg = pos - slen;
+                if !check_left_boundary(content, beg, resolved) {
+                    continue;
+                }
+                if let Some(al) = scan_url_tail(content, beg, pos + 1 + suflen, 2, resolved) {
+                    return Some(al);
                 }
             }
         }
-    } else if c == b'@' {
-        // Email autolink: scan backward for username, forward for domain
-        if pos == 0 || pos + 3 >= content.len() {
-            return None;
-        }
-        if !helpers::is_alpha_num(content[pos - 1]) || !helpers::is_alpha_num(content[pos + 1]) {
-            return None;
-        }
+    }
+    None
+}
 
-        // Scan backward for username
-        let mut beg = pos;
-        while beg > 0 {
-            if helpers::is_alpha_num(content[beg - 1])
-                || (beg >= 2
-                    && helpers::is_alpha_num(content[beg - 2])
-                    && is_in_set(content[beg - 1], b".-_+")
-                    && helpers::is_alpha_num(content[beg]))
-            {
-                beg -= 1;
-            } else {
-                break;
-            }
-        }
-        if beg == pos {
-            return None; // empty username
-        }
-
-        if !check_left_boundary(content, beg, allow_emph) {
-            return None;
-        }
-
-        // Scan forward for domain (host component only for email)
-        let host = scan_url_component(content, pos + 1, 0, b'.', b".-_", 2, 0);
-        if !host.ok {
-            return None;
-        }
-        let end = host.end;
-
-        if !check_right_boundary(content, end, allow_emph) {
-            return None;
-        }
-
-        return Some(Autolink { beg, end });
-    } else if c == b'.' {
-        // WWW autolink: check for "www." prefix
-        if pos < 3 {
-            return None;
-        }
-        if !helpers::ascii_case_eql(&content[pos - 3..pos], b"www") {
-            return None;
-        }
-
-        let beg = pos - 3;
-        if !check_left_boundary(content, beg, allow_emph) {
-            return None;
-        }
-
-        // Scan URL components starting from after the '.'
-        let mut end = pos + 1;
-        let host = scan_url_component(content, end, 0, b'.', b".-_", 1, 0);
-        if !host.ok {
-            return None;
-        }
-        end = host.end;
-
-        let path = scan_url_component(content, end, b'/', b'/', b"/.-_~*+%", 0, b'/');
-        end = path.end;
-
-        let query = scan_url_component(content, end, b'?', b'&', b"&.-+_=()~*%", 1, 0);
-        end = query.end;
-
-        let frag = scan_url_component(content, end, b'#', 0, b".-+_~*%", 1, 0);
-        end = frag.end;
-
-        end = post_process_autolink_end(content, beg, end);
-
-        if !check_right_boundary(content, end, allow_emph) {
-            return None;
-        }
-
-        return Some(Autolink { beg, end });
+/// Detect a permissive email autolink. `pos` is the position of the '@'.
+pub(crate) fn find_email_autolink(
+    content: &[u8],
+    pos: usize,
+    resolved: &[EmphDelim],
+) -> AutolinkResult {
+    // Email autolink: scan backward for username, forward for domain
+    if pos == 0 || pos + 3 >= content.len() {
+        return None;
+    }
+    if !helpers::is_alpha_num(content[pos - 1]) || !helpers::is_alpha_num(content[pos + 1]) {
+        return None;
     }
 
-    None
+    // Scan backward for username
+    let mut beg = pos;
+    while beg > 0 {
+        if helpers::is_alpha_num(content[beg - 1])
+            || (beg >= 2
+                && helpers::is_alpha_num(content[beg - 2])
+                && is_in_set(content[beg - 1], b".-_+")
+                && helpers::is_alpha_num(content[beg]))
+        {
+            beg -= 1;
+        } else {
+            break;
+        }
+    }
+    if beg == pos {
+        return None; // empty username
+    }
+
+    if !check_left_boundary(content, beg, resolved) {
+        return None;
+    }
+
+    // Scan forward for domain (host component only for email)
+    let host = scan_url_component(content, pos + 1, 0, b'.', b".-_", 2, 0);
+    if !host.ok {
+        return None;
+    }
+    let end = host.end;
+
+    if !check_right_boundary(content, end, resolved) {
+        return None;
+    }
+
+    Some(Autolink { beg, end })
+}
+
+/// Detect a permissive WWW autolink. `pos` is the position of the '.' after "www".
+pub(crate) fn find_www_autolink(
+    content: &[u8],
+    pos: usize,
+    resolved: &[EmphDelim],
+) -> AutolinkResult {
+    if pos < 3 {
+        return None;
+    }
+    if !helpers::ascii_case_eql(&content[pos - 3..pos], b"www") {
+        return None;
+    }
+
+    let beg = pos - 3;
+    if !check_left_boundary(content, beg, resolved) {
+        return None;
+    }
+    scan_url_tail(content, beg, pos + 1, 1, resolved)
+}
+
+/// Scan the host (mandatory), path, query and fragment of a link that starts at `beg`.
+fn scan_url_tail(
+    content: &[u8],
+    beg: usize,
+    host_start: usize,
+    min_host_components: u32,
+    resolved: &[EmphDelim],
+) -> AutolinkResult {
+    let host = scan_url_component(content, host_start, 0, b'.', b".-_", min_host_components, 0);
+    if !host.ok {
+        return None;
+    }
+    let path = scan_url_component(content, host.end, b'/', b'/', b"/.-_~*+%", 0, b'/');
+    let query = scan_url_component(content, path.end, b'?', b'&', b"&.-+_=()~*%", 1, 0);
+    let frag = scan_url_component(content, query.end, b'#', 0, b".-+_~*%", 1, 0);
+
+    let end = post_process_autolink_end(content, beg, frag.end);
+    if !check_right_boundary(content, end, resolved) {
+        return None;
+    }
+    Some(Autolink { beg, end })
 }
 
 /// GFM post-processing: trim trailing unbalanced `)` and entity-like suffixes from autolink URLs.

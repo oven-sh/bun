@@ -243,6 +243,19 @@ const _appendFile = fs.appendFile.bind(fs);
 
 type TailParameters<F> = F extends (first: any, ...rest: infer Rest) => any ? Rest : never;
 
+// Node returns for a FileHandle before its flush step: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L1900-L1901
+function withoutFlush(options) {
+  if (!$isObject(options) || options.flush !== true) return options;
+  return {
+    __proto__: null,
+    encoding: options.encoding,
+    flag: options.flag,
+    mode: options.mode,
+    signal: options.signal,
+    flush: false,
+  };
+}
+
 // Argument validation must run at the first .next(), not at call time: Node's
 // fs/promises glob is an async generator whose body constructs Glob lazily.
 async function* glob(pattern, options) {
@@ -252,7 +265,11 @@ async function* glob(pattern, options) {
 const exports = {
   access: asyncWrap(fs.access, "access"),
   appendFile: async function (fileHandleOrFdOrPath, ...args: TailParameters<typeof _appendFile>) {
-    fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
+    const fd = fileHandleOrFdOrPath?.[kFd];
+    if (fd !== undefined) {
+      fileHandleOrFdOrPath = fd;
+      if (args.length > 1) args[1] = withoutFlush(args[1]);
+    }
     return _appendFile(fileHandleOrFdOrPath, ...args);
   },
   close: asyncWrap(fs.close, "close"),
@@ -312,7 +329,11 @@ const exports = {
     return _readFile(fileHandleOrFdOrPath, ...args);
   },
   writeFile: async function (fileHandleOrFdOrPath, ...args: TailParameters<typeof _writeFile>) {
-    fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
+    const fd = fileHandleOrFdOrPath?.[kFd];
+    if (fd !== undefined) {
+      fileHandleOrFdOrPath = fd;
+      if (args.length > 1) args[1] = withoutFlush(args[1]);
+    }
     if (
       !$isTypedArrayView(args[0]) &&
       typeof args[0] !== "string" &&
@@ -467,7 +488,7 @@ function asyncWrap(fn: any, name: string) {
 
       try {
         this[kRef]();
-        return await writeFile(fd, data, { encoding, flush, flag: this[kFlag] });
+        return await writeFile(this, data, { encoding, flush, flag: this[kFlag] });
       } finally {
         this[kUnref]();
       }
@@ -682,11 +703,15 @@ function asyncWrap(fn: any, name: string) {
 
     async writeFile(
       data: string,
-      options: BufferEncoding | { encoding?: BufferEncoding | null; signal?: AbortSignal } | null = "utf8",
+      options:
+        | BufferEncoding
+        | { encoding?: BufferEncoding | null; flush?: boolean; signal?: AbortSignal }
+        | null = "utf8",
     ) {
       const fd = this[kFd];
       throwEBADFIfNecessary("writeFile", fd);
       let encoding: BufferEncoding = "utf8";
+      let flush = false;
       let signal: AbortSignal | undefined = undefined;
 
       if (options == null || typeof options === "function") {
@@ -694,13 +719,15 @@ function asyncWrap(fn: any, name: string) {
         encoding = options;
       } else {
         encoding = options?.encoding ?? encoding;
+        flush = options?.flush ?? flush;
         signal = options?.signal ?? undefined;
       }
 
       try {
         this[kRef]();
-        return await writeFile(fd, data, {
+        return await writeFile(this, data, {
           encoding,
+          flush,
           flag: this[kFlag],
           signal,
         });
@@ -1574,7 +1601,6 @@ async function writeFileAsyncIteratorInner(fd, iterable, encoding, signal: Abort
   const writer = Bun.file(fd).writer();
 
   const mustRencode = !(encoding === "utf8" || encoding === "utf-8" || encoding === "binary" || encoding === "buffer");
-  let totalBytesWritten = 0;
 
   try {
     for await (let chunk of iterable) {
@@ -1591,31 +1617,24 @@ async function writeFileAsyncIteratorInner(fd, iterable, encoding, signal: Abort
 
       const prom = writer.write(chunk);
       if (prom && $isPromise(prom)) {
-        totalBytesWritten += await prom;
-      } else {
-        totalBytesWritten += prom;
+        await prom;
       }
     }
   } finally {
     await writer.end();
   }
-
-  return totalBytesWritten;
-}
-
-// The only flag spellings whose `open` truncates. `r+` & co. overwrite in place,
-// so resizing the file down to the bytes we wrote would destroy the rest of it.
-function flagTruncates(flag): boolean {
-  return flag === "w" || flag === "w+" || flag === "wx" || flag === "wx+" || flag === "xw" || flag === "xw+";
 }
 
 async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, flag, mode) {
   let encoding;
   let signal: AbortSignal | null = null;
+  let flush = false;
   if (typeof optionsOrEncoding === "object") {
     encoding = optionsOrEncoding?.encoding ?? (encoding || "utf8");
     flag = optionsOrEncoding?.flag ?? (flag || "w");
     mode = optionsOrEncoding?.mode ?? (mode || 0o666);
+    flush = optionsOrEncoding?.flush ?? false;
+    validateBoolean(flush, "options.flush");
     signal = optionsOrEncoding?.signal ?? null;
     if (signal?.aborted) {
       throw $makeAbortError(undefined, { cause: signal.reason });
@@ -1631,9 +1650,9 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
     throw new TypeError(`Unknown encoding: ${encoding}`);
   }
 
-  let mustClose = typeof fdOrPath === "string";
+  // The callers unwrap a FileHandle to its fd. fs.open validates every other value.
+  const mustClose = typeof fdOrPath !== "number";
   if (mustClose) {
-    // Rely on fs.open for further argument validaiton.
     fdOrPath = await fs.open(fdOrPath, flag, mode);
   }
 
@@ -1642,33 +1661,38 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
     throw $makeAbortError(undefined, { cause: signal.reason });
   }
 
-  let totalBytesWritten = 0;
-
-  let error: Error | undefined;
+  // An iterable can throw a falsy value, so `error` alone cannot say whether the write failed.
+  let failed = false;
+  let error: unknown;
 
   try {
-    totalBytesWritten = await writeFileAsyncIteratorInner(fdOrPath, iterable, encoding, signal);
+    await writeFileAsyncIteratorInner(fdOrPath, iterable, encoding, signal);
   } catch (err) {
-    error = err as Error;
+    failed = true;
+    error = err;
   }
 
   // Handle cleanup outside of try-catch
-  if (mustClose) {
-    if (flagTruncates(flag)) {
-      try {
-        await fs.ftruncate(fdOrPath, totalBytesWritten);
-      } catch {}
+  if (flush && !failed && !signal?.aborted) {
+    try {
+      await fs.fsync(fdOrPath);
+    } catch (err) {
+      failed = true;
+      error = err;
     }
+  }
 
+  if (mustClose) {
     await fs.close(fdOrPath);
   }
 
   // Abort signal shadows other errors
   if (signal?.aborted) {
+    failed = true;
     error = $makeAbortError(undefined, { cause: signal.reason });
   }
 
-  if (error) {
+  if (failed) {
     throw error;
   }
 }

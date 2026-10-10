@@ -4170,8 +4170,11 @@ pub(crate) mod args {
                     }
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
                         if let Some(signal) = AbortSignal::ref_from_js(value) {
-                            signal.pending_activity_ref();
-                            *abort_signal = Some(signal);
+                            // Node's readFileSync never reads options.signal: https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L429-L486
+                            if arguments.will_be_async {
+                                signal.pending_activity_ref();
+                                *abort_signal = Some(signal);
+                            }
                         } else {
                             return Err(ctx.throw_invalid_argument_type_value(
                                 b"signal",
@@ -4268,8 +4271,11 @@ pub(crate) mod args {
                     }
                     if let Some(value) = arg.get_truthy(ctx, "signal")? {
                         if let Some(signal) = AbortSignal::ref_from_js(value) {
-                            signal.pending_activity_ref();
-                            *abort_signal = Some(signal);
+                            // Node's writeFileSync never reads options.signal: https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2386-L2437
+                            if arguments.will_be_async {
+                                signal.pending_activity_ref();
+                                *abort_signal = Some(signal);
+                            }
                         } else {
                             return Err(ctx.throw_invalid_argument_type_value(
                                 b"signal",
@@ -4703,26 +4709,15 @@ impl NodeFS {
         _: Flavor,
     ) -> Maybe<ret::AppendFile> {
         let args = &args.0;
-        let mut data = args.data.slice();
-        match &args.file {
-            PathOrFileDescriptor::Fd(fd) => {
-                while !data.is_empty() {
-                    let written = Syscall::write(*fd, data)?;
-                    data = &data[written..];
-                }
-                Ok(())
-            }
+        let fd = match &args.file {
+            PathOrFileDescriptor::Fd(fd) => *fd,
             PathOrFileDescriptor::Path(path_) => {
                 let path = path_.slice_z(&mut self.sync_error_buf);
-                let fd = Syscall::open(path, args.flag.as_int(), args.mode)?;
-                let _close = scopeguard::guard(fd, |fd| fd.close());
-                while !data.is_empty() {
-                    let written = Syscall::write(fd, data)?;
-                    data = &data[written..];
-                }
-                Ok(())
+                // Not `writeFile`'s open: on Windows libuv's O_APPEND handle has no FILE_WRITE_DATA, so the kernel appends each write.
+                Syscall::open(path, args.flag.as_int(), args.mode)?
             }
-        }
+        };
+        Self::write_file_to_fd(fd, args, true)
     }
 
     pub(crate) fn close(&mut self, args: &args::Close, _: Flavor) -> Maybe<ret::Close> {
@@ -7387,6 +7382,12 @@ impl NodeFS {
             }
             PathOrFileDescriptor::Fd(fd) => *fd,
         };
+        Self::write_file_to_fd(fd, args, false)
+    }
+
+    /// The part of `writeFile` after the open, which `appendFile` runs too. Closes `fd` when `args.file` is a path.
+    #[inline(always)]
+    fn write_file_to_fd(fd: FD, args: &args::WriteFile, append: bool) -> Maybe<ret::WriteFile> {
         let _close = scopeguard::guard(
             (fd, matches!(args.file, PathOrFileDescriptor::Path(_))),
             |(fd, is_path)| {
@@ -7406,7 +7407,7 @@ impl NodeFS {
 
         // Attempt to pre-allocate large files
         // Worthwhile after 6 MB at least on ext4 linux
-        if PREALLOCATE_SUPPORTED && buf.len() >= PREALLOCATE_LENGTH {
+        if !append && PREALLOCATE_SUPPORTED && buf.len() >= PREALLOCATE_LENGTH {
             'preallocate: {
                 let is_path = matches!(args.file, PathOrFileDescriptor::Path(_));
                 // Preallocating grows the file, so skip it when the kernel picks
@@ -7445,7 +7446,13 @@ impl NodeFS {
         // the bytes that did land.
         let mut write_err: Option<sys::Error> = None;
         while !buf.is_empty() {
-            match sys::write(fd, buf) {
+            // `Syscall` is libuv on Windows, where the fd of `appendFile` is always a libuv fd.
+            let result = if append {
+                Syscall::write(fd, buf)
+            } else {
+                sys::write(fd, buf)
+            };
+            match result {
                 Err(err) => {
                     write_err = Some(err);
                     break;
@@ -7465,10 +7472,11 @@ impl NodeFS {
 
         // https://github.com/oven-sh/bun/issues/2931
         // https://github.com/oven-sh/bun/issues/10222
-        // Resize only when the flags asked to truncate (the open above dropped
+        // Resize only when the flags asked to truncate (`writeFile`'s open dropped
         // O_TRUNC): `r+` & co. overwrite in place, and Node never resizes a
         // descriptor it was handed.
-        if (args.flag.as_int() & sys::O::TRUNC) != 0
+        if !append
+            && (args.flag.as_int() & sys::O::TRUNC) != 0
             && matches!(args.file, PathOrFileDescriptor::Path(_))
         {
             // If this errors, we silently ignore it.
@@ -7488,14 +7496,13 @@ impl NodeFS {
         }
 
         if args.flush {
+            // Node's utf8 fast path returns before its fsync (https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2400-L2412). Bun syncs, as nodejs/node#63887 proposes.
             #[cfg(windows)]
-            {
-                let _ = unsafe { windows::kernel32::FlushFileBuffers(fd.native()) };
-            }
+            windows::flush_file_buffers(fd)?;
+            // `get_errno` turns an errno outside the table into EUNKNOWN, which is what `fs.fsync` reports.
             #[cfg(not(windows))]
-            {
-                let _ = Syscall::fsync(fd);
-            }
+            Syscall::fsync(fd)
+                .map_err(|e| sys::Error::from_code(e.get_errno(), sys::Tag::fsync))?;
         }
 
         Ok(())

@@ -112,9 +112,39 @@ declare module "bun" {
        * By default, the shell writes to the current process's stdout and stderr while also buffering that output.
        *
        * `quiet()` configures the shell to only buffer the output.
+       * {@link inheritStdio} configures it to only write the output.
        * @param isQuiet Whether to suppress output. Defaults to `true`
        */
       quiet(isQuiet?: boolean): this;
+
+      /**
+       * Configure the shell to give its commands the current process's stdout
+       * and stderr themselves, and to buffer nothing.
+       *
+       * By default each command writes to a pipe that the shell copies to the
+       * current process's stdout and stderr, so a program cannot tell when its
+       * output reaches a terminal. With `inheritStdio()` a command gets what the
+       * current process has, as it does under `Bun.spawn` with
+       * `stdout: "inherit"` and `stderr: "inherit"`. If that is a terminal, the
+       * command sees the terminal: colors, progress bars and prompts work.
+       *
+       * The output of the command does not stay in memory. Reading `stdout`,
+       * `stderr` or an output method of the result throws. Cannot be combined
+       * with {@link quiet} or an output method such as {@link text} on the same
+       * command.
+       *
+       * Stdin does not change: a command reads the current process's stdin in
+       * every mode.
+       *
+       * @param isInherit Defaults to `true`
+       *
+       * @example
+       * ```ts
+       * // colors when the current process's stdout is a terminal
+       * await $`git log --oneline -5`.inheritStdio();
+       * ```
+       */
+      inheritStdio(isInherit?: boolean): this;
 
       /**
        * Read from stdout as a string, line by line

@@ -21,9 +21,9 @@ export default [
         fn: "setEnv",
         length: 1,
       },
-      setQuiet: {
-        fn: "setQuiet",
-        length: 1,
+      setOutputMode: {
+        fn: "setOutputMode",
+        length: 2,
       },
     },
   }),

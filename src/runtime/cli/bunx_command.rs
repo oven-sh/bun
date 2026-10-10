@@ -213,6 +213,126 @@ pub(crate) enum GetBinNameError {
     NeedToInstall,
 }
 
+/// What the project holds for a versionless `bunx <name>` that `which` could
+/// not run. Like npx, a command file or a package that is in the project counts
+/// as installed even when it cannot run, and then neither the bunx cache nor
+/// the registry may answer for it.
+enum ProjectCopy<'a> {
+    /// The package is in the project and its manifest names a bin that runs.
+    Run(&'a ZStr),
+    Blocked(Blocked),
+    /// The package is in the project and its manifest names no bin.
+    NoBin,
+    NotInstalled,
+}
+
+/// A command or a package that is in the project but cannot run.
+struct Blocked {
+    /// The command when its `.bin` entry was found, else the package.
+    name: Box<[u8]>,
+    /// The `.bin` entry or the `package.json` that stands in the way.
+    path: Box<[u8]>,
+    why: Unrunnable,
+    /// `name` is a package, so its registry copy can be named.
+    is_package: bool,
+}
+
+enum Unrunnable {
+    /// The `.bin` entry is a file the OS will not run: it has no execute bit,
+    /// or on Windows it is a `.bunx` whose `.exe` launcher is gone.
+    NotRunnable,
+    NotAFile,
+    Missing,
+    Dangling,
+    /// `stat` failed, and not because the entry is absent.
+    Inaccessible(&'static [u8]),
+    /// `package.json` is there but cannot be read or parsed.
+    Manifest(&'static str),
+}
+
+impl core::fmt::Display for Unrunnable {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Unrunnable::NotRunnable if cfg!(windows) => {
+                f.write_str("has no .exe launcher next to it")
+            }
+            Unrunnable::NotRunnable => f.write_str("has no execute permission"),
+            Unrunnable::NotAFile => f.write_str("is not a file"),
+            Unrunnable::Missing => f.write_str("does not exist"),
+            Unrunnable::Dangling => f.write_str("is a link to a file that does not exist"),
+            Unrunnable::Inaccessible(errno) => {
+                write!(f, "cannot be accessed ({})", BStr::new(errno))
+            }
+            Unrunnable::Manifest(err) => write!(f, "cannot be read ({err})"),
+        }
+    }
+}
+
+/// The `note:` line under a [`Blocked`] error: what repairs the project's copy,
+/// then how to ask for the registry's copy when the package is known.
+struct Remedy<'a>(&'a Blocked);
+
+impl Remedy<'_> {
+    fn is_empty(&self) -> bool {
+        !self.0.is_package
+            && matches!(
+                self.0.why,
+                Unrunnable::Inaccessible(_) | Unrunnable::Manifest(_)
+            )
+    }
+}
+
+impl core::fmt::Display for Remedy<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let blocked = self.0;
+        // Each repair holds for every way its state comes about. `bun install`
+        // does not set the execute bit of a `file:` dependency's bin; `chmod` does.
+        let repair = match blocked.why {
+            Unrunnable::NotRunnable if cfg!(not(windows)) => {
+                write!(f, "run `chmod +x \"{}\"`", BStr::new(&blocked.path))?;
+                true
+            }
+            Unrunnable::NotRunnable | Unrunnable::NotAFile | Unrunnable::Missing => {
+                f.write_str("run `bun install` to link it")?;
+                true
+            }
+            Unrunnable::Dangling => {
+                f.write_str("build or reinstall the package so that the link has a target")?;
+                true
+            }
+            Unrunnable::Inaccessible(_) | Unrunnable::Manifest(_) => false,
+        };
+        if blocked.is_package {
+            if repair {
+                f.write_str(", or ")?;
+            }
+            write!(
+                f,
+                "ask for a version (`{}@latest`) to run the copy from the registry",
+                BStr::new(&blocked.name),
+            )?;
+        }
+        Ok(())
+    }
+}
+
+impl Blocked {
+    #[cold]
+    fn exit(&self) -> ! {
+        bun_core::err_generic!(
+            "<b>{}<r> is installed in this project but cannot run: <b>{}<r> {}",
+            BStr::new(&self.name),
+            BStr::new(&self.path),
+            self.why,
+        );
+        let remedy = Remedy(self);
+        if !remedy.is_empty() {
+            bun_core::note!("{}", remedy);
+        }
+        Global::exit(1);
+    }
+}
+
 impl BunxCommand {
     /// Adds `create-` to the string, but also handles scoped packages correctly.
     /// Always clones the string in the process.
@@ -525,6 +645,195 @@ impl BunxCommand {
         }
     }
 
+    /// Writes `<dir>/node_modules/<parts joined by the separator><suffix>` into
+    /// `path`, NUL-terminated.
+    fn node_modules_path<'p>(
+        path: &'p mut Vec<u8>,
+        dir: &[u8],
+        parts: [&[u8]; 2],
+        suffix: &[u8],
+    ) -> &'p ZStr {
+        let dir = dir.strip_suffix(&[bun_paths::SEP]).unwrap_or(dir);
+        path.clear();
+        // three separators, "node_modules" and the NUL
+        path.reserve(dir.len() + 16 + parts[0].len() + parts[1].len() + suffix.len());
+        path.extend_from_slice(dir);
+        for part in [b"node_modules".as_slice(), parts[0], parts[1]] {
+            path.push(bun_paths::SEP);
+            path.extend_from_slice(part);
+        }
+        path.extend_from_slice(suffix);
+        path.push(0);
+        let path: &'p [u8] = path;
+        ZStr::from_buf(path, path.len() - 1)
+    }
+
+    /// Writes the path of the entry for `bin` in `<dir>/node_modules/.bin`.
+    ///
+    /// On Windows the linker writes `<bin>.bunx` and then the `<bin>.exe` that
+    /// `which` looks for, so the `.bunx` is the entry.
+    fn project_bin_path<'p>(path: &'p mut Vec<u8>, dir: &[u8], bin: &[u8]) -> &'p ZStr {
+        const SUFFIX: &[u8] = if cfg!(windows) { b".bunx" } else { b"" };
+        Self::node_modules_path(path, dir, [b".bin", bin], SUFFIX)
+    }
+
+    /// How the entry for `bin` in `<dir>/node_modules/.bin` stands, given that
+    /// `which` did not take it. `stat` follows a link, so a dangling link reads
+    /// as `Missing`. The entry's path is left in `path`.
+    fn project_bin_entry(path: &mut Vec<u8>, dir: &[u8], bin: &[u8]) -> Unrunnable {
+        let entry = Self::project_bin_path(path, dir, bin);
+        match bun_sys::stat(entry) {
+            Ok(st) if bun_sys::is_regular_file(st.st_mode as _) => Unrunnable::NotRunnable,
+            Ok(_) => Unrunnable::NotAFile,
+            Err(err) => match err.get_errno() {
+                bun_sys::E::ENOENT | bun_sys::E::ENOTDIR => Unrunnable::Missing,
+                _ => Unrunnable::Inaccessible(err.name()),
+            },
+        }
+    }
+
+    /// npx's `localFileExists`: is there a file at `<ancestor>/node_modules/.bin/<bin>`,
+    /// in any mode, in a directory of `searched`? The nearest one is left in `path`.
+    ///
+    /// `searched` is the `PATH` that `which` just walked for `bin`. A `.bin`
+    /// directory it leaves out (the one behind BUN_WHICH_IGNORE_CWD) holds
+    /// nothing `which` passed over. An entry that is absent, dangling, not a
+    /// file, or that `stat` cannot reach does not count either: a node_modules
+    /// directory this user cannot search, for example another user's in a
+    /// shared parent directory, says nothing about what is installed.
+    fn find_unrunnable_bin(
+        path: &mut Vec<u8>,
+        cwd_info: bun_resolver::DirInfoRef,
+        bin: &[u8],
+        searched: &[u8],
+    ) -> bool {
+        let mut info = cwd_info;
+        loop {
+            // The listing says whether node_modules is there. A directory the
+            // resolver could not list (permission denied) has an empty listing
+            // and no fd, so only the filesystem can say.
+            if info.has_node_modules() || !info.get_file_descriptor().is_valid() {
+                let entry = Self::project_bin_path(path, info.abs_path, bin);
+                let bin_dir = bun_paths::dirname(entry.as_bytes()).unwrap_or(b"");
+                if strings::tokenize(searched, &[DELIMITER]).any(|dir| {
+                    strings::eql_long(strings::without_trailing_slash(dir), bin_dir, true)
+                })
+                    // The usual answer is no: `exists_z` gives it without an error to allocate.
+                    && bun_sys::exists_z(entry)
+                    && bun_sys::stat(entry).is_ok_and(|st| bun_sys::is_regular_file(st.st_mode as _))
+                {
+                    return true;
+                }
+            }
+            match info.get_parent() {
+                Some(parent) => info = parent,
+                None => return false,
+            }
+        }
+    }
+
+    /// After `which` found nothing to run for a versionless request: is the
+    /// command or its package in the project anyway?
+    #[cold]
+    fn find_project_copy<'a>(
+        transpiler: &mut Transpiler,
+        path_buf: &'a mut bun_paths::PathBuffer,
+        cwd_info: bun_resolver::DirInfoRef,
+        // `None` when the command is only a guess from a scoped package name.
+        command: Option<&[u8]>,
+        // The `PATH` that `which` walked for `command`.
+        searched: &[u8],
+        package_name: &[u8],
+        // `--package <pkg> <bin>`
+        asked_bin: Option<&[u8]>,
+        local_bin_dirs: &[u8],
+        which_cwd: &[u8],
+        in_lifecycle_script: bool,
+    ) -> ProjectCopy<'a> {
+        let mut path: Vec<u8> = Vec::new();
+        let blocked = |path: &[u8], name: &[u8], why: Unrunnable, is_package: bool| {
+            ProjectCopy::Blocked(Blocked {
+                name: name.into(),
+                // without the NUL
+                path: path[..path.len() - 1].into(),
+                why,
+                is_package,
+            })
+        };
+
+        let command = command.filter(|name| Self::is_safe_bin_name(name));
+        if let Some(command) = command {
+            if Self::find_unrunnable_bin(&mut path, cwd_info, command, searched) {
+                return blocked(&path, command, Unrunnable::NotRunnable, false);
+            }
+        }
+
+        // While `bun install` runs a lifecycle script, a package can be in
+        // node_modules before its bins are linked: a missing link is no
+        // evidence there.
+        if in_lifecycle_script {
+            return ProjectCopy::NotInstalled;
+        }
+
+        // npx's tree lookup: is the package in this project? As for npm, the
+        // project root is the nearest directory, from cwd up, that has a
+        // package.json or a node_modules.
+        let mut root = cwd_info;
+        while !root.has_node_modules() && root.package_json().is_none() {
+            match root.get_parent() {
+                // What lies above a node_modules directory is another package.
+                Some(parent) if !parent.is_node_modules() => root = parent,
+                _ => return ProjectCopy::NotInstalled,
+            }
+        }
+        if root.is_node_modules() || !root.has_node_modules() {
+            return ProjectCopy::NotInstalled;
+        }
+        let manifest = Self::node_modules_path(
+            &mut path,
+            root.abs_path,
+            [package_name, b"package.json"],
+            b"",
+        );
+        if !bun_sys::exists_z(manifest) {
+            return ProjectCopy::NotInstalled;
+        }
+        let manifest_bin = match Self::get_bin_name_from_subpath(transpiler, Fd::cwd(), manifest) {
+            Ok(bin) => Some(bin),
+            Err(crate::Error::NoBinFound) => None,
+            Err(err) => {
+                return blocked(&path, package_name, Unrunnable::Manifest(err.name()), true);
+            }
+        };
+        let Some(bin) = asked_bin.or(manifest_bin.as_deref()) else {
+            return ProjectCopy::NoBin;
+        };
+
+        // The first probe has looked for `command` in every `.bin` directory.
+        let already_probed = command == Some(bin);
+        if !already_probed {
+            if let Some(destination) = bun_which::which(path_buf, local_bin_dirs, which_cwd, bin) {
+                return ProjectCopy::Run(destination);
+            }
+        }
+
+        // Name the file `which` passed over. If there is none, name the entry
+        // that belongs beside the package.
+        if !already_probed
+            && Self::is_safe_bin_name(bin)
+            && Self::find_unrunnable_bin(&mut path, cwd_info, bin, local_bin_dirs)
+        {
+            return blocked(&path, package_name, Unrunnable::NotRunnable, true);
+        }
+        let mut why = Self::project_bin_entry(&mut path, root.abs_path, bin);
+        if matches!(why, Unrunnable::Missing)
+            && bun_sys::lstat(ZStr::from_buf(&path, path.len() - 1)).is_ok()
+        {
+            why = Unrunnable::Dangling;
+        }
+        blocked(&path, package_name, why, true)
+    }
+
     /// Refuse to execute a binary resolved from inside the bunx cache unless
     /// it is owned by the current user.
     ///
@@ -665,6 +974,16 @@ impl BunxCommand {
 
     fn exit_with_usage() -> ! {
         crate::cli::command::tag_print_help(Command::Tag::BunxCommand, false);
+        Global::exit(1);
+    }
+
+    /// The package is installed, in the project or in the bunx cache, and its
+    /// manifest names no bin.
+    fn exit_without_bin(package_name: &[u8]) -> ! {
+        Output::err_generic(
+            "could not determine executable to run for package <b>{}<r>",
+            format_args!("{}", BStr::new(package_name)),
+        );
         Global::exit(1);
     }
 
@@ -1046,6 +1365,31 @@ impl BunxCommand {
                         ) {
                             break 'find Some(d);
                         }
+
+                        // Nothing to run. If the command or its package is in the
+                        // project anyway, the bunx cache and the registry hold some
+                        // other copy: run the project's, or stop.
+                        match Self::find_project_copy(
+                            this_transpiler,
+                            &mut path_buf,
+                            root_dir_info,
+                            (!initial_bin_name_is_a_guess).then_some(initial_bin_name),
+                            &path_for_bin_dirs,
+                            result_package_name,
+                            opts.binary_name,
+                            &local_bin_dirs,
+                            if !ignore_cwd.is_empty() {
+                                b"".as_slice()
+                            } else {
+                                top_level_dir
+                            },
+                            !ignore_cwd.is_empty(),
+                        ) {
+                            ProjectCopy::Run(d) => break 'find Some(d),
+                            ProjectCopy::Blocked(blocked) => blocked.exit(),
+                            ProjectCopy::NoBin => Self::exit_without_bin(result_package_name),
+                            ProjectCopy::NotInstalled => {}
+                        }
                     }
                     bun_which::which(
                         &mut path_buf,
@@ -1267,11 +1611,7 @@ impl BunxCommand {
                                 // `opts.binary_name` is `None` here (checked at the
                                 // enclosing `if` above), so the `--package` + binary
                                 // hint message can never apply on this path.
-                                Output::err_generic(
-                                    "could not determine executable to run for package <b>{}<r>",
-                                    format_args!("{}", BStr::new(&update_request.name)),
-                                );
-                                Global::exit(1);
+                                Self::exit_without_bin(update_request.name);
                             }
                         }
                     }

@@ -185,13 +185,13 @@ fn arena_ref<T>(p: NonNull<T>) -> &'static T {
 impl DirInfo {
     /// Is there a "node_modules" subdirectory?
     #[inline]
-    pub(crate) fn has_node_modules(&self) -> bool {
+    pub fn has_node_modules(&self) -> bool {
         self.flags.contains(Flags::HasNodeModules)
     }
 
     /// Is this a "node_modules" directory?
     #[inline]
-    pub(crate) fn is_node_modules(&self) -> bool {
+    pub fn is_node_modules(&self) -> bool {
         self.flags.contains(Flags::IsNodeModules)
     }
 
@@ -281,7 +281,7 @@ impl DirInfo {
     }
 
     #[inline]
-    pub(crate) fn get_parent(&self) -> Option<DirInfoRef> {
+    pub fn get_parent(&self) -> Option<DirInfoRef> {
         ref_at_index(self.parent)
     }
 

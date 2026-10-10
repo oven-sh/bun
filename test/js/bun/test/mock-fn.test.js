@@ -1098,7 +1098,105 @@ describe("spyOn", () => {
       obj.original;
       expect(fn).not.toHaveBeenCalled();
     });
+
+    // Jest throws a TypeError here too, but its failed spyOn leaves a restore callback behind that throws at teardown.
+    test("throws when spying on a non-configurable own property (frozen object)", () => {
+      const obj = Object.freeze({
+        fn() {
+          return 42;
+        },
+      });
+      expect(() => spyOn(obj, "fn")).toThrow(/configurable/i);
+      // The original must be untouched.
+      expect(obj.fn()).toBe(42);
+    });
+
+    // A spy on a value that is not a function is an accessor, and only a configurable property can become one.
+    test("throws when a non-configurable own property is not a function", () => {
+      const obj = {};
+      Object.defineProperty(obj, "value", { value: 1, writable: true, enumerable: true, configurable: false });
+      expect(() => spyOn(obj, "value")).toThrow(/configurable/i);
+      expect(obj.value).toBe(1);
+    });
+
+    // Builtins from a static table are writable and not configurable, like the methods of a sealed object.
+    test("works on writable, non-configurable builtins and on a sealed object", () => {
+      const sealed = Object.seal({ m: () => 1 });
+      for (const [target, key] of [
+        [Bun, "file"],
+        [Response, "json"],
+        [sealed, "m"],
+      ]) {
+        expect(Object.getOwnPropertyDescriptor(target, key)).toMatchObject({ writable: true, configurable: false });
+        const original = target[key];
+        const spy = spyOn(target, key);
+        try {
+          expect(target[key]).toBe(spy);
+        } finally {
+          spy.mockRestore();
+        }
+        expect(target[key]).toBe(original);
+      }
+    });
+
+    test("throws when spying on a WebAssembly GC reference", () => {
+      // (type $s (struct (field (mut i32))))
+      // (func (export "mk") (result (ref null $s)) struct.new_default $s)
+      // prettier-ignore
+      const bytes = new Uint8Array([
+        0, 0x61, 0x73, 0x6d, 1, 0, 0, 0,
+        1, 10, 2, 0x5f, 1, 0x7f, 1, 0x60, 0, 1, 0x63, 0,
+        3, 2, 1, 1,
+        7, 6, 1, 2, 0x6d, 0x6b, 0, 0,
+        10, 7, 1, 5, 0, 0xfb, 1, 0, 0x0b,
+      ]);
+      const struct = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk();
+
+      // The reference is permanently non-extensible. Its Structure refuses every transition,
+      // so a putDirect() on it aborts the process.
+      expect(() => spyOn(struct, "x")).toThrow(/not extensible/i);
+      expect(Object.getOwnPropertyNames(struct)).toEqual([]);
+    });
   }
+
+  test("throws when spying on an inherited property of a non-extensible object", () => {
+    class C {
+      m() {
+        return 42;
+      }
+    }
+    const c = Object.preventExtensions(new C());
+    expect(() => spyOn(c, "m")).toThrow(/not extensible/i);
+    expect(c.m()).toBe(42);
+  });
+
+  test("still works on a non-extensible object when the own property is configurable", () => {
+    const obj = {
+      fn() {
+        return 1;
+      },
+    };
+    Object.preventExtensions(obj);
+    const spy = spyOn(obj, "fn");
+    expect(obj.fn()).toBe(1);
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+  });
+
+  test("a non-configurable own property can be spied on while it is writable", () => {
+    const obj = {};
+    Object.defineProperty(obj, "fn", { value: () => 1, writable: true, enumerable: true, configurable: false });
+    const spy = spyOn(obj, "fn");
+    expect(obj.fn()).toBe(1);
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+    expect(Object.getOwnPropertyDescriptor(obj, "fn")).toEqual({
+      value: expect.any(Function),
+      writable: true,
+      enumerable: true,
+      configurable: false,
+    });
+  });
 
   test("spyOn twice works", () => {
     var obj = {

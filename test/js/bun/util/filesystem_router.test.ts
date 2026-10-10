@@ -1134,3 +1134,126 @@ it("an absolute dir with '..' in it names routes like its normalized spelling", 
     exitCode: 0,
   });
 });
+
+// A router interns `origin`, `assetPrefix` and its base directory in the VM's
+// ref-string map. The map hands the bytes to the WTF string constructor, which
+// refuses anything over `String::max_length()` and frees them. The intern then
+// wrote through that freed pointer and kept it in the map, so the first
+// construct segfaulted and a later one read a wild pointer. The children below
+// lower the limit with BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT, so the boundary
+// costs 64 KiB instead of 2 GiB.
+const syntheticLimitEnv = (bytes: number) => ({
+  ...bunEnv,
+  BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(bytes),
+});
+
+it("throws ERR_STRING_TOO_LONG for an origin or assetPrefix over the string limit", async () => {
+  using dir = tempDir("fsr-string-limit", { "index.tsx": "export default 1;" });
+  const code = /* js */ `
+    const dir = process.argv[1];
+    const LIMIT = 64 * 1024;
+    const pad = (prefix, len) => prefix + Buffer.alloc(len - prefix.length, "x").toString();
+    const attempt = (key, value) => {
+      try {
+        const router = new Bun.FileSystemRouter({ dir, style: "nextjs", [key]: value });
+        return key === "origin" ? "ok:" + router.origin.length : "ok";
+      } catch (e) {
+        return e?.code ?? e?.name;
+      }
+    };
+    console.log(
+      JSON.stringify({
+        originAtLimit: attempt("origin", pad("https://a.example/", LIMIT)),
+        originPastLimit: attempt("origin", pad("https://b.example/", LIMIT + 1)),
+        // The wild-pointer read needed a second intern of the same hash.
+        originPastLimitAgain: attempt("origin", pad("https://b.example/", LIMIT + 1)),
+        assetPrefixAtLimit: attempt("assetPrefix", pad("/static/", LIMIT)),
+        assetPrefixPastLimit: attempt("assetPrefix", pad("/static/", LIMIT + 1)),
+        afterwards: new Bun.FileSystemRouter({ dir, style: "nextjs", origin: "https://ok.example" }).match("/").src,
+      }),
+    );
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code, String(dir)],
+    env: syntheticLimitEnv(64 * 1024),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+    stdout: {
+      originAtLimit: "ok:65536",
+      originPastLimit: "ERR_STRING_TOO_LONG",
+      originPastLimitAgain: "ERR_STRING_TOO_LONG",
+      assetPrefixAtLimit: "ok",
+      assetPrefixPastLimit: "ERR_STRING_TOO_LONG",
+      afterwards: "https://ok.example/index.tsx",
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it("throws ERR_STRING_TOO_LONG for a directory path over the string limit", async () => {
+  using dir = tempDir("fsr-dir-limit", { "index.tsx": "export default 1;" });
+  // The router interns the resolved absolute path, which is longer than this
+  // limit. `dir: "."` keeps the argument itself short.
+  const code = /* js */ `
+    try {
+      const router = new Bun.FileSystemRouter({ dir: ".", style: "nextjs" });
+      console.log("ok:" + Object.keys(router.routes).length);
+    } catch (e) {
+      console.log(e?.code ?? e?.name);
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    cwd: String(dir),
+    env: syntheticLimitEnv(16),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "ERR_STRING_TOO_LONG\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it("keeps an already interned origin usable after the string limit drops below it", async () => {
+  using dir = tempDir("fsr-intern-hit", { "index.tsx": "export default 1;" });
+  // The length check belongs to the intern itself, on the miss path. A router
+  // that repeats an origin interned under the old limit finds it in the map and
+  // still constructs; only a new origin over the limit is refused.
+  const code = /* js */ `
+    const { setSyntheticAllocationLimitForTesting } = require("bun:internal-for-testing");
+    const dir = process.argv[1];
+    const interned = "https://a.example/" + Buffer.alloc(1_200_000, "x").toString();
+    const fresh = "https://b.example/" + Buffer.alloc(1_200_000, "y").toString();
+    const make = origin => {
+      try {
+        new Bun.FileSystemRouter({ dir, style: "nextjs", origin });
+        return "ok";
+      } catch (e) {
+        return e?.code ?? e?.name;
+      }
+    };
+    const before = make(interned);
+    // 1 MiB is the floor this hook accepts.
+    setSyntheticAllocationLimitForTesting(1024 * 1024);
+    console.log(JSON.stringify({ before, hit: make(interned), miss: make(fresh) }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code, String(dir)],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+    stdout: { before: "ok", hit: "ok", miss: "ERR_STRING_TOO_LONG" },
+    stderr: "",
+    exitCode: 0,
+  });
+});

@@ -928,3 +928,42 @@ it.each([
     stderr: [],
   });
 });
+
+// Under --hot and --watch a require() is transpiled on the JS thread and its
+// printed text is interned in the VM's ref-string map. The map gave text over
+// `String::max_length()` to the WTF string constructor, which frees it and
+// returns a dead string; the intern then wrote through the freed pointer. The
+// child lowers the limit so a 200 KiB module reaches it.
+it(
+  "throws ERR_STRING_TOO_LONG for a module whose transpiled text is over the string limit",
+  async () => {
+    using dir = tempDir("hot-string-limit", {
+      "big.cjs": `const s = ${JSON.stringify(Buffer.alloc(200 * 1024, "x").toString())};\nmodule.exports = { len: s.length };\n`,
+      "small.cjs": `module.exports = { ok: 2 };\n`,
+      "entry.cjs": `
+        let big;
+        try {
+          big = "loaded:" + require("./big.cjs").len;
+        } catch (e) {
+          big = "caught:" + (e?.code ?? e?.name);
+        }
+        console.log(JSON.stringify({ big, small: require("./small.cjs").ok }));
+        process.exit(0);
+      `,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "entry.cjs"],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ big: "caught:ERR_STRING_TOO_LONG", small: 2 }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  timeout,
+);

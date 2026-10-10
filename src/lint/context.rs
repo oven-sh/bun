@@ -93,7 +93,7 @@ pub(crate) struct Sink {
     pub(crate) wants_help: Cell<bool>,
     /// By `Diagnostic::rule`: how many bytes the messages, fixes and suggestions of the rule have.
     pub(crate) bytes: RefCell<Vec<u64>>,
-    /// The first that a rule has thrown.
+    /// What a rule has thrown: of all the first in the text, which ESLint comes to first.
     pub(crate) thrown: RefCell<Option<Thrown>>,
 }
 
@@ -282,7 +282,9 @@ impl<'a> CxBase<'a> {
             _ => return Some(whole as u64),
         };
         let (rule, mut thrown) = (self.rule, self.file.sink.thrown.borrow_mut());
-        thrown.get_or_insert(Thrown { rule, at, error });
+        if thrown.as_ref().is_none_or(|it| at < it.at) {
+            *thrown = Some(Thrown { rule, at, error });
+        }
         None
     }
 

@@ -193,7 +193,9 @@ impl NewlineAfterImport {
                 _ => "Add empty line(s) after require",
             });
         }
-        let Some(missing) = cx.repeat_count((expected_line_diff - line_diff) as f64, node) else {
+        // The calls of `require` are looked at when the program ends.
+        let at = if keyword == "require" { Span::empty(0) } else { node };
+        let Some(missing) = cx.repeat_count((expected_line_diff - line_diff) as f64, at) else {
             return;
         };
         report.fix(|fixer| Some(fixer.insert_after(node, fixer.repeat(b'\n', missing)?)));

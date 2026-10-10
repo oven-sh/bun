@@ -633,7 +633,7 @@ export const projects: Project[] = [
   },
   {
     name: "no-cycle/self",
-    about: "Flavor::counts_self_imports, and oxlint_allows_self_reference",
+    about: "Flavor::counts_self_imports, and Request::may_be_itself",
     config: noCycle(),
     files: {
       "a.ts": `import { a as x } from "./a";\nexport const a = x;\n`,
@@ -644,6 +644,16 @@ export const projects: Project[] = [
       "f.ts": `import * as f from "./f";\nexport { f };\n`,
       "g.ts": `import type { G } from "./g";\nexport type G = number;\nexport type H = G;\n`,
       "h.ts": `import "./h";\n`,
+    },
+  },
+  {
+    name: "no-cycle/exports-itself-on-the-way",
+    about: "Request::may_be_itself: a module on the way that imports a name of its own and exports it: that is no step",
+    config: noCycle({ maxDepth: 2 }),
+    files: {
+      "a.ts": `import { bar } from "./m";\nexport const a = bar;\n`,
+      "m.ts": `import { e as i } from "./m";\nexport { i as bar };\nimport { s } from "./n";\nexport const e = s;\n`,
+      "n.ts": `import { a } from "./a";\nexport const s = a;\n`,
     },
   },
   {

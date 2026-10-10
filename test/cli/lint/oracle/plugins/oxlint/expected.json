@@ -5223,5 +5223,10 @@
   "a.tsx:8:22+1 typescript(no-unsafe-member-access)",
   "a.tsx:8:32+1 typescript(no-unsafe-member-access)",
   "a.tsx:9:22+1 typescript(no-unsafe-member-access)"
+ ],
+ "no-cycle/exports-itself-on-the-way": [
+  "a.ts:1:21+5 import(no-cycle)",
+  "m.ts:3:19+5 import(no-cycle)",
+  "n.ts:1:19+5 import(no-cycle)"
  ]
 }

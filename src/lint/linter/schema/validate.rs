@@ -6,6 +6,7 @@ use crate::linter::message::write_json;
 use crate::options::Json;
 use crate::regex::Regex;
 use bun_core::strings;
+use rustc_hash::FxHashMap;
 
 const MAX_DEPTH: usize = 128;
 
@@ -425,35 +426,25 @@ impl<'s> Validator<'s> {
             }
             return None;
         }
-        // Items of simple types are looked up by what they print as, from the end.
-        for i in (0..items.len()).rev() {
-            if !types.iter().any(|name| has_type(&items[i], name)) {
-                continue;
-            }
-            let mut later = (i + 1..items.len())
-                .filter(|j| types.iter().any(|name| has_type(&items[*j], name)));
-            // The entry for a key is overwritten by each item that has it, so the nearest counts.
-            if let Some(j) =
-                later.find(|j| Self::has_same_key(&items[i], &items[*j], types.len() > 1))
-            {
-                return Some((j, i));
-            }
-        }
-        None
-    }
-
-    /// Whether two items of simple types are the same key of an object. With several types, a
-    /// string is told apart from what prints the same.
-    fn has_same_key(a: &Json, b: &Json, marks_strings: bool) -> bool {
+        // Items of simple types are looked up by what they print as, from the end: they are the keys of an object. With several
+        // types, a string is told apart from what prints the same.
         let key = |value: &Json| {
             let mut out = Vec::new();
-            if marks_strings && matches!(value, Json::String(_)) {
+            if types.len() > 1 && matches!(value, Json::String(_)) {
                 out.push(b'"');
             }
             crate::linter::message::write_js_string(&mut out, value);
             out
         };
-        key(a) == key(b)
+        let mut seen: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
+        for (i, item) in items.iter().enumerate().rev() {
+            if types.iter().any(|name| has_type(item, name))
+                && let Some(later) = seen.insert(key(item), i)
+            {
+                return Some((later, i));
+            }
+        }
+        None
     }
 
     fn check_object(&mut self, schema: &'s Json, data: &mut Json, cx: Context) -> bool {

@@ -1652,6 +1652,36 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
+  test(
+    "a plugin that waits is loaded after a rule has left a rejection that nobody handles",
+    async () => {
+      const reports = (message: string, before = "") =>
+        `{ create: context => ({ Program(node) { ${before} context.report({ node, message: "${message}" }); } }) }`;
+      const { stdout, stderr, exitCode } = await lint(
+        {
+          "eslint.config.mjs": `
+          import first from "./first.mjs";
+          import second from "./second.mjs";
+          export default [
+            { files: ["a.js"], plugins: { first }, rules: { "first/rejects": "error" } },
+            { files: ["b.js"], plugins: { second }, rules: { "second/late": "error" } },
+          ];`,
+          "first.mjs": `export default { rules: { rejects: ${reports("first", `Promise.reject(new Error("nobody handles this"));`)} } };`,
+          "second.mjs": `await new Promise(resolve => setTimeout(resolve, 1));\nexport default { rules: { late: ${reports("second")} } };`,
+          // The larger one is linted first.
+          "a.js": "1; // first\n",
+          "b.js": "1;\n",
+        },
+        ["-f", "unix", "--threads", "1", "a.js", "b.js"],
+      );
+      expect(stderr).toContain("error: nobody handles this");
+      expect(stdout).toContain("<dir>/a.js:1:1: first [Error/first/rejects]");
+      expect(stdout).toContain("<dir>/b.js:1:1: second [Error/second/late]");
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
   // ESLint in Node.js gives up at 740: "Not enough stack space to parse input". So does the parser here between 300 and 400 in a
   // debug build, whose frames are larger.
   test(

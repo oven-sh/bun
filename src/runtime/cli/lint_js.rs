@@ -243,6 +243,8 @@ impl Vm for ThreadVm {
                     if promise.status() != jsc::js_promise::Status::Pending {
                         break;
                     }
+                    // A rejection that nobody handles is printed and counted, and no loop is alive with one that is counted.
+                    vm.as_mut().unhandled_error_counter = 0;
                     if !vm.is_event_loop_alive() {
                         return Err(
                             b"A promise is not settled, and nothing is left to wait for.".to_vec(),

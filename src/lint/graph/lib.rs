@@ -327,6 +327,11 @@ impl<'h> Graph<'h> {
         let word = |name: &[u8], word: &[u8]| (name.to_vec(), Json::String(word.to_vec()));
         // Whatever the project says: what is linted is also JavaScript, and the resolvers that are followed here do not
         // read how TypeScript is to resolve.
+        // oxlint's `condition_names` are `module` and `import`.
+        let conditions = match self.flavor().resolves_as_node() {
+            true => vec![Json::String(b"module".to_vec())],
+            false => Vec::new(),
+        };
         let over = || {
             vec![
                 flag(b"allowJs"),
@@ -334,6 +339,10 @@ impl<'h> Graph<'h> {
                 flag(b"allowImportingTsExtensions"),
                 word(b"module", b"esnext"),
                 word(b"moduleResolution", b"bundler"),
+                (
+                    b"customConditions".to_vec(),
+                    Json::Array(conditions.clone()),
+                ),
             ]
         };
         let (disk, session) = (self.store.disk(), &self.store.session);
@@ -767,7 +776,14 @@ impl<'h> Graph<'h> {
         };
         let found = resolver
             .resolve_module_name(specifier, from, mode)
-            .or_else(from_base_url)?;
+            .or_else(from_base_url);
+        if self.flavor().resolves_as_node()
+            && found.as_ref().is_none_or(|it| is_in_package(it.file_name))
+            && let Some(entry) = self.entry_by_module_field(from, specifier)
+        {
+            return Some((Cow::Owned(entry), true));
+        }
+        let found = found?;
         let path = match self.flavor().resolves_as_node() {
             true => {
                 Cow::Owned(self.real(self.as_node_finds(specifier, found.file_name)?.into_owned()))
@@ -775,6 +791,27 @@ impl<'h> Graph<'h> {
             false => Cow::Borrowed(found.file_name),
         };
         Some((path, found.is_external_library_import))
+    }
+
+    /// oxlint's resolver asks the `module` of a `package.json` before its `main`. TypeScript does not know it.
+    fn entry_by_module_field(&self, from: &[u8], package: &[u8]) -> Option<Vec<u8>> {
+        let names = if package.starts_with(b"@") { 2 } else { 1 };
+        if matches!(package, [] | [b'.' | b'/' | b'#', ..])
+            || strings::split(package, b"/").count() != names
+        {
+            return None;
+        }
+        let disk = self.store.disk();
+        let inside = [b"node_modules/", package].concat();
+        let mut directories = ancestors(directory_of(from)).map(|it| join(it, &inside));
+        let manifest = join(&directories.find(|it| disk.is_dir(it))?, b"package.json");
+        let json = bun_lint::json::parse(&disk.read(&manifest)?)?;
+        let module = json
+            .get(b"module")
+            .filter(|_| json.get(b"exports").is_none())?
+            .as_str()?;
+        let relative = [b"./", module.strip_prefix(b"./").unwrap_or(module)].concat();
+        self.resolve_relative_as_node(&manifest, &relative)?
     }
 
     /// `path` with symbolic links followed.

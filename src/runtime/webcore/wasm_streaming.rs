@@ -100,8 +100,8 @@ fn get_body_stream_or_bytes_for_wasm_streaming(
     // of `response`, so we re-borrow per use and capture scalars.
     {
         let body = response.get_body_value();
-        if let BodyValue::Error(err) = body {
-            return Err(this.throw_value(err.to_js(this)));
+        if let Some(err) = body.take_error(this) {
+            return Err(this.throw_value(err));
         }
 
         // We're done validating. From now on, deal with extracting the body.

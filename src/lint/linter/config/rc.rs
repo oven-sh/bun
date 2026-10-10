@@ -632,11 +632,11 @@ impl Rc<'_, '_> {
             Some(one) => std::slice::from_ref(one),
             None => &[],
         };
-        let (mut objects, mut files) = (Vec::new(), Vec::new());
+        let mut rules_of_extended = Vec::new();
         for extended in extends {
             // What an `oxlint.config.ts` has imported.
             if extended.as_object().is_some() {
-                objects.push(self.file(extended, directory, true)?);
+                rules_of_extended.push(self.file(extended, directory, true)?);
                 continue;
             }
             let Some(name) = extended.as_str() else {
@@ -666,7 +666,7 @@ impl Rc<'_, '_> {
             };
             let file = paths::resolve(directory, &portable);
             let read = self.file(&extended, paths::dirname(&file), true);
-            files.push(read.map_err(|error| {
+            rules_of_extended.push(read.map_err(|error| {
                 ConfigError::new(&[
                     b"invalid config file ",
                     directory,
@@ -749,9 +749,9 @@ impl Rc<'_, '_> {
             base.linter_options = Json::Object(linter_options);
         }
         self.reader.objects.push(base);
-        // oxlint goes from the last to the first, through the objects before the files.
-        let is_merged = !objects.is_empty() || !files.is_empty();
-        let extended = objects.into_iter().rev().chain(files.into_iter().rev());
+        // oxlint goes from the last to the first.
+        let is_merged = !rules_of_extended.is_empty();
+        let extended = rules_of_extended.into_iter().rev();
         let rules = extended.fold(written_rules(json), merged);
         if is_merged && !is_extended {
             self.set_the_later_names(&rules, &certain)?;

@@ -314,6 +314,28 @@ fn globals_of(options: &Options) -> Option<Json> {
     Some(Json::Object(globals))
 }
 
+/// oxlint's `validateConfigExtends`: what a program exports extends objects that it has imported, no files.
+fn check_extends_of_program(config: &Json) -> Result<(), Vec<u8>> {
+    const NO_PATHS: &[u8] = b" (strings/paths are not supported).";
+    let Some(extends) = config.get(b"extends") else {
+        return Ok(());
+    };
+    let Some(items) = extends.as_array() else {
+        return Err([b"`extends` must be an array of config objects", NO_PATHS].concat());
+    };
+    for (index, item) in items.iter().enumerate() {
+        if item.as_object().is_none() {
+            let index = index.to_string();
+            let must_be: &[u8] = b"]` must be a config object";
+            return Err([b"`extends[", index.as_bytes(), must_be, NO_PATHS].concat());
+        }
+        if bun_core::StackCheck::init().is_safe_to_recurse() {
+            check_extends_of_program(item)?;
+        }
+    }
+    Ok(())
+}
+
 /// `preprocessConfig` under `--no-ignore`: an object that only has `ignores` loses them.
 fn without_global_ignores(json: Json) -> Json {
     match json {
@@ -941,6 +963,9 @@ impl<'l> Loader<'l> {
             let cannot_use = |why: &[u8]| {
                 Fatal([b"Cannot use the configuration file ", path, b":\n", why].concat())
             };
+            if syntax == Syntax::Program {
+                check_extends_of_program(&json).map_err(|why| cannot_use(&why))?;
+            }
             Config::check_shape_for_oxlint(&json).map_err(|error| cannot_use(&error.message))?;
             let is_nested = self.options.config.is_none()
                 && (paths::dirname(path).strip_prefix(self.cwd()))

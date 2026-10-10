@@ -1217,6 +1217,7 @@ impl Modules for Graph<'_> {
     ) -> Option<Vec<u8>> {
         let from = from_native(from);
         let found = match lookup {
+            // No system has a path that long.
             _ if specifier.len() > 4096 => return None,
             Lookup::TypeScript(projects) => {
                 // `removeQuerystring`

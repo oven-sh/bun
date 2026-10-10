@@ -1553,7 +1553,7 @@ impl<'c> Legacy<'_, '_, 'c> {
     }
 
     /// Adds the objects that stand for `element`.
-    fn convert(&mut self, element: &Element, named: &Named) -> Result<(), ConfigError> {
+    fn convert(&mut self, element: &mut Element, named: &Named) -> Result<(), ConfigError> {
         if self.options.ignore {
             let patterns: Vec<&[u8]> = element.ignore_patterns.iter().map(|it| &it[..]).collect();
             self.ignore_patterns(&patterns, element.base_path);
@@ -1617,7 +1617,6 @@ impl<'c> Legacy<'_, '_, 'c> {
         if !linter_options.is_empty() {
             flat.push((b"linterOptions", object(linter_options)));
         }
-        flat.extend(element.settings.clone().map(|it| (&b"settings"[..], it)));
         if let Some(processor) = element.processor.as_deref()
             && let Some((at, name, _)) = self.member(named, b"processors", processor)
         {
@@ -1642,7 +1641,8 @@ impl<'c> Legacy<'_, '_, 'c> {
             None => Vec::new(),
         };
         // An override that says nothing still adds its patterns to what is linted of a directory.
-        if flat.is_empty() && settings.is_empty() && element.criteria.is_empty() {
+        let says_nothing = flat.is_empty() && settings.is_empty() && element.settings.is_none();
+        if says_nothing && element.criteria.is_empty() {
             return Ok(());
         }
         // `isAdditionalTargetPath`, which is not asked with `--ext`.
@@ -1654,6 +1654,7 @@ impl<'c> Legacy<'_, '_, 'c> {
             pattern.is_universal = false;
         }
         read.rules = settings;
+        read.settings = element.settings.take().unwrap_or(Json::Null);
         if error.is_some() {
             read.error = error;
         }
@@ -2259,7 +2260,7 @@ impl Config {
         legacy.follow_typescript_eslint(&named, &mut elements)?;
         legacy.load_js_plugins(&elements, &named, load_plugin)?;
         legacy.validate_elements(&elements, &named)?;
-        for element in &elements {
+        for element in &mut elements {
             legacy.convert(element, &named)?;
         }
         let dot_patterns = legacy.reader.objects.len();

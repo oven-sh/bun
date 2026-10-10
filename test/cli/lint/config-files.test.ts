@@ -1584,6 +1584,27 @@ describe.concurrent("an .oxlintrc.json", () => {
     expect(exitCode).toBe(1);
   });
 
+  // As oxlint 1.87.0.
+  test.each([
+    [`["./base.json"]`, "`extends[0]` must be a config object (strings/paths are not supported)."],
+    [`[{ rules: {} }, "./base.json"]`, "`extends[1]` must be a config object (strings/paths are not supported)."],
+    [`[{ extends: [{}, "./base.json"] }]`, "`extends[1]` must be a config object (strings/paths are not supported)."],
+    [`[null]`, "`extends[0]` must be a config object (strings/paths are not supported)."],
+    [`[[]]`, "`extends[0]` must be a config object (strings/paths are not supported)."],
+    [`"./base.json"`, "`extends` must be an array of config objects (strings/paths are not supported)."],
+    [`{}`, "`extends` must be an array of config objects (strings/paths are not supported)."],
+    [`null`, "`extends` must be an array of config objects (strings/paths are not supported)."],
+  ])("`extends` of an oxlint.config.ts has no files: %s", async (extended, message) => {
+    const { problems, stdout, exitCode } = await lint({
+      "oxlint.config.ts": `export default { extends: ${extended} };`,
+      "base.json": JSON.stringify({ rules: { eqeqeq: "error" } }),
+      "a.js": code,
+    });
+    expect(problems).toEqual([]);
+    expect(stdout).toContain(message);
+    expect(exitCode).toBe(1);
+  });
+
   test("`options` of the configuration of the working directory are for the whole run", async () => {
     const rules = { "typescript/no-unnecessary-type-assertion": "error" };
     const typed = 'const s: string = "a";\nexport const t = s as string;\n';

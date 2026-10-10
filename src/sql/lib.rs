@@ -11,6 +11,8 @@ pub mod shared {
     pub mod connection_flags;
     #[path = "Data.rs"]
     pub mod data;
+    #[path = "Float4.rs"]
+    pub mod float4;
     #[path = "QueryStatus.rs"]
     pub mod query_status;
     #[path = "SQLQueryResultMode.rs"]

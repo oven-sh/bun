@@ -2,10 +2,10 @@ import { spawn, spawnSync } from "bun";
 import { beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, mkdirSync } from "fs";
 import { exists, stat } from "fs/promises";
-import { bunExe, bunEnv as env, isPosix, tempDir, tls, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, isPosix, isWindows, mergeWindowEnvs, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import * as nodetls from "node:tls";
-import { join } from "path";
+import { delimiter, join } from "path";
 import { gzipSync } from "zlib";
 
 let x_dir: string;
@@ -489,4 +489,205 @@ it("should not crash with --no-install and bun-create.postinstall starting with 
   const [err, _out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
   expect(err).not.toContain("error:");
   expect(exitCode).toBe(0);
+});
+
+// bun-create tasks are spawned directly (not through a shell), so a task whose
+// first word is a bare command name has to be resolved against $PATH. These
+// stubs go on $PATH and record, in the directory they were run in, the
+// arguments they were invoked with.
+const taskStubs = {
+  "bin/create-task": `#!/bin/sh\necho "$@" > task-ran.txt\n`,
+  "bin/create-task.cmd": "@echo %*> task-ran.txt\r\n",
+  // Decoy: a `bun ...` task must run the bun executing `bun create`, not
+  // whatever `bun` is first on $PATH.
+  "bin/bun": `#!/bin/sh\necho decoy > decoy-bun-ran.txt\n`,
+  "bin/bun.cmd": "@echo decoy> decoy-bun-ran.txt\r\n",
+};
+
+// Run as `bun marker.ts <name>`: records which bun executable ran it.
+const markerScript = `await Bun.write(process.argv[2] + "-ran.txt", process.execPath);`;
+
+// A `file:` dependency makes the template take the install path without
+// touching the network.
+const localdep = { dependencies: { localdep: "file:./localdep" } };
+const localdepFiles = { "localdep/package.json": JSON.stringify({ name: "localdep", version: "1.0.0" }) };
+
+// Creates a project from a local template whose package.json is `template`
+// (plus `files`), with the stubs above on $PATH, and collects the marker
+// files the tasks left behind in the destination.
+async function createFromTemplate(
+  name: string,
+  template: object,
+  files: Record<string, string> = {},
+  executable: string[] = [],
+) {
+  using root = tempDir(name, {
+    ...taskStubs,
+    "bun-create/tmpl/index.js": "// hi\n",
+    "bun-create/tmpl/package.json": JSON.stringify(template),
+    ...Object.fromEntries(Object.entries(files).map(([file, contents]) => [`bun-create/tmpl/${file}`, contents])),
+  });
+  for (const stub of ["bin/create-task", "bin/bun", ...executable.map(file => `bun-create/tmpl/${file}`)]) {
+    chmodSync(join(String(root), stub), 0o755);
+  }
+  const dest = join(String(root), "dest");
+
+  await using proc = spawn({
+    cmd: [bunExe(), "create", "tmpl", dest, "--no-git"],
+    cwd: String(root),
+    // Windows spells the inherited variable `Path`; merging keeps a single
+    // PATH entry instead of handing the child both spellings.
+    env: mergeWindowEnvs([
+      env,
+      {
+        PATH: `${join(String(root), "bin")}${delimiter}${process.env.PATH ?? ""}`,
+        BUN_CREATE_DIR: join(String(root), "bun-create"),
+      },
+    ]),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const ran: Record<string, string> = {};
+  for (const marker of ["task-ran.txt", "pre-ran.txt", "post-ran.txt", "decoy-bun-ran.txt"]) {
+    const file = Bun.file(join(dest, marker));
+    if (await file.exists()) ran[marker] = (await file.text()).trim();
+  }
+  return { out, err, exitCode, ran };
+}
+
+describe.concurrent("bun-create tasks", () => {
+  it("runs a command from $PATH when the template has no dependencies", async () => {
+    const { out, err, exitCode, ran } = await createFromTemplate("create-task-no-deps", {
+      name: "tmpl",
+      "bun-create": { postinstall: "create-task first second" },
+    });
+
+    expect(out).toContain("\n$ create-task first second\n");
+    expect(err).not.toContain("error:");
+    expect(ran).toEqual({ "task-ran.txt": "first second" });
+    expect(exitCode).toBe(0);
+  });
+
+  // A bare command is looked up the way a spawn would look it up: only on
+  // $PATH on POSIX, while Windows (CreateProcess order) checks the working
+  // directory, here the destination, first.
+  const localTaskTemplate = {
+    template: { name: "tmpl", "bun-create": { postinstall: "local-task first" } },
+    files: { "local-task": taskStubs["bin/create-task"], "local-task.cmd": taskStubs["bin/create-task.cmd"] },
+    executable: ["local-task"],
+  };
+
+  it.skipIf(isWindows)("does not look for a bare command in the destination on POSIX", async () => {
+    const { template, files, executable } = localTaskTemplate;
+    const { err, exitCode, ran } = await createFromTemplate("create-task-local-posix", template, files, executable);
+
+    expect(err).toContain('error: Failed to run "local-task first": executable not found in $PATH: "local-task"');
+    expect(ran).toEqual({});
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(!isWindows)("finds a bare command in the destination on Windows", async () => {
+    const { template, files, executable } = localTaskTemplate;
+    const { err, exitCode, ran } = await createFromTemplate("create-task-local-windows", template, files, executable);
+
+    expect(err).not.toContain("error:");
+    expect(ran).toEqual({ "task-ran.txt": "first" });
+    expect(exitCode).toBe(0);
+  });
+
+  it("runs a command through `bun run` when the template has dependencies", async () => {
+    const { out, err, exitCode, ran } = await createFromTemplate(
+      "create-task-deps",
+      { name: "tmpl", ...localdep, "bun-create": { postinstall: "create-task first second" } },
+      localdepFiles,
+    );
+
+    expect(out).toContain(" run create-task first second\n");
+    expect(err).not.toContain("error:");
+    expect(ran).toEqual({ "task-ran.txt": "first second" });
+    expect(exitCode).toBe(0);
+  });
+
+  it("runs a `bun ...` task with the bun running `bun create` when the template has no dependencies", async () => {
+    const { out, err, exitCode, ran } = await createFromTemplate(
+      "create-bun-task-no-deps",
+      { name: "tmpl", "bun-create": { postinstall: "bun marker.ts post" } },
+      { "marker.ts": markerScript },
+    );
+
+    expect(out).toContain("\n$ bun marker.ts post\n");
+    expect(err).not.toContain("error:");
+    expect(ran).toEqual({ "post-ran.txt": process.execPath });
+    expect(exitCode).toBe(0);
+  });
+
+  it("runs `bun ...` preinstall and postinstall tasks with the bun running `bun create` when the template has dependencies", async () => {
+    const { out, err, exitCode, ran } = await createFromTemplate(
+      "create-bun-task-deps",
+      {
+        name: "tmpl",
+        ...localdep,
+        "bun-create": { preinstall: "bun marker.ts pre", postinstall: "bun marker.ts post" },
+      },
+      { "marker.ts": markerScript, ...localdepFiles },
+    );
+
+    expect(out).toContain("\n$ bun marker.ts pre\n");
+    expect(out).toContain("\n$ bun marker.ts post\n");
+    expect(err).not.toContain("error:");
+    expect(ran).toEqual({ "pre-ran.txt": process.execPath, "post-ran.txt": process.execPath });
+    expect(exitCode).toBe(0);
+  });
+
+  it("reports a task that cannot be started and still runs the remaining tasks", async () => {
+    // A path-shaped command (either separator on Windows) is spawned as written
+    // and gets the spawn's own error rather than a $PATH lookup.
+    const missingPath = isWindows ? ".\\no-such-file" : "./no-such-file";
+    const { err, exitCode, ran } = await createFromTemplate("create-task-missing", {
+      name: "tmpl",
+      "bun-create": {
+        postinstall: ["no-such-create-task first", `${missingPath} first`, "create-task second"],
+      },
+    });
+
+    expect(err).toContain(
+      'error: Failed to run "no-such-create-task first": executable not found in $PATH: "no-such-create-task"',
+    );
+    expect(err).toContain(`error: Failed to run "${missingPath} first": `);
+    expect(err).not.toContain(`executable not found in $PATH: "${missingPath}"`);
+    expect(ran).toEqual({ "task-ran.txt": "second" });
+    expect(exitCode).toBe(0);
+  });
+
+  // cmd.exe re-tokenizes the arguments of a .cmd file, so an argument with a
+  // cmd.exe special character is rejected instead of spawned (as Bun.spawn does).
+  it.skipIf(!isWindows)("refuses to pass a cmd.exe special character to a .cmd task", async () => {
+    const { err, exitCode, ran } = await createFromTemplate("create-task-batch-metachar", {
+      name: "tmpl",
+      "bun-create": { postinstall: ['create-task first"second', "create-task third"] },
+    });
+
+    expect(err).toContain(
+      'error: Failed to run "create-task first\\"second": argument "first\\"second" contains a cmd.exe special character and cannot be passed to a .bat/.cmd file',
+    );
+    expect(ran).toEqual({ "task-ran.txt": "third" });
+    expect(exitCode).toBe(0);
+  });
+
+  // The script needs a shebang to be spawned directly, so POSIX only.
+  it.skipIf(!isPosix)("runs a task given as a path relative to the destination", async () => {
+    const { out, err, exitCode, ran } = await createFromTemplate(
+      "create-task-relative",
+      { name: "tmpl", "bun-create": { postinstall: "./setup.sh first second" } },
+      { "setup.sh": taskStubs["bin/create-task"] },
+      ["setup.sh"],
+    );
+
+    expect(out).toContain("\n$ ./setup.sh first second\n");
+    expect(err).not.toContain("error:");
+    expect(ran).toEqual({ "task-ran.txt": "first second" });
+    expect(exitCode).toBe(0);
+  });
 });

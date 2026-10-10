@@ -276,6 +276,30 @@ child.on("close", () => {
 });
 `;
 
+// node:child_process with no 'error' listener on stdout: the error is an uncaughtException. stdout and the
+// ChildProcess still emit 'close', as Node's net.Socket does from the close callback of its handle.
+const CHILD_PROCESS_UNHANDLED_FIXTURE = /* js */ `
+import { spawn } from "node:child_process";
+const out = { uncaught: [], stdout: [], child: [] };
+process.on("uncaughtException", e => out.uncaught.push(e.code));
+process.on("exit", () => console.log(JSON.stringify(out)));
+const child = spawn(${JSON.stringify(WRITER_CMD[0])}, ${JSON.stringify(WRITER_CMD.slice(1))}, { stdio: ["ignore", "pipe", "ignore"] });
+child.stdout.on("data", () => {});
+child.stdout.on("close", hadError => out.stdout.push("close(" + hadError + ")"));
+child.on("close", () => out.child.push("close"));
+`;
+
+// The same with no 'uncaughtException' listener: the error is fatal. Nothing reads stdout here, so its first recv()
+// comes when the ChildProcess resumes it, after 'exit'.
+const CHILD_PROCESS_FATAL_FIXTURE = /* js */ `
+import { spawn } from "node:child_process";
+const child = spawn("sh", ["-c", "printf hello"], { stdio: ["ignore", "pipe", "ignore"] });
+child.on("close", code => {
+  console.log(JSON.stringify("the 'close' listener ran"));
+  process.exit(code);
+});
+`;
+
 // node:child_process: every byte the parent read before the error reaches 'data'.
 const CHILD_PROCESS_BYTES_FIXTURE = /* js */ `
 import { spawn } from "node:child_process";
@@ -386,6 +410,8 @@ beforeAll(async () => {
     "stdout-text.mjs": STDOUT_TEXT_FIXTURE,
     "stdout-write.mjs": STDOUT_WRITE_FIXTURE,
     "child-process.mjs": CHILD_PROCESS_FIXTURE,
+    "child-process-unhandled.mjs": CHILD_PROCESS_UNHANDLED_FIXTURE,
+    "child-process-fatal.mjs": CHILD_PROCESS_FATAL_FIXTURE,
     "child-process-bytes.mjs": CHILD_PROCESS_BYTES_FIXTURE,
     "child-process-readable.mjs": CHILD_PROCESS_READABLE_FIXTURE,
     "stdout-stream-mid-fill.mjs": STDOUT_STREAM_MID_FILL_FIXTURE,
@@ -499,6 +525,21 @@ describe.skipIf(!isLinux || !cc)("subprocess stdio syscall errors", () => {
         exitCode: 0,
       });
     });
+  });
+
+  test.concurrent("node:child_process: an unhandled read error still ends in 'close'", async () => {
+    expect(await runWithFault("child-process-unhandled.mjs", { SPAWN_FAULT_RECV_AT: "3" })).toEqual({
+      parsed: { uncaught: ["EIO"], stdout: ["close(true)"], child: ["close"] },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Node exits at a fatal error. Bun first runs what is queued behind it, 'close' listeners included:
+  // https://github.com/oven-sh/bun/pull/34661. Observed: the listener runs, and the process exits 0.
+  test.concurrent.failing("node:child_process: a read error that nothing handles exits 1", async () => {
+    const { parsed, stderr, exitCode } = await runWithFault("child-process-fatal.mjs", { SPAWN_FAULT_RECV_AT: "1" });
+    expect({ parsed, error: stderr.includes("EIO"), exitCode }).toEqual({ parsed: "", error: true, exitCode: 1 });
   });
 
   // child.stdout reads one chunk ahead of its 'data' listener, so once the stream flows a chunk is still buffered

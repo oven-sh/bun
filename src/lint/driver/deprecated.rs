@@ -3,10 +3,10 @@
 #[path = "deprecated_data.rs"]
 mod data;
 
+use bun_core::printer::json_stringify;
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::js_plugin;
-use bun_core::printer::json_stringify;
 use bun_lint::linter::{ResolvedConfig, RuleId, write_json};
 use bun_lint::options::Json;
 

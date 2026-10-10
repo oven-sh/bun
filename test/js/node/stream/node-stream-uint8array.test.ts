@@ -62,7 +62,7 @@ describe("Writable", () => {
     const writable = new Writable({
       write: logCall((chunk, encoding, cb) => {
         expect(chunk instanceof Buffer).toBe(true);
-        expect(encoding).toBe("buffer");
+        expect(encoding).toBe<string>("buffer");
         expect(String(chunk)).toBe("ABC");
         callback = cb;
       }, 0),

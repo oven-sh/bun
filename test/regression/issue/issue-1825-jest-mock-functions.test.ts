@@ -4,7 +4,7 @@ describe("Jest mock functions from issue #1825", () => {
   test("jest.mock should be available and work with factory function", () => {
     // Should not throw - jest.mock should be available
     expect(() => {
-      jest.mock("fs", () => ({ readFile: jest.fn() }));
+      (jest as any).mock("fs", () => ({ readFile: jest.fn() }));
     }).not.toThrow();
   });
 

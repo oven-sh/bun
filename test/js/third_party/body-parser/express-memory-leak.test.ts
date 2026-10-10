@@ -103,7 +103,7 @@ async function runRequestBatch(
   const url = `http://${serverInfo.host}:${serverInfo.port}${endpoint}`;
 
   for (let i = 0; i < total; i += batchSize) {
-    const batch = [];
+    const batch: Promise<void | Blob>[] = [];
     for (let j = 0; j < batchSize && i + j < total; j++) {
       batch.push(
         fetch(url, options)
@@ -129,7 +129,7 @@ async function runRequestBatch(
 async function getMemoryUsage(serverInfo: ServerInfo): Promise<{ rss: number; objects: Record<string, number> }> {
   const url = `http://${serverInfo.host}:${serverInfo.port}/rss`;
   const response = await fetch(url);
-  const data = await response.json();
+  const data: any = await response.json();
   return data;
 }
 

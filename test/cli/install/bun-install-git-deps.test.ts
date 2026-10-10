@@ -10,7 +10,7 @@ import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, tempDir, tls 
 import { join } from "path";
 import { pathToFileURL } from "url";
 
-const gitEnv = {
+const gitEnv: NodeJS.Dict<string> = {
   ...bunEnv,
   GIT_CONFIG_NOSYSTEM: "1",
   GIT_AUTHOR_NAME: "Test",
@@ -187,7 +187,7 @@ function writeProject(root: string, dependencies: Record<string, string>): strin
 
 // Runs `bun <args>`. An `undefined` value in `extraEnv` removes that variable from its environment.
 async function runBun(cwd: string, cacheDir: string, extraEnv: Record<string, string | undefined>, ...args: string[]) {
-  const env = { ...gitEnv, ...extraEnv, BUN_INSTALL_CACHE_DIR: cacheDir };
+  const env: NodeJS.Dict<string> = { ...gitEnv, ...extraEnv, BUN_INSTALL_CACHE_DIR: cacheDir };
   // Set on ASAN CI lanes; it arms a subreaper around internal git spawns that
   // SIGKILLs concurrent clone tasks (see #33982). This test exercises install
   // task bookkeeping, not orphan reaping.
@@ -665,7 +665,7 @@ exit 1
       [nameOf("a")]: "git+https://localhost/scope/pkg-a.git",
       [nameOf("b")]: "git+https://localhost/scope/pkg-b.git",
     });
-    const env = { ...gitEnv, BUN_INSTALL_CACHE_DIR: join(root, "cache"), PATH: `${bin}:${gitEnv.PATH}` };
+    const env: typeof gitEnv = { ...gitEnv, BUN_INSTALL_CACHE_DIR: join(root, "cache"), PATH: `${bin}:${gitEnv.PATH}` };
     delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "install"],

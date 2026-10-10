@@ -234,7 +234,7 @@ describe.skipIf(skip)("node:http pipelining under short sends", () => {
 
     const socket = net.connect(Number(portLine), "127.0.0.1");
     const chunks: Buffer[] = [];
-    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("data", (chunk: Buffer) => chunks.push(chunk));
     socket.on("error", () => {});
     const request = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
     socket.on("connect", () => socket.write(Buffer.alloc(request.length * COUNT, request)));
@@ -289,7 +289,7 @@ describe.skipIf(skip)("node:http pipelining under stalled sends", () => {
 
     const socket = net.connect(Number(portLine), "127.0.0.1");
     const chunks: Buffer[] = [];
-    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("data", (chunk: Buffer) => chunks.push(chunk));
     socket.on("error", () => {});
     socket.on("connect", () =>
       socket.write(

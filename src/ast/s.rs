@@ -71,7 +71,10 @@ pub struct Label {
 
 /// This is a stand-in for a TypeScript type declaration
 #[derive(Clone, Copy, Default)]
-pub struct TypeScript {}
+pub struct TypeScript {
+    /// The source syntax, if the parser saves TypeScript syntax. `NONE` otherwise.
+    pub syntax: crate::ts_syntax::StatementId,
+}
 
 #[derive(Clone, Copy, Default)]
 pub struct Debugger {}

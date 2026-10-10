@@ -2,7 +2,7 @@ import { serve, Serve, Server, sleep } from "bun";
 
 declare global {
   // eslint-disable-next-line no-var
-  var server: Server;
+  var server: Server<undefined>;
 }
 
 const parseBody = async (request: Request): Promise<unknown | null> => {
@@ -14,8 +14,8 @@ const parseBody = async (request: Request): Promise<unknown | null> => {
   }
 };
 
-const bootstrap = (): Server => {
-  const options: Serve = {
+const bootstrap = (): Server<undefined> => {
+  const options: Serve.Options<undefined> = {
     port: 0,
     development: true,
     async fetch(request: Request): Promise<Response> {

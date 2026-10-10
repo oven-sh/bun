@@ -361,12 +361,12 @@ describe.concurrent("TLS wildcard hostname verification", () => {
     const { promise, resolve, reject } = Promise.withResolvers<unknown>();
     const socket = await Bun.connect({
       hostname: "127.0.0.1",
-      port: server.port,
+      port: server.port!,
       tls: { ca: wildcardExampleComTls.cert, serverName },
       socket: {
         handshake(s, success) {
           const error = s.getAuthorizationError();
-          resolve({ success, authorized: s.authorized, code: error?.code, message: error?.message });
+          resolve({ success, authorized: s.authorized, code: (error as any)?.code, message: error?.message });
         },
         data() {},
         error(_s, err) {
@@ -471,7 +471,6 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
     await using s = Bun.serve({ port: 0, tls: material, fetch: () => new Response("ok") });
     try {
       const r = await fetch(`https://127.0.0.1:${s.port}/`, {
-        // @ts-expect-error Bun extension
         tls: { ca: material.cert, serverName: host },
         keepalive: false,
       });
@@ -716,7 +715,6 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
         let viaFetch: string;
         try {
           const r = await fetch(`https://127.0.0.1:${server.port}/`, {
-            // @ts-expect-error Bun extension
             tls: { ca: wild.cert, serverName: host },
             keepalive: false,
           });
@@ -792,14 +790,13 @@ describe("TLS certificate name matching: fetch() / checkServerIdentity / checkHo
 
       expect(csi(wild.x509, serverName)).toBe(false);
       await expectRefused(async () => {
-        // @ts-expect-error Bun extension
         await (await fetch(`https://127.0.0.1:${server.port}/`, { tls: tlsOptions, keepalive: false })).text();
         return () => {};
       });
       await expectRefused(async () => {
         const socket = await Bun.connect({
           hostname: "127.0.0.1",
-          port: server.port,
+          port: server.port!,
           tls: tlsOptions,
           socket: { data() {} },
         });

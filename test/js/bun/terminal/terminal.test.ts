@@ -685,7 +685,7 @@ describe("Bun.Terminal", () => {
 
   describe("exit callback", () => {
     test("exit callback is called on close", async () => {
-      let exitCode: number | null = null;
+      let exitCode = null as number | null;
       const { promise, resolve } = Promise.withResolvers<void>();
 
       const terminal = new Bun.Terminal({
@@ -1191,7 +1191,7 @@ describe("Bun.Terminal", () => {
       });
 
       // Do multiple operations concurrently
-      const promises = [];
+      const promises: Promise<void>[] = [];
 
       for (let i = 0; i < 10; i++) {
         promises.push(

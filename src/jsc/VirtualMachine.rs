@@ -216,7 +216,6 @@ pub struct VirtualMachine {
     /// (`exit_tears_down_napi_envs`). The list is never walked again, so a hook
     /// pushed after this (a finalizer deferred from the final collection) would only leak.
     pub(crate) has_run_cleanup_hooks: bool,
-    pub plugin_runner: Option<crate::plugin_runner::PluginRunner>,
     pub is_main_thread: bool,
     pub exit_handler: ExitHandler,
 
@@ -503,13 +502,6 @@ pub unsafe extern "C" fn Bun__standaloneInternalModuleBytecode(
         *entry_offset = found_entry_offset;
     }
     true
-}
-
-/// Module loader resolve hook: whether `onResolve` plugins could claim a specifier before the builtin/standalone fast paths.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__hasPluginRunner(vm: *mut VirtualMachine) -> bool {
-    // SAFETY: `vm` is the live per-thread VM the C++ global object holds.
-    unsafe { (*vm).plugin_runner.is_some() }
 }
 
 #[unsafe(no_mangle)]
@@ -3479,25 +3471,41 @@ impl VirtualMachine {
                     bun_core::hint::cold();
                     self.set_pending_internal_promise(None);
                     let global_ref = self.global();
-                    let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, MAIN_FILE_NAME)
-                        .map_err(|_| crate::CrateError::JSError)?;
-                    let ret = jsc::from_js_host_call_generic(global_ref, || {
-                        NodeModuleModule__callOverriddenRunMain(global_ref, argv1)
-                    })
-                    .map_err(|_| crate::CrateError::JSError)?;
-                    // If the override stored a promise itself, use that; otherwise
-                    // wrap its return value.
-                    if let Some(stored) = self.pending_internal_promise() {
-                        return Ok(stored);
-                    }
-                    // `Promise.resolve(ret)` reads `ret.constructor` / `ret.then`,
-                    // which may throw.
-                    let resolved = jsc::call_check_slow(global_ref, || {
-                        JSC__JSInternalPromise__resolvedPromise(global_ref, ret)
-                    })
-                    .map_err(|_| crate::CrateError::JSError)?;
-                    self.set_pending_internal_promise(Some(resolved));
-                    return Ok(resolved);
+                    let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, MAIN_FILE_NAME)?;
+                    let promise: *mut JSInternalPromise =
+                        match jsc::from_js_host_call_generic(global_ref, || {
+                            NodeModuleModule__callOverriddenRunMain(global_ref, argv1)
+                        }) {
+                            Ok(ret) => {
+                                // If the override stored a promise itself, use that; otherwise
+                                // wrap its return value.
+                                if let Some(stored) = self.pending_internal_promise() {
+                                    return Ok(stored);
+                                }
+                                // `Promise.resolve(ret)` reads `ret.constructor` / `ret.then`,
+                                // which may throw.
+                                jsc::call_check_slow(global_ref, || {
+                                    JSC__JSInternalPromise__resolvedPromise(global_ref, ret)
+                                })?
+                            }
+                            Err(err) => {
+                                let rejected =
+                                    crate::JSPromise::rejected_promise_with_caught_exception(
+                                        global_ref, err,
+                                    )?;
+                                // Nobody else looks at a promise the override stored, so that stays
+                                // the entry point's, and this one is left to the rejection tracker.
+                                if let Some(stored) = self.pending_internal_promise() {
+                                    return Ok(stored);
+                                }
+                                // Whoever loads the entry point reports its promise, so, like the
+                                // loader's, it is not for the rejection tracker as well.
+                                rejected.set_handled();
+                                core::ptr::from_mut(rejected).cast()
+                            }
+                        };
+                    self.set_pending_internal_promise(Some(promise));
+                    return Ok(promise);
                 }
             }
 
@@ -3509,14 +3517,13 @@ impl VirtualMachine {
             let global_ref = self.global();
             let promise = if !self.main_is_html_entrypoint {
                 let name = bun_core::String::borrow_utf8(MAIN_FILE_NAME);
-                jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&name))
+                jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &name)
                     .map(NonNull::as_ptr)
                     .ok_or(crate::CrateError::JSError)?
             } else {
                 let p: *mut JSInternalPromise = jsc::from_js_host_call_generic(global_ref, || {
                     Bun__loadHTMLEntryPoint(global_ref)
-                })
-                .map_err(|_| crate::CrateError::JSError)?;
+                })?;
                 if p.is_null() {
                     return Err(crate::CrateError::JSError);
                 }
@@ -3530,7 +3537,7 @@ impl VirtualMachine {
             let global = self.global;
             let main_str = bun_core::String::from_bytes(self.main());
             let promise =
-                jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&main_str))
+                jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(global, &main_str)
                     .map(NonNull::as_ptr)
                     .ok_or(crate::CrateError::JSError)?;
             self.set_pending_internal_promise(Some(promise));
@@ -3599,7 +3606,9 @@ pub fn process_fetch_log(
 
     let msg_to_js = |msg: bun_ast::Msg| -> JSValue {
         take(match msg.metadata {
-            bun_ast::Metadata::Build => BuildMessage::create(global_this, msg),
+            bun_ast::Metadata::Build | bun_ast::Metadata::TypeScript { .. } => {
+                BuildMessage::create(global_this, msg)
+            }
             bun_ast::Metadata::Resolve(_) => {
                 ResolveMessage::create(global_this, &msg, referrer_utf8.slice())
             }
@@ -4125,7 +4134,9 @@ impl VirtualMachine {
     }
 
     /// `--disallow-code-generation-from-strings`, as a `bun_core::CodeGenerationFromStrings`.
-    /// The process's, so it takes no `VirtualMachine`.
+    /// The process's, so it takes no `VirtualMachine`. C++ does not ask a build that has the
+    /// level as a constant (CodeGenerationFromStrings.h).
+    #[cfg(not(bun_disallow_code_generation_from_strings))]
     #[unsafe(export_name = "Bun__codeGenerationFromStrings")]
     pub(crate) extern "C" fn code_generation_from_strings_for_cpp() -> u8 {
         bun_core::code_generation_from_strings() as u8
@@ -4497,11 +4508,13 @@ impl VirtualMachine {
 
     /// Adds the main entry point to the file watcher when watch mode is enabled.
     pub fn add_main_to_watcher_if_needed(&mut self) {
-        if !self.is_watcher_enabled() {
-            return;
-        }
-        let main = self.main();
-        if main.is_empty() {
+        self.add_to_watcher_if_needed(self.main());
+    }
+
+    /// Adds a file that the module loader has not loaded to the file watcher when watch mode is
+    /// enabled.
+    pub fn add_to_watcher_if_needed(&self, path: &[u8]) {
+        if !self.is_watcher_enabled() || path.is_empty() {
             return;
         }
         let watcher = self.bun_watcher_ptr();
@@ -4513,8 +4526,34 @@ impl VirtualMachine {
             // and `add_file_by_path_slow` serializes the inner watchlist write
             // via `Watcher.mutex`. Borrow is scoped to this single
             // mutex-guarded call.
-            let _ = unsafe { (*watcher).add_file_by_path_slow(main) };
+            let _ = unsafe { (*watcher).add_file_by_path_slow(path) };
         }
+    }
+
+    /// `add_to_watcher_if_needed`, for threads that work for this one. `None` unless watch mode is
+    /// enabled.
+    pub fn watcher_for_threads(&self) -> Option<impl Fn(&[u8]) + Send + Sync + 'static> {
+        struct Shared {
+            watcher: *mut crate::hot_reloader::ImportWatcher,
+            _ticket: crate::Ticket,
+        }
+        // SAFETY: it carries a `Ticket` for the VM that has the watcher. The pointee is made to be
+        // shared with other threads (see `bun_watcher_ptr`).
+        unsafe impl Send for Shared {}
+        if !self.is_watcher_enabled() {
+            return None;
+        }
+        // One of these threads at a time has the `&mut`.
+        let shared = bun_threading::Guarded::new(Shared {
+            watcher: self.bun_watcher_ptr(),
+            _ticket: self.ticket(),
+        });
+        Some(move |path: &[u8]| {
+            let shared = shared.lock();
+            let watcher = shared.watcher;
+            // SAFETY: as in `add_to_watcher_if_needed`.
+            let _ = unsafe { (*watcher).add_file_by_path_slow(path) };
+        })
     }
 
     /// `bun_resolver` holds the manager as an opaque forward-decl (it cannot
@@ -5028,6 +5067,7 @@ impl VirtualMachine {
         source: &[u8],
         is_esm: bool,
         is_a_file_path: bool,
+        global_cache: bun_resolver::GlobalCache,
     ) -> crate::CrateResult<()> {
         use bun_js_parser::Macro;
         use bun_resolver::{ResultUnion, node_fallbacks};
@@ -5117,7 +5157,6 @@ impl VirtualMachine {
             } else {
                 bun_ast::ImportKind::Require
             };
-            let global_cache = self.transpiler.resolver.opts.global_cache;
             match self.transpiler.resolver.resolve_and_auto_install(
                 source_to_use,
                 normalized_specifier,
@@ -5211,6 +5250,67 @@ impl VirtualMachine {
         query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
     ) -> JsResult<Result<bun_core::String, JSValue>> {
+        if global.has_plugins() {
+            match run_on_resolve(global, specifier, source)? {
+                None => {}
+                Some(Err(error)) => return Ok(Err(error)),
+                Some(Ok(answer)) => {
+                    if let Some(name) = global.resolve_virtual_module(&answer, source) {
+                        return Ok(Ok(name));
+                    }
+                    // A bare name may be a package's in the registry. It is the plugin's own, and not
+                    // installed, if `onResolve` answers about it as well.
+                    let answer_utf8 = answer.to_utf8();
+                    let is_bare = bun_resolver::is_package_path(&answer_utf8)
+                        && ModuleLoader::plugin_namespace_and_path(&answer_utf8)
+                            .is_some_and(|(namespace, _)| namespace.is_empty());
+                    drop(answer_utf8);
+                    let is_own = is_bare
+                        && (answer.eql(specifier)
+                            || match run_on_resolve(global, &answer, source)? {
+                                None => false,
+                                Some(Ok(_)) => true,
+                                Some(Err(error)) => return Ok(Err(error)),
+                            });
+                    let global_cache = if is_own {
+                        bun_resolver::GlobalCache::disable
+                    } else {
+                        global.bun_vm().transpiler.resolver.opts.global_cache
+                    };
+                    let resolved = Self::resolve_without_on_resolve::<IS_A_FILE_PATH>(
+                        global,
+                        &answer,
+                        source,
+                        query_string,
+                        mode,
+                        global_cache,
+                    )?;
+                    // Not on disk, for an `onLoad` to serve.
+                    if resolved.is_err() && global.has_on_load(&answer.to_utf8())? {
+                        return Ok(Ok(answer));
+                    }
+                    return Ok(resolved);
+                }
+            }
+        }
+        Self::resolve_without_on_resolve::<IS_A_FILE_PATH>(
+            global,
+            specifier,
+            source,
+            query_string,
+            mode,
+            global.bun_vm().transpiler.resolver.opts.global_cache,
+        )
+    }
+
+    fn resolve_without_on_resolve<const IS_A_FILE_PATH: bool>(
+        global: &JSGlobalObject,
+        specifier: &bun_core::String,
+        source: &bun_core::String,
+        query_string: Option<&mut bun_core::String>,
+        mode: ResolveMode,
+        global_cache: bun_resolver::GlobalCache,
+    ) -> JsResult<Result<bun_core::String, JSValue>> {
         const MAX_LEN: usize = (bun_paths::MAX_PATH_BYTES as f64 * 1.5) as usize;
         // `data:` URLs carry the module source inline and never touch the
         // filesystem, so the path-length cap does not apply to them.
@@ -5243,7 +5343,8 @@ impl VirtualMachine {
 
         // Bare/`node:` builtins: answer from the alias table before paying for UTF-8 copies and the resolver.
         // (Alias names are ASCII, so the Latin-1 bytes are the UTF-8 bytes whenever they can match.)
-        if jsc_vm.plugin_runner.is_none() && specifier.is_8bit() {
+        let has_plugins = global.has_plugins();
+        if !has_plugins && specifier.is_8bit() {
             if let Some(hardcoded) = ModuleLoader::HardcodedModule::Alias::get(
                 specifier.latin1(),
                 bun_ast::Target::Bun,
@@ -5262,28 +5363,6 @@ impl VirtualMachine {
         let specifier_utf8 = specifier.to_utf8();
         let source_utf8 = source.to_utf8();
 
-        if jsc_vm.plugin_runner.is_some() {
-            use bun_bundler::transpiler::PluginRunner;
-            let spec = specifier_utf8.slice();
-            if PluginRunner::could_be_plugin(spec) {
-                let namespace = PluginRunner::extract_namespace(spec);
-                let after_namespace = if namespace.is_empty() {
-                    spec
-                } else {
-                    &spec[namespace.len() + 1..]
-                };
-                if let Some(resolved_path) = plugin_runner_on_resolve_jsc(
-                    global,
-                    &bun_core::String::from_bytes(namespace),
-                    &bun_core::String::borrow_utf8(after_namespace),
-                    source,
-                    crate::BunPluginTarget::Bun,
-                )? {
-                    return Ok(resolved_path);
-                }
-            }
-        }
-
         if let Some(hardcoded) = ModuleLoader::HardcodedModule::Alias::get(
             specifier_utf8.slice(),
             bun_ast::Target::Bun,
@@ -5300,6 +5379,15 @@ impl VirtualMachine {
 
         // Node's `--expose-internals`.
         if ModuleLoader::exposed_internal_tag(specifier_utf8.slice()).is_some() {
+            return Ok(Ok(specifier.clone()));
+        }
+
+        // (One letter is a Windows drive.)
+        if has_plugins
+            && ModuleLoader::plugin_namespace_and_path(&specifier_utf8)
+                .is_some_and(|(namespace, _)| namespace.len() > 1)
+            && global.has_on_load(&specifier_utf8)?
+        {
             return Ok(Ok(specifier.clone()));
         }
 
@@ -5367,6 +5455,7 @@ impl VirtualMachine {
             normalize_source(source_utf8.slice()),
             mode.is_esm(),
             IS_A_FILE_PATH,
+            global_cache,
         );
         if let Err(err_) = resolve_result {
             let err = err_;
@@ -5555,9 +5644,21 @@ impl VirtualMachine {
         // Note: reshaped for borrowck.
         let global = self.global;
         let main_str = bun_core::String::from_bytes(self.main());
-        let promise = jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&main_str))
-            .map(NonNull::as_ptr)
-            .ok_or(crate::CrateError::JSError)?;
+        let promise = match jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(
+            global, &main_str,
+        ) {
+            Some(promise) => promise.as_ptr(),
+            // Not resolving is this file's failure, like not loading.
+            None => {
+                let rejected = crate::JSPromise::rejected_promise_with_caught_exception(
+                    self.global(),
+                    jsc::JsError::Thrown,
+                )?;
+                // Like the loader's: whoever loads the file reports it, not the rejection tracker.
+                rejected.set_handled();
+                std::ptr::from_mut(rejected)
+            }
+        };
         self.set_pending_internal_promise(Some(promise));
         Ok(promise)
     }
@@ -5803,10 +5904,6 @@ impl VirtualMachine {
         self.main_hash = 0;
         self.main_resolved_path = bun_core::String::EMPTY;
         self.unhandled_error_counter = 0;
-        // The finished file's plugins are dropped with its global; the next
-        // `Bun.plugin()` call reinstalls the runner against the new global.
-        self.transpiler.linker.plugin_runner = None;
-        self.plugin_runner = None;
 
         let old_global = self.global;
         // `old_global` valid for VM lifetime (safe ZST-handle deref);
@@ -5868,8 +5965,7 @@ impl VirtualMachine {
     ) -> Option<*mut JSInternalPromise> {
         let path_str = bun_core::String::from_bytes(entry_path);
         let promise =
-            jsc::JSModuleLoader::load_and_evaluate_module_ptr(self.global, Some(&path_str))?
-                .as_ptr();
+            jsc::JSModuleLoader::load_and_evaluate_module_ptr(self.global, &path_str)?.as_ptr();
         let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         Some(promise)
     }
@@ -7589,23 +7685,25 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
 }
 
 /// `None` when no `Bun.plugin()` `onResolve` callback claimed the specifier.
-pub(crate) fn plugin_runner_on_resolve_jsc(
+fn run_on_resolve(
     global: &JSGlobalObject,
-    namespace: &bun_core::String,
     specifier: &bun_core::String,
     importer: &bun_core::String,
-    target: crate::BunPluginTarget,
 ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
-    let empty = bun_core::String::EMPTY;
+    let specifier = specifier.to_utf8();
+    let Some((namespace, path)) = ModuleLoader::plugin_namespace_and_path(&specifier) else {
+        return Ok(None);
+    };
+    // The importer's key ends in the query it was imported with.
+    let importer = importer.to_utf8();
+    let importer = match bun_core::strings::index_of_char_usize(&importer, b'?') {
+        Some(query) => &importer[..query],
+        None => &importer[..],
+    };
     let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
-        if namespace.length() > 0 && !namespace.eq_ascii(b"file") {
-            namespace
-        } else {
-            &empty
-        },
-        specifier,
-        importer,
-        target,
+        &bun_core::String::from_bytes(if namespace == b"file" { b"" } else { namespace }),
+        &bun_core::String::borrow_utf8(path),
+        &bun_core::String::borrow_utf8(importer),
     )?
     else {
         return Ok(None);
@@ -7666,10 +7764,13 @@ pub(crate) fn plugin_runner_on_resolve_jsc(
         break 'brk bun_core::String::static_("file");
     };
 
-    // A `file`-namespace result (the default) is a filesystem path, not a new
-    // specifier: hand it back unprefixed. Other namespaces keep the `ns:path`
-    // form the module loader dispatches on.
     if user_namespace.eq_ascii(b"file") {
+        if file_path.starts_with_ascii(b"file://") {
+            let path = bun_url::path_from_file_url(&file_path);
+            if !path.is_dead() {
+                return Ok(Some(Ok(path)));
+            }
+        }
         return Ok(Some(Ok(file_path)));
     }
 

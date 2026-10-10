@@ -25,12 +25,41 @@
 
 #include "EventListener.h"
 #include <wtf/Ref.h>
+#include <wtf/SentinelLinkedList.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
+#include <wtf/text/AtomString.h>
 
 namespace WebCore {
 
 class AbortSignal;
+class EventTarget;
+class RegisteredEventListener;
 class WeakPtrImplWithEventTargetData;
+
+// The abort algorithm of a listener that was added with { signal }: remove the listener from its
+// target (https://dom.spec.whatwg.org/#add-an-event-listener, step 6). The listener owns it and
+// the signal links it, so the listener takes it off the signal without a search.
+// Linked ⇒ the signal is alive: ~AbortSignal unlinks what is left.
+class EventListenerAbortAlgorithm final : public BasicRawSentinelNode<EventListenerAbortAlgorithm> {
+    WTF_MAKE_TZONE_ALLOCATED(EventListenerAbortAlgorithm);
+    WTF_MAKE_NONCOPYABLE(EventListenerAbortAlgorithm);
+
+public:
+    EventListenerAbortAlgorithm(AbortSignal&, EventTarget&, const AtomString& eventType, RegisteredEventListener&);
+    ~EventListenerAbortAlgorithm();
+
+    // The listener left its target: the signal has nothing to remove any more.
+    void unlink();
+    // The signal aborted, and has unlinked this. Frees the listener and this with it.
+    void run();
+
+private:
+    AbortSignal& m_signal;
+    WeakPtr<EventTarget, WeakPtrImplWithEventTargetData> m_target;
+    AtomString m_eventType;
+    RegisteredEventListener& m_listener;
+};
 
 // https://dom.spec.whatwg.org/#concept-event-listener
 class RegisteredEventListener : public RefCounted<RegisteredEventListener> {
@@ -66,13 +95,10 @@ public:
 
     void markAsRemoved();
 
-    // Associates this listener with the abort algorithm that was registered
-    // on the provided AbortSignal by EventTarget::addEventListener(). When
-    // the listener is removed (via removeEventListener, once:true firing, or
-    // removeAllEventListeners) markAsRemoved() will drop that algorithm from
-    // the signal so m_algorithms doesn't grow unboundedly when the same
-    // signal is reused across many add/remove cycles.
-    void setAbortSignal(WeakPtr<AbortSignal, WeakPtrImplWithEventTargetData>&&, uint32_t algorithmIdentifier);
+    // EventTarget::addEventListener()'s { signal }: the signal removes this listener from `target`
+    // when it aborts. Removed any other way (removeEventListener, { once } firing,
+    // removeAllEventListeners), the listener takes its algorithm off the signal in markAsRemoved().
+    void removeOnAbort(AbortSignal&, EventTarget& target, const AtomString& eventType);
 
 private:
     RegisteredEventListener(Ref<EventListener>&& listener, const Options& options)
@@ -90,9 +116,8 @@ private:
     bool m_isOnce : 1;
     bool m_wasRemoved : 1;
     bool m_resistStopPropagation : 1;
-    uint32_t m_abortAlgorithmIdentifier { 0 };
     Ref<EventListener> m_callback;
-    WeakPtr<AbortSignal, WeakPtrImplWithEventTargetData> m_abortSignal;
+    std::unique_ptr<EventListenerAbortAlgorithm> m_abortAlgorithm;
 };
 
 } // namespace WebCore

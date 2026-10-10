@@ -106,18 +106,10 @@ AbortSignal::~AbortSignal()
 {
     releaseSourceObserverCounts();
 
-    // Invalidate WeakPtrs to this signal before our members (notably
-    // m_algorithms) are destroyed. A listener registered on this signal
-    // with { signal: this } stores a WeakPtr<AbortSignal> back to us on its
-    // RegisteredEventListener; without this the base ~EventTarget() (which
-    // runs after m_algorithms is freed but before the CanMakeWeakPtr base
-    // destructor revokes the factory) would call markAsRemoved(), resolve
-    // that WeakPtr, ref() a mid-deletion object, and call removeAlgorithm()
-    // on the freed vector. Clearing only the impl's object pointer leaves
-    // the impl itself (and the EventTargetData it hosts) intact so
-    // ~EventTarget()'s eventTargetData() lookup still works.
-    if (auto* impl = EventTargetWithInlineData::weakPtrFactory().impl())
-        impl->clear();
+    // A listener reaches its signal through its linked algorithm, and the listeners outlive this
+    // signal: those of other targets, and those of this signal itself until ~EventTarget().
+    while (!m_listenerAlgorithms.isEmpty())
+        m_listenerAlgorithms.begin()->remove();
 
     cancelTimer();
 }
@@ -202,9 +194,13 @@ void AbortSignal::runAbortSteps()
     m_nativeCallbacksBeingDispatched = nullptr;
 
     // 1. For each algorithm of signal's abort algorithms: run algorithm.
-    //    2. Empty signal's abort algorithms. (std::exchange empties)
-    for (auto& algorithm : std::exchange(m_algorithms, {}))
-        algorithm.second(reason);
+    //    2. Empty signal's abort algorithms.
+    // Not a loop over the list: run() frees its node, and nothing is added to an aborted signal.
+    while (!m_listenerAlgorithms.isEmpty()) {
+        auto& algorithm = *m_listenerAlgorithms.begin();
+        removeAlgorithm(algorithm);
+        algorithm.run();
+    }
 
     Vector<std::pair<uint32_t, Ref<AbortAlgorithm>>> abortAlgorithms;
     {
@@ -322,19 +318,19 @@ void AbortSignal::removeAbortAlgorithmFromSignal(AbortSignal& signal, uint32_t a
         signal.m_timeoutObserverCount.fetch_sub(1, std::memory_order_relaxed);
 }
 
-uint32_t AbortSignal::addAlgorithm(Algorithm&& algorithm)
+void AbortSignal::addAlgorithm(EventListenerAbortAlgorithm& algorithm)
 {
-    m_algorithms.append(std::make_pair(++m_algorithmIdentifier, WTF::move(algorithm)));
+    ASSERT(!aborted());
+    m_listenerAlgorithms.append(&algorithm);
+    ++m_listenerAlgorithmCount;
     m_timeoutObserverCount.fetch_add(1, std::memory_order_relaxed);
-    return m_algorithmIdentifier;
 }
 
-void AbortSignal::removeAlgorithm(uint32_t algorithmIdentifier)
+void AbortSignal::removeAlgorithm(EventListenerAbortAlgorithm& algorithm)
 {
-    if (m_algorithms.removeFirstMatching([algorithmIdentifier](auto& pair) {
-            return pair.first == algorithmIdentifier;
-        }))
-        m_timeoutObserverCount.fetch_sub(1, std::memory_order_relaxed);
+    algorithm.remove();
+    --m_listenerAlgorithmCount;
+    m_timeoutObserverCount.fetch_sub(1, std::memory_order_relaxed);
 }
 
 void AbortSignal::throwIfAborted(JSC::JSGlobalObject& lexicalGlobalObject)
@@ -356,7 +352,7 @@ WebCoreOpaqueRoot root(AbortSignal* signal)
 
 size_t AbortSignal::memoryCost() const
 {
-    return sizeof(AbortSignal) + m_native_callbacks.sizeInBytes() + m_algorithms.sizeInBytes() + m_abortAlgorithms.sizeInBytes() + m_sourceSignals.capacity() + m_dependentSignals.capacity();
+    return sizeof(AbortSignal) + m_native_callbacks.sizeInBytes() + m_listenerAlgorithmCount * sizeof(EventListenerAbortAlgorithm) + m_abortAlgorithms.sizeInBytes() + m_sourceSignals.capacity() + m_dependentSignals.capacity();
 }
 
 template<typename Visitor>

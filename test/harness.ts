@@ -68,6 +68,10 @@ export const bunEnv: NodeJS.Dict<string> = {
   // Strip ad-hoc JSC debug options that may be set on CI agents — they leak
   // a "WARNING: failed to parse" line to stderr that breaks snapshot tests.
   JSC_useJIT: undefined,
+  // `bun install` reads these. A value from the CI image or a parent `npm run`
+  // must not decide whether install tests run lifecycle scripts.
+  NPM_CONFIG_IGNORE_SCRIPTS: undefined,
+  npm_config_ignore_scripts: undefined,
   GITHUB_ACTIONS: "false",
   BUN_DEBUG_QUIET_LOGS: "1",
   NO_COLOR: "1",

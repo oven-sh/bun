@@ -67,7 +67,7 @@ pub(crate) fn dead_code_elimination(func: &mut HirFunction, env: &Environment) {
 }
 
 /// State for tracking referenced identifiers during mark phase.
-struct State {
+pub(super) struct State {
     /// SSA-specific usages (by IdentifierId)
     identifiers: HashSet<IdentifierId>,
     /// Named variable usages (any version)
@@ -102,7 +102,7 @@ fn reference(
 
 /// Check if any version of the given identifier is used somewhere.
 /// Checks both the specific SSA id and (for named identifiers) any usage of that name.
-fn is_id_or_name_used(
+pub(super) fn is_id_or_name_used(
     state: &State,
     identifiers: &[crate::hir::Identifier],
     identifier_id: IdentifierId,
@@ -151,7 +151,7 @@ fn reference_reassigned_variables(
 }
 
 /// Phase 1: Find all referenced identifiers via fixed-point iteration.
-fn find_referenced_identifiers(func: &HirFunction, env: &Environment) -> State {
+pub(super) fn find_referenced_identifiers(func: &HirFunction, env: &Environment) -> State {
     let has_loop = has_back_edge(func);
     // Collect block ids in reverse order (postorder - successors before predecessors)
     let reversed_block_ids: Vec<BlockId> = func.body.blocks.keys().rev().copied().collect();

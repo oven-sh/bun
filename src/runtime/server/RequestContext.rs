@@ -2669,7 +2669,16 @@ where
                 // (here, `blob`) may still be live across it. Nothing is written
                 // to the socket in between, so the wire output is unchanged.
                 blob.resolve_size();
-                let blob_size = blob.size.get();
+                // A slice of a file that could not be stat'd keeps its window. That window is not a length.
+                let stat_failed = matches!(
+                    blob.store.get().as_ref().map(|store| &store.data),
+                    Some(crate::webcore::blob::store::Data::File(file)) if file.seekable.is_none()
+                );
+                let blob_size = if stat_failed {
+                    crate::webcore::blob::MAX_SIZE
+                } else {
+                    blob.size.get()
+                };
                 this.render_metadata();
 
                 if blob_size == crate::webcore::blob::MAX_SIZE {

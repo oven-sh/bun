@@ -1148,6 +1148,58 @@ test.concurrent("a download resumed with If-Range after the file changed gets th
   }).toEqual({ status: 200, contentRange: null, body: Buffer.alloc(400, "B").toString() });
 });
 
+// A handle that was asked while its file was missing kept a size of 0. Served
+// from a fetch handler once the file was there, it came back as 206 with no bytes.
+test.concurrent("a fetch handler serves a file that did not exist when its Bun.file() was first asked", async () => {
+  using dir = tempDir("serve-file-asked-while-missing", {});
+  const path = join(String(dir), "later.txt");
+  const file = Bun.file(path);
+  const neverThere = Bun.file(join(String(dir), "never.txt"));
+
+  await using server = Bun.serve({
+    port: 0,
+    development: false,
+    async fetch(req) {
+      const { pathname } = new URL(req.url);
+      if (pathname === "/slice-from-10") return new Response(neverThere.slice(10));
+      if (pathname === "/slice-0-5") return new Response(neverThere.slice(0, 5));
+      if (pathname === "/slice-last-3") return new Response(neverThere.slice(-3));
+      return (await file.exists()) ? new Response(file) : new Response("not yet", { status: 404 });
+    },
+  });
+
+  const before = await fetch(server.url);
+  expect({ status: before.status, body: await before.text() }).toEqual({ status: 404, body: "not yet" });
+
+  writeFileSync(path, "hello world");
+
+  const get = await fetch(server.url);
+  const head = await fetch(server.url, { method: "HEAD" });
+  expect({
+    status: get.status,
+    contentLength: get.headers.get("content-length"),
+    contentRange: get.headers.get("content-range"),
+    body: await get.text(),
+    headStatus: head.status,
+    headContentLength: head.headers.get("content-length"),
+  }).toEqual({
+    status: 200,
+    contentLength: "11",
+    contentRange: null,
+    body: "hello world",
+    headStatus: 200,
+    headContentLength: "11",
+  });
+
+  // A slice of a file that is not there has a window and no length. HEAD answers 0 for it.
+  const lengths: Record<string, string | null> = {};
+  for (const route of ["/slice-from-10", "/slice-0-5", "/slice-last-3"]) {
+    const res = await fetch(new URL(route, server.url), { method: "HEAD" });
+    lengths[route] = res.headers.get("content-length");
+  }
+  expect(lengths).toEqual({ "/slice-from-10": "0", "/slice-0-5": "0", "/slice-last-3": "0" });
+});
+
 // A body write that returns backpressure must pause the reader until the
 // socket drains. For a pollable fd (FIFO, character device, socket) the read
 // loop re-arms its poll after EAGAIN, so a reader that is not paused keeps

@@ -1001,6 +1001,20 @@ fn iterate_bundled_deps(
     Ok(bundled_pack_queue)
 }
 
+/// A `dependencies` key becomes a path below `node_modules`: only `name` or `@scope/name`, and no leading `.` (`.bin`).
+fn is_nested_dependency_name(key: &[u8]) -> bool {
+    if !bun_install::package_installer::alias_is_safe_install_target(key)
+        || bun_install::dependency::is_scoped_package_name(key).is_err()
+    {
+        return false;
+    }
+    let name = match strings::index_of_char(key, b'/') {
+        Some(slash) => &key[slash as usize + 1..],
+        None => key,
+    };
+    !name.starts_with(b".")
+}
+
 fn add_bundled_dep(
     stats: &mut Stats,
     log: &mut bun_ast::Log,
@@ -1090,6 +1104,9 @@ fn add_bundled_dep(
                                 else {
                                     continue;
                                 };
+                                if !is_nested_dependency_name(dep_name) {
+                                    continue;
+                                }
 
                                 let mut dep_subpath_buf: Vec<u8> = Vec::with_capacity(
                                     dir_subpath.len() + "/node_modules/".len() + dep_name.len() + 1,

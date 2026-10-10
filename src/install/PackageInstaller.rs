@@ -369,7 +369,7 @@ fn abs_node_modules_path(
 /// anything that could escape `node_modules`: empty names, `.`/`..`
 /// components, absolute paths, drive letters, backslashes, NUL bytes, and any
 /// separator other than the single `/` in a scoped name (`@scope/name`).
-pub(crate) fn alias_is_safe_install_target(alias: &[u8]) -> bool {
+pub fn alias_is_safe_install_target(alias: &[u8]) -> bool {
     if alias.is_empty() || alias.len() >= MAX_PATH_BYTES || strings::contains_any(alias, b"\\:\0") {
         return false;
     }

@@ -97,7 +97,12 @@ impl<'a> PatchFile<'a> {
                     let pathz = ZBox::from_vec_with_nul(file_deletion.path.to_vec());
 
                     if let sys::Result::Err(e) = sys::unlinkat(patch_dir, &pathz) {
-                        return Some(e.without_path());
+                        // An older bun's patch deletes files a git dependency committed in `node_modules`, which a checkout no longer has.
+                        let already_gone = e.get_errno() == sys::E::ENOENT
+                            && file_deletion.path.starts_with(b"node_modules/");
+                        if !already_gone {
+                            return Some(e.without_path());
+                        }
                     }
                 }
                 PatchFilePart::FileRename(file_rename) => {

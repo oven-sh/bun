@@ -759,7 +759,9 @@ pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool
 pub fn is_package_in_cache_at(cache_dir: Fd, folder_path: &ZStr, tag: ResolutionTag) -> bool {
     let marker: &[u8] = match tag {
         ResolutionTag::Npm => b"package.json",
-        ResolutionTag::Git => b".bun-tag",
+        ResolutionTag::Git => {
+            return crate::git_runner::is_cached_checkout(cache_dir, folder_path.as_bytes());
+        }
         _ => return sys::directory_exists_at(cache_dir, folder_path).unwrap_or(false),
     };
     let mut buf = bun_paths::path_buffer_pool::get();

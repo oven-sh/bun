@@ -5,9 +5,20 @@
 // a bare repo on disk (served over git's dumb HTTP protocol by Bun.serve
 // when an http URL is needed) or tarballs built in memory.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
-import { join } from "path";
+import { dirname, join } from "path";
 import { pathToFileURL } from "url";
 
 const gitEnv: NodeJS.Dict<string> = {
@@ -51,6 +62,8 @@ interface BranchPackage {
   dependencies?: Record<string, string>;
   /** Files committed next to package.json; an `index.js` entry replaces the default one. */
   files?: Record<string, string>;
+  /** Symbolic links committed to the branch: path -> target. */
+  links?: Record<string, string>;
 }
 
 function indexJs(marker: string) {
@@ -75,6 +88,7 @@ interface Commit {
   from?: string;
   message: string;
   files: Record<string, string>;
+  links?: Record<string, string>;
 }
 
 function fastImportData(text: string) {
@@ -86,7 +100,7 @@ function fastImportData(text: string) {
 // regenerates the static files that dumb HTTP clients read.
 async function commitTo(bare: string, commits: Commit[]) {
   let stream = "";
-  for (const { ref, from, message, files } of commits) {
+  for (const { ref, from, message, files, links } of commits) {
     stream += `commit ${ref}\n`;
     stream += `committer ${gitEnv.GIT_COMMITTER_NAME} <${gitEnv.GIT_COMMITTER_EMAIL}> 0 +0000\n`;
     stream += fastImportData(message);
@@ -95,6 +109,9 @@ async function commitTo(bare: string, commits: Commit[]) {
     if (from) stream += `from ${from}^0\n`;
     for (const [path, contents] of Object.entries(files)) {
       stream += `M 100644 inline ${path}\n${fastImportData(contents)}`;
+    }
+    for (const [path, target] of Object.entries(links ?? {})) {
+      stream += `M 120000 inline ${path}\n${fastImportData(target)}`;
     }
     stream += "\n";
   }
@@ -117,6 +134,7 @@ async function makeSharedRepo(
       ref: `refs/heads/${pkg.branch}`,
       message: pkg.branch,
       files: { ...packageFiles(pkg.name, pkg.branch, pkg.dependencies), ...pkg.files },
+      links: pkg.links,
     })),
   );
   return bare;
@@ -227,11 +245,16 @@ async function lockedPackages(project: string): Promise<Record<string, unknown[]
   return lockfile.packages;
 }
 
-async function installedVersionOf(dir: string, name: string): Promise<string | null> {
-  const file = Bun.file(join(dir, "node_modules", name, "index.js"));
+// The marker that the index.js of the package in `folder` exports (null if absent).
+async function markerIn(folder: string): Promise<string | null> {
+  const file = Bun.file(join(folder, "index.js"));
   if (!(await file.exists())) return null;
   const text = await file.text();
   return JSON.parse(text.slice(text.indexOf("=") + 1, text.lastIndexOf(";")));
+}
+
+function installedVersionOf(dir: string, name: string): Promise<string | null> {
+  return markerIn(join(dir, "node_modules", name));
 }
 
 // name -> marker exported by the installed package's index.js (null if absent).
@@ -584,6 +607,430 @@ test.concurrent("installs a git+file:// dependency", async () => {
   expectInstalled(stdout, resolutions);
   expect(await installedVersions(project, [nameOf("b")])).toEqual(markers(["b"]));
   expect(await lockedPackages(project)).toEqual(locked);
+  expect(exitCode).toBe(0);
+});
+
+// A registry with `y@1.0.0` and `y@2.0.0`. Each version exports `y@<version>`.
+async function serveY() {
+  const versions = ["1.0.0", "2.0.0"];
+  const tarballs = new Map<string, Uint8Array>();
+  for (const version of versions) {
+    const files = { "package.json": JSON.stringify({ name: "y", version }), "index.js": indexJs(`y@${version}`) };
+    tarballs.set(`/y/-/y-${version}.tgz`, await tarballOf("package", files));
+  }
+  const server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const { pathname } = new URL(req.url);
+      if (pathname === "/y") {
+        return Response.json({
+          name: "y",
+          "dist-tags": { latest: "2.0.0" },
+          versions: Object.fromEntries(
+            versions.map(version => [
+              version,
+              { name: "y", version, dist: { tarball: `${server.url}y/-/y-${version}.tgz` } },
+            ]),
+          ),
+        });
+      }
+      const tarball = tarballs.get(pathname);
+      return tarball ? new Response(tarball) : new Response("not found", { status: 404 });
+    },
+  });
+  return server;
+}
+
+type Linker = "hoisted" | "isolated";
+
+// A project with a docs/ folder of its own. The hoisted linker puts a package's own
+// dependencies in node_modules/<package>/node_modules, the isolated linker beside it.
+function writeProjectWithDocs(
+  root: string,
+  dependencies: Record<string, string>,
+  registry: { url: URL },
+  linker: Linker = "hoisted",
+) {
+  const project = writeProject(root, dependencies);
+  writeFileSync(join(project, "bunfig.toml"), `[install]\nlinker = "${linker}"\nregistry = "${registry.url}"\n`);
+  mkdirSync(join(project, "docs"));
+  writeFileSync(join(project, "docs", "guide.md"), "# guide\n");
+  return project;
+}
+
+// The folder of the `name` that the installed package `dependent` loads: its own copy
+// if it has one, else the one in the node_modules folder that `dependent` is in.
+function dependencyOf(project: string, dependent: string, name: string) {
+  const linked = join(project, "node_modules", dependent);
+  const installed = existsSync(linked) ? realpathSync(linked) : linked;
+  const own = join(installed, "node_modules", name);
+  return existsSync(own) ? own : join(dirname(installed), name);
+}
+
+// The repository `a` needs its own copy of @x/docs (the project has another version).
+// `commit` is what the repository itself commits in node_modules.
+async function makeRepoWithNestedDependency(root: string, commit: Pick<BranchPackage, "files" | "links">) {
+  const bare = await makeSharedRepo(
+    root,
+    [{ name: "a", branch: "main", dependencies: { "@x/docs": "npm:y@2.0.0" }, ...commit }],
+    "a.git",
+  );
+  // `git init --bare` leaves HEAD at the default branch name, which may not be `main`.
+  await git(bare, "symbolic-ref", "HEAD", "refs/heads/main");
+  return {
+    bare,
+    dependencies: { a: `git+${pathToFileURL(bare)}#main`, "@x/docs": "npm:y@1.0.0" },
+    sha: branchCommits(bare).main,
+  };
+}
+
+// What the project looks like when `a` and both copies of @x/docs are installed and
+// nothing else changed.
+async function nestedDependencyState(project: string) {
+  const nested = dependencyOf(project, "a", "@x/docs");
+  const committedScope = join(project, "node_modules", "a", "node_modules", "@x");
+  return {
+    "docs/": existsSync(join(project, "docs")) ? readdirSync(join(project, "docs")).sort() : null,
+    "@x/docs": await installedVersionOf(project, "@x/docs"),
+    "a's @x/docs": await markerIn(nested),
+    "files of a's @x/docs": existsSync(nested) ? readdirSync(nested).sort() : null,
+    "a/node_modules/@x is a link": lstatSync(committedScope, { throwIfNoEntry: false })?.isSymbolicLink() ?? false,
+  };
+}
+const nestedDependencyInstalled = {
+  "docs/": ["guide.md"],
+  "@x/docs": "y@1.0.0",
+  "a's @x/docs": "y@2.0.0",
+  "files of a's @x/docs": ["index.js", "package.json"],
+  "a/node_modules/@x is a link": false,
+};
+const cleanCheckout = [".bun-tag", "index.js", "package.json"];
+
+const committedPackage = {
+  files: {
+    "node_modules/@x/docs/package.json": JSON.stringify({ name: "y", version: "2.0.0" }),
+    "node_modules/@x/docs/index.js": indexJs("committed"),
+    "node_modules/@x/docs/extra.js": indexJs("committed"),
+  },
+};
+
+// bun installs the packages a dependency needs, so what a repository commits in its
+// node_modules is not installed. Each repository here commits something at
+// node_modules/@x, where the hoisted linker puts its copy of @x/docs.
+const committedNodeModules: { name: string; commit: Pick<BranchPackage, "files" | "links">; linker: Linker }[] = [
+  {
+    // three directories up from node_modules/a/node_modules is the project
+    name: "a link committed in a git dependency's node_modules does not move its nested packages into the project",
+    commit: { links: { "node_modules/@x": "../../.." } },
+    linker: "hoisted",
+  },
+  {
+    name: "a file committed in a git dependency's node_modules does not block its nested packages",
+    commit: { files: { "node_modules/@x": "not a directory\n" } },
+    linker: "hoisted",
+  },
+  {
+    name: "a package committed in a git dependency's node_modules is not merged into the one bun installs",
+    commit: committedPackage,
+    linker: "hoisted",
+  },
+  {
+    // the isolated linker puts @x/docs beside `a`, and `a` loads a copy of its own first
+    name: "a package committed in a git dependency's node_modules is not loaded in place of the one bun installs",
+    commit: committedPackage,
+    linker: "isolated",
+  },
+];
+for (const { name, commit, linker } of committedNodeModules) {
+  test.concurrent(
+    name,
+    async () => {
+      using dir = tempDir("git-dep-committed-node-modules", {});
+      const root = String(dir);
+      await using registry = await serveY();
+      const { dependencies, sha } = await makeRepoWithNestedDependency(root, commit);
+      const project = writeProjectWithDocs(root, dependencies, registry, linker);
+
+      const cache = join(root, "cache");
+      const install = await runInstall(project, cache, {});
+      expect(install.stderr).toContain("Saved lockfile");
+      const afterInstall = await nestedDependencyState(project);
+      const cached = readdirSync(join(cache, `@G@${sha}`)).sort();
+
+      // a reinstall removes what is at the package's path before it writes there
+      const reinstall = await runInstall(project, cache, {}, "--force");
+      const afterReinstall = await nestedDependencyState(project);
+
+      expect({ afterInstall, cached, afterReinstall }).toEqual({
+        afterInstall: nestedDependencyInstalled,
+        cached: cleanCheckout,
+        afterReinstall: nestedDependencyInstalled,
+      });
+      expect({ install: install.exitCode, reinstall: reinstall.exitCode }).toEqual({ install: 0, reinstall: 0 });
+    },
+    30_000,
+  );
+}
+
+// A bun that kept the committed node_modules published checkouts that still hold it.
+// Such a checkout is cleaned when it is used again, from a lockfile and without one.
+test.concurrent(
+  "a git checkout cached by an older bun loses its committed node_modules before it is installed",
+  async () => {
+    using dir = tempDir("git-dep-cached-node-modules", {});
+    const root = String(dir);
+    await using registry = await serveY();
+    const { dependencies, sha } = await makeRepoWithNestedDependency(root, {});
+    const project = writeProjectWithDocs(root, dependencies, registry);
+
+    const cache = join(root, "cache");
+    const checkout = join(cache, `@G@${sha}`);
+    expect(await runInstall(project, cache, {})).toMatchObject({ exitCode: 0 });
+
+    for (const keepLockfile of [true, false]) {
+      mkdirSync(join(checkout, "node_modules"));
+      writeFileSync(join(checkout, "node_modules", "@x"), "not a directory\n");
+      rmSync(join(project, "node_modules"), { recursive: true });
+      if (!keepLockfile) rmSync(join(project, "bun.lock"));
+
+      const { exitCode } = await runInstall(project, cache, {});
+      expect({ keepLockfile, cached: readdirSync(checkout).sort(), ...(await nestedDependencyState(project)) }).toEqual(
+        { keepLockfile, cached: cleanCheckout, ...nestedDependencyInstalled },
+      );
+      expect(exitCode).toBe(0);
+    }
+  },
+  30_000,
+);
+
+// Both installs find the checkout that an older bun cached, and each one installs from
+// it only once it is clean. Neither can check the commit out again: the repository is
+// gone.
+test.concurrent(
+  "two installs at the same time clean the same cached git checkout",
+  async () => {
+    using dir = tempDir("git-dep-cached-twice", {});
+    const root = String(dir);
+    await using registry = await serveY();
+    const { bare, dependencies, sha } = await makeRepoWithNestedDependency(root, {});
+    const projects = ["first", "second"].map(name => writeProjectWithDocs(join(root, name), dependencies, registry));
+
+    const cache = join(root, "cache");
+    const checkout = join(cache, `@G@${sha}`);
+    for (const project of projects) {
+      expect(await runInstall(project, cache, {})).toMatchObject({ exitCode: 0 });
+      rmSync(join(project, "node_modules"), { recursive: true });
+    }
+    const committed = join(checkout, "node_modules", "@x", "docs");
+    mkdirSync(committed, { recursive: true });
+    for (let i = 0; i < 200; i++) writeFileSync(join(committed, `extra-${i}.js`), "");
+    rmSync(bare, { recursive: true });
+
+    const installs = await Promise.all(projects.map(project => runInstall(project, cache, {})));
+    const states = await Promise.all(projects.map(nestedDependencyState));
+    expect({ cached: readdirSync(checkout).sort(), states }).toEqual({
+      cached: cleanCheckout,
+      states: [nestedDependencyInstalled, nestedDependencyInstalled],
+    });
+    expect(installs.map(install => install.exitCode)).toEqual([0, 0]);
+  },
+  30_000,
+);
+
+// tempDir cannot delete a folder that is read-only.
+function makeWritable(dir: string) {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    chmodSync(join(dir, entry.name), 0o755);
+    makeWritable(join(dir, entry.name));
+  }
+}
+
+// bun cannot take anything out of a read-only node_modules, so it cannot clean this
+// checkout. It does not install from it: it checks the commit out again.
+test.concurrent.skipIf(isWindows || process.getuid?.() === 0)(
+  "a cached git checkout that cannot be cleaned is not installed",
+  async () => {
+    using dir = tempDir("git-dep-cached-read-only", {});
+    const root = String(dir);
+    await using registry = await serveY();
+    const { dependencies, sha } = await makeRepoWithNestedDependency(root, {});
+    const project = writeProjectWithDocs(root, dependencies, registry);
+
+    const cache = join(root, "cache");
+    const checkout = join(cache, `@G@${sha}`);
+    expect(await runInstall(project, cache, {})).toMatchObject({ exitCode: 0 });
+
+    mkdirSync(join(checkout, "node_modules"));
+    writeFileSync(join(checkout, "node_modules", "@x"), "not a directory\n");
+    chmodSync(join(checkout, "node_modules"), 0o555);
+    rmSync(join(project, "node_modules"), { recursive: true });
+    try {
+      const { exitCode } = await runInstall(project, cache, {});
+      expect({ cached: readdirSync(checkout).sort(), ...(await nestedDependencyState(project)) }).toEqual({
+        cached: cleanCheckout,
+        ...nestedDependencyInstalled,
+      });
+      expect(exitCode).toBe(0);
+    } finally {
+      makeWritable(cache);
+    }
+  },
+  30_000,
+);
+
+// `bun patch --commit` of an older bun wrote a deletion for each file that the
+// repository committed in node_modules. A checkout does not keep those files.
+test.concurrent("a patch from an older bun applies to a git dependency that committed node_modules", async () => {
+  using dir = tempDir("git-dep-patched", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(
+    root,
+    [{ name: "a", branch: "main", files: { "node_modules/inner/index.js": indexJs("inner") } }],
+    "a.git",
+  );
+  const url = `git+${pathToFileURL(bare)}`;
+  const project = writeProject(root, { a: `${url}#main` });
+  const manifest = JSON.parse(readFileSync(join(project, "package.json"), "utf8"));
+  manifest.patchedDependencies = { [`a@${url}#${branchCommits(bare).main}`]: "a.patch" };
+  writeFileSync(join(project, "package.json"), JSON.stringify(manifest));
+  writeFileSync(
+    join(project, "a.patch"),
+    [
+      "diff --git a/patched.js b/patched.js",
+      "new file mode 100644",
+      "index 0000000000000000000000000000000000000000..486c735f2b33e6d1beb1de227b99684124172cb9",
+      "--- /dev/null",
+      "+++ b/patched.js",
+      "@@ -0,0 +1 @@",
+      `+${indexJs("patched")}`.trimEnd(),
+      "diff --git a/node_modules/inner/index.js b/node_modules/inner/index.js",
+      "deleted file mode 100644",
+      "index 4a2a84def013d7d9f9e7a601d06f4fab8265154e..0000000000000000000000000000000000000000",
+      "",
+    ].join("\n"),
+  );
+
+  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
+  const installed = join(project, "node_modules", "a");
+  expect({
+    stderr: stderr.split(/\r?\n/).filter(line => line.startsWith("error")),
+    "patched.js": existsSync(join(installed, "patched.js"))
+      ? readFileSync(join(installed, "patched.js"), "utf8")
+      : null,
+    "a/node_modules": existsSync(join(installed, "node_modules")),
+  }).toEqual({ stderr: [], "patched.js": indexJs("patched"), "a/node_modules": false });
+  expect(exitCode).toBe(0);
+});
+
+// Every path below `dir`. A link is listed with its target and is not followed.
+function treeOf(dir: string, prefix = ""): string[] {
+  return readdirSync(dir, { withFileTypes: true })
+    .flatMap(entry => {
+      const path = prefix + entry.name;
+      if (entry.isSymbolicLink()) return [`${path} -> ${readlinkSync(join(dir, entry.name))}`];
+      return entry.isDirectory() ? [path, ...treeOf(join(dir, entry.name), `${path}/`)] : [path];
+    })
+    .sort();
+}
+
+// A bundled dependency comes inside its dependent, so bun does not install it. The
+// repository `b` bundles `y`. `committed` is what it commits in node_modules.
+async function makeRepoWithBundledDependency(root: string, committed: Pick<BranchPackage, "files" | "links">) {
+  const bare = await makeSharedRepo(
+    root,
+    [
+      {
+        branch: "main",
+        links: committed.links,
+        files: {
+          "package.json": JSON.stringify({
+            name: "b",
+            version: "1.0.0",
+            dependencies: { y: "2.0.0" },
+            bundleDependencies: ["y"],
+          }),
+          ...committed.files,
+        },
+      },
+    ],
+    "b.git",
+  );
+  return { url: `git+${pathToFileURL(bare)}`, sha: branchCommits(bare).main };
+}
+
+// The committed copy of `y` needs `@s/w`, which is committed beside it. Nothing
+// bundles the rest: another package, another package in the same scope, a .bin folder,
+// and two links that point out of the package.
+for (const linker of ["hoisted", "isolated"] as const) {
+  test.concurrent(
+    `a git dependency keeps the packages it bundles, what they need, and nothing else from its node_modules (${linker} linker)`,
+    async () => {
+      using dir = tempDir("git-dep-bundled", {});
+      const root = String(dir);
+      await using registry = await serveY();
+      const { url, sha } = await makeRepoWithBundledDependency(root, {
+        files: {
+          "node_modules/y/package.json": JSON.stringify({
+            name: "y",
+            version: "2.0.0",
+            dependencies: { "@s/w": "1.0.0" },
+          }),
+          "node_modules/y/index.js": indexJs("committed"),
+          "node_modules/@s/w/package.json": JSON.stringify({ name: "@s/w", version: "1.0.0" }),
+          "node_modules/@s/other/package.json": JSON.stringify({ name: "@s/other", version: "1.0.0" }),
+          "node_modules/unlisted/package.json": JSON.stringify({ name: "unlisted", version: "1.0.0" }),
+          "node_modules/.bin/tool": "#!/bin/sh\n",
+        },
+        links: { "node_modules/y/up": "../../..", "node_modules/@x": "../../.." },
+      });
+      const project = writeProjectWithDocs(root, { b: `${url}#main` }, registry, linker);
+
+      const cache = join(root, "cache");
+      const checkout = join(cache, `@G@${sha}`);
+      // On Windows git writes a link as a file. Inside a kept package that is one more
+      // file of the package.
+      const kept = ["@s", "@s/w", "@s/w/package.json", "y", "y/index.js", "y/package.json"];
+      if (isWindows) kept.push("y/up");
+      const state = async () => ({
+        cached: treeOf(join(checkout, "node_modules")),
+        "b's y": await markerIn(dependencyOf(project, "b", "y")),
+        y: await installedVersionOf(project, "y"),
+      });
+      const bundled = { cached: kept.sort(), "b's y": "committed", y: null };
+
+      const install = await runInstall(project, cache, {});
+      expect(install.stderr).toContain("Saved lockfile");
+      expect({ ...(await state()), locked: await lockedPackages(project) }).toEqual({
+        ...bundled,
+        locked: {
+          b: [`b@${url}#${sha}`, { dependencies: { y: "2.0.0" } }, sha],
+          "b/y": ["y@2.0.0", `${registry.url}y/-/y-2.0.0.tgz`, { bundled: true }, ""],
+        },
+      });
+
+      // A bun that kept everything published checkouts that still hold the rest.
+      mkdirSync(join(checkout, "node_modules", "unlisted"));
+      writeFileSync(join(checkout, "node_modules", "unlisted", "package.json"), "{}");
+      rmSync(join(project, "node_modules"), { recursive: true });
+      const reinstall = await runInstall(project, cache, {});
+      expect(await state()).toEqual(bundled);
+      expect({ install: install.exitCode, reinstall: reinstall.exitCode }).toEqual({ install: 0, reinstall: 0 });
+    },
+    30_000,
+  );
+}
+
+test.concurrent("a bundled dependency that a git dependency does not commit is not installed", async () => {
+  using dir = tempDir("git-dep-bundled-missing", {});
+  const root = String(dir);
+  await using registry = await serveY();
+  const { url } = await makeRepoWithBundledDependency(root, {});
+  const project = writeProjectWithDocs(root, { b: `${url}#main` }, registry);
+
+  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
+  expect(stderr).toContain("Saved lockfile");
+  expect(await markerIn(dependencyOf(project, "b", "y"))).toBeNull();
   expect(exitCode).toBe(0);
 });
 

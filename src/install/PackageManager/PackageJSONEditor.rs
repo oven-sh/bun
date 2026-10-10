@@ -972,6 +972,10 @@ pub(crate) fn edit(
     let mut remaining = updates.len();
     let mut replacing: usize = 0;
     let only_add_missing = manager.options.enable.only_missing();
+    // `--dev`/`--optional`/`--peer` moves an existing entry into that group; a bare `bun add` keeps its placement.
+    let move_to_target = !only_add_missing && dependency_list != DependencyGroup::DEPENDENCIES.prop;
+    // `(index into updates, existing devDependencies value)` pairs that follow the new peer range.
+    let mut dev_entries_to_sync: Vec<(usize, *mut E::EString)> = Vec::new();
 
     // There are three possible scenarios here
     // 1. There is no "dependencies" (or equivalent list) or it is empty
@@ -983,7 +987,7 @@ pub(crate) fn edit(
             let mut i: usize = 0;
             'loop_: while i < updates.len() {
                 let request = &mut updates[i];
-                // order-insensitive scan: `FOUR` is fine here
+                // `move_to_target` visits every group; otherwise order-insensitive (bails on first match).
                 'dependency_group: for list in DependencyGroup::FOUR.map(|g| g.prop) {
                     if let Some(query) = current_package_json.as_property(list) {
                         if matches!(query.expr.data, bun_ast::ExprData::EObject(_)) {
@@ -1000,14 +1004,48 @@ pub(crate) fn edit(
                                                     == dependency::Tag::Catalog
                                             },
                                         );
+                                    let in_target_list =
+                                        strings::eql_long(list, dependency_list, true);
 
                                     // `bun update <name>` edits the slot in place; the rebuild below re-sorts the keys.
                                     if request.package_id != INVALID_PACKAGE_ID
                                         && manager.subcommand != Subcommand::Update
-                                        && strings::eql_long(list, dependency_list, true)
+                                        && in_target_list
                                         && !keep_catalog_reference
                                     {
                                         replacing += 1;
+                                    } else if move_to_target && !in_target_list {
+                                        match list {
+                                            // A peer entry coexists with every other group.
+                                            b"peerDependencies" => {}
+                                            // A dev entry coexists with a peer entry and tracks its range.
+                                            b"devDependencies"
+                                                if dependency_list
+                                                    == DependencyGroup::PEER.prop =>
+                                            {
+                                                dev_entries_to_sync.push((
+                                                    i,
+                                                    value
+                                                        .expr
+                                                        .data
+                                                        .e_string()
+                                                        .expect("infallible: variant checked")
+                                                        .as_ptr(),
+                                                ));
+                                            }
+                                            _ => {
+                                                changed = true;
+                                                let mut group = query.expr.data.as_e_object();
+                                                let _ = group.properties.remove(value.i as usize);
+                                                if group.properties.is_empty() {
+                                                    let _ = current_package_json
+                                                        .data
+                                                        .as_e_object_mut()
+                                                        .properties
+                                                        .remove(query.i as usize);
+                                                }
+                                            }
+                                        }
                                     } else {
                                         if manager.subcommand == Subcommand::Update
                                             && options.before_install
@@ -1068,6 +1106,9 @@ pub(crate) fn edit(
                                             continue 'loop_;
                                         }
                                     }
+                                }
+                                if move_to_target {
+                                    continue 'dependency_group;
                                 }
                                 break;
                             } else {
@@ -1483,6 +1524,18 @@ pub(crate) fn edit(
             if e_string.data.slice() != new_literal {
                 changed = true;
                 e_string.data = bun_ast::StoreStr::new(new_literal);
+            }
+        }
+    }
+    for (update_index, dev_entry) in dev_entries_to_sync {
+        if let Some(peer_entry) = updates[update_index].e_string {
+            // SAFETY: both pointers were captured at the provenance sites described on the loop
+            // above and stay valid for the same reasons; that loop has released its borrows.
+            unsafe {
+                if (*dev_entry).data.slice() != (*peer_entry).data.slice() {
+                    changed = true;
+                    (*dev_entry).data = (*peer_entry).data;
+                }
             }
         }
     }

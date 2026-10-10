@@ -477,7 +477,7 @@ pub mod registry {
                     registry.password = env.get_auto(&registry.password).into();
 
                     if !registry.username.is_empty()
-                        && !registry.password.is_empty()
+                        && (!registry.password.is_empty() || registry.credentials_from_url)
                         && auth.is_empty()
                     {
                         let combo_len = registry.username.len() + registry.password.len() + 1;

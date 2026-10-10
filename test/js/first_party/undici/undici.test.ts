@@ -12,7 +12,7 @@ describe("undici", () => {
 
   beforeAll(() => {
     serverCtl = createServer();
-    port = serverCtl.port;
+    port = serverCtl.port!;
     host = `${serverCtl.hostname}:${port}`;
     hostUrl = `http://${host}`;
   });
@@ -258,7 +258,7 @@ describe("undici", () => {
     // and this one is empty.
     it.each([
       ["a 204", "/status/204", 204, {}],
-      ["the response to a HEAD request", "/head", 200, { method: "HEAD" }],
+      ["the response to a HEAD request", "/head", 200, { method: "HEAD" as const }],
     ])("%s has no body", async (_, path, expectedStatus, init) => {
       const response = await undiciFetch(`${hostUrl}${path}`, init);
       expect({ status: response.status, body: response.body }).toEqual({ status: expectedStatus, body: null });

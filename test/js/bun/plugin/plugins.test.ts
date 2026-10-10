@@ -200,6 +200,7 @@ plugin({
 // This is to test that it works when imported from a separate file
 import { tempDir } from "harness";
 import { render as svelteRender } from "svelte/server";
+// @ts-expect-error resolved by package.json "module"
 import "../../third_party/svelte";
 import "./module-plugins";
 
@@ -275,7 +276,7 @@ describe("module", () => {
           loader: "object",
         }));
       },
-    });
+    } as Bun.BunPlugin);
 
     {
       const { there, hello } = require("my-virtual-module-sync");
@@ -292,7 +293,7 @@ describe("module", () => {
           loader: "object",
         }));
       },
-    });
+    } as Bun.BunPlugin);
 
     {
       // @ts-expect-error
@@ -722,11 +723,13 @@ it("require(...) with __esModule", () => {
 });
 
 it("import(...) with __esModule", async () => {
+  // @ts-expect-error
   const { default: mod } = await import("my-virtual-module-with-__esModule");
   expect(mod).toBe("world");
 });
 
 it("import(...) without __esModule", async () => {
+  // @ts-expect-error
   const { default: mod } = await import("my-virtual-module-with-default");
   expect(mod).toBe("world");
 });

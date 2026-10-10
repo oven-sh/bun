@@ -18,12 +18,13 @@ use super::sink::Reported;
 use super::{Program, Query};
 use crate::atom::Intern;
 use crate::local::{Buffer, FileLocalTables, SlotNumber};
+use crate::node::Node;
 use crate::program::{FileId, Sym};
 use crate::session::Arena;
 use crate::table::{Applied, Entries, Finishing, Handle, Payload, Publish, Share};
 use crate::types::{Link, Marks, OwnRecords, OwnStore};
 use crate::util::{InParallel, for_each_mut};
-use std::cell::UnsafeCell;
+use std::cell::{RefCell, UnsafeCell};
 
 /// Permission to store a finished result. Only `Checker::leave` and the scopes in check/mod.rs
 /// create one.
@@ -64,6 +65,8 @@ pub struct Task<'s> {
     pub(super) foreign_evaluations: [u32; 14],
     /// See `Finished::order_dependent_variances`.
     pub(super) order_dependent_variances: Vec<OrderDependent<'s>>,
+    /// See `Finished::assignments_walked`. It is added to under `&Checker`.
+    pub(super) assignments_walked: RefCell<Vec<(FileId, Node, bool)>>,
     /// The types, signatures, mappers and component lists that the task has created.
     pub(crate) own: OwnStore<'s>,
     /// Interior-mutable because every access to a table takes `&Task`: some are made under `&Checker`. See `Task::buffer`.
@@ -86,6 +89,7 @@ impl<'s> Task<'s> {
             closed_a_cycle: false,
             foreign_evaluations: [0; 14],
             order_dependent_variances: Vec::new(),
+            assignments_walked: RefCell::default(),
             own: OwnStore::new_in(arena),
             buffer: UnsafeCell::new(Buffer::new()),
             file_local: UnsafeCell::new(FileLocalTables::new()),
@@ -155,6 +159,7 @@ impl<'s> Task<'s> {
         self.diagnostics.clear();
         (self.closed_a_cycle, self.foreign_evaluations) = (false, [0; 14]);
         self.order_dependent_variances.clear();
+        self.assignments_walked.get_mut().clear();
         self.own = OwnStore::new_in(self.arena);
         self.buffer.get_mut().clear();
         self.file_local.get_mut().clear();
@@ -221,6 +226,7 @@ impl<'s> Task<'s> {
         let own = self.own.finish(marks);
         let (closed_a_cycle, foreign_evaluations) = (self.closed_a_cycle, self.foreign_evaluations);
         let order_dependent_variances = std::mem::take(&mut self.order_dependent_variances);
+        let assignments_walked = self.assignments_walked.take();
         self.drop_everything();
         Finished {
             step,
@@ -229,6 +235,7 @@ impl<'s> Task<'s> {
             closed_a_cycle,
             foreign_evaluations,
             order_dependent_variances,
+            assignments_walked,
             own,
             link: Link::default(),
             tables: published,
@@ -247,6 +254,10 @@ pub struct Finished<'s> {
     pub foreign_evaluations: [u32; 14],
     /// See `Program::validate`.
     pub(super) order_dependent_variances: Vec<OrderDependent<'s>>,
+    /// The functions and source files that `markNodeAssignments` has walked in the task
+    /// (`Program::assignments_marked`), and whether the task was visiting the file. See
+    /// `Program::validate`.
+    pub(super) assignments_walked: Vec<(FileId, Node, bool)>,
     /// The task-local records that the entries mention, in creation order.
     pub own: OwnRecords<'s>,
     /// `Program::link` fills it in, `publish` follows it.
@@ -262,6 +273,7 @@ impl Finished<'_> {
     pub fn can_be_invalid(&self) -> bool {
         let mut measured = self.order_dependent_variances.iter();
         measured.any(|it| it.compared | it.failed | it.inferred != 0)
+            || self.assignments_walked.iter().any(|it| it.2)
     }
 }
 
@@ -318,7 +330,7 @@ pub struct Published {
 /// The `Buffered` tables keyed by a type, a signature or a mapper, except for `relations` and for the small ones that say something
 /// about a declared type parameter or flag a type. An entry of one of these is evaluated inside an evaluation that `relations` or a
 /// table keyed by a node or a symbol records, so a task that finds those entries does not ask for these.
-const TABLES_OF_RECORDS: [&str; 28] = [
+const TABLES_OF_RECORDS: [&str; 29] = [
     "shapes",
     "members",
     "sig_params",
@@ -336,6 +348,7 @@ const TABLES_OF_RECORDS: [&str; 28] = [
     "intersected_props",
     "union_properties",
     "union_objects",
+    "intersection_objects",
     "keys_of_properties",
     "conditionals",
     "resolved_return_types",

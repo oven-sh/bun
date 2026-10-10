@@ -274,6 +274,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool
     pub(crate) await_was_refused: bool,
     /// Tolerant mode: the loop of `reparseTopLevelAwait` continues to the end of the file.
     pub(crate) reparses_rest_of_file: bool,
+    /// Tolerant mode: an `await` in the top-level statement being parsed was read outside the
+    /// [Await] context, as an identifier.
+    pub(crate) await_read_as_identifier: bool,
+    /// Tolerant mode: the top-level statements that have one and that `reparseTopLevelAwait`
+    /// parses again. Those listed before the parse starts are parsed that way.
+    pub(crate) statements_with_await_in_names: Vec<bun_ast::Loc>,
     /// Tolerant mode: the decorators saved by `note_stray_decorators`, until the statement list
     /// being parsed takes them.
     pub(crate) stray_decorators: Vec<Expr>,
@@ -8448,17 +8454,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
     }
 
-    /// [`Self::restore_parser_snapshot`] for a caller that keeps the nodes parsed since the
-    /// snapshot: their notes are not rolled back.
-    pub(crate) fn restore_parser_snapshot_but_for_notes(
-        &mut self,
-        mut snapshot: ParserSnapshot<'a>,
-    ) {
-        self.release_type_syntax_checkpoint(&snapshot.noted);
-        snapshot.noted = self.type_syntax_checkpoint();
-        self.restore_parser_snapshot(snapshot);
-    }
-
     /// The speculative parse since [`Self::parser_snapshot`] succeeded.
     #[inline]
     pub(crate) fn release_parser_snapshot(&mut self, snapshot: &ParserSnapshot<'a>) {
@@ -8890,6 +8885,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
 
         ctx.hasher.update(b"\x00");
+
+        self.react_refresh.last_hook_seen = Some(&raw const *hook_call);
     }
 
     pub(crate) fn handle_react_refresh_post_visit_function_body(
@@ -9953,6 +9950,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             has_es_module_syntax: false,
             await_was_refused: false,
             reparses_rest_of_file: false,
+            await_read_as_identifier: false,
+            statements_with_await_in_names: Vec::new(),
             stray_decorators: Vec::new(),
             top_level_await_keyword: bun_ast::Range::NONE,
             fn_or_arrow_data_parse,

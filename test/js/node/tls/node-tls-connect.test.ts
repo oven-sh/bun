@@ -124,7 +124,7 @@ const tests = [
   },
   {
     name: "tls.connect using duplex proxy",
-    connect: duplexProxy,
+    connect: duplexProxy as typeof tlsConnect,
   },
 ];
 
@@ -168,14 +168,15 @@ it("should thow ECONNRESET if FIN is received before handshake", async () => {
   const error = await promise;
 
   expect(error).toBeDefined();
-  expect((error as Error).code as string).toBe("ECONNRESET");
+  expect((error as NodeJS.ErrnoException).code as string).toBe("ECONNRESET");
 });
 it("initializes authorizationError to null in the TLSSocket constructor", () => {
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L556
   // Node's onServerSocketSecure/onConnectSecure only assign on failure; a
   // clean handshake leaves the constructor's null untouched.
+  // @ts-expect-error no socket
   const socket = new tls.TLSSocket();
-  expect({ value: socket.authorizationError, hasOwn: "authorizationError" in socket }).toEqual({
+  expect({ value: socket.authorizationError, hasOwn: "authorizationError" in socket }).toEqual<object>({
     value: null,
     hasOwn: true,
   });
@@ -246,7 +247,7 @@ for (const { name, connect } of tests) {
         done(err);
       }
     });
-    const COMMON_CERT = { ...COMMON_CERT_ };
+    const COMMON_CERT: { cert: string; key: string; passphrase?: string } = { ...COMMON_CERT_ };
 
     it("Bun.serve() should work with tls and Bun.file()", async () => {
       using server = Bun.serve({
@@ -439,7 +440,7 @@ for (const { name, connect } of tests) {
           expect(typeof socket.getEphemeralKeyInfo()).toBe("object");
           expect(socket.getSharedSigalgs()).toBeInstanceOf(Array);
           expect(socket.getSession()).toBeInstanceOf(Buffer);
-          expect(socket.exportKeyingMaterial(512, "client finished")).toBeInstanceOf(Buffer);
+          expect((socket as any).exportKeyingMaterial(512, "client finished")).toBeInstanceOf(Buffer);
           expect(socket.isSessionReused()).toBe(false);
 
           // BoringSSL does not support these methods for >= TLSv1.3
@@ -750,7 +751,7 @@ it("a write from inside 'data' does not re-enter 'data' on a TLSSocket over a du
     held: Buffer[] | null = null;
     constructor(readonly raw: net.Socket) {
       super();
-      raw.on("data", chunk => {
+      raw.on("data", (chunk: Buffer) => {
         if (this.held === null) {
           this.push(chunk);
           return;
@@ -1026,7 +1027,7 @@ describe("application data written over a Duplex transport before the handshake 
     client.on("error", clientHelloWritten.reject);
     const closed = closeOf(client, [client, server]);
     await clientHelloWritten.promise;
-    log.push(`ClientHello written secureConnecting=${client.secureConnecting}`);
+    log.push(`ClientHello written secureConnecting=${(client as any).secureConnecting}`);
     client.write("one", err => log.push(`write callback err=${err}`));
     client.end();
     await closed;
@@ -1158,7 +1159,7 @@ describe("application data written over a Duplex transport before the handshake 
         server: n => (serverFlights = n),
         client: n => {
           if (n !== clientFlight) return;
-          log.push(`write() secureConnecting=${client.secureConnecting} serverFlights=${serverFlights}`);
+          log.push(`write() secureConnecting=${(client as any).secureConnecting} serverFlights=${serverFlights}`);
           client.write("early", err => {
             log.push(`write callback err=${err}`);
             written.resolve();
@@ -3094,7 +3095,7 @@ describe.concurrent("the final handshake flight and a write issued before the ha
     // The flight and the write leave natively, back to back, so two sends can
     // reach the proxy as one chunk: several connections, each must show 2.
     const connections = 4;
-    let result = {};
+    let result: { stdout?: string; exitCode?: number; failureDetail?: string } = {};
     const chunkCounts = await countClientChunks({}, async proxyPort => {
       const script = `
         const tls = require("node:tls");
@@ -3153,12 +3154,12 @@ describe.concurrent("the final handshake flight and a write issued before the ha
         sawClientFin = true;
         for (const data of held.splice(0)) downstream.write(data);
       });
-      upstream.on("data", data => (sawClientFin ? downstream.write(data) : held.push(data)));
+      upstream.on("data", (data: Buffer) => (sawClientFin ? downstream.write(data) : held.push(data)));
       downstream.on("error", () => {});
       upstream.on("error", () => {});
     });
     await once(relay.listen(0, "127.0.0.1"), "listening");
-    let result = {};
+    let result: { stdout?: string; exitCode?: number; failureDetail?: string } = {};
     try {
       const chunkCounts = await countClientChunks({}, async proxyPort => {
         const script = `
@@ -3237,7 +3238,7 @@ describe.concurrent("the final handshake flight and a write issued before the ha
   ])("$name", async ({ writeInOpen, serverOptions, chunks }) => {
     using dir = tempDir("tls-parked-write", {});
     const proceed = join(String(dir), "proceed");
-    let result = {};
+    let result: { stdout?: string; exitCode?: number; failureDetail?: string } = {};
     const chunkCounts = await countClientChunks(serverOptions, async (proxyPort, received) => {
       const script = `
         const fs = require("node:fs");
@@ -3302,7 +3303,7 @@ describe("a write issued before the handshake is failed, not delivered", () => {
     const received: Buffer[] = [];
     const serverDone = Promise.withResolvers<void>();
     const server = tls.createServer({ key: COMMON_CERT_.key, cert: COMMON_CERT_.cert }, socket => {
-      socket.on("data", chunk => received.push(chunk));
+      socket.on("data", (chunk: Buffer) => received.push(chunk));
       socket.on("error", () => {});
       socket.on("close", () => serverDone.resolve());
     });
@@ -3718,7 +3719,7 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
       socket.on("error", (err: NodeJS.ErrnoException) => events.push(`error ${err.code}`));
       // 'secure' ends the wait too, so a wrap that accepts the certificate fails here and does not time out.
       await new Promise(resolve => socket.once("close", resolve).once("secure", resolve));
-      expect({ events, authorized: socket.authorized, authorizationError: socket.authorizationError }).toEqual({
+      expect({ events, authorized: socket.authorized, authorizationError: socket.authorizationError }).toEqual<object>({
         events: ["_tlsError DEPTH_ZERO_SELF_SIGNED_CERT", "error DEPTH_ZERO_SELF_SIGNED_CERT"],
         authorized: false,
         authorizationError: null,
@@ -3996,7 +3997,7 @@ describe("new tls.TLSSocket(socket) on the client side", () => {
         servername: "sni.example",
         secureContext: tls.createSecureContext({}),
         rejectUnauthorized: false,
-      });
+      } as tls.TLSSocketOptions);
       expect(await seen).toBe("sni.example");
     } finally {
       socket?.destroy();

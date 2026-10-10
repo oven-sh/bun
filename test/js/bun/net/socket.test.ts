@@ -19,7 +19,7 @@ import { once } from "node:events";
 import net from "node:net";
 import { join } from "node:path";
 import { Duplex } from "node:stream";
-import { createSecureContext, connect as tlsConnect, createServer as tlsCreateServer } from "node:tls";
+import { createSecureContext, connect as tlsConnect, createServer as tlsCreateServer, type TlsOptions } from "node:tls";
 describe.concurrent("socket", () => {
   it("should throw when a socket from a file descriptor has a bad file descriptor", async () => {
     const open = jest.fn();
@@ -37,7 +37,7 @@ describe.concurrent("socket", () => {
               data,
               connectError,
             },
-          }),
+          } as any),
       ).toThrow();
       Bun.gc(true);
       await Bun.sleep(10);
@@ -71,7 +71,7 @@ describe.concurrent("socket", () => {
             close,
             data,
           },
-        });
+        } as any);
         Bun.gc(true);
         await Bun.sleep(10);
         Bun.gc(true);
@@ -211,7 +211,7 @@ describe.concurrent("socket", () => {
           expect(socket.data).toBe(data);
           expect(error).toBeDefined();
           expect(error.name).toBe("Error");
-          expect(error.code).toBe("ECONNREFUSED");
+          expect((error as any).code).toBe("ECONNREFUSED");
           expect(error.message).toBe("Failed to connect");
         },
         data() {
@@ -399,8 +399,8 @@ describe.concurrent("socket", () => {
         reject(new Error("Timeout"));
       }, 1000);
       client = await Bun.connect({
-        port: server.port,
-        hostname: server.hostname,
+        port: server.port!,
+        hostname: server.hostname!,
         socket: {
           open(socket) {
             // ReferenceError: bytes is not defined
@@ -617,7 +617,7 @@ describe.concurrent("socket", () => {
       ca: tls.cert,
       requestCert: true,
       rejectUnauthorized: true,
-    });
+    } as TlsOptions);
     const { promise, resolve, reject } = Promise.withResolvers<boolean>();
     const server = Bun.listen({
       hostname: "127.0.0.1",
@@ -640,7 +640,7 @@ describe.concurrent("socket", () => {
                 reject(err);
               },
             },
-          });
+          } as Bun.TLSUpgradeOptions<{}>);
         },
         data() {},
         close() {},
@@ -678,7 +678,7 @@ describe.concurrent("socket", () => {
     for (let i = 0; i < 100; i++) {
       const socket = await Bun.connect({
         hostname: "localhost",
-        port: server.port,
+        port: server.port!,
         socket: {
           data(socket, data) {
             rawBody = Buffer.concat([rawBody, data]);
@@ -785,7 +785,7 @@ describe.concurrent("socket", () => {
         let rawBody = Buffer.alloc(0);
         const socket = await Bun.connect({
           hostname: "localhost",
-          port: server.port,
+          port: server.port!,
           socket: {
             data(socket, data) {
               rawBody = Buffer.concat([rawBody, data]);
@@ -835,7 +835,7 @@ describe.concurrent("socket", () => {
       expect(tlsData).toContain("HTTP/1.1 200 OK");
       expect(tlsData).toContain("Content-Length: 11");
       expect(tlsData).toContain("\r\nHello World");
-      expect(rawData.byteLength).toBeGreaterThanOrEqual(1980);
+      expect((rawData as Buffer).byteLength).toBeGreaterThanOrEqual(1980);
     }
   });
   it("upgradeTLS feeds the initialData bytes captured at call time", async () => {
@@ -996,7 +996,7 @@ it.skipIf(isWindows)("should not crash when a socket from a file descriptor is c
         close,
         data,
       },
-    });
+    } as any);
     Bun.gc(true);
     await Bun.sleep(10);
     closeSync(client);
@@ -1107,8 +1107,8 @@ it("reading fd of a TLS listener should not crash", () => {
     socket: { data() {}, open() {}, close() {} },
     tls: { passphrase: "abc" },
   });
-  expect(typeof listener.fd).toBe("number");
-  expect(listener.fd).toBeGreaterThanOrEqual(0);
+  expect(typeof (listener as any).fd).toBe("number");
+  expect((listener as any).fd).toBeGreaterThanOrEqual(0);
 });
 
 it("getServername on a closed TLS socket should not crash", async () => {
@@ -3783,7 +3783,9 @@ Reo=
         sawClientFin = true;
         for (const data of held.splice(0)) downstream.write(data, onFlightForwarded);
       });
-      upstream.on("data", data => (sawClientFin ? downstream.write(data, onFlightForwarded) : held.push(data)));
+      upstream.on("data", (data: Buffer) =>
+        sawClientFin ? downstream.write(data, onFlightForwarded) : held.push(data),
+      );
       downstream.on("error", () => {});
       upstream.on("error", () => {});
       downstream.on("close", () => upstream.destroy());
@@ -4685,7 +4687,7 @@ describe.concurrent("TLS session/keylog handlers", () => {
           keylog(_socket, line) {
             keylogLines.push(line);
           },
-        },
+        } as SocketHandler,
       });
       const session = await promise;
       expect(session).toBeInstanceOf(Buffer);
@@ -4717,7 +4719,7 @@ describe.concurrent("TLS session/keylog handlers", () => {
           session() {
             throw boom;
           },
-        },
+        } as SocketHandler,
       });
       expect(await promise).toBe(boom);
       socket.end();
@@ -4747,7 +4749,7 @@ describe.concurrent("TLS session/keylog handlers", () => {
               throw boom;
             }
           },
-        },
+        } as SocketHandler,
       });
       expect(await promise).toBe(boom);
       socket.end();

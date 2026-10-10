@@ -458,10 +458,12 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         if !hir.is_js {
             return Vec::new();
         }
-        // `thisPropertyAssignmentKey`: the name, `isStatic`.
+        // `thisPropertyAssignmentKey`: the name, `isStatic`. `getThisPropertyAssignmentKey`: a name
+        // that is dynamic, or whose text `TryGetTextOfPropertyName` does not know (`[+1]`), is a
+        // key of its own, which no assignment has.
         let mut seen: Vec<(Atom, bool)> = Vec::new();
         for m in hir[c].members.iter() {
-            if let Some(name) = self.c.member_name(file, hir[m].key) {
+            if let Some(name) = hir[m].key.name() {
                 seen.push((name, hir[m].flags.contains(Flags::STATIC)));
             }
         }

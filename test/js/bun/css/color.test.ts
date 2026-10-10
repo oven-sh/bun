@@ -105,7 +105,7 @@ const formatted = {
 for (const format in formatted) {
   for (const input of formatted[format]) {
     test(`console.log(color(${JSON.stringify(input)}, "ansi-24bit"))`, () => {
-      console.log(color(input, "ansi-24bit") + input);
+      console.log(color(input, "ansi-24bit" as "ansi-16m") + input);
     });
 
     test(`console.log(color(${JSON.stringify(input)}, "ansi-256"))`, () => {
@@ -116,11 +116,11 @@ for (const format in formatted) {
     });
 
     test(`color(${JSON.stringify(input)}, "${format}") = ${JSON.stringify(input)}`, () => {
-      expect(color(input, format)).toEqual(input);
+      expect(color(input, format as any)).toEqual(input);
     });
 
     test(`color(${JSON.stringify(input)}, "ansi-24bit")`, () => {
-      expect(color(input, "ansi-24bit")).toMatchSnapshot();
+      expect(color(input, "ansi-24bit" as "ansi-16m")).toMatchSnapshot();
     });
 
     test(`color(${JSON.stringify(input)}, "ansi-16")`, () => {
@@ -128,7 +128,7 @@ for (const format in formatted) {
     });
 
     test(`color(${JSON.stringify(input)}, "ansi256")`, () => {
-      expect(color(input, "ansi256")).toMatchSnapshot();
+      expect(color(input, "ansi256" as "ansi-256")).toMatchSnapshot();
     });
   }
 
@@ -273,6 +273,7 @@ describe("number inputs are opaque", () => {
 });
 
 test("0 args", () => {
+  // @ts-expect-error
   expect(() => color()).toThrow(
     expect.objectContaining({
       code: "ERR_INVALID_ARG_TYPE",
@@ -283,7 +284,8 @@ test("0 args", () => {
 describe.concurrent('color(input, "ansi") picks the escape for the detected color depth', () => {
   // The "ansi" format resolves against the terminal color depth derived from
   // the environment, so it has to be observed from a child process.
-  async function autoAnsi(env: Record<string, string | undefined>) {
+  type Result = { stdout: string; exitCode: number; stderr?: string };
+  async function autoAnsi(env: Record<string, string | undefined>): Promise<Result> {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", `process.stdout.write(JSON.stringify(Bun.color("#ff0000", "ansi")))`],
       env: {
@@ -306,7 +308,7 @@ describe.concurrent('color(input, "ansi") picks the escape for the detected colo
   }
 
   function ansi(format: "ansi-24bit" | "ansi-256") {
-    return { stdout: JSON.stringify(color("#ff0000", format)), exitCode: 0 };
+    return { stdout: JSON.stringify(color("#ff0000", format as "ansi-256")), exitCode: 0 };
   }
 
   test("TMUX is 24-bit color", async () => {
@@ -353,7 +355,7 @@ describe("lab()/oklab() sRGB fallback for boundary colors (#33331)", () => {
 test.skipIf(isDebug)("fuzz ansi256", () => {
   withoutAggressiveGC(() => {
     const check = (r: number, g: number, b: number) => {
-      if (color((r << 16) | (g << 8) | b, "ansi256") === null) {
+      if (color((r << 16) | (g << 8) | b, "ansi256" as "ansi-256") === null) {
         throw new Error(`color(${r}, ${g}, ${b}, "ansi256") is null`);
       }
     };
@@ -472,7 +474,7 @@ describe("css string output parses back to the same color", () => {
 
   test.each(["css", "hex", "HEX", "rgb", "rgba"])("%s round-trips", format => {
     for (const input of inputs) {
-      expect(color(color(input, format as any) as string, "hex")).toBe(color(input, "hex"));
+      expect(color(color(input, format as "hex") as string, "hex")).toBe(color(input, "hex"));
     }
   });
 
@@ -620,7 +622,10 @@ describe("color-mix() percentage range", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, exitCode, stderr: exitCode === 0 ? undefined : stderr }).toEqual({ stdout: "null", exitCode: 0 });
+    expect({ stdout, exitCode, stderr: exitCode === 0 ? undefined : stderr }).toEqual<object>({
+      stdout: "null",
+      exitCode: 0,
+    });
   });
 
   test.each([

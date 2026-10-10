@@ -27,13 +27,15 @@ use bun_sema::hir::{ExprTag, FileKind};
 use bun_sema::json::Json;
 use bun_sema::messages;
 use bun_sema::program::{
-    FileId, Files, declaration_emit_output_file_path, own_emit_output_file_path,
+    COMPARE_PATHS_CASE_SENSITIVE, FileId, Files, declaration_emit_output_file_path,
+    own_emit_output_file_path,
 };
 pub use bun_sema::resolve::ScriptKind;
 use bun_sema::resolve::{
-    Host, Options, Phase, ancestors, contains_path, inside, is_declaration_file_name,
-    is_javascript, is_javascript_file, is_relative, is_same_path, join,
-    output_declaration_file_name, to_path, to_path_in,
+    Host, Options, Phase, ancestors, contains_path, displayed_path,
+    get_relative_path_from_directory, inside, is_declaration_file_name, is_javascript,
+    is_javascript_file, is_relative, is_same_path, join, output_declaration_file_name, to_path,
+    to_path_in, typescript_path,
 };
 use bun_sema::session::{Arena, Session};
 use bun_sema::types::LinkCounts;
@@ -91,6 +93,23 @@ impl ThreadCaches {
             set.2 = Default::default();
         }
     }
+}
+
+/// The allocator retains a thread's free pages for that thread, and only that thread can release
+/// them: each thread of `pool` does when it is next idle, like the bundler's `Worker::deinit_soon`.
+fn release_free_pages_of(pool: &bun_threading::ThreadPool) {
+    use bun_threading::thread_pool::{Node, Task};
+    unsafe fn release(task: *mut Task) {
+        // SAFETY: allocated below, and queued once.
+        drop(unsafe { bun_core::heap::take(task) });
+        bun_core::Global::mimalloc_cleanup(true);
+    }
+    pool.push_idle_task_to_each_thread(|| {
+        bun_core::heap::into_raw(Box::new(Task {
+            node: Node::default(),
+            callback: release,
+        }))
+    });
 }
 
 /// Runs `work(i)` for every `i` below `count` on Bun's shared thread pool, on at most `threads`
@@ -163,8 +182,21 @@ pub struct PlanOptions {
     pub split_tolerates: u8,
     /// Whether a range publishes the tables keyed by a type, a signature or a mapper too.
     pub split_publishes_everything: bool,
+    /// Whether one thread gets the plan of several. For measuring the tasks one at a time.
+    pub tasks_on_one_thread: bool,
+    /// The cost estimate at which a task of `Plan::of_one_thread` is complete.
+    pub one_thread_task_cost: usize,
+    /// The cost estimate of a program above which one thread gets the plan of several. The tasks of
+    /// `Plan::of_one_thread` publish nothing, so each begins with nothing: VS Code, of three times
+    /// this cost, takes 8% to 25% longer in 13 to 4 of them, and 6% longer and 1.8 times the memory
+    /// in one.
+    pub one_thread_max_cost: usize,
     /// `--checkers`. Nonzero: `checkerPool` is used, and none of the above applies.
     pub checkers: usize,
+    /// One checker (`checkers`) hands out symbol ids as `tsc --singleThreaded` does. Not for
+    /// TypeScript's own baselines: its test runner compiles every test in one process, and
+    /// `nextSymbolId` belongs to the process.
+    pub reproduces_symbol_ids: bool,
     /// How many projects of a `tsc -b` run are loaded or checked at the same time, at most. Each
     /// occupies memory.
     pub projects_at_once: usize,
@@ -182,14 +214,19 @@ impl Default for PlanOptions {
             split_files: 64,
             split_tolerates: 0,
             split_publishes_everything: false,
+            tasks_on_one_thread: false,
+            one_thread_task_cost: 256 << 10,
+            one_thread_max_cost: 1 << 20,
             checkers: 0,
+            reproduces_symbol_ids: true,
             projects_at_once: 4,
         }
     }
 }
 
 /// Which task is in which step, and in which order the tasks of a step are published. A function of
-/// the program alone: not of the thread count, not of time. During a step the published state is
+/// the program and of whether there is more than one thread (`Plan::of_one_thread`): not of how many
+/// there are, not of time. During a step the published state is
 /// read-only and a task writes to its own buffer, so the result of a task is a function of the
 /// program and of the published state at the start of its step. By induction over the steps, so is
 /// the output.
@@ -219,6 +256,26 @@ impl Plan {
             steps: vec![tasks],
             ahead: Vec::new(),
         }
+    }
+
+    /// The tasks of one thread for `files`, which are in program order like those of
+    /// `tsc --singleThreaded`: as few as `one_thread_task_cost` allows. Most programs are one task.
+    ///
+    /// Every task computes its own copy of what it shares with the other tasks of its step. That
+    /// occupies threads that have nothing else to do, and one thread has: with the plan of several
+    /// threads it is a fifth to a half of all the work. But a task keeps what it has computed until
+    /// it ends, so its size is what the memory grows by.
+    fn of_one_thread(
+        files: Vec<usize>,
+        size_of: &dyn Fn(usize) -> usize,
+        options: &PlanOptions,
+    ) -> Vec<Task> {
+        let options = PlanOptions {
+            min_tasks: 0,
+            chunk_bytes: options.one_thread_task_cost,
+            ..*options
+        };
+        Plan::cut(files, size_of, &options)
     }
 
     /// `count`: the number of files to check. `size_of(i)`: the source size of file `i` in bytes.
@@ -341,15 +398,14 @@ pub struct Progress {
     pub errors: AtomicUsize,
 }
 
-/// A compiler option and its value, from [`compiler_option_from_flag`].
+/// A compiler option of a command line and its value. `null` unsets the option.
 #[derive(Clone)]
 pub struct CompilerOption(Vec<u8>, Json);
 
-/// `CreateDiagnosticReporter`: whether `Quiet.IsTrue()` for the options of the command line, so
-/// that no diagnostic is printed. In a configuration file the option has no effect.
-pub fn is_quiet(compiler_options: &[CompilerOption]) -> bool {
-    let quiet = compiler_options.iter().rfind(|option| option.0 == b"quiet");
-    quiet.is_some_and(|option| option.1 == Json::Bool(true))
+/// The `Tristate` of the boolean option `name` of a command line.
+pub fn tristate(compiler_options: &[CompilerOption], name: &[u8]) -> Option<bool> {
+    let option = compiler_options.iter().rfind(|option| option.0 == name)?;
+    option.1.as_bool()
 }
 
 pub enum FlagError {
@@ -357,30 +413,37 @@ pub enum FlagError {
     Unknown,
     /// The option requires a value and none was given, or it cannot be given on a command line.
     NeedsValue,
-    /// The value is not one the option accepts. The allowed values, if there is a fixed set.
+    /// The value is not one the option accepts. The allowed values of an enum.
     BadValue(Vec<&'static [u8]>),
 }
 
 /// Whether the compiler option `name`, matched case-insensitively, is a boolean, so that its value
 /// may be omitted.
-pub fn is_boolean_compiler_option(name: &[u8]) -> bool {
+fn is_boolean_compiler_option(name: &[u8]) -> bool {
     bun_sema::config_options::choices(name) == Some(&[b"true".as_slice(), b"false"][..])
 }
 
 /// `--name value` as `tsc` reads it. `name` is matched case-insensitively. A boolean without a value is `true`.
-pub fn compiler_option_from_flag(
+fn compiler_option_from_flag(
     name: &[u8],
     value: Option<&[u8]>,
 ) -> Result<CompilerOption, FlagError> {
-    use bun_sema::config_options::{choices, choices_of_list, from_text};
+    use bun_sema::config_options::{choices, from_text, invalid_enum_type, possible_option};
     // What `tsc` does instead of compiling. A configuration file may have them, to no effect.
-    if name.eq_ignore_ascii_case(b"init") || name.eq_ignore_ascii_case(b"version") {
+    if [&b"all"[..], b"init", b"version"]
+        .iter()
+        .any(|it| name.eq_ignore_ascii_case(it))
+    {
         return Err(FlagError::Unknown);
     }
-    let allowed = choices(name);
+    if let Some(b"null") = value {
+        let name = possible_option(name).ok_or(FlagError::Unknown)?;
+        return Ok(CompilerOption(name.to_vec(), Json::Null));
+    }
+    let (allowed, is_boolean) = (choices(name), is_boolean_compiler_option(name));
     let value = match value {
         Some(value) => value,
-        None if is_boolean_compiler_option(name) => b"true",
+        None if is_boolean => b"true",
         // `from_text` with an arbitrary text distinguishes an unknown option from one that needs a
         // value.
         None if allowed.is_some() || from_text(name, b"0").is_some() => {
@@ -388,13 +451,8 @@ pub fn compiler_option_from_flag(
         }
         None => return Err(FlagError::Unknown),
     };
-    if let Some(allowed) = allowed
-        && !allowed.iter().any(|a| a.eq_ignore_ascii_case(value))
-    {
-        return Err(FlagError::BadValue(allowed.to_vec()));
-    }
     match from_text(name, value) {
-        Some((name, value)) => match choices_of_list(name, &value) {
+        Some((name, value)) => match invalid_enum_type(name, &value) {
             Some(allowed) => Err(FlagError::BadValue(allowed)),
             None => Ok(CompilerOption(name.to_vec(), value)),
         },
@@ -405,13 +463,186 @@ pub fn compiler_option_from_flag(
     }
 }
 
+/// A flag of a command line that is not accepted.
+pub struct RejectedFlag {
+    /// As it is written, up to `=`.
+    pub flag: Vec<u8>,
+    pub value: Option<Vec<u8>>,
+    pub error: FlagError,
+}
+
+/// What `parseCommandLineWorker` makes of the arguments of a command line.
+#[derive(Default)]
+pub struct CommandLine {
+    /// `fileNames`
+    pub paths: Vec<Vec<u8>>,
+    /// `--project`
+    pub project: Option<Vec<u8>>,
+    /// `--build`, which need not be the first argument.
+    pub build: bool,
+    /// The other `options`.
+    pub compiler_options: Vec<CompilerOption>,
+    /// `errors`, as far as they are about response files: `Request::errors`.
+    pub errors: Vec<Diagnostic>,
+    /// The other `errors`. A caller may know more flags, and it says so in its own words.
+    pub rejected: Vec<RejectedFlag>,
+}
+
+/// `shortOptionNames` of the options that are known here. Both names have their dashes.
+pub const SHORT_OPTION_NAMES: &[(&[u8], &[u8])] = &[
+    (b"-b", b"--build"),
+    (b"-d", b"--declaration"),
+    (b"-i", b"--incremental"),
+    (b"-m", b"--module"),
+    (b"-p", b"--project"),
+    (b"-q", b"--quiet"),
+    (b"-t", b"--target"),
+];
+
+/// `getInputOptionName`, and the first half of `GetOptionDeclarationFromName`.
+fn get_input_option_name(flag: &[u8]) -> &[u8] {
+    let name = flag.strip_prefix(b"-").unwrap_or(flag);
+    let name = name.strip_prefix(b"-").unwrap_or(name);
+    let mut short_option_names = SHORT_OPTION_NAMES.iter();
+    let long = short_option_names.find(|(short, _)| short[1..].eq_ignore_ascii_case(name));
+    long.map_or(name, |(_, long)| &long[2..])
+}
+
+/// `commandLineParser`
+struct CommandLineParser<'a> {
+    /// `currentDirectory`, in the checker's path format.
+    cwd: &'a [u8],
+    /// The response files that are being read, the outermost first.
+    response_files: Vec<Vec<u8>>,
+    parsed: CommandLine,
+}
+
+/// `parseCommandLineWorker`. `cwd` is a native path.
+pub fn parse_command_line(args: &[&[u8]], cwd: &[u8]) -> CommandLine {
+    let cwd = host::from_native(cwd);
+    let mut parser = CommandLineParser {
+        cwd: &cwd,
+        response_files: Vec::new(),
+        parsed: CommandLine::default(),
+    };
+    parser.parse_strings(args);
+    parser.parsed
+}
+
+impl CommandLineParser<'_> {
+    /// `parseStrings`
+    fn parse_strings(&mut self, args: &[&[u8]]) {
+        let mut i = 0;
+        while let Some(&s) = args.get(i) {
+            i += 1;
+            match s.first() {
+                None => {}
+                Some(b'@') => self.parse_response_file(&s[1..]),
+                Some(b'-') => i = self.parse_option_value(args, i, s),
+                Some(_) => self.parsed.paths.push(s.to_vec()),
+            }
+        }
+    }
+
+    /// `parseResponseFile`
+    fn parse_response_file(&mut self, file_name: &[u8]) {
+        let file_name = join(self.cwd, file_name);
+        // `tryReadFile`. The original reads a file that names itself until its stack ends.
+        let text = match self.response_files.contains(&file_name) {
+            true => None,
+            false => host::read_at(&file_name),
+        };
+        let Some(text) = text else {
+            let cannot_read = global(5083, &[displayed_path(&file_name)]);
+            return self.parsed.errors.push(cannot_read);
+        };
+        let (mut args, mut pos) = (Vec::new(), 0);
+        while pos < text.len() {
+            while pos < text.len() && text[pos] <= b' ' {
+                pos += 1;
+            }
+            if pos >= text.len() {
+                break;
+            }
+            let start = pos;
+            if text[pos] == b'"' {
+                pos += 1;
+                while pos < text.len() && text[pos] != b'"' {
+                    pos += 1;
+                }
+                if pos < text.len() {
+                    args.push(&text[start + 1..pos]);
+                    pos += 1;
+                } else {
+                    let unterminated = global(6045, &[displayed_path(&file_name)]);
+                    self.parsed.errors.push(unterminated);
+                }
+            } else {
+                while pos < text.len() && text[pos] > b' ' {
+                    pos += 1;
+                }
+                args.push(&text[start..pos]);
+            }
+        }
+        self.response_files.push(file_name);
+        self.parse_strings(&args);
+        self.response_files.pop();
+    }
+
+    /// `parseOptionValue` of the flag `s`, which precedes `args[i]`. Returns the index of the next
+    /// argument. Besides, the value may follow `=`.
+    fn parse_option_value(&mut self, args: &[&[u8]], i: usize, s: &[u8]) -> usize {
+        let (flag, written) = match strings::index_of_char_usize(s, b'=') {
+            Some(at) => (&s[..at], Some(&s[at + 1..])),
+            None => (s, None),
+        };
+        let name = get_input_option_name(flag);
+        if name.eq_ignore_ascii_case(b"build") {
+            self.parsed.build = true;
+            return i;
+        }
+        // A boolean takes the next argument only if that is a value of it.
+        let is_value = |next: &&[u8]| {
+            !is_boolean_compiler_option(name) || matches!(*next, b"true" | b"false" | b"null")
+        };
+        let next = match written {
+            Some(_) => None,
+            None => args.get(i).copied().filter(is_value),
+        };
+        let is_taken = match compiler_option_from_flag(name, written.or(next)) {
+            Ok(CompilerOption(name, value)) => {
+                // What `ParseListTypeOption` makes no list of is the next argument.
+                let is_taken = value != Json::Array(Vec::new());
+                if name == b"project" {
+                    self.parsed.project = value.as_str().map(<[u8]>::to_vec);
+                } else {
+                    let options = &mut self.parsed.compiler_options;
+                    options.retain(|option| option.0 != name);
+                    options.push(CompilerOption(name, value));
+                }
+                is_taken
+            }
+            Err(error) => {
+                let is_known = !matches!(error, FlagError::Unknown);
+                self.parsed.rejected.push(RejectedFlag {
+                    flag: flag.to_vec(),
+                    value: written.or(next).map(<[u8]>::to_vec),
+                    error,
+                });
+                is_known
+            }
+        };
+        i + usize::from(next.is_some() && is_taken)
+    }
+}
+
 /// The command line options, followed by `noEmit`, since nothing is ever emitted.
 fn overriding_options(request: &Request, is_build: bool) -> Vec<(Vec<u8>, Json)> {
     // `convertToOptionsWithAbsolutePaths`: a path on the command line is relative to the working
     // directory, not to the configuration file that it overrides.
     let cwd = host::from_native(request.cwd);
     let absolute = |value: &Json| match value {
-        Json::String(path) => Json::String(join(&cwd, path)),
+        Json::String(path) => Json::String(host::from_argument(&cwd, path)),
         other => other.clone(),
     };
     request
@@ -447,8 +678,11 @@ pub struct Request<'a> {
     pub cwd: &'a [u8],
     /// `--project`: a configuration file, or a directory with a `tsconfig.json` in it.
     pub project: Option<&'a [u8]>,
-    /// `-b`: `tscBuildCompilation`, also for a project without `references`.
+    /// `-b`: `tscBuildCompilation`, also for a project without `references`. Without `project`, the
+    /// one of `paths` is the project, or else the working directory.
     pub build: bool,
+    /// `commandLine.Errors`. If there are any, they are the report.
+    pub errors: &'a [Diagnostic],
     /// Files and directories to check instead of all the files of the project. The options are
     /// still the project's.
     pub paths: &'a [Vec<u8>],
@@ -613,8 +847,11 @@ pub struct Report {
     pub files_not_checked: usize,
     /// The steps that ran, in order. See `Plan`.
     pub steps: Vec<StepReport>,
-    /// How many projects were checked, if the configuration has `references`. Otherwise 0.
+    /// How many projects are reported, if `references` are followed. Otherwise 0.
     pub projects_checked: usize,
+    /// The configuration file has `references` and no files of its own, and `--build` was not
+    /// given: `tsc` checks nothing then.
+    pub follows_references: bool,
     /// `Options::writes_declaration_files`: each source file that a declaration file is emitted
     /// for, and the emitted text.
     pub declaration_files: Vec<(Vec<u8>, Vec<u8>)>,
@@ -840,7 +1077,7 @@ pub fn check_provided_then<R>(
     };
     let cwd = host::from_native(request.cwd);
     let named = (request.project).or_else(|| request.paths.first().map(Vec::as_slice));
-    let project = named.map_or_else(|| cwd.clone(), |it| join(&cwd, it));
+    let project = named.map_or_else(|| cwd.clone(), |it| host::from_argument(&cwd, it));
     let mut disk = host::Disk::with_already_read(threads, provided.already_read, &project);
     disk.before_read = provided.before_read;
     disk.scripts_of_page = provided.scripts_of_page;
@@ -848,7 +1085,7 @@ pub fn check_provided_then<R>(
         disk.bundled_libs = Some(libs);
     }
     let script_kinds = request.script_kinds.iter().map(|(path, kind)| {
-        let path = disk.as_written(&join(&cwd, path));
+        let path = disk.as_written(&host::from_argument(&cwd, path));
         (to_path(&path, disk.is_case_sensitive()).into_owned(), *kind)
     });
     disk.script_kinds = script_kinds.collect();
@@ -857,24 +1094,16 @@ pub fn check_provided_then<R>(
     let lent = disk.caches.lend();
     let mut report = check_request(&disk, request);
     report.is_case_sensitive = disk.is_case_sensitive();
-    report.is_quiet = (request.compiler_options.iter())
-        .any(|CompilerOption(name, value)| name == b"quiet" && *value == Json::Bool(true));
+    report.is_quiet = tristate(request.compiler_options, b"quiet") == Some(true);
     report.not_installed = dependencies_not_installed(&disk, &cwd, &project, &report.diagnostics);
-    for reported in &mut report.diagnostics {
-        host::show_drives(&mut reported.text);
-        let related = reported.related.iter_mut();
-        related.for_each(|related| host::show_drives(&mut related.text));
-    }
-    report
-        .resolution_trace
-        .iter_mut()
-        .for_each(host::show_drives);
     let result = then(report);
     drop(lent);
     disk.caches.idle.lock().clear();
-    // The allocator retains a thread's free pages for that thread. The process continues, so they
-    // are returned to the system.
-    disk.parallel(threads, &|_| bun_core::Global::mimalloc_cleanup(true));
+    // The process continues, so the free pages are returned to the system.
+    release_free_pages_of(bun_threading::WorkPool::get());
+    if let Some(io_pool) = disk.io_pool() {
+        release_free_pages_of(io_pool);
+    }
     bun_core::Global::mimalloc_cleanup(true);
     result
 }
@@ -986,7 +1215,7 @@ fn dependencies_not_installed(
 /// some, and each is loaded once.
 #[derive(Default)]
 struct Projects {
-    loaded: FxHashMap<Vec<u8>, config::Project>,
+    loaded: FxHashMap<Vec<u8>, Result<config::Project, Vec<ConfigError>>>,
     /// `Project::files`, to look a file up in.
     files: FxHashMap<Vec<u8>, FxHashSet<Vec<u8>>>,
     /// An entry point is JavaScript (`Request::are_entry_points`). It is of the project that would
@@ -995,13 +1224,38 @@ struct Projects {
 }
 
 impl Projects {
-    fn load(&mut self, disk: &host::Disk, request: &Request, config: &[u8]) -> &config::Project {
-        // `bun check` never emits. Without `references` it behaves like `tsc --noEmit`, so output-path errors are not reported. With
-        // `references` it behaves like `tsc -b`, which has no `--noEmit`.
-        self.loaded.entry(config.to_vec()).or_insert_with(|| {
-            config::load_overriding(disk, &Session::new(), config, &|has_references| {
-                overriding_options(request, has_references)
-            })
+    /// `None`: `config` cannot be read.
+    fn load(
+        &mut self,
+        disk: &host::Disk,
+        request: &Request,
+        config: &[u8],
+    ) -> Option<&config::Project> {
+        let loaded = (self.loaded.entry(config.to_vec()))
+            .or_insert_with(|| Self::load_from_disk(disk, request, config));
+        loaded.as_ref().ok()
+    }
+
+    /// `load`, and the project is handed over.
+    fn take(
+        &mut self,
+        disk: &host::Disk,
+        request: &Request,
+        config: &[u8],
+    ) -> Result<config::Project, Vec<ConfigError>> {
+        let loaded = self.loaded.remove(config);
+        loaded.unwrap_or_else(|| Self::load_from_disk(disk, request, config))
+    }
+
+    fn load_from_disk(
+        disk: &host::Disk,
+        request: &Request,
+        config: &[u8],
+    ) -> Result<config::Project, Vec<ConfigError>> {
+        // `bun check` never emits: it is `tsc --noEmit`, which reports no error about an output path.
+        // `tsc -b` has no such option.
+        config::load_overriding(disk, &Session::new(), config, &|_| {
+            overriding_options(request, false)
         })
     }
 
@@ -1023,7 +1277,7 @@ impl Projects {
         seen.push(config.to_vec());
         let is_new = !self.files.contains_key(config);
         let counts_javascript = self.counts_javascript;
-        let project = self.load(disk, request, config);
+        let project = self.load(disk, request, config)?;
         let references: Vec<Vec<u8>> = (project.references.iter())
             .map(|it| config::resolve_config_file_name_of_project_reference(&it.path))
             .collect();
@@ -1036,7 +1290,9 @@ impl Projects {
                         options.push((b"allowJs".to_vec(), Json::Bool(true)));
                         options
                     };
-                    config::load_overriding(disk, &Session::new(), config, &with_javascript).files
+                    config::load_overriding(disk, &Session::new(), config, &with_javascript)
+                        .map(|it| it.files)
+                        .unwrap_or_default()
                 }
             };
             let paths = files.iter().map(|it| to_path(it, is_case_sensitive));
@@ -1064,7 +1320,9 @@ impl Projects {
             return;
         }
         seen.push(config.to_vec());
-        let project = self.load(disk, request, config);
+        let Some(project) = self.load(disk, request, config) else {
+            return;
+        };
         files.extend(project.files.iter().cloned());
         let references: Vec<Vec<u8>> = (project.references.iter())
             .map(|it| config::resolve_config_file_name_of_project_reference(&it.path))
@@ -1094,7 +1352,8 @@ impl Projects {
             return Ok(Some(owner));
         }
         let project = self.load(disk, request, &nearest);
-        let is_solution = project.files.is_empty() && !project.references.is_empty();
+        let is_solution =
+            project.is_some_and(|it| it.files.is_empty() && !it.references.is_empty());
         Err((!is_solution).then_some(nearest))
     }
 }
@@ -1145,7 +1404,49 @@ fn nested_configs(disk: &host::Disk, top: &[u8]) -> Vec<Vec<u8>> {
     found
 }
 
+/// For a directory without a configuration file at or above it, and `below` under it.
+fn no_project_here(cwd: &[u8], below: &[Vec<u8>]) -> Diagnostic {
+    const NAMED: usize = 8;
+    let relative =
+        |config: &'_ [u8]| -> Vec<u8> { get_relative_path_from_directory(cwd, config, true) };
+    let mut text = [
+        b"No tsconfig.json in '",
+        &*displayed_path(cwd),
+        b"' or above it. Below it:",
+    ]
+    .concat();
+    for config in below.iter().take(NAMED) {
+        text.extend_from_slice(b"\n  ");
+        text.extend_from_slice(&relative(config));
+    }
+    if below.len() > NAMED {
+        let more = below.len() - NAMED;
+        let _ = std::io::Write::write_fmt(&mut text, format_args!("\n  and {more} more"));
+    }
+    text.extend_from_slice(b"\nTo check one: bun check -p ");
+    text.extend_from_slice(&relative(&below[0]));
+    text.extend_from_slice(b"\nTo check everything below this directory: bun check .");
+    Diagnostic {
+        text,
+        code: 0,
+        ..global(18003, &[""; 0])
+    }
+}
+
 fn check_request(disk: &host::Disk, request: &Request) -> Report {
+    // `ParseBuildCommandLine`: `Projects` is `fileNames`, or else `.`.
+    let request = &match (request.build, request.project, request.paths) {
+        (true, None, []) => Request {
+            project: Some(b"."),
+            ..*request
+        },
+        (true, None, [project]) => Request {
+            project: Some(project),
+            paths: &[],
+            ..*request
+        },
+        _ => *request,
+    };
     let mut report = check_paths(disk, request);
     // Each is checked in its own project, like a file that is named, and once.
     let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
@@ -1170,25 +1471,42 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
     let started = Instant::now();
     let cwd = host::from_native(request.cwd);
     let mut report = Report::default();
+    // `tscCompilation`, `tscBuildCompilation`
+    if !request.errors.is_empty() {
+        report.diagnostics.extend_from_slice(request.errors);
+        return report;
+    }
 
     // Report missing paths (TS6053) before loading the config file or any source file.
     let is_case_sensitive = disk.is_case_sensitive();
     let is_same = |a: &[u8], b: &[u8]| is_same_path(a, b, is_case_sensitive);
     let (mut paths, missing): (Vec<_>, Vec<_>) = (request.paths.iter())
-        .map(|path| disk.as_written(&join(&cwd, path)))
+        .map(|path| disk.as_written(&host::from_argument(&cwd, path)))
         .partition(|path| disk.is_dir(path) || disk.is_file(path));
-    let not_found = (missing.iter()).map(|path| global(6053, &[host::with_root(path)]));
+    let not_found = (missing.iter()).map(|path| global(6053, &[displayed_path(path)]));
     report.diagnostics.extend(not_found);
     if paths.is_empty() && !missing.is_empty() {
         return report;
     }
-    let explicit = match request.project {
-        Some(project) => {
-            let path = disk.as_written(&join(&cwd, project));
+    let project = request.project;
+    let explicit = match project.map(|project| disk.as_written(&host::from_argument(&cwd, project)))
+    {
+        // `ResolvedProjectPaths`, and `upToDateStatusTypeConfigFileNotFound`.
+        Some(path) if request.build => {
+            let config = config::resolve_config_file_name_of_project_reference(&path);
+            if !disk.is_file(&config) {
+                let not_found = global(6053, &[displayed_path(&config)]);
+                report.diagnostics.push(not_found);
+                return report;
+            }
+            Some(config)
+        }
+        Some(path) => {
             if disk.is_dir(&path) {
                 let inside = join(&path, b"tsconfig.json");
                 if !disk.is_file(&inside) {
-                    report.diagnostics.push(global(5081, &[&inside]));
+                    let not_found = global(5081, &[displayed_path(&inside)]);
+                    report.diagnostics.push(not_found);
                     return report;
                 }
                 Some(inside)
@@ -1197,7 +1515,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             } else {
                 report
                     .diagnostics
-                    .push(global(5058, &[host::with_root(&path)]));
+                    .push(global(5058, &[displayed_path(&path)]));
                 return report;
             }
         }
@@ -1229,8 +1547,21 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
                 };
                 return check_project_of(disk, request, &mut projects, of, report, started);
             }
-            // Whatever is here, each file with the options that are nearest to it.
-            None => paths.push(cwd.clone()),
+            None => {
+                // `tsc` prints its help. Which of them is meant is not for a guess: they are
+                // fixtures and examples as often as packages. Before something runs (`--check`),
+                // a list of commands that run nothing is of no use.
+                let below = match request.are_entry_points {
+                    true => Vec::new(),
+                    false => nested_configs(disk, &cwd),
+                };
+                if !below.is_empty() {
+                    report.diagnostics.push(no_project_here(&cwd, &below));
+                    return report;
+                }
+                // Whatever is here, with the default options.
+                paths.push(cwd.clone())
+            }
         }
     }
 
@@ -1284,8 +1615,10 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             let top = (config.as_deref().map(dirname::<Posix>))
                 .filter(is_below)
                 .unwrap_or(path);
-            let files = match &config {
-                Some(config) => projects.load(disk, request, config).files_under(disk, top),
+            // One that cannot be read excludes nothing. `check_project_of` reports it.
+            let project = (config.as_ref()).and_then(|it| projects.load(disk, request, it));
+            let files = match project {
+                Some(project) => project.files_under(disk, top),
                 None => project_without_config(disk, request, &cwd, &[]).files_under(disk, top),
             };
             let (mut included, mut others) = (Vec::new(), Vec::new());
@@ -1323,7 +1656,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         report.diagnostics.push(Diagnostic {
             text: [
                 b"Nothing to check: no TypeScript files in '",
-                &paths[0][..],
+                &displayed_path(&paths[0])[..],
                 b"'",
             ]
             .concat(),
@@ -1333,6 +1666,15 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         return report;
     }
     let is_one = by_project.len() == 1;
+    if !is_one {
+        let mut options = Vec::new();
+        for (config, ..) in &by_project {
+            let project = (config.as_ref()).and_then(|it| projects.load(disk, request, it));
+            options.extend(project.map(|it| it.options.clone()));
+        }
+        // Each of them may load more, for its references.
+        disk.share_declaration_files(variants_of_several(options.iter()), usize::MAX / 2);
+    }
     let paths_of = |files: &'_ [Vec<u8>]| -> Vec<Vec<u8>> {
         let paths = files.iter().map(|it| to_path(it, is_case_sensitive));
         paths.map(Cow::into_owned).collect()
@@ -1359,6 +1701,17 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         sort_as_one_project(&mut report);
     }
     report
+}
+
+/// `Host::share_declaration_files`
+fn variants_of_several<'a>(options: impl Iterator<Item = &'a Options>) -> u32 {
+    let (mut of_one, mut of_several) = (0u32, 0u32);
+    for it in options {
+        let variant = 1 << bun_sema::program::variant_of_files(it);
+        of_several |= of_one & variant;
+        of_one |= variant;
+    }
+    of_several
 }
 
 /// Where the files are that a check is limited to.
@@ -1388,14 +1741,26 @@ fn check_project_of(
     request: &Request,
     projects: &mut Projects,
     of: OfProject<'_>,
-    report: Report,
+    mut report: Report,
     started: Instant,
 ) -> Report {
     let mut project = match of.config {
-        Some(config) => {
-            projects.load(disk, request, config);
-            projects.loaded.remove(config).expect("loaded above")
-        }
+        Some(config) => match projects.take(disk, request, config) {
+            Ok(project) => project,
+            // `tscCompilation`: "these are unrecoverable errors--exit to report them as
+            // diagnostics". To a build, `upToDateStatusTypeConfigFileNotFound`.
+            Err(errors) => {
+                let errors = errors.iter().map(|it| of_config_error(disk, config, it));
+                match request.build {
+                    true => report
+                        .diagnostics
+                        .push(global(6053, &[displayed_path(config)])),
+                    false => report.diagnostics.extend(errors),
+                }
+                report.load_time = started.elapsed();
+                return report;
+            }
+        },
         None => {
             let cwd = host::from_native(request.cwd);
             let files = of.named.map(|it| it.1).unwrap_or_default();
@@ -1513,10 +1878,11 @@ impl Graph<'_> {
             if self.tasks.contains_key(&path) {
                 continue;
             }
-            let resolved = self.host.is_file(&config).then(|| {
-                let over = |_: bool| self.overrides.clone();
-                config::load_overriding(self.host, self.session, &config, &over)
-            });
+            let over = |_: bool| self.overrides.clone();
+            let resolved = match self.host.is_file(&config) {
+                true => config::load_overriding(self.host, self.session, &config, &over).ok(),
+                false => None,
+            };
             if let Some(project) = &resolved {
                 queued.extend(referenced(project));
             }
@@ -1539,11 +1905,13 @@ impl Graph<'_> {
         let (config, resolved) = self.tasks.remove(&path)?;
         let Some(project) = resolved else {
             let before = self.projects.len();
-            self.not_found.push((before, global(6053, &[config])));
+            let not_found = global(6053, &[displayed_path(&config)]);
+            self.not_found.push((before, not_found));
             return None;
         };
         self.index_of.insert(path.clone(), None);
-        self.circularity_stack.push(config_name.to_vec());
+        let shown = displayed_path(config_name).into_owned();
+        self.circularity_stack.push(shown);
         let mut up_stream = Vec::new();
         for reference in &project.references {
             let sub_reference =
@@ -1711,6 +2079,20 @@ impl Host for WithOutputs<'_> {
     fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>> {
         self.disk.scripts_of_page(page)
     }
+    fn share_declaration_files(&self, variants: u32, programs: usize) {
+        self.disk.share_declaration_files(variants, programs);
+    }
+    fn stays_loaded(&self) {
+        self.disk.stays_loaded();
+    }
+    fn shared_file(
+        &self,
+        path: &[u8],
+        text: &[u8],
+        variant: u8,
+    ) -> Option<Arc<std::sync::OnceLock<bun_sema::portable::SharedFile>>> {
+        self.disk.shared_file(path, text, variant)
+    }
     fn parse<'s>(
         &self,
         arena: &'s Arena,
@@ -1740,7 +2122,10 @@ impl Host for WithOutputs<'_> {
 
 /// Checks what `tsc -b` checks: `root` and every project it references, each with its own options.
 /// Nothing is written: a project reads the declaration files of the projects it references from
-/// memory. `named`: see `check_named_files` and `Extent`.
+/// memory. Without `Request::build` only `root` is reported, as by `tsc`, which reads the
+/// declaration files that an earlier build has written. If `root` has no files of its own, `tsc`
+/// checks nothing: then all are reported (`Report::follows_references`).
+/// `named`: see `check_named_files` and `Extent`.
 /// `elsewhere`: see `OfProject`.
 fn check_with_references(
     host: &dyn Host,
@@ -1753,11 +2138,19 @@ fn check_with_references(
 ) -> Report {
     let is_case_sensitive = host.is_case_sensitive();
     let root_config_path = root.config_path.clone();
+    let follows_references = !request.build && root.files.is_empty();
+    let reports_references =
+        request.build || follows_references || matches!(named, Some((Extent::Graph, _)));
     let configuration = Session::new();
     let mut graph = Graph {
         host,
         session: &configuration,
-        overrides: overriding_options(request, true),
+        // The command line is for the projects that are reported: that of a plain `tsc`, for the
+        // one that it is given.
+        overrides: match reports_references {
+            true => overriding_options(request, true),
+            false => Vec::new(),
+        },
         tasks: FxHashMap::default(),
         projects: Vec::new(),
         index_of: FxHashMap::default(),
@@ -1784,6 +2177,8 @@ fn check_with_references(
         let path = to_path(path, is_case_sensitive);
         Some(&projects[(*index_of.get(&*path)?)?].project)
     };
+    let root_index =
+        (index_of.get(&*to_path(&root_config_path, is_case_sensitive))).and_then(|it| *it);
     let about_references: Vec<Vec<ConfigError>> = (projects.iter())
         .map(|p| {
             (verify_project_references(&p.project, &resolved).iter())
@@ -1849,6 +2244,12 @@ fn check_with_references(
         let referenced = references[index].iter();
         pending.extend(referenced.filter(|&&it| std::mem::replace(&mut is_left_out[it], false)));
     }
+    // As `build` below.
+    let is_solution =
+        |index: usize| roots[index].is_empty() && projects[index].project.has_references;
+    let loaded = || (0..count).filter(|&index| !is_left_out[index] && !is_solution(index));
+    let variants = variants_of_several(loaded().map(|index| &projects[index].project.options));
+    host.share_declaration_files(variants, loaded().count());
     let is_read_by_a_program = |index: usize| {
         (0..count)
             .any(|by| !is_left_out[by] && !roots[by].is_empty() && references[by].contains(&index))
@@ -1988,16 +2389,13 @@ fn check_with_references(
             .chain(elsewhere.into_iter().flatten().copied())
             .filter(|path| !own.contains(path))
             .collect();
-        project.options.is_build = true;
+        let is_root = is_same_path(&project.config_path, &root_config_path, is_case_sensitive);
+        project.options.is_build = reports_references || !is_root;
         project.options.build_info_file_name = project.get_build_info_file_name();
         project.options.writes_declaration_files = writes_declaration_files(index);
         let no_emit_on_error = project.options.no_emit_on_error;
         let named = match named {
-            Some((Extent::Project, files))
-                if is_same_path(&project.config_path, &root_config_path, is_case_sensitive) =>
-            {
-                Some(files)
-            }
+            Some((Extent::Project, files)) if is_root => Some(files),
             // What another program reads is built whole. A solution has no program.
             Some((Extent::Graph, files)) if !is_read_by_a_program(index) => {
                 let is_named = |file: &Vec<u8>| is_among(files, file);
@@ -2114,19 +2512,26 @@ fn check_with_references(
     let mut not_found = not_found.into_iter().peekable();
     for (index, mut checked) in reports.into_iter().enumerate() {
         while let Some((_, d)) = not_found.next_if(|it| it.0 <= index) {
-            report.report_task(Report {
-                diagnostics: vec![d],
-                ..Default::default()
-            });
+            // Of the build. A plain `tsc` has only what the project says at its reference.
+            if reports_references {
+                report.report_task(Report {
+                    diagnostics: vec![d],
+                    ..Default::default()
+                });
+            }
         }
-        if let Some(mut checked) = checked.get_mut().take() {
+        if let Some(mut checked) = checked.get_mut().take()
+            // A project that is only read, with no file in the directory that was named, is not asked about.
+            && (reports_references && has_named[index] || Some(index) == root_index)
+        {
             for d in &mut checked.diagnostics {
                 d.project = index as u32;
             }
             report.report_task(checked);
-            report.projects_checked += 1;
+            report.projects_checked += usize::from(reports_references);
         }
     }
+    report.follows_references = follows_references && named.is_none();
     report.load_time = started.elapsed().saturating_sub(report.check_time);
     report
 }
@@ -2189,8 +2594,9 @@ fn compare_related_info(r1: &[Diagnostic], r2: &[Diagnostic]) -> std::cmp::Order
 
 /// `CompareDiagnostics`
 fn compare_diagnostics(d1: &Diagnostic, d2: &Diagnostic) -> std::cmp::Ordering {
-    (&d1.path, loc(d1), d1.code, &d1.args)
-        .cmp(&(&d2.path, loc(d2), d2.code, &d2.args))
+    let (path1, path2) = (typescript_path(&d1.path), typescript_path(&d2.path));
+    (path1, loc(d1), d1.code, &d1.args)
+        .cmp(&(path2, loc(d2), d2.code, &d2.args))
         .then_with(|| compare_message_chain_size(&d1.message_chain, &d2.message_chain))
         .then_with(|| compare_message_chain_content(&d1.message_chain, &d2.message_chain))
         .then_with(|| compare_related_info(&d1.related, &d2.related))
@@ -2220,34 +2626,20 @@ fn of_config_error(host: &dyn Host, config_path: &[u8], error: &ConfigError) -> 
     for chain in &reported.message_chain {
         chain.flatten(&mut reported.text, 1);
     }
-    if !error.related.is_empty()
-        && let Some(text) = host.read(config_path)
-    {
-        let starts = compute_ecma_line_starts(&text);
-        let related = error.related.iter().map(|&(from, to, code)| {
-            located(
-                config_path,
-                &text,
-                &starts,
-                from,
-                to,
-                global(code, &[""; 0]),
-            )
-        });
-        reported.related = related.collect();
+    if error.at.is_none() && error.related.is_empty() {
+        return reported;
     }
-    match &error.at {
-        Some((path, from, to)) => match host.read(path) {
-            Some(text) => located(
-                path,
-                &text,
-                &compute_ecma_line_starts(&text),
-                *from,
-                *to,
-                reported,
-            ),
-            None => reported,
-        },
+    let path = error.at.as_ref().map_or(config_path, |at| &at.0[..]);
+    let Some(text) = host.read(path) else {
+        return reported;
+    };
+    let starts = compute_ecma_line_starts(&text);
+    let related = error.related.iter().map(|(from, to, code, args)| {
+        located(path, &text, &starts, *from, *to, global(*code, args))
+    });
+    reported.related = related.collect();
+    match error.at {
+        Some((_, from, to)) => located(path, &text, &starts, from, to, reported),
         None => reported,
     }
 }
@@ -2339,6 +2731,7 @@ fn check_named_files(
     if is_outdated.is_some_and(|is_outdated| is_outdated()) {
         return report;
     }
+    host.stays_loaded();
     // In an arena, so that no destructor runs for them: the session frees what they refer to all
     // at once. `Program::release` frees the little that is on the regular heap.
     let files = session.arena().alloc(files);
@@ -2353,14 +2746,22 @@ fn check_named_files(
     if let Some(loaded) = request.loaded {
         loaded(program);
     }
-    if is_true(b"explainFiles") {
-        let (cwd, is_case_sensitive) = (host::from_native(request.cwd), host.is_case_sensitive());
-        report.listed_files = program.files.explain_files(host, &|file_name: &[u8]| {
-            format::get_relative_path_from_directory(&cwd, file_name, is_case_sensitive).into()
-        });
-    } else if is_true(b"listFiles") || is_true(b"listFilesOnly") {
-        let path = |&file: &FileId| program.files.module(file).file_name().to_vec();
-        report.listed_files = program.files.order.iter().map(path).collect();
+    let explains_files = is_true(b"explainFiles");
+    let explain_files = |has_made_diagnostics: bool| {
+        let cwd = host::from_native(request.cwd);
+        let to_relative_file_name = |file_name: &[u8]| {
+            get_relative_path_from_directory(&cwd, file_name, COMPARE_PATHS_CASE_SENSITIVE)
+        };
+        program
+            .files
+            .explain_files(host, has_made_diagnostics, &to_relative_file_name)
+    };
+    if !explains_files && (is_true(b"listFiles") || is_true(b"listFilesOnly")) {
+        let file_name = |&file: &FileId| program.files.module(file).file_name();
+        let file_names = program.files.order.iter().map(file_name);
+        report.listed_files = file_names
+            .map(|it| displayed_path(it).into_owned())
+            .collect();
     }
     let trace = program.files.resolution_trace.iter();
     report.resolution_trace = trace.map(|it| global(it.code, &it.args).text).collect();
@@ -2380,8 +2781,10 @@ fn check_named_files(
             match module.hir.kind {
                 // Only parse errors are reported for JSON files.
                 FileKind::Json => module.hir.has_parse_diagnostics,
-                _ if module.is_lib => !skip_lib_check && !skip_default_lib_check,
-                FileKind::Declaration => !skip_lib_check,
+                // `SkipTypeChecking`, and nothing is emitted for a declaration file.
+                FileKind::Declaration => {
+                    !skip_lib_check && !(skip_default_lib_check && module.is_lib)
+                }
                 FileKind::Ts | FileKind::Tsx => true,
             }
         })
@@ -2595,6 +2998,9 @@ fn check_named_files(
             if let Some((step, index, is_read_later)) = task {
                 checker.begin_task(step as u32, index as u32, is_read_later);
                 checker.set_checker_count(checker_count as u32);
+                if checker_count == 1 && request.plan_options.reproduces_symbol_ids {
+                    checker.hand_out_symbol_ids();
+                }
             }
             let (mut checked, mut incomplete) = (Vec::new(), Vec::new());
             for &file in files {
@@ -2694,14 +3100,13 @@ fn check_named_files(
     // A type node is a type to compute too. A declaration file has no expressions: next.js checks one of 2.9 MB that takes 23% of the
     // instructions of the check.
     let is_identifier = |tag: ExprTag| tag == ExprTag::Ident;
-    let costs: Vec<usize> = (to_check.iter())
-        .map(|&file| {
-            let hir = program.files.hir(file);
-            let tags = hir.exprs.iter().map(|it| it.kind.tag());
-            let type_nodes = hir.types.len() * request.plan_options.type_node_cost;
-            tags.filter(|&tag| is_identifier(tag)).count() + type_nodes + 1
-        })
-        .collect();
+    let cost_of = |file: FileId| {
+        let hir = program.files.hir(file);
+        let tags = hir.exprs.iter().map(|it| it.kind.tag());
+        let type_nodes = hir.types.len() * request.plan_options.type_node_cost;
+        tags.filter(|&tag| is_identifier(tag)).count() + type_nodes + 1
+    };
+    let costs: Vec<usize> = to_check.iter().map(|&file| cost_of(file)).collect();
     let size_of = |index: usize| costs[index];
     // `PlanOptions::split_files`: the text of file `index` in at most `parts` ranges of about the same length, each from the start of
     // a statement to the start of another. Empty: the file is not split. In a declaration file nothing is inferred and no node is
@@ -2734,7 +3139,21 @@ fn check_named_files(
         }
         ranges
     };
+    // Of all the files, so that those that are only emitted are not divided over an empty published state.
+    let cost =
+        costs.iter().sum::<usize>() + only_emitted.iter().map(|&it| cost_of(it)).sum::<usize>();
+    let is_one_thread = threads == 1
+        && !request.plan_options.tasks_on_one_thread
+        && cost <= request.plan_options.one_thread_max_cost;
+    let all: Vec<usize> = (0..to_check.len()).collect();
     let plan = match request.plan_options.checkers {
+        0 if is_one_thread => Plan {
+            steps: match Plan::of_one_thread(all, &size_of, &request.plan_options) {
+                tasks if tasks.is_empty() => Vec::new(),
+                tasks => vec![tasks],
+            },
+            ahead: Vec::new(),
+        },
         0 => Plan::new(
             to_check.len(),
             &bytes_of,
@@ -2769,6 +3188,7 @@ fn check_named_files(
         // The largest first, so that no thread begins it when the others are nearly done.
         let mut start_order: Vec<usize> = (0..tasks).collect();
         match request.order {
+            1 if is_one_thread => {}
             1 => start_order.sort_by_key(|&i| Reverse(weight_of(i))),
             order => start_order.sort_by_key(|&i| (i as u32 + 1).wrapping_mul(order)),
         }
@@ -2891,7 +3311,12 @@ fn check_named_files(
     let run_step = |number: usize, step: &[Task], expected: Requested| {
         let mut invalid = run_round(number, step, plan.ahead_of(number), expected);
         while !invalid.is_empty() {
-            let again = Plan::cut(invalid.concat(), &size_of, &request.plan_options);
+            let mut files = invalid.concat();
+            files.sort_unstable();
+            let again = match is_one_thread {
+                true => Plan::of_one_thread(files, &size_of, &request.plan_options),
+                false => Plan::cut(files, &size_of, &request.plan_options),
+            };
             invalid = run_round(number, &again, &[], expected);
         }
     };
@@ -2918,12 +3343,24 @@ fn check_named_files(
             }
         }
         if !type_checked {
-            // Not a function of the thread count, like the tasks of the plan.
-            let tasks = request.plan_options.min_tasks.max(1);
-            let tasks = only_emitted.chunks(only_emitted.len().div_ceil(tasks).max(1));
-            let tasks: Vec<&[FileId]> = tasks.collect();
+            // Like the tasks of the plan.
+            let tasks: Vec<Vec<FileId>> = if is_one_thread {
+                let cost_of = |index: usize| cost_of(only_emitted[index]);
+                Plan::of_one_thread(
+                    (0..only_emitted.len()).collect(),
+                    &cost_of,
+                    &request.plan_options,
+                )
+                .into_iter()
+                .map(|task| task.into_iter().map(|index| only_emitted[index]).collect())
+                .collect()
+            } else {
+                let tasks = request.plan_options.min_tasks.max(1);
+                let tasks = only_emitted.chunks(only_emitted.len().div_ceil(tasks).max(1));
+                tasks.map(<[FileId]>::to_vec).collect()
+            };
             host.parallel(tasks.len(), &|i| {
-                accept(check_chunk(tasks[i], expected, None));
+                accept(check_chunk(&tasks[i], expected, None));
             });
         }
         finish_files();
@@ -2964,11 +3401,21 @@ fn check_named_files(
             finish_files();
             let syntactic = std::mem::take(&mut *found.lock());
             if !syntactic.is_empty() {
+                // `GetProgramDiagnostics` is not called. An incremental program asks for them when
+                // `Emit` writes its build info (`ensureHasErrorsForState`).
+                if explains_files {
+                    let is_incremental = options.is_incremental || options.is_build;
+                    report.listed_files = explain_files(is_incremental && !lists_files_only);
+                }
                 report.diagnostics.extend(syntactic);
                 report.files_not_checked = std::mem::take(&mut report.files_checked);
                 report.diagnostics.extend(emit_on_early_exit());
                 break 'stages;
             }
+        }
+        // Before a file is checked, which can free its HIR.
+        if explains_files {
+            report.listed_files = explain_files(true);
         }
         report.diagnostics.append(&mut about_options);
         // `ListFilesOnly`: no checker is asked for anything, and `Emit` is not called.
@@ -3030,7 +3477,7 @@ fn check_named_files(
     report.incomplete.sort();
     report.incomplete.dedup();
     let unreadable = host.take_unreadable();
-    let cannot_read = unreadable.iter().map(|path| global(5083, &[path]));
+    let cannot_read = (unreadable.iter()).map(|path| global(5083, &[displayed_path(path)]));
     report.diagnostics.extend(cannot_read);
     sort_and_deduplicate(&mut report.diagnostics);
     report.check_time = checking.elapsed();

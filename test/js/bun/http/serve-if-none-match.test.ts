@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 
 describe("If-None-Match Support", () => {
-  let server: Server;
+  let server: Bun.Server<undefined>;
 
   const testContent = "Hello, World!";
   const routes = {
@@ -32,6 +32,7 @@ describe("If-None-Match Support", () => {
 
   beforeAll(async () => {
     server = Bun.serve({
+      // @ts-expect-error deprecated alias of routes
       static: routes,
       port: 0,
       fetch: () => new Response("Not Found", { status: 404 }),
@@ -263,6 +264,7 @@ describe("If-None-Match Support", () => {
       };
 
       const redirectServer = Bun.serve({
+        // @ts-expect-error deprecated alias of routes
         static: redirectRoutes,
         port: 0,
         fetch: () => new Response("Not Found", { status: 404 }),
@@ -291,12 +293,13 @@ describe("If-None-Match Support", () => {
     const LM = "Wed, 01 Jan 2020 00:00:00 GMT";
     const EARLIER = "Tue, 01 Jan 2019 00:00:00 GMT";
     const LATER = "Fri, 01 Jan 2027 00:00:00 GMT";
-    let imsServer: Server;
+    let imsServer: Bun.Server<undefined>;
 
     beforeAll(() => {
       imsServer = Bun.serve({
         port: 0,
         development: false,
+        // @ts-expect-error deprecated alias of routes
         static: {
           "/lm": new Response("hello static route", {
             headers: { "Content-Type": "text/plain", "Last-Modified": LM },

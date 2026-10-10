@@ -29,7 +29,7 @@ if (!fault.available()) {
 }
 
 const server = http2.createServer();
-server.on("stream", stream => {
+server.on("stream", (stream: http2.ServerHttp2Stream) => {
   stream.respond({ ":status": 200 });
   stream.resume();
   stream.on("end", () => stream.end());

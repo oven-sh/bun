@@ -51,10 +51,14 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
         // Look ahead to see if this should be an arrow function instead
         let mut is_ts_arrow_fn = false;
 
-        if p.lexer.token == T::TConst {
+        let is_const = p.lexer.token == T::TConst;
+        if is_const {
             p.lexer.next()?;
         }
-        if p.lexer.token == T::TIdentifier {
+        if p.lexer.token == T::TIdentifier
+            // `nextIsParenthesizedArrowFunctionExpression`: `isIdentifier`, of the token after "<".
+            && (is_const || !p.is_tolerant() || p.is_identifier_in_context())
+        {
             p.lexer.next()?;
             if p.lexer.token == T::TComma || p.lexer.token == T::TEquals {
                 is_ts_arrow_fn = true;
@@ -71,11 +75,23 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
         Ok(is_ts_arrow_fn)
     }
 
+    /// `p.token`. For the checker a reserved word is that keyword also if it is written with an
+    /// escape, as for TypeScript's scanner. The transpiler rejects such a word wherever it is no
+    /// name.
+    #[inline(always)]
+    fn ts_token(&self) -> T {
+        if self.is_tolerant() {
+            self.token()
+        } else {
+            self.lexer.token
+        }
+    }
+
     // This function is taken from the official TypeScript compiler source code:
     // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
     pub(crate) fn is_binary_operator(&self) -> bool {
         let p = self;
-        match p.lexer.token {
+        match p.ts_token() {
             T::TIn => p.allow_in,
 
             T::TQuestionQuestion
@@ -113,7 +129,7 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
     // https://github.com/microsoft/TypeScript/blob/master/src/compiler/parser.ts
     pub(crate) fn is_start_of_left_hand_side_expression(&mut self) -> bool {
         let p = self;
-        match p.lexer.token {
+        match p.ts_token() {
             T::TThis
             | T::TSuper
             | T::TNull
@@ -187,7 +203,7 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
             return true;
         }
 
-        match p.lexer.token {
+        match p.ts_token() {
             T::TPlus
             | T::TMinus
             | T::TTilde

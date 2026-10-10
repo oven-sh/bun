@@ -30,6 +30,9 @@ pub struct Checked {
     /// `Checker::expected_errors`
     expected_errors: Vec<Reported>,
     never_checked: Vec<(u32, u32)>,
+    /// The private members that `checkUnusedClassMembers` has reported, and where. See
+    /// `Program::properties_referenced_before`.
+    unused_private_members: Vec<(Sym, u32)>,
     /// `Options::writes_declaration_files`: the emitted text of the file's declaration file, if it
     /// has one.
     pub declaration_file: Option<Vec<u8>>,
@@ -46,6 +49,7 @@ impl Checked {
             include: Vec::new(),
             expected_errors: Vec::new(),
             never_checked: Vec::new(),
+            unused_private_members: Vec::new(),
             declaration_file: None,
         })
     }
@@ -61,9 +65,31 @@ impl Program<'_> {
             // task evaluated them.
             let is_checked = |d: &Reported| {
                 let mut never_checked = checked.never_checked.iter();
-                d.by_emit || !never_checked.any(|&(from, to)| (from..to).contains(&d.start))
+                d.by_emit
+                    || d.by_another_node
+                    || !never_checked.any(|&(from, to)| (from..to).contains(&d.start))
             };
             out.extend(self.take_buffer(file).into_iter().filter(is_checked));
+            // `requestedExternalEmitHelpers`: first come, whichever file was being checked.
+            if self.files.options.import_helpers {
+                let earlier = self.emit_helper_errors_of_earlier_files.lock();
+                out.retain(|d| {
+                    let same = earlier
+                        .iter()
+                        .filter(|it| (it.file, it.code) == (file, d.code) && it.args == d.args);
+                    let first = same.min_by_key(|it| it.rank);
+                    first.is_none_or(|first| first.start == d.start)
+                });
+            }
+            if !checked.unused_private_members.is_empty() {
+                let referenced = self.properties_referenced_before.lock();
+                let mut unused = checked.unused_private_members;
+                unused.retain(|it| referenced.contains(&it.0));
+                let is_referenced = |d: &Reported| {
+                    matches!(d.code, 6133 | 6138) && unused.iter().any(|it| it.1 == d.start)
+                };
+                out.retain(|d| !is_referenced(d));
+            }
             // `getDiagnosticsWithPrecedingDirectives`
             let used = out.iter().map(|d| d.directive);
             let mut used: Vec<u32> = used.filter(|&start| start != NO_DIRECTIVE).collect();
@@ -133,9 +159,12 @@ impl Checker<'_, '_> {
         self.rechecked_exprs.retain(|key, _| key.0 != file);
         self.rechecked_members.retain(|key, _| key.0 != file);
         self.late_bound_members.retain(|key, _| key.0.file != file);
+        self.early_bound_for_good.retain(|key| key.0.file != file);
         self.resolved_signatures.retain(|key| key.0 != file);
         self.context_checked_here.retain(|key| key.0 != file);
         self.prepared.retain(|key| key.0 != file);
+        self.circular_before_parameter_symbol
+            .retain(|key| key.0 != file);
     }
 
     /// Runs every check that queries `file`. Diagnostics it causes in other files, or other files
@@ -153,6 +182,9 @@ impl Checker<'_, '_> {
         self.refused_expressions.clear();
         self.work_trap = WORK_TRAP_DISARMED;
         self.limits = 0;
+        // tsgo never resets it, so each of its checkers reports nothing that needs the type of a
+        // reference in the files after one whose module body got 2563.
+        self.flow_analysis_disabled.clear();
         self.outermost_comparison = None;
         self.checked_type_references.0 = None;
         self.instantiation_limit_hits = 0;
@@ -161,12 +193,13 @@ impl Checker<'_, '_> {
         self.variances_cut_short.clear();
         self.generic_mapped_types_cut_short.clear();
         self.deferred_diagnostics.clear();
-        // Entries the task's previous file added after its own `check_circular_mapped_properties`
-        // are dropped, as they are for the last file.
-        self.circular_mapped_props.clear();
         self.node_check_flags.clear();
         self.never_checked.borrow_mut().clear();
         self.unknown_symbols.clear();
+        self.alias_targets_reported.clear();
+        self.signatures_resolved_discarding.clear();
+        self.expressions_cached_discarding.clear();
+        self.emit_helpers_checked_elsewhere.clear();
         self.reported.clear();
         self.release_provisional_shapes();
         self.is_type_checked = false;
@@ -258,7 +291,7 @@ impl Checker<'_, '_> {
             self.mark_identifier_aliases_referenced(file, true);
         }
         self.produce_type_not_iterable_errors(logged);
-        self.check_circular_mapped_properties();
+        self.resolve_marked_assignment_targets(file);
         self.report_unresolved_identifiers();
         // `GetDeclarationDiagnostics`: no comment directive suppresses these, and plain JavaScript
         // gets them too.
@@ -267,7 +300,11 @@ impl Checker<'_, '_> {
         let (semantic, elsewhere): (Vec<_>, Vec<_>) = reported.partition(|d| d.file == file);
         self.reported = elsewhere;
         self.log_reported_from(0);
+        let emits_later = !self.emits_first();
+        let was_emitting = self.set_symbol_ids_emitting(emits_later);
+        self.is_type_checked = emits_later;
         let declaration = self.get_declaration_diagnostics(file);
+        self.set_symbol_ids_emitting(was_emitting);
         self.is_type_checked = true;
         let mut directives = Directives::default();
         let semantic = semantic.into_iter();
@@ -324,6 +361,7 @@ impl Checker<'_, '_> {
             include: Vec::new(),
             expected_errors: Vec::new(),
             never_checked: self.never_checked.take(),
+            unused_private_members: std::mem::take(&mut self.unused_private_members),
             declaration_file: self.declaration_file.take(),
         }
     }
@@ -353,6 +391,7 @@ impl Checker<'_, '_> {
             return None;
         }
         self.settle_place(&mut d);
+        d.start = super::spans::start_of_error_range(hir, d.start, d.end);
         Some(d)
     }
 
@@ -384,7 +423,10 @@ impl Checker<'_, '_> {
             };
             return super::explain::Line {
                 code: 6278,
-                args: held(vec![types.to_vec(), package]),
+                args: held(vec![
+                    crate::resolve::displayed_path(types).into_owned(),
+                    package,
+                ]),
                 level: 1,
             };
         }
@@ -432,7 +474,7 @@ impl Checker<'_, '_> {
             let ExprKind::ImportCall { args, .. } = hir[e].kind else {
                 continue;
             };
-            if self.bound(file).is_unchecked(e.idx()) {
+            if self.bound(file).is_unchecked(e.idx()) || self.is_never_checked(hir[e].pos) {
                 continue;
             }
             if let Some(options) = hir.ids(args).nth(1) {
@@ -491,16 +533,35 @@ impl Checker<'_, '_> {
                 if !declares_alias && !self.is_commonjs_require(file, call) {
                     continue;
                 }
-                let mode = self.require_resolution_mode(file, spec);
-                let written = SpecifierUse {
-                    spec,
-                    pos: hir[argument].pos,
-                    kind: SpecifierKind::RequireCall,
-                    mode,
-                };
-                self.resolve_external_module(file, written, SpecifierSite::default());
+                self.resolve_required_module(file, argument, spec);
             }
         }
+    }
+
+    /// `resolveExternalModuleName` for `argument`, the argument of `require(spec)`: whether the
+    /// module is found.
+    fn resolve_required_module(&mut self, file: FileId, argument: ExprId, spec: Atom) -> bool {
+        let written = SpecifierUse {
+            spec,
+            pos: self.hir(file)[argument].pos,
+            kind: SpecifierKind::RequireCall,
+            mode: self.require_resolution_mode(file, spec),
+        };
+        self.resolve_external_module(file, written, SpecifierSite::default())
+    }
+
+    /// The same for the module that the variable declaration or the binding element with the name
+    /// `name` is initialized to (`getTargetOfImportEqualsDeclaration`, `getExternalModuleMember`).
+    pub(super) fn resolve_module_required_by(&mut self, file: FileId, name: PatId) -> bool {
+        let PatParent::Var(decl) = root_declaration(self.bound(file), name) else {
+            return false;
+        };
+        let Some((argument, spec)) = self.external_module_require_argument(file, decl) else {
+            return false;
+        };
+        // The loader only resolves the specifiers that the binder collected.
+        self.bound(file).specifiers.contains(&spec)
+            && self.resolve_required_module(file, argument, spec)
     }
 
     /// What `checkImportCallExpression` does with `options`, the second argument.
@@ -598,8 +659,8 @@ impl Checker<'_, '_> {
         }
         let export_star = self.export_star_past_a_default(module);
         let related = export_star.map(|at| self.new_diagnostic(at, 1195, &[]));
-        let at = self.place_of_token(file, import.default_pos);
-        self.error_at(at, 1192, &[Arg::Sym(module)])
+        let end = self.end_of_identifier_at(file, import.default, import.default_pos);
+        self.error_at((file, import.default_pos, end), 1192, &[Arg::Sym(module)])
             .related_information
             .extend(related);
     }
@@ -638,7 +699,7 @@ impl Checker<'_, '_> {
             }
             // `reportNonExportedMember`
             (2459 | 2460, _) => {
-                let local = self.local_of_module(module, name);
+                let local = self.files().local_of_module(module, name);
                 let declarations = local.map(|local| self.files().decls_of(local));
                 for (i, &(of, decl)) in declarations.iter().flat_map(|it| it.iter()).enumerate() {
                     if let Some(place) = self.error_place_of_declaration(of, decl) {
@@ -663,21 +724,6 @@ impl Checker<'_, '_> {
         };
         let at = self.place_of_token(from, start);
         self.error_at(at, code, args).related_information = related;
-    }
-
-    /// `moduleSymbol.ValueDeclaration.Locals()[name]`: a local declaration of the file, or of the
-    /// first `declare module "m"`.
-    fn local_of_module(&self, module: Sym, name: Atom) -> Option<Sym> {
-        let files = self.files();
-        let &(of, decl) = files.decls_of(module).first()?;
-        let bound = files.bound(of);
-        let scope = match decl {
-            Decl::File => 0,
-            Decl::Module(m) => bound.module_scope[m.idx()].idx(),
-            _ => return None,
-        };
-        let local = bound.lookup(bound.scopes.get(scope)?.locals, name)?;
-        Some(files.sym(of, local))
     }
 
     /// `reportNonDefaultExport`: the first `export *` of `module` that targets a module with a
@@ -781,27 +827,22 @@ impl Checker<'_, '_> {
         if files.export(module, known::default).is_some() {
             return (2614, None);
         }
-        let Some(local) = self.local_of_module(module, name) else {
+        let Some(local) = files.local_of_module(module, name) else {
             return (2305, None);
         };
-        let local = self.merged_resolved_symbol(local);
-        let own = files.exports(module);
+        // `getSymbolIfSameReference`
+        let is_local = |c: &mut Self, exported: Sym| {
+            c.merged_resolved_symbol(exported) == c.merged_resolved_symbol(local)
+        };
         let Some(equals) = files.export(module, known::export_equals) else {
+            let own = files.exports(module);
             let mut own = own.iter();
-            return match own.find(|&&(_, e)| self.merged_resolved_symbol(e) == local) {
+            return match own.find(|&&(_, exported)| is_local(self, exported)) {
                 Some(&(_, exported)) => (2460, Some(exported)),
                 None => (2459, None),
             };
         };
-        // `bindCommonJSTypeExports`: alongside exported types or namespaces, `export =` is also a
-        // namespace that contains them, and no longer aliases its target.
-        let is_more_than_an_alias = own.iter().any(|&(other, s)| {
-            other != known::export_equals
-                && files
-                    .flags(s)
-                    .intersects(SymFlags::TYPE | SymFlags::NAMESPACE)
-        });
-        let code = if is_more_than_an_alias || self.merged_resolved_symbol(equals) != local {
+        let code = if !is_local(self, equals) {
             2305
         } else if files.options.module >= crate::resolve::ModuleKind::Es2015 {
             2595
@@ -849,7 +890,7 @@ impl Checker<'_, '_> {
                 let hint = self.module_not_found_hint(text, atoms.bytes(package), alternate);
                 Reported::new(at, hint.code, hint.args)
             });
-        let args = [Arg::Atom(spec), Arg::Atom(path)];
+        let args = [Arg::Atom(spec), Arg::Path(atoms.bytes(path))];
         let diagnostic = self.new_diagnostic_chain(error_info, at, 7016, &args);
         self.add_diagnostic(diagnostic);
     }
@@ -927,6 +968,9 @@ impl Checker<'_, '_> {
     /// is assumed to be initialized at the start of its control flow container
     /// (`assumeInitialized`).
     pub(super) fn assumes_initialized(&self, file: FileId, e: ExprId, declared: TypeId) -> bool {
+        // FOR SPEED: it is evaluated last, unless the answer depends on what has been asked before.
+        let is_never_initialized = (self.has_order_dependent_assignment_marks(file))
+            .then(|| self.is_never_initialized(file, e));
         let is_automatic = self.is_automatic_type(declared);
         if !is_automatic
             && (!self.p.files.options.strict_null_checks
@@ -964,7 +1008,6 @@ impl Checker<'_, '_> {
         {
             return true;
         }
-        let symbol = bound.expr_symbol[e.idx()];
         // `isSameScopedBindingElement`. FOR SPEED: nodes in the pattern are numbered before the
         // initializer.
         if decl.pat != pat && e.0 < decl.init.0 {
@@ -982,13 +1025,25 @@ impl Checker<'_, '_> {
         {
             return false;
         }
-        // `isNeverInitialized`: its assignments by the time this code runs are unknown, unless it
-        // is never assigned.
-        !(decl.pat == pat
+        // Its assignments by the time this code runs are unknown, unless it is never assigned.
+        !is_never_initialized.unwrap_or_else(|| self.is_never_initialized(file, e))
+    }
+
+    /// `isNeverInitialized` of `checkIdentifier`, for the identifier `e`.
+    fn is_never_initialized(&self, file: FileId, e: ExprId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let Some((pat, d)) = self.value_declaration_of_variable(file, e) else {
+            return false;
+        };
+        let (decl, stmt) = (&hir[d], bound.var_stmt[d.idx()]);
+        decl.pat == pat
+            && stmt.is_some()
+            && matches!(hir[stmt].kind, StmtKind::Var(_))
             && !self.declares_loop_variable(file, stmt)
             && decl.init.is_none()
+            && !decl.flags.contains(Flags::DEFINITE)
             && self.is_mutable_local_variable_declaration(file, d)
-            && !self.is_symbol_assigned_definitely(file, symbol))
+            && !self.is_symbol_assigned_definitely(file, bound.expr_symbol[e.idx()])
     }
 
     /// `isMutableLocalVariableDeclaration`
@@ -1039,10 +1094,9 @@ impl Checker<'_, '_> {
             {
                 continue;
             }
-            // The key that identifies `this.name` or `this[key]` where the constructor assigns to
-            // it, and `getTypeOfSymbol` of the declaration: the declared type, with `this`
-            // uninstantiated.
-            let (key, ty) = match self.declared_member_name(file, member.key) {
+            // The name of the symbol, and `getTypeOfSymbol` of the declaration: the declared type,
+            // with `this` uninstantiated.
+            let (name, ty) = match self.declared_member_name(file, member.key) {
                 Some(name) => {
                     let sym = self.class_sym(file, c);
                     let instance = self.declared_type(sym);
@@ -1061,13 +1115,9 @@ impl Checker<'_, '_> {
                     };
                     (Some(name), ty)
                 }
-                None => {
-                    // `[k]: T` is subject to the check whatever `k` is.
-                    let PropKey::Computed(k) = member.key else {
-                        continue;
-                    };
-                    (self.access_key(file, k), None)
-                }
+                // `[k]: T` is subject to the check whatever `k` is.
+                None if matches!(member.key, PropKey::Computed(_)) => (None, None),
+                None => continue,
             };
             let ty = match ty {
                 Some(ty) => ty,
@@ -1086,11 +1136,15 @@ impl Checker<'_, '_> {
             {
                 continue;
             }
-            // `isPropertyInitializedInConstructor`
-            let is_assigned = match (constructor, key) {
-                (Some(func), Some(key)) => self.is_assigned_in_constructor(file, func, key, ty),
-                _ => false,
-            };
+            // `isPropertyInitializedInConstructor`: the reference is `this.name`, or `this[k]` for
+            // the name `[k]`, whatever symbol that declares.
+            let is_assigned = constructor.is_some_and(|func| {
+                let key = match member.key {
+                    PropKey::Computed(k) => self.access_key(file, k),
+                    _ => name.map(super::flow::AccessKey::Name),
+                };
+                key.is_some_and(|key| self.is_assigned_in_constructor(file, func, key, ty))
+            });
             if !is_assigned {
                 // `DeclarationNameToString`
                 let (start, end) = (member.name_pos, self.end_of_member_name(file, m));
@@ -1224,7 +1278,7 @@ impl Checker<'_, '_> {
     ///
     /// Only for the file being checked. No other task stores the entry of an unresolved identifier (`is_noted_for_check_file`), so
     /// `check_file` of another file evaluates its own identifiers itself, before its last call of this function.
-    fn report_unresolved_identifiers(&mut self) {
+    pub(super) fn report_unresolved_identifiers(&mut self) {
         while !self.unresolved_identifiers.is_empty() {
             let mut unresolved = std::mem::take(&mut self.unresolved_identifiers);
             unresolved.retain(|u| Some(u.0) == self.task.file);
@@ -1306,9 +1360,19 @@ impl Checker<'_, '_> {
             Ok(_) => {
                 let message = self.get_cannot_find_name_diagnostic_for_name(file, location, name);
                 let meaning = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
-                self.on_failed_to_resolve_symbol(
-                    file, location, None, scope, name, meaning, message,
-                );
+                // `getTargetOfAliasLikeExpression` has `checkExpressionCached` run while aliases
+                // are in progress, and a second time if that interrupts the first.
+                let lookups = self.files().failed_lookups_of(file, e);
+                let runs = lookups.iter().map(|it| it.aliases_in_progress);
+                for in_progress in runs.chain(lookups.is_empty().then_some(&[][..])) {
+                    let outer = self.alias_targets_in_progress.len();
+                    self.alias_targets_in_progress
+                        .extend_from_slice(in_progress);
+                    self.on_failed_to_resolve_symbol(
+                        file, location, None, scope, name, meaning, message,
+                    );
+                    self.alias_targets_in_progress.truncate(outer);
+                }
             }
         }
     }
@@ -1359,7 +1423,6 @@ impl Checker<'_, '_> {
             || options.verbatim_module_syntax
             || !matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
             || hir.is_js
-            || module.is_lib
             || module.is_from_external_library)
     }
 
@@ -1547,10 +1610,14 @@ impl Checker<'_, '_> {
             return;
         }
         // `result == nil`
-        if self
-            .files()
-            .resolve_name(file, scope, name, meaning)
-            .is_none()
+        let is_arguments_symbol = name == known::arguments
+            && meaning.intersects(SymFlags::VARIABLE)
+            && (self.bound(file)).is_in_function_with_arguments(self.hir(file), scope);
+        if !is_arguments_symbol
+            && self
+                .files()
+                .resolve_name(file, scope, name, meaning)
+                .is_none()
             && self.check_and_report_error_for_missing_prefix(file, location, name)
         {
             return;
@@ -1740,11 +1807,18 @@ impl Checker<'_, '_> {
             }
         }
         // `checkAndReportErrorForUsingValueAsType`
-        if meaning.intersects(SymFlags::TYPE.difference(SymFlags::NAMESPACE))
-            && let Some(symbol) = resolve_name(SymFlags::VALUE.difference(SymFlags::TYPE))
-        {
-            let flags = self.get_symbol_flags(symbol);
-            if flags != SymFlags::all() && !flags.intersects(SymFlags::NAMESPACE) {
+        if meaning.intersects(SymFlags::TYPE.difference(SymFlags::NAMESPACE)) {
+            // `argumentsSymbol`, which is in no table, is a property.
+            let flags = if name == known::arguments
+                && (self.bound(file)).is_in_function_with_arguments(hir, scope)
+            {
+                Some(SymFlags::PROPERTY)
+            } else {
+                resolve_name(SymFlags::VALUE.difference(SymFlags::TYPE))
+                    .map(|symbol| self.get_symbol_flags(symbol))
+            };
+            if flags.is_some_and(|it| it != SymFlags::all() && !it.intersects(SymFlags::NAMESPACE))
+            {
                 self.error_at(at, 2749, &[reported]);
                 return;
             }
@@ -2013,7 +2087,7 @@ bun_core::comptime_string_map! {
 
 /// Whether `GetSpellingSuggestion` would suggest `candidate` for `name` if it were the only
 /// candidate.
-pub(super) fn is_close(name: &[u8], candidate: &[u8]) -> bool {
+pub(crate) fn is_close(name: &[u8], candidate: &[u8]) -> bool {
     let only = std::iter::once(candidate);
     get_spelling_suggestion(name, only, get_candidate_name, |a, b| a.cmp(b)).is_some()
 }
@@ -2082,12 +2156,14 @@ fn similar_in_scope_and_where(
     let files = c.files();
     let name = (name, c.atoms().bytes(name));
     let among_globals = std::mem::take(&mut c.suggestions_among_globals);
+    // `try_resolve_alias` finds nothing for an alias in progress.
+    let is_function_of_candidate = c.alias_targets_in_progress.is_empty();
     let suggested = files.suggested_symbol_for_nonexistent_symbol(
         location,
         name,
         meaning,
         c,
-        Some(&among_globals),
+        is_function_of_candidate.then_some(&among_globals),
     );
     c.suggestions_among_globals = among_globals;
     // `Resolve` returns nil where the name may not be used.
@@ -2110,9 +2186,13 @@ impl SuggestionLookup for Checker<'_, '_> {
 
     fn try_resolve_alias(&mut self, candidate: Sym) -> Option<SymFlags> {
         let files = self.files();
+        // `findResolutionCycleStartIndex(symbol, TypeSystemPropertyNameAliasTarget) >= 0`
+        if self.alias_targets_in_progress.contains(&candidate) {
+            return None;
+        }
         // As for `get_symbol_flags`: the symbol tables have the target, unless types are needed.
         if let Some(target) = files.resolve_alias(candidate)
-            && files.combined_symbol(candidate).is_none()
+            && !files.has_symbol_to_combine(candidate)
         {
             return Some(files.flags(target));
         }
@@ -2326,7 +2406,7 @@ fn entity_name_text(c: &Checker<'_, '_>, file: FileId, e: ExprId) -> Vec<u8> {
 }
 
 /// `TokenToString` of the operator of `a op b`, or of `a op= b`.
-fn operator_text(op: BinOp, is_assignment: bool) -> Vec<u8> {
+pub(super) fn operator_text(op: BinOp, is_assignment: bool) -> Vec<u8> {
     let text: &[u8] = match op {
         BinOp::Add => b"+",
         BinOp::Sub => b"-",
@@ -2404,7 +2484,7 @@ pub(super) fn can_be_equal(c: &mut Checker<'_, '_>, left: TypeId, right: TypeId)
 
 impl Checker<'_, '_> {
     /// `isGlobalNaN`
-    fn is_global_nan(&self, file: FileId, e: ExprId) -> bool {
+    fn is_global_nan(&mut self, file: FileId, e: ExprId) -> bool {
         let ExprKind::Ident(name) = self.hir(file)[e].kind else {
             return false;
         };
@@ -2444,6 +2524,7 @@ impl Checker<'_, '_> {
             // value. A name that none of them declares is reported as missing on the type of the
             // right operand as it is.
             ExprKind::PrivateIdentifier(name) if !is_parenthesized(hir, left) => {
+                self.note_external_emit_helpers_check(file, left);
                 if !self.bound(file).private_class.contains_key(&left)
                     && !self.enclosing_classes(file, left).is_empty()
                 {

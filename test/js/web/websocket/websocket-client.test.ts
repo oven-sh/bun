@@ -118,11 +118,11 @@ describe("WebSocket", () => {
           expect(data).toBeInstanceOf(type);
           ws.ping();
         });
-        ws.addEventListener("ping", ({ data }) => {
+        ws.addEventListener("ping", ({ data }: any) => {
           expect(data).toBeInstanceOf(type);
           ws.pong();
         });
-        ws.addEventListener("pong", ({ data }) => {
+        ws.addEventListener("pong", ({ data }: any) => {
           expect(data).toBeInstanceOf(type);
           done();
         });
@@ -137,7 +137,7 @@ describe("WebSocket", () => {
         });
         ws.addEventListener("message", ({ data }) => {
           if (typeof data === "string") {
-            expect(data).toBe(message);
+            expect(data).toBe(message as string);
           } else {
             expect(data).toEqual(Buffer.from(bytes));
           }
@@ -151,7 +151,7 @@ describe("WebSocket", () => {
       ws.addEventListener("open", () => {
         ws.ping();
       });
-      ws.addEventListener("ping", ({ data }) => {
+      ws.addEventListener("ping", ({ data }: any) => {
         expect(data).toBeInstanceOf(Buffer);
         done();
       });
@@ -161,7 +161,7 @@ describe("WebSocket", () => {
         ws.addEventListener("open", () => {
           ws.ping(message);
         });
-        ws.addEventListener("ping", ({ data }) => {
+        ws.addEventListener("ping", ({ data }: any) => {
           expect(data).toEqual(Buffer.from(bytes));
           done();
         });
@@ -173,7 +173,7 @@ describe("WebSocket", () => {
       ws.addEventListener("open", () => {
         ws.pong();
       });
-      ws.addEventListener("pong", ({ data }) => {
+      ws.addEventListener("pong", ({ data }: any) => {
         expect(data).toBeInstanceOf(Buffer);
         done();
       });
@@ -183,7 +183,7 @@ describe("WebSocket", () => {
         ws.addEventListener("open", () => {
           ws.pong(message);
         });
-        ws.addEventListener("pong", ({ data }) => {
+        ws.addEventListener("pong", ({ data }: any) => {
           expect(data).toEqual(Buffer.from(bytes));
           done();
         });
@@ -309,7 +309,7 @@ describe.concurrent("WebSocket ping()/pong() payload size limit", () => {
       sock.on("error", () => {});
       let buf = Buffer.alloc(0);
       let shaken = false;
-      sock.on("data", chunk => {
+      sock.on("data", (chunk: Buffer) => {
         buf = Buffer.concat([buf, chunk]);
         if (!shaken) {
           const i = buf.indexOf("\r\n\r\n");
@@ -403,11 +403,11 @@ describe.concurrent("WebSocket ping()/pong() payload size limit", () => {
       expectRangeError(() => ws.ping(multibyte126), 126);
       expectRangeError(() => ws.ping(new Uint8Array(126)), 126);
       expectRangeError(() => ws.ping(new ArrayBuffer(200)), 200);
-      expectRangeError(() => ws.ping(new Blob([new Uint8Array(130)])), 130);
+      expectRangeError(() => ws.ping(new Blob([new Uint8Array(130)]) as any), 130);
       expectRangeError(() => ws.pong(s126), 126);
       expectRangeError(() => ws.pong(new Uint8Array(400)), 400);
       expectRangeError(() => ws.pong(new ArrayBuffer(126)), 126);
-      expectRangeError(() => ws.pong(new Blob([new Uint8Array(200)])), 200);
+      expectRangeError(() => ws.pong(new Blob([new Uint8Array(200)]) as any), 200);
 
       // socket must still be usable after the RangeErrors
       expect(ws.readyState).toBe(WebSocket.OPEN);
@@ -597,7 +597,7 @@ describe.concurrent("WebSocket ping()/pong() payload size limit", () => {
       const { promise: gotPing, resolve: onServerPing, reject: failPing } = Promise.withResolvers<Buffer>();
       gotPing.catch(() => {});
       ws.binaryType = "nodebuffer";
-      ws.addEventListener("ping", e => onServerPing(e.data as Buffer));
+      ws.addEventListener("ping", e => onServerPing((e as MessageEvent).data as Buffer));
       ws.addEventListener("close", e => failPing(new Error(`closed ${e.code} before ping`)));
       await openOrFail(ws);
 
@@ -665,7 +665,7 @@ describe("WebSocket handshake Connection header token list", () => {
 
 async function listen(): Promise<URL> {
   const pathname = path.join(import.meta.dir, "./websocket-server-echo.mjs");
-  const { promise, resolve, reject } = Promise.withResolvers();
+  const { promise, resolve, reject } = Promise.withResolvers<URL>();
   server = spawn({
     cmd: [nodeExe() ?? bunExe(), pathname],
     cwd: import.meta.dir,

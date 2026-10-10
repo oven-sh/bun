@@ -117,7 +117,7 @@ test.each(["split", "coalesced"] as const)(
       let buffered = Buffer.alloc(0);
       let authed = false;
       socket.write(mysqlHandshakeV10({ authPlugin: "caching_sha2_password" }));
-      socket.on("data", chunk => {
+      socket.on("data", (chunk: Buffer) => {
         buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
           if (!authed) {
             // HandshakeResponse41 -> warm auth cache: fast_auth_success then OK.
@@ -178,7 +178,7 @@ test("caching_sha2_password scramble hashes the double-SHA256 before the nonce",
     let buffered = Buffer.alloc(0);
     let authed = false;
     socket.write(mysqlHandshakeV10({ authPlugin: "caching_sha2_password" }));
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
         if (!authed) {
           authed = true;
@@ -235,7 +235,7 @@ test("public key retrieval refusal names allowPublicKeyRetrieval and TLS as reme
     let buffered = Buffer.alloc(0);
     let authed = false;
     socket.write(mysqlHandshakeV10({ authPlugin: "caching_sha2_password" }));
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), seq => {
         if (!authed) {
           // HandshakeResponse41 -> demand full authentication.

@@ -74,13 +74,13 @@ Your editor doesn't use `bun check`. It runs its own copy of TypeScript. To keep
 
 ## Replace `tsc`
 
-`bun check` reads the same `tsconfig.json` as `tsc`, so most projects only change the command.
+`bun check` reads the same `tsconfig.json` as `tsc` and checks the same files, so most projects only change the command.
 
 | Instead of                           | Run                            |
 | ------------------------------------ | ------------------------------ |
 | `tsc --noEmit`                       | `bun check`                    |
 | `tsc --noEmit -p packages/server`    | `bun check -p packages/server` |
-| `tsc -b`                             | `bun check`                    |
+| `tsc -b`                             | `bun check -b`                 |
 | `tsc --noEmit && bun src/index.ts`   | `bun --check src/index.ts`     |
 | `tsc --noEmit && bun test`           | `bun test --check`             |
 | `tsc --noEmit && bun build ./app.ts` | `bun build --check ./app.ts`   |
@@ -129,6 +129,8 @@ See [TypeScript 6 and 7](/typescript-6) for the `tsconfig.json` that Bun recomme
 ## Run in CI
 
 Install your dependencies, then run `bun check`. A type error fails the job.
+
+If your projects are connected by `references`, run [`bun check -b`](#every-project) to check all of them.
 
 ### GitHub Actions
 
@@ -242,7 +244,7 @@ Bun checks each file with the same `tsconfig.json` your editor uses for it:
 - If that `tsconfig.json` does not include the file but has `references`, Bun uses the referenced project that includes the file. The `tsconfig.json` from `create vite` works this way.
 - If no project includes the file, Bun still checks it, with the options of the nearest `tsconfig.json`.
 
-A directory means the files of the project inside that directory, so `bun check .` is the same as `bun check`. If the project has no files there, Bun checks every file in the directory that `exclude` does not rule out. An example is `bun check scripts` when `include` is `["src"]`.
+A directory means the files of the project inside that directory. If the project has no files there, Bun checks every file in the directory that `exclude` does not rule out. An example is `bun check scripts` when `include` is `["src"]`.
 
 ### Without a `tsconfig.json`
 
@@ -267,24 +269,54 @@ Bun uses the compiler options that [`bun init`](/runtime/templating/init) writes
 
 ## Monorepos
 
-Run `bun check` once at the root. How Bun finds the projects depends on the root `tsconfig.json`.
+`bun check` checks the project that `tsc` checks in the same directory: the one with the nearest `tsconfig.json`.
 
-**With `references` in the root `tsconfig.json`**, `bun check` follows them, like `tsc -b`. Bun checks each project with its own options, and prints the errors one project at a time, in build order. If two projects include the same file, Bun checks it in both and prints its errors once for each project.
+### One package
 
-Bun reads a referenced project from its source files. You don't have to build it first, and Bun does not write `.d.ts` or `.tsbuildinfo` files.
+Run `bun check` in the package, or name it from anywhere.
 
-**Without a root `tsconfig.json`**, `bun check` checks every TypeScript file below the current directory. Bun checks each file once, with the nearest `tsconfig.json`. Files with no `tsconfig.json` get the [default compiler options](#without-a-tsconfigjson).
+```bash terminal icon="terminal"
+bun check -p packages/web
+```
+
+If the package has `references`, Bun reads the referenced projects from their source files. You don't have to build them first, and Bun does not write `.d.ts` or `.tsbuildinfo` files. Bun reports the errors of the package only. Compiler options on the command line apply to the package only.
+
+### Every project
+
+Use `-b` to follow `references`, like `tsc -b`.
+
+```bash terminal icon="terminal"
+bun check -b
+```
+
+Bun checks each project with its own options, and prints the errors one project at a time, in build order. If two projects include the same file, Bun checks it in both and reports its errors for both, like `tsc -b`.
 
 ```txt
 packages/web/src/index.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.
 Found 1 error in 1 file, checked 2 files across 2 projects [21.00ms]
 ```
 
-To check one package, name it:
+### A `tsconfig.json` with nothing but `references`
 
-```bash terminal icon="terminal"
-bun check packages/web
+The `tsconfig.json` from `create vite` has `"files": []` and `references`. `tsc` without `-b` checks nothing there and succeeds. `bun check` follows the references, and says so:
+
+```txt
+note: tsconfig.json has no files of its own. Checked the projects it references, like tsc -b.
 ```
+
+### No `tsconfig.json` at the root
+
+If no `tsconfig.json` is in the current directory or above it, but some are below it, `bun check` does not guess which ones you mean. It lists them and stops.
+
+```txt
+error: No tsconfig.json in '/home/me/app' or above it. Below it:
+  packages/server/tsconfig.json
+  packages/web/tsconfig.json
+To check one: bun check -p packages/server/tsconfig.json
+To check everything below this directory: bun check .
+```
+
+`bun check .` checks every TypeScript file below the current directory. Bun checks each file once, with the nearest `tsconfig.json`. Files with no `tsconfig.json` get the [default compiler options](#without-a-tsconfigjson).
 
 To run the `typecheck` script of every workspace package, use [`--filter`](/pm/filter):
 
@@ -588,7 +620,7 @@ If `bun check` and `tsc` from TypeScript 7 report different errors, that is a bu
 
 ## Compiler options as flags
 
-Every compiler option works as a flag, as it does for `tsc`. A flag overrides `tsconfig.json`, including in referenced projects. Use a flag to try a stricter option before you commit to it.
+Every compiler option works as a flag, as it does for `tsc`. A flag overrides `tsconfig.json`. Use a flag to try a stricter option before you commit to it.
 
 ```bash terminal icon="terminal"
 bun check --noUncheckedIndexedAccess
@@ -597,6 +629,12 @@ bun check --target es2022
 ```
 
 Option names are not case-sensitive. `--target=es2022` is the same as `--target es2022`.
+
+A flag applies to the projects that `bun check` reports. With [`-b`](#every-project), that includes every referenced project.
+
+```bash terminal icon="terminal"
+bun check -b --strict
+```
 
 ## Differences from `tsc`
 
@@ -609,14 +647,18 @@ bun -p process.versions.typescript
 These differences are intentional:
 
 - **`bun check` only checks.** It does not write JavaScript, `.d.ts`, source map, or `.tsbuildinfo` files, even if `declaration` or `incremental` is on. Use [`bun build`](/bundler) to produce JavaScript and `tsc` to produce declaration files.
+- **Referenced projects don't have to be built.** `tsc` without `-b` reads the `.d.ts` files that an earlier build wrote, and reports TS6305 if there are none. `bun check` reads the source files.
+- **Compiler options work with `-b`.** `tsc -b --strict` reports TS5094. `bun check -b --strict` applies the option to every project.
+- **A `tsconfig.json` with nothing but `references` is followed.** `tsc` without `-b` [checks nothing](#a-tsconfigjson-with-nothing-but-references) there.
+- **Paths work next to a `tsconfig.json`.** `tsc src/index.ts` reports TS5112 if there is a `tsconfig.json`. `bun check src/index.ts` [checks the file with it](#some-files-or-directories).
 - **There is no `bun check --watch`.** To check again on every change, use [`bun --watch --check`](#watch-mode).
 - **The order of files does not change the errors.** `tsc` collects the errors of a file right after it checks that file, so it drops an error that a later file raises in an earlier one. `bun check` reports it.
-- **A misspelled compiler option gets a suggestion.** For `"strct": true`, `bun check` reports `TS5025: Unknown compiler option 'strct'. Did you mean 'strict'?`. `tsc` reports `TS5023: Unknown compiler option 'strct'.`
+- **A file that is too long affects no other file.** After TS2563 for the top-level code of one file, `tsc` stops following the types of variables and parameters in the files it checks next, so it drops errors there and reports false ones. `bun check` starts every file afresh.
 - **The `lib.*.d.ts` files are built in.** An error or a declaration in one of them has a path such as `bundled:///libs/lib.dom.d.ts`, which is not a file on your disk.
 - **A note tells you when dependencies are missing.** If an import fails because a package in `package.json` is not installed, `bun check` adds a line that names the `package.json` and says how to run `bun install` for it.
 - **A note tells you when type checking did not run.** If a syntax error or an invalid option stops the check, `bun check` adds a line that says [how many files it did not check](#stopped-before-type-checking).
 - **Language service plugins do not load.** `bun check` ignores the `plugins` compiler option.
-- **Some informational options have no effect.** `listFiles`, `listFilesOnly`, and `traceResolution` work. Others, such as `explainFiles`, do nothing.
+- **Some informational options have no effect.** `listFiles`, `listFilesOnly`, `explainFiles`, and `traceResolution` work. Others, such as `diagnostics`, do nothing.
 
 `bun check` finds packages in `node_modules`, like `tsc`. It does not support Yarn Plug'n'Play. In a Yarn project, set `nodeLinker: node-modules` in `.yarnrc.yml`.
 
@@ -629,6 +671,7 @@ bun check [flags] [...files or directories]
 | Flag                     | Description                                                         |
 | ------------------------ | ------------------------------------------------------------------- |
 | `-p`, `--project <path>` | Path to a `tsconfig.json` or its directory                          |
+| `-b`, `--build`          | Check the projects in `references` too, like `tsc -b`               |
 | `--pretty`               | Show source code around each error. Default in a terminal           |
 | `--no-pretty`            | One line per error, like `tsc --pretty false`. Default when piped   |
 | `--all`                  | Show every error. Without it, identical errors are grouped above 50 |

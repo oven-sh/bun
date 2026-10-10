@@ -254,6 +254,7 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
                             flags: PropFlags::empty(),
                             source: PropSource::Literal(file, p),
                             mapper: MapperId::IDENTITY,
+                            name_type: TypeId::UNRESOLVED,
                         })
                     },
                 )
@@ -273,6 +274,7 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
                         flags: PropFlags::empty(),
                         source: PropSource::Symbol(files.sym(file, property)),
                         mapper: MapperId::IDENTITY,
+                        name_type: TypeId::UNRESOLVED,
                     }));
                 }
                 let symbol = bound.pat_symbol[pat.idx()];
@@ -499,7 +501,7 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
                     } if bound.is_in_type_query(e) => Some(module),
                     _ => None,
                 };
-                match self.get_property_of_type(ty, name) {
+                match self.get_property_of_type(access.apparent, name) {
                     Some(found) => Some(found),
                     None if self.c.is_private_name(name) => None,
                     None if queried_module.is_some() => queried_module
@@ -712,6 +714,7 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
             flags: PropFlags::empty(),
             source: PropSource::Symbol(self.c.symbol_of_member(file, member)),
             mapper: MapperId::IDENTITY,
+            name_type: TypeId::UNRESOLVED,
         })
     }
 

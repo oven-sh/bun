@@ -339,7 +339,7 @@ test("postgres client refuses protocol messages received in place of the SSLRequ
   // be accepted while the SSLRequest answer is pending.
   const password = "hunter2-must-not-appear-on-the-wire";
 
-  let preTlsClientBytes = Buffer.alloc(0);
+  let preTlsClientBytes: Buffer = Buffer.alloc(0);
   let answeredSslRequest = false;
   const plaintextAfterAuthRequest: Buffer[] = [];
   const clientWroteToPlaintextSocket = Promise.withResolvers<void>();
@@ -348,7 +348,7 @@ test("postgres client refuses protocol messages received in place of the SSLRequ
   const { server, port } = await listeningServer(socket => {
     sockets.add(socket);
     socket.on("error", () => {});
-    socket.on("data", data => {
+    socket.on("data", (data: Buffer) => {
       if (!answeredSslRequest) {
         preTlsClientBytes = Buffer.concat([preTlsClientBytes, data]);
         if (preTlsClientBytes.length < pgSSLRequest().length) return;
@@ -406,7 +406,7 @@ test("postgres client aborts the connection when the server declines TLS that wa
   const password = "hunter2-must-not-appear-on-the-wire";
 
   for (const tls of [true, { rejectUnauthorized: false }] as const) {
-    let preTlsClientBytes = Buffer.alloc(0);
+    let preTlsClientBytes: Buffer = Buffer.alloc(0);
     let declinedTls = false;
     const plaintextAfterDecline: Buffer[] = [];
     const clientContinuedInPlaintext = Promise.withResolvers<void>();
@@ -415,7 +415,7 @@ test("postgres client aborts the connection when the server declines TLS that wa
     const { server, port } = await listeningServer(socket => {
       sockets.add(socket);
       socket.on("error", () => {});
-      socket.on("data", data => {
+      socket.on("data", (data: Buffer) => {
         if (!declinedTls) {
           preTlsClientBytes = Buffer.concat([preTlsClientBytes, data]);
           if (preTlsClientBytes.length < pgSSLRequest().length) return;
@@ -485,7 +485,7 @@ test.each(["idleTimeout", "maxLifetime"])(
         client.write(pgSSLResponse("S"));
         const upstream = net.connect((terminator.address() as net.AddressInfo).port, "127.0.0.1");
         upstream.on("error", () => {});
-        client.on("data", chunk => {
+        client.on("data", (chunk: Buffer) => {
           records = Buffer.concat([records, chunk]);
         });
         client.pipe(upstream).pipe(client);

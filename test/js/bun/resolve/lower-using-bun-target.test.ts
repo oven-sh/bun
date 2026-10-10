@@ -199,7 +199,7 @@ export const result = handle.val;
   });
 
   test("adjacent using declarations are not merged", () => {
-    const t = new Bun.Transpiler({ target: "bun", minify: { syntax: true } });
+    const t = new Bun.Transpiler({ target: "bun", minify: { syntax: true } } as Bun.TranspilerOptions);
     const out = t.transformSync(
       `function f() {
   using a = open();

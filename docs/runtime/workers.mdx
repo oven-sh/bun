@@ -227,6 +227,10 @@ Calling `worker.terminate()` makes the worker exit as soon as possible.
 
 A worker can terminate itself with `process.exit()`. This does not terminate the main process. Like in Node.js, `process.on('beforeExit', callback)` and `process.on('exit', callback)` are emitted on the worker thread, not on the main thread. Bun passes the exit code to the `"close"` event.
 
+### Process-wide state
+
+All workers share one operating system process with the main thread. A worker cannot change state that belongs to the whole process. In a worker, `process.chdir()`, `process.abort()`, `process.umask(mask)`, and the `process.setuid()` family throw `ERR_WORKER_UNSUPPORTED_OPERATION`. `process.umask()` without an argument still returns the current mask. Assigning `process.title` in a worker changes the title for that worker only. This matches Node.js `worker_threads` and applies to workers made with `Worker` and with `node:worker_threads`.
+
 ### `"close"`
 
 Bun emits the `"close"` event when a worker has been marked as terminated. The worker itself can take some time to fully exit. The `CloseEvent` contains the exit code passed to `process.exit()`, or 0 if it closed for another reason.

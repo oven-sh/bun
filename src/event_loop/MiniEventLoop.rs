@@ -462,10 +462,10 @@ mod tests {
     extern "C" fn us_wakeup_loop(loop_: *mut UwsLoop) {
         // SAFETY: only the test below reaches this, with its live `FakeLoop`.
         let fake = unsafe { &*loop_.cast::<FakeLoop>() };
-        while !fake.mini_freed.load(Ordering::Acquire) {
+        while !fake.mini_freed.load(Ordering::SeqCst) {
             std::thread::yield_now();
         }
-        fake.wakes.fetch_add(1, Ordering::Relaxed);
+        fake.wakes.fetch_add(1, Ordering::SeqCst);
     }
 
     struct Request {
@@ -500,7 +500,7 @@ mod tests {
 
         std::thread::scope(|scope| {
             scope.spawn(|| {
-                let mini = mini.load(Ordering::Relaxed);
+                let mini = mini.load(Ordering::SeqCst);
                 // SAFETY: this thread owns the loop until it frees it; the task it
                 // pops is `request.task`, which outlives the scope.
                 unsafe {
@@ -515,14 +515,14 @@ mod tests {
                     // The waiting pass returns here, with the poster still inside its call.
                     drop(Box::from_raw(mini));
                 }
-                fake.mini_freed.store(true, Ordering::Release);
+                fake.mini_freed.store(true, Ordering::SeqCst);
             });
 
             // SAFETY: the loop is live until the task is queued, which is all the
             // post requires; `request` outlives the scope.
             unsafe {
                 MiniEventLoop::enqueue_task_concurrent_with_extra_ctx::<Request, ()>(
-                    mini.load(Ordering::Relaxed),
+                    mini.load(Ordering::SeqCst),
                     &raw mut request,
                     run_on_owner,
                     core::mem::offset_of!(Request, task),
@@ -531,6 +531,6 @@ mod tests {
         });
 
         assert!(request.ran_on_owner);
-        assert_eq!(fake.wakes.load(Ordering::Relaxed), 1);
+        assert_eq!(fake.wakes.load(Ordering::SeqCst), 1);
     }
 }

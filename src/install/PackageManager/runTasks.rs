@@ -25,7 +25,7 @@ use super::{directories, enqueue};
 use crate::dependency::Behavior;
 use crate::isolated_install::installer as store_installer;
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _};
-use crate::lifecycle_script_runner::InstallCtx;
+use crate::lifecycle_script_runner::{InstallCtx, LifecycleScriptSubprocess};
 use crate::network_task::{Authorization, ForTarballError};
 use crate::package_manifest_map::Value as ManifestEntry;
 use bun_core::fmt::PathSep;
@@ -377,41 +377,11 @@ fn run_tasks_erased(
                 store_installer::Result::Blocked => {
                     installer.on_task_blocked(task.entry_id);
                 }
-                &store_installer::Result::RunScripts(list) => {
-                    let entry_id = task.entry_id;
-                    let node_id = installer.store.entries.items_node_id()[entry_id.get() as usize];
-                    let dep_id = installer.store.nodes.items_dep_id()[node_id.get() as usize];
-                    let dep = &installer.lockfile().buffers.dependencies[dep_id as usize];
-                    let optional = dep.behavior.contains(Behavior::OPTIONAL);
-                    // SAFETY: `list` is the per-entry scripts slot owned by
-                    // `store.entries.items_scripts()[entry_id]`; this Task is
-                    // its sole consumer (see Installer.rs Yield::RunScripts).
-                    let list_val = unsafe { (*list).clone() };
-                    // reshaped for borrowck — `Command::Context<'a>`
-                    // is `&'a mut ContextData`; reborrow instead of moving the
-                    // field out of `*installer`.
-                    let command_ctx: Command::Context<'_> = &mut *installer.command_ctx;
-                    // `installer.manager == manager` (same allocation,
-                    // see fn-signature note); call via the body shadow which is a
-                    // reborrow of `manager_ptr` — no extra unsafe alias needed.
-                    let spawn_res = manager.spawn_package_lifecycle_scripts(
-                        command_ctx,
-                        list_val,
-                        optional,
-                        false,
-                        Some(InstallCtx {
-                            entry_id,
-                            installer: installer_ptr,
-                        }),
-                    );
-                    if let Err(err) = spawn_res {
-                        // .monotonic is okay for the same reason as `.done`: we popped this
-                        // task from the `UnboundedQueue`, and the task is no longer running.
-                        installer.store.entries.items_step()[entry_id.get() as usize]
-                            .store(store_installer::Step::Done as u32, Ordering::Relaxed);
-                        installer
-                            .on_task_fail(entry_id, &store_installer::TaskError::RunScripts(err));
-                    }
+                store_installer::Result::RunScripts(_) => {
+                    // Queued, not spawned: the drain below enforces
+                    // `--concurrent-scripts` and keeps the spawn order FIFO
+                    // across ticks.
+                    installer.pending_lifecycle_scripts.push_back(task.entry_id);
                 }
                 store_installer::Result::Done => {
                     if Environment::CI_ASSERT {
@@ -425,6 +395,55 @@ fn run_tasks_erased(
                     installer
                         .on_task_complete(task.entry_id, store_installer::CompleteState::Success);
                 }
+            }
+        }
+
+        // `--concurrent-scripts=0` still reaches here as 0. With a limit of 0
+        // nothing would ever spawn and the install would never finish.
+        let max_concurrent_scripts = manager.options.max_concurrent_lifecycle_scripts.max(1);
+        // A script exit runs `handle_exit` inside the event loop tick that
+        // precedes this call, so the count is current here.
+        // .monotonic is okay because scripts are spawned and reaped on this thread.
+        while LifecycleScriptSubprocess::alive_count().load(Ordering::Relaxed)
+            < max_concurrent_scripts
+        {
+            let Some(entry_id) = installer.pending_lifecycle_scripts.pop_front() else {
+                break;
+            };
+            let node_id = installer.store.entries.items_node_id()[entry_id.get() as usize];
+            let dep_id = installer.store.nodes.items_dep_id()[node_id.get() as usize];
+            let dep = &installer.lockfile().buffers.dependencies[dep_id as usize];
+            let optional = dep.behavior.contains(Behavior::OPTIONAL);
+            let list = installer.store.entries.items_scripts()[entry_id.get() as usize]
+                .get()
+                .expect("a queued RunScripts entry has a scripts list");
+            // SAFETY: `list` is the per-entry scripts slot owned by
+            // `store.entries.items_scripts()[entry_id]`; this Task is
+            // its sole consumer (see Installer.rs Yield::RunScripts).
+            let list_val = unsafe { (*list).clone() };
+            // reshaped for borrowck — `Command::Context<'a>`
+            // is `&'a mut ContextData`; reborrow instead of moving the
+            // field out of `*installer`.
+            let command_ctx: Command::Context<'_> = &mut *installer.command_ctx;
+            // `installer.manager == manager` (same allocation,
+            // see fn-signature note); call via the body shadow which is a
+            // reborrow of `manager_ptr` — no extra unsafe alias needed.
+            let spawn_res = manager.spawn_package_lifecycle_scripts(
+                command_ctx,
+                list_val,
+                optional,
+                false,
+                Some(InstallCtx {
+                    entry_id,
+                    installer: installer_ptr,
+                }),
+            );
+            if let Err(err) = spawn_res {
+                // .monotonic is okay for the same reason as `.done`: we popped this
+                // task from the `UnboundedQueue`, and the task is no longer running.
+                installer.store.entries.items_step()[entry_id.get() as usize]
+                    .store(store_installer::Step::Done as u32, Ordering::Relaxed);
+                installer.on_task_fail(entry_id, &store_installer::TaskError::RunScripts(err));
             }
         }
     }

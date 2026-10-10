@@ -2362,8 +2362,15 @@ impl<'p, 's> Checker<'p, 's> {
             let mut prop = prop.clone_in(self.arena);
             match &mut prop.source {
                 PropSource::Type(t) | PropSource::Copy(t, ..) => *t = self.instantiate(*t, mapper),
-                // `instantiateSymbol` returns it itself.
-                &mut PropSource::Symbol(sym) if self.is_thisless_for_this_mapper(sym) => {}
+                // `instantiateSymbol` returns it itself. One that it has instantiated for a base
+                // type has a mapper.
+                PropSource::Symbol(_) if prop.flags.contains(PropFlags::THISLESS) => {}
+                &mut PropSource::Symbol(sym)
+                    if prop.mapper == MapperId::IDENTITY
+                        && self.is_thisless_for_this_mapper(sym) =>
+                {
+                    prop.flags |= PropFlags::THISLESS;
+                }
                 _ => {
                     if prop.mapper != composed.0 {
                         composed = (prop.mapper, self.compose(prop.mapper, mapper));
@@ -4890,7 +4897,10 @@ impl<'p, 's> Checker<'p, 's> {
             ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES | ObjectFlags::HAS_OTHER_INSTANTIATION;
         let is_instantiated = self.types().object_flags(base).intersects(is_changed)
             && match prop.source {
-                PropSource::Symbol(sym) => !self.is_thisless_for_this_mapper(sym),
+                PropSource::Symbol(sym) => {
+                    !prop.flags.contains(PropFlags::THISLESS)
+                        && !self.is_thisless_for_this_mapper(sym)
+                }
                 _ => true,
             };
         let ty = if is_instantiated {

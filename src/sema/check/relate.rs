@@ -5993,7 +5993,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `instantiateSymbol` returns it itself, in every type that inherits it.
         if let PropSource::Symbol(sym) = a.0.source
-            && self.is_thisless_for_this_mapper(sym)
+            && ((a.0.flags | b.0.flags).contains(PropFlags::THISLESS)
+                || self.is_thisless_for_this_mapper(sym))
         {
             return true;
         }

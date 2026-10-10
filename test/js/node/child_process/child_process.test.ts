@@ -28,6 +28,7 @@ import {
 import { getEventListeners, once, setMaxListeners } from "node:events";
 import net from "node:net";
 import os from "node:os";
+import { PassThrough } from "node:stream";
 import tls from "node:tls";
 import { promisify } from "node:util";
 import path from "path";
@@ -149,6 +150,78 @@ describe("ChildProcess.spawn()", () => {
       killed: true,
       errors: [],
     });
+  });
+});
+
+describe("ChildProcess stdio properties", () => {
+  const keys = ["stdin", "stdout", "stderr", "stdio", "connected"] as const;
+
+  it("read as undefined (false for connected) before spawn()", () => {
+    const proc = new ChildProcess();
+    expect(keys.map(key => [key, proc[key]])).toEqual([
+      ["stdin", undefined],
+      ["stdout", undefined],
+      ["stderr", undefined],
+      ["stdio", undefined],
+      ["connected", false],
+    ]);
+  });
+
+  it("read as undefined on ChildProcess.prototype", () => {
+    expect(keys.map(key => ChildProcess.prototype[key])).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it("can be assigned before spawn(), like node", () => {
+    const proc = new ChildProcess();
+    const replacements = {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      stdio: [new PassThrough(), new PassThrough(), new PassThrough()],
+      connected: true,
+    };
+    // This file is strict mode: a getter-only accessor makes this throw.
+    Object.assign(proc, replacements);
+    expect(keys.map(key => proc[key])).toEqual(keys.map(key => replacements[key]));
+    proc.connected = false;
+    expect(proc.connected).toBe(false);
+  });
+
+  it("spawn() replaces a stream assigned before it", async () => {
+    const proc = new ChildProcess();
+    const placeholder = new PassThrough();
+    proc.stdout = placeholder;
+    // @ts-ignore
+    proc.spawn({ file: bunExe(), args: [bunExe(), "-e", "console.log('hi')"], stdio: ["ignore", "pipe", "ignore"] });
+    expect(proc.stdout).not.toBe(placeholder);
+    expect(proc.stdio).toEqual([null, proc.stdout, null]);
+    const [chunks] = await Promise.all([proc.stdout!.toArray(), once(proc, "close")]);
+    expect(Buffer.concat(chunks).toString()).toBe("hi\n");
+  });
+
+  it("an IPC spawn() and disconnect() replace a connected value assigned before them", async () => {
+    const proc = new ChildProcess();
+    proc.connected = false;
+    // @ts-ignore
+    proc.spawn({
+      file: bunExe(),
+      args: [bunExe(), "-e", "process.on('message', () => {})"],
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+    });
+    expect(proc.connected).toBe(true);
+    proc.connected = true;
+    const disconnected = once(proc, "disconnect");
+    proc.disconnect();
+    expect(proc.connected).toBe(false);
+    await disconnected;
+    proc.kill();
+    await once(proc, "exit");
   });
 });
 

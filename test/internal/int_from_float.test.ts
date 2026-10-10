@@ -29,7 +29,7 @@ describe("bun.intFromFloat function", () => {
 
     const result = await Bun.build({
       entrypoints: [`${dir}/input.css`],
-      outdir: dir,
+      outdir: `${dir}/out`,
     });
 
     expect(result.success).toBe(true);
@@ -57,7 +57,7 @@ describe("bun.intFromFloat function", () => {
 
     const result = await Bun.build({
       entrypoints: [`${dir}/input.css`],
-      outdir: dir,
+      outdir: `${dir}/out`,
     });
 
     expect(result.success).toBe(true);
@@ -88,7 +88,7 @@ describe("bun.intFromFloat function", () => {
 
     const result = await Bun.build({
       entrypoints: [`${dir}/input.css`],
-      outdir: dir,
+      outdir: `${dir}/out`,
     });
 
     expect(result.success).toBe(true);
@@ -125,7 +125,7 @@ describe("bun.intFromFloat function", () => {
 
     const result = await Bun.build({
       entrypoints: [`${dir}/input.css`],
-      outdir: dir,
+      outdir: `${dir}/out`,
     });
 
     expect(result.success).toBe(true);

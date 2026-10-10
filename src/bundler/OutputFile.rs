@@ -229,6 +229,15 @@ impl OutputFile {
     }
 
     /// `dest_path` is relative to `root_dir`.
+    /// The path under the root that `write_to_disk` writes, when it writes one.
+    pub fn path_written_to_disk(&self) -> Option<&[u8]> {
+        match &self.value {
+            Value::Noop | Value::Saved(_) => None,
+            Value::Buffer { .. } => Some(&self.dest_path),
+            Value::Copy(op) => Some(&op.pathname),
+        }
+    }
+
     pub fn write_to_disk(&self, root_dir: Fd) -> Result<(), Error> {
         match &self.value {
             Value::Noop => {}

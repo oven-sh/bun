@@ -24,12 +24,14 @@ pub struct BuildResult {
     pub output_files: Vec<crate::options::OutputFile>,
     pub metafile: Option<Box<[u8]>>,
     pub metafile_markdown: Option<Box<[u8]>>,
+    /// Absolute paths of the build's on-disk inputs.
+    pub input_paths: crate::input_path_set::InputPathSet,
 }
 
 pub enum BundleV2Result {
     Pending,
     Err(crate::Error),
-    Value(BuildResult),
+    Value(Box<BuildResult>),
 }
 
 /// Originally, bake.DevServer required a separate bundling thread, but that was

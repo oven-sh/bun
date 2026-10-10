@@ -116,7 +116,7 @@ expectType(sql1.unsafe<{ id: string }[]>("SELECT * FROM users")).is<Bun.SQL.Quer
 expectType(sql1.file("query.sql", [1, 2, 3])).is<Bun.SQL.Query<any>>();
 
 sql1.reserve().then(reserved => {
-  reserved.release();
+  expectType(reserved.release()).is<Promise<void>>();
 
   expectType(reserved<[8]>`SELECT 8`).is<Bun.SQL.Query<[8]>>();
 });
@@ -131,6 +131,11 @@ sql1.begin(async txn => {
   txn.savepoint(async sp => {
     sp`SELECT 10`;
   });
+});
+
+// An array of queries that a savepoint callback returns resolves to the results of the queries.
+sql1.begin(async txn => {
+  expectType(await txn.savepoint(sp => [sp<[11]>`SELECT 11`, sp<[12]>`SELECT 12`])).is<([11] | [12])[]>();
 });
 
 // @ts-expect-error

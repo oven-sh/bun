@@ -863,6 +863,8 @@ await sql.begin(async tx => {
 });
 ```
 
+The `tx` client belongs to its transaction. A query that runs after Bun sent `COMMIT` or `ROLLBACK` never reaches the database: it rejects with `ERR_POSTGRES_CONNECTION_CLOSED` (`ERR_MYSQL_CONNECTION_CLOSED`, `ERR_SQLITE_CONNECTION_CLOSED`). Await every query inside the callback, or return the queries in an array. When one task of a `Promise.all` fails, the other tasks keep running: a query of theirs that runs after `ROLLBACK` rejects. If nothing awaits that query, the rejection is an unhandled rejection.
+
 ### Savepoints
 
 Savepoints create intermediate checkpoints within a transaction, so part of it can roll back without aborting the whole thing.
@@ -883,6 +885,8 @@ await sql.begin(async tx => {
   await tx`INSERT INTO audit_log (action) VALUES ('user_created')`;
 });
 ```
+
+The callback gets its own client (`sp` above). When the savepoint rolls back, a query on `sp` that runs after `ROLLBACK TO SAVEPOINT` never reaches the database: it rejects with `ERR_POSTGRES_CONNECTION_CLOSED`. After a savepoint that completed, `sp` works like `tx`. Run one savepoint of a client at a time: the database nests savepoints in the order it receives them. A savepoint callback can also return an array of queries, like a transaction callback.
 
 ### Distributed Transactions
 
@@ -1017,6 +1021,8 @@ try {
 } // Automatically released
 ```
 
+`release()` closes the client at once: a query on it that has not run yet rejects with `ERR_POSTGRES_CONNECTION_CLOSED` (`ERR_MYSQL_CONNECTION_CLOSED`), and so does a new `begin()`. Queries are lazy, so `await` each query before the release. A query that a `using` block returns without `await` runs after the release and rejects. If a transaction started with `reserved.begin()` is still running, that transaction keeps the connection until it commits or rolls back, and the pool gets the connection back after that. The promise that `release()` returns resolves at once, so you can await `release()` from inside such a transaction.
+
 When every connection is busy, `reserve()` waits until one frees up. Pass an `AbortSignal` to stop waiting: the promise rejects with `signal.reason` and no connection is taken from the pool. Aborting after the promise resolved has no effect, so a connection you received must still be released.
 
 ```ts
@@ -1148,7 +1154,7 @@ try {
 
 | Connection Errors                 | Description                                                                                                                                                                                                                                                                            |
 | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ERR_POSTGRES_CONNECTION_CLOSED`  | An established connection was terminated                                                                                                                                                                                                                                               |
+| `ERR_POSTGRES_CONNECTION_CLOSED`  | An established connection was terminated, or a query ran on a transaction, savepoint or reserved client that had already ended                                                                                                                                                         |
 | `ERR_POSTGRES_CONNECTION_FAILED`  | Connection was accepted but closed before the handshake completed (e.g. the server is still starting up). Retried with backoff until `connectionTimeout` while queries are waiting. Note: errors the server sends during startup, like `57P03`, surface as `ERR_POSTGRES_SERVER_ERROR` |
 | `ERR_POSTGRES_CONNECTION_REFUSED` | Connection was refused because nothing is listening at the address. Fails immediately and is not retried                                                                                                                                                                               |
 | `ERR_POSTGRES_CONNECTION_TIMEOUT` | Failed to establish connection within timeout period                                                                                                                                                                                                                                   |

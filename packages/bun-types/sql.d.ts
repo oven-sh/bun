@@ -4,12 +4,24 @@ declare module "bun" {
   /**
    * A connection reserved from the pool with {@link SQL.reserve}. Call
    * {@link release} to return it to the pool.
+   *
+   * After {@link release}, a query of this client that has not run yet rejects
+   * with `ERR_POSTGRES_CONNECTION_CLOSED` (or the `MYSQL` code). Queries are
+   * lazy, so this includes a query that is returned without `await` from a
+   * `using` block.
    */
   interface ReservedSQL extends SQL, Disposable {
     /**
-     * Releases the client back to the connection pool
+     * Releases the client back to the connection pool.
+     *
+     * The client closes at once: new queries and `begin()` calls reject. If a
+     * transaction started with `begin()` or `beginDistributed()` on this
+     * client is still running, that transaction keeps the connection until it
+     * commits or rolls back. The pool gets the connection back after that. The
+     * returned promise resolves at once, so `release()` can be awaited from
+     * inside such a transaction.
      */
-    release(): void;
+    release(): Promise<void>;
   }
 
   type ArrayType =
@@ -77,13 +89,23 @@ declare module "bun" {
   /**
    * The client passed to transaction callbacks ({@link SQL.begin},
    * {@link SQL.transaction}). Extends {@link SQL} with savepoints.
+   *
+   * The client belongs to its transaction. A query of it that runs after
+   * `COMMIT` or `ROLLBACK` was sent never reaches the database: it rejects
+   * with `ERR_POSTGRES_CONNECTION_CLOSED` (or the `MYSQL` / `SQLITE` code),
+   * also when the query was created inside the callback. Await every query
+   * inside the callback, or return the queries in an array.
    */
   interface TransactionSQL extends SQL {
     /**
-     * Creates a savepoint within the current transaction
+     * Creates a savepoint within the current transaction. The callback gets a
+     * client of its own ({@link SavepointSQL}). `savepoint` resolves with the
+     * callback's return value. When the callback returns an array of queries,
+     * they run inside the savepoint and `savepoint` resolves with their
+     * results.
      */
-    savepoint<T>(name: string, fn: SQL.SavepointContextCallback<T>): Promise<T>;
-    savepoint<T>(fn: SQL.SavepointContextCallback<T>): Promise<T>;
+    savepoint<T>(name: string, fn: SQL.SavepointContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
+    savepoint<T>(fn: SQL.SavepointContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
 
     /**
      * Reserves a connection from the pool and returns a client that wraps
@@ -1056,8 +1078,17 @@ declare module "bun" {
   const postgres: SQL;
 
   /**
-   * The client passed to {@link TransactionSQL.savepoint} callbacks; queries
-   * run within that savepoint
+   * The client passed to {@link TransactionSQL.savepoint} callbacks. It is a
+   * client of its own, not the client of the transaction.
+   *
+   * When the savepoint rolls back, a query of this client that runs after
+   * `ROLLBACK TO SAVEPOINT` was sent never reaches the database: it rejects
+   * with `ERR_POSTGRES_CONNECTION_CLOSED` (or the `MYSQL` / `SQLITE` code),
+   * also when the query was created inside the callback. After a savepoint
+   * that completed, the client works like the client of the transaction.
+   *
+   * Run one savepoint of a client at a time: the database nests savepoints in
+   * the order it receives them.
    */
   interface SavepointSQL extends SQL {}
 }

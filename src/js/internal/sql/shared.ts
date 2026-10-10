@@ -619,8 +619,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
   connectStartedAt: number = 0;
   connectAttempts: number = 0;
   retryTimer: ReturnType<typeof setTimeout> | null = null;
-  /// the first dial of a slot that redial() made from a close event; it waits
-  /// for the next event loop turn
+  /// the first dial after redial(), waiting for the next event loop turn
   parkedDial: ReturnType<typeof setImmediate> | null = null;
 
   constructor(
@@ -630,9 +629,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
   ) {
     this.adapter = adapter;
     this.connectionInfo = connectionInfo;
-    if (dialLater) {
-      this.parkedDial = adapter.runAsOwner(this.#parkDial, this);
-    } else {
+    if (!dialLater) {
       this.#beginConnecting();
     }
   }
@@ -655,9 +652,16 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     return this.adapter.ownerCallback(method.bind(this));
   }
 
-  /// The slot waits for the next event loop turn before its first dial,
-  /// parked like a backoff retry: it counts as connecting, and #close()
-  /// cancels it. An immediate, because jest.useFakeTimers() holds a timer.
+  /// The first dial of a connection made with `dialLater`, once a pool slot holds it.
+  dial(onNextTurn?: boolean) {
+    if (onNextTurn) {
+      this.parkedDial = this.adapter.runAsOwner(this.#parkDial, this);
+    } else {
+      this.#beginConnecting();
+    }
+  }
+
+  /// An immediate, not a timer: jest.useFakeTimers() holds timers back.
   #parkDial() {
     return setImmediate(BasePooledConnection.#parkedDialFired, this);
   }
@@ -763,8 +767,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     return this.#canKeepRetrying();
   }
 
-  /// Whether a dial that waited for its turn (a backoff retry, or the first
-  /// dial after redial()) should still start.
+  /// Whether a dial that waited for its turn (a backoff retry or a parked first dial) should still start.
   #isDialWanted(): boolean {
     if (this.adapter.closed || this.onFinish !== null) {
       return false;
@@ -786,9 +789,8 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     return this.connectStartedAt !== 0 && Date.now() - this.connectStartedAt < connectionTimeout;
   }
 
-  /// Returns true if a dial that had not started was cancelled (a backoff
-  /// retry, or the first dial after redial()); in that case nothing is in
-  /// flight and no onClose/onConnected callback will fire.
+  /// Returns true if a dial that had not started was cancelled; in that case
+  /// nothing is in flight and no onClose/onConnected callback will fire.
   cancelRetry(): boolean {
     if (this.retryTimer !== null) {
       clearTimeout(this.retryTimer);
@@ -803,8 +805,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     return false;
   }
 
-  /// `established`: a connection that completed its handshake closed, as
-  /// opposed to a connect cycle that failed.
+  /// `established`: the connection had completed its handshake. Otherwise a connect cycle failed.
   #finishClose(err: any, established: boolean) {
     const connectionInfo = this.connectionInfo;
     const poolClosedSlotBeforeOnconnect =
@@ -857,8 +858,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
   flush() {
     this.connection?.flush();
   }
-  /// False for a slot that never connected and failed with an
-  /// authentication-class error: another dial cannot fix that.
+  /// False after an authentication-class error on a slot that never connected: another dial cannot fix that.
   canRedial(): boolean {
     return (
       (this.flags & PooledConnectionFlags.canBeConnected) !== 0 ||
@@ -1219,14 +1219,8 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     this.flushConcurrentQueries();
   }
 
-  /// Dials a new connection into the slot of a closed one. The closed object
-  /// is never reused, so what still holds it (a reservation, a transaction, a
-  /// late release()) cannot reach the new connection.
-  ///
-  /// `dialLater`: the call comes from the close event of `connection`. Native
-  /// code closes that socket after the event returns, so a dial inside the
-  /// event would give a full pool one socket more than `max`.
-  redial(connection: PooledConnection, dialLater?: boolean): boolean {
+  /// A new object per dial: what still holds the closed one (a reservation, a transaction, a late release()) cannot reach the new connection.
+  redial(connection: PooledConnection, onNextTurn?: boolean): boolean {
     if (this.closed || !connection.canRedial()) {
       return false;
     }
@@ -1234,32 +1228,20 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     if (index === -1) {
       return false;
     }
-    // a hole while the dial runs: it can run user code (a function-valued
-    // `password`) that scans this array
-    // @ts-ignore
-    this.connections[index] = undefined;
-    const fresh = this.createPooledConnection(dialLater);
+    const fresh = this.createPooledConnection(true);
     fresh.flags |= connection.flags & PooledConnectionFlags.canBeConnected;
-    if (this.connections[index] === null) {
-      // that user code force-closed the pool, which could not see `fresh`:
-      // have #beginConnecting close its native handle
-      fresh.onFinish = () => {};
-      return false;
-    }
+    // in its slot before it dials: the dial can run user code (a function-valued `password`) that closes the pool
     this.connections[index] = fresh;
+    fresh.dial(onNextTurn);
     return true;
   }
 
-  /// Runs when a slot closes: once per ended connect cycle, from the slot's
-  /// close event, and for a parked dial that is no longer wanted. Besides
-  /// #close() it is the only place that fails the callers queued on the pool.
-  /// They never used `connection`. An established connection that closed
-  /// frees its slot, so the pool dials that slot again for them. They fail
-  /// when a connect cycle failed and no other slot is open or connecting.
+  /// Besides #close(), the only place that fails the callers queued on the pool. They never used `connection`.
   connectionClosed(connection: PooledConnection, established: boolean) {
     if (this.waitingQueue.length === 0 && this.reservedQueue.length === 0) {
       return;
     }
+    // on the next turn: native code closes the old socket after the close event returns
     if (established && this.redial(connection, true)) {
       return;
     }
@@ -1293,10 +1275,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
       const pollSize = this.connections.length;
       for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
-        // The slot can be an unassigned hole while connect() creates the
-        // pool's slots or redial() replaces one: user code that a dial runs
-        // (a function-valued `password`) can close a connection, which
-        // re-enters here via connectionClosed().
+        // a slot is an unassigned hole while connect() creates the pool's connections, which can run user code
         if (connection && connection.state !== PooledConnectionState.closed) {
           // some connection is connecting or connected
           return true;
@@ -1366,8 +1345,8 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
           case PooledConnectionState.pending:
           case PooledConnectionState.connected: {
             // cancelRetry only returns true while a dial waits for its turn
-            // (a backoff retry, or the first dial after redial()); nothing is
-            // in flight then, so there is no onClose/onConnected to wait for
+            // (a backoff retry or a parked first dial); nothing is in flight
+            // then, so there is no onClose/onConnected to wait for
             if (connection.cancelRetry()) {
               connection.state = PooledConnectionState.closed;
               break;

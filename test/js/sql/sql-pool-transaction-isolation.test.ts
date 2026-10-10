@@ -843,8 +843,9 @@ describe.each(adapters)("$adapter: queued callers", ({ adapter, mockServer, begi
   });
 
   test.each([undefined, ""])("the first query gets an error when the first dial fails with %p", async thrown => {
+    // The password function throws before the pool dials, so no server is needed.
     const sql = new SQL(
-      options(1, {
+      options(0, {
         password: () => {
           throw thrown;
         },
@@ -1161,32 +1162,42 @@ describe.each(adapters)("$adapter: queued callers", ({ adapter, mockServer, begi
   });
 
   // The second call of the password function is the dial that replaces the closed connection.
-  // It closes the pool at that moment, so the new connection has no pool to join and must not
-  // stay open.
-  test("a pool that is closed while a closed slot is dialed again leaves no connection open", async () => {
+  // It closes the pool at that moment. sql.close() waits for that dial, and the connection that
+  // the dial opens has no pool to join, so it does not stay open.
+  test("a pool that is closed while a closed slot is dialed again waits for the dial and leaves no connection open", async () => {
     const received: Received[] = [];
     const { port, server } = await mockServer(received);
     const opened = connectionLog(server, port);
+    const password = Promise.withResolvers<string>();
     let passwordCalls = 0;
     let closed: Promise<void> | undefined;
     const sql = new SQL(
       options(port, {
         password: () => {
-          if (++passwordCalls === 2) closed = sql.close();
-          return "p";
+          if (++passwordCalls !== 2) return "p";
+          closed = sql.close();
+          return password.promise;
         },
       }),
     );
     try {
       using reserved = await sql.reserve();
       await reserved.close();
-      expect(await outcome(sql.unsafe("SELECT 'later'"))).toBe(code("CONNECTION_CLOSED"));
+      const later = outcome(sql.unsafe("SELECT 'later'").execute());
       expect(passwordCalls).toBe(2);
+      await nextTurn();
+      expect(Bun.peek.status(closed!)).toBe("pending");
+      password.resolve("p");
       await closed;
+      expect(await later).toBe(code("CONNECTION_CLOSED"));
       const sockets = await opened();
-      await Promise.all(sockets.map(socket => socket.destroyed || once(socket, "close")));
+      // Not once(socket, "close"): it rejects when the client ends the connection with a reset.
+      await Promise.all(
+        sockets.map(socket => socket.destroyed || new Promise<void>(resolve => socket.once("close", () => resolve()))),
+      );
       expect(received).toEqual([]);
     } finally {
+      password.resolve("p");
       await closeNow(sql);
       await stopped(server);
     }
@@ -1276,100 +1287,103 @@ describe.each(adapters)("$adapter: queued callers", ({ adapter, mockServer, begi
 
 // The same rule against real servers. Here the server ends a session the way a server does:
 // with an error message first, then the close. Sessions are told apart by the id that the
-// server gives them.
-if (isDockerEnabled()) {
-  const servers = [
-    {
-      name: "PostgreSQL",
-      image: "postgres_plain",
-      options: (host: string, port: number): Bun.SQL.Options => ({
-        url: `postgres://bun_sql_test@${host}:${port}/bun_sql_test`,
-      }),
-      sessionId: "SELECT pg_backend_pid() AS id",
-      endSession: (id: number) => `SELECT pg_terminate_backend(${id})`,
-    },
-    {
-      name: "MySQL",
-      image: "mysql_plain",
-      options: (host: string, port: number): Bun.SQL.Options => ({
-        url: `mysql://root:@${host}:${port}/bun_sql_test`,
-        allowPublicKeyRetrieval: true,
-      }),
-      sessionId: "SELECT CONNECTION_ID() AS id",
-      endSession: (id: number) => `KILL CONNECTION ${id}`,
-    },
-  ];
+// server gives them. describeWithContainer skips a server that is not reachable.
+const servers = [
+  {
+    name: "PostgreSQL",
+    image: "postgres_plain",
+    enabled: true,
+    options: (host: string, port: number): Bun.SQL.Options => ({
+      url: `postgres://bun_sql_test@${host}:${port}/bun_sql_test`,
+    }),
+    sessionId: "SELECT pg_backend_pid() AS id",
+    endSession: (id: number) => `SELECT pg_terminate_backend(${id})`,
+  },
+  {
+    name: "MySQL",
+    image: "mysql_plain",
+    // These cases log in as root with an empty password over TCP. The container allows that.
+    // A local server that BUN_TEST_SERVICE_mysql_plain points at usually does not.
+    enabled: isDockerEnabled(),
+    options: (host: string, port: number): Bun.SQL.Options => ({
+      url: `mysql://root:@${host}:${port}/bun_sql_test`,
+      allowPublicKeyRetrieval: true,
+    }),
+    sessionId: "SELECT CONNECTION_ID() AS id",
+    endSession: (id: number) => `KILL CONNECTION ${id}`,
+  },
+];
 
-  for (const { name, image, options, sessionId, endSession } of servers) {
-    describeWithContainer(`${name}: queued callers`, { image }, container => {
-      const connect = (max: number) => new SQL({ ...options(container.host, container.port), max });
-      const idOf = async (client: { unsafe: SQL["unsafe"] }) => Number((await client.unsafe(sessionId))[0].id);
-      // Each waiter resolves with the id of the session that served it.
-      const waiters = [
-        {
-          name: "pool query",
-          wait: (sql: SQL) =>
-            sql
-              .unsafe(sessionId)
-              .execute()
-              .then(rows => Number(rows[0].id)),
+for (const { name, image, enabled, options, sessionId, endSession } of servers) {
+  if (!enabled) continue;
+  describeWithContainer(`${name}: queued callers`, { image }, container => {
+    const connect = (max: number) => new SQL({ ...options(container.host, container.port), max });
+    const idOf = async (client: { unsafe: SQL["unsafe"] }) => Number((await client.unsafe(sessionId))[0].id);
+    // Each waiter resolves with the id of the session that served it.
+    const waiters = [
+      {
+        name: "pool query",
+        wait: (sql: SQL) =>
+          sql
+            .unsafe(sessionId)
+            .execute()
+            .then(rows => Number(rows[0].id)),
+      },
+      {
+        name: "sql.reserve()",
+        wait: async (sql: SQL) => {
+          using second = await sql.reserve();
+          return await idOf(second);
         },
-        {
-          name: "sql.reserve()",
-          wait: async (sql: SQL) => {
-            using second = await sql.reserve();
-            return await idOf(second);
-          },
-        },
-        { name: "sql.begin()", wait: (sql: SQL) => sql.begin(tx => idOf(tx)) },
-      ];
+      },
+      { name: "sql.begin()", wait: (sql: SQL) => sql.begin(tx => idOf(tx)) },
+    ];
 
-      test.each(waiters)("a waiting $name gets a new session after reserved.close()", async ({ wait }) => {
+    test.each(waiters)("a waiting $name gets a new session after reserved.close()", async ({ wait }) => {
+      await container.ready;
+      await using sql = connect(1);
+      using reserved = await sql.reserve();
+      const closedSession = await idOf(reserved);
+      const queued = wait(sql);
+      await reserved.close();
+      const servedBy = await queued;
+      expect(servedBy).toBeInteger();
+      expect(servedBy).not.toBe(closedSession);
+    });
+
+    test.each(waiters)(
+      "a waiting $name gets a new session after the server ends the session of a reservation",
+      async ({ wait }) => {
         await container.ready;
+        await using admin = connect(1);
         await using sql = connect(1);
         using reserved = await sql.reserve();
-        const closedSession = await idOf(reserved);
+        const endedSession = await idOf(reserved);
         const queued = wait(sql);
-        await reserved.close();
+        await admin.unsafe(endSession(endedSession));
         const servedBy = await queued;
         expect(servedBy).toBeInteger();
-        expect(servedBy).not.toBe(closedSession);
-      });
+        expect(servedBy).not.toBe(endedSession);
+      },
+    );
 
-      test.each(waiters)(
-        "a waiting $name gets a new session after the server ends the session of a reservation",
-        async ({ wait }) => {
-          await container.ready;
-          await using admin = connect(1);
-          await using sql = connect(1);
-          using reserved = await sql.reserve();
-          const endedSession = await idOf(reserved);
-          const queued = wait(sql);
-          await admin.unsafe(endSession(endedSession));
-          const servedBy = await queued;
-          expect(servedBy).toBeInteger();
-          expect(servedBy).not.toBe(endedSession);
-        },
-      );
-
-      test.each(waiters)(
-        "with max: 2, a waiting $name gets a new session while the other session is held",
-        async ({ wait }) => {
-          await container.ready;
-          await using sql = connect(2);
-          using a = await sql.reserve();
-          using b = await sql.reserve();
-          const closedSession = await idOf(a);
-          const heldSession = await idOf(b);
-          const queued = wait(sql);
-          await a.close();
-          const servedBy = await queued;
-          expect(servedBy).toBeInteger();
-          expect([closedSession, heldSession]).not.toContain(servedBy);
-          // The reservation that was not closed still has its session.
-          expect(await idOf(b)).toBe(heldSession);
-        },
-      );
-    });
-  }
+    test.each(waiters)(
+      "with max: 2, a waiting $name gets a new session while the other session is held",
+      async ({ wait }) => {
+        await container.ready;
+        await using sql = connect(2);
+        using a = await sql.reserve();
+        using b = await sql.reserve();
+        const closedSession = await idOf(a);
+        const heldSession = await idOf(b);
+        const queued = wait(sql);
+        await a.close();
+        const servedBy = await queued;
+        expect(servedBy).toBeInteger();
+        expect([closedSession, heldSession]).not.toContain(servedBy);
+        // The reservation that was not closed still has its session.
+        expect(await idOf(b)).toBe(heldSession);
+      },
+    );
+  });
 }

@@ -19,7 +19,7 @@
 //! - Lines of any length are printed whole.
 
 use crate::ast::File;
-use crate::source::utf16_len;
+use bun_core::strings::utf8_lossy_len_utf16;
 use std::io::Write;
 use std::ops::Range;
 
@@ -105,7 +105,7 @@ pub fn write_rows_of<'a>(
 ) -> bool {
     let count = u64::from(lines.count());
     let exists = |line: u64| (1..=count).contains(&line);
-    let length = |line: u64| u64::from(utf16_len(lines.line(line as u32)));
+    let length = |line: u64| u64::from(utf8_lossy_len_utf16(lines.line(line as u32)));
     let is_seven = frame.version == Version::Seven;
     let end = frame.end.unwrap_or(frame.start);
     let (first, last) = (u64::from(frame.start.line), u64::from(end.line));
@@ -175,7 +175,10 @@ pub fn write_rows_of<'a>(
         } else if number == last {
             (0, to)
         } else {
-            (0, between.unwrap_or_else(|| u64::from(utf16_len(text))))
+            (
+                0,
+                between.unwrap_or_else(|| u64::from(utf8_lossy_len_utf16(text))),
+            )
         };
         out.push(b'\n');
         out.resize(out.len() + 2 + gutter, b' ');

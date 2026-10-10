@@ -570,8 +570,7 @@
       "array_index": 1
     },
     "src/lint/source.rs": {
-      "line_starts": 1,
-      "utf16_len": 1
+      "line_starts": 1
     },
     "src/lint/standalone/code_frame_cmd.rs": {
       "unhex": 1

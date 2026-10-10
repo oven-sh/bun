@@ -171,7 +171,7 @@ const POSIX_REGEX_SOURCE: [(&[u8], &[u8]); 14] = [
 const MAX_OPEN: usize = MAX_NESTING - 8;
 
 /// Why a written text has no pieces.
-enum Unread {
+pub(crate) enum Unread {
     /// It is no expression.
     NoExpression,
     /// It is one, with what is not taken: lookbehind, a named group.
@@ -179,7 +179,7 @@ enum Unread {
 }
 
 /// The pieces of a written text. Of the pattern: `\x`, a class, `(`, `(?:`, `(?=`, `(?!`, `)`, `|`, `?`, `+`, `*`, `.`, `^`, `$`.
-fn read_written(written: &[u16], dot: bool) -> Result<Vec<Piece>, Unread> {
+pub(crate) fn read_written(written: &[u16], dot: bool) -> Result<Vec<Piece>, Unread> {
     let mut out = Vec::with_capacity(written.len());
     let assert = |assertion: Assertion| Piece::Node(Node::Assert(assertion));
     // A class and an escape are read from bytes.

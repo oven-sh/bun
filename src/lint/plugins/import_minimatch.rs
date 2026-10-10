@@ -4,7 +4,7 @@
 
 use bun_core::strings;
 use bun_glob::{Options as GlobOptions, Pattern};
-use bun_lint::options::Object;
+use bun_lint::options::{Json, Object};
 use bun_lint::paths;
 use std::sync::OnceLock;
 
@@ -53,7 +53,7 @@ impl Glob {
     /// `minimatch(path, pattern, patternOptions || { nocomment: true })` for an element of `pathGroups`.
     pub(crate) fn of_path_group(group: Object) -> Glob {
         let options = group.object("patternOptions");
-        let is_set = |key: &str| options.bool_or(key, false);
+        let is_set = |key: &str| options.get(key).is_some_and(Json::is_truthy);
         let asked = Asked {
             nocomment: !group.has("patternOptions") || is_set("nocomment"),
             nonegate: is_set("nonegate"),

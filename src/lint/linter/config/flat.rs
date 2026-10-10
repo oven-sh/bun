@@ -118,10 +118,15 @@ fn package_of(name: &[u8]) -> &[u8] {
 }
 
 /// Whether `settings` has an `import/resolver`, or a parser in `import/parsers`, that the rules here do not do the same as, or a
-/// regular expression, of which nothing is left in JSON. The package answers then.
+/// regular expression that is not written as a string, which they do not read. The package answers then.
 pub(super) fn names_unknown_resolver(settings: &Json) -> bool {
-    let is_lost = |key: &[u8]| (settings.get(key)).is_some_and(js_plugin::has_what_json_lacks);
-    if is_lost(b"import/ignore") || is_lost(b"import/internal-regex") {
+    let is_expression = |it: &Json| it.get(b"$regexp").is_some();
+    let ignored = settings.get(b"import/ignore").and_then(Json::as_array);
+    if ignored.unwrap_or_default().iter().any(is_expression)
+        || settings
+            .get(b"import/internal-regex")
+            .is_some_and(is_expression)
+    {
         return true;
     }
     let parsers = settings.get(b"import/parsers").and_then(Json::as_object);

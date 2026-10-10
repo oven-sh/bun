@@ -13,6 +13,8 @@
 #![forbid(unsafe_code)]
 
 mod bun;
+mod import_doctrine;
+mod import_export_record;
 mod import_minimatch;
 mod import_package_path;
 mod import_resolve;

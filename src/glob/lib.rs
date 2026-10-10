@@ -10,6 +10,7 @@ mod node;
 pub mod pattern;
 mod read_ignore;
 mod read_minimatch;
+mod read_minimatch3;
 mod read_picomatch;
 pub mod scan;
 mod segments;

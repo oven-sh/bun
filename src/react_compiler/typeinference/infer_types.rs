@@ -8,9 +8,11 @@
 //! Generates type equations from the HIR, unifies them, and applies the
 //! resolved types back to identifiers. Analogous to TS `InferTypes.ts`.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use crate::collections::IdMap;
+use crate::collections::{FxHashMap, FxHashSet, IdMap};
 use crate::diagnostics::{CompilerDiagnostic, ErrorCategory};
 use crate::hir::environment::{Environment, is_hook_name};
 use crate::hir::object_shape::{
@@ -411,17 +413,17 @@ fn generate(
     }
 
     let mut names: IdMap<IdentifierId, StoreStr> = IdMap::new();
-    let mut return_types: HirVec<Type> = AstAlloc::vec();
+    let mut return_types: Vec<Type> = Vec::new();
 
     for (_block_id, block) in &func.body.blocks {
         // Phis
         for phi in &block.phis {
             let left = get_type(phi.place.identifier, &env.identifiers);
-            let operands = AstAlloc::vec_from_iter(
-                phi.operands
-                    .values()
-                    .map(|p| get_type(p.identifier, &env.identifiers)),
-            );
+            let operands = phi
+                .operands
+                .values()
+                .map(|p| get_type(p.identifier, &env.identifiers))
+                .collect();
             unifier.unify(left, Type::Phi { operands }, &env.shapes)?;
         }
 
@@ -455,7 +457,7 @@ fn generate(
         unifier.unify(
             returns_type,
             Type::Phi {
-                operands: return_types,
+                operands: return_types.into(),
             },
             &env.shapes,
         )?;
@@ -513,16 +515,16 @@ fn generate_for_function_id(
     // TS creates a fresh `names` Map per recursive `generate` call, so inner
     // functions don't inherit or pollute the outer function's name mappings.
     let mut inner_names: IdMap<IdentifierId, StoreStr> = IdMap::new();
-    let mut inner_return_types: HirVec<Type> = AstAlloc::vec();
+    let mut inner_return_types: Vec<Type> = Vec::new();
 
     for (_block_id, block) in &inner.body.blocks {
         for phi in &block.phis {
             let left = get_type(phi.place.identifier, identifiers);
-            let operands = AstAlloc::vec_from_iter(
-                phi.operands
-                    .values()
-                    .map(|p| get_type(p.identifier, identifiers)),
-            );
+            let operands = phi
+                .operands
+                .values()
+                .map(|p| get_type(p.identifier, identifiers))
+                .collect();
             unifier.unify(left, Type::Phi { operands }, shapes)?;
         }
 
@@ -552,7 +554,7 @@ fn generate_for_function_id(
         unifier.unify(
             returns_type,
             Type::Phi {
-                operands: inner_return_types,
+                operands: inner_return_types.into(),
             },
             shapes,
         )?;
@@ -1067,8 +1069,13 @@ fn resolve_identifier(
 /// Phis that are made of each other are copied into each other: without this, 400 bytes of source take all the memory.
 const MAX_STEPS: u32 = 1 << 22;
 
+/// What was made of a phi, by the address of its operands, which are held so that the address stays theirs.
+type OfPhis<T> = FxHashMap<*const Type, (Arc<[Type]>, T)>;
+
 struct Unifier {
     substitutions: HashMap<TypeId, Type>,
+    /// What `get` made of a phi since `substitutions` was last written. `None`: nothing in it had changed.
+    resolved: RefCell<OfPhis<Option<Arc<[Type]>>>>,
     enable_treat_ref_like_identifiers_as_refs: bool,
     enable_treat_set_identifiers_as_state_setters: bool,
     custom_hook_type: Option<Type>,
@@ -1086,6 +1093,7 @@ impl Unifier {
     ) -> Self {
         Unifier {
             substitutions: HashMap::new(),
+            resolved: RefCell::default(),
             enable_treat_ref_like_identifiers_as_refs,
             enable_treat_set_identifiers_as_state_setters,
             custom_hook_type,
@@ -1101,6 +1109,11 @@ impl Unifier {
             self.is_out_of_stack.set(true);
         }
         !self.is_out_of_stack.get()
+    }
+
+    fn substitute(&mut self, id: TypeId, ty: Type) {
+        self.substitutions.insert(id, ty);
+        self.resolved.get_mut().clear();
     }
 
     /// `has_stack`, and within [`MAX_STEPS`], which is the same on every platform.
@@ -1259,7 +1272,7 @@ impl Unifier {
             }
 
             let mut candidate_type: Option<Type> = None;
-            for operand in operands {
+            for operand in operands.iter() {
                 let resolved = self.get(operand);
                 match &candidate_type {
                     None => {
@@ -1286,10 +1299,10 @@ impl Unifier {
             }
         }
 
-        if self.occurs_check(&v, &ty) {
-            let resolved_type = self.try_resolve_type(&v, &ty);
+        if self.occurs_check(&v, &ty, &mut FxHashSet::default()) {
+            let resolved_type = self.try_resolve_type(&v, &ty, &mut OfPhis::default());
             if let Some(resolved) = resolved_type {
-                self.substitutions.insert(v_id, resolved);
+                self.substitute(v_id, resolved);
                 return Ok(());
             }
             return Err(CompilerDiagnostic {
@@ -1301,18 +1314,28 @@ impl Unifier {
             });
         }
 
-        self.substitutions.insert(v_id, ty);
+        self.substitute(v_id, ty);
         Ok(())
     }
 
-    fn try_resolve_type(&mut self, v: &Type, ty: &Type) -> Option<Type> {
+    /// `done`: what this made of each phi. What phis share comes from `get`, so that no type variable in it is bound.
+    fn try_resolve_type(
+        &mut self,
+        v: &Type,
+        ty: &Type,
+        done: &mut OfPhis<Arc<[Type]>>,
+    ) -> Option<Type> {
         if !self.may_go_into(1) {
             return None;
         }
         match ty {
             Type::Phi { operands } => {
-                let mut new_operands = AstAlloc::vec();
-                for operand in operands {
+                if let Some((_, known)) = done.get(&operands.as_ptr()) {
+                    let operands = Arc::clone(known);
+                    return Some(Type::Phi { operands });
+                }
+                let mut new_operands = Vec::with_capacity(operands.len());
+                for operand in operands.iter() {
                     if let Type::TypeVar { id } = operand {
                         if let Type::TypeVar { id: v_id } = v {
                             if id == v_id {
@@ -1320,9 +1343,21 @@ impl Unifier {
                             }
                         }
                     }
-                    let resolved = self.try_resolve_type(v, operand)?;
+                    let resolved = self.try_resolve_type(v, operand, done)?;
                     new_operands.push(resolved);
                 }
+                let is_as_it_was = new_operands.len() == operands.len()
+                    && std::iter::zip(&new_operands, operands.iter())
+                        .all(|(a, b)| is_the_same(a, b));
+                let new_operands = if is_as_it_was {
+                    Arc::clone(operands)
+                } else {
+                    new_operands.into()
+                };
+                done.insert(
+                    operands.as_ptr(),
+                    (Arc::clone(operands), Arc::clone(&new_operands)),
+                );
                 Some(Type::Phi {
                     operands: new_operands,
                 })
@@ -1330,8 +1365,8 @@ impl Unifier {
             Type::TypeVar { id } => {
                 let substitution = self.get(ty);
                 if !type_equals(&substitution, ty) {
-                    let resolved = self.try_resolve_type(v, &substitution)?;
-                    self.substitutions.insert(*id, resolved.clone());
+                    let resolved = self.try_resolve_type(v, &substitution, done)?;
+                    self.substitute(*id, resolved.clone());
                     Some(resolved)
                 } else {
                     Some(ty.clone())
@@ -1343,7 +1378,7 @@ impl Unifier {
                 property_name,
             } => {
                 let resolved_obj = self.get(object_type);
-                let object_type = self.try_resolve_type(v, &resolved_obj)?;
+                let object_type = self.try_resolve_type(v, &resolved_obj, done)?;
                 Some(Type::Property {
                     object_type: Box::new(object_type),
                     object_name: *object_name,
@@ -1356,7 +1391,7 @@ impl Unifier {
                 is_constructor,
             } => {
                 let resolved_ret = self.get(return_type);
-                let return_type = self.try_resolve_type(v, &resolved_ret)?;
+                let return_type = self.try_resolve_type(v, &resolved_ret, done)?;
                 Some(Type::Function {
                     shape_id: *shape_id,
                     return_type: Box::new(return_type),
@@ -1369,50 +1404,98 @@ impl Unifier {
         }
     }
 
-    fn occurs_check(&self, v: &Type, ty: &Type) -> bool {
+    /// `seen`: the phis in which it does not occur, by the address of their operands.
+    fn occurs_check(&self, v: &Type, ty: &Type, seen: &mut FxHashSet<*const Type>) -> bool {
         if type_equals(v, ty) {
             return true;
         }
 
         if let Type::TypeVar { id } = ty {
             if let Some(sub) = self.substitutions.get(id) {
-                return self.may_go_into(1) && self.occurs_check(v, sub);
+                return self.may_go_into(1) && self.occurs_check(v, sub, seen);
             }
         }
 
         if let Type::Phi { operands } = ty {
-            let may_go_on = self.may_go_into(operands.len());
-            return may_go_on && operands.iter().any(|o| self.occurs_check(v, o));
+            let may_go_on = seen.insert(operands.as_ptr()) && self.may_go_into(operands.len());
+            return may_go_on && operands.iter().any(|o| self.occurs_check(v, o, seen));
         }
 
         if let Type::Function { return_type, .. } = ty {
-            return self.may_go_into(1) && self.occurs_check(v, return_type);
+            return self.may_go_into(1) && self.occurs_check(v, return_type, seen);
         }
 
         false
     }
 
-    fn get<'a>(&'a self, mut ty: &'a Type) -> Type {
+    fn get(&self, ty: &Type) -> Type {
+        self.get_if_changed(ty).unwrap_or_else(|| ty.clone())
+    }
+
+    /// `None`: no type variable in it is bound.
+    fn get_if_changed<'a>(&'a self, mut ty: &'a Type) -> Option<Type> {
+        let given = ty;
         while let Type::TypeVar { id } = ty
             && let Some(sub) = self.substitutions.get(id)
         {
             ty = sub;
         }
-        match ty {
-            Type::Phi { operands } if self.may_go_into(operands.len()) => Type::Phi {
-                operands: AstAlloc::vec_from_iter(operands.iter().map(|o| self.get(o))),
-            },
+        let changed = match ty {
+            Type::Phi { operands } => self
+                .get_operands_if_changed(operands)
+                .map(|operands| Type::Phi { operands }),
             Type::Function {
                 is_constructor,
                 shape_id,
                 return_type,
-            } if self.may_go_into(1) => Type::Function {
-                is_constructor: *is_constructor,
-                shape_id: *shape_id,
-                return_type: Box::new(self.get(return_type)),
-            },
-            _ => ty.clone(),
+            } if self.may_go_into(1) => {
+                self.get_if_changed(return_type)
+                    .map(|return_type| Type::Function {
+                        is_constructor: *is_constructor,
+                        shape_id: *shape_id,
+                        return_type: Box::new(return_type),
+                    })
+            }
+            _ => None,
+        };
+        changed.or_else(|| (!std::ptr::eq(given, ty)).then(|| ty.clone()))
+    }
+
+    fn get_operands_if_changed(&self, operands: &Arc<[Type]>) -> Option<Arc<[Type]>> {
+        if let Some((_, known)) = self.resolved.borrow().get(&operands.as_ptr()) {
+            return known.clone();
         }
+        if !self.may_go_into(operands.len()) {
+            return None;
+        }
+        let mut changed: Option<Vec<Type>> = None;
+        for (index, operand) in operands.iter().enumerate() {
+            let ty = self.get_if_changed(operand);
+            if ty.is_some() && changed.is_none() {
+                let mut as_they_were = Vec::with_capacity(operands.len());
+                as_they_were.extend_from_slice(&operands[..index]);
+                changed = Some(as_they_were);
+            }
+            if let Some(changed) = &mut changed {
+                changed.push(ty.unwrap_or_else(|| operand.clone()));
+            }
+        }
+        let changed: Option<Arc<[Type]>> = changed.map(Arc::from);
+        let mut resolved = self.resolved.borrow_mut();
+        if let Some(changed) = &changed {
+            resolved.insert(changed.as_ptr(), (Arc::clone(changed), None));
+        }
+        resolved.insert(operands.as_ptr(), (Arc::clone(operands), changed.clone()));
+        changed
+    }
+}
+
+/// The one is a copy of the other that shares what can be shared.
+fn is_the_same(a: &Type, b: &Type) -> bool {
+    match (a, b) {
+        (Type::Phi { operands: a }, Type::Phi { operands: b }) => Arc::ptr_eq(a, b),
+        (Type::Function { .. }, _) | (Type::Property { .. }, _) => false,
+        _ => type_equals(a, b),
     }
 }
 

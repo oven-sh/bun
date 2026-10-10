@@ -3123,14 +3123,12 @@ test("react-compiler memory does not grow with the square of the size of a compo
   expect(pattern - empty).toBeLessThan(small ? 70 : 300);
 });
 
-// InferTypes copies the type of a phi into each phi that it is an operand of. Variables that are assigned from each
-// other in loops with joins multiply: these 500 bytes took all the memory there is, in the original too.
+// InferTypes puts the type of a phi into each phi that it is an operand of, and it copied it. Variables that are assigned
+// from each other in loops with joins multiply: these 500 bytes took all the memory there is, in the original too.
 // Where the fix is missing, this test takes all the memory that the machine gives it until its time is over.
-test(
-  "react-compiler leaves a component alone whose types are too complex to infer",
-  async () => {
-    using dir = tempDir("react-compiler-types", {
-      "entry.jsx": `
+test("react-compiler ends on a component whose types are made of each other", async () => {
+  using dir = tempDir("react-compiler-types", {
+    "entry.jsx": `
       export default function Component(props) {
         let a, b, c, d, e;
         while (props.x) {
@@ -3168,23 +3166,19 @@ test(
         return <div>{a}{b}{c}{d}{e}</div>;
       }
     `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toContain("function Component");
-    expect(stdout).not.toContain("react/compiler-runtime");
-    expect(exitCode).toBe(0);
-    // A debug build takes 14 seconds to find that out, a release build 0.3.
-  },
-  isDebug ? 60_000 : undefined,
-);
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("function Component");
+  expect(exitCode).toBe(0);
+});
 
 // ValidateNoRefAccessInRender gives a function the type of what it returns. The port
 // copied all that is nested in a type at each level of each join, so n functions that

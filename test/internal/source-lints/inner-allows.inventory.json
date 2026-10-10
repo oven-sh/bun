@@ -142,6 +142,51 @@
     "non_snake_case",
     "non_upper_case_globals"
   ],
+  "src/lint/plugins/import_minimatch.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/plugins/import_package_path.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/plugins/import_resolve.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/plugins/import_settings.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/plugins/module_visitor.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/plugins/regexp_ast_utils.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/plugins/regexp_char_set.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/plugins/regexp_raa_basic.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/plugins/regexp_replacements.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/plugins/regexp_syntax.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/plugins/regexp_type_builtins.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_ast.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_components_list.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_eslint.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_get_token_before_closing_bracket.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
   "src/lint/react/util_is_create_context.rs": [
     "dead_code, until every rule of the plugin is written"
   ],
@@ -151,7 +196,22 @@
   "src/lint/react/util_is_destructured_from_pragma_import.rs": [
     "dead_code, until every rule of the plugin is written"
   ],
+  "src/lint/react/util_jsx.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_lifecycle_methods.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_link_components.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_make_no_method_set_state_rule.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
   "src/lint/react/util_pragma.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_prop_wrapper.rs": [
     "dead_code, until every rule of the plugin is written"
   ],
   "src/lint/react/util_variable.rs": [

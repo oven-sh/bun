@@ -162,7 +162,7 @@ impl<'a> File<'a> {
         {
             return before_end - before_start;
         }
-        utf16_len(self.slice(Span::new(start, end)))
+        bun_core::strings::utf8_lossy_len_utf16(self.slice(Span::new(start, end)))
     }
 
     /// Where ESLint's text starts: it has no byte order mark. So a line and a column do not count it either.
@@ -369,18 +369,4 @@ fn line_starts(text: &[u8]) -> Vec<u32> {
         }
     }
     starts
-}
-
-/// `text.length` in JavaScript.
-pub fn utf16_len(text: &[u8]) -> u32 {
-    if text.is_ascii() {
-        return text.len() as u32;
-    }
-    let (mut at, mut units) = (0, 0);
-    while at < text.len() {
-        let (c, size) = bun_core::lexer::char_and_size(text, at);
-        units += if c > 0xFFFF { 2 } else { 1 };
-        at += size.max(1);
-    }
-    units
 }

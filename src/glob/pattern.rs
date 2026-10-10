@@ -2,6 +2,7 @@
 
 use crate::matcher;
 use crate::node::Program;
+use crate::read_minimatch3;
 use crate::read_picomatch;
 use crate::segments::{self, Expansion};
 use crate::unit::Subject;
@@ -18,6 +19,8 @@ pub enum Syntax {
     Minimatch,
     /// picomatch 2.3.2, which micromatch 4.0.8 and fast-glob 3.3.3 call.
     Picomatch,
+    /// `makeRe(pattern).test(path)` of minimatch 3.1.5: nothing is cut at a `/`, and a `**` keeps the `/` behind it.
+    Minimatch3MakeRe,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -50,6 +53,11 @@ impl Options {
     pub const MINIMATCH: Options = Options {
         dot: false,
         ..Options::MINIMATCH_DOT
+    };
+    /// `minimatch.makeRe(pattern).test(path)`: import/no-internal-modules.
+    pub const MINIMATCH_3_MAKE_RE: Options = Options {
+        syntax: Syntax::Minimatch3MakeRe,
+        ..Options::MINIMATCH
     };
     /// `micromatch.isMatch(path, pattern, { dot: true })`: `overrides` of Prettier.
     pub const MICROMATCH_DOT: Options = Options {
@@ -164,6 +172,15 @@ impl Pattern {
                     is_negated: bangs % 2 == 1,
                 }
             }
+            // The `!` is in the expression.
+            Syntax::Minimatch3MakeRe => of(Kind::Picomatch {
+                alternatives: vec![Alternative {
+                    written: Box::default(),
+                    program: read_minimatch3::pattern(pattern, options.dot),
+                    is_negated: false,
+                }],
+                is_asked_directly: true,
+            }),
             // picomatch throws for the empty pattern.
             Syntax::Picomatch if pattern.is_empty() => of(Kind::Never),
             Syntax::Picomatch => {

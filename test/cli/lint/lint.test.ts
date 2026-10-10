@@ -1674,7 +1674,7 @@ describe.concurrent("bun lint", () => {
         const helps = helpsOf(raw, messages).map((it, index) => ({ ...messages[index], said: it }));
         const wrong = helps.filter(it => it.said !== undefined && it.said !== it.help);
         expect(wrong.map(it => [it.rule, it.id])).toEqual([]);
-        expect(helps.filter(it => it.said === undefined && it.help !== undefined).length).toBeLessThanOrEqual(9);
+        expect(helps.filter(it => it.said === undefined && it.help !== undefined).length).toBeLessThanOrEqual(5);
       });
 
       // The table has no texts of messages, only numbers that are made of them: a message that is reworded would lose its help.

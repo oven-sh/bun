@@ -82,10 +82,16 @@ pub fn trim_js_whitespace_start(mut text: &[u8]) -> &[u8] {
 /// `text.trimEnd()`
 #[inline]
 pub fn trim_js_whitespace_end(mut text: &[u8]) -> &[u8] {
-    while let len @ 1.. = js_whitespace_len_back(text) {
-        text = &text[..text.len() - len];
+    loop {
+        text = match *text {
+            [ref rest @ .., 0x09..=0x0D | b' '] => rest,
+            [.., 0..0x80] | [] => return text,
+            _ => match js_whitespace_len_back(text) {
+                0 => return text,
+                len => &text[..text.len() - len],
+            },
+        };
     }
-    text
 }
 
 /// `text.trim()`

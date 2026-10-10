@@ -42,6 +42,11 @@ fn options_of(mode: &[u8]) -> Option<Options> {
         b"bun" => Options::BUN,
         b"minimatch" => Options::MINIMATCH_DOT,
         b"minimatch-nodot" => Options::MINIMATCH,
+        b"minimatch3-makere" => Options::MINIMATCH_3_MAKE_RE,
+        b"minimatch3-makere-dot" => Options {
+            dot: true,
+            ..Options::MINIMATCH_3_MAKE_RE
+        },
         b"micromatch" => Options::MICROMATCH_DOT,
         b"micromatch-nodot" => Options {
             dot: false,

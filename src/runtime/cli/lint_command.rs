@@ -51,6 +51,16 @@ fn cwd_before(command: &[u8]) -> Option<&'static [u8]> {
     found
 }
 
+/// `--disallow-code-generation-from-strings` among the flags of `bun`, which precede `command`: it holds for the plugins and
+/// the configuration files.
+fn disallow_code_generation_before(command: &[u8]) {
+    let argv = bun_core::argv().to_vec();
+    let flags = argv.iter().take_while(|it| it.as_bytes() != command);
+    super::arguments::disallow_code_generation_from_strings_as_compiled(
+        &flags.copied().collect::<Vec<_>>(),
+    );
+}
+
 /// Runs `script` with this executable, to its end.
 fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     use crate::api::bun::process::sync::{Options as SpawnOptions, SyncStdio, spawn};
@@ -71,9 +81,21 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
         Box::from(&b"--no-install"[..]),
         // It ends with this process, however that ends: a configuration can wait, or spin, for ever.
         Box::from(&b"--no-orphans"[..]),
-        Box::from(&b"-e"[..]),
-        Box::from(script.source.concat().as_bytes()),
     ];
+    use bun_core::CodeGenerationFromStrings as Level;
+    match bun_core::code_generation_from_strings() {
+        Level::Allowed => {}
+        Level::DisallowedLikeNode => {
+            argv.push(Box::from(&b"--disallow-code-generation-from-strings"[..]));
+        }
+        Level::Disallowed => {
+            argv.push(Box::from(
+                &b"--disallow-code-generation-from-strings=strict"[..],
+            ));
+        }
+    }
+    argv.push(Box::from(&b"-e"[..]));
+    argv.push(Box::from(script.source.concat().as_bytes()));
     argv.extend(script.arguments.iter().map(|it| Box::<[u8]>::from(*it)));
     let spawned = spawn(&SpawnOptions {
         argv,
@@ -114,6 +136,7 @@ pub(crate) fn run_and_exit(
     cwd: Option<&[u8]>,
     run: impl FnOnce(&Environment) -> Outcome,
 ) -> ! {
+    disallow_code_generation_before(command);
     if let Some(cwd) = cwd_before(command) {
         change_directory(cwd);
     }

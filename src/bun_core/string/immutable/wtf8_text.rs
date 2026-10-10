@@ -90,6 +90,24 @@ pub fn wtf8_len_utf16(text: &[u8]) -> u32 {
     }
 }
 
+/// `text.length` of the text of a file, which is read as Go reads it: a byte that is part of no
+/// sequence of UTF-8 is one U+FFFD, and so is each of the three of half a surrogate pair.
+pub fn utf8_lossy_len_utf16(text: &[u8]) -> u32 {
+    match first_non_ascii(text) {
+        None => text.len() as u32,
+        Some(_) if is_valid_utf8(text) => element_length_utf8_into_utf16(text) as u32,
+        Some(_) => {
+            let (mut at, mut units) = (0, 0);
+            while at < text.len() {
+                let (cp, size) = crate::lexer::char_and_size(text, at);
+                units += if cp > 0xFFFF { 2 } else { 1 };
+                at += size.max(1);
+            }
+            units
+        }
+    }
+}
+
 /// The offset in bytes of the UTF-16 index `index` of `text`. An index past the end is the length
 /// of `text`, and one in the middle of a surrogate pair is the start of the pair.
 pub fn wtf8_offset_of_utf16_index(text: &[u8], index: u32) -> usize {
@@ -239,6 +257,8 @@ mod tests {
             .collect();
         assert_eq!(offsets, [0, 1, 1, 5, 8, 10, 10]);
         assert_eq!(wtf8_slice_by_utf16(text, 3, 4), b"\xED\xA0\x80");
+        assert_eq!(utf8_lossy_len_utf16(text), 7);
+        assert_eq!(utf8_lossy_len_utf16("a😀é".as_bytes()), 4);
     }
 
     #[test]

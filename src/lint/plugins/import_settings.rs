@@ -1,9 +1,8 @@
 #![allow(dead_code)] // until every rule of the plugin is written
-//! `settings["import/.."]` of eslint-plugin-import: `ignore.js` and `getParserPath` of
-//! eslint-module-utils, and what `importType.js`, the `ExportMap` and a rule read of them.
-//!
-//! A value of a type that the original throws on says nothing here.
+//! `settings["import/.."]` of eslint-plugin-import, as `ignore.js`, `getParserPath`, `importType.js`
+//! and the `ExportMap` read them. A value of a type that they throw on says nothing here.
 
+use crate::import_package_path::is_truthy;
 use bun_core::strings;
 use bun_lint::language::Parser;
 use bun_lint::paths;
@@ -44,12 +43,7 @@ impl DocStyle {
 
 /// `value || ..`: `None` for what is falsy.
 fn truthy(value: Option<&Json>) -> Option<&Json> {
-    value.filter(|it| match it {
-        Json::Null | Json::Bool(false) => false,
-        Json::Number(number) => *number != 0.0 && !number.is_nan(),
-        Json::String(string) => !string.is_empty(),
-        _ => true,
-    })
+    value.filter(|it| is_truthy(it))
 }
 
 fn strings_in(json: Option<&Json>) -> impl Iterator<Item = &[u8]> {

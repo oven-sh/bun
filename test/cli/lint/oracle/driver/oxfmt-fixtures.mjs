@@ -1,7 +1,10 @@
 // Runs every case of oxfmt's own CLI tests (apps/oxfmt/test/cli/*/options.json) with real oxfmt and with `bun format`, on a copy of
 // the fixtures, and compares the exit code, the files afterwards, and which files `--check` and `--list-different` name.
 //
-//   bun oxfmt-fixtures.mjs --oxc=<checkout of oxc> --oxfmt=<path of oxfmt> --scratch=<directory> --bin="<bun-lint> cli @format" [--only=substring] [--show]
+//   bun oxfmt-fixtures.mjs --oxc=<checkout of oxc> --oxfmt=<path of oxfmt> --svelte=<node_modules with svelte> --scratch=<directory> \
+//     --bin="<bun-lint> cli @format" [--only=substring] [--show]
+//
+// oxfmt takes the compiler of Svelte from the project. The fixtures have none.
 //
 // `--record=<file>` writes the fixtures and what oxfmt does with them, for `test/cli/format/oxfmt-cli/oxfmt-cli.test.ts`.
 import { spawnSync } from "node:child_process";
@@ -18,10 +21,10 @@ const bin = flag("bin").split(" ");
 const only = flag("only");
 const show = process.argv.includes("--show");
 
-// Commands that `bun format` does not have, languages that it leaves alone, and what `vp` tells oxfmt through the environment.
-const leftOut = /^(migrate_|svelte|stdin_svelte|vite_plus)/;
+// Commands that `bun format` does not have, and what `vp` tells oxfmt through the environment.
+const leftOut = /^(migrate_|vite_plus)/;
 const compared =
-  /(\.([cm]?[jt]sx?|jsonc?|json5|css|scss|less|graphql|gql|ya?ml|md|markdown|hbs|handlebars|html?|vue|mjml|toml|toml\.example|toml\.orig)|(^|\/)Pipfile)$/;
+  /(\.([cm]?[jt]sx?|jsonc?|json5|css|scss|less|graphql|gql|ya?ml|md|markdown|hbs|handlebars|html?|vue|svelte|mjml|toml|toml\.example|toml\.orig)|(^|\/)Pipfile)$/;
 
 function readAll(root) {
   const files = {};
@@ -42,7 +45,7 @@ function run(command, fixtures, test) {
   const result = spawnSync(command[0], [...command.slice(1), ...test.args], {
     cwd: path.join(scratch, test.cwd ?? "."),
     input: test.stdin ? fs.readFileSync(path.join(fixtures, test.stdin)) : "",
-    env: { ...process.env, ...test.env, NO_COLOR: "1", AGENT: "0", CLAUDECODE: undefined, CI: "1" },
+    env: { ...process.env, ...test.env, NODE_PATH: path.resolve(flag("svelte")), NO_COLOR: "1", AGENT: "0", CLAUDECODE: undefined, CI: "1" },
     encoding: "utf8",
   });
   return { stdout: result.stdout, stderr: result.stderr, status: result.status, files: readAll(scratch) };

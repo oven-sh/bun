@@ -122,7 +122,7 @@ describe.concurrent("Svelte", () => {
       "Doc.mdx": block,
       "legacy/old.md": block,
     };
-    const result = await format(files, [], ["--list-different"]);
+    const result = await format(files, [], ["--log-level=log", "--list-different"]);
     expect(
       result.stdout
         .split("\n")

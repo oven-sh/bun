@@ -68,9 +68,10 @@ static CONTROL_SEQUENCE: LazyLock<Regex> = LazyLock::new(|| {
 /// `stringLength`
 fn visible_len(text: &[u8]) -> usize {
     if strings::contains_char(text, 0x1B) || strings::contains(text, "\u{9b}".as_bytes()) {
-        return bun_lint::source::utf16_len(&CONTROL_SEQUENCE.replace(text, b"")) as usize;
+        return bun_core::strings::utf8_lossy_len_utf16(&CONTROL_SEQUENCE.replace(text, b""))
+            as usize;
     }
-    bun_lint::source::utf16_len(text) as usize
+    bun_core::strings::utf8_lossy_len_utf16(text) as usize
 }
 
 /// `line.replace(/(\d+)\s+(\d+)/u, (m, p1, p2) => styleText("dim", `${p1}:${p2}`))`

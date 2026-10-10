@@ -1072,6 +1072,19 @@ describe.concurrent("bun check", () => {
       },
     );
 
+    // `/proc` lists processes, not their other threads. So it is with the snapshots of a file system, and with what an
+    // automounter has yet to mount.
+    test.skipIf(process.platform !== "linux")(
+      "a project below a directory that the one above does not list",
+      async () => {
+        using dir = project({ "tsconfig.json": tsconfig, "a.ts": `export const a: number = "";\n` });
+        const thread = readdirSync("/proc/self/task").find(it => it !== String(process.pid));
+        const { stdout, exitCode } = await check(dir, ["-p", `/proc/${thread}/root${dir}`]);
+        expect(stdout).toEndWith(`a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
+        expect(exitCode).toBe(1);
+      },
+    );
+
     test("two directories", async () => {
       using dir = project({
         "a/a.ts": `export const a: string = 1;\n`,

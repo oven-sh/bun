@@ -343,6 +343,24 @@
    "input.js": "function foo() { if (true) { console.log(\"hello\"); } }\n",
    "sub/.oxfmtrc.json": "{ \"tabWidth\": 2 }\n"
   },
+  "stdin_svelte": {
+   "fmt-with-svelte.json": "{\n  \"svelte\": {}\n}\n",
+   "fmt-without-svelte.json": "{}\n",
+   "input.svelte": "<script>let   count=$state(0);</script>\n<button onclick={()=>count++}>{count}</button>\n"
+  },
+  "svelte": {
+   "App.svelte": "<script>let   count=$state(0);</script>\n<button onclick={()=>count++}>{count}</button>\n",
+   "Doc.mdx": "import Demo from \"./App.svelte\";\n\n# MDX with Svelte\n\n```svelte\n<script>let   count=$state(0);</script>\n<button onclick={()=>count++}>{count}</button>\n```\n\n<Demo />\n",
+   "README.md": "# Demo\n\nEmbedded Svelte snippet:\n\n```svelte\n<script>let   count=$state(0);</script>\n<button onclick={()=>count++}>{count}</button>\n```\n",
+   "fmt-bool-disable.json": "{\n  \"svelte\": {},\n  \"overrides\": [\n    {\n      \"files\": [\"legacy/**\"],\n      \"options\": {\n        \"svelte\": false\n      }\n    }\n  ]\n}\n",
+   "fmt-md-only.json": "{\n  \"overrides\": [\n    {\n      \"files\": [\"**/*.md\"],\n      \"options\": {\n        \"svelte\": {}\n      }\n    }\n  ]\n}\n",
+   "fmt-no-svelte.json": "{}\n",
+   "fmt-overrides-only.json": "{\n  \"overrides\": [\n    {\n      \"files\": [\"**/*.svelte\"],\n      \"options\": {\n        \"svelte\": {}\n      }\n    }\n  ]\n}\n",
+   "fmt-root-overrides.json": "{\n  \"svelte\": {\n    \"sortOrder\": \"options-scripts-markup-styles\"\n  },\n  \"overrides\": [\n    {\n      \"files\": [\"legacy/**\"],\n      \"options\": {\n        \"svelte\": {\n          \"sortOrder\": \"styles-options-markup-scripts\"\n        }\n      }\n    }\n  ]\n}\n",
+   "fmt-simple.json": "{\n  \"svelte\": {}\n}\n",
+   "script.js": "const x={a:1,b:2};\n",
+   "legacy/Old.svelte": "<script>let count=$state(0);</script>\n<button onclick={()=>count++}>{count}</button>\n<style>button{color:red;}</style>\n"
+  },
   "toml": {
    "Cargo.lock": "# This is a lock file and should be ignored\n[[package]]\nname   =   \"test\"\nversion    =    \"0.1.0\"\n",
    "Pipfile": "[packages]\nrequests   =   \"*\"\nflask   =   {   version   =   \">=2.0\"  ,  extras   =   [  \"async\"  ]   }\n\n[dev-packages]\npytest=\"*\"\n",
@@ -608,10 +626,10 @@
    "cwd": "per_file_override",
    "exitCode": 0,
    "changed": {
-    "per_file_override/test.js": "if (true) {\n  console.log(\"js\");\n}\n",
     "per_file_override/test.ts": "if (true) {\n    console.log(\"ts\");\n}\n",
-    "per_file_override/nested/deep/test.js": "if (true) {\n        console.log(\"nested js\");\n}\n",
-    "per_file_override/nested/deep/test.json": "{\n\t\"a\": 1,\n\t\"b\": 2,\n\t\"c\": 3,\n\t\"d\": 4,\n\t\"e\": 5,\n\t\"f\": 6,\n\t\"g\": 7,\n\t\"h\": 8\n}\n"
+    "per_file_override/test.js": "if (true) {\n  console.log(\"js\");\n}\n",
+    "per_file_override/nested/deep/test.json": "{\n\t\"a\": 1,\n\t\"b\": 2,\n\t\"c\": 3,\n\t\"d\": 4,\n\t\"e\": 5,\n\t\"f\": 6,\n\t\"g\": 7,\n\t\"h\": 8\n}\n",
+    "per_file_override/nested/deep/test.js": "if (true) {\n        console.log(\"nested js\");\n}\n"
    }
   },
   {
@@ -624,8 +642,8 @@
    "cwd": "no_root_section",
    "exitCode": 0,
    "changed": {
-    "no_root_section/test.js": "if (true) {\n\tconsole.log(\"js\");\n}\n",
-    "no_root_section/test.ts": "if (true) {\n  console.log(\"ts\");\n}\n"
+    "no_root_section/test.ts": "if (true) {\n  console.log(\"ts\");\n}\n",
+    "no_root_section/test.js": "if (true) {\n\tconsole.log(\"js\");\n}\n"
    }
   },
   {
@@ -698,8 +716,8 @@
    "cwd": "unset_in_root",
    "exitCode": 0,
    "changed": {
-    "unset_in_root/test.js": "if (true) {\n  console.log(\"js\");\n}\n",
-    "unset_in_root/test.ts": "if (true) {\n    console.log(\"ts\");\n}\n"
+    "unset_in_root/test.ts": "if (true) {\n    console.log(\"ts\");\n}\n",
+    "unset_in_root/test.js": "if (true) {\n  console.log(\"js\");\n}\n"
    }
   },
   {
@@ -968,9 +986,9 @@
    ],
    "exitCode": 0,
    "changed": {
-    "foo.json": "{ \"x\": 1 }\n",
+    "tsconfig.dummy.json": "{\n  // Allow comments!\n  \"compilerOptions\": {\n    \"module\": \"commonjs\",\n    \"strict\": true\n  }\n}\n",
     "package.json": "{\n  \"name\": \"fixture\",\n  \"version\": \"0.0.0\",\n  \"private\": true,\n  \"scripts\": {\n    \"build\": \"pnpm run build-napi-release && pnpm run build-js\",\n    \"build-napi-release\": \"pnpm run build-napi --release --features allocator\",\n    \"build-js\": \"node scripts/build.js\",\n    \"test\": \"vitest --dir test run\"\n  },\n  \"dependencies\": {\n    \"prettier\": \"3.7.4\"\n  },\n  \"devDependencies\": {\n    \"@types/node\": \"catalog:\",\n    \"execa\": \"^9.6.0\"\n  },\n  \"engines\": {\n    \"node\": \"^20.19.0 || >=22.12.0\"\n  }\n}\n",
-    "tsconfig.dummy.json": "{\n  // Allow comments!\n  \"compilerOptions\": {\n    \"module\": \"commonjs\",\n    \"strict\": true\n  }\n}\n"
+    "foo.json": "{ \"x\": 1 }\n"
    }
   },
   {
@@ -1531,9 +1549,9 @@
    "cwd": "oxfmtrc_only",
    "exitCode": 0,
    "changed": {
-    "oxfmtrc_only/test.css": ".foo {\n  color: red;\n}",
+    "oxfmtrc_only/test.ts": "const foo = 1;",
     "oxfmtrc_only/test.toml": "[foo]\nbar = 1",
-    "oxfmtrc_only/test.ts": "const foo = 1;"
+    "oxfmtrc_only/test.css": ".foo {\n  color: red;\n}"
    }
   },
   {
@@ -1547,9 +1565,9 @@
    "cwd": "editorconfig_only",
    "exitCode": 0,
    "changed": {
-    "editorconfig_only/test.css": ".foo {\n  color: red;\n}",
+    "editorconfig_only/test.ts": "const foo = 1;",
     "editorconfig_only/test.toml": "[foo]\nbar = 1",
-    "editorconfig_only/test.ts": "const foo = 1;"
+    "editorconfig_only/test.css": ".foo {\n  color: red;\n}"
    }
   },
   {
@@ -1733,9 +1751,9 @@
    "exitCode": 0,
    "changed": {
     "root.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
-    "sibling-a/a.js": "function foo() {\n  if (true) {\n    console.log(\"hello\")\n  }\n}\n",
-    "sibling-b/b.js": "function foo() {\n  if (true) {\n    console.log('hello');\n  }\n}\n",
     "sub/nested.js": "function foo() {\n  if (true) {\n    console.log(\"hello\");\n  }\n}\n",
+    "sibling-b/b.js": "function foo() {\n  if (true) {\n    console.log('hello');\n  }\n}\n",
+    "sibling-a/a.js": "function foo() {\n  if (true) {\n    console.log(\"hello\")\n  }\n}\n",
     "sub/deep/deep.js": "function foo() {\n        if (true) {\n                console.log(\"hello\");\n        }\n}\n"
    }
   },
@@ -1750,10 +1768,10 @@
    "exitCode": 0,
    "changed": {
     "root.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
-    "sibling-a/a.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
-    "sibling-b/b.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
-    "sibling-b/oxfmt.config.ts": "export default {\n    singleQuote: true,\n};\n",
     "sub/nested.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
+    "sibling-b/oxfmt.config.ts": "export default {\n    singleQuote: true,\n};\n",
+    "sibling-b/b.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
+    "sibling-a/a.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
     "sub/deep/deep.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n"
    }
   },
@@ -1783,10 +1801,10 @@
    "exitCode": 0,
    "changed": {
     "root.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
-    "sibling-a/a.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
-    "sibling-b/b.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
-    "sibling-b/oxfmt.config.ts": "export default {\n    singleQuote: true,\n};\n",
     "sub/nested.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
+    "sibling-b/oxfmt.config.ts": "export default {\n    singleQuote: true,\n};\n",
+    "sibling-b/b.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
+    "sibling-a/a.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n",
     "sub/deep/deep.js": "function foo() {\n    if (true) {\n        console.log(\"hello\");\n    }\n}\n"
    }
   },
@@ -2214,8 +2232,8 @@
    "cwd": "editorconfig_per_file",
    "exitCode": 0,
    "changed": {
-    "editorconfig_per_file/test.js": "if (true) {\n  console.log(\"js\")\n}\n",
-    "editorconfig_per_file/test.ts": "if (true) {\n    console.log(\"ts\")\n}\n"
+    "editorconfig_per_file/test.ts": "if (true) {\n    console.log(\"ts\")\n}\n",
+    "editorconfig_per_file/test.js": "if (true) {\n  console.log(\"js\")\n}\n"
    }
   },
   {
@@ -2466,6 +2484,129 @@
    "stdout": "function foo() {\n  if (true) {\n    console.log(\"hello\");\n  }\n}\n"
   },
   {
+   "name": "stdin_svelte",
+   "index": 0,
+   "args": [
+    "--stdin-filepath",
+    "App.svelte",
+    "--config",
+    "./fmt-with-svelte.json"
+   ],
+   "stdin": "input.svelte",
+   "exitCode": 0,
+   "changed": {},
+   "stdout": "<script>\n  let count = $state(0);\n</script>\n\n<button onclick={() => count++}>{count}</button>\n"
+  },
+  {
+   "name": "stdin_svelte",
+   "index": 1,
+   "args": [
+    "--stdin-filepath",
+    "App.svelte",
+    "--config",
+    "./fmt-without-svelte.json"
+   ],
+   "stdin": "input.svelte",
+   "exitCode": 0,
+   "changed": {},
+   "stdout": "<script>let   count=$state(0);</script>\n<button onclick={()=>count++}>{count}</button>\n"
+  },
+  {
+   "name": "svelte",
+   "index": 0,
+   "args": [
+    "--check",
+    "--config",
+    "./fmt-simple.json"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "App.svelte",
+    "README.md",
+    "legacy/Old.svelte",
+    "script.js"
+   ]
+  },
+  {
+   "name": "svelte",
+   "index": 1,
+   "args": [
+    "--check",
+    "--config",
+    "./fmt-no-svelte.json"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "script.js"
+   ]
+  },
+  {
+   "name": "svelte",
+   "index": 2,
+   "args": [
+    "--check",
+    "--config",
+    "./fmt-root-overrides.json"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "App.svelte",
+    "README.md",
+    "legacy/Old.svelte",
+    "script.js"
+   ]
+  },
+  {
+   "name": "svelte",
+   "index": 3,
+   "args": [
+    "--check",
+    "--config",
+    "./fmt-overrides-only.json"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "App.svelte",
+    "legacy/Old.svelte",
+    "script.js"
+   ]
+  },
+  {
+   "name": "svelte",
+   "index": 4,
+   "args": [
+    "--check",
+    "--config",
+    "./fmt-md-only.json"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "README.md",
+    "script.js"
+   ]
+  },
+  {
+   "name": "svelte",
+   "index": 5,
+   "args": [
+    "--check",
+    "--config",
+    "./fmt-bool-disable.json"
+   ],
+   "exitCode": 1,
+   "changed": {},
+   "listed": [
+    "App.svelte",
+    "README.md",
+    "script.js"
+   ]
+  },
+  {
    "name": "toml",
    "index": 0,
    "args": [
@@ -2580,8 +2721,8 @@
    ],
    "exitCode": 0,
    "changed": {
-    "complex.js": "const obj = {\n  foo: \"bar\",\n  baz: 123,\n};\n",
-    "unformatted.js": "class Foo {}\n"
+    "unformatted.js": "class Foo {}\n",
+    "complex.js": "const obj = {\n  foo: \"bar\",\n  baz: 123,\n};\n"
    }
   },
   {
@@ -2594,8 +2735,8 @@
    ],
    "exitCode": 0,
    "changed": {
-    "complex.js": "const obj = {\n  foo: \"bar\",\n  baz: 123,\n};\n",
-    "unformatted.js": "class Foo {}\n"
+    "unformatted.js": "class Foo {}\n",
+    "complex.js": "const obj = {\n  foo: \"bar\",\n  baz: 123,\n};\n"
    }
   },
   {

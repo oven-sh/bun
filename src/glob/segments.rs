@@ -192,7 +192,7 @@ impl Expansion {
 }
 
 /// `/\{(?:(?!\{).)*\}/.test(pattern)`
-fn has_braces(pattern: &[u8]) -> bool {
+pub(crate) fn has_braces(pattern: &[u8]) -> bool {
     let mut is_open = false;
     let mut rest = pattern;
     while let [byte, after @ ..] = rest {

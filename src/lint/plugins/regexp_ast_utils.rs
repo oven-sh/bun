@@ -10,8 +10,8 @@ use bun_lint::utils::eslint_utils::{StaticValue, find_variable_of};
 use smallvec::SmallVec;
 use std::borrow::Cow;
 
-/// upstream's `findSimpleVariable`: a variable of the form `{var,let,const} identifier ( = <init> )?`
-/// that is defined once, with `defs[0].node`.
+/// upstream's `findSimpleVariable`: a variable that is defined once, by `var`, `let` or `const`
+/// and without a pattern, and its `defs[0].node`.
 fn find_simple_variable<'a>(identifier: Expr<'a>) -> Option<(Symbol<'a>, VarDecl<'a>)> {
     if identifier.tag() != ExprTag::Ident {
         return None;
@@ -127,13 +127,13 @@ impl Evaluator {
         while let Some(operand) = operands.pop() {
             value = match (value, self.get_static_value(operand)?) {
                 // `js_add` copies what is there, which is quadratic in a chain.
-                (StaticValue::String(text), StaticValue::String(more)) => {
-                    let mut text = text.into_owned();
-                    strings::push_wtf8(&mut text, &more);
-                    if text.len() > MAX_LEN {
+                (StaticValue::String(sum), StaticValue::String(more)) => {
+                    let mut sum = sum.into_owned();
+                    strings::push_wtf8(&mut sum, &more);
+                    if sum.len() > MAX_LEN {
                         return None;
                     }
-                    StaticValue::String(Cow::Owned(text))
+                    StaticValue::String(Cow::Owned(sum))
                 }
                 (value, other) => value.js_add(&other)?,
             };
@@ -260,34 +260,57 @@ pub(crate) fn get_string_value_range(
     if !is_string_literal(node) {
         return None;
     }
-    let units = parse_string_literal(node.text());
+    let (raw, node_start) = (node.text(), node.span().start);
+    let units = parse_string_literal(raw);
     if (units.len() as u32) < end_offset {
         return None;
     }
-    let node_start = node.span().start;
     let (mut value_index, mut start) = (0, None);
-    let mut rest = &units[..];
-    while let [t, after @ ..] = rest {
+    // The body of upstream's loop, for a token from `from` to `to` whose value has `len` units.
+    let mut token = |from: u32, to: u32, len: u32| {
+        let end_index = value_index + len;
+        if start.is_none() && value_index <= start_offset && start_offset < end_index {
+            start = Some(from);
+        }
+        let has_end = value_index < end_offset && end_offset <= end_index;
+        value_index = end_index;
+        start
+            .filter(|_| has_end)
+            .map(|start| Span::new(node_start + start, node_start + to))
+    };
+    let closing_quote = raw.len().saturating_sub(1) as u32;
+    let (mut at, mut rest) = (1, &units[..]);
+    loop {
+        // A line continuation has no unit. For upstream `\` and a line separator are a character.
+        let next = rest.first().map_or(closing_quote, |t| t.start);
+        while at < next {
+            let len = match raw.get(at as usize + 1..) {
+                Some([0xE2, ..]) => 4,
+                Some([b'\r', b'\n', ..]) => 3,
+                _ => 2,
+            };
+            if len == 4
+                && let Some(range) = token(at, at + len, 1)
+            {
+                return Some(range);
+            }
+            at += len;
+        }
+        let [t, after @ ..] = rest else {
+            return None;
+        };
         // Upstream's tokenizer throws at a line separator that is written as it is.
         if matches!(t.code_unit, 0x2028 | 0x2029) && t.end - t.start == 3 {
             return None;
         }
         // The two halves of a character are one token of upstream's.
         let is_pair = after.first().is_some_and(|next| next.start == t.start);
-        let end_index = value_index + if is_pair { 2 } else { 1 };
-        if start.is_none() && value_index <= start_offset && start_offset < end_index {
-            start = Some(t.start);
+        if let Some(range) = token(t.start, t.end, if is_pair { 2 } else { 1 }) {
+            return Some(range);
         }
-        if let Some(start) = start
-            && value_index < end_offset
-            && end_offset <= end_index
-        {
-            return Some(Span::new(node_start + start, node_start + t.end));
-        }
-        value_index = end_index;
+        at = t.end;
         rest = after.get(usize::from(is_pair)..).unwrap_or_default();
     }
-    None
 }
 
 /// upstream's `isStringLiteral`: a template is none.
@@ -368,8 +391,8 @@ pub(crate) fn get_flags_range(flags_node: Option<Expr<'_>>) -> Option<Span> {
     let flags_node = flags_node?;
     let range = flags_node.span();
     if let ExprKind::Regex(regex) = flags_node.kind() {
-        let flags = regex.flags().len() as u32;
-        return Some(Span::new(range.end.saturating_sub(flags), range.end));
+        let start = range.end.saturating_sub(regex.flags().len() as u32);
+        return Some(Span::new(start, range.end));
     }
     is_string_literal(flags_node).then(|| range.shrink(1, 1))
 }

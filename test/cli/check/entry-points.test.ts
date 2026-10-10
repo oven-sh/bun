@@ -304,6 +304,23 @@ test.concurrent.each(cases)("%s", async (_, kind, entry, command, isCorrect) => 
   });
 });
 
+// Of a line of more than 1,000 bytes only the beginning is kept with an error: a bundle on one line can have thousands.
+test("an error far into a long line has its place in a build, and no line of text", async () => {
+  const before = `export const s = "${Buffer.alloc(1100, "\u6f22").toString()}"; `;
+  using dir = tempDir("bun-check", {
+    "tsconfig.json": config({ noEmit: true }),
+    "index.ts": `${before}export const n: number = "1";\n`,
+    "build.ts": `
+      const { logs } = await Bun.build({ check: true, throw: false, entrypoints: ["index.ts"] });
+      console.log(JSON.stringify(logs.map(({ position }) => [position.line, position.column, position.lineText ?? ""])));
+    `,
+  });
+  await using proc = spawn({ timeout: longLimit, cmd: [bunExe(), "build.ts"], cwd: String(dir), env, stdout: "pipe" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout)).toEqual([[1, before.length + "export const ".length + 1, ""]]);
+  expect(exitCode).toBe(0);
+});
+
 test("a byte order mark is not a column, wherever the text comes from", async () => {
   const text = `export const n: number = "1";\n`;
   using dir = tempDir("bun-check", {

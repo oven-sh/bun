@@ -538,7 +538,8 @@ test.concurrent.each([
   ],
 ] as [string, unknown, string[], object?][])(
   "import/resolver: the package answers for a resolver that is not known here: %s",
-  async (_, resolver, expected, parsers) => {
+  // With four parameters the fourth is `done` for a row of three.
+  async (_, resolver, expected, parsers = undefined) => {
     const theirs = `{ create: context => ({ Program(node) { context.report({ node, message: "theirs" }); } }) }`;
     const config = `export default [
     { settings: ${JSON.stringify({ "import/resolver": resolver, "import/parsers": parsers })} },
@@ -549,17 +550,20 @@ test.concurrent.each([
   },
 );
 
-test.concurrent("import/ignore with a regular expression, of which JSON has nothing: the package answers", async () => {
-  const theirs = `{ create: context => ({ Program(node) { context.report({ node, message: "theirs" }); } }) }`;
-  const config = (ignore: string) => `export default [
+test.concurrent(
+  "import/ignore with a regular expression that is not written as a string: the package answers",
+  async () => {
+    const theirs = `{ create: context => ({ Program(node) { context.report({ node, message: "theirs" }); } }) }`;
+    const config = (ignore: string) => `export default [
     { settings: { "import/ignore": [${ignore}] } },
     { plugins: { import: { meta: { name: "eslint-plugin-import" }, rules: { "no-cycle": ${theirs} } } }, rules: { "import/no-cycle": "error" } },
   ];`;
-  const problems = async (ignore: string) =>
-    (await lint({ "eslint.config.mjs": config(ignore), "a.js": "export {};\n" }, ["a.js"])).problems;
-  expect(await problems(String.raw`/\.css$/`)).toEqual(["a.js:1:1 import/no-cycle"]);
-  expect(await problems(String.raw`"\\.css$"`)).toEqual([]);
-});
+    const problems = async (ignore: string) =>
+      (await lint({ "eslint.config.mjs": config(ignore), "a.js": "export {};\n" }, ["a.js"])).problems;
+    expect(await problems(String.raw`/\.css$/`)).toEqual(["a.js:1:1 import/no-cycle"]);
+    expect(await problems(String.raw`"\\.css$"`)).toEqual([]);
+  },
+);
 
 describe.concurrent("a note says that a plugin that is built in is installed in an older version", () => {
   const notes = async (files: Record<string, string>, ...flags: string[]) =>

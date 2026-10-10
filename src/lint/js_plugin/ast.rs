@@ -18,7 +18,6 @@ use crate::ast::File;
 use crate::estree::{Dialect, FieldEntry, Nodes, Object, VNode, Value};
 use crate::selector::{EsNode, Selector};
 use crate::span::Span;
-use rustc_hash::FxHashMap;
 
 /// What the number in a word is.
 #[derive(Copy, Clone)]
@@ -136,8 +135,8 @@ pub(super) const STRINGS: &[&str] = &[
     "~",
 ];
 
-/// The numbers of the nodes of a file.
-pub(super) type NodeIds<'a> = FxHashMap<VNode<'a>, u32>;
+/// The nodes of a file, by their numbers.
+pub(super) type Numbered<'a> = Vec<VNode<'a>>;
 
 const HEADER: usize = 10;
 /// In the start of a pair of `strings`: it is in `extra`.
@@ -162,6 +161,7 @@ struct Tree {
 
 struct OpenNode<'a> {
     node: VNode<'a>,
+    span: Span,
     id: u32,
     fields: &'static [FieldEntry],
     /// The index in `fields` of the next field.
@@ -185,7 +185,9 @@ struct Writer<'a, 's> {
     selectors: &'s [Option<&'s Selector>],
     /// The nodes that match each of `selectors`.
     matches: Vec<Vec<u32>>,
-    ids: NodeIds<'a>,
+    nodes: Numbered<'a>,
+    /// By the number of a type: how many words a node of it has. `u8::MAX`: not counted yet.
+    words: [u8; 256],
     tree: Tree,
     /// The length of [`Tree::extra`] in UTF-16 code units.
     extra_units: u32,
@@ -197,7 +199,7 @@ impl<'a> Writer<'a, '_> {
     fn start_node(&mut self, node: VNode<'a>, parent: u32) -> u32 {
         let id = self.tree.types.len() as u32;
         let node_type = node.node_type();
-        self.ids.insert(node, id);
+        self.nodes.push(node);
         if !self.selectors.is_empty() {
             let es_node = EsNode::of(node, node_type);
             for (selector, matches) in self.selectors.iter().zip(&mut self.matches) {
@@ -213,13 +215,15 @@ impl<'a> Writer<'a, '_> {
         self.tree.parents.push(parent);
         let fields = node_type.fields();
         let at = self.tree.fields.len();
-        let count = fields
-            .iter()
-            .filter(|it| it.is_in(self.dialect) && !it.is_hidden)
-            .count();
-        self.tree.fields.resize(at + count, UNDEFINED);
+        let words = &mut self.words[node_type as u8 as usize];
+        if *words == u8::MAX {
+            let has = |it: &&FieldEntry| it.is_in(self.dialect) && !it.is_hidden;
+            *words = fields.iter().filter(has).count() as u8;
+        }
+        self.tree.fields.resize(at + *words as usize, UNDEFINED);
         self.open.push(Open::Node(OpenNode {
             node,
+            span,
             id,
             fields,
             next: 0,
@@ -241,7 +245,7 @@ impl<'a> Writer<'a, '_> {
                     if entry.is_hidden || !entry.is_in(self.dialect) {
                         continue;
                     }
-                    let (node, id, to) = (open.node, open.id, open.at);
+                    let (node, span, id, to) = (open.node, open.span, open.id, open.at);
                     open.at += 1;
                     let value = (entry.get)(node);
                     let word = match (value, open.last_child) {
@@ -254,7 +258,7 @@ impl<'a> Writer<'a, '_> {
                             open.last_child = Some((child, self.tree.types.len() as u32));
                             word(Tag::Node, self.start_node(child, id) as usize)
                         }
-                        _ => self.value(&value, node.span(), id),
+                        _ => self.value(&value, span, id),
                     };
                     if let Some(field) = self.tree.fields.get_mut(to) {
                         *field = word;
@@ -367,7 +371,7 @@ impl<'a> Writer<'a, '_> {
             None => {
                 let start = self.extra_units;
                 self.tree.extra.extend_from_slice(value);
-                self.extra_units += crate::source::utf16_len(value);
+                self.extra_units += bun_core::strings::utf8_lossy_len_utf16(value);
                 (start | IN_EXTRA, self.extra_units)
             }
         };
@@ -422,13 +426,14 @@ fn walk<'a, 's>(
         offsets,
         selectors,
         matches: vec![Vec::new(); selectors.len()],
-        ids: NodeIds::default(),
+        nodes: Numbered::default(),
+        words: [u8::MAX; 256],
         tree: Tree::default(),
         extra_units: 0,
         open: Vec::new(),
     };
     let nodes = file.text().len() / 8;
-    writer.ids.reserve(nodes);
+    writer.nodes.reserve(nodes);
     writer.tree.types.reserve(nodes);
     writer.tree.starts.reserve(nodes);
     writer.tree.ends.reserve(nodes);
@@ -447,13 +452,13 @@ pub(super) fn write<'a>(
     selectors: &[Option<&Selector>],
     listened: Option<&[bool; 256]>,
     out: &mut Vec<u8>,
-) -> NodeIds<'a> {
+) -> Numbered<'a> {
     let writer = walk(file, offsets, selectors);
     let tree = &writer.tree;
     let is_listened = |listened: &[bool; 256]| tree.types.iter().any(|&it| listened[it as usize]);
     if listened.is_some_and(|it| !is_listened(it)) && writer.matches.iter().all(Vec::is_empty) {
         wire::words(out, &[0; HEADER]);
-        return writer.ids;
+        return writer.nodes;
     }
     let matches: usize = writer.matches.iter().map(|it| it.len() + 1).sum();
     let header: [u32; HEADER] = [
@@ -486,7 +491,7 @@ pub(super) fn write<'a>(
     write_matches(&writer.matches, out);
     out.extend_from_slice(&tree.types);
     out.extend_from_slice(&tree.extra);
-    writer.ids
+    writer.nodes
 }
 
 /// Appends only what matches `selectors`.

@@ -537,7 +537,7 @@ impl<'e> Host<'e> {
         message.extend_from_slice(path);
         message.extend_from_slice(if has_mark { &text[3..] } else { text });
 
-        let mut ids = None;
+        let mut nodes = None;
         let mut serve = |asked: u32, details: &[u8], out: &mut Vec<u8>| match asked {
             _ if self.serve_any(asked, details, out) => {}
             ask::SETTINGS => out.extend_from_slice(&settings.json),
@@ -575,7 +575,7 @@ impl<'e> Host<'e> {
                 });
                 match asked {
                     ask::AST => {
-                        ids = Some(ast::write(file, &offsets, &selectors, types.as_ref(), out));
+                        nodes = Some(ast::write(file, &offsets, &selectors, types.as_ref(), out));
                     }
                     _ => ast::write_only_matches(file, &offsets, &selectors, out),
                 }
@@ -583,8 +583,8 @@ impl<'e> Host<'e> {
             ask::TOKENS => tokens::write(file, &offsets, out),
             ask::COMMENTS => tokens::write_comments(file, &offsets, out),
             ask::SCOPES => {
-                if let Some(ids) = &ids {
-                    scopes::write(file, &offsets, ids, out);
+                if let Some(nodes) = &nodes {
+                    scopes::write(file, &offsets, nodes, out);
                 }
             }
             _ => {}

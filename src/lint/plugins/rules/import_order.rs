@@ -357,14 +357,14 @@ fn can_be_crossed(statement: Stmt) -> bool {
     }
 }
 
-/// `text.slice(start, end)`
-fn slice(text: &[u8], start: u32, end: u32) -> &[u8] {
-    text.get(start as usize..end as usize).unwrap_or_default()
+/// `text.slice(from, to)`
+fn slice(text: &[u8], from: u32, to: u32) -> &[u8] {
+    text.get(from as usize..to as usize).unwrap_or_default()
 }
 
-/// `text.substring(start, end)`
-fn substring(text: &[u8], start: u32, end: u32) -> &[u8] {
-    slice(text, start.min(end), start.max(end))
+/// `text.substring(from, to)`
+fn substring(text: &[u8], from: u32, to: u32) -> &[u8] {
+    slice(text, from.min(to), from.max(to))
 }
 
 /// `commentOnSameLineAs`

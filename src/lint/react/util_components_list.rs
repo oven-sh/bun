@@ -26,11 +26,8 @@ use std::borrow::Cow;
 pub(crate) struct At(u128);
 
 impl At {
-    /// How many bits of a number of the [`Queue`] are not the time.
-    const BITS_OF_QUEUE: u32 = 40;
-
     /// `Program:exit`
-    pub(crate) const END: At = At(u128::MAX >> At::BITS_OF_QUEUE);
+    pub(crate) const END: At = At(u128::MAX);
 
     /// Of the nodes that start together the longer is entered first, of those with one range the
     /// outer.
@@ -92,10 +89,8 @@ pub(crate) struct Event<'a> {
 /// The nodes that somebody wants to be called with, each at its time.
 #[derive(Default)]
 pub(crate) struct Queue<'a> {
-    nodes: Vec<Node<'a>>,
-    /// The time, the rank and the index into `nodes`, as one number.
-    order: Vec<u128>,
-    /// How many of `order` are handed out.
+    events: Vec<Event<'a>>,
+    /// How many of `events` are handed out.
     popped: usize,
     is_sorted: bool,
 }
@@ -104,30 +99,23 @@ impl<'a> Queue<'a> {
     /// Of what is due at one moment the lower `rank` comes first, as the earlier of the rules that
     /// upstream's `mergeRules` is given. Of one rank: what is pushed first.
     pub(crate) fn push(&mut self, at: At, rank: u8, node: Node<'a>) {
-        let index = self.nodes.len() as u128;
-        self.order
-            .push((at.0 << At::BITS_OF_QUEUE) | (u128::from(rank) << 32) | index);
-        self.nodes.push(node);
+        self.events.push(Event { at, rank, node });
         self.is_sorted = false;
     }
 
     /// The next that is due at `at` or before. It sorts when it is called after a `push`.
     pub(crate) fn pop_until(&mut self, at: At) -> Option<Event<'a>> {
         if !self.is_sorted {
-            sort::sort_unstable(self.order.get_mut(self.popped..)?);
+            let waiting = self.events.get_mut(self.popped..)?;
+            sort::sort_by_key(waiting, |it| (it.at, it.rank));
             self.is_sorted = true;
         }
-        let &key = self.order.get(self.popped)?;
-        let due = At(key >> At::BITS_OF_QUEUE);
-        if due > at {
+        let &next = self.events.get(self.popped)?;
+        if next.at > at {
             return None;
         }
         self.popped += 1;
-        Some(Event {
-            at: due,
-            rank: (key >> 32) as u8,
-            node: *self.nodes.get(key as u32 as usize)?,
-        })
+        Some(next)
     }
 }
 
@@ -171,8 +159,6 @@ pub(crate) struct DeclaredPropTypes<'a> {
     entries: Vec<(Cow<'a, [u8]>, DeclaredPropType<'a>)>,
     /// The index into `entries` by the name, once there are more than [`DeclaredPropTypes::FEW`].
     index: FxHashMap<Cow<'a, [u8]>, u32>,
-    /// How many of the names are array indices.
-    integers: u32,
 }
 
 impl<'a> DeclaredPropTypes<'a> {
@@ -215,25 +201,22 @@ impl<'a> DeclaredPropTypes<'a> {
         if at >= DeclaredPropTypes::FEW {
             self.index.insert(name.clone(), at as u32);
         }
-        self.integers += u32::from(DeclaredPropTypes::integer(&name).is_some());
         self.entries.push((name, value));
     }
 
     /// In the order of `Object.keys`: the array indices, ascending, then the others as they came.
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&[u8], &DeclaredPropType<'a>)> {
-        let (entries, has_integers) = (&self.entries, self.integers > 0);
-        let mut integers: Vec<(u32, u32)> = Vec::new();
-        if has_integers {
-            let numbers = entries.iter().map(|(it, _)| DeclaredPropTypes::integer(it));
-            integers.extend(numbers.zip(0u32..).filter_map(|(it, at)| Some((it?, at))));
-            sort::sort_unstable(&mut integers);
-        }
+        let entries = &self.entries;
+        let numbers = entries.iter().map(|(it, _)| DeclaredPropTypes::integer(it));
+        let numbered = numbers.zip(0u32..).filter_map(|(it, at)| Some((it?, at)));
+        let mut integers: Vec<(u32, u32)> = numbered.collect();
+        sort::sort_unstable(&mut integers);
         let first = integers
             .into_iter()
             .filter_map(move |(_, at)| entries.get(at as usize));
         let others = entries
             .iter()
-            .filter(move |(it, _)| !has_integers || DeclaredPropTypes::integer(it).is_none());
+            .filter(|(it, _)| DeclaredPropTypes::integer(it).is_none());
         first.chain(others).map(|(name, value)| (&**name, value))
     }
 

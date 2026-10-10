@@ -49,9 +49,9 @@ pub const fn is_regexp_word_byte(byte: u8) -> bool {
 mod wtf8_text;
 pub use wtf8_text::{
     Wtf8Codepoints, codepoint_len_utf16, push_codepoint_wtf8_joined, push_wtf8,
-    push_wtf8_well_formed, wtf8_codepoint_at, wtf8_codepoint_count, wtf8_codepoints,
-    wtf8_first_codepoint, wtf8_has_surrogate, wtf8_len_utf16, wtf8_offset_of_utf16_index,
-    wtf8_slice_by_utf16, wtf8_to_utf16, wtf16_to_wtf8,
+    push_wtf8_well_formed, utf8_lossy_len_utf16, wtf8_codepoint_at, wtf8_codepoint_count,
+    wtf8_codepoints, wtf8_first_codepoint, wtf8_has_surrogate, wtf8_len_utf16,
+    wtf8_offset_of_utf16_index, wtf8_slice_by_utf16, wtf8_to_utf16, wtf16_to_wtf8,
 };
 
 // UTF-16 surrogate primitives. The single implementation lives in the

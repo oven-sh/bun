@@ -609,6 +609,42 @@ for (let [gcTick, label] of [
   });
 }
 
+// SIGCHLD has one disposition. process.on("SIGCHLD") needs it, and the waiter thread needs it
+// to learn that a child exited. The first spawn starts the waiter thread.
+describe.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || (!isLinux && !isAndroid))(
+  "a SIGCHLD listener and Bun.spawn both see each child exit",
+  () => {
+    const waiterThread = { "BUN_FEATURE_FLAG_FORCE_WAITER_THREAD": "1", "BUN_GARBAGE_COLLECTOR_LEVEL": "1" };
+    // Number of listener calls after each of the three child exits. The second child also stops
+    // and continues, which is one call each. The listener is removed before the third child.
+    const signals = { before: [1, 4, 4], after: [0, 3, 3] };
+
+    // Not concurrent: a fixture that waits forever is only killed on the timeout of a serial test.
+    it.each([
+      ["waiter thread, listener added before the first spawn", waiterThread, "before"],
+      ["waiter thread, listener added after the first spawn", waiterThread, "after"],
+      ["pidfd, listener added before the first spawn", {}, "before"],
+      ["pidfd, listener added after the first spawn", {}, "after"],
+    ] as const)("%s", async (_, env, order) => {
+      await using proc = spawn({
+        cmd: [bunExe(), join(import.meta.dir, "spawn-sigchld-listener-fixture.ts"), order],
+        env: { ...bunEnv, ...env },
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const lines = stdout.split("\n").filter(Boolean);
+      expect(lines.map(line => JSON.parse(line))).toEqual([
+        { child: "first spawn", exitCode: 0, signals: signals[order][0] },
+        { child: "second spawn", exitCode: 0, signals: signals[order][1] },
+        { child: "listener removed", exitCode: 0, signals: signals[order][2] },
+      ]);
+      expect(exitCode).toBe(0);
+    });
+  },
+);
+
 // The waiter thread is the Linux fallback for kernels/sandboxes without pidfd;
 // kqueue platforms (macOS, FreeBSD) always have EVFILT_PROC and its non-Linux
 // loop has no wakeup for processes appended after it starts.

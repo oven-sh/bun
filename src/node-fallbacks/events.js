@@ -530,15 +530,5 @@ Object.assign(EventEmitter, {
   listenerCount,
 });
 
-export default EventEmitter;
-export {
-  EventEmitter,
-  addAbortListener,
-  captureRejectionSymbol,
-  getEventListeners,
-  getMaxListeners,
-  EventEmitter as init,
-  listenerCount,
-  once,
-  setMaxListeners,
-};
+// CommonJS so that `require("events")` returns the constructor.
+module.exports = EventEmitter;

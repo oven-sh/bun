@@ -65,7 +65,7 @@ describe("error messages", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("'bun patch-remove' with no package name shows a usage example", async () => {
+  test.concurrent("'bun patch-remove' with no package name shows a usage example", async () => {
     await using dir = tempDir("bun-patch-remove-noarg", {
       "package.json": JSON.stringify({ name: "t" }),
     });
@@ -83,7 +83,7 @@ describe("error messages", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("'bun patch-remove' with no patchedDependencies shows an error", async () => {
+  test.concurrent("'bun patch-remove' with no patchedDependencies shows an error", async () => {
     await using dir = tempDir("bun-patch-remove-none", {
       "package.json": JSON.stringify({ name: "t", dependencies: { bar: "0.0.7" } }),
     });
@@ -1341,8 +1341,8 @@ describe("bun patch-remove", async () => {
 
     const { stdout, stderr, exitCode } = await runBun(packageDir, "patch-remove", "bar");
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
     expect(stdout).toContain("Removed patch bar@0.0.7");
+    expect(exitCode).toBe(0);
 
     // the field is gone entirely once the last patch is removed
     expect((await readPackageJson(packageDir)).patchedDependencies).toBeUndefined();
@@ -1366,8 +1366,8 @@ describe("bun patch-remove", async () => {
 
     const { stdout, stderr, exitCode } = await runBun(packageDir, "patch-remove", "bar@0.0.7");
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
     expect(stdout).toContain("Removed patch bar@0.0.7");
+    expect(exitCode).toBe(0);
     expect((await readPackageJson(packageDir)).patchedDependencies).toBeUndefined();
   });
 
@@ -1406,13 +1406,20 @@ describe("bun patch-remove", async () => {
   });
 
   test.concurrent("errors when no patch exists for the package", async () => {
+    // another package must be patched so the "no patch found" branch is
+    // reached instead of the missing-field error
     const packageDir = await createProject({
-      "package.json": JSON.stringify({ name: "foo", dependencies: { bar: "0.0.7" } }),
+      "package.json": JSON.stringify({
+        name: "foo",
+        dependencies: { bar: "0.0.7", "no-deps": "1.0.0" },
+      }),
     });
     await install(packageDir);
+    await patchPackage(packageDir, "no-deps");
 
     const { stderr, exitCode } = await runBun(packageDir, "patch-remove", "bar");
     expect(stderr).toContain('no patch found for "bar"');
+    expect(stderr).toContain("no-deps@1.0.0");
     expect(exitCode).toBe(1);
   });
 
@@ -1440,7 +1447,7 @@ describe("bun patch-remove", async () => {
     );
   });
 
-  test("from a workspace package edits the root package.json", async () => {
+  test.concurrent("from a workspace package edits the root package.json", async () => {
     const packageDir = await createProject({
       "package.json": JSON.stringify({
         name: "root",
@@ -1469,8 +1476,8 @@ describe("bun patch-remove", async () => {
 
     const { stdout, stderr, exitCode } = await runBun(subdir, "patch-remove", "bar");
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
     expect(stdout).toContain("Removed patch bar@0.0.7");
+    expect(exitCode).toBe(0);
 
     expect((await readPackageJson(packageDir)).patchedDependencies).toBeUndefined();
     expect(await Bun.file(join(packageDir, "patches", "bar@0.0.7.patch")).exists()).toBe(false);

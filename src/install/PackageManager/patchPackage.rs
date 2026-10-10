@@ -718,6 +718,12 @@ pub fn do_patch_remove(manager: &mut PackageManager, log_level: LogLevel) -> Pat
                     "<r><red>error<r>: no patch found for <b>{}<r> in \"patchedDependencies\"<r>\n",
                     bstr::BStr::new(argument),
                 );
+                if !entries.is_empty() {
+                    bun_core::note!("patched packages:");
+                    for (key, _) in &entries {
+                        bun_core::pretty!("  {}<r>\n", bstr::BStr::new(key));
+                    }
+                }
                 Output::flush();
                 Global::crash();
             }
@@ -743,43 +749,87 @@ pub fn do_patch_remove(manager: &mut PackageManager, log_level: LogLevel) -> Pat
         patchfile_paths.push(entries[i].1.clone());
     }
 
+    // `--dry-run` / `--no-save` leave the manifest untouched on disk, so the
+    // patch files it still references must stay too. (`--no-save` is rejected
+    // during argument parsing.)
+    let dry_run = manager.options.dry_run;
+    // Deleting one file failing (e.g. a permission error) must not leave a
+    // multi-package removal half-finished: try every file, then report.
+    let mut unlink_failures: Vec<Box<[u8]>> = Vec::new();
+
     for (key, path) in patch_keys.iter().zip(patchfile_paths.iter()) {
-        if !path.is_empty() {
-            let patchfile: Vec<u8> = if Platform::AUTO.is_absolute(path) {
-                path.to_vec()
-            } else {
-                resolve_path::join::<platform::Auto>(&[root_dir, path]).to_vec()
+        if !path.is_empty() && !dry_run {
+            // values are written by `bun patch --commit` as project-relative
+            // paths, but a hand-edited manifest can point anywhere — only
+            // delete files that resolve inside the project
+            let Some(patchfile) = resolve_patchfile_in_project(root_dir, path) else {
+                bun_core::warn!(
+                    "patch file <b>{}<r> resolves outside the project, not deleting it\n",
+                    bstr::BStr::new(path)
+                );
+                Output::flush();
+                if log_level != LogLevel::Silent {
+                    bun_core::pretty!("<r>Removed patch <b>{}</b><r>\n", bstr::BStr::new(key));
+                    Output::flush();
+                }
+                continue;
             };
             let mut zbuf = patchfile;
             zbuf.push(0);
             let path_len = zbuf.len() - 1;
-            if let Err(e) = sys::unlink(ZStr::from_buf(&zbuf, path_len)) {
-                if e.get_errno() != sys::E::ENOENT {
-                    Output::err(
-                        e,
-                        "failed to delete patch file {f}",
-                        (bun_fmt::quote(&zbuf[..path_len]),),
-                    );
-                    Global::crash();
+            match sys::unlink(ZStr::from_buf(&zbuf, path_len)) {
+                Err(e) if e.get_errno() != sys::E::ENOENT => {
+                    unlink_failures.push(Box::<[u8]>::from(&zbuf[..path_len]));
+                    Output::err(e, "failed to delete patch file {f}", (bun_fmt::quote(&zbuf[..path_len]),));
+                    Output::flush();
+                    continue;
                 }
+                _ => {}
             }
-            // a value like `../shared/foo.patch` points outside the project;
-            // leave those directories alone
-            if !path.starts_with(b"..") {
-                remove_empty_patch_directories(root_dir, path);
-            }
+            remove_empty_patch_directories(root_dir, path);
         }
 
         if log_level != LogLevel::Silent {
-            bun_core::pretty!("<r>Removed patch <b>{}</b><r>\n", bstr::BStr::new(key));
+            if dry_run {
+                bun_core::pretty!("<r>Would remove patch <b>{}</b><r> <d>(dry run)<r>\n", bstr::BStr::new(key));
+            } else {
+                bun_core::pretty!("<r>Removed patch <b>{}</b><r>\n", bstr::BStr::new(key));
+            }
             Output::flush();
         }
+    }
+
+    if !unlink_failures.is_empty() {
+        // nothing has been written to package.json yet, so its entries are
+        // unchanged; only these patch files are gone
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: failed to delete {} patch file(s), listed above<r>",
+            unlink_failures.len(),
+        );
+        Output::flush();
+        Global::crash();
     }
 
     PatchRemoveResult {
         patch_keys: patch_keys.into_boxed_slice(),
         not_in_workspace_root,
     }
+}
+
+/// Resolves a `patchedDependencies` value against the project root; returns
+/// None for absolute paths or `..` escapes. The value is trusted to name a
+/// patch file the project itself committed, so removal must stay inside the
+/// project — otherwise a crafted manifest could delete arbitrary files.
+fn resolve_patchfile_in_project(root_dir: &[u8], value: &[u8]) -> Option<Vec<u8>> {
+    if Platform::AUTO.is_absolute(value) {
+        return None;
+    }
+    // join normalizes `.`/`..`, so an escaping value fails the prefix check
+    let full = resolve_path::join::<platform::Posix>(&[root_dir, value]).to_vec();
+    let contained = full.len() > root_dir.len()
+        && strings::eql_long(&full[..root_dir.len()], root_dir, true)
+        && full[root_dir.len()] == b'/';
+    if contained { Some(full) } else { None }
 }
 
 /// After a patch file is deleted, remove its directory and any now-empty
@@ -794,7 +844,7 @@ fn remove_empty_patch_directories(root_dir: &[u8], patchfile_rel_path: &[u8]) {
         _ => return,
     };
     loop {
-        let dir: Vec<u8> = resolve_path::join::<platform::Auto>(&[root_dir, rel_dir]).to_vec();
+        let dir: Vec<u8> = resolve_path::join::<platform::Posix>(&[root_dir, rel_dir]).to_vec();
         let mut zbuf = dir;
         zbuf.push(0);
         // rmdir fails with ENOTEMPTY while other patch files remain — the

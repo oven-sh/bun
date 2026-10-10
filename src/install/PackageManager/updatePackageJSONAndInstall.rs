@@ -633,6 +633,16 @@ fn update_package_json_and_install_with_manager_with_updates(
                 &result.patch_keys,
             );
             print_package_json_into_cache_entry(root_package_json, root_package_json_root);
+            // the install below reads the root manifest from the cache — the
+            // edited contents must be reparsed so the removed patch entries
+            // are gone from the AST it sees
+            if let Err(err) = root_package_json.reparse_root(manager.log_mut()) {
+                bun_core::pretty_errorln!(
+                    "package.json failed to parse due to error {}",
+                    err.name(),
+                );
+                Global::crash();
+            }
         }
 
         let root_is_targeted = manager

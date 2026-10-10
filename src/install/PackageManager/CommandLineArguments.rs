@@ -1744,6 +1744,14 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             Global::crash();
         }
 
+        // --no-save leaves the manifest untouched, but the command's whole job
+        // is removing the "patchedDependencies" entry; rejecting is clearer
+        // than silently keeping a reference to a patch file (dry-run works).
+        if subcommand == Subcommand::PatchRemove && cli.no_save {
+            Output::err_generic("--no-save cannot be used with bun patch-remove", ());
+            Global::crash();
+        }
+
         if cli.production && cli.trusted {
             Output::err_generic(
                 "The '--production' and '--trust' flags together are not supported because the --trust flag potentially modifies the lockfile after installing packages\n",

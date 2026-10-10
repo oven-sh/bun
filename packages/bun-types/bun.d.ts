@@ -3302,6 +3302,22 @@ declare module "bun" {
     allowUnresolved?: string[];
     packages?: "bundle" | "external";
     publicPath?: string;
+    /**
+     * Replaces identifiers and dotted property paths, such as `process.env.NODE_ENV`, with constant
+     * expressions at build time. Each value is a JSON string, an identifier, or a property path.
+     *
+     * An entry for `process.env.FOO` takes precedence over the value that {@link BuildConfig.env} inlines for `FOO`.
+     *
+     * Equivalent to `--define` in `bun build`.
+     *
+     * @example
+     * ```ts
+     * Bun.build({
+     *   entrypoints: ["src/index.ts"],
+     *   define: { "process.env.NODE_ENV": JSON.stringify("production") },
+     * })
+     * ```
+     */
     define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com
     loader?: { [k in string]: Loader };
@@ -3343,6 +3359,8 @@ declare module "bun" {
      * - `"disable"`: Disables environment variable injection entirely
      * - A string ending in `*`: Inlines environment variables that match the given prefix.
      *   For example, `"MY_PUBLIC_*"` only includes env vars starting with "MY_PUBLIC_"
+     *
+     * A {@link define} entry for `process.env.FOO` takes precedence over the value that `env` inlines for `FOO`.
      *
      * @example
      * ```ts

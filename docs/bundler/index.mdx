@@ -738,6 +738,25 @@ console.log(process.env.BAZ);
 
 Disables environment variable injection entirely.
 
+#### define takes precedence over env
+
+A [`define`](#define) entry for `process.env.FOO` takes precedence over the value that `env` inlines for `FOO`.
+
+To inline the value from the environment when `FOO` is set, and a default when it is not, compute the value in your build script:
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+await Bun.build({
+  entrypoints: ["./index.tsx"],
+  outdir: "./out",
+  env: "inline",
+  define: {
+    "process.env.FOO": JSON.stringify(Bun.env.FOO ?? "fallback"),
+  },
+});
+```
+
+The build script reads `Bun.env.FOO` because a `define` entry for `process.env.FOO` in `bunfig.toml` or on the command line also replaces `process.env.FOO` in the build script itself.
+
 ### sourcemap
 
 Specifies the type of sourcemap to generate.
@@ -1179,6 +1198,8 @@ var logo = "https://cdn.example.com/logo-a7305bdef.svg";
 ### define
 
 A map of global identifiers to be replaced at build time. Keys of this object are identifiers or dotted property paths such as `process.env.NODE_ENV`, and values are JSON strings, identifiers, or property paths that are inlined.
+
+A `define` entry for `process.env.FOO` [takes precedence](#define-takes-precedence-over-env) over the value that [`env`](#env) inlines for `FOO`.
 
 <Tabs>
   <Tab title="JavaScript">

@@ -1613,3 +1613,69 @@ describe("production headers and import.meta.env", () => {
     expect(results).toEqual(cases.map(([, , expected]) => expected));
   });
 });
+
+// A `define` for `process.env.X` outranks the value that `env` inlines for X, with and without the dev server.
+test("bunfig [serve.static] define outranks env for the same variable", async () => {
+  type Inlined = { appMode: string; nodeEnv: string };
+  const run = async (development: string, env: string, define: string, childEnv: Record<string, string>) => {
+    using dir = tempDir("html-define-outranks-env", {
+      "index.html": `<!DOCTYPE html><html><body><script type="module" src="./app.ts"></script></body></html>`,
+      "app.ts": `console.log("APP_MODE", process.env.APP_MODE, "NODE_ENV", process.env.NODE_ENV);`,
+      "bunfig.toml": `[serve.static]\nenv = "${env}"\ndefine = { ${define} }\n`,
+      "serve.ts": /*js*/ `
+        import index from "./index.html";
+        const server = Bun.serve({ port: 0, development: ${development}, routes: { "/": index } });
+        const base = server.url.href;
+        const html = await (await fetch(base)).text();
+        const jsPath = html.match(/src="([^"]+\\.js)"/)[1];
+        const js = await (await fetch(new URL(jsPath, base))).text();
+        const [, appMode, nodeEnv] = js.match(/"APP_MODE",\\s*([^,]+),\\s*"NODE_ENV",\\s*([^)]+)\\)/);
+        console.log(JSON.stringify({ appMode, nodeEnv }));
+        await server.stop(true);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "serve.ts"],
+      env: { ...bunEnv, NODE_ENV: undefined, ...childEnv },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(stdout + "\n" + stderr);
+    return JSON.parse(stdout) as Inlined;
+  };
+
+  const appMode = `"process.env.APP_MODE" = '"FROMDEFINE"'`;
+  const nodeEnv = `"process.env.NODE_ENV" = '"custom"'`;
+  const cases: [development: string, env: string, define: string, childEnv: Record<string, string>, Inlined][] = [
+    ["false", "APP_*", appMode, { APP_MODE: "fromenv" }, { appMode: '"FROMDEFINE"', nodeEnv: '"production"' }],
+    [
+      "{ hmr: false }",
+      "APP_*",
+      appMode,
+      { APP_MODE: "fromenv" },
+      { appMode: '"FROMDEFINE"', nodeEnv: '"development"' },
+    ],
+    ["true", "APP_*", appMode, { APP_MODE: "fromenv" }, { appMode: '"FROMDEFINE"', nodeEnv: '"development"' }],
+    [
+      "{ hmr: false }",
+      "inline",
+      `${appMode}, ${nodeEnv}`,
+      { APP_MODE: "fromenv", NODE_ENV: "staging" },
+      { appMode: '"FROMDEFINE"', nodeEnv: '"custom"' },
+    ],
+    // Bun's own NODE_ENV define replaces the one in bunfig.toml, and the environment still replaces Bun's.
+    [
+      "false",
+      "inline",
+      `${appMode}, ${nodeEnv}`,
+      { APP_MODE: "fromenv", NODE_ENV: "staging" },
+      { appMode: '"FROMDEFINE"', nodeEnv: '"staging"' },
+    ],
+  ];
+  const results = await Promise.all(
+    cases.map(([development, env, define, childEnv]) => run(development, env, define, childEnv)),
+  );
+  expect(results).toEqual(cases.map(([, , , , expected]) => expected));
+});

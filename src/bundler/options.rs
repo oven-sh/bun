@@ -881,6 +881,18 @@ pub(crate) fn defines_from_transform_options(
             &framework.prefix,
             bump,
         )?;
+
+        // The caller's `define` for `process.env.X` outranks the entry env inlining made for X.
+        for key in input_keys {
+            if !key.starts_with(defines::PROCESS_ENV) {
+                continue;
+            }
+            if framework.node_env_define_is_default && &**key == default_user_defines::node_env::KEY
+            {
+                continue;
+            }
+            environment_defines.swap_remove(key);
+        }
     }
 
     if behavior != api::DotEnvBehavior::LoadAllWithoutInlining {
@@ -2120,6 +2132,9 @@ pub struct Env {
 
     /// If true, disable loading of default .env files (from --no-env-file flag or bunfig)
     pub disable_default_env_files: bool,
+
+    /// `define` holds Bun's own default for `process.env.NODE_ENV`, which env inlining replaces.
+    pub node_env_define_is_default: bool,
 }
 
 impl Default for Env {
@@ -2129,6 +2144,7 @@ impl Default for Env {
             prefix: Box::default(),
             files: Box::default(),
             disable_default_env_files: false,
+            node_env_define_is_default: false,
         }
     }
 }

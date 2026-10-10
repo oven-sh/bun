@@ -568,7 +568,7 @@ pub mod defines {
                 hasher.update(&(bytes.len() as u64).to_le_bytes());
                 hasher.update(bytes);
             };
-            // Separate sections: `init` lets a later env pair override a user pair.
+            // Separate sections: `init` lets an env pair override a NODE_ENV or BUN_ENV default.
             for pairs in [defines, env_defines] {
                 update(&(pairs.len() as u64).to_le_bytes());
                 for (key, value) in pairs {

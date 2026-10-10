@@ -1682,6 +1682,101 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
+  // The rows are what oxlint 1.87.0 and ESLint 10.12 report for these files with this plugin.
+  test(
+    "a rule gets the text in JSX as it is written under oxlint, and with what `&amp;` stands for under ESLint",
+    async () => {
+      const text = String.raw`export const a = (
+  <div title="a &amp; b" data-single='&apos; &#183; &#xB7;' data-none="&zzqx; &amp" data-lines="one
+    &middot; two">
+    one &middot; two
+    three &amp; four
+    <p>{"a &amp; b"}</p>
+    <p inner=<i title="&lt;">&gt;</i>>12n</p>
+  </div>
+);
+`;
+      const plugin = String.raw`const say = value => JSON.stringify(value).replace(/[^ -~]/g, it => "\\u" + it.charCodeAt(0).toString(16).padStart(4, "0"));
+const by = selector => ({ create: context => ({ [selector]: node => context.report({ node, message: "matches" }) }) });
+export default {
+  meta: { name: "shows" },
+  rules: {
+    strings: {
+      create(context) {
+        const show = node => {
+          const token = context.sourceCode.getFirstToken(node);
+          const parts = [node.type, say(node.value), "raw", say(node.raw), token.type, say(token.value)];
+          context.report({ node, message: parts.concat("bigint" in node ? ["bigint", say(node.bigint)] : []).join(" ") });
+        };
+        return { JSXText: node => void (node.raw.trim() && show(node)), Literal: show };
+      },
+    },
+    "text-written": by("JSXText[value=/&middot;/]"),
+    "text-decoded": by("JSXText[value=/\\u00b7/]"),
+    "attribute-written": by('JSXAttribute > Literal[value="a &amp; b"]'),
+    "attribute-decoded": by('JSXAttribute > Literal[value="a & b"]'),
+  },
+};
+`;
+      const written = String.raw`
+2:14 attribute-written matches
+2:14 strings Literal "a &amp; b" raw "\"a &amp; b\"" JSXText "\"a &amp; b\""
+2:38 strings Literal "&apos; &#183; &#xB7;" raw "'&apos; &#183; &#xB7;'" JSXText "'&apos; &#183; &#xB7;'"
+2:71 strings Literal "&zzqx; &amp" raw "\"&zzqx; &amp\"" JSXText "\"&zzqx; &amp\""
+2:96 strings Literal "one\n    &middot; two" raw "\"one\n    &middot; two\"" JSXText "\"one\n    &middot; two\""
+3:19 strings JSXText "\n    one &middot; two\n    three &amp; four\n    " raw "\n    one &middot; two\n    three &amp; four\n    " JSXText "\n    one &middot; two\n    three &amp; four\n    "
+3:19 text-written matches
+6:9 strings Literal "a &amp; b" raw "\"a &amp; b\"" String "\"a &amp; b\""
+7:23 strings Literal "&lt;" raw "\"&lt;\"" JSXText "\"&lt;\""
+7:30 strings JSXText "&gt;" raw "&gt;" JSXText "&gt;"
+7:39 strings JSXText "12n" raw "12n" JSXText "12n"`;
+      const decoded = String.raw`
+2:14 attribute-decoded matches
+2:14 strings Literal "a & b" raw "\"a &amp; b\"" JSXText "\"a &amp; b\""
+2:38 strings Literal "' \u00b7 \u00b7" raw "'&apos; &#183; &#xB7;'" JSXText "'&apos; &#183; &#xB7;'"
+2:71 strings Literal "&zzqx; &amp" raw "\"&zzqx; &amp\"" JSXText "\"&zzqx; &amp\""
+2:96 strings Literal "one\n    \u00b7 two" raw "\"one\n    &middot; two\"" JSXText "\"one\n    &middot; two\""
+3:19 strings JSXText "\n    one \u00b7 two\n    three & four\n    " raw "\n    one &middot; two\n    three &amp; four\n    " JSXText "\n    one \u00b7 two\n    three & four\n    "
+3:19 text-decoded matches
+6:9 strings Literal "a &amp; b" raw "\"a &amp; b\"" String "\"a &amp; b\""
+7:23 strings Literal "<" raw "\"&lt;\"" JSXText "\"&lt;\""
+7:30 strings JSXText ">" raw "&gt;" JSXText ">"
+7:39 strings JSXText "12n" raw "12n" JSXText "12n" bigint "12n"`;
+      const names = ["strings", "text-written", "text-decoded", "attribute-written", "attribute-decoded"];
+      const rules = Object.fromEntries(names.map(name => ["shows/" + name, "error"]));
+      const files = { "plugin.mjs": plugin, "a.tsx": text, "a.jsx": text, "crlf.tsx": text.replaceAll("\n", "\r\n") };
+      const sorted = (rows: string) => rows.trim().split("\n").sort().join("\n");
+      const rows = (all: { line: number; column: number; rule: string; message: string }[]) =>
+        sorted(
+          all.map(it => `${it.line}:${it.column} ${it.rule.replace(/^shows[(/]|\)$/g, "")} ${it.message}`).join("\n"),
+        );
+
+      const oxlint = await lint({ ...files, ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules }) }, [
+        "-f",
+        "json",
+      ]);
+      const reported = JSON.parse(oxlint.raw).diagnostics as any[];
+      const of = (name: string) =>
+        rows(
+          reported
+            .filter(it => it.filename === name)
+            .map(it => ({ ...it.labels[0].span, rule: it.code, message: it.message })),
+        );
+      expect(of("a.tsx")).toBe(sorted(written));
+      expect(of("a.jsx")).toBe(sorted(written));
+      expect(of("crlf.tsx")).toBe(sorted(written.replaceAll("\\n", "\\r\\n")));
+
+      const configuration = `
+        import shows from "./plugin.mjs";
+        const languageOptions = { parserOptions: { ecmaFeatures: { jsx: true } } };
+        export default [{ files: ["**/*.jsx"], plugins: { shows }, languageOptions, rules: ${JSON.stringify(rules)} }];`;
+      const eslint = await lint({ ...files, "eslint.config.mjs": configuration }, ["-f", "json", "a.jsx"]);
+      const [{ messages }] = JSON.parse(eslint.raw) as [{ messages: any[] }];
+      expect(rows(messages.map(it => ({ ...it, rule: it.ruleId })))).toBe(sorted(decoded));
+    },
+    timeout,
+  );
+
   // What `@rushstack/eslint-patch` does when `eslint-config-next` loads it, in a package that is laid out as it is.
   test(
     "a configuration that looks for ESLint among the modules that have loaded it finds that of the project",

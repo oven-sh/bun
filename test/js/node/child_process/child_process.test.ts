@@ -234,7 +234,8 @@ describe("fork() IPC", () => {
       using dir = tempDir("ipc-channel-null-child-exit", { "child.js": `process.send("ready");` });
       const child = fork(path.join(String(dir), "child.js"), { env: bunEnv });
       try {
-        const before = typeof child.channel;
+        // typeof null is "object" too, so keep null apart.
+        const before = child.channel === null ? null : typeof child.channel;
         let atDisconnect: unknown = "no 'disconnect' event";
         child.once("disconnect", () => (atDisconnect = child.channel));
         await once(child, "close");

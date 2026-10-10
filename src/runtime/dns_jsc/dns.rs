@@ -1711,8 +1711,7 @@ impl DNSLookup {
     /// construction from a live `&JSGlobalObject` (never null) and is a
     /// JSC_BORROW backref — the global outlives every `DNSLookup` it spawns.
     /// The pointee is the JSC heap global, not memory owned by `self`, so the
-    /// returned `&` remains valid even after `self` is dropped (drain loops
-    /// rely on this when caching the ref across `heap::take`).
+    /// returned `&` remains valid even after `self` is dropped.
     #[inline]
     fn global_this(&self) -> &JSGlobalObject {
         self.global_this.get()
@@ -1856,12 +1855,7 @@ impl DNSLookup {
     }
 }
 
-/// The converted answer for one global, shared by every waiter of a
-/// pending-cache entry on that global. A conversion that threw is turned into
-/// its exception value *once* (the first `reject(Err(Thrown))` would take it
-/// off the VM and leave nothing for the next waiter); a termination settles
-/// nobody.
-#[derive(Clone, Copy)]
+/// Not `Copy`: each waiter of a shared query settles with its own conversion of the reply.
 pub(crate) enum Outcome {
     Value(JSValue),
     Error(JSValue),
@@ -1886,12 +1880,18 @@ impl Outcome {
         }
     }
 
-    /// Each waiter's completion may allocate; keep the shared value alive across them.
-    #[inline]
-    fn keep_alive(&self) {
-        if let Outcome::Value(v) | Outcome::Error(v) = self {
-            v.ensure_still_alive();
+    /// After a `Stopped` conversion the rest of the chain is `Stopped` too and converts nothing.
+    fn for_waiter(
+        chain_stopped: &mut bool,
+        global: &JSGlobalObject,
+        convert: impl FnOnce() -> JsResult<JSValue>,
+    ) -> Outcome {
+        if *chain_stopped {
+            return Outcome::Stopped;
         }
+        let outcome = Outcome::of(global, convert());
+        *chain_stopped = matches!(outcome, Outcome::Stopped);
+        outcome
     }
 
     /// The resolver backends' completion callbacks (c-ares poll, libinfo,
@@ -1913,11 +1913,6 @@ impl Outcome {
             Outcome::Stopped => return,
         });
     }
-}
-
-#[inline]
-fn keep_alive(outcome: &Outcome) {
-    outcome.keep_alive();
 }
 
 impl Drop for DNSLookup {
@@ -4330,26 +4325,25 @@ impl Resolver {
         // pending-cache slot; consumed via `heap::take` below.
         unsafe {
             let mut pending = (*key.lookup).head.next;
-            let mut prev_global = (*key.lookup).head.global_this();
-            let mut array =
-                Outcome::of(prev_global, addr.to_js_response(prev_global, T::TYPE_NAME));
-            keep_alive(&array);
-            CAresLookup::<T>::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
+            let mut stopped = false;
+            let global = (*key.lookup).head.global_this();
+            CAresLookup::<T>::on_complete(
+                ptr::addr_of_mut!((*key.lookup).head),
+                Outcome::for_waiter(&mut stopped, global, || {
+                    addr.to_js_response(global, T::TYPE_NAME)
+                }),
+            );
             drop(bun_core::heap::take(key.lookup));
 
-            keep_alive(&array);
-
             while let Some(value) = pending {
-                let new_global = (*value.as_ptr()).global_this();
-                if !core::ptr::eq(prev_global, new_global) {
-                    array = Outcome::of(new_global, addr.to_js_response(new_global, T::TYPE_NAME));
-                    prev_global = new_global;
-                }
+                let global = (*value.as_ptr()).global_this();
                 pending = (*value.as_ptr()).next;
-
-                keep_alive(&array);
-                CAresLookup::<T>::on_complete(value.as_ptr(), array);
-                keep_alive(&array);
+                CAresLookup::<T>::on_complete(
+                    value.as_ptr(),
+                    Outcome::for_waiter(&mut stopped, global, || {
+                        addr.to_js_response(global, T::TYPE_NAME)
+                    }),
+                );
             }
         }
     }
@@ -4390,34 +4384,28 @@ impl Resolver {
         // slot; `addr` is the c-ares-allocated AddrInfo freed by `_free_addr` below.
         unsafe {
             let mut pending = (*key.lookup).head.next;
-            let mut prev_global = (*key.lookup).head.global_this();
-            let mut array = Outcome::of(
-                prev_global,
-                super::cares_jsc::addr_info_to_js_array(&mut *addr, prev_global),
-            );
+            let mut stopped = false;
+            let global = (*key.lookup).head.global_this();
             // SAFETY: addr is the c-ares-allocated AddrInfo; freed once after all consumers run.
             // Move the raw pointer into the guard so the loop body can keep borrowing `*addr`.
             let _free_addr = scopeguard::guard(addr, |a| c_ares::AddrInfo::destroy(a));
-            keep_alive(&array);
-            DNSLookup::on_complete_with_array(ptr::addr_of_mut!((*key.lookup).head), array);
+            DNSLookup::on_complete_with_array(
+                ptr::addr_of_mut!((*key.lookup).head),
+                Outcome::for_waiter(&mut stopped, global, || {
+                    super::cares_jsc::addr_info_to_js_array(&mut *addr, global)
+                }),
+            );
             drop(bun_core::heap::take(key.lookup));
 
-            keep_alive(&array);
-
             while let Some(value) = pending {
-                let new_global = (*value.as_ptr()).global_this();
-                if !core::ptr::eq(prev_global, new_global) {
-                    array = Outcome::of(
-                        new_global,
-                        super::cares_jsc::addr_info_to_js_array(&mut *addr, new_global),
-                    );
-                    prev_global = new_global;
-                }
+                let global = (*value.as_ptr()).global_this();
                 pending = (*value.as_ptr()).next;
-
-                keep_alive(&array);
-                DNSLookup::on_complete_with_array(value.as_ptr(), array);
-                keep_alive(&array);
+                DNSLookup::on_complete_with_array(
+                    value.as_ptr(),
+                    Outcome::for_waiter(&mut stopped, global, || {
+                        super::cares_jsc::addr_info_to_js_array(&mut *addr, global)
+                    }),
+                );
             }
         }
     }
@@ -4434,7 +4422,7 @@ impl Resolver {
 
         let _guard = self.ref_guard();
 
-        let mut array: Outcome = match super::options_jsc::result_any_to_js(result, global_object)
+        let head: Outcome = match super::options_jsc::result_any_to_js(result, global_object)
             .transpose()
         {
             Some(a) => Outcome::of(global_object, a),
@@ -4465,31 +4453,21 @@ impl Resolver {
         // pending-cache slot; consumed via `heap::take` below.
         unsafe {
             let mut pending = (*key.lookup).head.next;
-            let mut prev_global = (*key.lookup).head.global_this();
-
-            {
-                keep_alive(&array);
-                DNSLookup::on_complete_with_array(ptr::addr_of_mut!((*key.lookup).head), array);
-                drop(bun_core::heap::take(key.lookup));
-                keep_alive(&array);
-            }
+            let mut stopped = matches!(head, Outcome::Stopped);
+            DNSLookup::on_complete_with_array(ptr::addr_of_mut!((*key.lookup).head), head);
+            drop(bun_core::heap::take(key.lookup));
 
             while let Some(value) = pending {
-                let new_global = (*value.as_ptr()).global_this();
+                let global = (*value.as_ptr()).global_this();
                 pending = (*value.as_ptr()).next;
-                if !core::ptr::eq(prev_global, new_global) {
-                    // Non-null addrinfo (checked above): never `None`.
-                    array = Outcome::of(
-                        new_global,
-                        super::options_jsc::result_any_to_js(result, new_global)
-                            .map(|a| a.expect("addrinfo present")),
-                    );
-                    prev_global = new_global;
-                }
-
-                keep_alive(&array);
-                DNSLookup::on_complete_with_array(value.as_ptr(), array);
-                keep_alive(&array);
+                DNSLookup::on_complete_with_array(
+                    value.as_ptr(),
+                    Outcome::for_waiter(&mut stopped, global, || {
+                        // Non-null addrinfo (checked above): never `None`.
+                        super::options_jsc::result_any_to_js(result, global)
+                            .map(|a| a.expect("addrinfo present"))
+                    }),
+                );
             }
         }
     }
@@ -4530,34 +4508,28 @@ impl Resolver {
         // slot; `addr` is the c-ares-owned hostent (freed by c-ares after the callback).
         unsafe {
             let mut pending = (*key.lookup).head.next;
-            let mut prev_global = (*key.lookup).head.global_this();
+            let mut stopped = false;
+            let global = (*key.lookup).head.global_this();
             //  The callback need not and should not attempt to free the memory
             //  pointed to by hostent; the ares library will free it when the
             //  callback returns.
-            let mut array = Outcome::of(
-                prev_global,
-                super::cares_jsc::hostent_to_js_response(&mut *addr, prev_global, b""),
+            CAresReverse::on_complete(
+                ptr::addr_of_mut!((*key.lookup).head),
+                Outcome::for_waiter(&mut stopped, global, || {
+                    super::cares_jsc::hostent_to_js_response(&mut *addr, global, b"")
+                }),
             );
-            keep_alive(&array);
-            CAresReverse::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
             drop(bun_core::heap::take(key.lookup));
 
-            keep_alive(&array);
-
             while let Some(value) = pending {
-                let new_global = (*value.as_ptr()).global_this();
-                if !core::ptr::eq(prev_global, new_global) {
-                    array = Outcome::of(
-                        new_global,
-                        super::cares_jsc::hostent_to_js_response(&mut *addr, new_global, b""),
-                    );
-                    prev_global = new_global;
-                }
+                let global = (*value.as_ptr()).global_this();
                 pending = (*value.as_ptr()).next;
-
-                keep_alive(&array);
-                CAresReverse::on_complete(value.as_ptr(), array);
-                keep_alive(&array);
+                CAresReverse::on_complete(
+                    value.as_ptr(),
+                    Outcome::for_waiter(&mut stopped, global, || {
+                        super::cares_jsc::hostent_to_js_response(&mut *addr, global, b"")
+                    }),
+                );
             }
         }
     }
@@ -4598,32 +4570,25 @@ impl Resolver {
         // pending-cache slot; consumed via `heap::take` below.
         unsafe {
             let mut pending = (*key.lookup).head.next;
-            let mut prev_global = (*key.lookup).head.global_this();
-
-            let mut array = Outcome::of(
-                prev_global,
-                super::cares_jsc::nameinfo_to_js_response(&mut name_info, prev_global),
+            let mut stopped = false;
+            let global = (*key.lookup).head.global_this();
+            CAresNameInfo::on_complete(
+                ptr::addr_of_mut!((*key.lookup).head),
+                Outcome::for_waiter(&mut stopped, global, || {
+                    super::cares_jsc::nameinfo_to_js_response(&mut name_info, global)
+                }),
             );
-            keep_alive(&array);
-            CAresNameInfo::on_complete(ptr::addr_of_mut!((*key.lookup).head), array);
             drop(bun_core::heap::take(key.lookup));
 
-            keep_alive(&array);
-
             while let Some(value) = pending {
-                let new_global = (*value.as_ptr()).global_this();
-                if !core::ptr::eq(prev_global, new_global) {
-                    array = Outcome::of(
-                        new_global,
-                        super::cares_jsc::nameinfo_to_js_response(&mut name_info, new_global),
-                    );
-                    prev_global = new_global;
-                }
+                let global = (*value.as_ptr()).global_this();
                 pending = (*value.as_ptr()).next;
-
-                keep_alive(&array);
-                CAresNameInfo::on_complete(value.as_ptr(), array);
-                keep_alive(&array);
+                CAresNameInfo::on_complete(
+                    value.as_ptr(),
+                    Outcome::for_waiter(&mut stopped, global, || {
+                        super::cares_jsc::nameinfo_to_js_response(&mut name_info, global)
+                    }),
+                );
             }
         }
     }

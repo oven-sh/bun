@@ -723,7 +723,7 @@ fn tsgolint_is_nested_in_array_literal_argument_to_generic_call<'a>(
             continue;
         };
         let is_element = |it: Expr<'a>| Node::Expr(it) == element;
-        let element_index = elements.iter().position(is_element).unwrap_or(elements.len());
+        let element_index = elements.iter().position(is_element).unwrap_or_else(|| elements.len());
         element_path.push(element_index);
 
         let (argument, is_spread) = match array.parent() {
@@ -742,7 +742,7 @@ fn tsgolint_is_nested_in_array_literal_argument_to_generic_call<'a>(
         if call.callee() == argument {
             continue;
         }
-        let arg_index = call.args().iter().position(|it| it == argument).unwrap_or(call.args().len());
+        let arg_index = call.args().iter().position(|it| it == argument).unwrap_or_else(|| call.args().len());
         let (arg_index, left_out) = if is_spread { (arg_index + element_index, 1) } else { (arg_index, 0) };
         let element_path = element_path.into_iter().rev().skip(left_out);
         return tsgolint_has_generic_inference_parameter_at_argument(parent, arg_index, element_path, known);

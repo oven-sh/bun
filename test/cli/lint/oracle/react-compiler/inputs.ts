@@ -227,7 +227,7 @@ const order = `export default function Component(props) {
 `;
 
 /** A ref is read in render at the top, and then there are `n` of one thing. */
-const long = (n: number, unit: (k: number) => string, result: (units: string) => [body: string, returns: string]) => {
+export const long = (n: number, unit: (k: number) => string, result: (units: string) => [body: string, returns: string]) => {
   const [body, returns] = result(Array.from({ length: n }, (_, k) => unit(k)).join("\n"));
   return `import { useCallback, useRef, useState } from "react";
 

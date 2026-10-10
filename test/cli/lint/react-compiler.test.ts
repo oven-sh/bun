@@ -13,6 +13,7 @@ import {
   eslintConfig,
   eslintSmall,
   type Files,
+  long,
   rc,
   small,
   twoLabels,
@@ -194,6 +195,30 @@ describe.concurrent(`bun lint: the rules of the React Compiler report what oxlin
       expect(diagnostics).toEqual(expected.reports.long.diagnostics);
       for (const path of ["statements.tsx", "states.tsx", "callbacks.tsx", "children.tsx"])
         expect([path, rulesIn({ it: diagnostics[path] })]).toEqual([path, ["react(refs)"]]);
+      expect(exit).toBe(1);
+    },
+    slow,
+  );
+
+  // oxlint 1.87.0 reports the same up to 1,500 of them, in the last line but two, and ends by SIGSEGV from 2,000.
+  test(
+    "what is declared at the top is read behind 4,000 optional chains",
+    async () => {
+      const { diagnostics, exit } = await report({
+        ".oxlintrc.json": rc(),
+        "chains.tsx": long(
+          4000,
+          k => `  const v${k} = props.o${k}?.b?.c;`,
+          units => [units, "<div>{bad + v0 + v3999}</div>"],
+        ),
+      });
+      const found = diagnostics["chains.tsx"] as {
+        code: string;
+        labels: { span: { line: number; column: number } }[];
+      }[];
+      expect(found.map(it => [it.code, it.labels[0].span.line, it.labels[0].span.column])).toEqual([
+        ["react(refs)", 4006, 16],
+      ]);
       expect(exit).toBe(1);
     },
     slow,

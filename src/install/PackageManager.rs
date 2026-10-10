@@ -237,10 +237,11 @@ pub use self::progress_strings::ProgressStrings;
 pub use self::patch_package::PatchCommitResult;
 
 pub use self::run_tasks::{
-    alloc_github_url, decrement_pending_tasks, drain_dependency_list, flush_dependency_queue,
-    flush_network_queue, flush_patch_task_queue, generate_network_task_for_tarball,
-    get_network_task, has_created_network_task, increment_pending_tasks, is_network_task_required,
-    pending_task_count, run_tasks, schedule_tasks,
+    TarballFor, alloc_github_url, decrement_pending_tasks, drain_dependency_list,
+    flush_dependency_queue, flush_network_queue, flush_patch_task_queue,
+    generate_network_task_for_tarball, get_network_task, has_created_network_task,
+    increment_pending_tasks, is_network_task_required, pending_task_count, run_tasks,
+    schedule_tasks,
 };
 
 pub use self::update_package_json_and_install::{
@@ -330,10 +331,8 @@ pub struct PackageManager {
 
     pub to_update: bool,
 
-    /// The pins of the `github:` packages of the loaded lockfile, by bun-tag
-    /// (`<owner>-<repo>-<hash>`). Extract workers read it, so it is built once
-    /// on the main thread (`load_github_pins`) and not changed after that.
-    pub(crate) github_pins: Option<Box<[(Box<[u8]>, crate::Integrity)]>>,
+    /// The pins of the loaded `github:` packages by `<owner>-<repo>-<hash>`, for extract workers.
+    pub(crate) github_pins: std::sync::OnceLock<Box<[(Box<[u8]>, crate::Integrity)]>>,
 
     pub subcommand: Subcommand,
     pub(crate) update_requests: Box<[UpdateRequest]>,
@@ -650,17 +649,16 @@ pub use bun_install_types::resolver_hooks::WakeHandler;
 static VERBOSE_INSTALL: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 impl PackageManager {
-    /// Collects the pins of the `github:` packages the lockfile loaded, once.
-    /// `false` when it pins none, so no extract has one to check.
+    /// Collects the pins of the loaded `github:` packages, once. `false` when one is not a sha512.
     #[cold]
-    pub(crate) fn load_github_pins(&mut self) -> bool {
+    pub(crate) fn load_github_pins(&self) -> bool {
         use crate::lockfile::package::PackageColumns as _;
 
-        if self.github_pins.is_none() {
+        let pins = self.github_pins.get_or_init(|| {
             let lockfile = &*self.lockfile;
             let loaded = (lockfile.loaded_package_count as usize).min(lockfile.packages.len());
             let buf = lockfile.buffers.string_bytes.as_slice();
-            let pins = lockfile.packages.items_resolution()[..loaded]
+            lockfile.packages.items_resolution()[..loaded]
                 .iter()
                 .zip(&lockfile.packages.items_meta()[..loaded])
                 .filter(|(resolution, meta)| {
@@ -669,26 +667,35 @@ impl PackageManager {
                         && !resolution.github().resolved.is_empty()
                 })
                 .map(|(resolution, meta)| {
-                    (
-                        Box::<[u8]>::from(resolution.github().resolved.slice(buf)),
-                        meta.integrity,
-                    )
+                    let repository = resolution.github();
+                    let tag = repository.resolved.slice(buf);
+                    // A lockfile that npm wrote names the commit by its hash alone.
+                    let commit = if strings::contains_char(tag, b'-') {
+                        Box::from(tag)
+                    } else {
+                        [repository.owner.slice(buf), repository.repo.slice(buf), tag]
+                            .join(&b'-')
+                            .into_boxed_slice()
+                    };
+                    (commit, meta.integrity)
                 })
-                .collect();
-            self.github_pins = Some(pins);
-        }
-        self.github_pins
-            .as_deref()
-            .is_some_and(|pins| !pins.is_empty())
+                .collect()
+        });
+        pins.iter()
+            .all(|(_, pin)| pin.tag == crate::integrity::Tag::SHA512)
     }
 
-    /// The pin the loaded lockfile holds for the `github:` archive `tag`.
-    pub(crate) fn github_pin(&self, tag: &[u8]) -> Option<&crate::Integrity> {
-        self.github_pins
-            .as_deref()?
-            .iter()
-            .find(|(pinned_tag, _)| &**pinned_tag == tag)
-            .map(|(_, integrity)| integrity)
+    /// The pin the loaded lockfile holds for the commit of the `github:` archive `archive_tag`.
+    pub(crate) fn github_pin(&self, archive_tag: &[u8]) -> Option<&crate::Integrity> {
+        let pins = self.github_pins.get()?;
+        pins.iter()
+            .find(|(commit, _)| commit.eq_ignore_ascii_case(archive_tag))
+            .or_else(|| {
+                pins.iter().find(|(commit, _)| {
+                    crate::repository::is_same_github_commit(commit, archive_tag)
+                })
+            })
+            .map(|(_, pin)| pin)
     }
 
     /// Read as `PackageManager::verbose_install()` throughout the install pipeline.
@@ -2134,7 +2141,7 @@ pub fn init(
         wr!(progress_name_buf, [0; 768]);
         wr!(track_installed_bin, TrackInstalledBin::None);
         wr!(to_update, false);
-        wr!(github_pins, None);
+        wr!(github_pins, std::sync::OnceLock::new());
         wr!(update_requests, Box::default());
         wr!(update_request_index, Default::default());
         wr!(audit_fix_pins, Box::default());
@@ -2595,7 +2602,7 @@ fn init_with_runtime_once(
         wr!(progress_name_buf, [0; 768]);
         wr!(track_installed_bin, TrackInstalledBin::None);
         wr!(to_update, false);
-        wr!(github_pins, None);
+        wr!(github_pins, std::sync::OnceLock::new());
         wr!(update_requests, Box::default());
         wr!(update_request_index, Default::default());
         wr!(audit_fix_pins, Box::default());

@@ -5,7 +5,8 @@
 // a bare repo on disk (served over git's dumb HTTP protocol by Bun.serve
 // when an http URL is needed) or tarballs built in memory.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { createHash } from "crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 import { pathToFileURL } from "url";
@@ -153,8 +154,8 @@ function serveStatic(root: string) {
 // `tar -czf <dir>` output it replaces, it starts with the root directory's own
 // entry: for a GitHub tarball bun reads the `<owner>-<repo>-<committish>` name
 // of that first entry and takes the committish as the resolved one.
-function tarballOf(rootDir: string, files: Record<string, string>) {
-  const entries: Record<string, string> = { [`${rootDir}/`]: "" };
+function tarballOf(rootDir: string, files: Record<string, string | Uint8Array>) {
+  const entries: Record<string, string | Uint8Array> = { [`${rootDir}/`]: "" };
   for (const [path, contents] of Object.entries(files)) entries[`${rootDir}/${path}`] = contents;
   return new Bun.Archive(entries, { compress: "gzip" }).bytes();
 }
@@ -572,57 +573,65 @@ for (const linker of ["hoisted", "isolated"] as const) {
 // issue #35420 bug 3: `git+file://` dependencies never cloned at all — the
 // clone task recognized neither an https nor an ssh URL and finished without
 // running git, leaving a poisoned repo handle behind.
-test.concurrent("installs a git+file:// dependency", async () => {
-  using dir = tempDir("git-dep-file", {});
-  const root = String(dir);
-  const repoUrl = `git+${pathToFileURL(sharedBare)}`;
-  const project = writeProject(root, { [nameOf("b")]: `${repoUrl}#pkg-b` });
-  const { resolutions, locked } = expectedGitPackages(repoUrl, sharedCommits, ["b"]);
+test.concurrent(
+  "installs a git+file:// dependency",
+  async () => {
+    using dir = tempDir("git-dep-file", {});
+    const root = String(dir);
+    const repoUrl = `git+${pathToFileURL(sharedBare)}`;
+    const project = writeProject(root, { [nameOf("b")]: `${repoUrl}#pkg-b` });
+    const { resolutions, locked } = expectedGitPackages(repoUrl, sharedCommits, ["b"]);
 
-  const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
-  expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
-    "Resolving dependencies
-    Resolved, downloaded and extracted [2]
-    Saved lockfile"
-  `);
-  expectInstalled(stdout, resolutions);
-  expect(await installedVersions(project, [nameOf("b")])).toEqual(markers(["b"]));
-  expect(await lockedPackages(project)).toEqual(locked);
-  expect(exitCode).toBe(0);
-});
+    const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
+    expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+      "Resolving dependencies
+      Resolved, downloaded and extracted [2]
+      Saved lockfile"
+    `);
+    expectInstalled(stdout, resolutions);
+    expect(await installedVersions(project, [nameOf("b")])).toEqual(markers(["b"]));
+    expect(await lockedPackages(project)).toEqual(locked);
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
 
 // issue #40803: `bun install <git url>` (no alias) sorted the workspace dep
 // under its version literal. The real name is only known once the repo is
 // fetched; it is rewritten in place after resolution, so the written key
 // landed at the literal's position ("git..." here, between nothing and
 // "hhh-first") instead of its own.
-test.concurrent("bun install <git url> sorts the workspace dependency by its resolved name", async () => {
-  using dir = tempDir("git-dep-sort", {
-    "project/package.json": JSON.stringify({
-      name: "project",
-      version: "1.0.0",
-      dependencies: { "hhh-first": "file:./hhh-first", "jjj-last": "file:./jjj-last" },
-    }),
-    "project/hhh-first/package.json": JSON.stringify({ name: "hhh-first", version: "1.0.0" }),
-    "project/jjj-last/package.json": JSON.stringify({ name: "jjj-last", version: "1.0.0" }),
-  });
-  const root = String(dir);
-  const project = join(root, "project");
-  const bare = await makeSharedRepo(root, [{ name: "iii-middle", branch: "main" }], "sort-repo.git");
+test.concurrent(
+  "bun install <git url> sorts the workspace dependency by its resolved name",
+  async () => {
+    using dir = tempDir("git-dep-sort", {
+      "project/package.json": JSON.stringify({
+        name: "project",
+        version: "1.0.0",
+        dependencies: { "hhh-first": "file:./hhh-first", "jjj-last": "file:./jjj-last" },
+      }),
+      "project/hhh-first/package.json": JSON.stringify({ name: "hhh-first", version: "1.0.0" }),
+      "project/jjj-last/package.json": JSON.stringify({ name: "jjj-last", version: "1.0.0" }),
+    });
+    const root = String(dir);
+    const project = join(root, "project");
+    const bare = await makeSharedRepo(root, [{ name: "iii-middle", branch: "main" }], "sort-repo.git");
 
-  const first = await runInstall(project, join(root, "cache"), {});
-  expect(first.stderr).toContain("Saved lockfile");
-  expect(first.exitCode).toBe(0);
+    const first = await runInstall(project, join(root, "cache"), {});
+    expect(first.stderr).toContain("Saved lockfile");
+    expect(first.exitCode).toBe(0);
 
-  const second = await runInstall(project, join(root, "cache"), {}, `git+${pathToFileURL(bare)}#main`);
-  expect(second.stderr).toContain("Saved lockfile");
-  expect(second.exitCode).toBe(0);
+    const second = await runInstall(project, join(root, "cache"), {}, `git+${pathToFileURL(bare)}#main`);
+    expect(second.stderr).toContain("Saved lockfile");
+    expect(second.exitCode).toBe(0);
 
-  const lockfile = Bun.JSONC.parse(await Bun.file(join(project, "bun.lock")).text()) as {
-    workspaces: Record<string, { dependencies: Record<string, string> }>;
-  };
-  expect(Object.keys(lockfile.workspaces[""].dependencies)).toEqual(["hhh-first", "iii-middle", "jjj-last"]);
-});
+    const lockfile = Bun.JSONC.parse(await Bun.file(join(project, "bun.lock")).text()) as {
+      workspaces: Record<string, { dependencies: Record<string, string> }>;
+    };
+    expect(Object.keys(lockfile.workspaces[""].dependencies)).toEqual(["hhh-first", "iii-middle", "jjj-last"]);
+  },
+  30_000,
+);
 
 // The git commands of an install used to run on thread-pool threads through
 // the synchronous spawn helper, which installed the signal forwarder meant for
@@ -864,6 +873,17 @@ function ghArchive(
   return tarballOf(`${gh.owner}-${repo}-${commit}`, packageFiles(name, marker, dependencies));
 }
 
+// gzip cannot shrink these bytes. bun reads up to 512 KB from a socket at
+// once, so an archive that holds them takes more than one read, and bun starts
+// to extract it while it still downloads.
+const ghBulk = createHash("shake256", { outputLength: 640 * 1024 })
+  .update("bulk")
+  .digest();
+
+function ghLargeArchive(commit: string, marker: string) {
+  return tarballOf(`${gh.owner}-${gh.repo}-${commit}`, { ...packageFiles(gh.name, marker), "bulk.bin": ghBulk });
+}
+
 // How package.json can write the dependency. `ref` is what bun asks the API for.
 const ghSpellings = [
   { title: "a short commit hash", spec: `github:${gh.owner}/${gh.repo}#${gh.locked}`, ref: gh.locked },
@@ -873,7 +893,8 @@ const ghSpellings = [
   { title: "no ref", spec: `github:${gh.owner}/${gh.repo}`, ref: "" },
 ];
 
-function ghFixture() {
+/** `chunked` answers like the GitHub API does: a chunked body with no Content-Length. `env` goes to every bun. */
+function ghFixture(options: { chunked?: boolean; env?: Record<string, string> } = {}) {
   const dir = tempDir("github-pin", {});
   const root = String(dir);
   const project = join(root, "project");
@@ -888,13 +909,31 @@ function ghFixture() {
       const request = new URL(req.url).pathname.match(/^\/repos\/([^/]+)\/([^/]+)\/tarball\/?(.*)$/);
       if (request) asked.push(request[3]);
       const archive = request?.[1] === gh.owner ? refs.get(`${request[2]}/${request[3]}`) : undefined;
-      return archive ? new Response(archive) : new Response("not found", { status: 404 });
+      if (!archive) return new Response("not found", { status: 404 });
+      if (!options.chunked) return new Response(archive);
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          async pull(controller) {
+            for (let at = 0; at < archive.length; at += 64 * 1024) {
+              controller.write(archive.subarray(at, at + 64 * 1024));
+              await controller.flush();
+            }
+            controller.close();
+          },
+        }),
+      );
     },
   });
 
   return {
     project,
     asked,
+    /** The folders of the `github:` archives that a cache holds. */
+    cached(cache: "cold" | "warm") {
+      const cacheDir = join(root, `cache-${cache}`);
+      return existsSync(cacheDir) ? readdirSync(cacheDir).filter(entry => entry.startsWith("@GH@")) : [];
+    },
     serve: (ref: string, archive: Uint8Array, repo = gh.repo) => refs.set(`${repo}/${ref}`, archive),
     manifest(manifest: Record<string, unknown>, at = ".") {
       mkdirSync(join(project, at), { recursive: true });
@@ -906,7 +945,11 @@ function ghFixture() {
         project,
         join(root, `cache-${cache}`),
         // a registry request would also come here, and get a 404
-        { GITHUB_API_URL: `http://localhost:${server.port}`, BUN_CONFIG_REGISTRY: `http://localhost:${server.port}/` },
+        {
+          GITHUB_API_URL: `http://localhost:${server.port}`,
+          BUN_CONFIG_REGISTRY: `http://localhost:${server.port}/`,
+          ...options.env,
+        },
         ...args,
       ),
     removeNodeModules() {
@@ -1333,4 +1376,695 @@ for (const spelling of ghSpellings.filter(spelling => !spelling.ref.startsWith(g
       30_000,
     );
   }
+}
+
+// The GitHub API sends an archive as a chunked body with no Content-Length.
+// bun extracts such a body while it downloads it, or after the download when
+// BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL is set. Both ways compare the
+// archive with the pin of its commit before it enters the cache.
+{
+  const branch = ghSpellings.find(spelling => spelling.ref === "main")!;
+  const member = join("packages", "member");
+
+  for (const [route, env, streamed] of [
+    ["while it downloads", {}, true],
+    ["after the download", { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" }, false],
+  ] as const) {
+    /** bun.lock pins the branch at commit `gh.locked`, marker "v1". Every archive comes as a chunked body. */
+    async function ghPinnedChunked(manifest: Record<string, unknown>) {
+      const fx = ghFixture({ chunked: true, env });
+      const archive = await ghLargeArchive(gh.locked, "v1");
+      fx.serve(branch.ref, archive);
+      fx.serve(gh.locked, archive);
+      fx.manifest(manifest);
+      const first = await fx.bun("warm", "install", "--verbose");
+      expect(first.stderr).not.toContain("error:");
+      // --verbose prints this line for an archive that bun extracted while it downloaded it
+      expect({ streamed: first.stderr.includes("Streamed ") }).toEqual({ streamed });
+      expect(first.exitCode).toBe(0);
+      const pinnedEntry = (await lockedPackages(fx.project))[gh.name];
+      expect(pinnedEntry.slice(2)).toEqual([`${gh.owner}-${gh.repo}-${gh.locked}`, integrityOf(archive)]);
+      fx.removeNodeModules();
+      return Object.assign(fx, { pinnedEntry });
+    }
+
+    for (const args of [["install"], ["install", "--frozen-lockfile"]]) {
+      test.concurrent(
+        `a github: archive that bun extracts ${route} is refused with changed bytes at the locked commit when its key is renamed: bun ${args.join(" ")}`,
+        async () => {
+          await using pin = await ghPinnedChunked({ dependencies: { [gh.name]: branch.spec } });
+          const changed = await ghLargeArchive(gh.locked, "v2");
+          pin.serve(branch.ref, changed);
+          pin.serve(gh.locked, changed);
+          pin.manifest({ dependencies: { "renamed-key": branch.spec } });
+
+          const { stdout, stderr, exitCode } = await pin.bun("cold", ...args);
+
+          expect({
+            installed: await installedVersionOf(pin.project, "renamed-key"),
+            locked: (await lockedPackages(pin.project))[gh.name],
+            cached: pin.cached("cold"),
+          }).toEqual({ installed: null, locked: pin.pinnedEntry, cached: [] });
+          expect(stdout + stderr).toContain("Integrity check failed");
+          expect(exitCode).toBe(1);
+        },
+        30_000,
+      );
+
+      test.concurrent(
+        `a github: archive that bun extracts ${route} is refused with changed bytes at the locked commit when a new workspace member declares it: bun ${args.join(" ")}`,
+        async () => {
+          await using pin = await ghPinnedChunked({
+            workspaces: ["packages/*"],
+            dependencies: { [gh.name]: branch.spec },
+          });
+          const changed = await ghLargeArchive(gh.locked, "v2");
+          pin.serve(branch.ref, changed);
+          pin.serve(gh.locked, changed);
+          pin.manifest({ name: "member", dependencies: { [gh.name]: branch.spec } }, member);
+
+          const { stdout, stderr, exitCode } = await pin.bun("cold", ...args);
+
+          expect({
+            root: await installedVersionOf(pin.project, gh.name),
+            member: await installedVersionOf(join(pin.project, member), gh.name),
+            locked: (await lockedPackages(pin.project))[gh.name],
+            cached: pin.cached("cold"),
+          }).toEqual({ root: null, member: null, locked: pin.pinnedEntry, cached: [] });
+          expect(stdout + stderr).toContain("Integrity check failed");
+          expect(exitCode).toBe(1);
+        },
+        30_000,
+      );
+    }
+
+    test.concurrent(
+      `a github: archive that bun extracts ${route} is installed with the pinned bytes when its key is renamed`,
+      async () => {
+        await using pin = await ghPinnedChunked({ dependencies: { [gh.name]: branch.spec } });
+        pin.manifest({ dependencies: { "renamed-key": branch.spec } });
+
+        const { stderr, exitCode } = await pin.bun("cold", "install", "--verbose");
+
+        expect(stderr).not.toContain("error:");
+        expect({
+          installed: await installedVersionOf(pin.project, "renamed-key"),
+          streamed: stderr.includes("Streamed "),
+          locked: Object.values(await lockedPackages(pin.project)).map(entry => entry.slice(2)),
+        }).toEqual({ installed: "v1", streamed, locked: [pin.pinnedEntry.slice(2)] });
+        expect(exitCode).toBe(0);
+      },
+      30_000,
+    );
+  }
+}
+
+// A dependency that is resolved again and extracts the bytes bun.lock pins is
+// the package bun.lock holds. bun.lock does not get a second one.
+for (const spelling of ghSpellings.filter(spelling => spelling.ref !== gh.locked)) {
+  test.concurrent(
+    `a new workspace member shares the package of a github: dependency written as ${spelling.title}`,
+    async () => {
+      await using pin = await ghPinned(spelling, {
+        workspaces: ["packages/*"],
+        dependencies: { [gh.name]: spelling.spec },
+      });
+      pin.manifest({ name: "member", dependencies: { [gh.name]: spelling.spec } }, join("packages", "member"));
+
+      const { stderr, exitCode } = await pin.bun("cold", "install");
+
+      expect(stderr).not.toContain("error:");
+      expect({
+        root: await installedVersionOf(pin.project, gh.name),
+        member: await installedVersionOf(join(pin.project, "packages", "member"), gh.name),
+        locked: await lockedPackages(pin.project),
+      }).toEqual({
+        root: "v1",
+        member: "v1",
+        locked: { member: ["member@workspace:packages/member"], [gh.name]: pin.pinnedEntry },
+      });
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+}
+
+// A bun.lock from an older bun has no hash for a `github:` package. The
+// install that resolves the dependency again writes the hash of what it got.
+{
+  const [short] = ghSpellings;
+  const branch = ghSpellings.find(spelling => spelling.ref === "main")!;
+
+  /** The project of `ghPinned`, with the hash taken out of bun.lock. */
+  async function ghPinnedWithoutHash(spelling: (typeof ghSpellings)[number], manifest?: Record<string, unknown>) {
+    const pin = await ghPinned(spelling, manifest);
+    const withoutHash = pin.pinnedLock.replace(`, ${JSON.stringify(pin.pinnedEntry[3])}]`, "]");
+    expect(withoutHash).not.toBe(pin.pinnedLock);
+    writeFileSync(join(pin.project, "bun.lock"), withoutHash);
+    return pin;
+  }
+
+  test.concurrent(
+    "a github: package that bun.lock holds with no hash gets its hash when the key of its dependency is renamed",
+    async () => {
+      await using pin = await ghPinnedWithoutHash(short);
+      pin.manifest({ dependencies: { "renamed-key": short.spec } });
+
+      const { stderr, exitCode } = await pin.bun("cold", "install");
+
+      expect(stderr).not.toContain("error:");
+      expect({
+        installed: await installedVersionOf(pin.project, "renamed-key"),
+        locked: await lockedPackages(pin.project),
+      }).toEqual({ installed: "v1", locked: { "renamed-key": pin.pinnedEntry } });
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "a github: package that bun.lock holds with no hash gets its hash when a new workspace member declares it",
+    async () => {
+      await using pin = await ghPinnedWithoutHash(branch, {
+        workspaces: ["packages/*"],
+        dependencies: { [gh.name]: branch.spec },
+      });
+      pin.manifest({ name: "member", dependencies: { [gh.name]: branch.spec } }, join("packages", "member"));
+
+      const { stderr, exitCode } = await pin.bun("cold", "install");
+
+      expect(stderr).not.toContain("error:");
+      expect(await lockedPackages(pin.project)).toEqual({
+        member: ["member@workspace:packages/member"],
+        [gh.name]: pin.pinnedEntry,
+      });
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+}
+
+// `bun update` takes the bytes a commit has now. The lockfile then holds the
+// package those bytes are: their hash and the dependencies they declare. The
+// dependency keeps the package the lockfile had when package.json names the
+// commit, and with any spelling when the lockfile is a bun.lockb.
+{
+  const [short] = ghSpellings;
+  const branch = ghSpellings.find(spelling => spelling.ref === "main")!;
+  // "v1" declares `dropped`. "v2" declares `added` in its place.
+  const dropped = { repo: "dropped-repo", name: "dropped-gh-pkg", commit: "ddd1111" };
+  const added = { repo: "added-repo", name: "added-gh-pkg", commit: "eee1111" };
+  const specOf = (dependency: typeof added) => `github:${gh.owner}/${dependency.repo}#${dependency.commit}`;
+  const updated = { [gh.name]: "v2", [added.name]: "added", [dropped.name]: null };
+
+  /** bun.lock's packages by `<name>@<resolution>`, whatever key of package.json installs them. */
+  const lockedByResolution = async (project: string) =>
+    Object.fromEntries(Object.values(await lockedPackages(project)).map(entry => [entry[0], entry.slice(1)]));
+
+  /** The lockfile pins "v1". The commit then serves "v2". */
+  async function ghPinnedThenChanged(
+    spelling: (typeof ghSpellings)[number] = short,
+    lockfile: "bun.lock" | "bun.lockb" = "bun.lock",
+  ) {
+    const fx = ghFixture();
+    if (lockfile === "bun.lockb") {
+      writeFileSync(join(fx.project, "bunfig.toml"), "[install]\nsaveTextLockfile = false\n");
+    }
+    fx.serve(spelling.ref, await ghArchive(gh.locked, "v1", gh.repo, gh.name, { [dropped.name]: specOf(dropped) }));
+    fx.serve(dropped.commit, await ghArchive(dropped.commit, "dropped", dropped.repo, dropped.name), dropped.repo);
+    fx.manifest({ dependencies: { [gh.name]: spelling.spec } });
+    const first = await fx.bun("warm", "install");
+    expect(first.stderr).not.toContain("error:");
+    expect(existsSync(join(fx.project, lockfile))).toBe(true);
+    expect(first.exitCode).toBe(0);
+    fx.removeNodeModules();
+
+    const changed = await ghArchive(gh.locked, "v2", gh.repo, gh.name, { [added.name]: specOf(added) });
+    fx.serve(spelling.ref, changed);
+    fx.serve(gh.locked, changed);
+    const addedArchive = await ghArchive(added.commit, "added", added.repo, added.name);
+    fx.serve(added.commit, addedArchive, added.repo);
+    /** What bun.lock holds once it pins "v2". */
+    const repinned = {
+      [`${gh.name}@github:${gh.owner}/${gh.repo}#${gh.locked}`]: [
+        { dependencies: { [added.name]: specOf(added) } },
+        `${gh.owner}-${gh.repo}-${gh.locked}`,
+        integrityOf(changed),
+      ],
+      [`${added.name}@${specOf(added)}`]: [{}, `${gh.owner}-${added.repo}-${added.commit}`, integrityOf(addedArchive)],
+    };
+    /** The markers of what is installed. `key` is the line of package.json that installs the dependency. */
+    const installed = async (key = gh.name) => ({
+      [gh.name]: await installedVersionOf(fx.project, key),
+      [added.name]: await installedVersionOf(fx.project, added.name),
+      [dropped.name]: await installedVersionOf(fx.project, dropped.name),
+    });
+    return Object.assign(fx, { repinned, installed });
+  }
+
+  for (const args of [["update"], ["update", gh.name], ["update", "--latest"]]) {
+    test.concurrent(
+      `bun ${args.join(" ")} pins changed bytes at the locked commit of a github: dependency with the dependencies they declare`,
+      async () => {
+        await using pin = await ghPinnedThenChanged();
+
+        const update = await pin.bun("warm", ...args);
+
+        expect(update.stderr).not.toContain("error:");
+        expect({ installed: await pin.installed(), locked: await lockedByResolution(pin.project) }).toEqual({
+          installed: updated,
+          locked: pin.repinned,
+        });
+        expect(update.exitCode).toBe(0);
+
+        // The new pin is the one an install on another machine checks.
+        pin.removeNodeModules();
+        const install = await pin.bun("cold", "install", "--frozen-lockfile");
+        expect(install.stderr).not.toContain("error:");
+        expect(await pin.installed()).toEqual(updated);
+        expect(install.exitCode).toBe(0);
+      },
+      30_000,
+    );
+  }
+
+  test.concurrent(
+    "bun update pins changed bytes at the locked commit of a github: branch that bun.lockb holds with the dependencies they declare",
+    async () => {
+      await using pin = await ghPinnedThenChanged(branch, "bun.lockb");
+
+      const update = await pin.bun("warm", "update");
+
+      expect(update.stderr).not.toContain("error:");
+      expect(await pin.installed()).toEqual(updated);
+      expect(update.exitCode).toBe(0);
+
+      pin.removeNodeModules();
+      const install = await pin.bun("cold", "install", "--frozen-lockfile");
+      expect(install.stderr).not.toContain("error:");
+      expect(await pin.installed()).toEqual(updated);
+      expect(install.exitCode).toBe(0);
+    },
+    30_000,
+  );
+
+  // An install that resolves the dependency again after the update accepts the bytes the update pinned.
+  for (const [act, manifest, key] of [
+    ["its line moves to devDependencies", { devDependencies: { [gh.name]: short.spec } }, gh.name],
+    ["its key is renamed", { dependencies: { "renamed-key": short.spec } }, "renamed-key"],
+  ] as const) {
+    for (const args of [["install"], ["install", "--frozen-lockfile"]]) {
+      test.concurrent(
+        `after bun update pinned changed bytes of a github: dependency, bun ${args.join(" ")} accepts them when ${act}`,
+        async () => {
+          await using pin = await ghPinnedThenChanged();
+          const update = await pin.bun("warm", "update");
+          expect(update.stderr).not.toContain("error:");
+          expect(update.exitCode).toBe(0);
+          pin.removeNodeModules();
+          pin.manifest(manifest);
+
+          const { stderr, exitCode } = await pin.bun("cold", ...args);
+
+          expect(stderr).not.toContain("error:");
+          expect({ installed: await pin.installed(key), locked: await lockedByResolution(pin.project) }).toEqual({
+            installed: updated,
+            locked: pin.repinned,
+          });
+          expect(exitCode).toBe(0);
+        },
+        30_000,
+      );
+    }
+  }
+}
+
+// `bun update` pins the bytes it takes. A run that does not save bun.lock
+// cannot pin them, so it checks them against the pin like an install does.
+for (const flag of ["--no-save", "--dry-run", "--frozen-lockfile"]) {
+  test.concurrent(
+    `bun update ${flag} refuses changed bytes at the locked commit of a github: dependency`,
+    async () => {
+      const branch = ghSpellings.find(spelling => spelling.ref === "main")!;
+      await using pin = await ghPinned(branch);
+      const changed = await ghArchive(gh.locked, "v2");
+      pin.serve(branch.ref, changed);
+      pin.serve(gh.locked, changed);
+
+      const { stdout, stderr, exitCode } = await pin.bun("cold", "update", flag);
+
+      expect({
+        installed: await installedVersionOf(pin.project, gh.name),
+        lock: readFileSync(join(pin.project, "bun.lock"), "utf8"),
+        cached: pin.cached("cold"),
+      }).toEqual({ installed: null, lock: pin.pinnedLock, cached: [] });
+      expect(stdout + stderr).toContain("Integrity check failed");
+      expect(exitCode).toBe(1);
+    },
+    30_000,
+  );
+}
+
+// One archive can answer for two lines: `bun update <name>` names one of
+// them, and the other is resolved in the same run. Which line comes first
+// does not decide whether the update takes the changed bytes.
+{
+  const [short] = ghSpellings;
+  const branch = ghSpellings.find(spelling => spelling.ref === "main")!;
+  const member = join("packages", "member");
+  const pinOf = (archive: Uint8Array) => [`${gh.owner}-${gh.repo}-${gh.locked}`, integrityOf(archive)];
+  const lockedPins = async (project: string) =>
+    Object.fromEntries(
+      Object.entries(await lockedPackages(project))
+        .filter(([, entry]) => entry.length > 1)
+        .map(([key, entry]) => [key, entry.slice(2)]),
+    );
+
+  /** bun.lock pins "v1" for the root's line and for the member's line, if it has one. The commit then serves "v2". */
+  async function ghPinnedTwice(spelling: (typeof ghSpellings)[number], rootKey: string, memberKey?: string) {
+    const fx = ghFixture();
+    const archive = await ghArchive(gh.locked, "v1");
+    fx.serve(spelling.ref, archive);
+    fx.serve(gh.locked, archive);
+    fx.manifest({ workspaces: ["packages/*"], dependencies: { [rootKey]: spelling.spec } });
+    if (memberKey) fx.manifest({ name: "member", dependencies: { [memberKey]: spelling.spec } }, member);
+    const first = await fx.bun("warm", "install");
+    expect(first.stderr).not.toContain("error:");
+    expect(first.exitCode).toBe(0);
+    fx.removeNodeModules();
+    const changed = await ghArchive(gh.locked, "v2");
+    fx.serve(spelling.ref, changed);
+    fx.serve(gh.locked, changed);
+    return Object.assign(fx, { changed });
+  }
+
+  test.concurrent(
+    "bun update <name> takes changed bytes of a github: dependency when the line it names comes before another line of the same archive",
+    async () => {
+      await using fx = await ghPinnedTwice(short, "target-key");
+      fx.manifest({ name: "member", dependencies: { "other-key": short.spec } }, member);
+
+      const { stderr, exitCode } = await fx.bun("cold", "update", "target-key");
+
+      expect(stderr).not.toContain("error:");
+      expect({
+        target: await installedVersionOf(fx.project, "target-key"),
+        other: await installedVersionOf(join(fx.project, member), "other-key"),
+        locked: await lockedPins(fx.project),
+      }).toEqual({
+        target: "v2",
+        other: "v2",
+        locked: { "target-key": pinOf(fx.changed), "other-key": pinOf(fx.changed) },
+      });
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "bun update <name> takes changed bytes of a github: dependency when another line of the same archive comes before the line it names",
+    async () => {
+      await using fx = await ghPinnedTwice(short, "old-key", "target-key");
+      // The root's line is new, so this run resolves it, and before the line of the member.
+      fx.manifest({ workspaces: ["packages/*"], dependencies: { "other-key": short.spec } });
+
+      const { stderr, exitCode } = await fx.bun("cold", "update", "target-key", "--filter", "member");
+
+      expect(stderr).not.toContain("error:");
+      expect({
+        target: await installedVersionOf(join(fx.project, member), "target-key"),
+        locked: await lockedPins(fx.project),
+      }).toEqual({ target: "v2", locked: { "target-key": pinOf(fx.changed), "other-key": pinOf(fx.changed) } });
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "bun update <name> pins changed bytes of a github: branch for a line it does not name that holds the same package",
+    async () => {
+      await using fx = await ghPinnedTwice(branch, "other-key", "target-key");
+
+      const { stderr, exitCode } = await fx.bun("cold", "update", "target-key", "--filter", "member");
+
+      expect(stderr).not.toContain("error:");
+      expect({
+        target: await installedVersionOf(join(fx.project, member), "target-key"),
+        locked: await lockedPins(fx.project),
+      }).toEqual({ target: "v2", locked: { "target-key": pinOf(fx.changed), "other-key": pinOf(fx.changed) } });
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+}
+
+// bun does not resolve an optional peer dependency. A line that becomes one
+// drops its package from bun.lock, which a frozen install refuses.
+for (const args of [["install", "--frozen-lockfile"], ["ci"]]) {
+  test.concurrent(
+    `a github: dependency that becomes an optional peer is a change to bun.lock: bun ${args.join(" ")}`,
+    async () => {
+      const branch = ghSpellings.find(spelling => spelling.ref === "main")!;
+      await using pin = await ghPinned(branch);
+      pin.manifest({
+        peerDependencies: { [gh.name]: branch.spec },
+        peerDependenciesMeta: { [gh.name]: { optional: true } },
+      });
+      pin.asked.length = 0;
+
+      const { stdout, stderr, exitCode } = await pin.bun("cold", ...args);
+
+      expect({
+        installed: await installedVersionOf(pin.project, gh.name),
+        asked: pin.asked,
+        lock: readFileSync(join(pin.project, "bun.lock"), "utf8"),
+      }).toEqual({ installed: null, asked: [], lock: pin.pinnedLock });
+      expect(stdout + stderr).toContain("lockfile had changes, but lockfile is frozen");
+      expect(exitCode).toBe(1);
+    },
+    30_000,
+  );
+}
+
+// A package-lock.json names the commit of a `github:` package by its full
+// hash, and bun.lock keeps that name when bun takes the pin over. The archive
+// of the commit names it by the short hash. Both are the same commit.
+{
+  const [, full] = ghSpellings;
+  const sha1Of = (tarball: Uint8Array) => `sha1-${new Bun.CryptoHasher("sha1").update(tarball).digest("base64")}`;
+
+  /** bun.lock comes from a package-lock.json that pins commit `ghFullSha`, marker "v1", by the hash `pinOf` gives. */
+  async function ghPinnedByNpm(pinOf = integrityOf, archiveOf: typeof ghLargeArchive = ghArchive, chunked = false) {
+    const fx = ghFixture({ chunked });
+    const archive = await archiveOf(gh.locked, "v1");
+    fx.serve(full.ref, archive);
+    fx.manifest({ dependencies: { [gh.name]: full.spec } });
+    writeFileSync(
+      join(fx.project, "package-lock.json"),
+      JSON.stringify({
+        name: "root",
+        version: "1.0.0",
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": { name: "root", version: "1.0.0", dependencies: { [gh.name]: full.spec } },
+          [`node_modules/${gh.name}`]: {
+            version: "1.0.0",
+            resolved: `git+ssh://git@github.com/${gh.owner}/${gh.repo}.git#${ghFullSha}`,
+            integrity: pinOf(archive),
+          },
+        },
+      }),
+    );
+    const first = await fx.bun("warm", "install");
+    expect(first.stderr).not.toContain("error:");
+    expect(first.exitCode).toBe(0);
+    const pinnedEntry = (await lockedPackages(fx.project))[gh.name];
+    expect(pinnedEntry.slice(2)).toEqual([ghFullSha, pinOf(archive)]);
+    fx.removeNodeModules();
+    return Object.assign(fx, { pinnedEntry, pinnedLock: readFileSync(join(fx.project, "bun.lock"), "utf8") });
+  }
+
+  for (const args of [["install"], ["install", "--frozen-lockfile"]]) {
+    test.concurrent(
+      `a github: dependency that bun.lock names by its full commit hash refuses changed bytes when its key is renamed: bun ${args.join(" ")}`,
+      async () => {
+        await using pin = await ghPinnedByNpm();
+        pin.serve(full.ref, await ghArchive(gh.locked, "v2"));
+        pin.manifest({ dependencies: { "renamed-key": full.spec } });
+
+        const { stdout, stderr, exitCode } = await pin.bun("cold", ...args);
+
+        expect({
+          installed: await installedVersionOf(pin.project, "renamed-key"),
+          lock: readFileSync(join(pin.project, "bun.lock"), "utf8"),
+          cached: pin.cached("cold"),
+        }).toEqual({ installed: null, lock: pin.pinnedLock, cached: [] });
+        expect(stdout + stderr).toContain("Integrity check failed");
+        expect(exitCode).toBe(1);
+      },
+      30_000,
+    );
+  }
+
+  test.concurrent(
+    "a github: dependency that bun.lock names by its full commit hash installs the pinned bytes when its key is renamed",
+    async () => {
+      await using pin = await ghPinnedByNpm();
+      pin.manifest({ dependencies: { "renamed-key": full.spec } });
+
+      const { stderr, exitCode } = await pin.bun("cold", "install");
+
+      expect(stderr).not.toContain("error:");
+      expect({
+        installed: await installedVersionOf(pin.project, "renamed-key"),
+        hashes: Object.values(await lockedPackages(pin.project)).map(entry => entry[3]),
+      }).toEqual({ installed: "v1", hashes: [pin.pinnedEntry[3]] });
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+
+  // The hash npm wrote can be a sha1. bun checks a chunked answer against it too.
+  test.concurrent(
+    "a github: dependency that bun.lock pins by a sha1 hash refuses changed bytes from a chunked answer when its key is renamed",
+    async () => {
+      await using pin = await ghPinnedByNpm(sha1Of, ghLargeArchive, true);
+      pin.serve(full.ref, await ghLargeArchive(gh.locked, "v2"));
+      pin.manifest({ dependencies: { "renamed-key": full.spec } });
+
+      const { stdout, stderr, exitCode } = await pin.bun("cold", "install");
+
+      expect({
+        installed: await installedVersionOf(pin.project, "renamed-key"),
+        lock: readFileSync(join(pin.project, "bun.lock"), "utf8"),
+        cached: pin.cached("cold"),
+      }).toEqual({ installed: null, lock: pin.pinnedLock, cached: [] });
+      expect(stdout + stderr).toContain("Integrity check failed");
+      expect(exitCode).toBe(1);
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "a github: dependency that bun.lock pins by a sha1 hash installs the pinned bytes from a chunked answer when its key is renamed",
+    async () => {
+      await using pin = await ghPinnedByNpm(sha1Of, ghLargeArchive, true);
+      pin.manifest({ dependencies: { "renamed-key": full.spec } });
+
+      const { stderr, exitCode } = await pin.bun("cold", "install");
+
+      expect(stderr).not.toContain("error:");
+      expect(await installedVersionOf(pin.project, "renamed-key")).toBe("v1");
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+}
+
+// `bun install --lockfile-only` resolves and saves. When it cannot resolve a dependency it saves nothing.
+{
+  const branch = ghSpellings.find(spelling => spelling.ref === "main")!;
+
+  for (const [act, first, manifest, at] of [
+    ["its key is renamed", undefined, { dependencies: { "renamed-key": branch.spec } }, "."],
+    [
+      "a new workspace member declares it",
+      { workspaces: ["packages/*"], dependencies: { [gh.name]: branch.spec } },
+      { name: "member", dependencies: { [gh.name]: branch.spec } },
+      join("packages", "member"),
+    ],
+  ] as const) {
+    test.concurrent(
+      `bun install --lockfile-only leaves bun.lock alone when a github: dependency has changed bytes at the locked commit and ${act}`,
+      async () => {
+        await using pin = await ghPinned(branch, first);
+        const changed = await ghArchive(gh.locked, "v2");
+        pin.serve(branch.ref, changed);
+        pin.serve(gh.locked, changed);
+        pin.manifest(manifest, at);
+
+        const { stdout, stderr, exitCode } = await pin.bun("cold", "install", "--lockfile-only");
+
+        expect({
+          lock: readFileSync(join(pin.project, "bun.lock"), "utf8"),
+          cached: pin.cached("cold"),
+        }).toEqual({ lock: pin.pinnedLock, cached: [] });
+        expect(stdout + stderr).toContain("Integrity check failed");
+        expect(exitCode).toBe(1);
+      },
+      30_000,
+    );
+  }
+}
+
+// `--no-verify` turns the check off.
+test.concurrent(
+  "bun install --no-verify takes changed bytes at the locked commit of a github: dependency when its key is renamed",
+  async () => {
+    const branch = ghSpellings.find(spelling => spelling.ref === "main")!;
+    await using pin = await ghPinned(branch);
+    const changed = await ghArchive(gh.locked, "v2");
+    pin.serve(branch.ref, changed);
+    pin.serve(gh.locked, changed);
+    pin.manifest({ dependencies: { "renamed-key": branch.spec } });
+
+    const { stderr, exitCode } = await pin.bun("cold", "install", "--no-verify");
+
+    expect(stderr).not.toContain("error:");
+    expect(await installedVersionOf(pin.project, "renamed-key")).toBe("v2");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
+// `bun update -r` names every workspace, so the line of a member follows its ref like the line of the root.
+for (const args of [
+  ["update", "-r"],
+  ["update", "-r", "--latest"],
+]) {
+  test.concurrent(
+    `bun ${args.join(" ")} moves the github: branch of the root and of a workspace member to the new commit`,
+    async () => {
+      const branch = ghSpellings.find(spelling => spelling.ref === "main")!;
+      const member = join("packages", "member");
+      const fx = ghFixture();
+      await using _ = fx;
+      const archive = await ghArchive(gh.locked, "v1");
+      fx.serve(branch.ref, archive);
+      fx.serve(gh.locked, archive);
+      fx.manifest({ workspaces: ["packages/*"], dependencies: { [gh.name]: branch.spec } });
+      fx.manifest({ name: "member", dependencies: { [gh.name]: branch.spec } }, member);
+      const first = await fx.bun("warm", "install");
+      expect(first.stderr).not.toContain("error:");
+      expect(first.exitCode).toBe(0);
+      fx.removeNodeModules();
+      const moved = await ghArchive(gh.moved, "v2");
+      fx.serve(branch.ref, moved);
+      fx.serve(gh.moved, moved);
+
+      const { stderr, exitCode } = await fx.bun("cold", ...args);
+
+      expect(stderr).not.toContain("error:");
+      expect({
+        root: await installedVersionOf(fx.project, gh.name),
+        member: await installedVersionOf(join(fx.project, member), gh.name),
+        locked: await lockedPackages(fx.project),
+      }).toEqual({
+        root: "v2",
+        member: "v2",
+        locked: {
+          member: ["member@workspace:packages/member"],
+          [gh.name]: [
+            `${gh.name}@github:${gh.owner}/${gh.repo}#${gh.moved}`,
+            {},
+            `${gh.owner}-${gh.repo}-${gh.moved}`,
+            integrityOf(moved),
+          ],
+        },
+      });
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
 }

@@ -771,6 +771,7 @@ impl NetworkTask {
         tarball_: ExtractTarball,
         scope: &npm::registry::Scope,
         authorization: Authorization,
+        streaming: bool,
     ) -> Result<(), ForTarballError> {
         let pm = self.pm_mut();
 
@@ -888,7 +889,7 @@ impl NetworkTask {
             ..Default::default()
         };
 
-        if extract_tarball::uses_streaming_extraction() {
+        if streaming {
             // Tell the HTTP client to invoke `notify` for every body chunk
             // instead of buffering the whole response. `notify` pushes each
             // chunk into `tarball_stream`, which schedules a drain task on

@@ -224,8 +224,7 @@ pub(crate) fn is_safe_resolved_tag(resolved: &[u8]) -> bool {
             .all(|&b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
 
-/// The commit a resolved `github:` package is locked to: the short hash at the
-/// end of `resolved` (`<owner>-<repo>-<hash>`).
+/// The short hash at the end of `resolved` (`<owner>-<repo>-<hash>`): the commit a `github:` package is locked to.
 pub(crate) fn github_locked_hash<'a>(
     repository: &'a Repository,
     buf: &'a [u8],
@@ -233,6 +232,27 @@ pub(crate) fn github_locked_hash<'a>(
     let resolved = repository.resolved.slice(buf);
     let hash = &resolved[strings::last_index_of_char(resolved, b'-')? + 1..];
     (!hash.is_empty()).then_some(hash)
+}
+
+/// Do two `<owner>-<repo>-<hash>` names of `github:` archives name one commit? One hash can be longer.
+pub(crate) fn is_same_github_commit(a: &[u8], b: &[u8]) -> bool {
+    const MIN_HASH_LEN: usize = 7;
+    let (Some(a_dash), Some(b_dash)) = (
+        strings::last_index_of_char(a, b'-'),
+        strings::last_index_of_char(b, b'-'),
+    ) else {
+        return false;
+    };
+    let (a_hash, b_hash) = (&a[a_dash + 1..], &b[b_dash + 1..]);
+    let (short, long) = if a_hash.len() <= b_hash.len() {
+        (a_hash, b_hash)
+    } else {
+        (b_hash, a_hash)
+    };
+    short.len() >= MIN_HASH_LEN
+        && long.iter().all(u8::is_ascii_hexdigit)
+        && long[..short.len()].eq_ignore_ascii_case(short)
+        && a[..a_dash].eq_ignore_ascii_case(&b[..b_dash])
 }
 
 /// Install-tier `Repository` behaviour: parsing, formatting, clone URL forms.

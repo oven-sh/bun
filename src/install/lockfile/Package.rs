@@ -1418,10 +1418,7 @@ impl Diff {
                         continue;
                     }
                 }
-                // The line moved to another group of package.json. It is the
-                // same dependency, so a row that a git, github: or tarball
-                // package resolved keeps that package. `bun update` still
-                // resolves its targets again.
+                // A line that moved to another group keeps its git, github: or tarball package, unless `bun update` names it.
                 if let Some(mapping) = id_mapping.as_deref_mut() {
                     let from_buf = from_lockfile.buffers.string_bytes.as_slice();
                     let is_update_target = update_requests.is_some_and(|updates| {
@@ -1436,10 +1433,11 @@ impl Diff {
                         && from_lockfile.is_git_or_tarball_package(from_resolutions[i])
                     {
                         let to_buf = to_lockfile.buffers.string_bytes.as_slice();
-                        if let Some(moved_to) = to_deps!()
-                            .iter()
-                            .position(|to_dep| Dependency::eql(to_dep, from_dep, to_buf, from_buf))
-                        {
+                        // A peer is left to the resolver, which resolves it last or not at all.
+                        if let Some(moved_to) = to_deps!().iter().position(|to_dep| {
+                            !to_dep.behavior.is_peer()
+                                && Dependency::eql(to_dep, from_dep, to_buf, from_buf)
+                        }) {
                             if mapping[moved_to] == invalid_package_id {
                                 mapping[moved_to] = i as PackageID;
                             }

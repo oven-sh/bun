@@ -18,6 +18,7 @@ use crate::_folder_resolver::{
 };
 use crate::dependency;
 use crate::dependency::{DependencyExt as _, TagExt as _, VersionExt as _};
+use crate::extract_tarball::PinPolicy;
 use crate::lockfile::PackageIndexEntry;
 use crate::lockfile::package::Package;
 use crate::lockfile_real as Lockfile;
@@ -191,7 +192,7 @@ pub fn enqueue_tarball_for_download(
         url,
         is_required,
         dependency_id,
-        &package,
+        run_tasks::TarballFor::Package(&package),
         patch_name_and_version_hash,
         crate::network_task::Authorization::NoAuthorization,
     )? {
@@ -494,7 +495,7 @@ pub fn enqueue_package_for_download(
         url,
         is_required,
         dependency_id,
-        &package,
+        run_tasks::TarballFor::Package(&package),
         patch_name_and_version_hash,
         crate::network_task::Authorization::AllowAuthorization,
     )? {
@@ -726,8 +727,7 @@ pub fn enqueue_patch_task_pre(this: &mut PackageManager, mut task: Box<PatchTask
     let _ = this.pending_pre_calc_hashes.fetch_add(1, Ordering::Relaxed);
 }
 
-/// Does `bun update` resolve this row again? `name` is the package's own name,
-/// which differs from the dependency's for an alias.
+/// Does `bun update` resolve this row again? `name` is the package's own name, which an alias does not share.
 #[inline(always)]
 fn is_update_target(
     this: &mut PackageManager,
@@ -736,8 +736,7 @@ fn is_update_target(
     name_hash: PackageNameHash,
     name: SemverString,
 ) -> bool {
-    // reshaped for borrowck — `is_root_dependency(&self, &mut PackageManager, …)`
-    // borrows `this.lockfile` and `this` at once. Split via raw root.
+    // `is_root_dependency` borrows `this.lockfile` and `this` at once, so a raw pointer splits them.
     this.to_update
         && if !this.update_requests.is_empty() {
             // bun update <name>: every in-scope <name> row (declared or `npm:<name>@…` aliased, see update_scope); other resolutions stay pinned.
@@ -765,11 +764,7 @@ fn is_update_target(
         }
 }
 
-/// A package.json that is parsed again gives its package a new set of rows,
-/// all unresolved. A row that declares the same dependency as a row before
-/// keeps the git, github: or tarball package that row resolved to: to resolve
-/// it again is to ask the ref, the URL or the path again. `bun update` still
-/// resolves its targets.
+/// A row of a package.json that is parsed again keeps the git, github: or tarball package the same row had before.
 #[cold]
 pub(crate) fn keep_git_and_tarball_resolutions(
     this: &mut PackageManager,
@@ -792,6 +787,10 @@ pub(crate) fn keep_git_and_tarball_resolutions(
         let Some(dependency) = this.lockfile.buffers.dependencies.get(id as usize).cloned() else {
             return;
         };
+        // A peer is left to the resolver, which resolves it last or not at all.
+        if dependency.behavior.is_peer() {
+            continue;
+        }
         let buf = this.lockfile.buffers.string_bytes.as_slice();
         let kept = before.clone().find_map(|before_id| {
             let resolved = this.lockfile.buffers.resolutions[before_id];
@@ -809,9 +808,7 @@ pub(crate) fn keep_git_and_tarball_resolutions(
     }
 }
 
-/// Queues the rows of a folder package for the resolver. A row that kept its
-/// package when the package.json was parsed again
-/// (`keep_git_and_tarball_resolutions`) has nothing to resolve and stays out.
+/// Queues the rows of a folder package for the resolver. A row that kept its package stays out.
 fn queue_rows_to_resolve(
     this: &mut PackageManager,
     rows: Lockfile::DependencySlice,
@@ -844,134 +841,147 @@ fn queue_rows_to_resolve(
     Ok(())
 }
 
-/// The integrity that the fetch of a URL or `file:` tarball is verified
-/// against when its dependency has no package yet: the pin of the package the
-/// loaded lockfile holds for the same URL or path.
-///
-/// `bun update` and a `bun add` of the dependency ask for the bytes the
-/// tarball has now. Their fetch has no pin, and the lockfile takes the new
-/// hash when the extract completes (`pin_loaded_package_to_extracted`).
+/// What the fetch for a dependency that has no package yet is checked against.
+pub(crate) struct UnresolvedPin {
+    pub(crate) integrity: Integrity,
+    pub(crate) policy: PinPolicy,
+    /// False when a `github:` pin is not a sha512, which is all the streaming extractor computes.
+    pub(crate) streamable: bool,
+}
+
+/// The pin the loaded lockfile holds for the URL, the path or the repository of `resolution`.
 #[cold]
-fn pin_for_unresolved_tarball(
+pub(crate) fn pin_for_unresolved_tarball(
     this: &mut PackageManager,
     dependency_id: DependencyID,
     resolution: &Resolution,
-) -> Integrity {
-    if !matches!(
-        resolution.tag,
-        ResolutionTag::RemoteTarball | ResolutionTag::LocalTarball
-    ) {
-        return Integrity::default();
-    }
-    let Some(package_id) = this.lockfile.loaded_package_with_resolution(resolution) else {
-        return Integrity::default();
+) -> UnresolvedPin {
+    let mut pin = UnresolvedPin {
+        integrity: Integrity::default(),
+        policy: pin_policy_for_destination(this, dependency_id, resolution),
+        streamable: true,
     };
-    let integrity = this.lockfile.packages.items_meta()[package_id as usize].integrity;
-    if !integrity.tag.is_supported() {
-        return integrity;
+    if pin.policy == PinPolicy::Refresh {
+        return pin;
     }
-    let dependency = this.lockfile.buffers.dependencies[dependency_id as usize].clone();
-    let name = this.lockfile.packages.items_name()[package_id as usize];
-    let name_hash = this.lockfile.packages.items_name_hash()[package_id as usize];
-    if is_refresh(this, &dependency, dependency_id, name_hash, name) {
-        Integrity::default()
-    } else {
-        integrity
+    if resolution.tag == ResolutionTag::Github {
+        // Only the archive names its commit, so the extract finds the pin in `github_pins`.
+        pin.streamable = this.load_github_pins();
+    } else if let Some(package_id) = this.lockfile.loaded_package_with_resolution(resolution) {
+        pin.integrity = this.lockfile.packages.items_meta()[package_id as usize].integrity;
     }
+    pin
 }
 
-/// `is_refresh` for a `github:` row that has no package yet. `bun update <name>`
-/// names a package, and the row has no package name before its fetch, so the
-/// packages the lockfile loaded for the same repository answer for it.
+/// `Refresh` when this run saves the lockfile and `bun update` or `bun add` names a row that declares `resolution`.
 #[cold]
-fn is_github_refresh(
+fn pin_policy_for_destination(
     this: &mut PackageManager,
-    dependency: &Dependency,
     dependency_id: DependencyID,
-    repository: &Repository,
-) -> bool {
-    if is_refresh(
-        this,
-        dependency,
-        dependency_id,
-        dependency.name_hash,
-        dependency.name,
-    ) {
-        return true;
-    }
-    if !this.to_update || this.update_requests.is_empty() {
-        return false;
-    }
-    let loaded = (this.lockfile.loaded_package_count as usize).min(this.lockfile.packages.len());
-    for package_id in 0..loaded {
-        let resolution = this.lockfile.packages.items_resolution()[package_id];
-        if resolution.tag != ResolutionTag::Github {
-            continue;
-        }
-        let buf = this.lockfile.buffers.string_bytes.as_slice();
-        let locked = resolution.github();
-        if !locked.owner.eql(repository.owner, buf, buf)
-            || !locked.repo.eql(repository.repo, buf, buf)
-        {
-            continue;
-        }
-        let name = this.lockfile.packages.items_name()[package_id];
-        let name_hash = this.lockfile.packages.items_name_hash()[package_id];
-        if is_update_target(this, dependency, dependency_id, name_hash, name) {
-            return true;
-        }
-    }
-    false
-}
-
-/// Does the command ask for the bytes a tarball or a ref has now? `bun update`
-/// does for its targets, and `bun add` for the dependency it names. `name` is
-/// the package's own name when the lockfile knows it.
-#[cold]
-fn is_refresh(
-    this: &mut PackageManager,
-    dependency: &Dependency,
-    dependency_id: DependencyID,
-    name_hash: PackageNameHash,
-    name: SemverString,
-) -> bool {
-    if this.to_update {
-        return is_update_target(this, dependency, dependency_id, name_hash, name);
-    }
-    this.subcommand == crate::Subcommand::Add && {
-        let buf = this.lockfile.buffers.string_bytes.as_slice();
-        this.is_update_request(dependency.name_hash, dependency.name.slice(buf))
-            || this.is_update_request(name_hash, name.slice(buf))
-    }
-}
-
-/// A tarball fetch for a dependency that has no package yet: a URL tarball
-/// whose package.json has not been read.
-fn generate_network_task_for_unresolved_tarball<'a>(
-    this: &'a mut PackageManager,
-    task_id: Task::Id,
-    url: &[u8],
-    dependency_id: DependencyID,
-    dependency: &Dependency,
     resolution: &Resolution,
-) -> Result<Option<&'a mut NetworkTask>, crate::network_task::ForTarballError> {
-    let mut package = Package {
-        name: dependency.name,
-        name_hash: dependency.name_hash,
-        resolution: *resolution,
-        ..Package::default()
+) -> PinPolicy {
+    let add = this.subcommand == crate::Subcommand::Add;
+    if !(this.to_update || add) || !this.options.do_.save_lockfile() {
+        return PinPolicy::Verify;
+    }
+
+    // GitHub serves one repository under any case of its owner and name.
+    let same_repository = |repository: &Repository, buf: &[u8]| {
+        let fetched = resolution.github();
+        strings::eql_case_insensitive_ascii(
+            repository.owner.slice(buf),
+            fetched.owner.slice(buf),
+            true,
+        ) && strings::eql_case_insensitive_ascii(
+            repository.repo.slice(buf),
+            fetched.repo.slice(buf),
+            true,
+        )
     };
-    package.meta.integrity = pin_for_unresolved_tarball(this, dependency_id, resolution);
-    run_tasks::generate_network_task_for_tarball(
-        this,
-        task_id,
-        url,
-        dependency.behavior.is_required(),
-        dependency_id,
-        &package,
-        None,
-        crate::network_task::Authorization::NoAuthorization,
-    )
+    let declares = |version: &dependency::Version, buf: &[u8]| match version.tag {
+        dependency::version::Tag::Github => {
+            resolution.tag == ResolutionTag::Github && same_repository(version.github(), buf)
+        }
+        dependency::version::Tag::Tarball => match &version.tarball().uri {
+            dependency::tarball::Uri::Remote(url) => {
+                resolution.tag == ResolutionTag::RemoteTarball
+                    && url.eql(*resolution.remote_tarball(), buf, buf)
+            }
+            dependency::tarball::Uri::Local(path) => {
+                resolution.tag == ResolutionTag::LocalTarball
+                    && path.eql(*resolution.local_tarball(), buf, buf)
+            }
+        },
+        _ => false,
+    };
+
+    // `bun update <name>` can name a package that a row declares under another key. A loaded package of this destination gives that name.
+    let mut named_package = None;
+    if this.to_update && !this.update_requests.is_empty() {
+        let buf = this.lockfile.buffers.string_bytes.as_slice();
+        let loaded =
+            (this.lockfile.loaded_package_count as usize).min(this.lockfile.packages.len());
+        named_package = (0..loaded).find_map(|package_id| {
+            let locked = &this.lockfile.packages.items_resolution()[package_id];
+            let fetched_here = if resolution.tag == ResolutionTag::Github {
+                locked.tag == ResolutionTag::Github && same_repository(locked.github(), buf)
+            } else {
+                locked.eql(resolution, buf, buf)
+            };
+            let name = this.lockfile.packages.items_name()[package_id];
+            let name_hash = this.lockfile.packages.items_name_hash()[package_id];
+            (fetched_here && this.is_update_request(name_hash, name.slice(buf)))
+                .then_some((name_hash, name))
+        });
+    }
+
+    let is_target = |this: &mut PackageManager, id: DependencyID| {
+        let row = this.lockfile.buffers.dependencies[id as usize].clone();
+        if add {
+            // The rows a request was written to, as `fail_update_requests` finds them.
+            let buf = this.lockfile.buffers.string_bytes.as_slice();
+            let workspace = this.lockfile.get_workspace_pkg_if_workspace_dep(id);
+            this.update_requests.iter().any(|request| {
+                request.matches(&row, buf)
+                    && this
+                        .lockfile
+                        .workspaces_of_update_request(
+                            this.pending_filtered_write.as_deref(),
+                            this.workspace_name_hash,
+                            request,
+                        )
+                        .contains(&workspace)
+            })
+        } else {
+            let (name_hash, name) = named_package.unwrap_or((row.name_hash, row.name));
+            is_update_target(this, &row, id, name_hash, name)
+        }
+    };
+
+    // An override can give the row that made the task its version. The scan reads only what a row declares.
+    if is_target(this, dependency_id) {
+        return PinPolicy::Refresh;
+    }
+    for package_id in 0..this.lockfile.packages.len() {
+        let rows = this.lockfile.packages.items_dependencies()[package_id];
+        for id in rows.off..rows.off.saturating_add(rows.len) {
+            let buf = this.lockfile.buffers.string_bytes.as_slice();
+            // An optional peer is not resolved, so it asks for no bytes.
+            let declared = this
+                .lockfile
+                .buffers
+                .dependencies
+                .get(id as usize)
+                .is_some_and(|row| {
+                    !row.behavior.is_optional_peer()
+                        && declares(this.lockfile.catalogs.resolve_range(buf, row), buf)
+                });
+            if declared && is_target(this, id) {
+                return PinPolicy::Refresh;
+            }
+        }
+    }
+    PinPolicy::Verify
 }
 
 /// A resolve task's callback queue is drained exactly once. If `task_id`
@@ -1814,22 +1824,15 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 }
             }
 
-            // The extract checks the archive against the pin the lockfile
-            // holds for its commit. `bun update` and a `bun add` of the
-            // dependency ask for the bytes the ref has now.
-            let pinned_by_commit =
-                !is_github_refresh(this, dependency, id, dep) && this.load_github_pins();
             let generated = match run_tasks::generate_network_task_for_tarball(
                 this,
                 task_id,
                 &url,
                 dependency.behavior.is_required(),
                 id,
-                &Package {
+                run_tasks::TarballFor::Dependency {
                     name: dependency.name,
-                    name_hash: dependency.name_hash,
-                    resolution: res,
-                    ..Package::default()
+                    resolution: &res,
                 },
                 None,
                 crate::network_task::Authorization::NoAuthorization,
@@ -1839,10 +1842,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 other => other?,
             };
             if let Some(network_task) = generated {
-                if let crate::network_task::Callback::Extract(tarball) = &mut network_task.callback
-                {
-                    tarball.pinned_by_github_commit = pinned_by_commit;
-                }
                 // reshaped for borrowck — see `enqueue_tarball_for_download`.
                 let nt: *mut NetworkTask = network_task;
                 enqueue_network_task(this, nt);
@@ -2043,13 +2042,23 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     this.task_batch.push(ThreadPool::Batch::from(task));
                 }
                 dependency::tarball::Uri::Remote(_) => {
-                    // `generate_network_task_for_unresolved_tarball` returns
+                    // `generate_network_task_for_tarball` returns
                     // `&'a mut NetworkTask` tied to `this`; coerce to `*mut`
                     // immediately so the `&mut *this` borrow ends before
                     // `enqueue_network_task(this, …)` reborrows it (NLL).
                     let network_task: Option<*mut NetworkTask> =
-                        match generate_network_task_for_unresolved_tarball(
-                            this, task_id, url, id, dependency, &res,
+                        match run_tasks::generate_network_task_for_tarball(
+                            this,
+                            task_id,
+                            url,
+                            dependency.behavior.is_required(),
+                            id,
+                            run_tasks::TarballFor::Dependency {
+                                name: dependency.name,
+                                resolution: &res,
+                            },
+                            None,
+                            crate::network_task::Authorization::NoAuthorization,
                         ) {
                             // --offline miss: already reported / skipped
                             Err(crate::network_task::ForTarballError::Offline) => return Ok(()),
@@ -2344,8 +2353,7 @@ pub fn enqueue_git_checkout(
     this.preallocated_resolve_tasks.get_init(task_value)
 }
 
-/// `package_id` is the lockfile package the tarball is read for. A dependency
-/// that has no package yet passes `None`, and the loaded lockfile gives the pin.
+/// `package_id` is the package the tarball is read for. `None` takes the pin from the loaded lockfile.
 fn enqueue_local_tarball(
     this: &mut PackageManager,
     task_id: Task::Id,
@@ -2355,9 +2363,15 @@ fn enqueue_local_tarball(
     resolution: &Resolution,
     package_id: Option<PackageID>,
 ) -> *mut ThreadPool::Task {
-    let integrity = match package_id {
-        Some(package_id) => this.lockfile.packages.items_meta()[package_id as usize].integrity,
-        None => pin_for_unresolved_tarball(this, dependency_id, resolution),
+    let (integrity, pin_policy) = match package_id {
+        Some(package_id) => (
+            this.lockfile.packages.items_meta()[package_id as usize].integrity,
+            PinPolicy::Verify,
+        ),
+        None => {
+            let pin = pin_for_unresolved_tarball(this, dependency_id, resolution);
+            (pin.integrity, pin.policy)
+        }
     };
 
     // Resolve the on-disk tarball path here on the main thread. The task
@@ -2410,10 +2424,13 @@ fn enqueue_local_tarball(
                         &mut crate::network_task::filename_store_appender(),
                     )
                     .expect("unreachable"),
-                    skip_verify: false,
+                    skip_verify: !this
+                        .options
+                        .do_
+                        .contains(crate::package_manager_real::options::Do::VERIFY_INTEGRITY),
                     in_trusted_dependencies: false,
                     github_resolved: StringOrTinyString::init(b""),
-                    pinned_by_github_commit: false,
+                    pin_policy,
                 },
                 tarball_path: StringOrTinyString::init_append_if_needed(
                     tarball_path,
@@ -2696,7 +2713,7 @@ fn get_or_put_resolved_package_with_find_result(
                         manifest.str(&find_result.package.tarball_url),
                         behavior.is_required(),
                         dependency_id,
-                        &package,
+                        run_tasks::TarballFor::Package(&package),
                         name_and_version_hash,
                         // its npm.
                         crate::network_task::Authorization::AllowAuthorization,

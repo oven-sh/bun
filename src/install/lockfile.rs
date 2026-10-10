@@ -2329,9 +2329,7 @@ impl Lockfile {
         None
     }
 
-    /// Is this a package that a git ref, a URL or a path names? To resolve its
-    /// dependency again is to ask that ref, URL or path again, which can give
-    /// other bytes than the lockfile holds.
+    /// Is this a package that a git ref, a URL or a path names? Asking again can give other bytes.
     pub(crate) fn is_git_or_tarball_package(&self, package_id: PackageID) -> bool {
         self.packages
             .items_resolution()

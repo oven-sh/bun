@@ -9,9 +9,10 @@ use bun_sys as sys;
 
 use crate::bun_json as json;
 use crate::bun_json::Expr;
+use crate::extract_tarball::PinPolicy;
 use crate::lockfile_real::StringBuilder;
 use crate::lockfile_real::package::{Package, PackageColumns, ResolverContext, Scripts};
-use crate::package_manager_real::options::LogLevel;
+use crate::package_manager_real::options::{Enable, LogLevel};
 use crate::package_manager_real::{
     PackageManager, TaskCallbackList, enqueue, resolution as pm_resolution,
 };
@@ -124,6 +125,43 @@ impl<'a> ResolverContext for TarballResolver<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl PackageManager {
+    /// Puts an extracted package into the lockfile. The package the lockfile loaded under this name and resolution stays the one.
+    fn put_extracted_package(&mut self, mut package: Package, pin_policy: PinPolicy) -> Package {
+        let loaded = self
+            .lockfile
+            .get_package_id(package.name_hash, None, &package.resolution)
+            .filter(|&id| id < self.lockfile.loaded_package_count);
+        match loaded {
+            None => package = self.lockfile.append_package(&package).expect("unreachable"),
+            Some(id) => {
+                let hash = package.meta.integrity;
+                let pin = &mut self.lockfile.packages.items_meta_mut()[id as usize].integrity;
+                let pinned = pin.tag.is_supported();
+                let unchanged = !hash.tag.is_supported() || (pinned && pin.matches(&hash, None));
+                if unchanged || (pinned && pin_policy == PinPolicy::Verify) {
+                    return *self.lockfile.packages.get(id as usize);
+                }
+                self.options.enable.set(Enable::FORCE_SAVE_LOCKFILE, true);
+                if pin_policy == PinPolicy::Verify {
+                    *pin = hash;
+                    return *self.lockfile.packages.get(id as usize);
+                }
+                // `bun update` or `bun add` took these bytes, so the lockfile takes the package they hold.
+                package.meta.id = id;
+                self.lockfile.packages.set(id as usize, package);
+            }
+        }
+        if package.dependencies.len > 0 {
+            bun_core::handle_oom(
+                self.lockfile
+                    .scratch
+                    .dependency_list_queue
+                    .write_item(package.dependencies),
+            );
+        }
+        package
+    }
+
     /// Returns true if we need to drain dependencies
     pub(crate) fn process_extracted_tarball_package(
         &mut self,
@@ -131,6 +169,7 @@ impl PackageManager {
         dep_id: DependencyID,
         resolution: &Resolution,
         data: &ExtractData,
+        pin_policy: PinPolicy,
         log_level: LogLevel,
     ) -> Option<Package> {
         match resolution.tag {
@@ -220,17 +259,8 @@ impl PackageManager {
                     package.meta.integrity = data.integrity;
                 }
 
-                package = self.lockfile.append_package(&package).expect("unreachable");
+                package = self.put_extracted_package(package, pin_policy);
                 *package_id = package.meta.id;
-
-                if package.dependencies.len > 0 {
-                    bun_core::handle_oom(
-                        self.lockfile
-                            .scratch
-                            .dependency_list_queue
-                            .write_item(package.dependencies),
-                    );
-                }
 
                 Some(package)
             }
@@ -279,17 +309,8 @@ impl PackageManager {
                     package.meta.integrity = data.integrity;
                 }
 
-                package = self.lockfile.append_package(&package).expect("unreachable");
+                package = self.put_extracted_package(package, pin_policy);
                 *package_id = package.meta.id;
-
-                if package.dependencies.len > 0 {
-                    bun_core::handle_oom(
-                        self.lockfile
-                            .scratch
-                            .dependency_list_queue
-                            .write_item(package.dependencies),
-                    );
-                }
 
                 Some(package)
             }

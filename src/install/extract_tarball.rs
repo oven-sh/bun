@@ -21,6 +21,17 @@ use bun_resolver::fs::FileSystem;
 use bun_sys::FdDirExt;
 type Error = crate::Error;
 
+/// What an extract does with the pin the lockfile holds for its cache folder.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum PinPolicy {
+    /// The bytes must match the pin.
+    #[default]
+    Verify,
+    /// `bun update` or `bun add` asked for the bytes of now. They become the pin.
+    Refresh,
+}
+
 pub struct ExtractTarball {
     pub(crate) name: StringOrTinyString,
     pub(crate) resolution: Resolution,
@@ -40,11 +51,7 @@ pub struct ExtractTarball {
     /// set it names the cache folder and `.bun-tag` (cache lookups are keyed by
     /// it); empty on a fresh resolve, which uses the archive's root dir name.
     pub(crate) github_resolved: StringOrTinyString,
-    /// A `github:` fetch for a dependency that has no package yet. Its commit
-    /// is known from the archive's root directory only, so the pin the
-    /// lockfile holds for that commit is checked after the extract
-    /// (`verify_github_pin`).
-    pub(crate) pinned_by_github_commit: bool,
+    pub(crate) pin_policy: PinPolicy,
     /// BACKREF: PackageManager owns the task pool that owns this struct.
     pub(crate) package_manager: bun_ptr::BackRef<PackageManager>,
 }
@@ -65,28 +72,27 @@ impl ExtractTarball {
                 return Err(crate::Error::IntegrityCheckFailed);
             }
         }
-        let mut result = self.extract(log, bytes)?;
-
         // Compute and store SHA-512 integrity hash for GitHub / URL / local tarballs
         // so the lockfile can pin the exact tarball content. On subsequent installs
         // the hash stored in the lockfile is forwarded via this.integrity and verified
         // above, preventing a compromised server from silently swapping the tarball.
         match self.resolution.tag {
             ResolutionTag::Github | ResolutionTag::RemoteTarball | ResolutionTag::LocalTarball => {
-                if self.integrity.tag.is_supported() {
+                let digest = if self.integrity.tag.is_supported() {
                     // Re-installing with an existing lockfile: integrity was already
                     // verified above, propagate the known value to ExtractData so that
                     // the lockfile keeps it on re-serialisation.
-                    result.integrity = self.integrity;
+                    self.integrity
                 } else {
                     // First install (no integrity in the lockfile yet): compute it.
-                    result.integrity = Integrity::for_bytes(bytes);
-                }
+                    Integrity::for_bytes(bytes)
+                };
+                let mut result = self.extract(log, bytes, &digest)?;
+                result.integrity = digest;
+                Ok(result)
             }
-            _ => {}
+            _ => self.extract(log, bytes, &self.integrity),
         }
-
-        Ok(result)
     }
 }
 
@@ -233,7 +239,12 @@ impl ExtractTarball {
         (name, basename)
     }
 
-    fn extract(&self, log: &mut bun_ast::Log, tgz_bytes: &[u8]) -> Result<ExtractData, Error> {
+    fn extract(
+        &self,
+        log: &mut bun_ast::Log,
+        tgz_bytes: &[u8],
+        digest: &Integrity,
+    ) -> Result<ExtractData, Error> {
         let _tracer = bun_core::perf::trace("ExtractTarball.extract");
 
         let tmpdir = Dir::borrow(&self.temp_dir);
@@ -386,16 +397,6 @@ impl ExtractTarball {
                         },
                     )?;
 
-                    if self.pinned_by_github_commit {
-                        if let Err(err) =
-                            self.verify_github_pin(log, resolved, |pin| pin.verify(tgz_bytes))
-                        {
-                            drop(extract_destination);
-                            let _ = tmpdir.delete_tree(tmpname.as_bytes());
-                            return Err(err);
-                        }
-                    }
-
                     let lockfile_tag = self.github_resolved.slice();
                     if !lockfile_tag.is_empty() {
                         resolved = FileSystem::instance()
@@ -465,29 +466,40 @@ impl ExtractTarball {
             }
         }
 
-        self.move_to_cache_directory(log, tmpname, name, basename, resolved)
+        self.move_to_cache_directory(
+            log,
+            tmpname,
+            name,
+            basename,
+            resolved,
+            digest,
+            Some(tgz_bytes),
+        )
     }
 
-    /// A `github:` archive of a commit that the loaded lockfile pins must be
-    /// the pinned bytes. `archive_tag` is the root directory of the archive
-    /// (`<owner>-<repo>-<hash>`). `matches` compares the archive with a pin.
-    /// Both extraction paths call this before the rename into the cache.
-    #[cold]
-    pub(crate) fn verify_github_pin(
+    /// The bytes that fill a pinned cache folder must match its pin. `resolved` names a `github:` folder.
+    fn verify_pin_of_destination(
         &self,
         log: &mut bun_ast::Log,
-        archive_tag: &[u8],
-        matches: impl FnOnce(&Integrity) -> bool,
+        tmpname: &ZStr,
+        resolved: &[u8],
+        digest: &Integrity,
+        bytes: Option<&[u8]>,
     ) -> Result<(), Error> {
-        if !self.pinned_by_github_commit || self.skip_verify {
+        if self.skip_verify || self.pin_policy == PinPolicy::Refresh {
             return Ok(());
         }
-        let Some(pin) = self.package_manager.get().github_pin(archive_tag) else {
-            return Ok(());
+        let pin = if self.integrity.tag.is_supported() {
+            Some(&self.integrity)
+        } else if self.resolution.tag == ResolutionTag::Github {
+            self.package_manager.get().github_pin(resolved)
+        } else {
+            None
         };
-        if matches(pin) {
+        if pin.is_none_or(|pin| pin.matches(digest, bytes)) {
             return Ok(());
         }
+        let _ = Dir::borrow(&self.temp_dir).delete_tree(tmpname.as_bytes());
         log.add_error_fmt(
             None,
             bun_ast::Loc::EMPTY,
@@ -509,6 +521,8 @@ impl ExtractTarball {
         name: &[u8],
         basename: &[u8],
         resolved: &[u8],
+        digest: &Integrity,
+        bytes: Option<&[u8]>,
     ) -> Result<ExtractData, Error> {
         let package_manager = self.package_manager.get();
 
@@ -550,6 +564,7 @@ impl ExtractTarball {
                         );
                         return Err(crate::Error::InstallFailed);
                     }
+                    self.verify_pin_of_destination(log, tmpname, resolved, digest, bytes)?;
                     directories::cached_github_folder_name_print(
                         &mut bufs.folder_name_buf,
                         resolved,
@@ -558,6 +573,7 @@ impl ExtractTarball {
                     .as_bytes()
                 }
                 ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
+                    self.verify_pin_of_destination(log, tmpname, resolved, digest, bytes)?;
                     directories::cached_tarball_folder_name_print(
                         &mut bufs.folder_name_buf,
                         self.url.slice(),

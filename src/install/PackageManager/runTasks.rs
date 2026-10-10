@@ -8,7 +8,7 @@ use bun_core::{Environment, Output};
 use bun_http::{self as http, AsyncHTTP};
 use bun_threading::thread_pool::Batch as ThreadPoolBatch;
 
-use crate::extract_tarball;
+use crate::extract_tarball::{self, PinPolicy};
 use crate::network_task::Callback as NetworkTaskCallback;
 use crate::npm;
 use crate::patch_install::{Callback as PatchTaskCallback, PatchTask};
@@ -1219,6 +1219,7 @@ fn run_tasks_erased(
                     // shared `&task` here coexists with the field-disjoint
                     // `&task.request` borrow held via `resolution` above.
                     task.data_extract(),
+                    tarball.pin_policy,
                     log_level,
                 ) {
                     // Record the appended package so a later-enqueued dependency
@@ -1269,7 +1270,6 @@ fn run_tasks_erased(
                                         Some(&any_root),
                                         install_peer,
                                     )?;
-                                    pin_loaded_package_to_extracted(manager, id, &pkg);
                                 }
                                 _ => {
                                     // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
@@ -1592,6 +1592,7 @@ fn run_tasks_erased(
                     // `&task` here coexists with the field-disjoint
                     // `&task.request` borrow held via `git_checkout` above.
                     task.data_git_checkout(),
+                    PinPolicy::Verify,
                     log_level,
                 ) {
                     // Record the appended package so a later-enqueued dependency
@@ -1856,8 +1857,7 @@ pub fn alloc_github_url(this: &PackageManager, repository: &Repository) -> Vec<u
 
     let owner = this.lockfile.str(&repository.owner);
     let repo = this.lockfile.str(&repository.repo);
-    // A resolved package is fetched by its commit. The ref it was declared
-    // with, which a bun.lockb keeps, can name another commit by now.
+    // A resolved package is fetched by its commit. The ref a bun.lockb keeps can have moved.
     let committish = crate::repository::github_locked_hash(
         repository,
         this.lockfile.buffers.string_bytes.as_slice(),
@@ -1991,57 +1991,55 @@ fn throttle_after_network_error(manager: &PackageManager, has_network_error: &mu
     }
 }
 
-/// A row that waited for an extract can end on the package the lockfile loaded
-/// for the same resolution, not on `extracted`. The bytes came in with no pin:
-/// the loaded package had none, or `bun update` or `bun add` asked for the
-/// tarball again. The lockfile then pins what was extracted.
-fn pin_loaded_package_to_extracted(
-    manager: &mut PackageManager,
-    dependency_id: DependencyID,
-    extracted: &Package,
-) {
-    if !extracted.meta.integrity.tag.is_supported() {
-        return;
-    }
-    let bound = manager.lockfile.buffers.resolutions[dependency_id as usize];
-    if bound == extracted.meta.id || bound >= manager.lockfile.loaded_package_count {
-        return;
-    }
-    let buf = manager.lockfile.buffers.string_bytes.as_slice();
-    if !manager.lockfile.packages.items_resolution()[bound as usize].eql(
-        &extracted.resolution,
-        buf,
-        buf,
-    ) {
-        return;
-    }
-    let meta = &mut manager.lockfile.packages.items_meta_mut()[bound as usize];
-    if bytemuck::bytes_of(&meta.integrity) == bytemuck::bytes_of(&extracted.meta.integrity) {
-        return;
-    }
-    meta.integrity = extracted.meta.integrity;
-    manager
-        .options
-        .enable
-        .set(Enable::FORCE_SAVE_LOCKFILE, true);
+/// What a tarball is fetched for.
+#[derive(Clone, Copy)]
+pub enum TarballFor<'a> {
+    /// A lockfile package. Its integrity is the pin.
+    Package(&'a Package),
+    /// A dependency that has no package yet. The loaded lockfile gives the pin.
+    Dependency {
+        name: bun_semver::String,
+        resolution: &'a bun_install::Resolution,
+    },
 }
 
-/// A tarball fetch for `package`, a package of the lockfile: its integrity is
-/// what the bytes are verified against. A dependency that has no package yet
-/// goes through `generate_network_task_for_unresolved_tarball`.
 pub fn generate_network_task_for_tarball<'a>(
     this: &'a mut PackageManager,
     task_id: Task::Id,
     url: &[u8],
     is_required: bool,
     dependency_id: DependencyID,
-    package: &Package,
+    target: TarballFor<'_>,
     patch_name_and_version_hash: Option<u64>,
     authorization: Authorization,
 ) -> Result<Option<&'a mut NetworkTask>, ForTarballError> {
     if has_created_network_task(this, task_id, is_required) {
         return Ok(None);
     }
+    // False keeps the body off the streaming extractor.
+    let mut streaming = extract_tarball::uses_streaming_extraction();
+    let unresolved;
+    let (name, package_id, resolution, integrity, pin_policy) = match target {
+        TarballFor::Package(package) => (
+            package.name,
+            package.meta.id,
+            &package.resolution,
+            &package.meta.integrity,
+            PinPolicy::Verify,
+        ),
+        TarballFor::Dependency { name, resolution } => {
+            debug_assert!(patch_name_and_version_hash.is_none());
+            unresolved = enqueue::pin_for_unresolved_tarball(this, dependency_id, resolution);
+            streaming = streaming && unresolved.streamable;
+            (
+                name,
+                INVALID_PACKAGE_ID,
+                resolution,
+                &unresolved.integrity,
+                unresolved.policy,
+            )
+        }
+    };
     // Only reached when the tarball is not already extracted in the cache. Under
     // --offline nothing can be fetched: report it once (the dedupe entry above stays,
     // so later edges to the same package are quiet) — as an error only if some edge
@@ -2050,7 +2048,7 @@ pub fn generate_network_task_for_tarball<'a>(
         if is_required {
             // reported once; later dependents see the failed dedupe entry
             mark_network_task_failed(this, task_id);
-            let name = this.lockfile.str(&package.name).to_vec();
+            let name = this.lockfile.str(&name).to_vec();
             this.log_mut().add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
@@ -2086,7 +2084,7 @@ pub fn generate_network_task_for_tarball<'a>(
         ))
     });
     let apply_patch_task = if let Some((h, patch_hash)) = patch {
-        let mut task = PatchTask::new_apply_patch_hash(this, package.meta.id, patch_hash, h);
+        let mut task = PatchTask::new_apply_patch_hash(this, package_id, patch_hash, h);
         if let PatchTaskCallback::Apply(apply) = &mut task.callback {
             apply.task_id = Some(task_id);
         }
@@ -2120,7 +2118,7 @@ pub fn generate_network_task_for_tarball<'a>(
     // `unsafe_http_client` is `MaybeUninit` and overwritten by `for_tarball`.
     let network_task = unsafe { &mut *net_ptr };
 
-    let pkg_name = this.lockfile.str(&package.name);
+    let pkg_name = this.lockfile.str(&name);
     let scope = this.scope_for_package_name(pkg_name);
 
     let extract_tarball = ExtractTarball {
@@ -2135,23 +2133,23 @@ pub fn generate_network_task_for_tarball<'a>(
             &mut crate::network_task::filename_store_appender(),
         )
         .expect("unreachable"),
-        resolution: package.resolution,
+        resolution: *resolution,
         cache_dir,
         temp_dir,
         dependency_id,
         skip_verify: false,
         in_trusted_dependencies: this.lockfile.in_trusted_dependencies(pkg_name),
-        pinned_by_github_commit: false,
-        integrity: package.meta.integrity,
+        pin_policy,
+        integrity: *integrity,
         url: strings::StringOrTinyString::init_append_if_needed(
             url,
             &mut crate::network_task::filename_store_appender(),
         )
         .expect("unreachable"),
         // Copied here: extract workers must not read lockfile buffers.
-        github_resolved: if package.resolution.tag == bun_install::ResolutionTag::Github {
+        github_resolved: if resolution.tag == bun_install::ResolutionTag::Github {
             strings::StringOrTinyString::init_append_if_needed(
-                this.lockfile.str(&package.resolution.github().resolved),
+                this.lockfile.str(&resolution.github().resolved),
                 &mut crate::network_task::filename_store_appender(),
             )
             .expect("unreachable")
@@ -2160,9 +2158,9 @@ pub fn generate_network_task_for_tarball<'a>(
         },
     };
 
-    network_task.for_tarball(extract_tarball, scope, authorization)?;
+    network_task.for_tarball(extract_tarball, scope, authorization, streaming)?;
 
-    if extract_tarball::uses_streaming_extraction() {
+    if streaming {
         // Pre-create the extract Task and streaming state here on the
         // main thread: `preallocated_resolve_tasks` is not thread-safe,
         // and the streaming extractor needs a stable `Task` pointer so

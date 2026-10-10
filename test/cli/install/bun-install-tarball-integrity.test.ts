@@ -2,7 +2,7 @@ import { file, spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { exists, mkdir, rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, tempDir } from "harness";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { join } from "path";
 import {
@@ -868,16 +868,26 @@ describe.concurrent("pinned tarball that is resolved again", () => {
   const sri = (algorithm: string, bytes: Uint8Array) =>
     `${algorithm}-${createHash(algorithm).update(bytes).digest("base64")}`;
 
-  /** A package tarball whose index.js exports `marker`. */
-  function tarballOf(marker: string, manifest: Record<string, unknown> = {}, name = PKG) {
+  /** A package tarball whose index.js exports `marker`. `files` are more files of the archive. */
+  function tarballOf(
+    marker: string,
+    manifest: Record<string, unknown> = {},
+    name = PKG,
+    files: Record<string, Uint8Array> = {},
+  ) {
     return new Bun.Archive(
       {
         "package/package.json": JSON.stringify({ name, version: "1.0.0", ...manifest }),
         "package/index.js": `module.exports = ${JSON.stringify(marker)};\n`,
+        ...files,
       },
       { compress: "gzip" },
     ).bytes();
   }
+
+  // Files for `tarballOf` that make the tarball larger than one socket read (512 KiB).
+  // The bytes are random, so gzip does not shrink them.
+  const padding = () => ({ "package/padding.bin": randomBytes(1024 * 1024) });
 
   function fixture(kind: Kind) {
     const dir = tempDir("pinned-tarball", { project: { vendor: {} } });
@@ -886,21 +896,39 @@ describe.concurrent("pinned tarball that is resolved again", () => {
     // URL path -> the bytes the server answers with
     const served = new Map<string, Uint8Array>();
     let requests = 0;
+    let chunked = false;
     const server = Bun.serve({
       port: 0,
       fetch(req) {
         requests++;
         const bytes = served.get(new URL(req.url).pathname);
-        return bytes ? new Response(bytes) : new Response("not found", { status: 404 });
+        if (!bytes) return new Response("not found", { status: 404 });
+        if (!chunked) return new Response(bytes);
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write(bytes);
+              await controller.flush();
+              controller.close();
+            },
+          }),
+        );
       },
     });
+    const url = (name = "one.tgz") => `http://localhost:${server.port}/${name}`;
 
     return {
       kind,
       project,
+      /** The URL of the tarball `name`. */
+      url,
       /** How package.json writes the tarball `name`. */
-      spec: (name = "one.tgz") =>
-        kind === "url" ? `http://localhost:${server.port}/${name}` : `file:./vendor/${name}`,
+      spec: (name = "one.tgz") => (kind === "url" ? url(name) : `file:./vendor/${name}`),
+      /** From now on the server sends a body with no Content-Length. */
+      chunked() {
+        chunked = true;
+      },
       /** Puts `bytes` behind the URL and the path of the tarball `name`. */
       async put(bytes: Uint8Array, name = "one.tgz") {
         served.set(`/${name}`, bytes);
@@ -913,12 +941,15 @@ describe.concurrent("pinned tarball that is resolved again", () => {
           JSON.stringify({ name: "root", version: "1.0.0", ...manifest }),
         );
       },
-      /** "warm" is the cache of the first install. "cold" is a cache that has never held the tarball. */
-      async bun(cache: "cold" | "warm", args: string[], extraEnv: Record<string, string> = {}) {
+      /**
+       * "warm" is the cache of the first install. "cold" is a cache that has never held the tarball.
+       * bun runs in the directory `at` of the project.
+       */
+      async bun(cache: "cold" | "warm", args: string[], extraEnv: Record<string, string> = {}, at = ".") {
         requests = 0;
         await using proc = spawn({
           cmd: [bunExe(), ...args],
-          cwd: project,
+          cwd: join(project, at),
           env: { ...env, BUN_INSTALL_CACHE_DIR: join(root, `cache-${cache}`), ...extraEnv },
           stdout: "pipe",
           stderr: "pipe",
@@ -1195,6 +1226,33 @@ describe.concurrent("pinned tarball that is resolved again", () => {
         expect(result.exitCode).toBe(1);
       });
     });
+
+    // bun checks a pin with the algorithm of the pin, whichever way it reads the body.
+    it.each([
+      ["with no edit", "dependencies", false],
+      ["when the line moves", "devDependencies", false],
+      ["from a chunked body with no edit", "dependencies", true],
+      ["from a chunked body when the line moves", "devDependencies", true],
+    ] as const)("package-lock.json with a sha1 pin: installs the pinned bytes %s", async (_, group, chunked) => {
+      await using fx = fixture("url");
+      if (chunked) fx.chunked();
+      const bytes = await tarballOf("v1", {}, PKG, chunked ? padding() : {});
+      await fx.put(bytes);
+      await writeFile(
+        join(fx.project, "package-lock.json"),
+        foreign["package-lock.json"](fx.spec(), sri("sha1", bytes)),
+      );
+      await fx.manifest({ [group]: { [PKG]: fx.spec() } });
+
+      const result = await fx.bun("cold", ["install"]);
+
+      expect(result.out).not.toContain("error:");
+      expect({ installed: await fx.installed(), pinned: (await fx.lock()).includes(sri("sha1", bytes)) }).toEqual({
+        installed: "v1",
+        pinned: true,
+      });
+      expect(result.exitCode).toBe(0);
+    });
   });
 
   // A line that moves is the same dependency. It keeps its package, so bun does not ask for the tarball again.
@@ -1306,5 +1364,442 @@ describe.concurrent("pinned tarball that is resolved again", () => {
         expect(result.exitCode).toBe(0);
       },
     );
+
+    it("keeps the row of the package when the key is renamed", async () => {
+      await using pin = await pinned(kind);
+      await pin.manifest({ dependencies: { "renamed-key": pin.spec() } });
+
+      const result = await pin.bun("cold", ["install"]);
+
+      expect(result.out).not.toContain("error:");
+      expect({ installed: await pin.installed(join("node_modules", "renamed-key")), lock: await pin.lock() }).toEqual({
+        installed: "v1",
+        lock: pin.pinnedLock.replaceAll(`"${PKG}":`, `"renamed-key":`),
+      });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  // bun does not resolve an optional peer dependency, so the package leaves bun.lock.
+  // A frozen install stops there and asks for nothing.
+  describe.each(kinds)("%s, the line moves to an optional peer dependency", kind => {
+    it.each([[["install", "--frozen-lockfile"]], [["ci"]]])("bun %j stops on the changed lockfile", async args => {
+      await using pin = await pinned(kind);
+      await pin.manifest({
+        peerDependencies: { [PKG]: pin.spec() },
+        peerDependenciesMeta: { [PKG]: { optional: true } },
+      });
+
+      const result = await pin.bun("cold", args);
+
+      expect({ installed: await pin.installed(), requests: result.requests, lock: await pin.lock() }).toEqual({
+        installed: null,
+        requests: 0,
+        lock: pin.pinnedLock,
+      });
+      expect(result.out).toContain("lockfile had changes, but lockfile is frozen");
+      expect(result.exitCode).toBe(1);
+    });
+  });
+
+  // `--no-verify` turns the check of the bytes against bun.lock off.
+  describe.each(kinds)("%s, changed bytes, --no-verify", kind => {
+    const edits = [
+      ["with no edit", "dependencies", PKG],
+      ["when the line moves", "devDependencies", PKG],
+      ["when the key is renamed", "dependencies", "renamed-key"],
+    ] as const;
+
+    it.each(edits)("installs them %s", async (_, group, key) => {
+      await using pin = await pinned(kind);
+      await pin.put(await tarballOf("v2"));
+      await pin.manifest({ [group]: { [key]: pin.spec() } });
+
+      const result = await pin.bun("cold", ["install", "--no-verify"]);
+
+      expect(result.out).not.toContain("error:");
+      expect(await pin.installed(join("node_modules", key))).toBe("v2");
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  // These commands install nothing. They still read the tarball to resolve the renamed key.
+  describe.each(kinds)("%s, changed bytes, a command that installs nothing", kind => {
+    it.each([[["install", "--lockfile-only"]], [["install", "--dry-run"]]])(
+      "bun %j refuses when the key is renamed and leaves bun.lock as it was",
+      async args => {
+        await using pin = await pinned(kind);
+        await pin.put(await tarballOf("v2"));
+        await pin.manifest({ dependencies: { "renamed-key": pin.spec() } });
+
+        const result = await pin.bun("cold", args);
+
+        expect(await pin.lock()).toBe(pin.pinnedLock);
+        await expectRefused(pin, result, join("node_modules", "renamed-key"));
+      },
+    );
+  });
+
+  // A bun.lock from before bun pinned tarballs has no hash in the row.
+  describe.each(kinds)("%s, a bun.lock row with no hash", kind => {
+    it("gets the hash of the bytes when the key is renamed", async () => {
+      await using pin = await pinned(kind);
+      const noHash = pin.pinnedLock.replace(`, "${pin.pin}"`, "");
+      expect(noHash).not.toContain(pin.pin);
+      await writeFile(join(pin.project, "bun.lock"), noHash);
+      await pin.manifest({ dependencies: { "renamed-key": pin.spec() } });
+
+      const result = await pin.bun("cold", ["install"]);
+
+      expect(result.out).not.toContain("error:");
+      expect({ installed: await pin.installed(join("node_modules", "renamed-key")), lock: await pin.lock() }).toEqual({
+        installed: "v1",
+        lock: pin.pinnedLock.replaceAll(`"${PKG}":`, `"renamed-key":`),
+      });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  // A body with no Content-Length that is larger than one socket read arrives in parts,
+  // and bun extracts it while it downloads.
+  it("url: bun extracts a chunked body that is larger than one socket read while it downloads", async () => {
+    await using fx = fixture("url");
+    fx.chunked();
+    await fx.put(await tarballOf("v1", {}, PKG, padding()));
+    await fx.manifest({ dependencies: { [PKG]: fx.spec() } });
+
+    const result = await fx.bun("cold", ["install", "--verbose"]);
+
+    expect({ streamed: result.out.includes("Streamed "), installed: await fx.installed() }).toEqual({
+      streamed: true,
+      installed: "v1",
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  describe.each([
+    ["extracted while it downloads", {}],
+    ["buffered first", { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" }],
+  ] as const)("url, changed bytes in a chunked body, %s", (_, route) => {
+    const commands = [[["install"]], [["install", "--frozen-lockfile"]]];
+
+    it.each(commands)("refuses when the key is renamed: bun %j", async args => {
+      await using pin = await pinned("url");
+      pin.chunked();
+      await pin.put(await tarballOf("v2", {}, PKG, padding()));
+      await pin.manifest({ dependencies: { "renamed-key": pin.spec() } });
+
+      await expectRefused(pin, await pin.bun("cold", args, route), join("node_modules", "renamed-key"));
+    });
+
+    it.each(commands)("refuses when a new workspace declares the tarball: bun %j", async args => {
+      await using pin = await pinned("url", withWorkspaces);
+      pin.chunked();
+      await pin.put(await tarballOf("v2", {}, PKG, padding()));
+      await pin.manifest({ name: "a", dependencies: { [PKG]: pin.spec() } }, join("packages", "a"));
+
+      const result = await pin.bun("cold", args, route);
+
+      expect(await pin.installed(join("packages", "a", "node_modules", PKG))).toBe(null);
+      await expectRefused(pin, result);
+    });
+  });
+
+  // The changed bytes declare a dependency and a bin that the pinned bytes do not have.
+  describe.each(kinds)("%s, changed bytes with another package.json", kind => {
+    describe.each(["hoisted", "isolated"] as const)("%s linker", linker => {
+      const project = async (fx: Fixture) => {
+        await writeFile(join(fx.project, "bunfig.toml"), `[install]\nlinker = "${linker}"\n`);
+        await fx.manifest({ dependencies: { [PKG]: fx.spec() } });
+      };
+      const change = async (pin: Pinned) => {
+        await pin.put(await tarballOf("dep", {}, "dep-pkg"), "dep.tgz");
+        const manifest = { dependencies: { "dep-pkg": pin.url("dep.tgz") }, bin: { "pinned-bin": "index.js" } };
+        await pin.put(await tarballOf("v2", manifest));
+      };
+      /** bun.lock is the one a first install of the bytes the tarball has now writes. */
+      async function expectLockOfFirstInstall(pin: Pinned, result: { out: string; exitCode: number }) {
+        expect(result.out).not.toContain("error:");
+        const after = { installed: await pin.installed(), lock: await pin.lock() };
+        await rm(join(pin.project, "bun.lock"));
+        await pin.removeNodeModules();
+        const first = await pin.bun("warm", ["install"]);
+        expect(first.out).not.toContain("error:");
+        expect(after).toEqual({ installed: "v2", lock: await pin.lock() });
+        expect(result.exitCode).toBe(0);
+      }
+
+      it.each([[["update"]], [["update", PKG]], [["update", "--latest"]]])("bun %j pins all of it", async args => {
+        await using pin = await pinned(kind, project);
+        await change(pin);
+
+        await expectLockOfFirstInstall(pin, await pin.bun("warm", args));
+      });
+
+      it("bun add of the tarball pins all of it when package.json lost the line", async () => {
+        await using pin = await pinned(kind, project);
+        await change(pin);
+        await pin.manifest({});
+
+        const result = await pin.bun("warm", ["add", kind === "url" ? pin.spec() : "./vendor/one.tgz"]);
+
+        await expectLockOfFirstInstall(pin, result);
+      });
+    });
+  });
+
+  // After `bun update` pinned the changed bytes, an install that resolves the dependency again takes them.
+  describe.each(kinds)("%s, after bun update pinned changed bytes", kind => {
+    const frozenToo = [["install"], ["install", "--frozen-lockfile"]];
+    type Again = {
+      title: string;
+      commands: string[][];
+      write?: (fx: Fixture) => Promise<void>;
+      edit: (fx: Fixture) => Promise<void>;
+      at?: string;
+    };
+    const again: Again[] = [
+      {
+        title: "the line moves",
+        commands: frozenToo,
+        edit: fx => fx.manifest({ devDependencies: { [PKG]: fx.spec() } }),
+      },
+      {
+        title: "the key is renamed",
+        commands: frozenToo,
+        edit: fx => fx.manifest({ dependencies: { "renamed-key": fx.spec() } }),
+        at: join("node_modules", "renamed-key"),
+      },
+      {
+        title: "an override names the same tarball",
+        commands: [["install"]],
+        edit: fx => fx.manifest({ dependencies: { [PKG]: fx.spec() }, overrides: { [PKG]: fx.spec() } }),
+      },
+    ];
+    // A `file:` path in a workspace is another spelling, and so another package in bun.lock.
+    if (kind === "url") {
+      again.push(
+        {
+          title: "a new workspace declares the tarball",
+          commands: [["install"]],
+          write: withWorkspaces,
+          edit: fx => fx.manifest({ name: "a", dependencies: { [PKG]: fx.spec() } }, join("packages", "a")),
+        },
+        {
+          title: "a workspace that declares the tarball gets another dependency",
+          commands: frozenToo,
+          write: async fx => {
+            await withWorkspaces(fx);
+            await fx.manifest({ name: "a", dependencies: { [PKG]: fx.spec() } }, join("packages", "a"));
+            await fx.manifest({ name: "b" }, join("packages", "b"));
+          },
+          edit: fx =>
+            fx.manifest({ name: "a", dependencies: { [PKG]: fx.spec(), b: "workspace:*" } }, join("packages", "a")),
+        },
+      );
+    }
+
+    describe.each(again.map(cell => [cell.title, cell] as const))("%s", (_, { commands, write, edit, at }) => {
+      it.each(commands.map(args => [args]))("bun %j installs them", async args => {
+        await using pin = await pinned(kind, write);
+        const changed = await tarballOf("v2");
+        await pin.put(changed);
+        const update = await pin.bun("warm", ["update"]);
+        expect(update.out).not.toContain("error:");
+        expect(update.exitCode).toBe(0);
+        await pin.removeNodeModules();
+        await edit(pin);
+
+        const result = await pin.bun("cold", args);
+
+        expect(result.out).not.toContain("error:");
+        expect({
+          installed: await pin.installed(at),
+          pinned: (await pin.lock()).includes(sri("sha512", changed)),
+        }).toEqual({
+          installed: "v2",
+          pinned: true,
+        });
+        expect(result.exitCode).toBe(0);
+      });
+    });
+  });
+
+  // One fetch of the URL serves every line that declares it, whichever line asks first.
+  describe("url, changed bytes, the root and a workspace declare the tarball", () => {
+    const both = async (fx: Fixture) => {
+      await withWorkspaces(fx);
+      await fx.manifest({ name: "a", dependencies: { [PKG]: fx.spec() } }, join("packages", "a"));
+      await fx.manifest({ name: "b" }, join("packages", "b"));
+    };
+
+    it.each([
+      ["the root", "."],
+      ["the workspace", join("packages", "a")],
+    ])("bun update in %s installs them and pins them", async (_, cwd) => {
+      await using pin = await pinned("url", both);
+      const changed = await tarballOf("v2");
+      await pin.put(changed);
+
+      const result = await pin.bun("cold", ["update"], {}, cwd);
+
+      expect(result.out).not.toContain("error:");
+      expect({
+        root: await pin.installed(),
+        workspace: await pin.installed(join("packages", "a", "node_modules", PKG)),
+        lock: await pin.lock(),
+      }).toEqual({ root: "v2", workspace: "v2", lock: pin.pinnedLock.replace(pin.pin, sri("sha512", changed)) });
+      expect(result.exitCode).toBe(0);
+    });
+
+    it("bun update in a workspace that does not declare the tarball refuses them", async () => {
+      await using pin = await pinned("url", both);
+      await pin.put(await tarballOf("v2"));
+
+      await expectRefused(pin, await pin.bun("cold", ["update"], {}, join("packages", "b")));
+    });
+
+    it("bun add of the URL in another workspace installs them and pins them", async () => {
+      await using pin = await pinned("url", both);
+      const changed = await tarballOf("v2");
+      await pin.put(changed);
+
+      const result = await pin.bun("cold", ["add", pin.spec()], {}, join("packages", "b"));
+
+      expect(result.out).not.toContain("error:");
+      const lock = await pin.lock();
+      expect({
+        root: await pin.installed(),
+        added: await pin.installed(join("packages", "b", "node_modules", PKG)),
+        pins: [lock.includes(pin.pin), lock.includes(sri("sha512", changed))],
+      }).toEqual({ root: "v2", added: "v2", pins: [false, true] });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  // `bun update -r` names the dependencies of every workspace. The workspace has a registry
+  // dependency next to the tarball, and the server is its registry.
+  describe.each(kinds)("%s, changed bytes, a workspace declares the tarball", kind => {
+    /** Publishes the versions of `npm-pkg`. The last one is `latest`. */
+    async function publish(fx: Fixture, versions: string[]) {
+      const published: Record<string, unknown> = {};
+      for (const version of versions) {
+        const bytes = await tarballOf(version, { version }, "npm-pkg");
+        const tarball = `npm-pkg-${version}.tgz`;
+        await fx.put(bytes, tarball);
+        const dist = { tarball: fx.url(tarball), integrity: sri("sha512", bytes) };
+        published[version] = { name: "npm-pkg", version, dist };
+      }
+      const manifest = { name: "npm-pkg", "dist-tags": { latest: versions.at(-1) }, versions: published };
+      await fx.put(new TextEncoder().encode(JSON.stringify(manifest)), "npm-pkg");
+    }
+
+    it.each([
+      [["update", "-r"], "1.1.0"],
+      [["update", "-r", "--latest"], "2.0.0"],
+    ] as const)("bun %j moves the registry dependency to %s, installs them and pins them", async (args, version) => {
+      await using pin = await pinned(kind, async fx => {
+        await writeFile(join(fx.project, "bunfig.toml"), `[install]\nregistry = "${fx.url("")}"\n`);
+        await publish(fx, ["1.0.0"]);
+        await fx.manifest({ workspaces: ["packages/*"] });
+        const spec = kind === "url" ? fx.spec() : "file:../../vendor/one.tgz";
+        await fx.manifest({ name: "a", dependencies: { "npm-pkg": "^1.0.0", [PKG]: spec } }, join("packages", "a"));
+      });
+      const changed = await tarballOf("v2");
+      await pin.put(changed);
+      await publish(pin, ["1.0.0", "1.1.0", "2.0.0"]);
+
+      const result = await pin.bun("warm", [...args]);
+
+      expect(result.out).not.toContain("error:");
+      const lock = await pin.lock();
+      expect({
+        tarball: await pin.installed(join("packages", "a", "node_modules", PKG)),
+        registry: await pin.installed(join("packages", "a", "node_modules", "npm-pkg")),
+        pins: [lock.includes(pin.pin), lock.includes(sri("sha512", changed))],
+      }).toEqual({ tarball: "v2", registry: version, pins: [false, true] });
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  // An update that does not save bun.lock cannot pin the bytes it gets, so it takes the pinned bytes only.
+  describe.each(kinds)("%s, changed bytes, bun update that does not save bun.lock", kind => {
+    it.each([[["update", "--dry-run"]], [["update", "--no-save"]], [["update", "--frozen-lockfile"]]])(
+      "refuses: bun %j",
+      async args => {
+        await using pin = await pinned(kind);
+        await pin.put(await tarballOf("v2"));
+
+        await expectRefused(pin, await pin.bun("cold", args));
+      },
+    );
+  });
+
+  // The renamed key is resolved again, and `bun add` names its URL.
+  it("url, bun add of the URL installs changed bytes and pins them when its key was renamed", async () => {
+    await using pin = await pinned("url");
+    const changed = await tarballOf("v2");
+    await pin.put(changed);
+    await pin.manifest({ dependencies: { "renamed-key": pin.spec() } });
+
+    const result = await pin.bun("cold", ["add", pin.spec()]);
+
+    expect(result.out).not.toContain("error:");
+    expect({ installed: await pin.installed(join("node_modules", "renamed-key")), lock: await pin.lock() }).toEqual({
+      installed: "v2",
+      lock: pin.pinnedLock.replaceAll(`"${PKG}":`, `"renamed-key":`).replace(pin.pin, sri("sha512", changed)),
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  // package.json does not change, so nothing is resolved again: the install checks the bytes against the pin.
+  it("url, bun add of the URL that package.json already has refuses changed bytes", async () => {
+    await using pin = await pinned("url");
+    await pin.put(await tarballOf("v2"));
+
+    await expectRefused(pin, await pin.bun("cold", ["add", pin.spec()]));
+  });
+
+  // bun.lockb holds the same pin. An install from it on another cache shows what it pins.
+  it.each(kinds)("%s, bun.lockb: bun update installs changed bytes and pins them", async kind => {
+    await using fx = fixture(kind);
+    await writeFile(join(fx.project, "bunfig.toml"), "[install]\nsaveTextLockfile = false\n");
+    await fx.put(await tarballOf("v1"));
+    await fx.manifest({ dependencies: { [PKG]: fx.spec() } });
+    const first = await fx.bun("warm", ["install"]);
+    expect(first.out).not.toContain("error:");
+    expect(first.exitCode).toBe(0);
+    await fx.removeNodeModules();
+    await fx.put(await tarballOf("v2"));
+
+    const update = await fx.bun("warm", ["update"]);
+    expect(update.out).not.toContain("error:");
+    expect(await fx.installed()).toBe("v2");
+    expect(update.exitCode).toBe(0);
+
+    await fx.removeNodeModules();
+    const install = await fx.bun("cold", ["install", "--frozen-lockfile"]);
+    expect(install.out).not.toContain("error:");
+    expect(await fx.installed()).toBe("v2");
+    expect(install.exitCode).toBe(0);
+  });
+
+  // The renamed line is fetched again and ends on the package bun.lock holds, whose dependencies are resolved already.
+  it("url, unchanged bytes: a renamed key asks for its tarball and not for the tarball that it declares", async () => {
+    await using pin = await pinned("url", async fx => {
+      await fx.put(await tarballOf("parent", { dependencies: { [PKG]: fx.spec() } }, "parent-pkg"), "parent.tgz");
+      await fx.manifest({ dependencies: { "parent-pkg": fx.spec("parent.tgz") } });
+    });
+    await pin.manifest({ dependencies: { "renamed-key": pin.spec("parent.tgz") } });
+
+    const result = await pin.bun("warm", ["install"]);
+
+    expect(result.out).not.toContain("error:");
+    expect({
+      installed: await pin.installed(),
+      parent: await pin.installed(join("node_modules", "renamed-key")),
+      requests: result.requests,
+    }).toEqual({ installed: "v1", parent: "parent", requests: 1 });
+    expect(result.exitCode).toBe(0);
   });
 });

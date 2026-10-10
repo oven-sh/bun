@@ -196,6 +196,15 @@ impl Integrity {
         Self::verify_by_tag(self.tag, bytes, &self.value)
     }
 
+    /// Is this the pin of an archive? `digest` is its hash. A pin of another algorithm needs the `bytes`.
+    pub(crate) fn matches(&self, digest: &Integrity, bytes: Option<&[u8]>) -> bool {
+        if self.tag == digest.tag {
+            return self.tag.is_supported()
+                && strings::eql_long(self.slice(), digest.slice(), true);
+        }
+        bytes.is_some_and(|bytes| self.verify(bytes))
+    }
+
     pub(crate) fn verify_by_tag(tag: Tag, bytes: &[u8], sum: &[u8]) -> bool {
         let mut digest: [u8; DIGEST_BUF_LEN] = [0u8; DIGEST_BUF_LEN];
 

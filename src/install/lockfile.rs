@@ -991,6 +991,8 @@ impl Lockfile {
                 for (&package_id, dep) in resolved_ids.iter().zip(workspace_deps.iter()) {
                     if update.matches(dep, string_buf) {
                         if package_id as usize > self.packages.len() {
+                            // -r binds once per workspace, so an entry that did not resolve here drops the previous workspace's package. A request that matches no entry keeps its package: `bun add npm:<pkg>` after the write-back.
+                            update.package_id = invalid_package_id;
                             continue;
                         }
                         update.version_buf = string_buf_ptr;

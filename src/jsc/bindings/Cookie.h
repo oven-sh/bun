@@ -37,6 +37,9 @@ class Cookie : public RefCounted<Cookie> {
 public:
     ~Cookie();
     static constexpr int64_t emptyExpiresAtValue = std::numeric_limits<int64_t>::min();
+    // RFC 6265bis section 5.6: a user agent ignores a cookie attribute whose value is longer than this.
+    static constexpr unsigned maxAttributeValueLength = 1024;
+
     static ExceptionOr<Ref<Cookie>> create(const String& name, const String& value,
         const String& domain, const String& path,
         int64_t expires, bool secure, CookieSameSite sameSite,

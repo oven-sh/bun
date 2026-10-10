@@ -832,6 +832,171 @@ describe("EventEmitter captureRejections", () => {
 
     expect(handled).toEqual(null);
   });
+
+  // Node decides per call from this[kCapture], so the global default reaches an
+  // emitter whose constructor never ran (util.inherits without the super call),
+  // and an emitter constructed while the default was off keeps not capturing.
+  test("EventEmitter.captureRejections applies to an emitter whose constructor never ran", async () => {
+    function NoConstructor() {}
+    Object.setPrototypeOf(NoConstructor.prototype, EventEmitter.prototype);
+    const constructedBefore = new EventEmitter();
+    const before = EventEmitter.captureRejections;
+    const emitBefore = EventEmitter.prototype.emit;
+    EventEmitter.captureRejections = true;
+    try {
+      const ee = new (NoConstructor as any)();
+      const err = new Error("kaboom");
+      const { promise, resolve } = Promise.withResolvers();
+      ee.on("error", resolve);
+      ee.on("something", async () => {
+        throw err;
+      });
+      ee.emit("something");
+      expect(await promise).toBe(err);
+
+      const onError = mock();
+      constructedBefore.on("error", onError);
+      let returned;
+      constructedBefore.on("something", () => (returned = Promise.reject(new Error("not captured"))));
+      constructedBefore.emit("something");
+      // Capture would run as: rejection reaction (a microtask queued before this
+      // .catch()) -> process.nextTick -> emit('error'); so it would have fired by
+      // the time a nextTick queued after that microtask runs.
+      await returned.catch(() => {});
+      await new Promise(resolve => process.nextTick(resolve));
+      expect(onError).not.toHaveBeenCalled();
+    } finally {
+      EventEmitter.captureRejections = before;
+    }
+    expect(EventEmitter.prototype.emit).toBe(emitBefore);
+  });
+
+  test("EventEmitter.captureRejections leaves a replaced EventEmitter.prototype.emit in place", () => {
+    const before = EventEmitter.captureRejections;
+    const emitBefore = EventEmitter.prototype.emit;
+    const replacement = function emit(this: EventEmitter, ...args: unknown[]) {
+      return emitBefore.apply(this, args);
+    };
+    EventEmitter.prototype.emit = replacement;
+    try {
+      EventEmitter.captureRejections = true;
+      expect(EventEmitter.prototype.emit).toBe(replacement);
+      EventEmitter.captureRejections = false;
+      expect(EventEmitter.prototype.emit).toBe(replacement);
+    } finally {
+      EventEmitter.prototype.emit = emitBefore;
+      EventEmitter.captureRejections = before;
+    }
+  });
+
+  // Node feeds every listener's result to the capture, 'error' listeners included.
+  test("a rejecting 'error' listener reaches the emitter's rejection handler", async () => {
+    const ee = new EventEmitter({ captureRejections: true });
+    const { promise, resolve } = Promise.withResolvers();
+    ee[captureRejectionSymbol] = (err, type, ...args) => resolve([err.message, type, args.map(arg => arg.message)]);
+    ee.on("error", async () => {
+      throw new Error("log failed");
+    });
+    expect(ee.emit("error", new Error("x"))).toBe(true);
+    expect(await promise).toEqual(["log failed", "error", ["x"]]);
+  });
+
+  test("a rejecting 'error' listener is emitted as 'error' when there is no rejection handler", async () => {
+    const ee = new EventEmitter({ captureRejections: true });
+    const { promise, resolve } = Promise.withResolvers();
+    const seen: string[] = [];
+    ee.on("error", async err => {
+      seen.push(err.message);
+      if (seen.length === 1) throw new Error("log failed");
+      resolve();
+    });
+    ee.emit("error", new Error("x"));
+    await promise;
+    expect(seen).toEqual(["x", "log failed"]);
+  });
+
+  test("'error' with no listener still throws, after the error monitor ran", () => {
+    const ee = new EventEmitter({ captureRejections: true });
+    const monitor = mock();
+    ee.on(EventEmitter.errorMonitor, monitor);
+    const err = new Error("y");
+    expect(() => ee.emit("error", err)).toThrow(err);
+    expect(monitor.mock.calls).toEqual([[err]]);
+  });
+
+  test("'error' throws when the error monitor removed the last 'error' listener", () => {
+    const ee = new EventEmitter({ captureRejections: true });
+    const onError = mock();
+    ee.on("error", onError);
+    ee.on(EventEmitter.errorMonitor, () => ee.off("error", onError));
+    const err = new Error("y");
+    expect(() => ee.emit("error", err)).toThrow(err);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  test("a rejecting error monitor listener reaches the emitter's rejection handler", async () => {
+    const ee = new EventEmitter({ captureRejections: true });
+    const { promise, resolve } = Promise.withResolvers();
+    ee[captureRejectionSymbol] = (err, type, ...args) => resolve([err.message, type, args.map(arg => arg.message)]);
+    ee.on(EventEmitter.errorMonitor, async () => {
+      throw new Error("monitor failed");
+    });
+    ee.on("error", () => {});
+    ee.emit("error", new Error("x"));
+    expect(await promise).toEqual(["monitor failed", EventEmitter.errorMonitor, ["x"]]);
+  });
+
+  // Promises/A+: any thenable a listener returns is followed; `then` is read
+  // once, and a `then` getter that throws is emitted as 'error'.
+  test("captures thenables, reading `then` once", async () => {
+    const ee = new EventEmitter({ captureRejections: true });
+    const err = new Error("kaboom");
+    let reads = 0;
+    ee.on("something", () => {
+      const obj = {};
+      Object.defineProperty(obj, "then", {
+        get() {
+          reads++;
+          return (resolve, reject) => reject(err);
+        },
+      });
+      return obj;
+    });
+    const { promise, resolve } = Promise.withResolvers();
+    ee.on("error", resolve);
+    ee.emit("something");
+    expect(await promise).toBe(err);
+    expect(reads).toBe(1);
+  });
+
+  test("a `then` getter that throws is emitted as 'error'", () => {
+    const ee = new EventEmitter({ captureRejections: true });
+    const err = new Error("kaboom");
+    ee.on("something", () => {
+      const obj = {};
+      Object.defineProperty(obj, "then", {
+        get() {
+          throw err;
+        },
+      });
+      return obj;
+    });
+    const onError = mock();
+    ee.on("error", onError);
+    ee.emit("something");
+    expect(onError.mock.calls).toEqual([[err]]);
+  });
+
+  test("non-thenable return values are ignored", () => {
+    const ee = new EventEmitter({ captureRejections: true });
+    const onError = mock();
+    ee.on("error", onError);
+    ee.on("something", () => ({ then: "not a function" }));
+    ee.on("something", () => 42);
+    ee.on("something", () => null);
+    expect(ee.emit("something")).toBe(true);
+    expect(onError).not.toHaveBeenCalled();
+  });
 });
 
 const waysOfCreating = [

@@ -1,0 +1,45 @@
+{
+	"name": "peer-deps-with-own-types",
+	"versions": {
+		"1.0.0": {
+			"name": "peer-deps-with-own-types",
+			"version": "1.0.0",
+			"peerDependencies": {
+				"no-deps": "^1.0.0"
+			},
+			"dependencies": {
+				"@types/no-deps": "1.0.0"
+			},
+			"_id": "peer-deps-with-own-types@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-3H6yjBT6Xh04LEvSvoZZRFC5pom9fXz00V6895kOn4A2qlOiseS6ujrhO06pVcgRR14e63H58L8Ohdk52CbadA==",
+				"shasum": "369f033d04c246b060c3eddea6fa3833a615b204",
+				"tarball": "http://localhost:4873/peer-deps-with-own-types/-/peer-deps-with-own-types-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:28.386Z",
+		"created": "2023-11-01T22:05:28.386Z",
+		"1.0.0": "2023-11-01T22:05:28.386Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"peer-deps-with-own-types-1.0.0.tgz": {
+			"shasum": "369f033d04c246b060c3eddea6fa3833a615b204",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-a68300e3ff5c4137",
+	"_id": "peer-deps-with-own-types",
+	"readme": "ERROR: No README data found!"
+}

@@ -1038,6 +1038,12 @@ pub mod fs {
         pub(crate) fn remove(&mut self, key: &[u8]) -> bool {
             self.inner().remove(key)
         }
+        pub(crate) fn mark(&mut self) -> bun_alloc::BSSMapMark {
+            self.inner().mark()
+        }
+        pub(crate) fn forget_since(&mut self, mark: bun_alloc::BSSMapMark) {
+            self.inner().forget_since(mark)
+        }
     }
 
     /// The active filesystem backend (always the real filesystem).
@@ -1356,6 +1362,16 @@ pub mod fs {
             // `read_directory`/`dir_info_cached_maybe_log`).
             let _g = self.entries_mutex.lock_guard();
             self.entries.remove(file_path)
+        }
+
+        pub(crate) fn entries_mark(&mut self) -> bun_alloc::BSSMapMark {
+            let _g = self.entries_mutex.lock_guard();
+            self.entries.mark()
+        }
+
+        pub(crate) fn forget_entries_since(&mut self, mark: bun_alloc::BSSMapMark) {
+            let _g = self.entries_mutex.lock_guard();
+            self.entries.forget_since(mark)
         }
 
         /// lstat + (if symlink) open + fstat +

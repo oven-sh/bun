@@ -40,7 +40,7 @@ pub struct State<'a> {
 }
 
 impl Rule for FunctionComponentDefinition {
-    const META: Meta = Meta::plugin(Plugin::React, "function-component-definition", Kind::Suggestion)
+    const META: Meta = Meta::plugin(Plugin::React, "function-component-definition", Kind::None)
         .fixable(Fixable::Code)
         .has_suggestions();
     const ON: On = On::new().funcs();

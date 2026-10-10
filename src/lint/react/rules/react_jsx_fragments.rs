@@ -77,7 +77,7 @@ impl<'a> Names<'a> {
 }
 
 impl Rule for JsxFragments {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-fragments", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-fragments", Kind::None).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = Names<'a>;
 

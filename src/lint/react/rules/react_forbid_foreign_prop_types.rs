@@ -29,7 +29,7 @@ fn is_prop_types(key: Option<Key>) -> bool {
 }
 
 impl Rule for ForbidForeignPropTypes {
-    const META: Meta = Meta::plugin(Plugin::React, "forbid-foreign-prop-types", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "forbid-foreign-prop-types", Kind::None);
     const ON: On = On::new()
         .exprs(&[ExprTag::Dot, ExprTag::Index, ExprTag::Object])
         .types(&[TypeTag::Ref])

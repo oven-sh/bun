@@ -17,7 +17,7 @@ const OXLINT: Message =
     Message::new("", "React component {{component_name}} must not be in a namespace, as React does not support them.");
 
 impl Rule for NoNamespace {
-    const META: Meta = Meta::plugin(Plugin::React, "no-namespace", Kind::Problem);
+    const META: Meta = Meta::plugin(Plugin::React, "no-namespace", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Call]);
     /// The pragma. oxlint knows none.
     type State<'a> = OnceCell<&'a [u8]>;

@@ -164,7 +164,7 @@ impl<'a> State<'a> {
 }
 
 impl Rule for DestructuringAssignment {
-    const META: Meta = Meta::plugin(Plugin::React, "destructuring-assignment", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta = Meta::plugin(Plugin::React, "destructuring-assignment", Kind::None).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::This]).funcs().var_decls().finish();
     type State<'a> = State<'a>;
 

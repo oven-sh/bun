@@ -14,7 +14,7 @@ fn is_readonly(signature: Member<'_>) -> bool {
 }
 
 impl Rule for PreferReadOnlyProps {
-    const META: Meta = Meta::plugin(Plugin::React, "prefer-read-only-props", Kind::Suggestion)
+    const META: Meta = Meta::plugin(Plugin::React, "prefer-read-only-props", Kind::None)
         .fixable(Fixable::Code)
         .reports_at_the_end();
     const ON: On = On::new().finish();

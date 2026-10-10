@@ -36,7 +36,7 @@ fn rule_of<'o>(options: &Options<'o>) -> Option<&'o str> {
 }
 
 impl Rule for BooleanPropNaming {
-    const META: Meta = Meta::plugin(Plugin::React, "boolean-prop-naming", Kind::Suggestion).reports_at_the_end();
+    const META: Meta = Meta::plugin(Plugin::React, "boolean-prop-naming", Kind::None).reports_at_the_end();
     const ON: On = On::new().finish();
     type State<'a> = ();
 

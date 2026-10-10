@@ -15,7 +15,7 @@ const PROP_TYPES: Message =
     Message::new("propTypes", "Component propTypes should be exact by using {{exactPropWrappers}}.");
 
 impl Rule for PreferExactProps {
-    const META: Meta = Meta::plugin(Plugin::React, "prefer-exact-props", Kind::Problem);
+    const META: Meta = Meta::plugin(Plugin::React, "prefer-exact-props", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]).members();
     type State<'a> = ();
 

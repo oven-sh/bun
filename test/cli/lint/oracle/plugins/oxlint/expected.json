@@ -5203,5 +5203,25 @@
  "strict-void-return/a-union-has-no-signatures": [
   "void.tsx:4:32+3 typescript(strict-void-return)",
   "void.tsx:9:12+3 typescript(strict-void-return)"
+ ],
+ "no-unsafe-member-access/the-names-of-jsx-tags": [
+  "a.tsx:10:22+1 typescript(no-unsafe-member-access)",
+  "a.tsx:10:32+1 typescript(no-unsafe-member-access)",
+  "a.tsx:13:33+1 typescript(no-unsafe-member-access)",
+  "a.tsx:14:33+1 typescript(no-unsafe-member-access)",
+  "a.tsx:14:50+1 typescript(no-unsafe-member-access)",
+  "a.tsx:15:24+8 typescript(no-unsafe-member-access)",
+  "a.tsx:15:42+1 typescript(no-unsafe-member-access)",
+  "a.tsx:15:48+1 typescript(no-unsafe-member-access)",
+  "a.tsx:15:56+8 typescript(no-unsafe-member-access)",
+  "a.tsx:16:32+1 typescript(no-unsafe-member-access)",
+  "a.tsx:25:7+1 typescript(no-unsafe-member-access)",
+  "a.tsx:5:28+4 typescript(no-unsafe-member-access)",
+  "a.tsx:6:28+4 typescript(no-unsafe-member-access)",
+  "a.tsx:6:43+4 typescript(no-unsafe-member-access)",
+  "a.tsx:7:22+1 typescript(no-unsafe-member-access)",
+  "a.tsx:8:22+1 typescript(no-unsafe-member-access)",
+  "a.tsx:8:32+1 typescript(no-unsafe-member-access)",
+  "a.tsx:9:22+1 typescript(no-unsafe-member-access)"
  ]
 }

@@ -24,7 +24,7 @@ const NO_POTENTIAL_LEAKED_RENDER: Message = Message::new(
 );
 
 impl Rule for JsxNoLeakedRender {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-no-leaked-render", Kind::Problem).fixable(Fixable::Code);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-no-leaked-render", Kind::None).fixable(Fixable::Code);
     const ON: On = On::new().binaries(&[BinOp::And]).exprs(&[ExprTag::Cond]);
     type State<'a> = ();
 

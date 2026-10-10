@@ -22,7 +22,7 @@ pub struct State<'a> {
 }
 
 impl Rule for NoSetState {
-    const META: Meta = Meta::plugin(Plugin::React, "no-set-state", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "no-set-state", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Call]).finish();
     type State<'a> = State<'a>;
 

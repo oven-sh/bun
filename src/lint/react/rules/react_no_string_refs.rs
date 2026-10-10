@@ -29,7 +29,7 @@ pub struct State<'a> {
 }
 
 impl Rule for NoStringRefs {
-    const META: Meta = Meta::plugin(Plugin::React, "no-string-refs", Kind::Problem).recommended();
+    const META: Meta = Meta::plugin(Plugin::React, "no-string-refs", Kind::None).recommended();
     const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Dot, ExprTag::Index]);
     type State<'a> = State<'a>;
 

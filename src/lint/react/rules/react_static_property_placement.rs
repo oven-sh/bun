@@ -1,4 +1,4 @@
-use crate::util_component_util::{get_parent_es6_component, is_es6_component};
+use crate::util_component_util::{get_parent_es6_component, may_have_explicit_components};
 use crate::util_components::Components;
 use crate::util_props::{
     is_child_context_types_declaration, is_context_type_declaration, is_context_types_declaration,
@@ -93,7 +93,7 @@ pub struct State<'a> {
 }
 
 impl Rule for StaticPropertyPlacement {
-    const META: Meta = Meta::plugin(Plugin::React, "static-property-placement", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "static-property-placement", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]).members();
     type State<'a> = State<'a>;
 
@@ -107,7 +107,7 @@ impl Rule for StaticPropertyPlacement {
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        if !file.has_classes() {
+        if !file.has_classes() && !may_have_explicit_components(file) {
             return On::new();
         }
         // Where all are to be assigned, no assignment is wrong.
@@ -138,9 +138,8 @@ impl Rule for StaticPropertyPlacement {
         let Some(related_component) = components.get_related_component(node) else {
             return;
         };
-        if matches!(components.component(related_component).node, Node::Class(class)
-            if is_es6_component(class, components.pragmas()))
-        {
+        let related_node = components.component(related_component).node;
+        if components.is_es6_component(related_node) {
             cx.report(node, misplaced.message).data("name", misplaced.name);
         }
     }

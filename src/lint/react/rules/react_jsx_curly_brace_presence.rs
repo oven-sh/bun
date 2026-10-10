@@ -36,7 +36,7 @@ enum StringLike {
 }
 
 impl Rule for JsxCurlyBracePresence {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-curly-brace-presence", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-curly-brace-presence", Kind::None).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 

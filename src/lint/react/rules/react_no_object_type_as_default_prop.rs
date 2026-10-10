@@ -31,7 +31,7 @@ struct Forbidden<'a> {
 }
 
 impl Rule for NoObjectTypeAsDefaultProp {
-    const META: Meta = Meta::plugin(Plugin::React, "no-object-type-as-default-prop", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "no-object-type-as-default-prop", Kind::None);
     const ON: On = On::new().funcs();
     type State<'a> = State<'a>;
 

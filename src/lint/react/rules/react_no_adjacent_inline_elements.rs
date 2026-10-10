@@ -57,7 +57,7 @@ fn is_inline(node: Expr<'_>) -> Option<bool> {
 }
 
 impl Rule for NoAdjacentInlineElements {
-    const META: Meta = Meta::plugin(Plugin::React, "no-adjacent-inline-elements", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "no-adjacent-inline-elements", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Call]);
     /// The pragma.
     type State<'a> = &'a [u8];

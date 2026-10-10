@@ -16,7 +16,7 @@ const NEED_SPACE_BEFORE_CLOSE: Message =
 
 impl Rule for JsxSpaceBeforeClosing {
     const META: Meta =
-        Meta::plugin(Plugin::React, "jsx-space-before-closing", Kind::Layout).fixable(Fixable::Code).deprecated();
+        Meta::plugin(Plugin::React, "jsx-space-before-closing", Kind::None).fixable(Fixable::Code).deprecated();
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     no_state!();
 

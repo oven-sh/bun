@@ -40,7 +40,7 @@ impl<'a> State<'a> {
 }
 
 impl Rule for NoArrayIndexKey {
-    const META: Meta = Meta::plugin(Plugin::React, "no-array-index-key", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "no-array-index-key", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Call]).finish();
     type State<'a> = State<'a>;
 

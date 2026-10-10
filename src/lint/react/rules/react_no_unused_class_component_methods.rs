@@ -189,7 +189,7 @@ impl<'a> ClassInfo<'a> {
 
 impl Rule for NoUnusedClassComponentMethods {
     const META: Meta =
-        Meta::plugin(Plugin::React, "no-unused-class-component-methods", Kind::Suggestion).reports_on_exit();
+        Meta::plugin(Plugin::React, "no-unused-class-component-methods", Kind::None).reports_on_exit();
     const ON: On = On::new().finish();
     type State<'a> = ();
 

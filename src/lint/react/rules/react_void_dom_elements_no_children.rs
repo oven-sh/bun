@@ -22,7 +22,7 @@ const VOID_DOM_ELEMENTS: [&str; 16] = [
 const CHILDREN_OR_DANGER: [&str; 2] = ["children", "dangerouslySetInnerHTML"];
 
 impl Rule for VoidDomElementsNoChildren {
-    const META: Meta = Meta::plugin(Plugin::React, "void-dom-elements-no-children", Kind::Problem);
+    const META: Meta = Meta::plugin(Plugin::React, "void-dom-elements-no-children", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Call]);
     /// The pragma. oxlint knows none.
     type State<'a> = OnceCell<&'a [u8]>;

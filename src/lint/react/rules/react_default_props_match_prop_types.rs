@@ -18,7 +18,7 @@ const DEFAULT_HAS_NO_TYPE: Message =
 
 impl Rule for DefaultPropsMatchPropTypes {
     const META: Meta =
-        Meta::plugin(Plugin::React, "default-props-match-prop-types", Kind::Suggestion).reports_at_the_end();
+        Meta::plugin(Plugin::React, "default-props-match-prop-types", Kind::None).reports_at_the_end();
     const ON: On = On::new().finish();
     type State<'a> = ();
 

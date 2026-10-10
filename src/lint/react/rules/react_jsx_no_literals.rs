@@ -86,7 +86,7 @@ const JSX: NodeTags = NodeTags::new().exprs(&[ExprTag::Jsx]);
 const JSX_AND_DECLARATIONS: NodeTags = JSX.union(NodeTags::new().stmts(&[StmtTag::Import, StmtTag::Var]));
 
 impl Rule for JsxNoLiterals {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-no-literals", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-no-literals", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]).enter(JSX_AND_DECLARATIONS).exit(JSX);
     type State<'a> = State<'a>;
 

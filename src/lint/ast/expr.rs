@@ -1,6 +1,7 @@
 //! Expressions.
 
 use super::{Class, File, Func, Ident, List, Name, Node, Prop, TypeNode, handle};
+use crate::language::Parser;
 use crate::span::Span;
 use crate::tokens::skip_trivia;
 use bun_sema::atom::Atom;
@@ -274,7 +275,8 @@ impl<'a> Expr<'a> {
         if !file.is_jsx_attribute_string(self.id) {
             return ExprKind::String(value);
         }
-        ExprKind::String(match super::entities::unescape(value.bytes()) {
+        let is_espree = file.language().parser == Parser::Espree;
+        ExprKind::String(match super::entities::unescape(value.bytes(), is_espree) {
             std::borrow::Cow::Borrowed(_) => value,
             std::borrow::Cow::Owned(decoded) => file.name(file.atoms.intern(&decoded)),
         })
@@ -297,9 +299,26 @@ impl<'a> Expr<'a> {
 
     /// ESLint's `value` of a `JSXText`: the text as it is written, all whitespace included, with
     /// what `&amp;` and the like stand for. `None` if it is not [JSX text](Expr::is_jsx_text).
+    /// espree has `\n` for each `\r\n` in it.
     pub fn jsx_text_value(self) -> Option<std::borrow::Cow<'a, [u8]>> {
-        self.is_jsx_text()
-            .then(|| super::entities::unescape(self.text()))
+        use bun_core::strings;
+        if !self.is_jsx_text() {
+            return None;
+        }
+        let written = self.text();
+        let is_espree = self.file.language().parser == Parser::Espree;
+        if !is_espree || !strings::contains(written, b"\r\n") {
+            return Some(super::entities::unescape(written, is_espree));
+        }
+        let mut normalized = Vec::with_capacity(written.len());
+        for (at, line) in strings::split(written, b"\r\n").enumerate() {
+            if at > 0 {
+                normalized.push(b'\n');
+            }
+            normalized.extend_from_slice(line);
+        }
+        let value = super::entities::unescape(&normalized, is_espree);
+        Some(value.into_owned().into())
     }
 
     /// It is the name in a tag of a JSX element, or a part of it: the `a`, the `a.b` and the `a.b.c`

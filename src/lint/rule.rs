@@ -148,7 +148,7 @@ plugins! {
     /// `@typescript-eslint/no-explicit-any`
     TypeScript: ["@typescript-eslint", "typescript-eslint", "typescript"], InPlaceOf(None, "8.71.1"), Whole;
     /// `react-hooks/rules-of-hooks`
-    ReactHooks: ["react-hooks", "react_hooks", "react"], InPlaceOf(Some("eslint-plugin-react-hooks"), "7.1.1"), Part;
+    ReactHooks: ["react-hooks", "react_hooks"], InPlaceOf(Some("eslint-plugin-react-hooks"), "7.1.1"), Part;
     /// `import/no-cycle`
     Import: ["import", "import-x"], InPlaceOf(Some("eslint-plugin-import"), "2.32.0"), Part;
     /// `n/no-unsupported-features/es-syntax`
@@ -158,7 +158,7 @@ plugins! {
     /// `unicorn/no-null`
     Unicorn: ["unicorn"], Package, Part;
     /// `react/jsx-key`
-    React: ["react", "react-hooks", "react_hooks"], Package, Part;
+    React: ["react", "react-hooks", "react_hooks"], InPlaceOf(Some("eslint-plugin-react"), "7.37.5"), Part;
     /// `react-perf/jsx-no-new-object-as-prop`
     ReactPerf: ["react-perf", "react_perf"], Package, Part;
     /// `jsx-a11y/alt-text`
@@ -214,8 +214,16 @@ impl Plugin {
     /// The plugin that a configuration or a comment calls `prefix`: by the name that is usual with ESLint, or by one
     /// that oxlint has for it.
     pub fn of_prefix(prefix: &[u8]) -> Option<Plugin> {
-        let mut all = Plugin::ALL.iter().copied();
-        all.find(|it| !it.is_only_of_oxlint() && it.is_called(prefix))
+        let all = || {
+            Plugin::ALL
+                .iter()
+                .copied()
+                .filter(|it| !it.is_only_of_oxlint())
+        };
+        // `react-hooks` is also what oxlint calls its `react`.
+        all()
+            .find(|it| it.prefix().as_bytes() == prefix)
+            .or_else(|| all().find(|it| it.is_called(prefix)))
     }
 
     /// The same in a configuration of oxlint and in the comments of a file that is linted with one. oxlint has more
@@ -224,6 +232,7 @@ impl Plugin {
         let mut all = Plugin::ALL.iter().copied();
         all.find(|it| it.is_only_of_oxlint() && it.is_called(prefix))
             .or_else(|| Plugin::of_prefix(prefix))
+            .map(Plugin::in_oxlint)
     }
 
     /// Whether the rules here answer for the plugin that a configuration of ESLint has as `prefix`, in place of those

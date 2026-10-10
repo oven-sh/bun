@@ -67,6 +67,7 @@ use crate::span::{Span, Spanned};
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{self, Decl, ScopeId};
 use bun_sema::hir;
+use rustc_hash::FxHashSet;
 use std::cell::{OnceCell, RefCell};
 
 mod references;
@@ -86,6 +87,8 @@ pub(crate) struct ReferenceIndex {
     /// `MARKED_USED`, `MARKED_EXPORTED`, by index in `Variables::list`. Empty until something is
     /// marked.
     marks: RefCell<Vec<u8>>,
+    /// See [`File::mark_global_used`].
+    marked_globals: RefCell<FxHashSet<Box<[u8]>>>,
     /// What `File::global` has said of late, each name at the place that its number tells. Not
     /// what a comment of the file names. Empty until something is asked.
     globals: RefCell<Vec<(Atom, Option<GlobalVariable<'static>>)>>,
@@ -1050,6 +1053,20 @@ impl<'a> Scope<'a> {
 // ───────────────────────────── from the syntax ─────────────────────────────
 
 impl<'a> File<'a> {
+    /// Sets ESLint's `variable.eslintUsed` of a variable that the file does not declare, which is
+    /// no [`Symbol`]: `no-unused-vars` reads it of what a `/* global */` comment defines.
+    pub fn mark_global_used(&self, name: &[u8]) {
+        let mut marked = self.semantic().marked_globals.borrow_mut();
+        if !marked.contains(name) {
+            marked.insert(name.into());
+        }
+    }
+
+    /// See [`File::mark_global_used`].
+    pub fn is_global_marked_used(&self, name: &[u8]) -> bool {
+        self.semantic().marked_globals.borrow().contains(name)
+    }
+
     /// The global scope: ESLint's `scopeManager.globalScope`, `sourceCode.getScope(program)`.
     /// What a module or a CommonJS file declares at the top level is in
     /// [`File::top_level_scope`], which is inside it.

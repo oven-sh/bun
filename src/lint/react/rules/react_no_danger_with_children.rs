@@ -26,7 +26,7 @@ pub struct State<'a> {
 }
 
 impl Rule for NoDangerWithChildren {
-    const META: Meta = Meta::plugin(Plugin::React, "no-danger-with-children", Kind::Problem).recommended();
+    const META: Meta = Meta::plugin(Plugin::React, "no-danger-with-children", Kind::None).recommended();
     const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Call]);
     type State<'a> = State<'a>;
 

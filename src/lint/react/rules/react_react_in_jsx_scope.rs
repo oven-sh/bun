@@ -33,7 +33,7 @@ impl<'a> Pragma<'a> {
 }
 
 impl Rule for ReactInJsxScope {
-    const META: Meta = Meta::plugin(Plugin::React, "react-in-jsx-scope", Kind::Problem).recommended();
+    const META: Meta = Meta::plugin(Plugin::React, "react-in-jsx-scope", Kind::None).recommended();
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = Pragma<'a>;
 

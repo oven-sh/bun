@@ -618,14 +618,14 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     // Babel looks for it in the tree.
                     let takes_a_mix = self.recovers();
                     let is_as_or = takes_a_mix && !self.options.dialect.typescript_5;
+                    // Asked before the right side adds its parentheses.
+                    let is_left_a_mix = !takes_a_mix && self.is_logical_and_or_or(left);
                     let right = self.binary_expression(match is_as_or {
                         // `OperatorPrecedenceCoalesce` is `OperatorPrecedenceLogicalOR`.
                         true => T::BarBar.binary_precedence(),
                         false => new_precedence,
                     });
-                    if !takes_a_mix
-                        && (self.is_logical_and_or_or(left) || self.is_logical_and_or_or(right))
-                    {
+                    if is_left_a_mix || (!takes_a_mix && self.is_logical_and_or_or(right)) {
                         self.report();
                     }
                     let kind = ExprKind::Binary {

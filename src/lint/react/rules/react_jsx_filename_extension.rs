@@ -25,7 +25,7 @@ fn without_dot(extension: &[u8]) -> &[u8] {
 }
 
 impl Rule for JsxFilenameExtension {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-filename-extension", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-filename-extension", Kind::None);
     const ON: On = On::new().finish();
     /// Whether the file has JSX.
     type State<'a> = bool;

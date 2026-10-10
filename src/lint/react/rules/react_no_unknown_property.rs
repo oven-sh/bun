@@ -427,7 +427,7 @@ fn any_char(name: &[u8], is_it: impl Fn(char) -> bool) -> bool {
 }
 
 impl Rule for NoUnknownProperty {
-    const META: Meta = Meta::plugin(Plugin::React, "no-unknown-property", Kind::Suggestion)
+    const META: Meta = Meta::plugin(Plugin::React, "no-unknown-property", Kind::None)
         .fixable(Fixable::Code)
         .has_suggestions()
         .recommended();

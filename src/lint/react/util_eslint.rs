@@ -49,6 +49,9 @@ pub(crate) fn is_space_between_tokens<'a>(file: &'a File<'a>, first: Span, secon
 pub(crate) fn mark_variable_as_used<'a>(name: Name<'a>, node: Node<'a>) {
     let scope = node.scope();
     let Some(variable) = scope.resolve_name(name) else {
+        if node.file().global_in_comments(name.bytes()).is_some() {
+            node.file().mark_global_used(name.bytes());
+        }
         return;
     };
     // In a class its name is a second variable for ESLint: that one is found, and nobody asks it.

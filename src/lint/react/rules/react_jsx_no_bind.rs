@@ -57,7 +57,7 @@ pub struct State<'a> {
 }
 
 impl Rule for JsxNoBind {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-no-bind", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-no-bind", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]).finish();
     type State<'a> = State<'a>;
 

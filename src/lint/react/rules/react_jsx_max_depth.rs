@@ -39,7 +39,7 @@ struct Found {
 }
 
 impl Rule for JsxMaxDepth {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-max-depth", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-max-depth", Kind::None);
     const ON: On =
         On::new().enter(NodeTags::new().exprs(&[ExprTag::Jsx])).exit(NodeTags::new().exprs(&[ExprTag::Jsx])).finish();
     type State<'a> = State<'a>;

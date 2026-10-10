@@ -20,7 +20,8 @@
 
 use crate::util_ast::get_property_name;
 use crate::util_component_util::{
-    Pragmas, get_parent_es5_component, get_parent_es6_component, is_es5_component, is_es6_component,
+    Pragmas, get_parent_es5_component, get_parent_es6_component, is_es5_component,
+    is_es6_component, is_explicit_component_function, may_have_explicit_components,
 };
 use crate::util_components_list::{At, Component, ComponentId, ComponentList, Queue};
 use crate::util_components_related::Related;
@@ -32,6 +33,7 @@ use crate::util_pragma::{get_create_class_from_context, mentions_create_class};
 use crate::util_props::{is_default_props_declaration, is_prop_types_declaration};
 use bun_core::strings;
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::{estree_parent, last_sequence_expression, normalize};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -250,6 +252,10 @@ pub(crate) struct Components<'a> {
     stages: Vec<Option<Box<dyn Instructions<'a> + 'a>>>,
     is_started: bool,
     is_finished: bool,
+    /// [`may_have_explicit_components`]
+    may_have_explicit: OnceCell<bool>,
+    /// For [`is_explicit_component_function`].
+    documented_at: AncestorMemo<'a, Option<u32>>,
 }
 
 impl<'a> Components<'a> {
@@ -291,6 +297,21 @@ impl<'a> Components<'a> {
             stages: Vec::new(),
             is_started: false,
             is_finished: false,
+            may_have_explicit: OnceCell::new(),
+            documented_at: AncestorMemo::default(),
+        }
+    }
+
+    /// `componentUtil.isES6Component(node, context)`, of a node of the list.
+    pub(crate) fn is_es6_component(&mut self, node: Node<'a>) -> bool {
+        match node {
+            Node::Class(class) => is_es6_component(class, self.pragmas()),
+            Node::Func(func) => {
+                let file = self.file;
+                *(self.may_have_explicit).get_or_init(|| may_have_explicit_components(file))
+                    && is_explicit_component_function(func, &mut self.documented_at)
+            }
+            _ => false,
         }
     }
 

@@ -18,7 +18,7 @@ const NOT_SELF_CLOSING: Message = Message::new("notSelfClosing", "Empty componen
 const SELF_CLOSING_COMP: Message = Message::new("", "Unnecessary closing tag");
 
 impl Rule for SelfClosingComp {
-    const META: Meta = Meta::plugin(Plugin::React, "self-closing-comp", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta = Meta::plugin(Plugin::React, "self-closing-comp", Kind::None).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 

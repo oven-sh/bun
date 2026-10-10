@@ -72,7 +72,7 @@ pub struct State<'a> {
 }
 
 impl Rule for NoUnstableNestedComponents {
-    const META: Meta = Meta::plugin(Plugin::React, "no-unstable-nested-components", Kind::Problem);
+    const META: Meta = Meta::plugin(Plugin::React, "no-unstable-nested-components", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Call]).funcs().classes().finish();
     type State<'a> = State<'a>;
 

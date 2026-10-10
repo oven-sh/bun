@@ -17,7 +17,7 @@ const DANGEROUS_PROP: Message = Message::new("dangerousProp", "Dangerous propert
 const NO_DANGER: Message = Message::new("", "Do not use `dangerouslySetInnerHTML` prop");
 
 impl Rule for NoDanger {
-    const META: Meta = Meta::plugin(Plugin::React, "no-danger", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "no-danger", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Call]);
     type State<'a> = ();
 

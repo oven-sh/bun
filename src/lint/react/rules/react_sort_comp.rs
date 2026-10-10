@@ -295,7 +295,7 @@ fn get_property_name(node: Property<'_>, kinds: Kinds) -> Option<&[u8]> {
 }
 
 impl Rule for SortComp {
-    const META: Meta = Meta::plugin(Plugin::React, "sort-comp", Kind::Suggestion).reports_at_the_end();
+    const META: Meta = Meta::plugin(Plugin::React, "sort-comp", Kind::None).reports_at_the_end();
     const ON: On = On::new().classes().finish();
     /// Whether something that can be a component is out of order: few files need the components.
     type State<'a> = bool;

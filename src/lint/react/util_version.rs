@@ -32,14 +32,38 @@ fn convert_conf_ver_to_semver(conf_ver: &[u8]) -> Option<Version> {
     Some((version.major, version.minor, version.patch))
 }
 
-/// `String(value)`, if `value` is truthy and no array or object.
+/// `String(value)`
+pub(crate) fn string_of(value: &Json) -> Vec<u8> {
+    match value {
+        Json::Null => b"null".to_vec(),
+        Json::Bool(it) => it.to_string().into_bytes(),
+        Json::Number(it) => text::number_to_string(*it),
+        Json::String(it) => it.clone(),
+        // In an array `null` is nothing.
+        Json::Array(all) => {
+            let parts = all.iter().map(|it| match it {
+                Json::Null => Vec::new(),
+                it => string_of(it),
+            });
+            parts.collect::<Vec<_>>().join(&b","[..])
+        }
+        Json::Object(_) => b"[object Object]".to_vec(),
+    }
+}
+
+/// `String(value)`, if `value` is truthy and no object, which is no version.
 fn truthy_text(value: &Json) -> Option<Vec<u8>> {
     match value {
+        Json::Array(_) => Some(string_of(value)),
         Json::String(it) if !it.is_empty() => Some(it.clone()),
         Json::Number(it) if *it != 0.0 && !it.is_nan() => Some(text::number_to_string(*it)),
         Json::Bool(true) => Some(b"true".to_vec()),
         _ => None,
     }
+}
+
+fn name_in(package_json: &Json) -> Option<&[u8]> {
+    package_json.get(b"name").and_then(Json::as_str)
 }
 
 /// `detectReactVersion`, `detectFlowVersion`: the version of the `package` that is installed for
@@ -53,8 +77,10 @@ fn detect_version<'a>(file: &'a File<'a>, package: &[u8]) -> Option<&'a [u8]> {
         directory = directory.get(..end)?;
         // The closest `package.json`, which is that of the project if there is no such package.
         let path = [directory, b"/node_modules/", package, b"/package.json"].concat();
+        // `"react": "npm:@preact/compat"` installs a package of another name there.
+        let project = || modules.package_json(&[directory, b"/package.json"].concat());
         if let Some(found) = modules.package_json(&path)
-            && (found.get(b"name").and_then(Json::as_str)).is_some_and(|name| name == package)
+            && (name_in(found) == Some(package) || name_in(found) != project().and_then(name_in))
         {
             return found.get(b"version")?.as_str();
         }

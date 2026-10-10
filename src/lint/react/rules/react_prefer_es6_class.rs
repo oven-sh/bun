@@ -24,7 +24,7 @@ pub struct State<'a> {
 }
 
 impl Rule for PreferEs6Class {
-    const META: Meta = Meta::plugin(Plugin::React, "prefer-es6-class", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "prefer-es6-class", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]).classes();
     type State<'a> = State<'a>;
 

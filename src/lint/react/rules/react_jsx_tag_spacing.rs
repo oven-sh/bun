@@ -57,7 +57,7 @@ impl Spacing {
 }
 
 impl Rule for JsxTagSpacing {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-tag-spacing", Kind::Layout).fixable(Fixable::Whitespace);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-tag-spacing", Kind::None).fixable(Fixable::Whitespace);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     no_state!();
 

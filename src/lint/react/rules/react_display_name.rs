@@ -52,7 +52,7 @@ struct State<'a> {
 }
 
 impl Rule for DisplayName {
-    const META: Meta = Meta::plugin(Plugin::React, "display-name", Kind::Suggestion).recommended();
+    const META: Meta = Meta::plugin(Plugin::React, "display-name", Kind::None).recommended();
     const ON: On = On::new().finish();
     type State<'a> = ();
 

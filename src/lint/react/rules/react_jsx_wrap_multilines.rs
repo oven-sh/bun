@@ -39,7 +39,7 @@ const PARENS_ON_NEW_LINES: Message =
     Message::new("parensOnNewLines", "Parentheses around JSX should be on separate lines");
 
 impl Rule for JsxWrapMultilines {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-wrap-multilines", Kind::Layout).fixable(Fixable::Code);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-wrap-multilines", Kind::None).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     no_state!();
 

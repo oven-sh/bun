@@ -1,5 +1,7 @@
 use crate::util_ast::{Property, get_component_properties, get_property_name};
-use crate::util_component_util::{is_es5_component, is_es6_component, is_pure_component};
+use crate::util_component_util::{
+    is_es5_component, is_es6_component, is_pure_component, may_have_explicit_components,
+};
 use crate::util_components::Components;
 use crate::util_components_list::{At, ComponentId, Queue};
 use crate::util_jsx::Branches;
@@ -171,7 +173,7 @@ fn is_member_of_this(member: Expr<'_>) -> bool {
 }
 
 impl Rule for PreferStatelessFunction {
-    const META: Meta = Meta::plugin(Plugin::React, "prefer-stateless-function", Kind::Suggestion).reports_at_the_end();
+    const META: Meta = Meta::plugin(Plugin::React, "prefer-stateless-function", Kind::None).reports_at_the_end();
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -180,7 +182,9 @@ impl Rule for PreferStatelessFunction {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        ((file.has_classes() || mentions_create_class(file)) && Components::may_have_any(file)).then_some(())
+        ((file.has_classes() || mentions_create_class(file) || may_have_explicit_components(file))
+            && Components::may_have_any(file))
+        .then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
@@ -189,7 +193,7 @@ impl Rule for PreferStatelessFunction {
         let pragmas = *components.pragmas();
         // Only such a class is reported, and what is in a call of `createClass`.
         let is_candidate = |it: Class| is_es6_component(it, &pragmas) && !has_other_properties(Node::Class(it));
-        if !mentions_create_class(file) && !file.classes().any(is_candidate) {
+        if !mentions_create_class(file) && !file.classes().any(is_candidate) && !may_have_explicit_components(file) {
             return;
         }
 
@@ -211,8 +215,7 @@ impl Rule for PreferStatelessFunction {
             let node = components.component(id).node;
             if !marked.contains(&id)
                 && !has_other_properties(node)
-                && (is_es5_component(node, &pragmas)
-                    || matches!(node, Node::Class(class) if is_es6_component(class, &pragmas)))
+                && (is_es5_component(node, &pragmas) || components.is_es6_component(node))
             {
                 cx.report(components.component(id).span(), COMPONENT_SHOULD_BE_PURE);
             }

@@ -16,7 +16,7 @@ const ALIGN_WITH_OPENING: Message =
 
 impl Rule for JsxClosingTagLocation {
     const META: Meta =
-        Meta::plugin(Plugin::React, "jsx-closing-tag-location", Kind::Layout).fixable(Fixable::Whitespace);
+        Meta::plugin(Plugin::React, "jsx-closing-tag-location", Kind::None).fixable(Fixable::Whitespace);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     no_state!();
 

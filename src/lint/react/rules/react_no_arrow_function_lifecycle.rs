@@ -19,7 +19,7 @@ fn mentions_create_class<'a>(file: &'a File<'a>) -> bool {
 }
 
 impl Rule for NoArrowFunctionLifecycle {
-    const META: Meta = Meta::plugin(Plugin::React, "no-arrow-function-lifecycle", Kind::Suggestion)
+    const META: Meta = Meta::plugin(Plugin::React, "no-arrow-function-lifecycle", Kind::None)
         .fixable(Fixable::Code)
         .reports_at_the_end();
     const ON: On = On::new().members().props().finish();

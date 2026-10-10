@@ -30,7 +30,7 @@ struct Child<'a> {
 
 impl Rule for JsxOneExpressionPerLine {
     const META: Meta =
-        Meta::plugin(Plugin::React, "jsx-one-expression-per-line", Kind::Layout).fixable(Fixable::Whitespace);
+        Meta::plugin(Plugin::React, "jsx-one-expression-per-line", Kind::None).fixable(Fixable::Whitespace);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     no_state!();
 

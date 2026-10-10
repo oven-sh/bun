@@ -23,7 +23,7 @@ const OXLINT_EXCLUSIVE_CHECKED_ATTRIBUTE: Message =
     Message::new("", "Use either `checked` or `defaultChecked`, but not both.");
 
 impl Rule for CheckedRequiresOnchangeOrReadonly {
-    const META: Meta = Meta::plugin(Plugin::React, "checked-requires-onchange-or-readonly", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "checked-requires-onchange-or-readonly", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Call]);
     /// The pragma. oxlint knows none.
     type State<'a> = &'a [u8];

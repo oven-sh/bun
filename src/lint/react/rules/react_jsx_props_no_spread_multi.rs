@@ -16,7 +16,7 @@ const MULTIPLE_IDENTIFIERS: Message = Message::new("", "Prop '{{prop_name}}' is 
 const MULTIPLE_MEMBER_EXPRESSIONS: Message = Message::new("", "'{{member_name}}' is spread multiple times.");
 
 impl Rule for JsxPropsNoSpreadMulti {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-props-no-spread-multi", Kind::Problem).fixable(Fixable::Code);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-props-no-spread-multi", Kind::None).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 

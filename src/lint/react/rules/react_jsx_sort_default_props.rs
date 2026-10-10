@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 pub struct JsxSortDefaultProps(SortDefaultProps);
 
 impl Rule for JsxSortDefaultProps {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-sort-default-props", Kind::Suggestion).deprecated();
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-sort-default-props", Kind::None).deprecated();
     const ON: On = SortDefaultProps::ON;
     type State<'a> = Vec<Expr<'a>>;
 

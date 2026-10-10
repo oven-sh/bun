@@ -32,7 +32,7 @@ struct Line {
 }
 
 impl Rule for JsxIndentProps {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-indent-props", Kind::Layout).fixable(Fixable::Code);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-indent-props", Kind::None).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     no_state!();
 

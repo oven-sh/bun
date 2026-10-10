@@ -21,7 +21,7 @@ const NO_RENDER_RETURN: Message = Message::new("noRenderReturn", "Your render me
 const REQUIRE_RENDER_RETURN: Message = Message::new("", "Your `render` method should have a `return` statement.");
 
 impl Rule for RequireRenderReturn {
-    const META: Meta = Meta::plugin(Plugin::React, "require-render-return", Kind::Problem).recommended();
+    const META: Meta = Meta::plugin(Plugin::React, "require-render-return", Kind::None).recommended();
     const ON: On = On::new().funcs().finish();
     type State<'a> = ();
 

@@ -40,7 +40,7 @@ struct Entities {
 
 impl Rule for NoUnescapedEntities {
     const META: Meta =
-        Meta::plugin(Plugin::React, "no-unescaped-entities", Kind::Suggestion).has_suggestions().recommended();
+        Meta::plugin(Plugin::React, "no-unescaped-entities", Kind::None).has_suggestions().recommended();
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 

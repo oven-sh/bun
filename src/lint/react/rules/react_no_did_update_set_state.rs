@@ -18,7 +18,7 @@ pub struct State<'a> {
 }
 
 impl Rule for NoDidUpdateSetState {
-    const META: Meta = Meta::plugin(Plugin::React, "no-did-update-set-state", Kind::Problem);
+    const META: Meta = Meta::plugin(Plugin::React, "no-did-update-set-state", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = State<'a>;
 

@@ -26,7 +26,7 @@ pub struct State<'a> {
 }
 
 impl Rule for NoThisInSfc {
-    const META: Meta = Meta::plugin(Plugin::React, "no-this-in-sfc", Kind::Problem);
+    const META: Meta = Meta::plugin(Plugin::React, "no-this-in-sfc", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::This]).finish();
     type State<'a> = State<'a>;
 

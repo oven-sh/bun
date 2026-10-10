@@ -51,7 +51,7 @@ const TAGS: NodeTags = NodeTags::CLASS
     .union(NodeTags::new().stmts(&[StmtTag::ExportDefault]));
 
 impl Rule for NoMultiComp {
-    const META: Meta = Meta::plugin(Plugin::React, "no-multi-comp", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "no-multi-comp", Kind::None);
     const ON: On = On::new().enter(TAGS).exit(TAGS).finish();
     type State<'a> = State<'a>;
 

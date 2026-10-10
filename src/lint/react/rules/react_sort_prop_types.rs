@@ -104,7 +104,7 @@ struct Source<'t> {
 }
 
 impl Rule for SortPropTypes {
-    const META: Meta = Meta::plugin(Plugin::React, "sort-prop-types", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta = Meta::plugin(Plugin::React, "sort-prop-types", Kind::None).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::Dot, ExprTag::Index]).funcs().members().props();
     type State<'a> = State<'a>;
 

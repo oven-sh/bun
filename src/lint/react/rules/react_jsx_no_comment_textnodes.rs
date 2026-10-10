@@ -12,7 +12,7 @@ const JSX_NO_COMMENT_TEXTNODES: Message =
     Message::new("", "Comments inside children section of tag should be placed inside braces");
 
 impl Rule for JsxNoCommentTextnodes {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-no-comment-textnodes", Kind::Problem).recommended();
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-no-comment-textnodes", Kind::None).recommended();
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 

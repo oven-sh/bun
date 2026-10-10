@@ -22,7 +22,7 @@ const BOOLEAN_VALUE_UNDEFINED_FALSE: Message =
     Message::new("", "Value must be omitted for `false` attribute \"{{attr}}\"");
 
 impl Rule for JsxBooleanValue {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-boolean-value", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-boolean-value", Kind::None).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 

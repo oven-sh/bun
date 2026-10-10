@@ -151,7 +151,7 @@ fn is_value_or_object<'a>(current: Node<'a>, parent: Node<'a>) -> Option<bool> {
 }
 
 impl Rule for NoAccessStateInSetstate {
-    const META: Meta = Meta::plugin(Plugin::React, "no-access-state-in-setstate", Kind::Problem);
+    const META: Meta = Meta::plugin(Plugin::React, "no-access-state-in-setstate", Kind::None);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

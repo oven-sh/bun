@@ -18,7 +18,7 @@ const INLINE_ELEMENTS: [&str; 30] = [
 ];
 
 impl Rule for JsxChildElementSpacing {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-child-element-spacing", Kind::Layout);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-child-element-spacing", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     no_state!();
 

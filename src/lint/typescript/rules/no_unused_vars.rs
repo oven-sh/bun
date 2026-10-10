@@ -1552,6 +1552,7 @@ impl NoUnusedVars {
             // What a script declares as well has definitions, and is checked as that.
             if variable.is_in_lib
                 || variable.is_exported
+                || file.is_global_marked_used(name)
                 || file.scope().get_bytes(name).is_some()
                 || is_used_global_variable(file, name)
             {

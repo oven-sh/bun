@@ -90,7 +90,7 @@ enum Finding<'a> {
 }
 
 impl Rule for NoTypos {
-    const META: Meta = Meta::plugin(Plugin::React, "no-typos", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "no-typos", Kind::None);
     const ON: On =
         On::new().exprs(&[ExprTag::Assign, ExprTag::Call, ExprTag::New]).stmts(&[StmtTag::Import]).classes();
     type State<'a> = State<'a>;
@@ -192,10 +192,9 @@ fn member_expression<'a>(node: Expr<'a>, parent: Expr<'a>, right: Expr<'a>, cx: 
     let Some(related_component) = components.get_related_component(node) else {
         return;
     };
-    let is_component = match components.component(related_component).node {
-        Node::Class(class) => is_es6_component(class, components.pragmas()),
-        node => components.is_returning_jsx(node, Branches::Any),
-    };
+    let related_node = components.component(related_component).node;
+    let is_component = components.is_es6_component(related_node)
+        || (!matches!(related_node, Node::Class(_)) && components.is_returning_jsx(related_node, Branches::Any));
     if is_component {
         finding.report(TYPO_STATIC_CLASS_PROP, cx);
     }

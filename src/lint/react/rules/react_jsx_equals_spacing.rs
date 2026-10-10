@@ -14,7 +14,7 @@ const NEED_SPACE_BEFORE: Message = Message::new("needSpaceBefore", "A space is r
 const NEED_SPACE_AFTER: Message = Message::new("needSpaceAfter", "A space is required after '='");
 
 impl Rule for JsxEqualsSpacing {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-equals-spacing", Kind::Layout).fixable(Fixable::Code);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-equals-spacing", Kind::None).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     no_state!();
 

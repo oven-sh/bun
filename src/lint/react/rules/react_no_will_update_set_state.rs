@@ -23,7 +23,7 @@ pub struct State<'a> {
 }
 
 impl Rule for NoWillUpdateSetState {
-    const META: Meta = Meta::plugin(Plugin::React, "no-will-update-set-state", Kind::Problem);
+    const META: Meta = Meta::plugin(Plugin::React, "no-will-update-set-state", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = State<'a>;
 

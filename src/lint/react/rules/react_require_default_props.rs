@@ -43,7 +43,7 @@ const DESTRUCTURE_IN_SIGNATURE: Message = Message::new(
 );
 
 impl Rule for RequireDefaultProps {
-    const META: Meta = Meta::plugin(Plugin::React, "require-default-props", Kind::Suggestion).reports_at_the_end();
+    const META: Meta = Meta::plugin(Plugin::React, "require-default-props", Kind::None).reports_at_the_end();
     const ON: On = On::new().finish();
     type State<'a> = ();
 

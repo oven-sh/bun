@@ -20,7 +20,7 @@ const NO_SCRIPT_URL: Message = Message::new(
 const JSX_NO_SCRIPT_URL: Message = Message::new("", "React 19 disallows `javascript:` URLs as a security precaution.");
 
 impl Rule for JsxNoScriptUrl {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-no-script-url", Kind::Problem);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-no-script-url", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     /// `settings.react.linkComponents`, where oxlint has them.
     type State<'a> = &'a [Json];

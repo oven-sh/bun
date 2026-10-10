@@ -14,7 +14,7 @@ const ALLOW_MULTILINES: Message = Message::new("allowMultilines", "Multiline JSX
 
 impl Rule for JsxNewline {
     const META: Meta =
-        Meta::plugin(Plugin::React, "jsx-newline", Kind::Layout).fixable(Fixable::Code).reports_at_the_end();
+        Meta::plugin(Plugin::React, "jsx-newline", Kind::None).fixable(Fixable::Code).reports_at_the_end();
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     no_state!();
 

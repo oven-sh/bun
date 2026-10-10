@@ -13,7 +13,7 @@ const NO_IS_MOUNTED: Message = Message::new("noIsMounted", "Do not use isMounted
 const OXLINT: Message = Message::new("", "Do not use `isMounted`.");
 
 impl Rule for NoIsMounted {
-    const META: Meta = Meta::plugin(Plugin::React, "no-is-mounted", Kind::Problem).recommended();
+    const META: Meta = Meta::plugin(Plugin::React, "no-is-mounted", Kind::None).recommended();
     const ON: On = On::new().exprs(&[ExprTag::Call]);
     /// Whether something is in a property of an object or in a method of a class.
     type State<'a> = AncestorMemo<'a, ()>;

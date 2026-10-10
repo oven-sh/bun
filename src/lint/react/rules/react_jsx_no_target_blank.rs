@@ -73,7 +73,7 @@ enum Component {
 }
 
 impl Rule for JsxNoTargetBlank {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-no-target-blank", Kind::Suggestion)
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-no-target-blank", Kind::None)
         .fixable(Fixable::Code)
         .has_suggestions()
         .recommended();

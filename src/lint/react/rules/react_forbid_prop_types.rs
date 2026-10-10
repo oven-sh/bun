@@ -64,7 +64,7 @@ pub struct State<'a> {
 }
 
 impl Rule for ForbidPropTypes {
-    const META: Meta = Meta::plugin(Plugin::React, "forbid-prop-types", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "forbid-prop-types", Kind::None);
     const ON: On = On::new()
         .exprs(&[ExprTag::Assign, ExprTag::Binary, ExprTag::Call])
         .stmts(&[StmtTag::ForIn, StmtTag::ForOf])

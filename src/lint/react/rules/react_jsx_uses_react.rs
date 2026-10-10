@@ -6,14 +6,14 @@ use bun_lint::rule::Plugin;
 /// Disallow React to be incorrectly marked as unused
 pub struct JsxUsesReact;
 
-/// Each only if the file has the name in it.
+/// Each only if the file has the name in it, or in a `/* global */` comment.
 pub struct Pragmas<'a> {
     pragma: Option<Name<'a>>,
     fragment: Option<Name<'a>>,
 }
 
 impl Rule for JsxUsesReact {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-uses-react", Kind::Problem).recommended();
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-uses-react", Kind::None).recommended();
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = Pragmas<'a>;
 
@@ -24,7 +24,8 @@ impl Rule for JsxUsesReact {
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Pragmas<'a>> {
         let mentioned = |name: &[u8]| {
             let name = std::str::from_utf8(name).ok()?;
-            file.mentions(name).then(|| file.name_of(name))
+            let is_named = file.mentions(name) || file.global_in_comments(name.as_bytes()).is_some();
+            is_named.then(|| file.name_of(name))
         };
         let pragma = mentioned(get_from_context(file));
         let fragment = mentioned(get_fragment_from_context(file));

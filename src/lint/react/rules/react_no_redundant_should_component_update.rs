@@ -22,7 +22,7 @@ pub struct State<'a> {
 }
 
 impl Rule for NoRedundantShouldComponentUpdate {
-    const META: Meta = Meta::plugin(Plugin::React, "no-redundant-should-component-update", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "no-redundant-should-component-update", Kind::None);
     const ON: On = On::new().classes();
     type State<'a> = State<'a>;
 

@@ -12,7 +12,7 @@ const ONLY_ONE_SPACE: Message =
     Message::new("onlyOneSpace", "Expected only one space between “{{prop1}}” and “{{prop2}}”");
 
 impl Rule for JsxPropsNoMultiSpaces {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-props-no-multi-spaces", Kind::Layout).fixable(Fixable::Code);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-props-no-multi-spaces", Kind::None).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     no_state!();
 

@@ -48,7 +48,7 @@ const MISSING_TYPE_PROP: Message = Message::new("", "`button` elements must have
 const INVALID_TYPE_PROP: Message = Message::new("", "`button` elements must have a valid `type` attribute.");
 
 impl Rule for ButtonHasType {
-    const META: Meta = Meta::plugin(Plugin::React, "button-has-type", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "button-has-type", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Call]).finish();
     type State<'a> = State<'a>;
 

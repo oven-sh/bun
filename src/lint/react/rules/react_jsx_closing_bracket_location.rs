@@ -43,7 +43,7 @@ impl Location {
 }
 
 impl Rule for JsxClosingBracketLocation {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-closing-bracket-location", Kind::Layout)
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-closing-bracket-location", Kind::None)
         .fixable(Fixable::Code)
         .reports_on_exit();
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);

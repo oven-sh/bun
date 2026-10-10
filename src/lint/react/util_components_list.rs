@@ -229,6 +229,8 @@ impl<'a> DeclaredPropTypes<'a> {
 #[derive(Clone)]
 pub(crate) struct UsedPropType<'a> {
     pub(crate) name: &'a [u8],
+    /// `typeof name !== "string"`: the key `1` of a pattern, which is not the `"1"` of `props[1]`.
+    pub(crate) is_number: bool,
     pub(crate) all_names: SmallVec<[&'a [u8]; 2]>,
     /// The range of `node`.
     pub(crate) at: Span,
@@ -238,19 +240,19 @@ pub(crate) struct UsedPropType<'a> {
 
 impl<'a> UsedPropType<'a> {
     /// What upstream's `usedPropTypesAreEquivalent` compares: `name` and `allNames.join("")`.
-    fn equivalence(&self) -> (&'a [u8], Cow<'a, [u8]>) {
+    fn equivalence(&self) -> (&'a [u8], bool, Cow<'a, [u8]>) {
         let all_names = match self.all_names.as_slice() {
             [only] => Cow::Borrowed(*only),
             all_names => Cow::Owned(all_names.concat()),
         };
-        (self.name, all_names)
+        (self.name, self.is_number, all_names)
     }
 }
 
 /// Which used prop types a list has. The list is only added to.
 #[derive(Default)]
 struct Equivalents<'a> {
-    known: FxHashSet<(&'a [u8], Cow<'a, [u8]>)>,
+    known: FxHashSet<(&'a [u8], bool, Cow<'a, [u8]>)>,
     /// How many of the list are in `known`.
     counted: usize,
 }

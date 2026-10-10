@@ -20,7 +20,7 @@ const PROP_ON_SAME_LINE: Message =
     Message::new("propOnSameLine", "Property should be placed on the same line as the component declaration");
 
 impl Rule for JsxFirstPropNewLine {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-first-prop-new-line", Kind::Layout).fixable(Fixable::Code);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-first-prop-new-line", Kind::None).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     no_state!();
 

@@ -29,7 +29,7 @@ pub struct State<'a> {
 }
 
 impl Rule for StateInConstructor {
-    const META: Meta = Meta::plugin(Plugin::React, "state-in-constructor", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "state-in-constructor", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Assign]).members();
     type State<'a> = State<'a>;
 

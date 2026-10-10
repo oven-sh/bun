@@ -1,4 +1,5 @@
 use crate::jsx::{AttributeValue, get_jsx_element_name, get_prop_value};
+use crate::util_version::string_of;
 use bun_lint_oxlint::text::glob_match;
 use bun_core::strings;
 use bun_glob::{Options as GlobOptions, Pattern};
@@ -73,7 +74,7 @@ enum HandlerName<'a> {
 }
 
 impl Rule for JsxHandlerNames {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-handler-names", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-handler-names", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = Known;
 
@@ -545,22 +546,6 @@ fn end_of_handler_name_start(prefixes: &[Box<[u8]>], text: &[u8], from: u32, is_
         }
     };
     prefixes.iter().filter_map(|it| end_with(it)).min()
-}
-
-/// `String(value)`
-fn string_of(value: &Json) -> Vec<u8> {
-    match value {
-        Json::Null => b"null".to_vec(),
-        Json::Bool(it) => it.to_string().into_bytes(),
-        Json::Number(it) => text::number_to_string(*it),
-        Json::String(it) => it.clone(),
-        // In an array `null` is nothing.
-        Json::Array(all) => {
-            let parts = all.iter().map(|it| if *it == Json::Null { Vec::new() } else { string_of(it) });
-            parts.collect::<Vec<_>>().join(&b","[..])
-        }
-        Json::Object(_) => b"[object Object]".to_vec(),
-    }
 }
 
 /// The name, and whether it is of `props` or `this.props`.

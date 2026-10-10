@@ -98,7 +98,7 @@ enum Definition<'a> {
 }
 
 impl Rule for JsxNoConstructedContextValues {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-no-constructed-context-values", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-no-constructed-context-values", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]).finish();
     type State<'a> = State<'a>;
 

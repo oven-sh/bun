@@ -20,7 +20,7 @@ const UNUSED_PROP_TYPE: Message =
     Message::new("unusedPropType", "'{{name}}' PropType is defined but prop is never used");
 
 impl Rule for NoUnusedPropTypes {
-    const META: Meta = Meta::plugin(Plugin::React, "no-unused-prop-types", Kind::Suggestion).reports_at_the_end();
+    const META: Meta = Meta::plugin(Plugin::React, "no-unused-prop-types", Kind::None).reports_at_the_end();
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -91,6 +91,18 @@ fn own_property<'p, 'a>((name, prop): (&[u8], &'p DeclaredPropType<'a>)) -> Opti
     (name != b"__proto__").then_some(prop)
 }
 
+/// Whether `getKeyValue` of the key of `node` is no string: `1`, `[1n]`, `[null]`, `[/a/]`.
+fn is_named_by_no_string(node: Node<'_>) -> bool {
+    let Node::Prop(property) = node else {
+        return false;
+    };
+    match property.key().map(Key::kind) {
+        Some(KeyKind::Number(_) | KeyKind::ComputedNumber(_)) => true,
+        Some(KeyKind::Computed(e)) => !matches!(e.tag(), ExprTag::Ident | ExprTag::String),
+        _ => false,
+    }
+}
+
 /// Puts `props` on `pending`, which is taken from at its end: the first of them last.
 fn push_all<'p, 'a>(
     pending: &mut Vec<&'p DeclaredPropType<'a>>,
@@ -110,7 +122,7 @@ impl NoUnusedPropTypes {
             return;
         };
         let used_prop_types = component.used_prop_types.as_deref().unwrap_or_default();
-        let used_names: FxHashSet<&[u8]> = used_prop_types.iter().map(|it| it.name).collect();
+        let used_names: FxHashSet<(&[u8], bool)> = used_prop_types.iter().map(|it| (it.name, it.is_number)).collect();
         let mut pending = Vec::new();
         push_all(&mut pending, &mut declared_prop_types.iter().filter_map(own_property));
         while let Some(prop) = pending.pop() {
@@ -119,11 +131,15 @@ impl NoUnusedPropTypes {
                 continue;
             }
             let full_name = prop.full_name.as_deref();
-            let is_ignored = full_name.is_some_and(|name| self.ignore.iter().any(|it| name == &**it));
+            // upstream compares with `===` and `indexOf`. In a shape the full name is a string.
+            let is_number = prop.node.is_some_and(is_named_by_no_string);
+            let is_ignored = !(is_number && prop.full_name == prop.name)
+                && full_name.is_some_and(|name| self.ignore.iter().any(|it| name == &**it));
             // Where nothing at all is used, a shape is not used either.
             let is_prop_used = !used_names.is_empty()
                 && (is_shape
-                    || prop.name.as_deref().is_some_and(|name| name == b"__ANY_KEY__" || used_names.contains(name)));
+                    || (prop.name.as_deref())
+                        .is_some_and(|name| name == b"__ANY_KEY__" || used_names.contains(&(name, is_number))));
             if let Some(node) = prop.node
                 && !is_ignored
                 && !is_prop_used

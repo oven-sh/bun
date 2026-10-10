@@ -404,6 +404,7 @@ impl<'a> UsedPropTypesInstructions<'a> {
                         .filter(|_| name != COMPUTED_PROP)
                         .map(|at| UsedPropType {
                             name,
+                            is_number: false,
                             all_names,
                             at,
                             is_property: false,
@@ -452,6 +453,7 @@ impl<'a> UsedPropTypesInstructions<'a> {
             let all_names = concat(parent_names, prop_name);
             let used_prop_type = UsedPropType {
                 name: prop_name,
+                is_number: matches!(key.map(Key::kind), Some(KeyKind::Number(_))),
                 all_names: all_names.clone(),
                 at: property.span(),
                 is_property: true,

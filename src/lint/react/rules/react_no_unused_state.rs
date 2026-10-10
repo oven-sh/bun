@@ -503,7 +503,7 @@ impl<'a> Visitor<'a> for Walk<'a> {
 }
 
 impl Rule for NoUnusedState {
-    const META: Meta = Meta::plugin(Plugin::React, "no-unused-state", Kind::Suggestion).reports_on_exit();
+    const META: Meta = Meta::plugin(Plugin::React, "no-unused-state", Kind::None).reports_on_exit();
     const ON: On = On::new().finish();
     type State<'a> = ();
 

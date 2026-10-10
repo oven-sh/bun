@@ -41,7 +41,7 @@ struct Component {
 }
 
 impl Rule for NoDirectMutationState {
-    const META: Meta = Meta::plugin(Plugin::React, "no-direct-mutation-state", Kind::Problem).recommended();
+    const META: Meta = Meta::plugin(Plugin::React, "no-direct-mutation-state", Kind::None).recommended();
     const ON: On = On::new().exprs(&[ExprTag::Assign]).unaries(&UPDATES).finish();
     type State<'a> = State<'a>;
 

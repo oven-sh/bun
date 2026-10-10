@@ -55,7 +55,7 @@ pub(super) fn property_definition(member: Member<'_>) -> Option<Expr<'_>> {
 }
 
 impl Rule for SortDefaultProps {
-    const META: Meta = Meta::plugin(Plugin::React, "sort-default-props", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "sort-default-props", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]).members().finish();
     /// What `checkSorted` is called with, once for each call.
     type State<'a> = Vec<Expr<'a>>;

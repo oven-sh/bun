@@ -28,7 +28,7 @@ pub struct State<'a> {
 }
 
 impl Rule for StylePropObject {
-    const META: Meta = Meta::plugin(Plugin::React, "style-prop-object", Kind::Problem);
+    const META: Meta = Meta::plugin(Plugin::React, "style-prop-object", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Call]);
     type State<'a> = State<'a>;
 

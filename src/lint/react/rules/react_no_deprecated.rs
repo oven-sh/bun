@@ -127,7 +127,7 @@ pub struct State<'a> {
 }
 
 impl Rule for NoDeprecated {
-    const META: Meta = Meta::plugin(Plugin::React, "no-deprecated", Kind::Suggestion).recommended();
+    const META: Meta = Meta::plugin(Plugin::React, "no-deprecated", Kind::None).recommended();
     const ON: On = On::new()
         .exprs(&[ExprTag::Dot, ExprTag::Object])
         .stmts(&[StmtTag::Interface])

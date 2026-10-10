@@ -31,7 +31,7 @@ const PASS_FUNCTION_AS_ARGS: Message = Message::new(
 const NO_CHILDREN_PROP: Message = Message::new("", "Avoid passing children using a prop.");
 
 impl Rule for NoChildrenProp {
-    const META: Meta = Meta::plugin(Plugin::React, "no-children-prop", Kind::Problem).recommended();
+    const META: Meta = Meta::plugin(Plugin::React, "no-children-prop", Kind::None).recommended();
     const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Call]);
     /// The pragma. `None`: nobody has asked yet. oxlint knows none.
     type State<'a> = Option<&'a [u8]>;

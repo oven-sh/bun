@@ -11,7 +11,7 @@ fn is_tag_name(name: Name) -> bool {
 }
 
 impl Rule for JsxUsesVars {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-uses-vars", Kind::Problem).recommended();
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-uses-vars", Kind::None).recommended();
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     no_state!();
 

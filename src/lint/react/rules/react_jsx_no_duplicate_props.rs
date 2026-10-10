@@ -26,7 +26,7 @@ struct Attribute<'a> {
 }
 
 impl Rule for JsxNoDuplicateProps {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-no-duplicate-props", Kind::Problem).recommended();
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-no-duplicate-props", Kind::None).recommended();
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 

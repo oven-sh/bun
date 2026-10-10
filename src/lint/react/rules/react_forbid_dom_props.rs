@@ -27,7 +27,7 @@ const FORBIDDEN_VALUE: Message =
 const FORBIDDEN: Message = Message::new("", "Prop \"{{property}}\" is forbidden on DOM Nodes");
 
 impl Rule for ForbidDomProps {
-    const META: Meta = Meta::plugin(Plugin::React, "forbid-dom-props", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "forbid-dom-props", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 

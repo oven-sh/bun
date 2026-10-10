@@ -1,5 +1,6 @@
 use crate::jsx::get_jsx_attribute_name;
 use crate::util_jsx::is_dom_component;
+use crate::util_version::string_of;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -100,7 +101,7 @@ struct Sortable<'a> {
 }
 
 impl Rule for JsxSortProps {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-sort-props", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-sort-props", Kind::None).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     no_state!();
 
@@ -222,11 +223,7 @@ impl ReservedFirst {
 fn string_in_array(value: &Json) -> Vec<u8> {
     match value {
         Json::Null => Vec::new(),
-        Json::Bool(it) => it.to_string().into_bytes(),
-        Json::Number(it) => text::number_to_string(*it),
-        Json::String(it) => it.clone(),
-        Json::Array(all) => all.iter().map(string_in_array).collect::<Vec<_>>().join(&b","[..]),
-        Json::Object(_) => b"[object Object]".to_vec(),
+        value => string_of(value),
     }
 }
 

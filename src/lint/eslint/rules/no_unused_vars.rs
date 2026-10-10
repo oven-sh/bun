@@ -1013,6 +1013,7 @@ impl NoUnusedVars {
             };
             // What a script declares as well is checked as that.
             if global.setting == Global::Off
+                || file.is_global_marked_used(name)
                 || file.scope().get_bytes(name).is_some()
                 || file.is_exported_in_comments(name)
             {

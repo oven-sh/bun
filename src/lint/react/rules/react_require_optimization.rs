@@ -20,7 +20,7 @@ const NO_SHOULD_COMPONENT_UPDATE: Message = Message::new(
 );
 
 impl Rule for RequireOptimization {
-    const META: Meta = Meta::plugin(Plugin::React, "require-optimization", Kind::Suggestion).reports_at_the_end();
+    const META: Meta = Meta::plugin(Plugin::React, "require-optimization", Kind::None).reports_at_the_end();
     const ON: On = On::new().finish();
     type State<'a> = ();
 

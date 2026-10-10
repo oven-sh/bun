@@ -13,7 +13,7 @@ const UNDEFINED: Message = Message::new("undefined", "'{{identifier}}' is not de
 const JSX_NO_UNDEF: Message = Message::new("", "'{{ident_name}}' is not defined.");
 
 impl Rule for JsxNoUndef {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-no-undef", Kind::Problem).recommended();
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-no-undef", Kind::None).recommended();
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 

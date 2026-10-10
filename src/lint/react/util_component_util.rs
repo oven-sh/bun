@@ -9,6 +9,7 @@ use crate::util_pragma::{get_create_class_from_context, get_from_context, mentio
 use bun_core::strings;
 use bun_lint::language::Parser;
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::estree_compat::{estree_parent, estree_span, normalize};
 
 /// What componentUtil.js memoizes for a context.
@@ -223,17 +224,34 @@ fn get_jsdoc_comment(class: Class<'_>) -> Option<Token<'_>> {
     find_jsdoc_comment(class.file(), start)
 }
 
-/// `isExplicitComponent`. The tags are read by [`File::jsdoc`]. doctrine, which upstream reads them
-/// with, also ends at the first tag that it cannot read.
+/// `isExplicitComponent`, of a class.
 pub(crate) fn is_explicit_component(class: Class<'_>) -> bool {
-    let Some(comment) = get_jsdoc_comment(class) else {
-        return false;
-    };
+    get_jsdoc_comment(class).is_some_and(|it| has_component_tag(class.file(), it))
+}
+
+/// `isExplicitComponent`, of a function. `documented_at`: one for all functions of a file.
+pub(crate) fn is_explicit_component_function<'a>(
+    func: Func<'a>,
+    documented_at: &mut AncestorMemo<'a, Option<u32>>,
+) -> bool {
+    ast_utils::get_jsdoc_comment_of_function(func, documented_at)
+        .is_some_and(|it| has_component_tag(func.file(), it))
+}
+
+/// `false` is certain: no comment of the file makes a component of what it documents.
+pub(crate) fn may_have_explicit_components<'a>(file: &'a File<'a>) -> bool {
+    let mut comments = file.comments().map(|it| it.comment_value());
+    comments.any(|it| strings::contains(it, b"React."))
+}
+
+/// What `isExplicitComponent` asks of the comment. The tags are read by [`File::jsdoc`]. doctrine,
+/// which upstream reads them with, also ends at the first tag that it cannot read.
+fn has_component_tag<'a>(file: &'a File<'a>, comment: Token<'a>) -> bool {
     let value = comment.comment_value();
     if !strings::contains(value, b"React.") {
         return false;
     }
-    let Some(comment_ast) = class.file().jsdoc().at(comment.start()) else {
+    let Some(comment_ast) = file.jsdoc().at(comment.start()) else {
         return false;
     };
     // doctrine takes the `*` of a `**/` that is alone on its line for text of the last tag.

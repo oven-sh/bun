@@ -18,7 +18,7 @@ const WRONG_INDENT: Message = Message::new(
 );
 
 impl Rule for JsxIndent {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-indent", Kind::Layout).fixable(Fixable::Whitespace);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-indent", Kind::None).fixable(Fixable::Whitespace);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]).stmts(&[StmtTag::Return]);
     type State<'a> = ();
 

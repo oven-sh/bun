@@ -44,7 +44,7 @@ const ALLOWED_VALUES: [&[u8]; 14] = [
 ];
 
 impl Rule for IframeMissingSandbox {
-    const META: Meta = Meta::plugin(Plugin::React, "iframe-missing-sandbox", Kind::Problem);
+    const META: Meta = Meta::plugin(Plugin::React, "iframe-missing-sandbox", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Call]);
     /// The pragma. oxlint knows none.
     type State<'a> = &'a [u8];

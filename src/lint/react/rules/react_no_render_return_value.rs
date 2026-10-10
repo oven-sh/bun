@@ -20,7 +20,7 @@ pub struct State<'a> {
 }
 
 impl Rule for NoRenderReturnValue {
-    const META: Meta = Meta::plugin(Plugin::React, "no-render-return-value", Kind::Problem).recommended();
+    const META: Meta = Meta::plugin(Plugin::React, "no-render-return-value", Kind::None).recommended();
     const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = State<'a>;
 

@@ -2000,6 +2000,14 @@ fn get_jsdoc_comment<'a>(
     }
 }
 
+/// ESLint's `getJSDocComment`, for a function. `documented_at`: one for all functions of a file.
+pub fn get_jsdoc_comment_of_function<'a>(
+    func: Func<'a>,
+    documented_at: &mut AncestorMemo<'a, Option<u32>>,
+) -> Option<Token<'a>> {
+    get_jsdoc_comment(Node::Func(func), documented_at)
+}
+
 /// ESLint's `hasJSDocThisTag`: the JSDoc comment of the function, or a comment directly before it,
 /// has `@this`.
 fn has_jsdoc_this_tag<'a>(

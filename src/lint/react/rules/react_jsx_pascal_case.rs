@@ -30,7 +30,7 @@ const OXLINT_PASCAL_CASE_OR_ALL_CAPS: Message =
     Message::new("", "JSX component {{name}} must be in PascalCase or SCREAMING_SNAKE_CASE");
 
 impl Rule for JsxPascalCase {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-pascal-case", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-pascal-case", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     no_state!();
 

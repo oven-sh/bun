@@ -49,7 +49,7 @@ pub struct State<'a> {
 }
 
 impl Rule for NoUnsafe {
-    const META: Meta = Meta::plugin(Plugin::React, "no-unsafe", Kind::Problem);
+    const META: Meta = Meta::plugin(Plugin::React, "no-unsafe", Kind::None);
     const ON: On = On::new().members().props();
     type State<'a> = State<'a>;
 

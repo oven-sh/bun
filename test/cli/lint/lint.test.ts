@@ -6823,7 +6823,7 @@ describe.concurrent("nativePluginRules", () => {
   test.each([
     [
       `["imprt"]`,
-      "Option native-plugin-rules: 'imprt' not one of @typescript-eslint, react-hooks, import, n, prettier.",
+      "Option native-plugin-rules: 'imprt' not one of @typescript-eslint, react-hooks, import, n, react, prettier.",
     ],
     [`["unicorn"]`, "Option native-plugin-rules: 'unicorn' not one of"],
     [`["true"]`, "Option native-plugin-rules: 'true' not one of"],

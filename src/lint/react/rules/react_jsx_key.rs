@@ -99,7 +99,7 @@ struct Imports<'a> {
 }
 
 impl Rule for JsxKey {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-key", Kind::Problem).recommended();
+    const META: Meta = Meta::plugin(Plugin::React, "jsx-key", Kind::None).recommended();
     const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Array]);
     type State<'a> = State<'a>;
 

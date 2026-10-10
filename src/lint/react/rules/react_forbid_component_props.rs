@@ -43,7 +43,7 @@ const CUSTOM: Message = Message::new("", "{{message}}");
 const FORBID_COMPONENT_PROPS: Message = Message::new("", "Prop \"{{prop}}\" is forbidden on Components");
 
 impl Rule for ForbidComponentProps {
-    const META: Meta = Meta::plugin(Plugin::React, "forbid-component-props", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::React, "forbid-component-props", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 

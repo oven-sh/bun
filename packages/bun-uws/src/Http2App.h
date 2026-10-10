@@ -50,6 +50,7 @@ struct H2App {
     bool drain() { return http2Context->drain(); }
 
     void clearRoutes() { http2Context->clearRoutes(); }
+    void sortRoutes() { http2Context->sortRoutes(); }
     /* GOAWAY + close every connection. */
     void close() { http2Context->closeAll(); }
     void *getNativeHandle() { return http2Context; }

@@ -2155,7 +2155,27 @@ declare module "bun" {
     input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[] | Archive | ReadableStream,
     options?: {
       /**
-       * If writing to a PathLike, set the permissions of the file.
+       * Set the Unix permissions of the destination file to exactly this mode.
+       * The process umask does not apply, and a file that already exists is
+       * changed too.
+       *
+       * The new data is never readable through permissions that the mode does
+       * not give. If the operating system refuses the change, the write is
+       * rejected and an existing file keeps its contents. A `Bun.file()` input
+       * is the exception: it is copied first, and the mode is set after the
+       * copy.
+       *
+       * If omitted, an existing file keeps its permissions, and a new file gets
+       * the default ones, which the process umask limits (typically 0o644).
+       *
+       * It has no effect when the destination is a file descriptor. For an input
+       * other than a `Bun.file()`, it also has no effect on a FIFO or a device.
+       * Windows has no Unix permissions, so the mode is not applied in this way
+       * there.
+       *
+       * Must be an integer from 0 to 0o777 (511 in decimal).
+       *
+       * @throws {RangeError} If the mode is not an integer in that range.
        */
       mode?: number;
       /**
@@ -2186,6 +2206,30 @@ declare module "bun" {
     input: Response | Request,
     options?: {
       /**
+       * Set the Unix permissions of the destination file to exactly this mode.
+       * The process umask does not apply, and a file that already exists is
+       * changed too.
+       *
+       * The new data is never readable through permissions that the mode does
+       * not give. If the operating system refuses the change, the write is
+       * rejected and an existing file keeps its contents. A `Bun.file()` input
+       * is the exception: it is copied first, and the mode is set after the
+       * copy.
+       *
+       * If omitted, an existing file keeps its permissions, and a new file gets
+       * the default ones, which the process umask limits (typically 0o644).
+       *
+       * It has no effect when the destination is a file descriptor. For an input
+       * other than a `Bun.file()`, it also has no effect on a FIFO or a device.
+       * Windows has no Unix permissions, so the mode is not applied in this way
+       * there.
+       *
+       * Must be an integer from 0 to 0o777 (511 in decimal).
+       *
+       * @throws {RangeError} If the mode is not an integer in that range.
+       */
+      mode?: number;
+      /**
        * If `true`, create the parent directory if it doesn't exist.
        *
        * If `false`, the write throws an error when the directory doesn't exist.
@@ -2210,6 +2254,30 @@ declare module "bun" {
     destinationPath: PathLike,
     input: Response | Request,
     options?: {
+      /**
+       * Set the Unix permissions of the destination file to exactly this mode.
+       * The process umask does not apply, and a file that already exists is
+       * changed too.
+       *
+       * The new data is never readable through permissions that the mode does
+       * not give. If the operating system refuses the change, the write is
+       * rejected and an existing file keeps its contents. A `Bun.file()` input
+       * is the exception: it is copied first, and the mode is set after the
+       * copy.
+       *
+       * If omitted, an existing file keeps its permissions, and a new file gets
+       * the default ones, which the process umask limits (typically 0o644).
+       *
+       * It has no effect when the destination is a file descriptor. For an input
+       * other than a `Bun.file()`, it also has no effect on a FIFO or a device.
+       * Windows has no Unix permissions, so the mode is not applied in this way
+       * there.
+       *
+       * Must be an integer from 0 to 0o777 (511 in decimal).
+       *
+       * @throws {RangeError} If the mode is not an integer in that range.
+       */
+      mode?: number;
       /**
        * If `true`, create the parent directory if it doesn't exist.
        *
@@ -2244,12 +2312,22 @@ declare module "bun" {
     input: BunFile,
     options?: {
       /**
-       * Set the file permissions of the destination when it is created or overwritten.
+       * Set the Unix permissions of the destination file to exactly this mode.
+       * The process umask does not apply, and a file that already exists is
+       * changed too.
        *
-       * Must be a valid Unix permission mode (0 to 0o777 / 511 in decimal).
+       * The file is copied first, and the mode is set after the copy. If the
+       * operating system refuses the change, the write is rejected after the
+       * copy.
+       *
        * If omitted, defaults to the system default based on umask (typically 0o644).
        *
-       * @throws {RangeError} If the mode is outside the valid range (0 to 0o777).
+       * It has no effect when the destination is a file descriptor. Windows has
+       * no Unix permissions, so the mode is not applied in this way there.
+       *
+       * Must be an integer from 0 to 0o777 (511 in decimal).
+       *
+       * @throws {RangeError} If the mode is not an integer in that range.
        *
        * @example
        * ```ts
@@ -2290,12 +2368,22 @@ declare module "bun" {
     input: BunFile,
     options?: {
       /**
-       * Set the file permissions of the destination when it is created or overwritten.
+       * Set the Unix permissions of the destination file to exactly this mode.
+       * The process umask does not apply, and a file that already exists is
+       * changed too.
        *
-       * Must be a valid Unix permission mode (0 to 0o777 / 511 in decimal).
+       * The file is copied first, and the mode is set after the copy. If the
+       * operating system refuses the change, the write is rejected after the
+       * copy.
+       *
        * If omitted, defaults to the system default based on umask (typically 0o644).
        *
-       * @throws {RangeError} If the mode is outside the valid range (0 to 0o777).
+       * It has no effect when the destination is a file descriptor. Windows has
+       * no Unix permissions, so the mode is not applied in this way there.
+       *
+       * Must be an integer from 0 to 0o777 (511 in decimal).
+       *
+       * @throws {RangeError} If the mode is not an integer in that range.
        *
        * @example
        * ```ts
@@ -2761,7 +2849,33 @@ declare module "bun" {
      */
     write(
       data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile | ReadableStream,
-      options?: { highWaterMark?: number },
+      options?: {
+        highWaterMark?: number;
+        /**
+         * Set the Unix permissions of this file to exactly this mode.
+         * The process umask does not apply, and a file that already exists is
+         * changed too.
+         *
+         * The new data is never readable through permissions that the mode does
+         * not give. If the operating system refuses the change, the write is
+         * rejected and an existing file keeps its contents. A `Bun.file()` input
+         * is the exception: it is copied first, and the mode is set after the
+         * copy.
+         *
+         * If omitted, an existing file keeps its permissions, and a new file gets
+         * the default ones, which the process umask limits (typically 0o644).
+         *
+         * It has no effect when this file is a file descriptor. For an input
+         * other than a `Bun.file()`, it also has no effect on a FIFO or a device.
+         * Windows has no Unix permissions, so the mode is not applied in this way
+         * there.
+         *
+         * Must be an integer from 0 to 0o777 (511 in decimal).
+         *
+         * @throws {RangeError} If the mode is not an integer in that range.
+         */
+        mode?: number;
+      },
     ): Promise<number>;
 
     /**

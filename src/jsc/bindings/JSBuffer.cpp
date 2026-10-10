@@ -81,6 +81,7 @@
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
 #include <JavaScriptCore/JSObjectInlines.h>
+#include "CollectArrayLike.h"
 
 extern "C" bool Bun__Node__ZeroFillBuffers;
 
@@ -913,52 +914,29 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalO
 
     JSValue totalLengthValue = callFrame->argument(1);
 
-    // Resolve every element of `list` into a MarkedArgumentBuffer first so
-    // that all user-observable side effects (index getters, proxy traps)
-    // run to completion before we read any byte lengths or allocate the
-    // output buffer. This avoids a TOCTOU where a getter at index N detaches
-    // or resizes the buffer backing index M < N after M's length was
-    // measured, which previously left uninitialized bytes in the output.
-    //
-    // Note: `validateArray` uses `JSC::isArray()` which returns true for
-    // Proxy->Array. `forEachInArrayLike` reads `.length` and each index via
-    // `JSObject::getIndex`, which fast-paths dense JSArrays and falls back
-    // to [[Get]] for proxies and sparse arrays.
-    MarkedArgumentBuffer args;
-    if (auto* array = dynamicDowncast<JSC::JSArray>(listValue)) [[likely]] {
-        args.ensureCapacity(array->length());
-        if (args.hasOverflowed()) [[unlikely]] {
-            throwOutOfMemoryError(lexicalGlobalObject, throwScope);
-            return {};
-        }
-    }
-
-    JSC::forEachInArrayLike(lexicalGlobalObject, asObject(listValue), [&](JSValue element) -> bool {
-        args.append(element);
-        return true;
+    // `JSC::isArray()` is true for Proxy->Array, so `length` and each index can come from traps.
+    MarkedArgumentBuffer storage;
+    auto elements = Bun::collectArrayLike(lexicalGlobalObject, asObject(listValue), storage, [&](JSValue element, size_t index) -> bool {
+        if (dynamicDowncast<JSC::JSUint8Array>(element)) [[likely]]
+            return true;
+        Bun::ERR::INVALID_ARG_INSTANCE(throwScope, lexicalGlobalObject, makeString("list["_s, index, "]"_s), "Buffer or Uint8Array"_s, element);
+        return false;
     });
     RETURN_IF_EXCEPTION(throwScope, {});
-    if (args.hasOverflowed()) [[unlikely]] {
+    if (storage.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(lexicalGlobalObject, throwScope);
         return {};
     }
     // Node.js: `if (list.length === 0) return new FastBuffer();`
     // — an empty list returns an empty buffer regardless of totalLength.
-    if (args.isEmpty()) {
+    if (elements.empty()) {
         RELEASE_AND_RETURN(throwScope, constructBufferEmpty(lexicalGlobalObject));
     }
 
-    // All user code is done running. Validate each element and sum their
-    // byte lengths. Nothing between here and the final memcpy loop can call
-    // back into JavaScript, so the lengths we measure now are the lengths we
-    // copy below.
+    // Nothing between here and the memcpy loop calls back into JavaScript, so the lengths read now are the lengths copied below.
     size_t availableLength = 0;
-    for (unsigned i = 0; i < args.size(); i++) {
-        JSValue element = args.at(i);
-        auto* typedArray = dynamicDowncast<JSC::JSUint8Array>(element);
-        if (!typedArray) [[unlikely]] {
-            return Bun::ERR::INVALID_ARG_INSTANCE(throwScope, lexicalGlobalObject, makeString("list["_s, i, "]"_s), "Buffer or Uint8Array"_s, element);
-        }
+    for (auto element : elements) {
+        auto* typedArray = uncheckedDowncast<JSC::JSUint8Array>(JSValue::decode(element));
         if (typedArray->isDetached()) [[unlikely]] {
             return throwVMTypeError(lexicalGlobalObject, throwScope, "ArrayBufferView is detached"_s);
         }
@@ -999,8 +977,8 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_concatBody(JSC::JSGlobalO
     RETURN_IF_EXCEPTION(throwScope, {});
 
     auto output = outBuffer->typedSpan();
-    for (size_t i = 0; i < args.size() && output.size() > 0; i++) {
-        auto* bufferView = uncheckedDowncast<JSC::JSUint8Array>(args.at(i));
+    for (size_t i = 0; i < elements.size() && output.size() > 0; i++) {
+        auto* bufferView = uncheckedDowncast<JSC::JSUint8Array>(JSValue::decode(elements[i]));
         auto source = bufferView->span();
         if (source.empty())
             continue;

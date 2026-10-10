@@ -1,5 +1,6 @@
 #![allow(non_snake_case)]
 #![warn(unused_must_use)]
+#![forbid(unsafe_code)]
 #[path = "HardcodedModule.rs"]
 pub mod HardcodedModule;
 

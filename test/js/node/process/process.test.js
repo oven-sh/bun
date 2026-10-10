@@ -4,6 +4,7 @@ import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
 import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { Worker } from "node:worker_threads";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 
@@ -376,6 +377,59 @@ it("process.hrtime.bigint()", () => {
   const start = process.hrtime.bigint();
   const end = process.hrtime.bigint();
   expect(end > start).toBe(true);
+});
+
+// Node reads one monotonic clock (uv_hrtime) on every thread, so a reading in
+// a worker compares with one in the main thread. A worker used to count from
+// its own start, so its hrtime read as far behind the main thread's as the
+// main thread had run before spawning it.
+it("process.hrtime, process.uptime, Bun.nanoseconds and performance share one origin across threads", async () => {
+  const before = {
+    hrtime: process.hrtime.bigint(),
+    uptime: process.uptime(),
+    nanoseconds: Bun.nanoseconds(),
+    performanceNow: performance.now(),
+  };
+  const worker = new Worker(
+    /* js */ `
+      const { parentPort } = require("node:worker_threads");
+      const [sec, nsec] = process.hrtime();
+      parentPort.postMessage({
+        hrtime: BigInt(sec) * 1_000_000_000n + BigInt(nsec),
+        hrtimeBigint: process.hrtime.bigint(),
+        uptime: process.uptime(),
+        nanoseconds: Bun.nanoseconds(),
+        performanceNow: performance.now(),
+        timeOrigin: performance.timeOrigin,
+      });
+    `,
+    { eval: true },
+  );
+  try {
+    const inWorker = await new Promise((resolve, reject) => {
+      worker.once("message", resolve);
+      worker.once("error", reject);
+    });
+    const after = {
+      hrtime: process.hrtime.bigint(),
+      uptime: process.uptime(),
+      nanoseconds: Bun.nanoseconds(),
+      performanceNow: performance.now(),
+    };
+
+    // The worker took its readings between the main thread's two readings.
+    expect(inWorker.timeOrigin).toBe(performance.timeOrigin);
+    expect(inWorker.hrtime >= before.hrtime && inWorker.hrtime <= after.hrtime).toBe(true);
+    expect(inWorker.hrtimeBigint >= before.hrtime && inWorker.hrtimeBigint <= after.hrtime).toBe(true);
+    expect(inWorker.uptime).toBeGreaterThanOrEqual(before.uptime);
+    expect(inWorker.uptime).toBeLessThanOrEqual(after.uptime);
+    expect(inWorker.nanoseconds).toBeGreaterThanOrEqual(before.nanoseconds);
+    expect(inWorker.nanoseconds).toBeLessThanOrEqual(after.nanoseconds);
+    expect(inWorker.performanceNow).toBeGreaterThanOrEqual(before.performanceNow);
+    expect(inWorker.performanceNow).toBeLessThanOrEqual(after.performanceNow);
+  } finally {
+    await worker.terminate();
+  }
 });
 
 // Runs in a subprocess because passing a non-numeric element used to trip an

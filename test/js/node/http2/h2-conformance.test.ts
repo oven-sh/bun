@@ -1777,7 +1777,12 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
 
   /** http2.connect() against `raw` with `count` requests in flight; resolves once the server
    *  has seen every request HEADERS and completed the SETTINGS exchange. */
-  async function connectClient(raw: RawH2Server, count: number, options: http2.ClientSessionOptions = {}) {
+  async function connectClient(
+    raw: RawH2Server,
+    count: number,
+    // The types list these two session options for a server only, or not at all.
+    options: http2.ClientSessionOptions & { maxSessionRejectedStreams?: number; maxOutstandingSettings?: number } = {},
+  ) {
     const client = http2.connect(`http://127.0.0.1:${raw.port}`, options);
     client.on("error", () => {});
     client.on("stream", pushed => pushed.on("error", () => {}));
@@ -1967,7 +1972,7 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
   test("a new request with a lower id does not lower the last-stream-id", async () => {
     const server = http2.createServer();
     server.on("session", s => s.on("error", () => {}));
-    server.on("stream", stream => {
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
       stream.on("error", () => {});
       stream.respond({ ":status": 200 });
       stream.end();
@@ -2003,7 +2008,7 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
       session = s;
       s.on("error", () => {});
     });
-    server.on("stream", stream => {
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
       stream.on("error", () => {});
       // Streams 2 and 4 are the server's own. 4 is above the request that the client sends next.
       for (const path of ["/a", "/b"]) {
@@ -2051,7 +2056,7 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
       session = s;
       s.on("error", () => {});
     });
-    server.on("stream", stream => {
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
       stream.on("error", () => {});
       // Streams 2 and 4 are the server's own. 4 is above the request that the client sends next.
       for (const path of ["/a", "/b"]) {
@@ -2104,8 +2109,8 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
     const seen: number[] = [];
     const server = http2.createServer({ maxSessionMemory: 1 });
     server.on("session", s => s.on("error", () => {}));
-    server.on("stream", stream => {
-      seen.push(stream.id);
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
+      seen.push(stream.id!);
       stream.on("error", () => {});
       stream.respond({ ":status": 200 });
       // 4 MiB against the default 64 KiB window: most of it stays queued, over the budget.
@@ -2166,7 +2171,7 @@ describe("GOAWAY last-stream-id (RFC 9113 §6.8)", () => {
     async function serverWithTwoRequests() {
       const server = http2.createServer();
       server.on("session", s => s.on("error", () => {}));
-      server.on("stream", stream => {
+      server.on("stream", (stream: http2.ServerHttp2Stream) => {
         stream.on("error", () => {});
         stream.respond({ ":status": 200 });
         stream.write("a");

@@ -1138,6 +1138,121 @@ describe.skipIf(!isWindows).each([
   );
 });
 
+// #42962: the console Ctrl handler runs on its own thread. With a quiet child
+// nothing else wakes the parent's uv_run, so the handler must wake the loop.
+// The leaf ignores Ctrl+C, so only the runner's teardown can end it.
+//
+// The helper allocates a fresh console, spawns the parent on it, and sends a
+// real CTRL_C_EVENT there once the leaf is up. It reports through a file:
+// AllocConsole rebinds the std handles, so its stdout is not reliable.
+describe.skipIf(!isWindows).each([
+  { via: "--filter", argv: ["--filter", "*", "dev"] },
+  { via: "run --parallel", argv: ["run", "--parallel", "dev"] },
+])("windows: $via exits on Ctrl+C while the script is idle (#42962)", ({ argv }) => {
+  test.concurrent(
+    "parent exits and the leaf dies",
+    async () => {
+      using dir = tempDir("filter-win-ctrlc", {
+        "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+        "packages/app/server.js": `
+          process.on("SIGINT", () => {});
+          require("fs").writeFileSync(process.env.PIDFILE, String(process.pid));
+          setInterval(() => {}, 1000);
+        `,
+        "packages/app/package.json": JSON.stringify({
+          name: "app",
+          scripts: { dev: `"${bunExe()}" server.js` },
+        }),
+        "ctrlc-fixture.js": `
+          const { dlopen, FFIType } = require("bun:ffi");
+          const fs = require("fs");
+          const { setTimeout: sleep } = require("timers/promises");
+          const k32 = dlopen("kernel32.dll", {
+            FreeConsole: { args: [], returns: FFIType.i32 },
+            AllocConsole: { args: [], returns: FFIType.i32 },
+            SetConsoleCtrlHandler: { args: [FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
+            GenerateConsoleCtrlEvent: { args: [FFIType.u32, FFIType.u32], returns: FFIType.i32 },
+          }).symbols;
+          const isAlive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+          const result = { parentExited: false, parentExitCode: null, leafDead: false, error: "" };
+          let parent, leafPid = 0;
+          try {
+            k32.FreeConsole();
+            if (!k32.AllocConsole()) throw new Error("AllocConsole failed");
+            // A CI harness can start the test with Ctrl+C disabled. Children
+            // inherit that attribute, so clear it before the spawn.
+            k32.SetConsoleCtrlHandler(null, 0);
+            parent = Bun.spawn({
+              cmd: [process.execPath, ...JSON.parse(process.env.PARENT_ARGV)],
+              cwd: process.env.PARENT_CWD,
+              env: process.env,
+              stdin: "ignore",
+              stdout: "ignore",
+              stderr: "ignore",
+            });
+            // Ignore Ctrl+C in this process only. Set after the spawn: the
+            // ignore attribute is inherited by children.
+            process.on("SIGINT", () => {});
+            k32.SetConsoleCtrlHandler(null, 1);
+            const deadline = Date.now() + 10000;
+            while (leafPid === 0 && Date.now() < deadline) {
+              try { leafPid = Number(fs.readFileSync(process.env.PIDFILE, "utf8").trim()) || 0; } catch {}
+              if (leafPid === 0) await sleep(25);
+            }
+            if (leafPid === 0) throw new Error("leaf never wrote pidfile");
+            if (!k32.GenerateConsoleCtrlEvent(0, 0)) throw new Error("GenerateConsoleCtrlEvent failed");
+            let timer;
+            result.parentExited = await Promise.race([
+              parent.exited.then(() => true),
+              new Promise(resolve => { timer = setTimeout(() => resolve(false), 5000); }),
+            ]);
+            clearTimeout(timer);
+            result.parentExitCode = parent.exitCode;
+            const leafDeadline = Date.now() + 5000;
+            while (isAlive(leafPid) && Date.now() < leafDeadline) await sleep(25);
+            result.leafDead = !isAlive(leafPid);
+          } catch (e) {
+            result.error = String(e);
+          } finally {
+            if (parent) { try { parent.kill("SIGKILL"); } catch {} await parent.exited; }
+            if (leafPid && isAlive(leafPid)) { try { process.kill(leafPid, "SIGKILL"); } catch {} }
+            fs.writeFileSync(process.env.RESULTFILE, JSON.stringify(result));
+          }
+        `,
+      });
+
+      const env: Record<string, string | undefined> = {
+        ...bunEnv,
+        PIDFILE: join(String(dir), "leaf.pid"),
+        RESULTFILE: join(String(dir), "result.json"),
+        PARENT_ARGV: JSON.stringify(argv),
+        PARENT_CWD: join(String(dir), "packages", "app"),
+        BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
+        NO_COLOR: "1",
+      };
+      await using helper = Bun.spawn({
+        cmd: [bunExe(), "ctrlc-fixture.js"],
+        env,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([helper.stderr.text(), helper.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      expect(await Bun.file(env.RESULTFILE!).json()).toEqual({
+        parentExited: true,
+        parentExitCode: 130,
+        leafDead: true,
+        error: "",
+      });
+    },
+    // When the run does not end, the helper needs up to 20 s to report and to
+    // kill the runner and the leaf it started.
+    30000,
+  );
+});
+
 describe("output timing", () => {
   // A script is finished when its process exits: output it already wrote is
   // drained at that point, but a detached child still holding the pipe write
@@ -1334,5 +1449,109 @@ describe("auto-discovered bunfig.toml [run] section", () => {
     expect(r.stderr).toContain("Expected boolean");
     expect(r.stdout).not.toContain("Bun is");
     expect(r.exitCode).toBe(1);
+  });
+});
+
+// proc.kill() is TerminateProcess on Windows; it never reaches the console control handler.
+describe.concurrent.skipIf(isWindows)("signals", () => {
+  // Each package runs a script that reports the signal it receives and exits 0.
+  // The sleep is long enough that a runner which only reacts once its children
+  // exit on their own shows up as the wrong exit code, not as a slow pass.
+  const trapFixture = `
+    const sig = process.argv[2];
+    process.on(sig, () => {
+      console.log("got " + sig);
+      process.exit(0);
+    });
+    console.log("ready");
+    setTimeout(() => {}, 30_000);
+  `;
+
+  async function runFilterAndSignal(signal: "SIGINT" | "SIGTERM", extraArgs: string[] = []) {
+    using dir = tempDir("filter-signal", {
+      "trap.js": trapFixture,
+      packages: {
+        pkga: {
+          "package.json": JSON.stringify({ name: "pkga", scripts: { wait: `${bunExe()} ../../trap.js ${signal}` } }),
+        },
+        pkgb: {
+          "package.json": JSON.stringify({ name: "pkgb", scripts: { wait: `${bunExe()} ../../trap.js ${signal}` } }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", ...extraArgs, "--filter", "*", "wait"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const ready = Promise.withResolvers<void>();
+    const decoder = new TextDecoder();
+    let stdout = "";
+    const stdoutDone = (async () => {
+      for await (const chunk of proc.stdout) {
+        stdout += decoder.decode(chunk, { stream: true });
+        if (stdout.split("ready").length - 1 >= 2) ready.resolve();
+      }
+      ready.reject(new Error(`stdout ended before both packages were ready:\n${stdout}`));
+    })();
+    await ready.promise;
+    // Signal the runner alone, not the children.
+    proc.kill(signal);
+    const [, stderr, exitCode] = await Promise.all([stdoutDone, proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  test("SIGINT to the runner is forwarded to every package at once and exits 130", async () => {
+    const r = await runFilterAndSignal("SIGINT");
+    expect(r.stdout).toContain("pkga wait: got SIGINT");
+    expect(r.stdout).toContain("pkgb wait: got SIGINT");
+    // The runner ends by the signal, so a shell or systemd sees a signal death.
+    expect({ exitCode: r.exitCode, signalCode: r.signalCode }).toEqual({ exitCode: 130, signalCode: "SIGINT" });
+  });
+
+  test("SIGTERM to the runner is forwarded to every package and exits 143", async () => {
+    const r = await runFilterAndSignal("SIGTERM");
+    expect(r.stdout).toContain("pkga wait: got SIGTERM");
+    expect(r.stdout).toContain("pkgb wait: got SIGTERM");
+    expect(r.exitCode).toBe(143);
+  });
+
+  test("a signal that arrives while the packages are still being started is caught and forwarded", async () => {
+    // The first package signals the runner as soon as its shell starts, while
+    // the runner is still spawning the others.
+    const names = Array.from({ length: 8 }, (_, i) => `p${i}`);
+    const packages: Record<string, Record<string, string>> = {};
+    for (const name of names) {
+      const go = name === "p0" ? "kill -TERM $PPID; exec sleep 10" : "exec sleep 10";
+      packages[name] = { "package.json": JSON.stringify({ name, scripts: { go } }) };
+    }
+    using dir = tempDir("filter-signal-start", {
+      packages,
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "*", "go"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    for (const name of names) {
+      expect(stdout).toContain(`${name} go: Signaled with code SIGTERM`);
+    }
+    expect(exitCode).toBe(143);
+  });
+
+  // With --no-orphans the packages get SIGKILL when the runner dies. The
+  // forwarded SIGTERM must reach them before that.
+  test("--no-orphans: SIGTERM reaches every package before the runner exits", async () => {
+    const r = await runFilterAndSignal("SIGTERM", ["--no-orphans"]);
+    expect(r.stdout).toContain("pkga wait: got SIGTERM");
+    expect(r.stdout).toContain("pkgb wait: got SIGTERM");
+    expect(r.exitCode).toBe(143);
   });
 });

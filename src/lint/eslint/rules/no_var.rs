@@ -250,11 +250,12 @@ fn oxlint_is_written_to(pat: Pat) -> bool {
 /// changes it in the same pass.
 fn fix_as_oxlint<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, declarations: List<'a, VarDecl<'a>>) -> Option<Fix> {
     let var = var_keyword(statement)?;
-    // A variable does not leave the function or the file.
+    // A variable does not leave the file. The default value of a parameter is outside of the body of the function.
     let around = match statement.parent() {
         _ if statement.is_exported() => Some(statement.span()),
         Node::Stmt(parent) => Some(parent.span()),
         Node::Case(case) => Some(case.span()),
+        Node::Func(func) => func.body_span(),
         _ => None,
     };
     if let Some(around) = around {

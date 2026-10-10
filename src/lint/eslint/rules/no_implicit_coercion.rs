@@ -79,6 +79,36 @@ fn is_numeric(e: Expr) -> bool {
         || called_name(e).is_some_and(|it| it.is_any(&["Number", "parseInt", "parseFloat"]))
 }
 
+/// `*`, `/`, `%`, `-`, `**`: what makes a number for oxlint.
+fn is_arithmetic(op: BinOp) -> bool {
+    matches!(op, BinOp::Mul | BinOp::Div | BinOp::Rem | BinOp::Sub | BinOp::Pow)
+}
+
+/// oxlint's `is_already_numeric`, which is in the place of `isNumeric` there: also a `bigint`, which `Number()` would change.
+fn is_already_numeric(e: Expr) -> bool {
+    match e.kind() {
+        ExprKind::BigInt(_) => true,
+        ExprKind::Binary { op, .. } => is_arithmetic(op),
+        ExprKind::Unary { op, .. } => matches!(op, UnOp::Plus | UnOp::Minus),
+        _ => is_numeric(e),
+    }
+}
+
+/// oxlint's `is_part_of_larger_binary_expression`: parentheses are a node of their own for it.
+fn is_operand_of_arithmetic(e: Expr) -> bool {
+    !e.is_parenthesized()
+        && matches!(e.parent(), Node::Expr(parent)
+            if matches!(parent.kind(), ExprKind::Binary { op, .. } if is_arithmetic(op)))
+}
+
+/// What oxlint takes for the operand of `1 * a` and `a * 1`.
+fn operand_for_oxlint<'a>(e: Expr<'a>, left: Expr<'a>, right: Expr<'a>) -> Option<Expr<'a>> {
+    if is_number(left, 1.0) && !is_already_numeric(right) {
+        return Some(right);
+    }
+    (is_number(right, 1.0) && !is_already_numeric(left) && !is_operand_of_arithmetic(e)).then_some(left)
+}
+
 /// ESLint's `getNonNumericOperand`.
 fn get_non_numeric_operand<'a>(left: Expr<'a>, right: Expr<'a>) -> Option<Expr<'a>> {
     [right, left].into_iter().find(|it| !is_binary_expression(*it) && !is_numeric(*it))
@@ -180,6 +210,7 @@ impl NoImplicitCoercion {
         let ExprKind::Unary { op, operand } = e.kind() else {
             return;
         };
+        let is_numeric = if cx.language().is_oxlint { is_already_numeric } else { is_numeric };
         match op {
             UnOp::Not if self.checks_double_negation => {
                 if let Some(inner) = operand_of(operand, UnOp::Not) {
@@ -223,7 +254,15 @@ impl NoImplicitCoercion {
         let ExprKind::Binary { op, left, right } = e.kind() else {
             return;
         };
+        let is_oxlint = cx.language().is_oxlint;
         match op {
+            BinOp::Mul if self.checks_multiplication && is_oxlint => {
+                if let Some(operand) = operand_for_oxlint(e, left, right) {
+                    report(e, &call_of("Number", operand), Remedy::Suggestion, cx);
+                }
+            }
+            // `(0)` is no `0` for it.
+            BinOp::Sub if is_oxlint && (right.is_parenthesized() || is_already_numeric(left)) => {}
             BinOp::Mul if self.checks_multiplication => {
                 if (is_number(left, 1.0) || is_number(right, 1.0))
                     && !is_multiply_by_fraction_of_one(e, right)

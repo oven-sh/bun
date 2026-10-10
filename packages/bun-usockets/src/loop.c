@@ -475,6 +475,66 @@ void us_internal_loop_post(struct us_loop_t *loop) {
 #define us_ioctl ioctl
 #endif
 
+/* Registers a connected fd on a listener as an accepted socket: same group,
+ * kind, ext size and TLS context, then the open callback. With
+ * `read_now`, reads at once because the first bytes are known to be waiting
+ * (the POLL_TYPE_SOCKET handler tolerates EWOULDBLOCK). Returns -1 if the fd
+ * could not be registered; it is closed then, so the peer sees a RST instead
+ * of a connection that silently never answers. Used by the accept loop and by
+ * us_listen_socket_adopt_fd. */
+static int us_internal_listen_socket_take_fd(struct us_listen_socket_t *listen_socket, LIBUS_SOCKET_DESCRIPTOR client_fd, struct bsd_addr_t *addr, int read_now) {
+    struct us_socket_group_t *accept_group = listen_socket->accept_group;
+    struct us_loop_t *loop = accept_group->loop;
+    struct us_poll_t *accepted_p = us_create_poll(loop, 0, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + listen_socket->socket_ext_size);
+    us_poll_init(accepted_p, client_fd, POLL_TYPE_SOCKET);
+    if (us_poll_start_rc(accepted_p, loop, listen_socket->accept_paused ? 0 : LIBUS_SOCKET_READABLE) != 0) {
+        /* EPOLL_CTL_ADD failed (e.g. ENOSPC). */
+        bsd_close_socket(client_fd);
+        us_poll_free(accepted_p, loop);
+        return -1;
+    }
+
+    struct us_socket_t *s = (struct us_socket_t *) accepted_p;
+
+    s->group = accept_group;
+    s->kind = listen_socket->accept_kind;
+    s->ssl = NULL;
+    s->connect_state = NULL;
+    s->timeout = 255;
+    s->long_timeout = 255;
+    s->flags.low_prio_state = 0;
+    s->flags.allow_half_open = listen_socket->s.flags.allow_half_open;
+    s->flags.is_paused = listen_socket->accept_paused;
+    s->flags.is_ipc = 0;
+    s->flags.is_closed = 0;
+    s->flags.adopted = 0;
+    s->flags.last_write_failed = 0;
+    s->unclassified_send_failures = 0;
+    s->read_eof = 0;
+    s->hangup_closes_unsent = 0;
+
+    /* We always use nodelay */
+    bsd_socket_nodelay(client_fd, 1);
+
+    us_internal_socket_group_link_socket(accept_group, s);
+
+    char *ip = addr ? bsd_addr_get_ip(addr) : NULL;
+    int ip_length = addr ? bsd_addr_get_ip_length(addr) : 0;
+    if (listen_socket->ssl_ctx) {
+        us_internal_ssl_attach(s, listen_socket->ssl_ctx, /*is_client*/ 0, NULL, listen_socket);
+        us_internal_ssl_on_open(s, 0, ip, ip_length);
+    } else {
+        us_dispatch_open(s, 0, ip, ip_length);
+    }
+    /* After socket adoption, track the new socket; the old one becomes invalid */
+    s = us_internal_socket_follow_adopted(s);
+
+    if (read_now && s && !us_socket_is_closed(s)) {
+        us_internal_dispatch_ready_poll((struct us_poll_t *) s, 0, 0, LIBUS_SOCKET_READABLE);
+    }
+    return 0;
+}
+
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events) {
     switch (us_internal_poll_type(p)) {
     case POLL_TYPE_CALLBACK: {
@@ -527,58 +587,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     /* Todo: stop timer if any */
 
                     do {
-                        struct us_poll_t *accepted_p = us_create_poll(loop, 0, sizeof(struct us_socket_t) - sizeof(struct us_poll_t) + listen_socket->socket_ext_size);
-                        us_poll_init(accepted_p, client_fd, POLL_TYPE_SOCKET);
-                        if (us_poll_start_rc(accepted_p, loop, listen_socket->accept_paused ? 0 : LIBUS_SOCKET_READABLE) != 0) {
-                            /* EPOLL_CTL_ADD failed (e.g. ENOSPC). Close the fd so the
-                             * peer sees a RST instead of a connection that silently
-                             * never answers. */
-                            bsd_close_socket(client_fd);
-                            us_poll_free(accepted_p, loop);
-                            continue;
-                        }
-
-                        struct us_socket_t *s = (struct us_socket_t *) accepted_p;
-
-                        s->group = accept_group;
-                        s->kind = listen_socket->accept_kind;
-                        s->ssl = NULL;
-                        s->connect_state = NULL;
-                        s->timeout = 255;
-                        s->long_timeout = 255;
-                        s->flags.low_prio_state = 0;
-                        s->flags.allow_half_open = listen_socket->s.flags.allow_half_open;
-                        s->flags.is_paused = listen_socket->accept_paused;
-                        s->flags.is_ipc = 0;
-                        s->flags.is_closed = 0;
-                        s->flags.adopted = 0;
-                        s->flags.last_write_failed = 0;
-                        s->unclassified_send_failures = 0;
-                        s->read_eof = 0;
-                        s->hangup_closes_unsent = 0;
-
-                        /* We always use nodelay */
-                        bsd_socket_nodelay(client_fd, 1);
-
-                        us_internal_socket_group_link_socket(accept_group, s);
-
-                        if (listen_socket->ssl_ctx) {
-                            us_internal_ssl_attach(s, listen_socket->ssl_ctx, /*is_client*/ 0, NULL, listen_socket);
-                            us_internal_ssl_on_open(s, 0, bsd_addr_get_ip(&addr), bsd_addr_get_ip_length(&addr));
-                        } else {
-                            us_dispatch_open(s, 0, bsd_addr_get_ip(&addr), bsd_addr_get_ip_length(&addr));
-                        }
-                        /* After socket adoption, track the new socket; the old one becomes invalid */
-                        s = us_internal_socket_follow_adopted(s);
-
                         /* When the kernel deferred the accept until data arrived (TCP_DEFER_ACCEPT
                          * on Linux, SO_ACCEPTFILTER on FreeBSD), the request/ClientHello is already
-                         * in the buffer. Dispatch readable now instead of returning to epoll just to
-                         * learn what we already know. The POLL_TYPE_SOCKET handler tolerates
-                         * EWOULDBLOCK for the rare case where the defer timed out with no data. */
-                        if (listen_socket->deferred_accept && s && !us_socket_is_closed(s)) {
-                            us_internal_dispatch_ready_poll((struct us_poll_t *) s, 0, 0, LIBUS_SOCKET_READABLE);
-                        }
+                         * in the buffer, so read it right away instead of returning to epoll. */
+                        us_internal_listen_socket_take_fd(listen_socket, client_fd, &addr, listen_socket->deferred_accept);
 
                         /* Exit accept loop if listen socket was closed in on_open or the request handler */
                         if (us_socket_is_closed(&listen_socket->s)) {
@@ -1131,3 +1143,18 @@ __attribute__((always_inline)) void *us_loop_ext(struct us_loop_t *loop) {
 }
 
 #undef us_ioctl
+
+/* Adopt an already-accepted, connected fd (for example one received over
+ * SCM_RIGHTS from a router that peeked at the ClientHello) into a listener,
+ * exactly as if the listener had accepted it. Bytes the peer already sent stay
+ * in the kernel buffer and are read at once. Returns 0, or -1 if the fd could
+ * not be registered (it is closed then). */
+int us_listen_socket_adopt_fd(struct us_listen_socket_t *listen_socket, LIBUS_SOCKET_DESCRIPTOR client_fd) {
+    struct bsd_addr_t addr;
+    int have_addr = bsd_remote_addr(client_fd, &addr) == 0;
+    bsd_set_nonblocking(client_fd);
+#ifndef _WIN32
+    fcntl(client_fd, F_SETFD, FD_CLOEXEC);
+#endif
+    return us_internal_listen_socket_take_fd(listen_socket, client_fd, have_addr ? &addr : NULL, 1);
+}

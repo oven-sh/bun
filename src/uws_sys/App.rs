@@ -469,6 +469,12 @@ impl<const SSL: bool> ListenSocket<SSL> {
             .get_local_port()
     }
 
+    #[inline]
+    pub fn adopt_fd(&mut self, fd: crate::LIBUS_SOCKET_DESCRIPTOR) -> bool {
+        bun_opaque::opaque_deref_mut(std::ptr::from_mut::<Self>(self).cast::<UwsListenSocket>())
+            .adopt_fd(fd)
+    }
+
     pub fn socket(&mut self) -> crate::socket::NewSocketHandler<SSL> {
         // SAFETY: ListenSocket<SSL> is layout-identical to us_socket_t on the C side
         // (a listen socket IS a us_socket_t).

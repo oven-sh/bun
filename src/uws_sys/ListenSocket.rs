@@ -2,7 +2,7 @@ use core::ffi::{c_char, c_int, c_void};
 
 use bun_boringssl_sys::OwnedSslCtx;
 
-use crate::{SocketGroup, SslCtx, us_socket_t};
+use crate::{LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SslCtx, us_socket_t};
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for a uSockets listen socket.
@@ -40,6 +40,12 @@ impl ListenSocket {
     pub fn group(&mut self) -> &mut SocketGroup {
         // SAFETY: self is a valid listen socket; C returns a non-null group.
         unsafe { &mut *us_listen_socket_group(self) }
+    }
+
+    /// Adopt an already-connected fd as if this listener had accepted it.
+    /// Returns false if it could not be registered (the fd is then closed).
+    pub fn adopt_fd(&mut self, fd: LIBUS_SOCKET_DESCRIPTOR) -> bool {
+        us_listen_socket_adopt_fd(self, fd) == 0
     }
 
     /// `ssl_ctx` is `SSL_CTX_up_ref`'d for the SNI node; the listener drops
@@ -93,6 +99,7 @@ impl ListenSocket {
 unsafe extern "C" {
     safe fn us_listen_socket_close(ls: &mut ListenSocket);
     safe fn us_listen_socket_group(ls: &mut ListenSocket) -> *mut SocketGroup;
+    safe fn us_listen_socket_adopt_fd(ls: &mut ListenSocket, fd: LIBUS_SOCKET_DESCRIPTOR) -> c_int;
     fn us_listen_socket_add_server_name(
         ls: *mut ListenSocket,
         hostname: *const c_char,

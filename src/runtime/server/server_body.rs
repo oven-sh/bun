@@ -1521,6 +1521,39 @@ where
         self.timeout(global, callframe)
     }
 
+    /// `server.adopt(fd)`: take an already-connected TCP socket (for example
+    /// one passed over SCM_RIGHTS by a hostname router) and serve it exactly
+    /// as if this server's listener had accepted it. Returns false when the
+    /// server has no listener or the fd could not be registered.
+    pub(crate) fn do_adopt(
+        &mut self,
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let arguments = callframe.arguments();
+        if arguments.is_empty() {
+            return Err(global.throw_not_enough_arguments("adopt", 1, 0));
+        }
+        let fd = crate::node::util::validators::validate_int32(
+            global,
+            arguments[0],
+            "fd",
+            Some(0),
+            None,
+        )?;
+        let Some(listener) = self.listener else {
+            // The server owns `fd` once adopt() is called, so close it rather than leak it.
+            #[cfg(not(windows))]
+            let _ = bun_sys::FdExt::close_allowing_bad_file_descriptor(
+                bun_sys::Fd::from_native(fd),
+                None,
+            );
+            return Ok(JSValue::FALSE);
+        };
+        let ok = bun_opaque::opaque_deref_mut(listener).adopt_fd(fd as _);
+        Ok(JSValue::from(ok))
+    }
+
     pub(crate) fn request_ip(&self, request: &Request) -> JsResult<JSValue> {
         if self.config.address.is_unix() {
             return Ok(JSValue::NULL);

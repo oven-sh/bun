@@ -73,6 +73,18 @@ export function parseHandle(target, serialized, fd) {
       emit(target, serialized.msg, socket);
       return;
     }
+    case "fd": {
+      // A raw connected descriptor for `server.adopt(fd)` (a hostname router
+      // hands over the connection after peeking the ClientHello). Nothing
+      // reads it here, so the ClientHello stays in the kernel buffer.
+      // Whoever handles "message" owns the descriptor; with no handler, close it.
+      if (target === null && process.listenerCount("message") === 0) {
+        require("node:fs").closeSync(fd);
+        return;
+      }
+      emit(target, serialized.msg, fd);
+      return;
+    }
     case "dgram.Native": {
       // A non-reading UDP handle (cluster-shared dgram socket): wrap the
       // received descriptor so the cluster child can adopt it.

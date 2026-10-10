@@ -715,6 +715,7 @@ int us_socket_ipc_write_fd(us_socket_r s, const char *data, int length, int fd) 
 void us_socket_sendfile_needs_more(us_socket_r s) nonnull_fn_decl;
 void *us_listen_socket_ext(struct us_listen_socket_t *ls) nonnull_fn_decl;
 LIBUS_SOCKET_DESCRIPTOR us_listen_socket_get_fd(struct us_listen_socket_t *ls) nonnull_fn_decl;
+int us_listen_socket_adopt_fd(struct us_listen_socket_t *ls, LIBUS_SOCKET_DESCRIPTOR fd) nonnull_fn_decl;
 int us_listen_socket_port(struct us_listen_socket_t *ls) nonnull_fn_decl;
 struct us_socket_group_t *us_listen_socket_group(struct us_listen_socket_t *ls) nonnull_fn_decl;
 /* Walk a group's live listeners. The list is the source of truth — anything

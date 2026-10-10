@@ -48,6 +48,10 @@ function generate(name) {
         fn: "doTimeout",
         length: 2,
       },
+      adopt: {
+        fn: "doAdopt",
+        length: 1,
+      },
       port: {
         getter: "getPort",
       },

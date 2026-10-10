@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, nodeExe, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, libcPathForDlopen, nodeExe, tempDir, tls } from "harness";
+import { join } from "node:path";
+import { rawFdIpc } from "./fixtures/raw-fd-ipc.js";
 
 const node = nodeExe();
 
@@ -813,5 +815,63 @@ const server = net.createServer().listen(0, '127.0.0.1', () => {
       stderr: "",
     });
     expect(exitCode).toBe(0);
+  });
+});
+
+// A hostname router hands a connected socket to a worker as NODE_HANDLE type "fd" (for
+// `server.adopt(fd)`). The receiver owns that descriptor only through a "message" listener;
+// without one it must be closed, or each such message leaks an fd.
+describe.skipIf(!isLinux)('raw descriptor over IPC (NODE_HANDLE type "fd")', () => {
+  const fixture = join(import.meta.dir, "fixtures", "raw-fd-ipc.js");
+
+  test.concurrent("a child with no 'message' listener closes it", async () => {
+    const ipc = rawFdIpc(libcPathForDlopen());
+    const [parentEnd, childEnd] = ipc.socketpair();
+    const [r, w] = ipc.pipe();
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `process.on("disconnect", () => process.exit(0)); setInterval(() => {}, 1 << 30);`],
+        env: { ...bunEnv, NODE_CHANNEL_FD: "3" },
+        stdio: ["ignore", "pipe", "pipe", childEnd],
+      });
+      ipc.close(childEnd);
+      ipc.sendFd(parentEnd, w, "conn");
+      ipc.close(w);
+      const state = await ipc.writeEndState(r, 5000);
+      ipc.close(parentEnd);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ state, stdout, stderr, exitCode }).toEqual({ state: "closed", stdout: "", stderr: "", exitCode: 0 });
+    } finally {
+      ipc.close(r);
+    }
+  });
+
+  test.concurrent("a parent with no 'message' listener closes it", async () => {
+    using dir = tempDir("ipc-raw-fd-parent", {
+      "parent.js": `
+const { fork } = require("node:child_process");
+const child = fork("child.js", [${JSON.stringify(libcPathForDlopen())}]);
+child.on("exit", code => process.exit(code));
+`,
+      "child.js": `
+import { rawFdIpc } from ${JSON.stringify(fixture)};
+const ipc = rawFdIpc(process.argv[2]);
+const [r, w] = ipc.pipe();
+// fork() puts the channel at fd 3 and removes NODE_CHANNEL_FD from the env once read.
+ipc.sendFd(3, w, "conn");
+ipc.close(w);
+console.log(await ipc.writeEndState(r, 5000));
+process.exit(0);
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "closed\n", stderr: "", exitCode: 0 });
   });
 });

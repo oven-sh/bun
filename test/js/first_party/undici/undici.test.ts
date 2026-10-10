@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { Readable } from "node:stream";
-import { request, fetch as undiciFetch } from "undici";
+import { errors, request, fetch as undiciFetch } from "undici";
 
 import { createServer } from "../../../http-test-server";
 
@@ -341,6 +341,21 @@ describe("undici", () => {
     //   const json = (await body.json()) as { form: { foo: string } };
     //   expect(json.form.foo).toBe("bar");
     // });
+  });
+});
+
+describe("undici timeout errors", () => {
+  it.each([
+    [errors.ConnectTimeoutError, "ConnectTimeoutError", "UND_ERR_CONNECT_TIMEOUT", "Connect Timeout Error"],
+    [errors.HeadersTimeoutError, "HeadersTimeoutError", "UND_ERR_HEADERS_TIMEOUT", "Headers Timeout Error"],
+    [errors.BodyTimeoutError, "BodyTimeoutError", "UND_ERR_BODY_TIMEOUT", "Body Timeout Error"],
+  ])("matches %s metadata", (ErrorClass, name, code, fallbackMessage) => {
+    const fallback = new ErrorClass();
+    expect(fallback).toBeInstanceOf(errors.UndiciError);
+    expect(fallback).toMatchObject({ name, code, message: fallbackMessage });
+
+    const explicit = new ErrorClass("custom timeout");
+    expect(explicit).toMatchObject({ name, code, message: "custom timeout" });
   });
 });
 

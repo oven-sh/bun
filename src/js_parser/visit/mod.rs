@@ -772,7 +772,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 } else {
                     AssignTarget::None
                 };
-                self.stmt_expr_value = st.value.data;
                 self.visit_expr_in_out(
                     &mut st.value,
                     ExprIn {

@@ -33,12 +33,8 @@
 #include "config.h"
 #include "Performance.h"
 
-// #include "Document.h"
-// #include "DocumentLoader.h"
 #include "Event.h"
-// #include "EventLoop.h"
 #include "EventNames.h"
-// #include "LocalFrame.h"
 #include "PerformanceEntry.h"
 #include "PerformanceMarkOptions.h"
 #include "PerformanceMeasureOptions.h"
@@ -107,8 +103,6 @@ Vector<RefPtr<PerformanceEntry>> Performance::getEntries() const
 
     // if (m_navigationTiming)
     //     entries.append(m_navigationTiming);
-
-    // entries.appendVector(m_resourceTimingBuffer);
 
     if (m_userTiming) {
         entries.appendVector(m_userTiming->getMarks());

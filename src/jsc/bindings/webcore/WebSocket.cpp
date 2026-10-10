@@ -296,7 +296,6 @@ ExceptionOr<Ref<WebSocket>> WebSocket::create(ScriptExecutionContext& context, c
         return socket;
 
     auto result = socket->connect(url, protocols, WTF::move(headers));
-    // auto result = socket->connect(url, protocols);
 
     if (result.hasException())
         return result.releaseException();
@@ -412,13 +411,11 @@ size_t WebSocket::memoryCost() const
 
 __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headersInit, std::optional<ProxyConfig>&& proxyConfig)
 {
-    // LOG(Network, "WebSocket %p connect() url='%s'", this, url.utf8().data());
     m_url = URL { url };
 
     ASSERT(scriptExecutionContext());
 
     if (!m_url.isValid()) {
-        // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
         m_state = CLOSED;
         return Exception { SyntaxError, makeString("Invalid url for WebSocket "_s, m_url.stringCenterEllipsizedToLength()) };
     }
@@ -427,12 +424,10 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
     bool is_secure = m_url.protocolIs("wss"_s) || m_url.protocolIs("https"_s) || m_url.protocolIs("wss+unix"_s);
 
     if (!m_url.protocolIs("http"_s) && !m_url.protocolIs("ws"_s) && !is_secure && !is_unix) {
-        // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
         m_state = CLOSED;
         return Exception { SyntaxError, makeString("Wrong url scheme for WebSocket "_s, m_url.stringCenterEllipsizedToLength()) };
     }
     if (m_url.hasFragmentIdentifier()) {
-        // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
         m_state = CLOSED;
         return Exception { SyntaxError, makeString("URL has fragment component "_s, m_url.stringCenterEllipsizedToLength()) };
     }
@@ -446,7 +441,6 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
     // comply with WebSocket API specification, but it seems to be the only reasonable way to handle this conflict.
     for (auto& protocol : protocols) {
         if (!isValidProtocolString(protocol)) {
-            // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
             m_state = CLOSED;
             return Exception { SyntaxError, makeString("Wrong protocol for WebSocket '"_s, encodeProtocolString(protocol), "'"_s) };
         }
@@ -454,7 +448,6 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
     HashSet<String> visited;
     for (auto& protocol : protocols) {
         if (!visited.add(protocol).isNewEntry) {
-            // context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, );
             m_state = CLOSED;
             return Exception { SyntaxError, makeString("WebSocket protocols contain duplicates:"_s, encodeProtocolString(protocol), "'"_s) };
         }
@@ -672,7 +665,6 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
 
 ExceptionOr<void> WebSocket::send(const String& message)
 {
-    // LOG(Network, "WebSocket %p send() Sending String '%s'", this, message.utf8().data());
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
     // No exception is raised if the connection was once established but has subsequently been closed.
@@ -691,7 +683,6 @@ ExceptionOr<void> WebSocket::send(const String& message)
 
 ExceptionOr<void> WebSocket::send(ArrayBuffer& binaryData)
 {
-    // LOG(Network, "WebSocket %p send() Sending ArrayBuffer %p", this, &binaryData);
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
     if (m_state == CLOSING || m_state == CLOSED) {
@@ -710,8 +701,6 @@ ExceptionOr<void> WebSocket::send(ArrayBuffer& binaryData)
 
 ExceptionOr<void> WebSocket::send(ArrayBufferView& arrayBufferView)
 {
-    // LOG(Network, "WebSocket %p send() Sending ArrayBufferView %p", this, &arrayBufferView);
-
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
     if (m_state == CLOSING || m_state == CLOSED) {
@@ -757,7 +746,6 @@ void WebSocket::sendWebSocketData(const char* baseAddress, size_t length, const 
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client: {
         Bun__WebSocketClient__writeBinaryData(this->m_connectedWebSocket.client, reinterpret_cast<const unsigned char*>(baseAddress), length, static_cast<uint8_t>(op));
-        // this->m_connectedWebSocket.client->send({ baseAddress, length }, opCode);
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
@@ -776,7 +764,6 @@ void WebSocket::sendWebSocketString(const String& message, const Opcode op)
     case ConnectedWebSocketKind::Client: {
         auto slice = Zig::toEncodedSlice(message);
         Bun__WebSocketClient__writeString(this->m_connectedWebSocket.client, &slice, static_cast<uint8_t>(op));
-        // this->m_connectedWebSocket.client->send({ baseAddress, length }, opCode);
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
@@ -876,8 +863,6 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
 
 ExceptionOr<void> WebSocket::terminate()
 {
-    // LOG(Network, "WebSocket %p terminate()", this);
-
     if (m_state == CLOSING || m_state == CLOSED)
         return {};
     if (m_state == CONNECTING) {
@@ -984,7 +969,6 @@ ExceptionOr<void> WebSocket::ping()
 
 ExceptionOr<void> WebSocket::ping(const String& message)
 {
-    // LOG(Network, "WebSocket %p ping() Sending String '%s'", this, message.utf8().data());
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
 
@@ -1007,7 +991,6 @@ ExceptionOr<void> WebSocket::ping(const String& message)
 
 ExceptionOr<void> WebSocket::ping(ArrayBuffer& binaryData)
 {
-    // LOG(Network, "WebSocket %p ping() Sending ArrayBuffer %p", this, &binaryData);
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
 
@@ -1029,8 +1012,6 @@ ExceptionOr<void> WebSocket::ping(ArrayBuffer& binaryData)
 
 ExceptionOr<void> WebSocket::ping(ArrayBufferView& arrayBufferView)
 {
-    // LOG(Network, "WebSocket %p ping() Sending ArrayBufferView %p", this, &arrayBufferView);
-
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
 
@@ -1070,7 +1051,6 @@ ExceptionOr<void> WebSocket::pong()
 
 ExceptionOr<void> WebSocket::pong(const String& message)
 {
-    // LOG(Network, "WebSocket %p pong() Sending String '%s'", this, message.utf8().data());
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
 
@@ -1093,7 +1073,6 @@ ExceptionOr<void> WebSocket::pong(const String& message)
 
 ExceptionOr<void> WebSocket::pong(ArrayBuffer& binaryData)
 {
-    // LOG(Network, "WebSocket %p pong() Sending ArrayBuffer %p", this, &binaryData);
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
 
@@ -1115,8 +1094,6 @@ ExceptionOr<void> WebSocket::pong(ArrayBuffer& binaryData)
 
 ExceptionOr<void> WebSocket::pong(ArrayBufferView& arrayBufferView)
 {
-    // LOG(Network, "WebSocket %p pong() Sending ArrayBufferView %p", this, &arrayBufferView);
-
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
 
@@ -1209,8 +1186,6 @@ void WebSocket::didConnect()
 {
     // from new WebSocket() -> connect()
 
-    // LOG(Network, "WebSocket %p didConnect()", this);
-    // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this] {
     if (m_state == CLOSED)
         return;
     if (m_state != CONNECTING) {
@@ -1244,8 +1219,6 @@ void WebSocket::didConnect()
 
 void WebSocket::didReceiveMessage(String&& message)
 {
-    // LOG(Network, "WebSocket %p didReceiveMessage() Text message '%s'", this, message.utf8().data());
-    // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, message = WTF::move(message)]() mutable {
     if (m_state != OPEN)
         return;
 
@@ -1273,14 +1246,10 @@ void WebSocket::didReceiveMessage(String&& message)
             ws.dispatchEvent(MessageEvent::create(message_, ws.m_url.string()));
         });
     }
-
-    // });
 }
 
 void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData)
 {
-    // LOG(Network, "WebSocket %p didReceiveBinaryData() %u byte binary message", this, static_cast<unsigned>(binaryData.size()));
-    // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, binaryData = WTF::move(binaryData)]() mutable {
     if (m_state != OPEN)
         return;
 
@@ -1359,7 +1328,6 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
         break;
     }
     }
-    // });
 }
 
 void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, std::span<const uint8_t> body)
@@ -1414,8 +1382,6 @@ void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const
 
 void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, bool isConnectionError)
 {
-    // LOG(Network, "WebSocket %p didReceiveErrorMessage()", this);
-    // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, reason = WTF::move(reason)] {
     if (m_state == CLOSED)
         return;
     const bool wasConnecting = m_state == CONNECTING;
@@ -1454,21 +1420,16 @@ void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::
 
 void WebSocket::didStartClosingHandshake()
 {
-    // LOG(Network, "WebSocket %p didStartClosingHandshake()", this);
-    // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this] {
     if (m_state == CLOSED)
         return;
     m_state = CLOSING;
-    // });
 }
 
 void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason)
 {
-    // LOG(Network, "WebSocket %p didClose()", this);
     if (this->m_connectedWebSocketKind == ConnectedWebSocketKind::None)
         return;
 
-    // queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [this, unhandledBufferedAmount, closingHandshakeCompletion, code, reason] {
     bool wasClean = m_state == CLOSING && !unhandledBufferedAmount && code != 0; // WebSocketChannel::CloseEventCodeAbnormalClosure;
     m_bufferedAmount = unhandledBufferedAmount;
     ASSERT(scriptExecutionContext());

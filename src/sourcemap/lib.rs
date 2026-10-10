@@ -90,11 +90,7 @@ pub enum SourceMapLoadHint {
 pub enum ParseUrlResultHint {
     MappingsOnly,
     SourceOnly(u32),
-    All {
-        line: i32,
-        column: i32,
-        include_names: bool,
-    },
+    All { line: i32, column: i32 },
 }
 
 #[derive(Default)]
@@ -940,56 +936,19 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
     };
 
     let map: Option<Arc<ParsedSourceMap>> = if !source_only {
-        let mut map_data = match mapping::parse(
+        let map_data = match mapping::parse(
             mappings_vlq,
             None,
             i32::MAX,
             i32::MAX as usize,
             mapping::ParseOptions {
-                allow_names: matches!(
-                    hint,
-                    ParseUrlResultHint::All {
-                        include_names: true,
-                        ..
-                    }
-                ),
+                allow_names: false,
                 sort: true,
             },
         ) {
             Ok(x) => x,
             Err(fail) => return Err(fail.err),
         };
-
-        if let ParseUrlResultHint::All {
-            include_names: true,
-            ..
-        } = hint
-        {
-            if matches!(map_data.mappings.r#impl, mapping::ListValue::WithNames(_)) {
-                if let Some(names) = json.get(b"names") {
-                    if let bun_ast::ExprData::EArrayJSON(arr) = names.data {
-                        let arr = arr.get();
-                        let mut names_list: Vec<bun_semver::String> =
-                            Vec::with_capacity(arr.items().len());
-                        let mut names_buffer: Vec<u8> = Vec::new();
-
-                        for item in arr.items() {
-                            let Some(str) = item.as_str() else {
-                                return Err(crate::Error::InvalidSourceMap);
-                            };
-
-                            names_list.push(bun_semver::String::init_append_if_needed(
-                                &mut names_buffer,
-                                str,
-                            )?);
-                        }
-
-                        map_data.mappings.names = names_list.into_boxed_slice();
-                        map_data.mappings.names_buffer = names_buffer;
-                    }
-                }
-            }
-        }
 
         let mut psm = map_data;
         psm.external_source_names = source_paths_slice.unwrap();

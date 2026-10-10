@@ -1,11 +1,9 @@
-use bun_collections::VecExt;
 use core::mem::size_of;
 
 use bun_ast::Loc;
 use bun_collections::MultiArrayList;
 use bun_core::{self, Utf8Bytes};
 use bun_core::{declare_scope, scoped_log};
-use bun_semver::String as SemverString;
 
 use crate::vlq::decode as decode_vlq;
 use crate::{LineColumnOffset, Ordinal, ParseFail, ParseResult, ParsedSourceMap};
@@ -107,8 +105,6 @@ impl ListValue {
 #[derive(Default)]
 pub struct List {
     pub(crate) r#impl: ListValue,
-    pub(crate) names: Box<[SemverString]>,
-    pub(crate) names_buffer: Vec<u8>,
 }
 
 impl List {
@@ -239,31 +235,10 @@ impl List {
         both_lists!(&self.r#impl, |list| list.items_source_index())
     }
 
-    // `deinit` dropped: all fields (`MultiArrayList`, `Vec<u8>`, `Box<[SemverString]>`)
-    // own their storage and free on Drop.
-
-    pub fn get_name(&self, index: i32) -> Option<&[u8]> {
-        if index < 0 {
-            return None;
-        }
-        let i = usize::try_from(index).expect("int cast");
-
-        if i >= self.names.len() {
-            return None;
-        }
-
-        if matches!(self.r#impl, ListValue::WithNames(_)) {
-            let str: &SemverString = &self.names[i];
-            return Some(str.slice(self.names_buffer.slice()));
-        }
-
-        None
-    }
+    // `deinit` dropped: the `MultiArrayList` owns its storage and frees on Drop.
 
     pub(crate) fn memory_cost(&self) -> usize {
         self.r#impl.memory_cost()
-            + self.names_buffer.memory_cost()
-            + (self.names.len() * size_of::<SemverString>())
     }
 
     pub(crate) fn ensure_total_capacity(

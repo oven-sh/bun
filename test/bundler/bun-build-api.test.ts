@@ -900,6 +900,85 @@ describe("Bun.build", () => {
   //   throw new Error("test was not fully written");
   // });
 
+  // Two callers each await a build, write a new file into the directory that
+  // build listed, and await a build that imports it. A build that reuses the
+  // earlier listing fails to resolve the file ("missing") or, when an older file
+  // matches the same import, bundles the older one ("shadow": .ts comes before
+  // .js in the extension order). The listing used to stay until the bundle
+  // thread found its queue empty. One caller alone queues its next build before
+  // that on some rounds only, at a rate that depends on the machine. With two
+  // callers a build is queued behind nearly every build.
+  //
+  // Not concurrent: one bundle thread runs every Bun.build of this process, so
+  // these twelve builds would wait behind the builds of the tests around them.
+  test("a build sees a file written before the call while a second caller builds", async () => {
+    const rounds = [0, 1, 2];
+    const files: Record<string, string> = { "package.json": `{}`, "first.js": `export default 1;\n` };
+    for (const round of rounds) {
+      files[`missing-${round}.js`] = `import value from "./added-${round}.js";\nconsole.log(value);\n`;
+      files[`shadow-${round}.js`] = `import value from "./replaced-${round}";\nconsole.log(value);\n`;
+      files[`replaced-${round}.js`] = `export default "old";\n`;
+    }
+    using dir = tempDir("rebuild-sees-new-file", files);
+    const root = String(dir);
+
+    async function caller(form: "missing" | "shadow") {
+      const bundled: string[] = [];
+      for (const round of rounds) {
+        await Bun.build({ entrypoints: [join(root, "first.js")] });
+        const added = form === "missing" ? `added-${round}.js` : `replaced-${round}.ts`;
+        writeFileSync(join(root, added), `export default "new";\n`);
+        const build = await Bun.build({ entrypoints: [join(root, `${form}-${round}.js`)], throw: false });
+        if (build.success) {
+          bundled.push(/"(old|new)"/.exec(await build.outputs[0].text())?.[1] ?? "neither");
+        } else {
+          bundled.push(build.logs[0].message);
+        }
+      }
+      return bundled;
+    }
+
+    const [missing, shadow] = await Promise.all([caller("missing"), caller("shadow")]);
+    expect({ missing, shadow }).toEqual({
+      missing: ["new", "new", "new"],
+      shadow: ["new", "new", "new"],
+    });
+  });
+
+  // A script writes a file next to itself and then calls Bun.build for the first
+  // time. The runtime listed that directory, at generation 0, when it resolved
+  // the script. The first build of a process ran at generation 0 too when it was
+  // queued before the bundle thread first looked at its queue, and it then
+  // reused the runtime's listing. That was about half of all processes on many
+  // cores and nearly all on one or two, so this starts more than one process.
+  // They run one after another: side by side they lost that race less often.
+  test("the first build of a process sees a file written after the runtime listed the directory", async () => {
+    const processes = isDebug || isASAN ? 2 : 5;
+    for (let i = 0; i < processes; i++) {
+      using dir = tempDir("first-build-sees-new-file", {
+        "package.json": `{}`,
+        "entry.js": `import value from "./added.js";\nconsole.log(value);\n`,
+        "driver.ts": `
+          import { writeFileSync } from "node:fs";
+          writeFileSync("added.js", 'export default "new";\\n');
+          const build = await Bun.build({ entrypoints: ["./entry.js"], throw: false });
+          console.log(build.success ? "built" : build.logs[0].message);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "driver.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("built\n");
+      expect(exitCode).toBe(0);
+    }
+  });
+
   test.concurrent("loader map with an empty-string key is ignored without leaving uninitialized slots", async () => {
     // `JSPropertyIterator` skips empty-name properties, but `loader_names` was being
     // indexed by the property position instead of a dense counter, leaving garbage in
@@ -951,6 +1030,91 @@ describe("Bun.build", () => {
     }
     expect(exitCode).toBe(0);
     Bun.gc(true);
+  });
+
+  // The bundle thread hands every build a resolver generation, and a build
+  // re-reads the directory listings cached by builds of an older generation. The
+  // generation used to advance only when the thread found its queue empty, so as
+  // long as other Bun.build() calls kept the queue non-empty, every build reused
+  // the listings read by the first one and never saw files created or removed
+  // since. The driver keeps the queue non-empty deterministically: behind every
+  // app build it queues a build that parks the thread in an async onLoad until
+  // the next app build has been queued.
+  test.concurrent("rebuilding sees directory changes while other builds keep the bundle thread busy", async () => {
+    using dir = tempDir("rebuild-while-bundle-thread-busy", {
+      "package.json": `{}`,
+      "driver.ts": `
+        const parkedBuilds: ReturnType<typeof Bun.build>[] = [];
+        let releaseParkedBuild = () => {};
+
+        // Queues a build whose onLoad does not return until the next call
+        // (or the final release below), then lets the previously parked build
+        // finish. Everything queued in between therefore sits behind a build the
+        // thread cannot finish yet, and the thread never sees an empty queue.
+        function parkBundleThread() {
+          const gate = Promise.withResolvers<void>();
+          parkedBuilds.push(
+            Bun.build({
+              entrypoints: ["./parked/entry.js"],
+              throw: false,
+              plugins: [
+                {
+                  name: "park",
+                  setup(build) {
+                    build.onResolve({ filter: /^parked:/ }, args => ({ path: args.path, namespace: "parked" }));
+                    build.onLoad({ filter: /.*/, namespace: "parked" }, async () => {
+                      await gate.promise;
+                      return { contents: "export default 1;", loader: "js" };
+                    });
+                  },
+                },
+              ],
+            }),
+          );
+          const releasePrevious = releaseParkedBuild;
+          releaseParkedBuild = gate.resolve;
+          releasePrevious();
+        }
+
+        async function buildApp() {
+          const build = Bun.build({ entrypoints: ["./app/entry.js"], throw: false });
+          parkBundleThread();
+          const result = await build;
+          return { success: result.success, messages: result.logs.map(log => log.message) };
+        }
+
+        parkBundleThread();
+        const before = await buildApp();
+        await Bun.write("app/mod.js", "export const value = 1;\\n");
+        const afterAdd = await buildApp();
+        await Bun.file("app/mod.js").delete();
+        const afterRemove = await buildApp();
+        releaseParkedBuild();
+        const parked = (await Promise.all(parkedBuilds)).map(result => result.success);
+        console.log(JSON.stringify({ before, afterAdd, afterRemove, parked }));
+      `,
+      "app/entry.js": `import { value } from "./mod.js";\nconsole.log(value);\n`,
+      "parked/entry.js": `import "parked:mod";\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "driver.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      before: { success: false, messages: ['Could not resolve: "./mod.js"'] },
+      afterAdd: { success: true, messages: [] },
+      // A listing still holding the removed file would fail later, while
+      // reading it ("File not found"), rather than here in the resolver.
+      afterRemove: { success: false, messages: ['Could not resolve: "./mod.js"'] },
+      parked: [true, true, true, true],
+    });
+    expect(exitCode).toBe(0);
   });
 
   // https://github.com/oven-sh/bun/issues/33099

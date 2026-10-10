@@ -186,6 +186,67 @@ test.concurrent("a dropped connection rejects the committed navigation of every 
   });
 });
 
+// An explicit backend.url never falls back to spawning (only an auto-detected
+// one does). The WebSocket connects in the background, so the constructor
+// cannot throw for it; the first awaited operation rejects, naming the URL.
+test.concurrent(
+  "an explicit backend.url that refuses the upgrade rejects the first operation with the URL",
+  async () => {
+    const result = await runScenario(`
+    // Answers every request with a plain 404, so the upgrade never completes.
+    const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response(null, { status: 404 }) });
+    const url = "ws://127.0.0.1:" + server.port + "/devtools/browser/nope";
+    let constructed;
+    try {
+      var view = new Bun.WebView({ backend: { type: "chrome", url }, width: 100, height: 100 });
+      constructed = true;
+    } catch (e) {
+      constructed = "threw: " + e.message;
+    }
+    const navigate = await view.navigate("http://mock/1").then(() => "resolved", e => "rejected: " + e.message);
+    console.log(JSON.stringify({ constructed, navigate: navigate.replace(url, "<url>"), loading: view.loading }));
+    server.stop(true);
+  `);
+    expect(result).toEqual({
+      constructed: true,
+      navigate: "rejected: Failed to connect to Chrome at <url>",
+      loading: false,
+    });
+  },
+);
+
+// Nothing is in flight when that connection dies, so no promise carries the
+// reason. Every later call reports it, instead of a bare "view is closed".
+test.concurrent("a connection that dies with nothing pending names itself on later calls", async () => {
+  const result = await runScenario(`
+    const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response(null, { status: 404 }) });
+    const url = "ws://127.0.0.1:" + server.port + "/devtools/browser/nope";
+    const view = new Bun.WebView({ backend: { type: "chrome", url }, width: 100, height: 100 });
+
+    // Poll until the view has been closed by the failed connection. Until
+    // then navigate() is accepted and rejects asynchronously; once closed it
+    // throws synchronously, which is the state under test.
+    const attempt = () => {
+      try {
+        return view.navigate("http://mock/1").then(() => "resolved", e => "rejected: " + e.message);
+      } catch (e) {
+        return "threw: " + e.message;
+      }
+    };
+    let closed;
+    for (;;) {
+      closed = await attempt();
+      if (closed.startsWith("threw: ")) break;
+    }
+    const next = await attempt();
+    console.log(JSON.stringify({ closed: closed.replace(url, "<url>"), next: next.replace(url, "<url>") }));
+    server.stop(true);
+  `);
+  // Both report the endpoint, not a bare "view is closed".
+  const named = "threw: Invalid state: WebView.navigate: Failed to connect to Chrome at <url>";
+  expect(result).toEqual({ closed: named, next: named });
+});
+
 // The connection stays up but the view's own page goes away. The promise
 // was already rejected on these paths; they also have to clear loading.
 test.concurrent.each([

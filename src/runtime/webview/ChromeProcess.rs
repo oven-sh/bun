@@ -28,8 +28,8 @@ use std::io::Write as _;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core::ZStr;
 use bun_core::{self, ZBox, env_var, getenv_z, strings, zstr};
-use bun_jsc::JSGlobalObject;
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{JSGlobalObject, JSValue};
 #[cfg(windows)]
 use bun_libuv_sys::{UvHandle as _, UvStream as _};
 use bun_output::{declare_scope, scoped_log};
@@ -45,6 +45,7 @@ use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 use bun_sys::{self, Fd, FdExt as _};
+use bun_sys_jsc::ErrorJsc as _;
 use bun_which::which;
 
 declare_scope!(Chrome, hidden);
@@ -115,11 +116,12 @@ extern "C" fn Bun__Chrome__retire() {
 }
 
 /// Returns the parent's socketpair fd (POSIX, owned by usockets from then on), 0 (Windows), or -1 on failure.
+/// On failure `*error_out` gets an Error when there is more to say than "no Chrome found".
 ///
 /// # Safety
 /// `user_data_dir` and `path` must each be null or point to a valid
 /// NUL-terminated string. `extra_argv` must be null or point to
-/// `extra_argv_len` valid NUL-terminated string pointers.
+/// `extra_argv_len` valid NUL-terminated string pointers. `error_out` is writable.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__Chrome__ensure(
     global: &JSGlobalObject,
@@ -129,6 +131,7 @@ unsafe extern "C" fn Bun__Chrome__ensure(
     extra_argv_len: u32,
     stdout_inherit: bool,
     stderr_inherit: bool,
+    error_out: *mut JSValue,
 ) -> i32 {
     {
         if !INSTANCE.load(Ordering::Relaxed).is_null() {
@@ -154,7 +157,7 @@ unsafe extern "C" fn Bun__Chrome__ensure(
             // SAFETY: caller passes a valid NUL-terminated string when non-null; null is handled above.
             Some(unsafe { bun_core::ffi::cstr(path) })
         };
-        match spawn(
+        let error = match spawn(
             vm,
             user_data_dir,
             path,
@@ -162,12 +165,23 @@ unsafe extern "C" fn Bun__Chrome__ensure(
             stdout_inherit,
             stderr_inherit,
         ) {
-            Ok(rc) => rc,
+            Ok(Ok(rc)) => return rc,
+            Ok(Err(exec_error)) => {
+                scoped_log!(Chrome, "spawn failed: {}", exec_error);
+                exec_error.to_js(global).unwrap_or_default()
+            }
+            Err(crate::Error::ChromeNotFound) => {
+                scoped_log!(Chrome, "spawn failed: no Chrome found");
+                return -1;
+            }
             Err(err) => {
                 scoped_log!(Chrome, "spawn failed: {}", err.name());
-                -1
+                global.create_error_instance(format_args!("Failed to start Chrome: {err}"))
             }
-        }
+        };
+        // SAFETY: caller contract; `error_out` points to a live JSValue slot.
+        unsafe { *error_out = error };
+        -1
     }
 }
 
@@ -476,7 +490,7 @@ fn find_playwright_shell() -> Option<ZBox> {
     None
 }
 
-/// Returns `Bun__Chrome__ensure`'s success value.
+/// Returns `Bun__Chrome__ensure`'s success value; the inner error is the chosen binary failing to start.
 fn spawn(
     vm: *mut VirtualMachine,
     user_data_dir: Option<&CStr>,
@@ -484,7 +498,7 @@ fn spawn(
     extra_argv: &[*const c_char],
     stdout_inherit: bool,
     stderr_inherit: bool,
-) -> crate::Result<i32> {
+) -> crate::Result<bun_sys::Result<i32>> {
     {
         let chrome = find_chrome(explicit_path).ok_or(crate::Error::ChromeNotFound)?;
         scoped_log!(
@@ -601,14 +615,17 @@ fn spawn(
         // SAFETY: `argv`/`env` are local null-terminated C-string arrays with
         // argv[0] non-null; valid for this call.
         let spawned =
-            unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr().cast()) }??;
+            match unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr().cast()) }? {
+                Ok(spawned) => spawned,
+                Err(err) => return Ok(Err(err.with_path(chrome.as_bytes()))),
+            };
         #[cfg(windows)]
         let mut spawned = spawned;
 
         // Keeping our copies of the child's ends would mask Chrome's death (no EOF).
         endpoints.close_child_ends();
 
-        endpoints.attach(spawned.to_process_handle(event_loop))
+        Ok(Ok(endpoints.attach(spawned.to_process_handle(event_loop))?))
     }
 }
 

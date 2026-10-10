@@ -2,7 +2,10 @@ use bun_lint::prelude::*;
 use bun_lint_oxlint::ast_util::is_reference_to_global_variable;
 
 /// Enforce the use of the radix argument when using `parseInt()`.
-pub struct Radix;
+pub struct Radix {
+    /// `"as-needed"`, which ESLint 10 ignores.
+    is_as_needed: bool,
+}
 
 const MISSING_PARAMETERS: Message = Message::new("missingParameters", "Missing parameters.");
 const MISSING_RADIX: Message = Message::new("missingRadix", "Missing radix parameter.");
@@ -10,6 +13,7 @@ const INVALID_RADIX: Message = Message::new(
     "invalidRadix",
     "Invalid radix parameter, must be an integer between 2 and 36.",
 );
+const REDUNDANT_RADIX: Message = Message::new("redundantRadix", "Redundant radix parameter.");
 const ADD_RADIX_PARAMETER_10: Message = Message::new(
     "addRadixParameter10",
     "Add radix parameter `10` for parsing decimal numbers.",
@@ -72,9 +76,14 @@ impl Radix {
         if !is_oxlint && args.iter().take(2).any(|arg| arg.tag() == ExprTag::Spread) {
             return;
         }
+        let is_as_needed = self.is_as_needed && cx.language().eslint_major < 10;
         match (args.first(), args.get(1)) {
             (None, _) => {
                 cx.report(e, MISSING_PARAMETERS);
+            }
+            (Some(_), None) if is_as_needed => {}
+            (Some(_), Some(radix)) if is_as_needed && matches!(radix.kind(), ExprKind::Number(it) if it == 10.0) => {
+                cx.report(e, REDUNDANT_RADIX);
             }
             (Some(_), None) => {
                 cx.report(e, MISSING_RADIX).suggest(ADD_RADIX_PARAMETER_10, |fixer| {
@@ -98,8 +107,8 @@ impl Rule for Radix {
     const META: Meta = Meta::eslint("radix", Kind::Suggestion).has_suggestions();
     type State<'a> = ();
 
-    fn new(_: &Options) -> Self {
-        Radix
+    fn new(options: &Options) -> Self {
+        Radix { is_as_needed: options.str(0) == Some("as-needed") }
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {

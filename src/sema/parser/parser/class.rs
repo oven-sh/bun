@@ -170,6 +170,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     let saved = p.enter_context(ctx::NO_RECORD, 0);
                     let extended = p.left_hand_side_expression();
                     p.context = saved;
+                    let of_import = p.import_with_type_arguments(first_token);
                     if index > 0 || has_extends {
                         // Type arguments that the expression has not taken are in no list.
                         if p.token() == T::LessThan {
@@ -199,12 +200,16 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                         (heritage.extends_args, element_error) = p.type_arguments_unchecked();
                     }
                     p.check_js_type_arguments(heritage.extends_args);
+                    element_error = element_error.or(p.import_with_type_arguments(first_token));
+                    element_error = element_error.or(of_import);
                 }),
                 false => {
                     let saved = self.enter_context(ctx::TYPE, 0);
                     let list = self.heritage_elements(|p, _| {
+                        let first_token = (p.lx.start, p.lx.end);
                         let ty = p.heritage_type(!has_implements, 2500);
                         p.s.ids.push(ty.0);
+                        element_error = element_error.or(p.import_with_type_arguments(first_token));
                     });
                     self.context = saved;
                     self.js_error((keyword.0, self.prev_end()), 8005, b"");
@@ -455,6 +460,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
             return self.s.members.push(member);
         }
+        let is_default = flags.contains(Flags::DEFAULT);
         // The checker reports these, which are in the list.
         flags -= Flags::CONST | Flags::EXPORT | Flags::DEFAULT;
         // `parseClassElement`: its own `declare` makes a property or a method ambient.
@@ -488,6 +494,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         };
         if name_token == T::BigInt {
             key = PropKey::None;
+        }
+        // `declareSymbolEx`: `isDefaultExport && parent != nil`
+        if is_default && matches!(key, PropKey::Name(_)) {
+            key = PropKey::Name(known::default);
         }
         flags |= flags_of_member_name(name_token, name_kind, key);
         // Neither `tryParseConstructorDeclaration` nor the property without a name looks for it.

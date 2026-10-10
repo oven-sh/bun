@@ -455,7 +455,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         self.s.decorators.truncate(decorators);
         if self.reads_jsdoc() {
+            // `withJSDoc` of a parameter: in the context of the list.
+            let saved = self.enter_context(context, cleared);
             self.parameters_jsdoc(params);
+            self.context = saved;
         }
         Some(params)
     }

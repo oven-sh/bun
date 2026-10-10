@@ -3,12 +3,12 @@
 //! A list of tokens is its length, then where each starts, then where each ends, then the
 //! [`TokenKind`] of each, a byte for each, and zeros up to a multiple of 4 bytes.
 
-use super::offsets::Offsets;
 use super::wire;
 use crate::ast::File;
 use crate::tokens::Tokens;
+use bun_core::strings::Utf16OffsetTable;
 
-fn write_list(tokens: Tokens, offsets: &Offsets, out: &mut Vec<u8>) {
+fn write_list(tokens: Tokens, offsets: &Utf16OffsetTable, out: &mut Vec<u8>) {
     let count = tokens.count();
     wire::words(out, &[count as u32]);
     out.reserve(count * 9 + 3);
@@ -23,11 +23,15 @@ fn write_list(tokens: Tokens, offsets: &Offsets, out: &mut Vec<u8>) {
 }
 
 /// Appends the tokens, then the comments.
-pub(super) fn write<'a>(file: &'a File<'a>, offsets: &Offsets, out: &mut Vec<u8>) {
+pub(super) fn write<'a>(file: &'a File<'a>, offsets: &Utf16OffsetTable, out: &mut Vec<u8>) {
     write_list(file.tokens(), offsets, out);
     write_list(file.comments(), offsets, out);
 }
 
-pub(super) fn write_comments<'a>(file: &'a File<'a>, offsets: &Offsets, out: &mut Vec<u8>) {
+pub(super) fn write_comments<'a>(
+    file: &'a File<'a>,
+    offsets: &Utf16OffsetTable,
+    out: &mut Vec<u8>,
+) {
     write_list(file.comments(), offsets, out);
 }

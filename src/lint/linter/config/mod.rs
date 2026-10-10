@@ -339,6 +339,8 @@ pub struct Config {
     is_legacy: bool,
     /// [`LanguageOptions::eslint_major`]
     eslint_major: u8,
+    /// [`LanguageOptions::without_modules`]
+    without_modules: bool,
     /// `--no-ignore` of ESLint 8: a file that is named is linted, whatever ignores it. What is found in a directory is not.
     lints_all_that_is_named: bool,
     /// Which object has the patterns with which ESLint 8 ignores what starts with a dot.
@@ -843,6 +845,7 @@ impl Config {
         config.language.is_oxlint = self.prefers_typescript_rules;
         config.language.eslint_8 = eslint_8;
         config.language.eslint_major = self.eslint_major;
+        config.language.without_modules = self.without_modules;
         let parser_location = (indices.iter().rev())
             .find_map(|index| self.objects.get(*index as usize)?.parser_location.as_ref());
         config.linter = linter;

@@ -119,7 +119,7 @@ impl<'a, 'b> MemberChain<'a, 'b> {
         };
         if !f.is_quiet()
             && (has_leading_comment(first_member, f)
-                || has_trailing_comment(first_member.expr(), f))
+                || has_trailing_comment(first_member, f))
         {
             return false;
         }
@@ -238,9 +238,26 @@ impl<'a, 'b> MemberChain<'a, 'b> {
             self.members.last(),
             Some(ChainMember::CallExpression { .. })
         );
-        (!tail.is_empty() && will_break(head))
+        (!tail.is_empty() && (will_break(head) || self.starts_with_comment_that_breaks(f)))
             || (has_function_like_argument && ends_with_call && will_break(last))
             || tail.iter().rev().skip(1).any(will_break)
+    }
+
+    /// `a⏎// comment⏎.b!().c().d()`: whether a comment that leads something in what the chain starts with, here `a.b`,
+    /// has been written before the chain, with a line break behind it. For Prettier it is part of what the chain
+    /// starts with.
+    fn starts_with_comment_that_breaks(&self, f: &Formatter<'a>) -> bool {
+        let Some(ChainMember::Node(first)) = self.members.first() else {
+            return false;
+        };
+        let span = first.span();
+        (f.comments().printed_comments().iter().rev())
+            .take_while(|comment| comment.is_moved() && comment.start() == span.start)
+            .any(|comment| {
+                span.contains_offset(comment.span.start)
+                    && (comment.is_line()
+                        || (comment.preceded_by_newline() && comment.followed_by_newline()))
+            })
     }
 
     /// Prettier's `nodeHasComment`.
@@ -256,7 +273,7 @@ impl<'a, 'b> MemberChain<'a, 'b> {
                         }
                     ) && !(matches!(member, ChainMember::ComputedMember(_))
                         && comment_behind_brackets_breaks_no_chain(f))
-                        && has_trailing_comment(member.expr(), f))
+                        && has_trailing_comment(member, f))
             })
     }
 }
@@ -365,11 +382,15 @@ fn comment_behind_brackets_breaks_no_chain(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// Whether a comment trails `expression`, a link of a chain that is not the last.
-fn has_trailing_comment<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> bool {
+/// Whether a comment trails `member`, which is not the last of a chain.
+fn has_trailing_comment<'a>(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool {
+    let expression = member.expr();
     let end = expression.span().end;
     if comments_are_attached_to_links(f) {
-        return f.comments().has_comment_trailing_link(end);
+        // It is attached to what is in a `ChainExpression`, not to that.
+        let is_chain_expression = matches!(member, ChainMember::Node(node) if is_chain_root(*node))
+            && !f.context().has_tree_of_babel();
+        return !is_chain_expression && f.comments().has_comment_trailing_link(end);
     }
     // See `comments_trailing_computed_callee`: those behind the `(` are among them, and separate nothing.
     if expression.tag() == ExprTag::Index {
@@ -483,7 +504,7 @@ fn push_ends_of_remaining_groups<'a>(
 
         // So that the comment stays behind what it is written behind.
         if !f.is_quiet()
-            && (has_trailing_comment(member.expr(), f)
+            && (has_trailing_comment(member, f)
                 || is_before_comment_that_starts_line(member.expr(), f))
         {
             group_ends.push(index as u32 + 1);

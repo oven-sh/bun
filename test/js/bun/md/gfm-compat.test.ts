@@ -871,22 +871,31 @@ describe("task list items with nothing behind the marker", () => {
     );
   });
 
-  const box = '<input type="checkbox" class="task-list-item-checkbox" disabled>';
+  const item = (checked: string, inside: string) =>
+    `<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled${checked}>${inside}</li>\n`;
 
-  test.each(["- [ ]\ntext\n", "- [ ] \ntext\n", "- [ ]\n  text\n"])("the text on the next line is in it: %j", text => {
-    expect(markdown.html(text)).toBe(`<ul>\n<li class="task-list-item">${box}text</li>\n</ul>\n`);
-  });
-
-  test("so is what is indented behind an empty line", () => {
-    expect(markdown.html("- [ ]\n\n  text\n")).toBe(
-      `<ul>\n<li class="task-list-item">${box}\n<p>text</p>\n</li>\n</ul>\n`,
-    );
-  });
-
-  test("the next item is not", () => {
-    expect(markdown.html("- [ ]\n- [ ]\n")).toBe(
-      `<ul>\n<li class="task-list-item">${box}</li>\n<li class="task-list-item">${box}</li>\n</ul>\n`,
-    );
+  test.each([
+    ["- [ ]", `<ul>\n${item("", "")}</ul>\n`],
+    ["- [ ] ", `<ul>\n${item("", "")}</ul>\n`],
+    ["1. [x]", `<ol>\n${item(" checked", "")}</ol>\n`],
+    // The text on the next line is in the item, indented or not.
+    ["- [ ]\ntext", `<ul>\n${item("", "text")}</ul>\n`],
+    ["- [ ] \ntext", `<ul>\n${item("", "text")}</ul>\n`],
+    ["- [ ]\n  text", `<ul>\n${item("", "text")}</ul>\n`],
+    ["- [x]  \n  a", `<ul>\n${item(" checked", "a")}</ul>\n`],
+    // So is what is indented, behind an empty line too.
+    ["- [ ]\n\n  text", `<ul>\n${item("", "\n<p>text</p>\n")}</ul>\n`],
+    ["- [ ] \n  # h", `<ul>\n${item("", "\n<h1>h</h1>\n")}</ul>\n`],
+    ["- [x]\n  - [ ] sub", `<ul>\n${item(" checked", `\n<ul>\n${item("", "sub")}</ul>\n`)}</ul>\n`],
+    // The next item is not, nor what is not indented behind an empty line.
+    ["- [ ]\n- [x]", `<ul>\n${item("", "")}${item(" checked", "")}</ul>\n`],
+    ["- [x] \n\nfoo", `<ul>\n${item(" checked", "")}</ul>\n<p>foo</p>\n`],
+    // White space is behind the marker.
+    ["- [ ]a", "<ul>\n<li>[ ]a</li>\n</ul>\n"],
+    ["- [ ]\ta", `<ul>\n${item("", "a")}</ul>\n`],
+    ["- [ ]  a", `<ul>\n${item("", "a")}</ul>\n`],
+  ])("%j", (text, html) => {
+    expect(markdown.html(text)).toBe(html);
   });
 });
 

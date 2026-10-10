@@ -16,13 +16,13 @@
 //!
 //! After the last scope and the last variable there is one more, for where the lists of the last end.
 
-use super::offsets::Offsets;
 use super::wire;
 use crate::ast::{ExprKind, File, Node};
 use crate::estree::{Field, NodeType, VNode, Value};
 use crate::language::Global;
 use crate::semantic::{Declaration, Reference, Scope, ScopeKind};
 use crate::span::Span;
+use bun_core::strings::Utf16OffsetTable;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 const HEADER: usize = 6;
@@ -121,7 +121,7 @@ fn identifier<'a>(reference: Reference<'a>) -> Option<VNode<'a>> {
 
 pub(super) fn write<'a>(
     file: &'a File<'a>,
-    offsets: &Offsets,
+    offsets: &Utf16OffsetTable,
     nodes: &[VNode<'a>],
     out: &mut Vec<u8>,
 ) {

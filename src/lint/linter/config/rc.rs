@@ -1019,13 +1019,6 @@ impl Config {
             (object.rules).retain(|it| it.written_for.is_none_or(|it| rc.has_plugin(it)));
         }
         objects.append(&mut rc.take_overrides());
-        // Only with `import` does oxlint look at other files, which `oxc/no-barrel-file` has to know.
-        if !rc.has_plugin(Plugin::Import) {
-            objects.push(ConfigObject {
-                settings: Json::Object(vec![(b"$withoutModules".to_vec(), Json::Bool(true))]),
-                ..ConfigObject::default()
-            });
-        }
         rc.reader.objects = objects;
         let is_off = |id: &[u8]| {
             let plugin = parse_rule_id(id).0;
@@ -1039,6 +1032,8 @@ impl Config {
         rc.reader.objects.append(&mut by_kind_of_file);
         let options_of_oxlint = std::mem::take(&mut rc.options);
         Ok(Config {
+            // `oxc/no-barrel-file` has to know.
+            without_modules: !rc.has_plugin(Plugin::Import),
             options_of_oxlint,
             printed_for_oxlint,
             ..rc.reader.finish(Semantics {

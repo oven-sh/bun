@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, normalizeBunSnapshot, tempDir } from "harness";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { endChildren, spawn } from "../children";
@@ -2016,51 +2016,28 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
-  test(
-    "what an engine cost is kept for the next run in the project, which starts as many as pay by that",
-    async () => {
-      const files: Record<string, string> = {
-        "node_modules/some/package.json": "{}",
+  test.each(["--disallow-code-generation-from-strings", "--disallow-code-generation-from-strings=strict"])(
+    "bun %s lint: plugins run, and neither they nor the configuration file make code from a string",
+    async flag => {
+      using dir = tempDir("bun-lint-js-plugins", {
         "eslint.config.mjs": `
-          const spins = { create: context => ({ Program(node) {
-            let sum = 0;
-            for (let i = 0; i < 1e6; i++) sum += i % 7;
-            context.report({ node, message: "seen " + Math.sign(sum) });
-          } }) };
-          export default [{ files: ["src/*"], plugins: { own: { rules: { spins } } }, rules: { "own/spins": "error" } }];`,
-      };
-      for (let i = 0; i < 24; i++) files[`src/${i}.js`] = `foo;\n/*${Buffer.alloc(250_000, "x")}*/\n`;
-      using dir = tempDir("bun-lint-js-plugins", files);
-      const run = async () => {
-        await using proc = spawn({
-          cmd: [bunExe(), "lint", "--threads", "8", "--timing", "-f", "unix", "src"],
-          env,
-          cwd: String(dir),
-          stdin: "ignore",
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(stdout.split(": seen 1 [Error/own/spins]").length - 1).toBe(24);
-        expect(exitCode).toBe(1);
-        return Number(/JavaScript: (\d+) engines/.exec(stderr)?.[1]);
-      };
-      await run();
-      const kept = join(String(dir), "node_modules/.cache/bun-lint");
-      const read = (name: string) => JSON.parse(readFileSync(join(kept, name), "utf8"));
-      const [name] = readdirSync(kept).filter(name => "start" in read(name));
-      expect(read(name)).toEqual({
-        version: expect.any(String),
-        size: 24 * 250_010,
-        start: expect.any(Number),
-        memory: expect.any(Number),
+          const tried = () => { try { return "allowed: " + new Function("return 1")(); } catch { return "refused"; } };
+          const atFirst = tried();
+          const tries = { create: context => ({ Identifier: node => context.report({ node, message: atFirst + ", " + tried() + " in a " + node.parent.type }) }) };
+          export default [{ files: ["a.js"], plugins: { own: { rules: { tries } } }, rules: { "own/tries": "error" } }];`,
+        "a.js": "foo;\n",
       });
-      // An engine that takes for ever to start: no second one pays.
-      writeFileSync(join(kept, name), JSON.stringify({ ...read(name), start: 1e12 }));
-      expect(await run()).toBe(1);
-      // One that starts in no time: one for each thread that asks while the others are in use.
-      writeFileSync(join(kept, name), JSON.stringify({ ...read(name), start: 0 }));
-      expect(await run()).toBeGreaterThan(1);
+      await using proc = spawn({
+        cmd: [bunExe(), flag, "lint", "-f", "unix", "a.js"],
+        env,
+        cwd: String(dir),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toContain("a.js:1:1: refused, refused in a ExpressionStatement [Error/own/tries]");
+      expect(exitCode).toBe(1);
     },
     timeout,
   );

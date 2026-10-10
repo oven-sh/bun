@@ -108,6 +108,8 @@ pub struct LanguageOptions {
     /// ESLint 8; 9 with an `eslint.config.js` for which an `eslint` before 10 is installed; else 10, also with a configuration of
     /// oxlint, where [`is_oxlint`](Self::is_oxlint) decides.
     pub eslint_major: u8,
+    /// oxlint looks at no other file than the one that it lints: it does so only with its plugin `import`.
+    pub without_modules: bool,
     /// All of `languageOptions.parserOptions`.
     pub parser_options: Json,
     /// ESLint's `settings`.
@@ -343,6 +345,7 @@ impl LanguageOptions {
             is_oxlint: false,
             eslint_8: None,
             eslint_major: 10,
+            without_modules: false,
             parser_options,
             settings: settings.clone(),
             config_globals: OnceLock::new(),
@@ -437,6 +440,7 @@ impl Default for LanguageOptions {
             is_oxlint: false,
             eslint_8: None,
             eslint_major: 10,
+            without_modules: false,
             parser_options: Json::Null,
             settings: Json::Null,
             config_globals: OnceLock::new(),

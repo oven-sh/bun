@@ -207,6 +207,25 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
     }
 
+    /// `parseToplevelStatement`. `parsePropertyName` restores `statementHasAwaitIdentifier`, so that no statement is parsed
+    /// again for an `await` in a name: there it is a name. For another `await` `reparseTopLevelAwait` parses all of the
+    /// statement again, in the await context.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn top_level_statement(&mut self) -> StmtId {
+        self.has_await_in_name = false;
+        let before = self.checkpoint();
+        let statement = self.statement();
+        if !(self.has_await_in_name && self.has_await_in_statement) || self.has_failed() {
+            return statement;
+        }
+        self.rollback(&before);
+        self.names_are_in_await_context = true;
+        let statement = self.statement();
+        self.names_are_in_await_context = false;
+        statement
+    }
+
     /// `scanError`: what the scanner has reported goes where the errors of the parser go, before
     /// the next of them.
     #[inline(always)]

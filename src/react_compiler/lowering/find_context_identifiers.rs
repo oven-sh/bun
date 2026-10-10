@@ -59,9 +59,9 @@ struct ContextIdentifierVisitor<'a> {
     inner_reassignments: Vec<(Ref, u32)>,
     error: Option<CompilerError>,
     /// How many statements, expressions and patterns are around what is walked. After the first: blocks, object
-    /// literals, array literals, property accesses and functions, each counted apart, so that `if (a) { .. }`, an
-    /// element of JSX, `.m()` and `() => ..` are one level each, as a reader counts.
-    levels: [u32; 6],
+    /// literals, array literals and property accesses, each counted apart, so that `if (a) { .. }`, an element of
+    /// JSX and `.m()` are one level each, as a reader counts. Not functions: 4 MB of stack are enough for 230 of them.
+    levels: [u32; 5],
 }
 
 impl<'a> ContextIdentifierVisitor<'a> {
@@ -401,7 +401,6 @@ impl<'a> ContextIdentifierVisitor<'a> {
             Data::EObject(_) => 2,
             Data::EArray(_) => 3,
             Data::EDot(_) | Data::EIndex(_) => 4,
-            Data::EArrow(_) | Data::EFunction(_) => 5,
             _ => 0,
         };
         if !self.env.can_nest(self.levels[kind]) {
@@ -693,7 +692,7 @@ pub(crate) fn find_context_identifiers(
         inner_references: Vec::new(),
         inner_reassignments: Vec::new(),
         error: None,
-        levels: [0; 6],
+        levels: [0; 5],
     };
 
     // Walk params and body (like Babel's func.traverse())

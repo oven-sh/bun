@@ -39,7 +39,7 @@ impl Rule for NoBarrelFile {
 
 /// Without the plugin `import` oxlint knows nothing about the other files.
 fn modules_of<'a>(file: &'a File<'a>) -> Option<&'a dyn Modules> {
-    file.modules().filter(|_| file.path() != b"<text>" && file.settings().get(b"$withoutModules").is_none())
+    file.modules().filter(|_| file.path() != b"<text>" && !file.language().without_modules)
 }
 
 impl NoBarrelFile {

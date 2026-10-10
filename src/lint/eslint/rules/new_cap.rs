@@ -28,6 +28,11 @@ const CAPS_ALLOWED: [&str; 11] = [
     "Array", "Boolean", "Date", "Error", "Function", "Number", "Object", "RegExp", "String", "Symbol", "BigInt",
 ];
 const GLOBAL_OBJECT_NAMES: [&str; 4] = ["global", "globalThis", "self", "window"];
+/// Before ESLint 10 the exceptions are the keys of an object, which has these too: `new constructor()`. The others do
+/// not start with a letter.
+const KEYS_OF_EVERY_OBJECT: [&str; 7] = [
+    "constructor", "hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable", "toLocaleString", "toString", "valueOf",
+];
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Cap {
@@ -95,9 +100,11 @@ impl NewCap {
     /// ESLint's `isCapAllowed`
     fn is_cap_allowed(&self, exceptions: &Exceptions, callee: Expr, name: &[u8]) -> bool {
         let source = callee.text();
+        let is_before_10 = callee.file().language().eslint_major < 10;
         if exceptions.has(name)
             || exceptions.has(source)
             || exceptions.pattern.as_ref().is_some_and(|it| it.test(source))
+            || (is_before_10 && KEYS_OF_EVERY_OBJECT.iter().any(|it| it.as_bytes() == name || it.as_bytes() == source))
         {
             return true;
         }
@@ -107,7 +114,11 @@ impl NewCap {
                     true => obj.is_ident("Date"),
                     false => is_global_built_in(obj, b"Date"),
                 };
-                self.skips_properties || name == b"UTC" && is_date()
+                // Before ESLint 10 `properties` has no say about `a.UTC()`.
+                match name == b"UTC" {
+                    true => is_date() || (self.skips_properties && !is_before_10),
+                    false => self.skips_properties,
+                }
             }
             _ => false,
         }

@@ -4,7 +4,8 @@ use smallvec::SmallVec;
 
 /// Disallow identifiers from shadowing restricted names.
 pub struct NoShadowRestrictedNames {
-    report_global_this: bool,
+    /// `None`: `true` since ESLint 10.
+    report_global_this: Option<bool>,
 }
 
 const SHADOWING_RESTRICTED_NAME: Message =
@@ -101,12 +102,13 @@ impl Rule for NoShadowRestrictedNames {
 
     fn new(options: &Options) -> Self {
         NoShadowRestrictedNames {
-            report_global_this: options.object(0).bool_or("reportGlobalThis", true),
+            report_global_this: options.object(0).bool("reportGlobalThis"),
         }
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        let last = if self.report_global_this { "globalThis" } else { "eval" };
+        let report_global_this = self.report_global_this.unwrap_or(file.language().eslint_major >= 10);
+        let last = if report_global_this { "globalThis" } else { "eval" };
         let names = ["undefined", "NaN", "Infinity", "arguments", "eval", last];
         let state = State {
             restricted: names.into_iter().filter(|name| file.mentions(name)).map(|name| file.name_of(name)).collect(),

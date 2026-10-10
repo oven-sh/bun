@@ -29,14 +29,6 @@ pub trait Engine: Sync {
     /// Nobody says so if a realm is needed to find out.
     fn expect(&self, _files: usize, _size: u64, _most: usize) {}
 
-    /// What a realm cost in the last run like this one. Before [`Engine::expect`].
-    fn remember(&self, _cost: Cost) {}
-
-    /// What a realm has cost in this run, which is over. `None`: too little of it was seen.
-    fn cost(&self) -> Option<Cost> {
-        None
-    }
-
     /// For `--timing`: the most that all realms together have taken, in bytes, and how many were freed because that was too much.
     fn sizes(&self) -> (usize, usize) {
         (0, 0)
@@ -56,34 +48,16 @@ pub const HEAVY: usize = 256 << 10;
 /// with the configurations of openlayers, vscode and mermaid.
 const BYTES_IN_THE_COST: f64 = 1e6;
 
-/// What a realm cost in a run. The first run in a project guesses, the next ones know: what a plugin builds for itself in its
-/// first seconds, or in a thread of its own, shows when all realms have long been started.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct Cost {
-    /// How large the files of the run were together.
-    pub size: u64,
-    /// How many bytes a realm lints in the time that another one takes until it lints as fast.
-    pub start: u64,
-    /// How many bytes of memory a realm had at the most.
-    pub memory: u64,
-}
-
 #[derive(Default)]
 struct Left {
     /// How large the files are that are still to come.
     bytes: u64,
-    /// How large they were at first.
-    all: u64,
     /// How many realms there can be. 0: nobody has said, and there is one.
     most: usize,
     /// How many seconds realms have taken until they had loaded what they need and linted their first file, and how many have.
     starting: (f64, u32),
     /// How many seconds realms have taken after that, and for how many bytes.
     linting: (f64, u64),
-    /// The same for the last quarter of the bytes, when the realms are as fast as they get.
-    at_last: (f64, u64),
-    /// [`Cost::start`] of the last run.
-    known: Option<u64>,
 }
 
 /// Decides how many realms a run has.
@@ -93,33 +67,11 @@ pub struct Demand(Guarded<Left>);
 impl Demand {
     /// [`Engine::expect`]
     pub fn expect(&self, size: u64, most: usize) {
-        let mut left = self.0.lock();
-        *left = Left {
+        *self.0.lock() = Left {
             bytes: size,
-            all: size,
             most,
-            known: left.known,
             ..Left::default()
         };
-    }
-
-    /// [`Engine::remember`]
-    pub fn remember(&self, start: u64) {
-        self.0.lock().known = Some(start);
-    }
-
-    /// [`Cost::size`] and [`Cost::start`] of this run: of the seconds that all realms have taken, those that are more than the
-    /// bytes take at the speed of the end, for each realm, in bytes at that speed.
-    pub fn cost(&self) -> Option<(u64, u64)> {
-        let left = self.0.lock();
-        let ((seconds, bytes @ 1..), (starting, realms @ 1..)) = (left.at_last, left.starting)
-        else {
-            return None;
-        };
-        let at_that_speed = (starting + left.linting.0) * bytes as f64 / seconds;
-        let done = (left.all - left.bytes) as f64;
-        let start = (at_that_speed - done).max(0.0) / f64::from(realms);
-        start.is_finite().then_some((left.all, start as u64))
     }
 
     /// How large the files are that are still to come.
@@ -135,9 +87,6 @@ impl Demand {
             true => left.starting = (left.starting.0 + seconds, left.starting.1 + 1),
             false => left.linting = (left.linting.0 + seconds, left.linting.1 + size as u64),
         }
-        if !is_first && left.bytes < left.all / 4 {
-            left.at_last = (left.at_last.0 + seconds, left.at_last.1 + size as u64);
-        }
     }
 
     /// Whether to start another realm beside the `realms` that there are, all of which are in use: whether it is going to lint for
@@ -147,9 +96,8 @@ impl Demand {
         if realms == 0 || realms >= left.most {
             return realms == 0;
         }
-        let cost = match (left.known, left.starting, left.linting) {
-            (Some(known), ..) => known as f64,
-            (None, (starting, realms @ 1..), (linting, bytes @ 1..)) if linting > 0.0 => {
+        let cost = match (left.starting, left.linting) {
+            ((starting, realms @ 1..), (linting, bytes @ 1..)) if linting > 0.0 => {
                 starting / f64::from(realms) * bytes as f64 / linting
             }
             _ => BYTES_IN_THE_COST,

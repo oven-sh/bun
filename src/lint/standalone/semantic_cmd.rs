@@ -9,6 +9,7 @@
 //! - `fuzz <cases.jsonl> [--rounds=n]`: looks for panics on code with syntax errors.
 
 use crate::host::{self, output_line};
+use bun_core::strings::Utf16OffsetTable;
 use bun_lint::ast::{File, Node, StmtKind, TypeKind};
 use bun_lint::language::LanguageOptions;
 use bun_lint::options::Json;
@@ -22,40 +23,6 @@ fn string(text: impl AsRef<[u8]>) -> Json {
 
 fn number(n: u32) -> Json {
     Json::Number(f64::from(n))
-}
-
-/// Offsets in bytes to offsets in UTF-16 code units.
-struct Offsets(Option<Vec<u32>>);
-
-impl Offsets {
-    fn new(text: &[u8]) -> Offsets {
-        if text.is_ascii() {
-            return Offsets(None);
-        }
-        let (mut table, mut units) = (Vec::with_capacity(text.len() + 1), 0);
-        for &byte in text {
-            table.push(units);
-            // The first byte of a character counts for all of it.
-            units += match byte {
-                0x80..=0xBF => 0,
-                0xF0..=0xFF => 2,
-                _ => 1,
-            };
-        }
-        table.push(units);
-        Offsets(Some(table))
-    }
-
-    fn of(&self, offset: u32) -> u32 {
-        match &self.0 {
-            Some(table) => table
-                .get(offset as usize)
-                .or_else(|| table.last())
-                .copied()
-                .unwrap_or(0),
-            None => offset,
-        }
-    }
 }
 
 fn kind_name(kind: ScopeKind) -> &'static str {
@@ -97,30 +64,30 @@ fn declaration_kind_name(kind: Option<DeclarationKind>) -> &'static str {
     }
 }
 
-fn scope_key(scope: Scope, offsets: &Offsets) -> Json {
+fn scope_key(scope: Scope, offsets: &Utf16OffsetTable) -> Json {
     string(format!(
         "{}@{}",
         kind_name(scope.kind()),
-        offsets.of(scope.span().start)
+        offsets.to_utf16(scope.span().start)
     ))
 }
 
-fn symbol_key(symbol: Symbol, offsets: &Offsets) -> Json {
+fn symbol_key(symbol: Symbol, offsets: &Utf16OffsetTable) -> Json {
     match symbol.declarations().next().and_then(|it| it.name_span()) {
-        Some(name) => number(offsets.of(name.start)),
+        Some(name) => number(offsets.to_utf16(name.start)),
         None => string(format!(
             "arguments@{}",
-            offsets.of(symbol.scope().span().start)
+            offsets.to_utf16(symbol.scope().span().start)
         )),
     }
 }
 
-fn dump_reference(it: Reference, offsets: &Offsets) -> Json {
+fn dump_reference(it: Reference, offsets: &Utf16OffsetTable) -> Json {
     let letters = |pairs: [(bool, char); 2]| -> String {
         pairs.iter().filter(|it| it.0).map(|it| it.1).collect()
     };
     Json::Array(vec![
-        number(offsets.of(it.span().start)),
+        number(offsets.to_utf16(it.span().start)),
         string(it.name().bytes()),
         string(letters([(it.is_read(), 'r'), (it.is_write(), 'w')])),
         string(letters([(it.is_value(), 'v'), (it.is_type(), 't')])),
@@ -128,8 +95,9 @@ fn dump_reference(it: Reference, offsets: &Offsets) -> Json {
         it.symbol()
             .map_or(Json::Null, |symbol| symbol_key(symbol, offsets)),
         scope_key(it.scope(), offsets),
-        it.write_expr()
-            .map_or(Json::Null, |value| number(offsets.of(value.span().start))),
+        it.write_expr().map_or(Json::Null, |value| {
+            number(offsets.to_utf16(value.span().start))
+        }),
         scope_key(it.node().scope(), offsets),
     ])
 }
@@ -155,13 +123,13 @@ fn summaries_hold(symbol: Symbol) -> bool {
 }
 
 fn dump<'a>(file: &'a File<'a>, with_nodes: bool) -> Vec<(Vec<u8>, Json)> {
-    let offsets = &Offsets::new(file.text());
+    let offsets = &Utf16OffsetTable::new(file.text());
     let (mut scopes, mut variables) = (Vec::new(), Vec::new());
     for scope in file.scopes() {
         scopes.push(Json::Array(vec![
             string(kind_name(scope.kind())),
-            number(offsets.of(scope.span().start)),
-            number(offsets.of(scope.span().end)),
+            number(offsets.to_utf16(scope.span().start)),
+            number(offsets.to_utf16(scope.span().end)),
             number(u32::from(scope.is_strict())),
             scope
                 .parent()
@@ -170,7 +138,7 @@ fn dump<'a>(file: &'a File<'a>, with_nodes: bool) -> Vec<(Vec<u8>, Json)> {
             {
                 let mut through: Vec<u32> = scope
                     .through()
-                    .map(|it| offsets.of(it.span().start))
+                    .map(|it| offsets.to_utf16(it.span().start))
                     .collect();
                 through.sort_unstable();
                 Json::Array(through.into_iter().map(number).collect())
@@ -185,7 +153,7 @@ fn dump<'a>(file: &'a File<'a>, with_nodes: bool) -> Vec<(Vec<u8>, Json)> {
             variables.push(Json::Array(vec![
                 string(symbol.name().bytes()),
                 scope_key(scope, offsets),
-                Json::Array(names.map(|it| number(offsets.of(it.start))).collect()),
+                Json::Array(names.map(|it| number(offsets.to_utf16(it.start))).collect()),
                 Json::Array(
                     symbol
                         .declarations()
@@ -201,7 +169,7 @@ fn dump<'a>(file: &'a File<'a>, with_nodes: bool) -> Vec<(Vec<u8>, Json)> {
                         let writes = symbol.references().filter(|it| it.is_write());
                         Json::Array(
                             writes
-                                .map(|it| number(offsets.of(it.span().start)))
+                                .map(|it| number(offsets.to_utf16(it.span().start)))
                                 .collect(),
                         )
                     }
@@ -216,7 +184,7 @@ fn dump<'a>(file: &'a File<'a>, with_nodes: bool) -> Vec<(Vec<u8>, Json)> {
     let name_and_start = |it: Reference| {
         Json::Array(vec![
             string(it.name().bytes()),
-            number(offsets.of(it.span().start)),
+            number(offsets.to_utf16(it.span().start)),
         ])
     };
     let implicit = file.implicit_globals().map(name_and_start).collect();
@@ -245,8 +213,8 @@ fn dump<'a>(file: &'a File<'a>, with_nodes: bool) -> Vec<(Vec<u8>, Json)> {
                 _ => node.span(),
             };
             scopes_of_nodes.push(Json::Array(vec![
-                number(offsets.of(span.start)),
-                number(offsets.of(span.end)),
+                number(offsets.to_utf16(span.start)),
+                number(offsets.to_utf16(span.end)),
                 scope_key(node.scope(), offsets),
             ]));
         }
@@ -285,7 +253,7 @@ fn dump<'a>(file: &'a File<'a>, with_nodes: bool) -> Vec<(Vec<u8>, Json)> {
                 .collect();
             keys.sort();
             declared.push(Json::Array(vec![
-                number(offsets.of(start)),
+                number(offsets.to_utf16(start)),
                 string(keys.join(",")),
             ]));
         }

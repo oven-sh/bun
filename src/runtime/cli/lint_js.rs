@@ -16,7 +16,7 @@ use bun_jsc::{
     self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, Strong,
     virtual_machine::VirtualMachine,
 };
-use bun_lint_driver::js_plugin::{Cost, Demand, Engine, HEAVY, PROGRAM, Serve, Vm};
+use bun_lint_driver::js_plugin::{Demand, Engine, HEAVY, PROGRAM, Serve, Vm};
 use bun_threading::{Condition, Guarded};
 use std::sync::Arc;
 use std::thread::ThreadId;
@@ -406,8 +406,6 @@ struct Start {
     /// Whether there can be more than a few engines. Nobody knows if an engine is needed to find out.
     is_for_few: core::sync::atomic::AtomicBool,
     memory: std::sync::OnceLock<usize>,
-    /// [`Cost::memory`] of the last run.
-    size_of_one: std::sync::OnceLock<usize>,
 }
 
 impl Start {
@@ -580,8 +578,7 @@ impl Drop for Borrowed<'_> {
     }
 }
 
-/// What an engine counts for until the run has shown how its engines grow, if no run before has: none that was seen took much
-/// more. So where 16 GB are to be had four engines start at once, and with less, or for a fifth, that is waited for.
+/// What an engine counts for until the run has shown how its engines grow: none that was seen took much more. So where 16 GB are to be had four engines start at once, and with less, or for a fifth, that is waited for.
 const NOT_LOADED_YET: usize = 2 << 30;
 
 /// An engine.
@@ -683,7 +680,7 @@ impl Engines {
                 (state.taken as f64 + grows_by * self.demand.left() as f64) / loaded as f64
             }
             // What an engine has after its load says little about what it is going to have.
-            _ => *self.start.size_of_one.get().unwrap_or(&NOT_LOADED_YET) as f64,
+            _ => NOT_LOADED_YET as f64,
         };
         let all = one.max(state.most_for_one as f64) * (state.count() + 1) as f64;
         state.all.is_empty() || all <= self.start.memory() as f64
@@ -775,23 +772,6 @@ impl Engine for Engines {
     fn sizes(&self) -> (usize, usize) {
         let state = self.state.lock();
         (state.most, state.all.len() - state.count())
-    }
-
-    fn remember(&self, cost: Cost) {
-        self.demand.remember(cost.start);
-        if cost.memory > 0 {
-            let _ = self.start.size_of_one.set(cost.memory as usize);
-        }
-    }
-
-    fn cost(&self) -> Option<Cost> {
-        let (size, start) = self.demand.cost()?;
-        let memory = self.state.lock().most_for_one as u64;
-        Some(Cost {
-            size,
-            start,
-            memory,
-        })
     }
 
     fn expect(&self, _files: usize, size: u64, most: usize) {

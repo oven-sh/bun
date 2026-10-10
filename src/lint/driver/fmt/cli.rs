@@ -371,6 +371,12 @@ impl Options {
         Ok(())
     }
 
+    /// As `--no-config --no-editorconfig`.
+    pub(crate) fn ignore_configuration(&mut self) {
+        self.config_lookup = false;
+        self.editorconfig = false;
+    }
+
     /// The same command line as oxfmt reads it, if that is another way.
     pub(crate) fn as_oxfmt_reads_it(&self) -> Option<Options> {
         let (path, checks) = self.after_short_c.as_ref()?;

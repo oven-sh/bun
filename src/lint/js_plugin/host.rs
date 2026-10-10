@@ -1,7 +1,6 @@
 //! What the linter talks to: loads plugins, and runs their rules on a file.
 
-use super::engine::{Cost, Engine, Vm};
-use super::offsets::Offsets;
+use super::engine::{Engine, Vm};
 use super::rules::{Configured, FileSettings, Plugin, Rule, Schema};
 use super::wire::{self, ask, call, result};
 use super::{ast, schema, scopes, tokens};
@@ -14,6 +13,7 @@ use crate::rule::Kind;
 use crate::selector::Selector;
 use crate::span::Span;
 use bun_core::printer::json_stringify;
+use bun_core::strings::Utf16OffsetTable;
 use bun_threading::Guarded;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
@@ -146,7 +146,7 @@ fn text_of(json: Option<&Json>) -> Option<Box<str>> {
 }
 
 /// `[start, end, text]`
-fn fix_of(json: Option<&Json>, offsets: &Offsets) -> Option<Fix> {
+fn fix_of(json: Option<&Json>, offsets: &Utf16OffsetTable) -> Option<Fix> {
     let [start, end, text] = json?.as_array()? else {
         return None;
     };
@@ -162,7 +162,7 @@ fn fix_of(json: Option<&Json>, offsets: &Offsets) -> Option<Fix> {
 }
 
 /// `[rule, message, messageId, line, column, endLine, endColumn, fix, suggestions]`
-fn report_of(json: &Json, offsets: &Offsets) -> Option<Report> {
+fn report_of(json: &Json, offsets: &Utf16OffsetTable) -> Option<Report> {
     let parts = json.as_array()?;
     let suggestions = parts.get(8).and_then(Json::as_array).unwrap_or_default();
     // `[messageId, desc, data, fix]`
@@ -258,16 +258,6 @@ impl<'e> Host<'e> {
     /// [`Engine::expect`]
     pub fn expect(&self, files: usize, size: u64, most: usize) {
         self.engine.expect(files, size, most);
-    }
-
-    /// [`Engine::remember`]
-    pub fn remember(&self, cost: Cost) {
-        self.engine.remember(cost);
-    }
-
-    /// [`Engine::cost`]
-    pub fn cost(&self) -> Option<Cost> {
-        self.engine.cost()
     }
 
     /// [`Engine::keep_vm`]
@@ -518,7 +508,7 @@ impl<'e> Host<'e> {
         physical_path_len: Option<usize>,
     ) -> Result<Vec<Report>, Failure> {
         let text = file.text();
-        let offsets = Offsets::new(text);
+        let offsets = Utf16OffsetTable::without_bom(text);
         let has_mark = text.starts_with(b"\xEF\xBB\xBF");
         let path = file.path();
         let plugins = Self::plugins_of(enabled);

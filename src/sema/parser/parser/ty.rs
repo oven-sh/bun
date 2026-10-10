@@ -1177,6 +1177,36 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.finish_type(TypeNodeKind::Heritage { expr, args }, start)
     }
 
+    /// `checkGrammarExpressionWithTypeArguments`, after an element of a heritage clause whose first token is at
+    /// `first_token`: what it says about `import<T>`. Whoever has the clause says it, or something else.
+    #[inline(always)]
+    pub(crate) fn import_with_type_arguments(
+        &mut self,
+        first_token: (u32, u32),
+    ) -> Option<GrammarError> {
+        match self.recovers() {
+            true => self.import_with_type_arguments_slowly(first_token),
+            false => None,
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn import_with_type_arguments_slowly(
+        &mut self,
+        (start, end): (u32, u32),
+    ) -> Option<GrammarError> {
+        let word = self.lx.src.get(start as usize..end as usize);
+        if word != Some(&b"import"[..]) || self.lx.src.get(end as usize) == Some(&b'(') {
+            return None;
+        }
+        // The expression has said it, if the type arguments are its own.
+        (self.f.diagnostics).retain(|it| it.code != 1326 || it.start != start);
+        let ends_with_list = (self.prev_end() as usize).checked_sub(1);
+        let ends_with_list = ends_with_list.and_then(|at| self.lx.src.get(at)) == Some(&b'>');
+        ends_with_list.then_some(((start, self.prev_end()), 1326))
+    }
+
     /// `parseHeritageClauses` of an interface, with what `checkGrammarInterfaceDeclaration` reports
     /// but for `implements`, which the checker finds in the text: the types of the first `extends`
     /// clause, and those of the other clauses.
@@ -1200,9 +1230,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             has_extends |= is_extends;
             self.next();
             let base = self.s.ids.len();
+            let mut element_error = None;
             let (count, comma) = self.heritage_elements(|p, _| {
+                let first_token = (p.lx.start, p.lx.end);
                 let ty = p.heritage_type(is_first_extends, 2499);
                 p.s.ids.push(ty.0);
+                element_error = element_error.or(p.import_with_type_arguments(first_token));
             });
             // `checkGrammarHeritageClause`
             match comma {
@@ -1212,7 +1245,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     let at = (keyword.1, keyword.1);
                     self.flag(DiagnosticKind::Grammar, 1097, at, &[b"extends"]);
                 }
-                None => {}
+                None => {
+                    if let Some((at, code)) = element_error {
+                        self.flag(DiagnosticKind::Grammar, code, at, &[]);
+                    }
+                }
             }
             match is_first_extends {
                 true => extends = self.take_ids(base),
@@ -2013,6 +2050,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             // `getDeclarationName`: a private name outside a class declares nothing.
             if self.classes_around == 0 && matches!(key, PropKey::Private(_)) {
                 key = PropKey::None;
+            }
+            // `declareSymbolEx`: `isDefaultExport && parent != nil`
+            if member.flags.contains(Flags::DEFAULT) && matches!(key, PropKey::Name(_)) {
+                key = PropKey::Name(known::default);
             }
             (member.key, member.name_pos) = (key, name_pos);
             member.flags |= flags_of_type_member_name(name_token, name_kind, key);

@@ -9,6 +9,7 @@
 //!   finds nothing to listen for costs.
 
 use crate::host::{self, output_line};
+use bun_core::strings::Utf16OffsetTable;
 use bun_lint::context::Severity;
 use bun_lint::language::{LanguageOptions, Parser, SourceType};
 use bun_lint::prelude::*;
@@ -132,38 +133,6 @@ const COUNTING_PROBE: RuleEntry = RuleEntry::of::<Probe<true>>();
 
 // ───────────────────────────── match ─────────────────────────────
 
-/// Converts offsets in UTF-8 text to offsets in the same text as UTF-16, without a byte order mark.
-struct Utf16Offsets(Option<Vec<u32>>);
-
-impl Utf16Offsets {
-    fn new(code: &[u8]) -> Utf16Offsets {
-        if code.is_ascii() {
-            return Utf16Offsets(None);
-        }
-        let mut units = vec![0u32; code.len() + 1];
-        let mut count = 0u32;
-        for (i, byte) in code.iter().enumerate() {
-            units[i] = count;
-            count += match byte {
-                0x80..0xC0 => 0,
-                0xF0.. => 2,
-                _ => 1,
-            };
-        }
-        units[code.len()] = count;
-        if code.starts_with(b"\xEF\xBB\xBF") {
-            units.iter_mut().for_each(|it| *it = it.saturating_sub(1));
-        }
-        Utf16Offsets(Some(units))
-    }
-
-    fn of(&self, offset: u32) -> u32 {
-        self.0.as_ref().map_or(offset, |units| {
-            units.get(offset as usize).copied().unwrap_or(offset)
-        })
-    }
-}
-
 fn language_of(parser: Option<&[u8]>, source_type: Option<&[u8]>) -> LanguageOptions {
     LanguageOptions {
         parser: match parser {
@@ -216,15 +185,15 @@ fn match_cases(path: &str) {
                     rule: &*rule,
                     severity: Severity::Error,
                 };
-                let offsets = Utf16Offsets::new(code);
+                let offsets = Utf16OffsetTable::without_bom(code);
                 let found = bun_lint::runner::run(file, &[enabled], false);
                 let found = found.iter().map(|it| {
                     let message = host::text(&it.message);
                     let (selector, node_type) = host::split_once(&message, " ").unwrap_or_default();
                     format!(
                         "[{selector},\"{node_type}\",{},{}]",
-                        offsets.of(it.span.start),
-                        offsets.of(it.span.end)
+                        offsets.to_utf16(it.span.start),
+                        offsets.to_utf16(it.span.end)
                     )
                 });
                 Ok(found.collect::<Vec<_>>().join(","))

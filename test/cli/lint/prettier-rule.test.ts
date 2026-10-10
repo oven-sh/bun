@@ -216,6 +216,33 @@ describe.concurrent("prettier/prettier", () => {
     expect(stderr.split("\n")).toContain(`note: prettier/prettier ran in JavaScript for 1 file: ${why}.`);
   });
 
+  // The parser of ESLint takes it, that of Prettier, which goes by the name of the file, does not.
+  test("the rule of the package is asked: a syntax error that only the formatter finds", async () => {
+    const blocks = [{ files: ["a.js"], languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } } }];
+    const files = {
+      "a.js": "namespace N {\n  export const a = 1;\n}\n",
+      "b.js": "const a = {b:1}\n",
+      ...installed(),
+      "eslint.config.mjs": config(blocks),
+    };
+    const [{ reports }, { stderr }] = await Promise.all([lint(files), run(files, "-f", "stylish")]);
+    expect(reports).toEqual({ "a.js": ["theirs"], "b.js": expected["git.js"] });
+    expect(stderr.split("\n")).toContain(
+      "note: prettier/prettier ran in JavaScript for 1 file: bun format finds a syntax error in them.",
+    );
+  });
+
+  test("a comment turns the rule of the package off as well, and is not called unused", async () => {
+    const files = {
+      "a.js": "// eslint-disable-next-line prettier/prettier\nconst a = {b:1}\n",
+      "b.js": "/* eslint-disable prettier/prettier */\nconst a = {b:1}\n",
+      "c.js": "const a = {b:1}\n",
+      ...installed("3.3.3"),
+      "eslint.config.mjs": config(),
+    };
+    expect((await lint(files)).reports).toEqual({ "a.js": [], "b.js": [], "c.js": ["theirs"] });
+  });
+
   // It is `bun format`, which also leaves alone what `.gitignore` names. The comment in off.js is for the other rule.
   test("bun/format reports the same, and nothing has to be installed", async () => {
     const own = (text: string) => text.replaceAll("prettier/prettier", "bun/format");

@@ -12,12 +12,12 @@
 //! The message: [`HEADER`] words with the lengths of the parts, then the parts in the order of the
 //! fields of [`Tree`]: the 8-byte numbers first, the bytes last.
 
-use super::offsets::Offsets;
 use super::wire;
 use crate::ast::File;
 use crate::estree::{Dialect, FieldEntry, Nodes, Object, VNode, Value};
 use crate::selector::{EsNode, Selector};
 use crate::span::Span;
+use bun_core::strings::Utf16OffsetTable;
 
 /// What the number in a word is.
 #[derive(Copy, Clone)]
@@ -181,7 +181,7 @@ enum Open<'a> {
 struct Writer<'a, 's> {
     text: &'a [u8],
     dialect: Dialect,
-    offsets: &'s Offsets,
+    offsets: &'s Utf16OffsetTable,
     selectors: &'s [Option<&'s Selector>],
     /// The nodes that match each of `selectors`.
     matches: Vec<Vec<u32>>,
@@ -417,7 +417,7 @@ fn write_matches(matches: &[Vec<u32>], out: &mut Vec<u8>) {
 
 fn walk<'a, 's>(
     file: &'a File<'a>,
-    offsets: &'s Offsets,
+    offsets: &'s Utf16OffsetTable,
     selectors: &'s [Option<&'s Selector>],
 ) -> Writer<'a, 's> {
     let mut writer = Writer {
@@ -448,7 +448,7 @@ fn walk<'a, 's>(
 /// tree without nodes is appended if no such node is in the file and nothing matches: making the nodes is dearer than this.
 pub(super) fn write<'a>(
     file: &'a File<'a>,
-    offsets: &Offsets,
+    offsets: &Utf16OffsetTable,
     selectors: &[Option<&Selector>],
     listened: Option<&[bool; 256]>,
     out: &mut Vec<u8>,
@@ -497,7 +497,7 @@ pub(super) fn write<'a>(
 /// Appends only what matches `selectors`.
 pub(super) fn write_only_matches<'a>(
     file: &'a File<'a>,
-    offsets: &Offsets,
+    offsets: &Utf16OffsetTable,
     selectors: &[Option<&Selector>],
     out: &mut Vec<u8>,
 ) {

@@ -6,45 +6,10 @@
 //!   what it is.
 //! - There are no `loc`, `start`, `end`, `tokens` and `comments`.
 
+use bun_core::strings::Utf16OffsetTable;
 use bun_lint::ast::File;
 use bun_lint::estree_for_tests::{Nodes, VNode, Value};
 use std::io::Write as _;
-
-/// Converts offsets in UTF-8 text to offsets in the same text as UTF-16.
-struct Utf16Offsets {
-    /// For each character that takes a different number of units in the two encodings: the offset
-    /// after it in bytes, and by how much the offsets differ from there on. Empty for ASCII.
-    shifts: Vec<(u32, u32)>,
-}
-
-impl Utf16Offsets {
-    fn new(text: &[u8]) -> Utf16Offsets {
-        let mut shifts = Vec::new();
-        let (mut at, mut shift) = (0, 0u32);
-        while let Some(&byte) = text.get(at) {
-            let (bytes, units) = match byte {
-                0xF0.. => (4, 2),
-                0xE0.. => (3, 1),
-                0xC0.. => (2, 1),
-                // ASCII, or a stray continuation byte.
-                _ => (1, 1),
-            };
-            at += bytes;
-            if bytes != units {
-                shift += (bytes - units) as u32;
-                shifts.push((at as u32, shift));
-            }
-        }
-        Utf16Offsets { shifts }
-    }
-
-    fn of(&self, offset: u32) -> u32 {
-        match self.shifts.partition_point(|it| it.0 <= offset) {
-            0 => offset,
-            after => offset - self.shifts[after - 1].1,
-        }
-    }
-}
 
 /// What is being written.
 enum Frame<'a> {
@@ -55,7 +20,7 @@ enum Frame<'a> {
 
 struct Writer<'a, 'o> {
     out: &'o mut Vec<u8>,
-    offsets: Utf16Offsets,
+    offsets: Utf16OffsetTable,
     open: Vec<Frame<'a>>,
 }
 
@@ -63,7 +28,7 @@ struct Writer<'a, 'o> {
 pub(crate) fn write_json<'a>(file: &'a File<'a>, out: &mut Vec<u8>) {
     let mut writer = Writer {
         out,
-        offsets: Utf16Offsets::new(file.text()),
+        offsets: Utf16OffsetTable::new(file.text()),
         open: Vec::new(),
     };
     writer.start_node(VNode::program(file));
@@ -73,7 +38,10 @@ pub(crate) fn write_json<'a>(file: &'a File<'a>, out: &mut Vec<u8>) {
 impl<'a> Writer<'a, '_> {
     fn start_node(&mut self, node: VNode<'a>) {
         let span = node.span();
-        let (start, end) = (self.offsets.of(span.start), self.offsets.of(span.end));
+        let (start, end) = (
+            self.offsets.to_utf16(span.start),
+            self.offsets.to_utf16(span.end),
+        );
         let _ = write!(
             self.out,
             "{{\"type\":\"{}\",\"range\":[{start},{end}]",

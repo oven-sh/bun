@@ -4002,6 +4002,24 @@ describe.concurrent("what bun lint takes from Bun", () => {
     ]);
     expect(exitCode).toBe(1);
   });
+
+  test("texts are collated as Intl.Collator does, outside of ASCII too", async () => {
+    const files = {
+      ".eslintrc.json": JSON.stringify({
+        root: true,
+        parser: "@typescript-eslint/parser",
+        plugins: ["@typescript-eslint"],
+        rules: { "@typescript-eslint/sort-type-constituents": "error" },
+      }),
+      "sorted.ts": 'export type T = "a2" | "a10" | "e" | "\u00C9" | "\u00E9" | "f" | "ss" | "\u00DF" | "z";\n',
+      "accent.ts": 'export type T = "f" | "\u00E9";\n',
+      "expansion.ts": 'export type T = "st" | "\u00DF";\n',
+    };
+    const { raw, exitCode } = await lint(files, ["-f", "unix", "sorted.ts", "accent.ts", "expansion.ts"]);
+    const reported = raw.split("\n").filter(it => it.endsWith("[Error/@typescript-eslint/sort-type-constituents]"));
+    expect(reported.map(it => /([\w-]+\.ts):\d+:\d+: /.exec(it)?.[1]).sort()).toEqual(["accent.ts", "expansion.ts"]);
+    expect(exitCode).toBe(1);
+  });
 });
 
 // What differs between Windows, macOS and Linux, for `bun lint`: how a path is written, which names are the same file, how a line

@@ -194,6 +194,11 @@ pub(crate) struct Parser<'a, const GENERAL: bool> {
     pub(crate) end: u32,
     /// `statementHasAwaitIdentifier`, as far as recovery asks: see `is_in_some_parsing_context`.
     pub(crate) has_await_in_statement: bool,
+    /// A computed name in the top-level statement that is being parsed has an `await`, which was read outside the await
+    /// context.
+    pub(crate) has_await_in_name: bool,
+    /// `reparseTopLevelAwait` parses the statement again, its names too.
+    pub(crate) names_are_in_await_context: bool,
     /// It was an `await` that recovery met where no name can be.
     pub(crate) was_await_refused: bool,
     /// That parse has gone past the end of its statement. See `skip_to_element`.
@@ -406,6 +411,8 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             has_top_level_await: false,
             end: 0,
             has_await_in_statement: false,
+            has_await_in_name: false,
+            names_are_in_await_context: false,
             was_await_refused: false,
             reparses_rest_of_file: false,
             reparsed_at: u32::MAX,
@@ -476,7 +483,10 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
         }
         let reparsed = self.jsdoc.reparsed.len();
         while self.token() != T::Eof && self.is_at_element(ListKind::SourceElements) {
-            let statement = self.statement();
+            let statement = match self.recovers() {
+                true => self.top_level_statement(),
+                false => self.statement(),
+            };
             self.take_stray_decorators(0);
             if is_an_external_module_indicator(&self.f, statement) {
                 self.f.has_module_syntax = true;

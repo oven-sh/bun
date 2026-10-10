@@ -114,9 +114,9 @@ pub fn is_strict_mode<'a>(scope: Scope<'a>, file: &'a File<'a>) -> bool {
 }
 
 /// Whether a rule that asks today what `Boolean`, `Promise` or `NaN` refers to goes by the name alone: its port in oxlint does, and
-/// so did the rule in ESLint 8, whose configurations have `Promise` only if `env` says so.
+/// so did the rule before ESLint 10. The configurations of ESLint 8 have `Promise` only if `env` says so.
 pub fn goes_by_the_name(language: &LanguageOptions) -> bool {
-    language.is_oxlint || language.eslint_8.is_some()
+    language.is_oxlint || language.eslint_major < 10
 }
 
 /// [`is_global_reference`] for such a rule: where it [`goes_by_the_name`] it is enough that `e`, which the caller knows to have

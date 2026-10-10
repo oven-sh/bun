@@ -53,7 +53,8 @@ const LOOKS_LIKE_TYPE_CAST: u16 = 1 << 4;
 const SUPPRESSION: u16 = 1 << 5;
 /// It is between the two sides of a declarator or an assignment and trails the left one.
 const TRAILS_LEFT_SIDE: u16 = 1 << 6;
-/// It trails a link of a member chain, or what the chain starts with, and has been moved to the end of that.
+/// It trails a link of a member chain, what the chain starts with, or all of an optional chain that something follows,
+/// and has been moved to the end of that.
 const TRAILS_LINK: u16 = 1 << 7;
 /// It leads a link of a member chain: it is written before the `.b`, `[b]`, `(..)` or `!`, and has been moved to the
 /// end of what that follows.
@@ -502,6 +503,8 @@ fn attach_in_link<'a>(
 
     let is_link_of_chain = nodes.is_link_of_member_chain(link);
     let is_in_chain = is_link_of_chain || nodes.ends_member_chain(link);
+    // No comment is attached to a `ChainExpression`. What trails it trails what is in it, in the parentheses.
+    let is_after_chain_expression = !nodes.has_tree_of_babel && is_chain_root(inner);
     // Where what is written for `inner` starts in a chain, if that is not all of it.
     let inner_link_start = (!has_preceding && is_in_chain && nodes.is_link_of_member_chain(inner))
         .then(|| inner_of_link(inner).map(|it| it.span().end))
@@ -543,7 +546,9 @@ fn attach_in_link<'a>(
             }
         };
         let (moved_to, flag) = match attached_to {
-            AttachedTo::Preceding if is_in_chain => (inner.span().end, TRAILS_LINK),
+            AttachedTo::Preceding if is_in_chain || is_after_chain_expression => {
+                (inner.span().end, TRAILS_LINK)
+            }
             AttachedTo::Link if is_link_of_chain => (inner.span().end, LEADS_LINK),
             AttachedTo::Link if !is_name_of_jsx_element(link) => (link.span().start, 0),
             AttachedTo::Following => match inner_link_start {
@@ -1239,8 +1244,8 @@ impl<'a> Comments<'a> {
         &comments[..count]
     }
 
-    /// The next comments, as far as they trail what ends at `end`: a link of a member chain, or what the chain starts
-    /// with.
+    /// The next comments, as far as they trail what ends at `end`: a link of a member chain, what the chain starts
+    /// with, or all of an optional chain.
     pub(crate) fn comments_trailing_link(&self, end: u32) -> &'a [Comment] {
         self.next_comments_moved_to(end, TRAILS_LINK)
     }

@@ -593,17 +593,19 @@ impl Linter {
         // The rule of the package looks at a file that the rule here cannot answer for as it would.
         if let Some(reason) = file.handed_back() {
             result.handed_back = Some(reason);
-            let back: Vec<RunningJs> = (running.iter())
+            // Each with the id of the rule for which it stands in, which is what the comments name.
+            let back: Vec<(RunningJs, RuleId)> = (running.iter())
                 .filter(|it| it.entry.meta.hands_back && it.severity != Severity::Off)
                 .filter_map(|it| {
-                    Some(RunningJs {
+                    let rule = RunningJs {
                         severity: it.severity,
                         configured: Cow::Borrowed(&it.or_else?.configured),
-                    })
+                    };
+                    Some((rule, it.id()))
                 })
                 .collect();
             let enabled: Vec<&js_plugin::Configured> =
-                back.iter().map(|it| &**it.configured).collect();
+                back.iter().map(|it| &**it.0.configured).collect();
             let reports = match (options.js_plugins, &config.js_settings) {
                 (Some(host), Some(settings)) if !enabled.is_empty() => host.run_on_block(
                     file,
@@ -618,13 +620,16 @@ impl Linter {
             match reports {
                 Ok(reports) => {
                     let of_rule = |it: js_plugin::Report| {
-                        let rule = back.get(it.rule as usize)?;
-                        Some(js_message(it, rule))
+                        let (rule, id) = back.get(it.rule as usize)?;
+                        Some(LintMessage {
+                            rule_id: Some(id.clone()),
+                            ..js_message(it, rule)
+                        })
                     };
                     problems.extend(reports.into_iter().filter_map(of_rule));
                 }
                 Err(failure) => {
-                    let rule = failure.rule.and_then(|it| back.get(it as usize));
+                    let rule = failure.rule.and_then(|it| Some(&back.get(it as usize)?.0));
                     match js_failure(&failure, rule, file.path(), config) {
                         Ok(problem) => problems.push(problem),
                         Err(thrown) => {

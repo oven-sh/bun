@@ -54,8 +54,9 @@ fn command_line(request: &Request) -> Result<Options, Reason> {
     let mut options = Options::default();
     let file_info = |key: &[u8]| request.file_info_options.and_then(|it| it.get(key));
     // `resolveConfig(file, { editorconfig: true })`, or nothing.
-    options.config_lookup = request.uses_configuration;
-    options.editorconfig = request.uses_configuration;
+    if !request.uses_configuration {
+        options.ignore_configuration();
+    }
     options.with_node_modules = file_info(b"withNodeModules").and_then(Json::as_bool) == Some(true);
     options.ignore_path = match file_info(b"ignorePath") {
         Some(Json::String(path)) => Some(vec![path.clone()]),

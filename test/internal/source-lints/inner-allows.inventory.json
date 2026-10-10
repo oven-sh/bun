@@ -142,6 +142,9 @@
     "non_snake_case",
     "non_upper_case_globals"
   ],
+  "src/lint/plugins/import_export_map.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
   "src/lint/plugins/import_export_record.rs": [
     "dead_code, until every rule of the plugin is written"
   ],
@@ -155,6 +158,9 @@
     "dead_code, until every rule of the plugin is written"
   ],
   "src/lint/plugins/import_settings.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/plugins/import_type.rs": [
     "dead_code, until every rule of the plugin is written"
   ],
   "src/lint/plugins/module_visitor.rs": [

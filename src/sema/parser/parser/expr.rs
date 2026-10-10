@@ -583,24 +583,24 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                         return left;
                     }
                     self.next();
-                    let kind = if token == T::As && self.token() == T::Const && self.is_at_const_alone()
-                    {
-                        self.js_error((self.lx.start, self.lx.end), 8016, b"");
-                        self.const_assertion_type();
-                        ExprKind::AsConst(left)
-                    } else {
-                        let ty = match self.is_flow {
-                            true => self.flow_type(),
-                            false => self.ty(),
+                    let kind =
+                        if token == T::As && self.token() == T::Const && self.is_at_const_alone() {
+                            self.js_error((self.lx.start, self.lx.end), 8016, b"");
+                            self.const_assertion_type();
+                            ExprKind::AsConst(left)
+                        } else {
+                            let ty = match self.is_flow {
+                                true => self.flow_type(),
+                                false => self.ty(),
+                            };
+                            if self.options.is_javascript {
+                                self.js_error_at_type(ty, if token == T::As { 8016 } else { 8037 });
+                            }
+                            match token {
+                                T::As => ExprKind::As { expr: left, ty },
+                                _ => ExprKind::Satisfies { expr: left, ty },
+                            }
                         };
-                        if self.options.is_javascript {
-                            self.js_error_at_type(ty, if token == T::As { 8016 } else { 8037 });
-                        }
-                        match token {
-                            T::As => ExprKind::As { expr: left, ty },
-                            _ => ExprKind::Satisfies { expr: left, ty },
-                        }
-                    };
                     left = self.finish_expr(kind, start);
                     // "Stop if the precedence of the next operator is too high": in `a + b as T * c`
                     // the `as T` could not be erased.
@@ -1020,12 +1020,17 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 // For Babel `source` is a phase too. It is kept like `defer`: the text tells them
                 // apart.
                 b"defer" if self.peek() == T::OpenParen => {}
+                b"defer" if self.recovers() && self.is_callee(true) => {}
                 b"source" if self.options.dialect.babel => {}
                 _ => return self.other_meta_property_of_import(start),
             }
             // `parseIdentifierName`
             self.next_after_name();
             is_deferred = true;
+            // `IsImportCall` does not ask for it.
+            if self.recovers() {
+                self.eat(T::QuestionDot);
+            }
         }
         match self.token() {
             T::OpenParen => self.import_call(start, is_deferred).0,
@@ -1042,6 +1047,26 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         };
         let names: [&'static [u8]; 3] = [b"meta", b"defer", b"source"];
         names.into_iter().find(|it| *it == name).unwrap_or_default()
+    }
+
+    /// `parseCallExpressionRest`: whether what ends here is called: a `(` follows, with or without `?.`
+    /// and type arguments before it. `is_at_last_token`: here is after the token.
+    #[cold]
+    #[inline(never)]
+    fn is_callee(&mut self, is_at_last_token: bool) -> bool {
+        self.look_ahead_parsing(|p| {
+            if is_at_last_token {
+                p.next();
+            }
+            p.eat(T::QuestionDot);
+            if matches!(p.token(), T::LessThan | T::LessThanLessThan)
+                && (!p.has_type_arguments_in_expressions
+                    || p.try_type_arguments_in_expression(true).is_none())
+            {
+                return false;
+            }
+            p.token() == T::OpenParen
+        })
     }
 
     /// At the `(` of `import(..)`, which starts at `start`: the call and its arguments.
@@ -1090,7 +1115,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[cold]
     #[inline(never)]
     fn import_without_arguments(&mut self, start: u32, is_deferred: bool) -> ExprId {
-        if !self.recovers() || is_deferred || self.token() != T::LessThan {
+        if !self.recovers() || self.token() != T::LessThan {
             self.fail();
             return ExprId::NONE;
         }
@@ -1109,7 +1134,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 index += 1;
                 index <= reported || it.kind == DiagnosticKind::Parse
             });
-            let (call, args) = self.import_call(start, false);
+            let (call, args) = self.import_call(start, is_deferred);
             if !args.is_empty() {
                 let specifier = self.f.id_at(args, 0);
                 self.f.import_call_type_args.push((specifier, type_args));
@@ -1146,7 +1171,19 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// `checkGrammarMetaProperty`, `checkGrammarImportCallExpression`
     #[cold]
     fn other_meta_property_of_import(&mut self, start: u32) -> ExprId {
-        if !self.token().is_identifier_or_keyword() || self.token() == T::PrivateIdentifier {
+        // `tokenIsIdentifierOrKeyword` is true of a private name.
+        if !self.token().is_identifier_or_keyword() {
+            let (name, name_pos) = self.missing_identifier(0, 0);
+            let obj = self.add_expr(ExprKind::Missing, start, start);
+            let kind = ExprKind::Dot {
+                obj,
+                name,
+                name_pos,
+                chain: Chain::No,
+            };
+            return self.finish_expr(kind, start);
+        }
+        if self.token() == T::PrivateIdentifier && !self.recovers() {
             self.refuse(Refusal::Unsupported);
         }
         let (name, at) = (self.lx.atom, (self.lx.start, self.lx.end));
@@ -1158,18 +1195,23 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         // `parseIdentifierName`
         self.next_after_name();
         // Type arguments, and a call with `?.`, are looked at on the way.
-        if matches!(
-            self.token(),
-            T::LessThan | T::LessThanLessThan | T::QuestionDot
-        ) {
-            self.refuse(Refusal::Unsupported);
-        }
-        match (word, self.token()) {
+        let is_callee = match self.token() {
+            T::OpenParen => true,
+            T::LessThan | T::LessThanLessThan | T::QuestionDot if self.recovers() => {
+                self.is_callee(false)
+            }
+            T::LessThan | T::LessThanLessThan | T::QuestionDot => {
+                self.refuse(Refusal::Unsupported);
+                false
+            }
+            _ => false,
+        };
+        match (word, is_callee) {
             (b"defer", _) => {
                 let after = (at.1, Diagnostic::NO_LENGTH);
                 self.flag(DiagnosticKind::Grammar, 1005, after, &[b"("]);
             }
-            (_, T::OpenParen) => self.flag(DiagnosticKind::Grammar, 18061, at, &[word]),
+            (_, true) => self.flag(DiagnosticKind::Grammar, 18061, at, &[word]),
             _ => self.flag(
                 DiagnosticKind::Grammar,
                 17012,
@@ -1921,6 +1963,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     ) -> ExprId {
         let backtick = self.pos();
         let head = self.lx.atom;
+        // `checkTaggedTemplateExpression`: `checkGrammarTypeArguments` is not asked after the error below.
+        let is_of_list = |it: &Diagnostic| it.code == 1099 && (start..backtick).contains(&it.start);
+        if is_in_chain && type_args.is_empty() && self.f.diagnostics.last().is_some_and(is_of_list)
+        {
+            self.f.diagnostics.pop();
+        }
         let (exprs, is_incomplete) = self.template_parts(true);
         // `checkGrammarTaggedTemplateChain`
         if is_in_chain {
@@ -2087,6 +2135,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 if self.has_top_level_await
                     && !self.options.dialect.typescript_5
                     && !self.is_ecmascript
+                    && !self.names_are_in_await_context
                 {
                     self.refuse(Refusal::Unsupported);
                 }
@@ -2149,24 +2198,19 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[inline(always)]
     fn await_context_of_module(&self) -> u32 {
         match self.recovers() && self.has_context(ctx::TOP_LEVEL) {
-            true if !self.options.dialect.typescript_5 => ctx::AWAIT,
+            true if !self.options.dialect.typescript_5 && !self.names_are_in_await_context => {
+                ctx::AWAIT
+            }
             _ => 0,
         }
     }
 
-    /// After the computed name from `open` on, which has left that context: `reparseTopLevelAwait`
-    /// parses it in the context all the same if another `await` is in its statement.
+    /// After the computed name from `open` on, which has left that context: see `top_level_statement`.
     #[cold]
     #[inline(never)]
     fn computed_name_outside_await_context(&mut self, open: u32) {
-        let (src, open, close) = (self.lx.src, open as usize, self.pos() as usize);
-        let has_await =
-            |text: Option<&[u8]>| bun_core::strings::contains(text.unwrap_or_default(), b"await");
-        if has_await(src.get(open..close))
-            && (has_await(src.get(..open)) || has_await(src.get(close..)))
-        {
-            self.refuse(Refusal::Unsupported);
-        }
+        let name = self.lx.src.get(open as usize..self.pos() as usize);
+        self.has_await_in_name |= bun_core::strings::contains(name.unwrap_or_default(), b"await");
     }
 
     /// Removes `e`, which is the last expression and is not referred to.

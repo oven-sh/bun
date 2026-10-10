@@ -30,6 +30,7 @@ mod util_link_components;
 mod util_make_no_method_set_state_rule;
 mod util_pragma;
 mod util_prop_wrapper;
+mod util_props;
 mod util_variable;
 mod util_version;
 

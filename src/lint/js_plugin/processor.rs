@@ -6,7 +6,6 @@
 
 use super::engine::Vm;
 use super::host::{Host, number};
-use super::offsets::Offsets;
 use super::wire::{self, result};
 use crate::context::Severity;
 use crate::fix::{Fix, SuggestionKind};
@@ -15,6 +14,7 @@ use crate::linter::{
 };
 use crate::options::Json;
 use crate::span::Span;
+use bun_core::strings::Utf16OffsetTable;
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -95,7 +95,7 @@ fn text_of(json: Option<&Json>) -> Option<String> {
 }
 
 /// `{ range, text }`
-fn fix_of(json: Option<&Json>, offsets: &Offsets) -> Option<Fix> {
+fn fix_of(json: Option<&Json>, offsets: &Utf16OffsetTable) -> Option<Fix> {
     let json = json?;
     let [start, end] = json.get(b"range")?.as_array()? else {
         return None;
@@ -111,7 +111,7 @@ fn fix_of(json: Option<&Json>, offsets: &Offsets) -> Option<Fix> {
     })
 }
 
-fn suggestion_of(json: &Json, offsets: &Offsets) -> Option<Suggestion> {
+fn suggestion_of(json: &Json, offsets: &Utf16OffsetTable) -> Option<Suggestion> {
     let data = json.get(b"data").and_then(Json::as_object);
     let has_data = data.is_some();
     let data = data.unwrap_or_default().iter().filter_map(|(key, value)| {
@@ -144,7 +144,7 @@ fn suppression_of(json: &Json) -> Suppression {
     }
 }
 
-fn message_of(json: &Json, offsets: &Offsets, find_rule: &FindRule) -> LintMessage {
+fn message_of(json: &Json, offsets: &Utf16OffsetTable, find_rule: &FindRule) -> LintMessage {
     let list = |key: &[u8]| json.get(key).and_then(Json::as_array).unwrap_or_default();
     LintMessage {
         rule_id: json.get(b"ruleId").and_then(Json::as_str).map(find_rule),
@@ -179,7 +179,7 @@ pub fn read_messages(
     text: &[u8],
     find_rule: &FindRule,
 ) -> (Vec<LintMessage>, Vec<LintMessage>) {
-    let offsets = Offsets::new(text);
+    let offsets = Utf16OffsetTable::without_bom(text);
     messages
         .as_array()
         .unwrap_or_default()

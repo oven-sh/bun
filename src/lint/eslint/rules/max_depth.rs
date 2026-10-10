@@ -95,12 +95,45 @@ impl<'a> AncestorCounter<'a> {
     }
 }
 
+#[derive(Default)]
+pub struct State<'a> {
+    ancestors: AncestorCounter<'a>,
+    /// ESLint before 10 counts while it walks: how deep it is in each of the functions around.
+    depths: Vec<i64>,
+}
+
+/// Whether ESLint before 10 counts `node` where it ends.
+fn ends_a_block_before_10(node: Node) -> bool {
+    matches!(node, Node::Stmt(stmt) if !matches!(stmt.kind(), StmtKind::Block(_)))
+}
+
 impl MaxDepth {
+    /// An `if` that is directly in another one, as that of `else if`, is not counted where it begins, and is where it
+    /// ends. So what follows it in the function is less deep by one.
+    fn enter_before_10<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        let (Some(max), Node::Stmt(stmt), true) = (self.max, node, ends_a_block_before_10(node)) else {
+            return;
+        };
+        let is_if = |it: Stmt| matches!(it.kind(), StmtKind::If { .. });
+        if is_if(stmt) && matches!(stmt.parent(), Node::Stmt(parent) if is_if(parent)) {
+            return;
+        }
+        let Some(depth) = cx.state.depths.last_mut() else {
+            return;
+        };
+        *depth += 1;
+        if let Ok(depth) = usize::try_from(*depth)
+            && depth > max
+        {
+            cx.report(stmt, TOO_DEEPLY).data("depth", depth).data("maxDepth", max);
+        }
+    }
+
     fn check<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let (Some(max), Some(keyword)) = (self.max, keyword_of(stmt)) else {
             return;
         };
-        let around = cx.state.count(Node::Stmt(stmt), |ancestor| match ancestor {
+        let around = cx.state.ancestors.count(Node::Stmt(stmt), |ancestor| match ancestor {
             Node::Func(_) => Ancestor::End,
             Node::Stmt(outer) if keyword_of(outer).is_some() => Ancestor::Counted,
             _ => Ancestor::Passed,
@@ -119,7 +152,7 @@ impl MaxDepth {
 
 impl Rule for MaxDepth {
     const META: Meta = Meta::eslint("max-depth", Kind::Suggestion);
-    type State<'a> = AncestorCounter<'a>;
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -131,22 +164,36 @@ impl Rule for MaxDepth {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> AncestorCounter<'a> {
-        on.stmts(
-            [
-                StmtTag::If,
-                StmtTag::Switch,
-                StmtTag::Try,
-                StmtTag::DoWhile,
-                StmtTag::While,
-                StmtTag::For,
-                StmtTag::ForIn,
-                StmtTag::ForOf,
-                // `with`
-                StmtTag::Block,
-            ],
-            Self::check,
-        );
-        AncestorCounter::default()
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+        let statements = [
+            StmtTag::If,
+            StmtTag::Switch,
+            StmtTag::Try,
+            StmtTag::DoWhile,
+            StmtTag::While,
+            StmtTag::For,
+            StmtTag::ForIn,
+            StmtTag::ForOf,
+            // `with`
+            StmtTag::Block,
+        ];
+        if file.language().eslint_major < 10 {
+            let functions = NodeTags::FILE | NodeTags::FUNC;
+            on.enter(functions, |_, _, cx| cx.state.depths.push(0));
+            on.exit(functions, |_, _, cx| {
+                cx.state.depths.pop();
+            });
+            on.enter(statements, Self::enter_before_10);
+            on.exit(statements, |_, node, cx| {
+                if ends_a_block_before_10(node)
+                    && let Some(depth) = cx.state.depths.last_mut()
+                {
+                    *depth -= 1;
+                }
+            });
+            return State::default();
+        }
+        on.stmts(statements, Self::check);
+        State::default()
     }
 }

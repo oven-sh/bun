@@ -96,8 +96,8 @@ Fixed 2 vulnerabilities in 2 packages
 ```
 
 - **blocked by a dependent's range** — no safe version fits a dependent's declared range. If the range is in your own `package.json` or catalog, `bun audit fix --latest` gets past it. Otherwise, update the dependent or add an [`overrides`](/pm/overrides) entry.
-- **no published version fixes** — every published version is vulnerable. Replace the package, or silence the advisory with the printed `--ignore` command.
-- If no newer version is safe but an older one is, Bun downgrades and marks the row `(downgrade)`.
+- **no published version fixes** — every version Bun would install is vulnerable. Replace the package, or silence the advisory with the printed `--ignore` command.
+- If no newer version is safe but an older one is, Bun downgrades and marks the row `(downgrade)`. Bun only downgrades within the installed major version (within the installed minor version below 1.0.0), with or without `--latest`. When an advisory covers every `2.x` release, Bun lists the package under **no published version fixes** instead of installing a `1.x` release.
 - Bun still installs a safe version newer than `--minimum-release-age` and marks the row `(newer than --minimum-release-age)`.
 - Bun upgrades patched dependencies (`patchedDependencies`) like any other package. Re-create the patch afterwards with `bun patch`.
 - After installing, Bun re-audits the new lockfile. The `remaining` count and exit code reflect that second audit, so they match what a follow-up `bun audit` would report.

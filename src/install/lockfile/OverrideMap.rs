@@ -3,7 +3,9 @@ use core::cmp::Ordering;
 
 use crate::DependencyID;
 use crate::Error;
-use crate::package_manager::workspace_package_json_cache::{GetJSONOptions, GetResult};
+use crate::package_manager::workspace_package_json_cache::{
+    GetJSONOptions, GetResult, WorkspacePackageJSONCache,
+};
 use crate::resolution::Tag as ResolutionTag;
 use crate::{PackageID, invalid_package_id};
 use bun_collections::{ArrayHashMap, index_sort};
@@ -22,7 +24,7 @@ use super::override_selector::{
     PackageSelector, Selector, SelectorError, parse_package_segment, parse_selector,
 };
 use super::package::PackageColumns as _;
-use super::package::workspace_map::WorkspaceMap;
+use super::package::workspace_map::{WorkspaceMap, package_json_dir, parse_for_testing};
 use super::package::{DependencyGroup, value_loc_of};
 use super::{Lockfile, StringBuilder, package::Package};
 // LAYERING NOTE: package.json is parsed by `bun_parsers::json` which
@@ -1111,7 +1113,7 @@ fn parse_override_value(
         match root_ref {
             Some(root_ref) => root_ref,
             None => match workspace_ref_literal(
-                ctx.pm,
+                &mut ctx.pm.workspace_package_json_cache,
                 ctx.log,
                 ctx.source,
                 ctx.workspace_names,
@@ -1205,13 +1207,19 @@ fn count_ref_value(
         }
         return;
     }
-    if let Ok(Some(literal)) = workspace_ref_literal(pm, log, source, workspace_names, ref_name) {
+    if let Ok(Some(literal)) = workspace_ref_literal(
+        &mut pm.workspace_package_json_cache,
+        log,
+        source,
+        workspace_names,
+        ref_name,
+    ) {
         builder.count(&literal);
     }
 }
 
 fn workspace_ref_literal(
-    pm: &mut PackageManager,
+    json_cache: &mut WorkspacePackageJSONCache,
     log: &mut bun_ast::Log,
     source: &bun_ast::Source,
     workspace_names: &WorkspaceMap,
@@ -1220,7 +1228,7 @@ fn workspace_ref_literal(
     if workspace_names.count() == 0 {
         return Ok(None);
     }
-    let root_dir: &[u8] = source.path.name().dir;
+    let root_dir: &[u8] = package_json_dir(source);
     let mut path_buf = bun_paths::path_buffer_pool::get();
     let mut found: Option<Vec<u8>> = None;
     for relative_dir in workspace_names.keys() {
@@ -1233,7 +1241,7 @@ fn workspace_ref_literal(
         else {
             continue;
         };
-        let GetResult::Entry(entry) = pm.workspace_package_json_cache.get_with_path(
+        let GetResult::Entry(entry) = json_cache.get_with_path(
             log,
             abs_package_json_path,
             GetJSONOptions {
@@ -1257,4 +1265,15 @@ fn workspace_ref_literal(
         }
     }
     Ok(found)
+}
+
+/// For `bun:internal-for-testing`: what `$ref_name` in `overrides` takes from a workspace member.
+pub fn workspace_ref_for_testing(
+    source: &bun_ast::Source,
+    log: &mut bun_ast::Log,
+    ref_name: &[u8],
+) -> crate::Result<Option<Vec<u8>>> {
+    let mut json_cache = WorkspacePackageJSONCache::default();
+    let members = parse_for_testing(source, log, &mut json_cache)?;
+    Ok(workspace_ref_literal(&mut json_cache, log, source, &members, ref_name).unwrap_or_default())
 }

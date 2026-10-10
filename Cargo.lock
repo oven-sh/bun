@@ -819,6 +819,7 @@ dependencies = [
  "bun_ptr",
  "bun_react_compiler",
  "bun_sema",
+ "bun_sys",
  "bun_url",
  "bun_wyhash",
  "bytemuck",

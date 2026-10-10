@@ -300,7 +300,9 @@ impl FormatOptions {
         };
         match name {
             b"printWidth" if value == b"Infinity" => self.line_width = LineWidth(u16::MAX),
-            b"printWidth" => self.line_width = LineWidth(number(u32::from(u16::MAX))? as u16),
+            b"printWidth" => {
+                self.line_width = LineWidth(number(u32::MAX)?.min(u32::from(u16::MAX)) as u16)
+            }
             // Markdown asks whether something is a multiple of it. Nothing is as wide as 255 columns.
             b"tabWidth" => {
                 self.indent_width = IndentWidth(number(u32::MAX)?.min(u32::from(u8::MAX)) as u8)

@@ -33,5 +33,7 @@ if (typeof config === "string") config = await importDefault(Bun.resolveSync(con
 if (config !== undefined && config !== null && typeof config !== "object") {
   throw new TypeError(`Config is only allowed to be an object, but received ${typeof config} in "${path}"`);
 }
-// What is not JSON, like a plugin that is an object, is left out.
-finish(JSON.parse(JSON.stringify(config ?? null, (key, value) => (typeof value === "bigint" ? undefined : value))));
+// What is not JSON, like a plugin that is an object, is left out. `printWidth: Infinity` would be null: it is the widest there is.
+const kept = (key, value) =>
+  typeof value === "bigint" ? undefined : key === "printWidth" && value === Infinity ? 65535 : value;
+finish(JSON.parse(JSON.stringify(config ?? null, kept)));

@@ -1212,6 +1212,38 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     expect(result.exitCode).toBe(2);
   });
 
+  // "Never break a line." Prettier takes every whole number from 0 on, and Infinity.
+  test.each([
+    [{ ".prettierrc": `{ "printWidth": 100000 }` }, []],
+    [{ ".prettierrc.mjs": `export default { printWidth: Infinity };` }, []],
+    [{ ".prettierrc.yaml": `printWidth: .inf\n` }, []],
+    [{ ".prettierrc.json5": `{ printWidth: Infinity }` }, []],
+    [{ ".prettierrc.mjs": `export default { overrides: [{ files: "*.js", options: { printWidth: Infinity } }] };` }, []],
+    [{ ".prettierrc.mjs": `export default { printWidth: Infinity, rangeStart: 0, rangeEnd: Infinity };` }, []],
+    [{ "bunfig.toml": `[format]\nprintWidth = 100000\n` }, []],
+    [{}, ["--print-width", "65536"]],
+    [{}, ["--print-width=100000"]],
+    [{}, ["--print-width=9007199254740991"]],
+  ])("a printWidth wider than any line: %j %j", async (config, flags) => {
+    const line = `const value = someFunction(${Array.from({ length: 40 }, (_, i) => `argumentNumber${i}`).join(", ")});\n`;
+    const result = await format({ ...config, "a.js": line.replaceAll(", ", ",   ") }, [...flags, "a.js"], {
+      reads: ["a.js"],
+    });
+    expect(result.stderr).not.toContain("Invalid");
+    expect(result.files["a.js"]).toBe(line);
+    expect(result.exitCode).toBe(0);
+  });
+
+  // oxfmt 0.72: "Failed to load configuration file.", 1.
+  test("an infinite printWidth is none that oxfmt takes", async () => {
+    const result = await format({ "oxfmt.config.ts": `export default { printWidth: Infinity };`, "a.js": ugly }, ["a.js"], {
+      reads: ["a.js"],
+    });
+    expect(result.files["a.js"]).toBe(ugly);
+    expect(result.stderr).toContain("Invalid printWidth: The line width should be between 1 and 320");
+    expect(result.exitCode).toBe(1);
+  });
+
   test("an option that Prettier does not know is ignored with its warning, unless a plugin may know it", async () => {
     const unknown = '"nonsense": 1, "other": [1, "a"], "tailwindConfig": "x", "$schema": "y"';
     const result = await format({ ".prettierrc": `{ ${unknown} }`, "a.js": ugly }, ["a.js"], { reads: ["a.js"] });

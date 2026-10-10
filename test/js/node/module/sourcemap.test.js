@@ -22,6 +22,17 @@ test("SourceMap payload must be an object", () => {
   );
 });
 
+test.each([[() => {}], [class {}], [[]], [null]])("SourceMap payload rejects %p", payload => {
+  let err;
+  try {
+    new SourceMap(payload);
+  } catch (e) {
+    err = e;
+  }
+  expect(err).toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+  expect(err.message).toMatch(/"payload" argument must be of type object/);
+});
+
 test("SourceMap instance has expected methods", () => {
   const sourceMap = new SourceMap({
     version: 3,

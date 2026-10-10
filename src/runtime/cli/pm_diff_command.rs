@@ -2048,6 +2048,8 @@ fn expr_text(e: &bun_js_parser::Expr, bump: &Bump) -> Vec<u8> {
         &source,
         bun_js_printer::PrintJsonOptions {
             mangled_props: None,
+            // This text is compared: `1e400` must not read as `null`.
+            non_finite_numbers_as_js: true,
             ..Default::default()
         },
     );

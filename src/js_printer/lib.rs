@@ -1380,6 +1380,9 @@ pub struct Options<'a> {
     pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List<bun_alloc::AstAlloc>>,
 
     pub mangled_props: Option<&'a crate::MangledProps>,
+
+    /// `PrintJsonOptions::non_finite_numbers_as_js`. Read only when `IS_JSON`.
+    pub non_finite_numbers_as_js: bool,
 }
 
 impl<'a> Options<'a> {
@@ -1435,6 +1438,7 @@ impl<'a> Default for Options<'a> {
             has_dynamic_import_items: false,
             line_offset_tables: None,
             mangled_props: None,
+            non_finite_numbers_as_js: false,
         }
     }
 }
@@ -1455,6 +1459,9 @@ pub struct PrintJsonOptions<'a> {
     pub indent: Indentation,
     pub mangled_props: Option<&'a MangledProps>,
     pub minify_whitespace: bool,
+    /// Print NaN and the infinities as `NaN` / `Infinity` and not as `null`. The output is then
+    /// not JSON: only for text that is compared or shown, never parsed.
+    pub non_finite_numbers_as_js: bool,
 }
 
 // `print_json` lives below the `Printer` impl (after `__gated_printer`) so it
@@ -6888,7 +6895,7 @@ pub(crate) mod __gated_printer {
 
         pub(crate) fn print_number(&mut self, value: f64, level: Level) {
             let abs_value = value.abs();
-            if IS_JSON && !value.is_finite() {
+            if IS_JSON && !value.is_finite() && !self.options.non_finite_numbers_as_js {
                 // JSON has no token for these. Match JSON.stringify.
                 self.print_space_before_identifier();
                 self.print(b"null");
@@ -6913,7 +6920,7 @@ pub(crate) mod __gated_printer {
                 }
 
                 // If we are not running the symbol renamer, we must not print "Infinity".
-                if !self.options.minify_syntax && self.options.has_run_symbol_renamer {
+                if IS_JSON || (!self.options.minify_syntax && self.options.has_run_symbol_renamer) {
                     self.print(b"Infinity");
                 } else if self.options.minify_whitespace {
                     self.print(b"1/0");
@@ -7929,6 +7936,7 @@ pub fn print_json<W: WriterTrait>(
         indent: opts.indent,
         mangled_props: opts.mangled_props,
         minify_whitespace: opts.minify_whitespace,
+        non_finite_numbers_as_js: opts.non_finite_numbers_as_js,
         ..Default::default()
     };
     let mut printer = PrinterType::<W>::init(

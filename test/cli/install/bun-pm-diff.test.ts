@@ -518,6 +518,28 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a JSON number that overflows to Infinity is a different value from null", async () => {
+    // The package.json writer prints null for such a number. Here the text is compared, so 1e400, -1e400 and
+    // null must stay three values, or a real change reads as "formatting only".
+    const { text, exitCode } = await pretty({
+      "a/package.json": `{"name":"x","version":"1.0.0","engines":null}`,
+      "b/package.json": `{"name":"x","version":"1.0.0","engines":1e400}`,
+      "a/data.json": `{"v": null, "w": 1e400}`,
+      "b/data.json": `{"v": 1e400, "w": -1e400}`,
+    });
+    expect(text).not.toContain("formatting only");
+    expect(changedLines(text).map(l => l.replace(/^ +[\d:]+ │/, ""))).toEqual([
+      '-   "v": null,',
+      '-   "w": Infinity',
+      '+   "v": Infinity,',
+      '+   "w": -Infinity',
+      '-   "engines": null',
+      '+   "engines": Infinity',
+    ]);
+    expect(text).toContain("▲ engines changed: null → Infinity\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("two minified builds with different mangled names diff down to the real change", async () => {
     // Same program, names handed out differently by the "minifier", plus one genuine edit (* 2 → * 3) and one
     // inserted helper in b. Long enough on one line to count as minified.

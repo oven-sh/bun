@@ -14,6 +14,7 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/SymbolRegistry.h>
 
 namespace WebCore {
 
@@ -24,21 +25,16 @@ Ref<EventEmitter> EventEmitter::create(ScriptExecutionContext& context)
     return adoptRef(*new EventEmitter(context));
 }
 
-bool EventEmitter::addListener(const Identifier& eventType, Ref<EventListener>&& listener, bool once, bool prepend)
+void EventEmitter::addListener(const Identifier& eventType, Ref<EventListener>&& listener, bool once, bool prepend)
 {
-
-    if (prepend) {
-        if (!ensureEventEmitterData().eventListenerMap.prepend(eventType, listener.copyRef(), once))
-            return false;
-    } else {
-        if (!ensureEventEmitterData().eventListenerMap.add(eventType, listener.copyRef(), once))
-            return false;
-    }
+    if (prepend)
+        ensureEventEmitterData().eventListenerMap.prepend(eventType, WTF::move(listener), once);
+    else
+        ensureEventEmitterData().eventListenerMap.add(eventType, WTF::move(listener), once);
 
     eventListenersDidChange();
     if (this->onDidChangeListener)
         this->onDidChangeListener(*this, eventType, true);
-    return true;
 }
 
 void EventEmitter::addListenerForBindings(const Identifier& eventType, RefPtr<EventListener>&& listener, bool once, bool prepend)
@@ -64,6 +60,22 @@ bool EventEmitter::removeListener(const Identifier& eventType, EventListener& li
         return false;
 
     if (data->eventListenerMap.remove(eventType, listener)) {
+        eventListenersDidChange();
+
+        if (this->onDidChangeListener)
+            this->onDidChangeListener(*this, eventType, false);
+        return true;
+    }
+    return false;
+}
+
+bool EventEmitter::removeListener(const Identifier& eventType, SimpleRegisteredEventListener& registration)
+{
+    auto* data = eventTargetData();
+    if (!data)
+        return false;
+
+    if (data->eventListenerMap.remove(eventType, registration)) {
         eventListenersDidChange();
 
         if (this->onDidChangeListener)
@@ -116,12 +128,6 @@ bool EventEmitter::removeAllListeners(const Identifier& eventType)
     return false;
 }
 
-bool EventEmitter::hasActiveEventListeners(const Identifier& eventType) const
-{
-    auto* data = eventTargetData();
-    return data && data->eventListenerMap.containsActive(eventType);
-}
-
 bool EventEmitter::emitForBindings(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
     if (!scriptExecutionContext())
@@ -143,7 +149,7 @@ Vector<Identifier> EventEmitter::getEventNames()
     return data->eventListenerMap.eventTypes();
 }
 
-int EventEmitter::listenerCount(const Identifier& eventType)
+int EventEmitter::listenerCount(const Identifier& eventType, JSC::JSObject* listener)
 {
     auto* data = eventTargetData();
     if (!data)
@@ -154,7 +160,8 @@ int EventEmitter::listenerCount(const Identifier& eventType)
             if (registeredListener->wasRemoved()) [[unlikely]]
                 continue;
 
-            if (registeredListener->callback().jsFunction()) {
+            JSC::JSObject* jsFunction = registeredListener->callback().jsFunction();
+            if (jsFunction && (!listener || jsFunction == listener)) {
                 result++;
             }
         }
@@ -184,29 +191,50 @@ Vector<JSObject*> EventEmitter::getListeners(const Identifier& eventType)
 // https://dom.spec.whatwg.org/#concept-event-listener-invoke
 bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
-
     auto* data = eventTargetData();
     if (!data)
         return false;
 
-    auto* listenersVector = data->eventListenerMap.find(eventType);
-    if (!listenersVector) [[unlikely]] {
-        if (eventType == scriptExecutionContext()->vm().propertyNames->error && arguments.size() > 0) {
-            Ref<EventEmitter> protectedThis(*this);
-            auto* thisObject = protectedThis->m_thisObject.get();
-            if (!thisObject)
-                return false;
+    if (eventType == scriptExecutionContext()->vm().propertyNames->error) [[unlikely]]
+        return fireErrorEventListeners(*data, arguments);
 
-            Bun__reportUnhandledError(thisObject->globalObject(), JSValue::encode(arguments.at(0)));
-            return false;
+    auto* listenersVector = data->eventListenerMap.find(eventType);
+    if (!listenersVector) [[unlikely]]
+        return false;
+
+    return invokeEventListeners(*data, eventType, *listenersVector, arguments);
+}
+
+// Like emitError in src/js/node/events.ts: the events.errorMonitor listeners run first, whether or not 'error' has a handler.
+bool EventEmitter::fireErrorEventListeners(EventEmitterData& data, const MarkedArgumentBuffer& arguments)
+{
+    Ref<EventEmitter> protectedThis(*this);
+    VM& vm = scriptExecutionContext()->vm();
+
+    // events.ts creates the symbol with Symbol.for.
+    auto errorMonitor = Identifier::fromUid(vm.symbolRegistry().symbolForKey("events.errorMonitor"_s));
+    if (auto* monitors = data.eventListenerMap.find(errorMonitor)) [[unlikely]]
+        invokeEventListeners(data, errorMonitor, *monitors, arguments);
+
+    auto& errorIdentifier = vm.propertyNames->error;
+    auto* listenersVector = data.eventListenerMap.find(errorIdentifier);
+    if (!listenersVector) {
+        if (arguments.size() > 0) {
+            if (auto* thisObject = m_thisObject.get())
+                Bun__reportUnhandledError(thisObject->globalObject(), JSValue::encode(arguments.at(0)));
         }
         return false;
     }
 
-    bool prevFiringEventListeners = data->isFiringEventListeners;
-    data->isFiringEventListeners = true;
-    auto fired = innerInvokeEventListeners(eventType, *listenersVector, arguments);
-    data->isFiringEventListeners = prevFiringEventListeners;
+    return invokeEventListeners(data, errorIdentifier, *listenersVector, arguments);
+}
+
+bool EventEmitter::invokeEventListeners(EventEmitterData& data, const Identifier& eventType, SimpleEventListenerVector& listeners, const MarkedArgumentBuffer& arguments)
+{
+    bool prevFiringEventListeners = data.isFiringEventListeners;
+    data.isFiringEventListeners = true;
+    auto fired = innerInvokeEventListeners(eventType, listeners, arguments);
+    data.isFiringEventListeners = prevFiringEventListeners;
     return fired;
 }
 
@@ -243,7 +271,7 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
 
         // Do this before invocation to avoid reentrancy issues.
         if (registeredListener->isOnce())
-            removeListener(eventType, callback);
+            removeListener(eventType, *registeredListener);
 
         if (!jsFunction) [[unlikely]]
             continue;
@@ -260,22 +288,8 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
         call(lexicalGlobalObject, jsFunction, callData, thisValue, arguments, exceptionPtr);
         auto* exception = exceptionPtr.get();
 
-        if (exception) [[unlikely]] {
-            auto errorIdentifier = vm.propertyNames->error;
-            auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
-            if (!hasErrorListener || eventType == errorIdentifier) {
-                // If the event type is error, report the exception to the console.
-                Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(exception));
-            } else if (hasErrorListener) {
-                MarkedArgumentBuffer expcep;
-                JSValue errorValue = exception->value();
-                if (!errorValue) {
-                    errorValue = JSC::jsUndefined();
-                }
-                expcep.append(errorValue);
-                fireEventListeners(errorIdentifier, WTF::move(expcep));
-            }
-        }
+        if (exception) [[unlikely]]
+            Bun__reportUnhandledError(lexicalGlobalObject, JSValue::encode(exception));
     }
 
     return fired;

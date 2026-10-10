@@ -234,3 +234,52 @@ test("Bun.resolveSync with non-ASCII specifier and query string", async () => {
   expect(resolved).toEndWith("target.js?v=caf\u00e9-\u65e5\u672c\u8a9e");
   expect(exitCode).toBe(0);
 });
+
+// `bun build` cuts the query where the runtime cuts it, so a bundle has the file that `bun run` loads.
+test("bun build resolves an import with a query to the same file as bun run", async () => {
+  using dir = tempDir("import-query-build", {
+    "package.json": JSON.stringify({ name: "app", imports: { "#alias/*": "./src/*" } }),
+    "a.txt": "a",
+    "lib.js": `export default "lib";`,
+    "dir#1/a.txt": "in dir#1",
+    // `./dir#1/a.txt?raw` cut at the "#" is `./dir`, which is this file.
+    "dir.js": `export default "dir.js";`,
+    "src/aliased.txt": "aliased",
+    "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "./index.js" }),
+    "node_modules/pkg/index.js": `module.exports = "pkg";`,
+  });
+  const rows: [specifier: string, value: string][] = [
+    ["./a.txt?raw", "a"],
+    ["./a.txt?raw&x=1", "a"],
+    ["./a.txt?raw#fragment", "a"],
+    ["./lib.js?v=1", "lib"],
+    ["./lib.js?raw", `export default "lib";`],
+    ["./lib.js?redirect=/a/b.js", "lib"],
+    ["./dir#1/a.txt?raw", "in dir#1"],
+    ["#alias/aliased.txt?raw", "aliased"],
+    ["pkg?v=1", "pkg"],
+    [`${dir}/lib.js?absolute`.replaceAll("\\", "/"), "lib"],
+  ];
+  await Bun.write(
+    `${dir}/entry.js`,
+    rows.map(([specifier], i) => `import v${i} from ${JSON.stringify(specifier)};`).join("\n") +
+      `\nconsole.log(JSON.stringify([${rows.map((_, i) => `v${i}`).join(", ")}]));\n`,
+  );
+
+  async function run(...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const expected = { stdout: JSON.stringify(rows.map(([, value]) => value)) + "\n", stderr: "", exitCode: 0 };
+  expect(await run("entry.js")).toEqual(expected);
+  expect((await run("build", "entry.js", "--target=bun", "--outdir=out")).stderr).toBe("");
+  expect(await run("out/entry.js")).toEqual(expected);
+});

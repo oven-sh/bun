@@ -346,10 +346,10 @@ describe("other loaders do not crash", () => {
 describe("?raw", () => {
   for (const [name, fn] of [
     ["bun run", testBunRun],
-    // ["bun build", testBunBuild], // TODO: bun.build doesn't support query params at all yet
+    ["bun build", testBunBuild],
     ["bun run await import", testBunRunAwaitImport],
     ["require", testBunRunRequire],
-    // ["bun build require", testBunBuildRequire], // TODO: bun.build doesn't support query params at all yet
+    // ["bun build require", testBunBuildRequire], // a bundled require() of a text file returns the string, not { default }
   ] as const) {
     test(name, async () => {
       const filename = "abcd.js";

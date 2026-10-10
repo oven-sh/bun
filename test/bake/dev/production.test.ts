@@ -660,6 +660,73 @@ export default function IndexPage() {
     expect(htmlContent).not.toContain('<script type="module"');
   });
 
+  test("a client component reached through several server components makes the route dynamic", async () => {
+    // Whether a route gets client code is decided by walking its imports; the
+    // "use client" file here sits three server components deep, and the
+    // second page shares the first two of them but never reaches it.
+    const dir = await tempDirWithBakeDeps("bake-production-nested-client", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `import Layout from "../components/Layout";
+import Section from "../components/Section";
+
+export default function IndexPage() {
+  return <Layout><Section /></Layout>;
+}`,
+      "pages/static.tsx": `import Layout from "../components/Layout";
+import Text from "../components/Text";
+
+export default function StaticPage() {
+  return <Layout><Text /></Layout>;
+}`,
+      "components/Layout.tsx": `import Text from "./Text";
+
+export default function Layout({ children }) {
+  return <main><Text />{children}</main>;
+}`,
+      "components/Text.tsx": `export default function Text() {
+  return <p>server text</p>;
+}`,
+      "components/Section.tsx": `import Card from "./Card";
+
+export default function Section() {
+  return <section><Card /></section>;
+}`,
+      "components/Card.tsx": `import Counter from "./Counter";
+
+export default function Card() {
+  return <div><Counter /></div>;
+}`,
+      "components/Counter.tsx": `"use client";
+
+export default function Counter() {
+  return <button>count</button>;
+}`,
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    const { exitCode } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(exitCode).toBe(0);
+
+    const indexHtml = await Bun.file(path.join(dir, "dist", "index.html")).text();
+    expect(indexHtml).toContain("server text");
+    expect(indexHtml).toContain("count");
+    expect(indexHtml).toContain('<script type="module"');
+
+    const staticHtml = await Bun.file(path.join(dir, "dist", "static", "index.html")).text();
+    expect(staticHtml).toContain("server text");
+    expect(staticHtml).not.toContain('<script type="module"');
+  });
+
   test("a page can make a WebSocket while it is prerendered", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-websocket", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,

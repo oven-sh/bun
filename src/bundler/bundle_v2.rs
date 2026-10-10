@@ -6113,8 +6113,33 @@ pub mod bv2_impl {
             });
 
             // Then all the distinct CSS bundles (these are JS->CSS, not CSS->CSS)
+            let mut css_orders = Vec::with_capacity(start.css_entry_points.count());
+            let mut css_too_deep = Vec::new();
             for entry_point in start.css_entry_points.keys() {
-                let order = crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&mut self.linker, self.graph.heap, &[*entry_point]);
+                match crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&mut self.linker, self.graph.heap, &[*entry_point]) {
+                    Ok(order) => css_orders.push((*entry_point, order)),
+                    Err(too_deep) => css_too_deep.push((*entry_point, too_deep)),
+                }
+            }
+            // A stylesheet whose `@import` chain is too deep fails like one
+            // with an invalid import: the dev server shows the error for the
+            // file, and it gets no chunk.
+            for (entry_point, too_deep) in css_too_deep {
+                let sources = self.graph.input_files.items_source();
+                let mut log = bun_ast::Log::init();
+                too_deep.add_to_log(sources, &mut log);
+                dev_server
+                    .handle_parse_task_failure(
+                        crate::Error::InvalidCssImport,
+                        bake::Graph::Client,
+                        sources[entry_point.get() as usize].path.text,
+                        &raw const log,
+                        self,
+                    )
+                    .map_err(|_| AllocError)?;
+                let _ = start.css_entry_points.ordered_remove(&entry_point);
+            }
+            for (entry_point, order) in css_orders {
                 let order_len = order.len() as usize;
                 chunks.push(Chunk {
                     entry_point: chunk::EntryPoint::non_entry_point(

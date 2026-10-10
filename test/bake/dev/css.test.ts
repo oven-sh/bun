@@ -698,6 +698,44 @@ devTest("css import before create project relative", {
   },
 });
 
+// `find_imported_files_in_css_order` recurses once per `@import` and checks the
+// remaining stack first. How deep it gets before giving up depends on the
+// build (a debug build gave up at about 1270 files, a release build gets past
+// 1500), so both outcomes are valid here. What is not valid is the dev server
+// dying, which is what the unguarded walk did.
+devTest("a deep @import chain either bundles or fails with a build error", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["c0.css"],
+      body: `hello world`,
+    }),
+    ...cssImportChain(1500),
+  },
+  async test(dev) {
+    const response = await dev.fetch("/");
+    if (response.status === 200) {
+      const html = await response.text();
+      const cssUrl = html.match(/href="([^"]+\.css)"/)?.[1];
+      expect(cssUrl).toBeDefined();
+      const css = await dev.fetch(cssUrl!).then(r => r.text());
+      expect(css).toContain(".c1499");
+      expect(css).toContain(".c0");
+    } else {
+      expect(response.status).toBe(500);
+      expect(await response.text()).toContain("Build Failed");
+      await dev.output.waitForLine(/Maximum call stack size exceeded while following this "@import" chain/);
+    }
+  },
+});
+
+function cssImportChain(length: number): Record<string, string> {
+  const files: Record<string, string> = {};
+  for (let i = 0; i < length; i++) {
+    files[`c${i}.css`] = (i + 1 < length ? `@import "./c${i + 1}.css";\n` : "") + `.c${i} { color: red; }\n`;
+  }
+  return files;
+}
+
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);
   if (!url) {

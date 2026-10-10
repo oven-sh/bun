@@ -481,6 +481,14 @@ describe("FormData", () => {
           ["last", "2"],
         ]);
       });
+
+      it("skips a part with no name parameter", async () => {
+        const body = multipart(part('name="first"', "1"), part('filename="b"', "v"), part('name="last"', "2"));
+        expect(await parse(body)).toEqual([
+          ["first", "1"],
+          ["last", "2"],
+        ]);
+      });
     });
 
     it("round-trips entries appended under the empty name", async () => {
@@ -522,6 +530,20 @@ describe("FormData", () => {
       ]);
       parsed.delete("");
       expect([...parsed]).toEqual([["k", "w"]]);
+    });
+
+    it("toJSON() and Bun.inspect() accept a parsed File under the empty name", async () => {
+      const body = multipart(part('name=""; filename="b.txt"', "x"));
+      const parsed = await new Response(body, { headers }).formData();
+      const json = (parsed as any).toJSON();
+      const file = json[""];
+      expect(file).toBeInstanceOf(File);
+      expect({ keys: Object.keys(json), name: file.name, text: await file.text() }).toEqual({
+        keys: [""],
+        name: "b.txt",
+        text: "x",
+      });
+      expect(Bun.inspect(parsed)).toStartWith('FormData {\n  "": File (1 bytes) {\n    name: "b.txt",');
     });
   });
 

@@ -170,9 +170,10 @@ impl hooks::AutoInstaller for PackageManager {
         &self,
         name: &[u8],
         version: &hooks::DependencyVersion,
+        version_buf: &[u8],
     ) -> Option<PackageID> {
         self.lockfile
-            .resolve_package_from_name_and_version(name, version)
+            .resolve_package_from_name_and_version(name, version, version_buf)
     }
 
     fn lockfile_legacy_package_to_dependency_id(
@@ -369,8 +370,9 @@ impl hooks::AutoInstaller for PackageManager {
         &mut self,
         name: &[u8],
         version: &hooks::DependencyVersion,
+        version_buf: &[u8],
     ) -> Option<PackageID> {
-        pm_resolution::resolve_from_disk_cache(self, name, version)
+        pm_resolution::resolve_from_disk_cache(self, name, version, version_buf)
     }
 
     fn enqueue_dependency_to_root(
@@ -404,13 +406,43 @@ impl hooks::AutoInstaller for PackageManager {
         sliced: &SlicedString,
         log: Option<&mut bun_ast::Log>,
     ) -> Option<hooks::DependencyVersion> {
-        // `pm` is threaded so `parse_with_tag` can record `npm:` aliases into
-        // `pm.known_npm_aliases`.
-        dependency::parse(name, name_hash, version, sliced, log, Some(self))
+        let parsed = dependency::parse(
+            name,
+            name_hash,
+            version,
+            sliced,
+            log,
+            None::<&mut PackageManager>,
+        )?;
+
+        // `known_npm_aliases` is sliced with the lockfile's strings, so the alias is parsed there.
+        if let Some(alias_hash) = name_hash
+            && parsed.tag == dependency::Tag::Npm
+            && parsed.npm().is_alias
+        {
+            let known_npm_aliases = &mut self.known_npm_aliases;
+            let (mut builder, _) = self.lockfile.string_builder_split();
+            builder.count(sliced.slice);
+            bun_core::handle_oom(builder.allocate());
+            let literal = builder.append::<SemverString>(sliced.slice);
+            let string_bytes = builder.string_bytes.as_slice();
+            let _ = dependency::parse_with_tag(
+                SemverString::default(),
+                Some(alias_hash),
+                bun_core::strings::trim_left(literal.slice(string_bytes), b" \t\n\r"),
+                dependency::Tag::Npm,
+                &literal.sliced(string_bytes),
+                None,
+                Some(known_npm_aliases as &mut dyn dependency::NpmAliasRegistry),
+            );
+            builder.clamp();
+        }
+
+        Some(parsed)
     }
 
     fn parse_dependency_with_tag(
-        &mut self,
+        &self,
         name: SemverString,
         name_hash: u64,
         version: &[u8],
@@ -418,15 +450,7 @@ impl hooks::AutoInstaller for PackageManager {
         sliced: &SlicedString,
         log: Option<&mut bun_ast::Log>,
     ) -> Option<hooks::DependencyVersion> {
-        dependency::parse_with_tag(
-            name,
-            Some(name_hash),
-            version,
-            tag,
-            sliced,
-            log,
-            Some(self as &mut dyn dependency::NpmAliasRegistry),
-        )
+        dependency::parse_with_tag(name, Some(name_hash), version, tag, sliced, log, None)
     }
 
     fn infer_dependency_tag(&self, dep: &[u8]) -> hooks::DependencyVersionTag {

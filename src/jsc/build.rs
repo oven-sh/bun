@@ -61,8 +61,17 @@ fn main() {
         );
     }
 
+    let bindgen_generated_rs = codegen_dir.join("bindgen_generated.rs");
+    if !bindgen_generated_rs.exists() {
+        panic!(
+            "bindgen_generated.rs not found at {} — run `bun bd` (bindgenv2 codegen) first",
+            bindgen_generated_rs.display()
+        );
+    }
+
     println!("cargo:rustc-env=BUN_CODEGEN_DIR={}", codegen_dir.display());
     println!("cargo:rerun-if-changed={}", cpp_rs.display());
+    println!("cargo:rerun-if-changed={}", bindgen_generated_rs.display());
     println!(
         "cargo:rerun-if-changed={}",
         resolved_source_tag_rs.display()

@@ -44,7 +44,7 @@ type Pkg = {
   };
 };
 
-let server: Server;
+let server: Server<undefined>;
 export let root_url: string;
 export let check_npm_auth_type = { check: true };
 

@@ -1,7 +1,7 @@
 import { createTest } from "node-harness";
 import { once } from "node:events";
 import http from "node:http";
-import type { Socket } from "node:net";
+import type { AddressInfo, Socket } from "node:net";
 const { expect } = createTest(import.meta.path);
 
 const { promise, resolve, reject } = Promise.withResolvers();
@@ -11,7 +11,7 @@ await using server = http.createServer((req, res) => {
   socket = req.socket;
   res.writeHead(200, { "Connection": "close" });
 
-  res.socket.end();
+  res.socket!.end();
   res.on("error", reject);
   try {
     const result = res.write("Hello, world!");
@@ -21,7 +21,7 @@ await using server = http.createServer((req, res) => {
   }
 });
 await once(server.listen(0), "listening");
-const url = `http://localhost:${server.address().port}`;
+const url = `http://localhost:${(server.address() as AddressInfo).port}`;
 
 await fetch(url, {
   method: "POST",

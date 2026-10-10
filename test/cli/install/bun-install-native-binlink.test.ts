@@ -216,7 +216,7 @@ describe.concurrent("native binlink optimization", () => {
   // still run `node install.js`.
   describe("nested nativeDependencies", () => {
     async function setup(opts: { linker: "hoisted" | "isolated"; deps: Record<string, string>; extraEnv?: object }) {
-      let env: Record<string, string> = { ...bunEnv, ...(opts.extraEnv ?? {}) };
+      let env: NodeJS.Dict<string> = { ...bunEnv, ...(opts.extraEnv ?? {}) };
       const { packageDir, packageJson } = await verdaccio.createTestDir();
       env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
       env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");

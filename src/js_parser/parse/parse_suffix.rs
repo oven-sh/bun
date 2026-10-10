@@ -279,7 +279,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             }
         }
 
-        match p.lexer.token {
+        // `tryParseTypeArgumentsInExpression`. If there are none, the name is missing at the "<".
+        let less_than = p.lexer.loc();
+        let has_type_arguments = p.is_tolerant()
+            && matches!(p.lexer.token, T::TLessThan | T::TLessThanLessThan)
+            && !p.lexer.is_javascript_file()
+            && p.try_skip_type_script_type_arguments_in_chain_with_backtracking(true)?;
+        let token = if has_type_arguments {
+            T::TLessThan
+        } else {
+            p.lexer.token
+        };
+
+        match token {
             T::TOpenBracket => {
                 // "a?.[b]"
                 let after_bracket = bun_ast::usize2loc(p.lexer.end);
@@ -334,14 +346,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     loc,
                 );
             }
-            T::TLessThan | T::TLessThanLessThan if !p.lexer.is_javascript_file() => {
+            T::TLessThan | T::TLessThanLessThan
+                if !p.lexer.is_javascript_file() && (has_type_arguments || !p.is_tolerant()) =>
+            'call: {
                 // "a?.<T>()"
                 if !Self::IS_TYPESCRIPT_ENABLED {
                     p.lexer.expected(T::TIdentifier)?;
                     return Err(crate::Error::SyntaxError);
                 }
 
-                let _ = p.skip_type_script_type_arguments::<false, false>()?;
+                if !has_type_arguments {
+                    let _ = p.skip_type_script_type_arguments::<false, false>()?;
+                } else if matches!(
+                    p.lexer.token,
+                    T::TNoSubstitutionTemplateLiteral | T::TTemplateHead
+                ) {
+                    // "a?.<T>`b`": the suffix that parses the template takes the type arguments.
+                    p.note_type_arguments(left, less_than);
+                    break 'call;
+                }
                 let type_arguments = p.saved_type_arguments();
                 if p.lexer.token != T::TOpenParen {
                     p.lexer.expected(T::TOpenParen)?;
@@ -455,7 +478,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     fn sfx_t_no_substitution_template_literal(
         p: &mut Self,
         _level: Level,
-        _optional_chain: &mut Option<OptionalChain>,
+        optional_chain: &mut Option<OptionalChain>,
         old_optional_chain: Option<OptionalChain>,
         left: &mut Expr,
     ) -> CResult {
@@ -466,6 +489,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 p.lexer.range(),
                 b"Template literals cannot have an optional chain as a tag",
             );
+            Self::sfx_chain_after_tagged_template(p, optional_chain, old_optional_chain);
         }
         // `hasCorrectArity`: a call with an unterminated template is incomplete.
         let is_incomplete = p.is_tolerant() && p.lexer.unterminated_at == p.lexer.start;
@@ -491,7 +515,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     fn sfx_t_template_head(
         p: &mut Self,
         _level: Level,
-        _optional_chain: &mut Option<OptionalChain>,
+        optional_chain: &mut Option<OptionalChain>,
         old_optional_chain: Option<OptionalChain>,
         left: &mut Expr,
     ) -> CResult {
@@ -510,6 +534,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if p.is_tolerant() && Self::sfx_tag_is_optional_chain(p, old_optional_chain, left) {
             // `checkGrammarTaggedTemplateChain`: said of `node.Template`.
             p.lexer.ts_grammar_error(p.lexer.range_from(backtick), 1358);
+            Self::sfx_chain_after_tagged_template(p, optional_chain, old_optional_chain);
         }
         // `hasCorrectArity`: a call with a template whose last literal is missing or unterminated is incomplete.
         let is_incomplete = p.is_tolerant() && p.lexer.unterminated_at == tail_loc.start as usize;
@@ -1198,6 +1223,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         chain.is_some() && !(p.is_tolerant() && p.last_cast(left) == Some(Mark::NonNull))
     }
 
+    /// `parseTaggedTemplateRest`: a tagged template whose tag has `NodeFlagsOptionalChain` has it
+    /// too, so that `tryReparseOptionalChain` keeps what follows it in `chain`.
+    #[inline]
+    fn sfx_chain_after_tagged_template(
+        p: &Self,
+        optional_chain: &mut Option<OptionalChain>,
+        chain: Option<OptionalChain>,
+    ) {
+        if p.is_tolerant() {
+            *optional_chain = chain;
+        }
+    }
+
     fn sfx_t_less_than(
         p: &mut Self,
         level: Level,
@@ -1205,11 +1243,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         old_optional_chain: Option<OptionalChain>,
         left: &mut Expr,
     ) -> CResult {
-        // `Scan`: in a file with JSX "</" is one token (LessThanSlashToken), which is not an
-        // operator.
-        if p.is_tolerant() && p.is_jsx_enabled() && p.lexer.is_less_than_slash() {
-            return Ok(Continuation::Done);
-        }
         // TypeScript allows type arguments to be specified with angle brackets
         // inside an expression. Unlike in other languages, this unfortunately
         // appears to require backtracking to parse.
@@ -1218,6 +1251,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if Self::IS_TYPESCRIPT_ENABLED
             // `tryParseTypeArgumentsInExpression`
             && !p.lexer.is_javascript_file()
+            // Only `parseMemberExpressionRest` and `parseCallExpressionRest` call it.
+            && !(p.is_tolerant() && Self::sfx_is_not_left_hand_side(p, left))
             && p.try_skip_type_script_type_arguments_in_chain_with_backtracking(is_optional_chain)?
         {
             *optional_chain = Self::sfx_chain_after_type_arguments(p, old_optional_chain);
@@ -1338,6 +1373,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if Self::IS_TYPESCRIPT_ENABLED
             && !p.lexer.is_javascript_file()
             && !is_jsx_element
+            && !(p.is_tolerant() && Self::sfx_is_not_left_hand_side(p, left))
             && p.try_skip_type_script_type_arguments_in_chain_with_backtracking(is_optional_chain)?
         {
             *optional_chain = Self::sfx_chain_after_type_arguments(p, old_optional_chain);
@@ -1823,6 +1859,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         )
     }
 
+    /// Whether the syntax of `left` ends with a closing token. At a token that is forbidden as a
+    /// suffix, that token is missing, and the expression the suffix is forbidden after is inside
+    /// `left`: `parseMemberExpressionRest` and `parseCallExpressionRest` go on after `left`.
+    #[cold]
+    #[inline(never)]
+    fn sfx_ends_with_closing_token(p: &Self, left: &Expr) -> bool {
+        if let Some(kind) = p.last_cast(left) {
+            return kind == Mark::Paren;
+        }
+        match &left.data {
+            ExprData::EIndex(access) => {
+                !matches!(access.index.data, ExprData::EPrivateIdentifier(_))
+            }
+            ExprData::EObject(_)
+            | ExprData::EArray(_)
+            | ExprData::ETemplate(_)
+            | ExprData::EClass(_)
+            | ExprData::ECall(_)
+            | ExprData::ENew(_)
+            | ExprData::EImport(_) => true,
+            _ => false,
+        }
+    }
+
     fn sfx_t_in(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
         if level.gte(Level::Compare) || !p.allow_in {
             return Ok(Continuation::Done);
@@ -1935,6 +1995,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     // An operand that is missing at this token starts another expression, which
                     // the operator continues (`parseBinaryExpressionRest`).
                     && !(matches!(left.data, ExprData::EMissing(_)) && p.is_tolerant())
+                    && !(p.is_tolerant() && Self::sfx_ends_with_closing_token(p, left))
                 {
                     break;
                 }

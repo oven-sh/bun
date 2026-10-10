@@ -165,9 +165,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Self::parse_declaration_worker(p, opts, is_async)
     }
 
-    /// The keywords of `parseModifiersEx`, from the current token up to one that `parse_stmt` takes
-    /// itself: `export`, `declare`, `const` before `enum`, `async` before `function`, `abstract`
-    /// before `class`. Returns whether it consumed any, and whether `async` is one of the
+    /// `parseModifiersEx`, from the current token up to a keyword that `parse_stmt` takes itself:
+    /// `export`, `declare`, `const` before `enum`, `async` before `function`, `abstract` before
+    /// `class`. Returns whether it consumed any keyword, and whether `async` is one of the
     /// modifiers. Tolerant mode only.
     #[cold]
     #[inline(never)]
@@ -177,6 +177,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let mut has_static = p.statement_has_modifier(Modifier::STATIC);
         loop {
             Self::unescape_keyword_of_statement(p);
+            if p.lexer.token == T::TAt && !Self::has_trailing_modifier(p, opts) {
+                Self::more_decorators(p, opts)?;
+                continue;
+            }
             if !p.is_at_modifier(has_static) {
                 break;
             }
@@ -206,6 +210,46 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok((has_any, is_async))
     }
 
+    /// `hasTrailingModifier` of `parseModifiersEx`: whether, in what has been consumed so far of
+    /// the statement being parsed, a keyword follows a decorator that follows a keyword.
+    #[cold]
+    #[inline(never)]
+    fn has_trailing_modifier(p: &Self, opts: &ParseStatementOptions<'a>) -> bool {
+        let (Some(decorators), Some(syntax)) = (&opts.ts_decorators, &p.type_syntax) else {
+            return false;
+        };
+        let keywords = &syntax.statement_modifiers[syntax.statement_modifiers_base..];
+        let (Some(first), Some(last)) = (keywords.first(), keywords.last()) else {
+            return false;
+        };
+        decorators.values.iter().any(|decorator| {
+            let at = p.real_loc(decorator.loc).start;
+            first.loc.start < at && at < last.loc.start
+        })
+    }
+
+    /// `parseTypeAliasDeclaration`, at `type`, for the statement at `loc`. Tolerant mode only.
+    #[cold]
+    #[inline(never)]
+    fn parse_type_alias_declaration(
+        p: &mut Self,
+        scope: StatementScope,
+        loc: bun_ast::Loc,
+    ) -> Result<Stmt> {
+        let keyword_loc = p.lexer.loc();
+        p.lexer.next_token()?;
+        if p.lexer.has_newline_before {
+            let range = p.lexer.range();
+            p.lexer.ts_error(range, 1142);
+        }
+        let mut stmt_opts = ParseStatementOptions {
+            scope,
+            ..Default::default()
+        };
+        p.skip_type_script_type_stmt(&mut stmt_opts, keyword_loc)?;
+        Ok(p.type_script_statement(loc))
+    }
+
     /// `parseDeclarationWorker`, after decorators or modifiers. `is_async`: `async` is one of the
     /// modifiers. Tolerant mode only.
     #[cold]
@@ -215,6 +259,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         opts: &mut ParseStatementOptions<'a>,
         is_async: bool,
     ) -> Result<Stmt> {
+        let loc = p.lexer.loc();
         let word = p.lexer.identifier;
         // Whether what follows can still be a class. `None`: no declaration follows.
         let can_be_class = match p.lexer.token {
@@ -252,7 +297,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         {
             // `parseVariableStatement`: after modifiers, `using` starts a declaration list
             // regardless of the next token.
-            let loc = p.lexer.loc();
             p.lexer.next_token()?;
             opts.is_using_statement = true;
             let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, opts)?;
@@ -265,6 +309,41 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 },
                 loc,
             ));
+        }
+        // The keyword alone decides: only `parseStatement` asks `isStartOfDeclaration`.
+        match p.lexer.token {
+            T::TImport => return Self::t_import(p, opts, loc, true),
+            T::TIdentifier => match word {
+                b"interface" => {
+                    p.lexer.next_token()?;
+                    let mut stmt_opts = ParseStatementOptions {
+                        scope: opts.scope,
+                        ..Default::default()
+                    };
+                    p.skip_type_script_interface_stmt(&mut stmt_opts, loc)?;
+                    return Ok(p.type_script_statement(loc));
+                }
+                b"type" => return Self::parse_type_alias_declaration(p, opts.scope, loc),
+                b"namespace" | b"module" => {
+                    p.lexer.next_token()?;
+                    let is_module = word == b"module";
+                    return p.parse_type_script_namespace_stmt(loc, opts, false, is_module);
+                }
+                b"global" => {
+                    p.lexer.next()?;
+                    let keyword = js_lexer::TypescriptStmtKeyword::TsStmtGlobal;
+                    if let Some(stmt) =
+                        Self::parse_stmt_fallthrough_ts_keyword(p, opts, loc, keyword)?
+                    {
+                        return Ok(stmt);
+                    }
+                    // `parseAmbientExternalModuleDeclaration`: without a "{" there is no body.
+                    p.lexer.expect_or_insert_semicolon()?;
+                    return Ok(p.keep_global(loc, loc, None, opts.is_export));
+                }
+                _ => {}
+            },
+            _ => {}
         }
         let mut stmt = p.parse_stmt(opts)?;
         // `parseFunctionDeclaration`: `modifierListHasAsync`, with `async` at any position among
@@ -284,84 +363,44 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             p.lexer.expected(T::TClass)?;
             return Ok(());
         }
-        if let Some(decorators) = opts.ts_decorators.take()
-            && let Some(first) = decorators.values.first()
-        {
-            let at_sign = |p: &Self, decorator: &Expr| match p
-                .noted(decorator.loc, crate::sema::Mark::AtSign)
-            {
-                Some(at_sign) => bun_ast::Loc {
-                    start: at_sign as i32,
-                },
-                None => p.real_loc(decorator.loc),
-            };
-            // `checkJSDecoratorSyntax`
-            if p.lexer.is_javascript_file() {
-                let loc = at_sign(p, first);
-                p.lexer
-                    .ts_grammar_error(bun_ast::Range { loc, len: 1 }, 1206);
-            }
+        if let Some(decorators) = opts.ts_decorators.take() {
             let end = p.lexer.full_start();
             for decorator in decorators.values {
                 p.note_stray_decorator(decorator, end);
-                let loc = at_sign(p, decorator);
+                let loc = match p.noted(decorator.loc, crate::sema::Mark::AtSign) {
+                    Some(at_sign) => bun_ast::Loc {
+                        start: at_sign as i32,
+                    },
+                    None => p.real_loc(decorator.loc),
+                };
                 p.push_statement_decorator(*decorator, loc);
             }
         }
         Ok(())
     }
 
-    /// `parseModifiersEx`: decorators are modifiers, and may come after `export` or `export
-    /// default` as well as before.
-    /// They all decorate the class. The errors of `checkGrammarModifiers` about their position are
-    /// reported here.
+    /// `parseModifiersEx`: decorators are modifiers, and may come after `export` or `default` as
+    /// well as before. They all decorate the class. `checkGrammarModifiers` and
+    /// `checkJSDecoratorSyntax` report those that are misplaced.
     #[cold]
     #[inline(never)]
     fn more_decorators(p: &mut Self, opts: &mut ParseStatementOptions<'a>) -> Result<()> {
-        let mut at = p.lexer.range();
         let scope_index = p.scopes_in_order.len();
         let more = p.parse_type_script_decorators()?;
-        if let Some(first) = more.slice().first()
-            && let Some(end) = p.noted(first.loc, crate::sema::Mark::DecoratorEnd)
-        {
-            at.len = end as i32 - at.loc.start;
-        }
-        match opts.ts_decorators.take() {
-            // Before `export` and after it.
+        opts.ts_decorators = Some(match opts.ts_decorators.take() {
             Some(first) => {
-                Self::grammar_error(p, at, 8038);
-                // Related info: the first decorator of the declaration.
-                use crate::sema::Mark::{AtSign, DecoratorEnd};
-                let decorator = first.values[0].loc;
-                if let (Some(start), Some(end)) =
-                    (p.noted(decorator, AtSign), p.noted(decorator, DecoratorEnd))
-                    && !p.lexer.is_log_disabled
-                {
-                    let r = bun_ast::Range {
-                        loc: bun_ast::usize2loc(start as usize),
-                        len: (end - start) as i32,
-                    };
-                    let index = p.log().msgs.len() - 1;
-                    p.lexer.add_related_info(index, r, b"");
-                }
                 let mut all: Vec<Expr> = first.values.to_vec();
                 all.extend_from_slice(more.slice());
-                opts.ts_decorators = Some(DeferredTsDecorators {
+                DeferredTsDecorators {
                     values: p.arena.alloc_slice_copy(&all),
                     scope_index: first.scope_index,
-                });
-            }
-            None => {
-                opts.ts_decorators = Some(DeferredTsDecorators {
-                    values: p.arena.alloc_slice_copy(more.slice()),
-                    scope_index,
-                });
-                // "export @decorator default class Foo {}"
-                if p.lexer.token == T::TDefault {
-                    Self::grammar_error(p, at, 1206);
                 }
             }
-        }
+            None => DeferredTsDecorators {
+                values: p.arena.alloc_slice_copy(more.slice()),
+                scope_index,
+            },
+        });
         Ok(())
     }
 
@@ -411,7 +450,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
         p.lexer.next()?;
 
-        if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TEnum {
+        if Self::IS_TYPESCRIPT_ENABLED
+            && (p.lexer.token == T::TEnum || (p.is_tolerant() && p.lexer.is_keyword(T::TEnum)))
+        {
             p.push_statement_modifier(crate::sema::ts_syntax::Flags::CONST, loc);
             return p.parse_typescript_enum_stmt(loc, opts);
         }
@@ -450,7 +491,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             p.lexer.next()?;
             let open_paren = p.lexer.loc();
             p.lexer.expect(T::TOpenParen)?;
-            let test = p.parse_expr(Level::Lowest)?;
+            let test = p.parse_expr_allow_in(Level::Lowest)?;
             p.lexer.expect_closing(T::TCloseParen, open_paren)?;
             let mut stmt_opts = ParseStatementOptions {
                 lexical_decl: LexicalDecl::AllowFnInsideIf,
@@ -524,7 +565,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         p.lexer.expect(T::TWhile)?;
         let open_paren = p.lexer.loc();
         p.lexer.expect(T::TOpenParen)?;
-        let test = p.parse_expr(Level::Lowest)?;
+        let test = p.parse_expr_allow_in(Level::Lowest)?;
         p.lexer.expect_closing(T::TCloseParen, open_paren)?;
 
         // This is a weird corner case where automatic semicolon insertion applies
@@ -541,7 +582,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
         let open_paren = p.lexer.loc();
         p.lexer.expect(T::TOpenParen)?;
-        let test = p.parse_expr(Level::Lowest)?;
+        let test = p.parse_expr_allow_in(Level::Lowest)?;
         p.lexer.expect_closing(T::TCloseParen, open_paren)?;
 
         let mut stmt_opts = ParseStatementOptions::default();
@@ -557,7 +598,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let open_paren = p.lexer.loc();
         p.lexer.expect(T::TOpenParen)?;
         let test_full_start = p.lexer.full_start();
-        let test = p.parse_expr(Level::Lowest)?;
+        let test = p.parse_expr_allow_in(Level::Lowest)?;
         let body_loc = p.lexer.loc();
         let test_end = p.lexer.full_start();
         p.lexer.expect_closing(T::TCloseParen, open_paren)?;
@@ -588,7 +629,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         p.lexer.next()?;
 
         p.lexer.expect(T::TOpenParen)?;
-        let test = p.parse_expr(Level::Lowest)?;
+        let test = p.parse_expr_allow_in(Level::Lowest)?;
         p.lexer.expect(T::TCloseParen)?;
 
         let body_loc = p.lexer.loc();
@@ -638,7 +679,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     found_default = true;
                 } else {
                     p.lexer.expect(T::TCase)?;
-                    value = Some(p.parse_expr(Level::Lowest)?);
+                    value = Some(p.parse_expr_allow_in(Level::Lowest)?);
                     p.lexer.expect(T::TColon)?;
                 }
 
@@ -906,6 +947,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             let mut update: Option<Expr> = None;
 
             // "in" expressions aren't allowed here
+            let old_allow_in = p.allow_in;
             p.allow_in = false;
 
             let mut bad_let_range: Option<bun_ast::Range> = None;
@@ -941,7 +983,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 T::TVar => {
                     is_var = true;
                     p.lexer.next()?;
-                    let mut stmt_opts = ParseStatementOptions::default();
+                    let mut stmt_opts = ParseStatementOptions {
+                        is_for_loop_init: true,
+                        ..Default::default()
+                    };
                     let decls = if p.is_tolerant() && Self::no_declaration_follows(p) {
                         bun_alloc::AstAlloc::vec()
                     } else {
@@ -960,7 +1005,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 // for (const )
                 T::TConst => {
                     p.lexer.next()?;
-                    let mut stmt_opts = ParseStatementOptions::default();
+                    let mut stmt_opts = ParseStatementOptions {
+                        is_for_loop_init: true,
+                        ..Default::default()
+                    };
                     let decls = if p.is_tolerant() && Self::no_declaration_follows(p) {
                         bun_alloc::AstAlloc::vec()
                     } else {
@@ -1023,8 +1071,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 }
             }
 
-            // "in" expressions are allowed again
-            p.allow_in = true;
+            // "in" expressions are allowed again. (`parseForOrForInOrForOfStatement` returns to the
+            // context of the statement: see `parse_expr_allow_in`.)
+            p.allow_in = old_allow_in || !p.is_tolerant();
             if let Some(init) = &mut init_ {
                 p.finish_node(&mut init.loc, init_full_start);
             }
@@ -1079,7 +1128,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
                 p.forbid_initializers(decls_ptr.slice(), "of", false)?;
                 p.lexer.next_token()?;
-                let value = p.parse_expr(Level::Comma)?;
+                let value = p.parse_expr_allow_in(Level::Comma)?;
                 p.lexer.expect(T::TCloseParen)?;
                 let mut stmt_opts = ParseStatementOptions::default();
                 let body = Self::parse_embedded_stmt(p, &mut stmt_opts)?;
@@ -1100,7 +1149,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             if p.lexer.is_keyword(T::TIn) {
                 p.forbid_initializers(decls_ptr.slice(), "in", is_var)?;
                 p.lexer.next_token()?;
-                let value = p.parse_expr(Level::Lowest)?;
+                let value = p.parse_expr_allow_in(Level::Lowest)?;
                 p.lexer.expect(T::TCloseParen)?;
                 let mut stmt_opts = ParseStatementOptions::default();
                 let body = Self::parse_embedded_stmt(p, &mut stmt_opts)?;
@@ -1131,13 +1180,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             if p.lexer.token != T::TSemicolon
                 && !(p.lexer.token == T::TCloseParen && p.is_tolerant())
             {
-                test = Some(p.parse_expr(Level::Lowest)?);
+                test = Some(p.parse_expr_allow_in(Level::Lowest)?);
             }
 
             p.lexer.expect(T::TSemicolon)?;
 
             if p.lexer.token != T::TCloseParen {
-                update = Some(p.parse_expr(Level::Lowest)?);
+                update = Some(p.parse_expr_allow_in(Level::Lowest)?);
             }
 
             p.lexer.expect(T::TCloseParen)?;
@@ -1189,7 +1238,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             && p.lexer.token != T::TCloseBrace
             && p.lexer.token != T::TEndOfFile
         {
-            value = Some(p.parse_expr(Level::Lowest)?);
+            value = Some(p.parse_expr_allow_in(Level::Lowest)?);
         }
         p.latest_return_had_semicolon = p.lexer.token == T::TSemicolon;
         p.lexer.expect_or_insert_semicolon()?;
@@ -1203,7 +1252,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if p.lexer.has_newline_before {
             return Self::t_throw_before_newline(p, loc);
         }
-        let expr = p.parse_expr(Level::Lowest)?;
+        let expr = p.parse_expr_allow_in(Level::Lowest)?;
         if !p.can_parse_semicolon() && p.is_tolerant() {
             Self::missing_semicolon_after_expr(p, &expr)?;
         } else {
@@ -1298,15 +1347,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             }
         }
         let recovers = p.is_tolerant() && !p.lexer.is_log_disabled;
-        let mut is_modifier_beside_decorators =
-            recovers && opts.ts_decorators.is_some() && p.is_at_modifier(false);
+        // At an `@`, `parseStatement` has not asked `isStartOfDeclaration`.
+        let is_after_decorators = recovers && opts.ts_decorators.is_some();
+        let mut is_modifier_beside_decorators = is_after_decorators && p.is_at_modifier(false);
         p.push_statement_modifier(crate::sema::ts_syntax::Flags::EXPORT, loc);
         p.lexer.next()?;
         if p.lexer.token == T::TEscapedKeyword && recovers {
             Self::unescape_keyword_of_statement(p);
         }
 
-        if p.lexer.token == T::TAt && p.is_tolerant() {
+        if p.lexer.token == T::TAt && p.is_tolerant() && !Self::has_trailing_modifier(p, opts) {
             Self::more_decorators(p, opts)?;
             is_modifier_beside_decorators = recovers;
         }
@@ -1425,6 +1475,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                 // "export type foo = ..."
                                 let type_range = p.lexer.range();
                                 p.lexer.next_token()?;
+                                // `canFollowExportModifier`: the `export` is no modifier, so
+                                // `parseExportDeclaration` has taken the `type`.
+                                if (is_after_decorators
+                                    || recovers && p.lexer.is_contextual_keyword(b"as"))
+                                    && !matches!(p.lexer.token, T::TOpenBrace | T::TAsterisk)
+                                {
+                                    p.note_type_only_export();
+                                    return Self::export_without_declaration(
+                                        p,
+                                        loc,
+                                        previous_export_keyword,
+                                        true,
+                                    );
+                                }
                                 // "export type\n{ foo }" and "export type\n* from 'bar'" are fine
                                 if p.lexer.has_newline_before
                                     && p.lexer.token != T::TOpenBrace
@@ -1476,7 +1540,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     }
                 }
 
-                Self::export_without_declaration(p, loc, previous_export_keyword)
+                Self::export_without_declaration(
+                    p,
+                    loc,
+                    previous_export_keyword,
+                    is_after_decorators,
+                )
             }
 
             T::TDefault => {
@@ -1490,7 +1559,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 p.lexer.next()?;
 
                 if p.lexer.token == T::TAt && p.is_tolerant() {
-                    Self::more_decorators(p, opts)?;
                     // `nextTokenCanFollowDefaultKeyword`: before a decorator `default` is a
                     // modifier, and no expression follows.
                     let (_, is_async) = Self::parse_modifiers(p, opts)?;
@@ -1503,6 +1571,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         opts.is_export = true;
                         return Self::parse_declaration_worker(p, opts, is_async);
                     }
+                }
+                // Before `interface` it is a modifier too.
+                if recovers && p.lexer.is_contextual_keyword(b"interface") {
+                    return Self::parse_declaration_worker(p, opts, false);
                 }
 
                 // TypeScript decorators only work on class declarations
@@ -1961,22 +2033,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 p.esm_export_keyword = previous_export_keyword;
                 p.parse_stmt(opts)
             }
-            _ => Self::export_without_declaration(p, loc, previous_export_keyword),
+            _ => Self::export_without_declaration(
+                p,
+                loc,
+                previous_export_keyword,
+                is_after_decorators,
+            ),
         }
     }
 
     /// Call at the token after the `export` at `loc` if nothing that can be exported starts there. Ordinary builds fail.
     /// Tolerant mode reports the error, consumes nothing more, and leaves the token to the next statement.
+    /// `is_export_declaration`: `parseDeclarationWorker` has taken the `export`, which is no modifier.
     #[cold]
     #[inline(never)]
     fn export_without_declaration(
         p: &mut Self,
         loc: bun_ast::Loc,
         previous_export_keyword: bun_ast::Range,
+        is_export_declaration: bool,
     ) -> Result<Stmt> {
         if !p.is_tolerant() || p.lexer.is_log_disabled {
             p.lexer.unexpected()?;
             return Err(crate::Error::SyntaxError);
+        }
+        if is_export_declaration {
+            // `parseExportDeclaration`: `parseNamedExports` reports the missing "{".
+            let _ = p.parse_export_clause()?;
+            p.lexer.expect_or_insert_semicolon()?;
+            return Ok(p.s(S::TypeScript::default(), loc));
         }
         p.esm_export_keyword = previous_export_keyword;
         if p.is_start_of_declaration() {
@@ -1991,14 +2076,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Ok(Stmt::empty())
     }
 
+    /// `is_declaration`: `parseDeclarationWorker` has taken the keyword, so that no expression
+    /// starts here.
     #[inline]
     fn t_import(
         p: &mut Self,
         opts: &mut ParseStatementOptions<'a>,
         loc: bun_ast::Loc,
+        is_declaration: bool,
     ) -> Result<Stmt> {
         p.begin_module_syntax(opts);
-        let stmt = Self::parse_statement_after_import(p, opts, loc);
+        let stmt = Self::parse_statement_after_import(p, opts, loc, is_declaration);
         let kept = p.end_module_syntax();
         Ok(p.keep_import(kept, stmt?, loc))
     }
@@ -2008,6 +2096,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         p: &mut Self,
         opts: &mut ParseStatementOptions<'a>,
         loc: bun_ast::Loc,
+        is_declaration: bool,
     ) -> Result<Stmt> {
         let previous_import_keyword = p.esm_import_keyword;
         p.esm_import_keyword = p.lexer.range();
@@ -2035,7 +2124,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             // "import.meta"
             // "import<T>": no declaration either (`isStartOfStatement`). `parse_import_expr` says what is wrong with it.
             T::TOpenParen | T::TDot | T::TLessThan
-                if p.lexer.token != T::TLessThan || p.lexer.tolerant =>
+                if !is_declaration && (p.lexer.token != T::TLessThan || p.lexer.tolerant) =>
             {
                 p.esm_import_keyword = previous_import_keyword; // this wasn't an esm import statement after all
                 let mut expr = p.parse_import_expr(loc, Level::Lowest)?;
@@ -2360,6 +2449,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             let range = self.lexer.range();
             self.lexer.ts_error(range, 18016);
             self.lexer.next()?;
+        } else if self.lexer.token == T::TIdentifier
+            && self.is_tolerant()
+            && !self.is_identifier_in_context()
+        {
+            self.report_missing_identifier()?;
         } else {
             self.lexer.expect(T::TIdentifier)?;
         }
@@ -2486,6 +2580,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     ) -> Result<Stmt> {
         let is_identifier = p.lexer.token == T::TIdentifier;
         let name = p.lexer.identifier;
+        let escaped_name = if p.is_tolerant() && is_identifier {
+            p.lexer.escaped_word()
+        } else {
+            None
+        };
         if p.is_tolerant() && is_identifier && Self::IS_TYPESCRIPT_ENABLED {
             if let Some(stmt) = Self::parse_declaration_after_modifiers(p, opts)? {
                 return Ok(stmt);
@@ -2555,9 +2654,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         if let Some(stmt) =
                             Self::parse_stmt_fallthrough_ts_keyword(p, opts, loc, ts_stmt)?
                         {
-                            if p.is_tolerant() {
-                                let end = p.noted_end(expr.loc);
-                                Self::ts_keyword_was_taken(p, loc, end, name, ts_stmt);
+                            // `global` is parsed as a name
+                            // (`parseAmbientExternalModuleDeclaration`).
+                            if ts_stmt != js_lexer::TypescriptStmtKeyword::TsStmtGlobal {
+                                p.lexer.keyword_was_taken(escaped_name);
                             }
                             return Ok(stmt);
                         }
@@ -2693,29 +2793,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
         p.lexer.put_up_with(before)?;
         Ok(())
-    }
-
-    /// The word from `loc` to `end`, which spells `name`, was treated as the keyword of the
-    /// statement just parsed. `nextToken` reports a keyword written with an escape. `global` is
-    /// parsed as a name (`parseAmbientExternalModuleDeclaration`).
-    #[cold]
-    #[inline(never)]
-    fn ts_keyword_was_taken(
-        p: &mut Self,
-        loc: bun_ast::Loc,
-        end: Option<bun_ast::Loc>,
-        name: &[u8],
-        ts_stmt: js_lexer::TypescriptStmtKeyword,
-    ) {
-        if ts_stmt != js_lexer::TypescriptStmtKeyword::TsStmtGlobal
-            && !p.source.contents()[loc.to_usize()..].starts_with(name)
-        {
-            // It precedes all errors reported for the rest of the statement.
-            let last = p.lexer.prev_error_loc;
-            let len = end.map_or(0, |end| end.start - loc.start);
-            p.lexer.ts_error(bun_ast::Range { loc, len }, 1260);
-            p.lexer.prev_error_loc = last;
-        }
     }
 
     /// A reserved word written with an escape, at the start of a statement. It is treated as the
@@ -2964,18 +3041,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     && !p.lexer.is_log_disabled
                     && p.lexer.is_contextual_keyword(b"type")
                 {
-                    let type_keyword_loc = p.lexer.loc();
-                    p.lexer.next_token()?;
-                    if p.lexer.has_newline_before {
-                        let range = p.lexer.range();
-                        p.lexer.ts_error(range, 1142);
-                    }
-                    let mut stmt_opts = ParseStatementOptions {
-                        scope: opts.scope,
-                        ..Default::default()
-                    };
-                    p.skip_type_script_type_stmt(&mut stmt_opts, type_keyword_loc)?;
-                    return Ok(Some(p.type_script_statement(loc)));
+                    return Self::parse_type_alias_declaration(p, opts.scope, loc).map(Some);
                 }
 
                 // "declare const x: any"
@@ -3121,7 +3187,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             T::TSwitch => Self::t_switch(self, opts, loc),
             T::TTry => Self::t_try(self, opts, loc),
             T::TFor => Self::t_for(self, opts, loc),
-            T::TImport => Self::t_import(self, opts, loc),
+            T::TImport => Self::t_import(self, opts, loc, false),
             T::TBreak => Self::t_break(self, opts, loc),
             T::TContinue => Self::t_continue(self, opts, loc),
             T::TReturn => Self::t_return(self, opts, loc),

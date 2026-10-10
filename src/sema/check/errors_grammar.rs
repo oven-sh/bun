@@ -37,6 +37,7 @@ impl Checker<'_, '_> {
 
     pub(super) fn check_grammar(&mut self, file: FileId) {
         self.check_strict_mode(file, !has_parse_diagnostics(self.hir(file)));
+        self.check_grammar_augments_tags(file);
     }
 
     /// `getSourceFileFromReference`, `processingDiagnostic.toDiagnostic`: the error for the `///

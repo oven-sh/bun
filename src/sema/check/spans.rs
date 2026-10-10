@@ -4,7 +4,7 @@
 
 use super::Checker;
 use crate::atom::{Atom, known};
-use crate::bind::{ClassOwner, FnOwner, MemberOwner};
+use crate::bind::{FnOwner, MemberOwner};
 use crate::hir::{
     CaseId, ClassId, EnumMemberId, ExportSpecId, ExprId, ExprKind, File, FileKind, FnBody, FnId,
     FnKind, IdList, ImportSpecId, MemberId, MemberKind, ModifierKind, Node, NodeData, ParamId,
@@ -228,7 +228,10 @@ pub(crate) fn skip_trivia_back(text: &[u8], pos: usize) -> usize {
             at = open;
         }
         if at == before {
-            return at;
+            // `isShebangTrivia`: the first line of a file.
+            let is_in_shebang = text.starts_with(b"#!")
+                && bun_core::strings::index_of_any(&text[..at], b"\n\r").is_none();
+            return if is_in_shebang { 0 } else { at };
         }
     }
 }
@@ -288,6 +291,21 @@ pub(super) fn identifier_end(text: &[u8], at: usize) -> usize {
         Some(first) if !lexer::is_identifier_start(first as u32) => at,
         _ => ident_end(text, at),
     }
+}
+
+/// `GetErrorRangeForNode`: `SkipTrivia(text, errorNode.Pos())` for the error node whose tokens are
+/// `start..end`. One word is taken for an identifier: a caller that reports at another node of one
+/// word (a keyword, a type reference, a parameter) skips the trivia itself.
+pub(super) fn start_of_error_range(hir: &File, start: u32, end: u32) -> u32 {
+    if hir.jsdoc_asterisks.is_empty() {
+        return start;
+    }
+    let (text, at) = (&hir.text[..], start as usize);
+    let is_number = text.get(at).is_some_and(u8::is_ascii_digit);
+    if !is_number && identifier_end(text, at) == end as usize {
+        return start;
+    }
+    hir.skip_trivia_of_node_at(start)
 }
 
 /// The same for a name that may be private.
@@ -359,7 +377,7 @@ fn jsx_string_end(text: &[u8], at: usize) -> usize {
 
 /// `scanTemplateAndSetTokenValue`, from inside the text of a template: the end of the text, past
 /// the `` ` `` or the `${`, and whether it is the latter.
-fn template_text(text: &[u8], mut at: usize) -> (usize, bool) {
+pub(super) fn template_text(text: &[u8], mut at: usize) -> (usize, bool) {
     loop {
         match text.get(at) {
             None => return (text.len(), false),
@@ -924,6 +942,13 @@ impl<'a, 's> Spans<'a, 's> {
             crate::hir::Diagnostic::NO_LENGTH => start,
             // `getErrorSpanForNode` (parser.go): a missing JSON value ends before it starts.
             end if end != 0 && (end >= start || self.hir.kind == FileKind::Json) => end,
+            // `jsErrorAtRange`: so does a missing node, which starts after the trivia it precedes.
+            end if end != 0
+                && self.hir.is_js
+                && self.skip_trivia(end as usize) == start as usize =>
+            {
+                end
+            }
             // No end was given.
             _ if is_between_tokens() => start,
             _ => (self.token(start as usize) as u32).max(start),
@@ -986,12 +1011,25 @@ impl<'a, 's> Spans<'a, 's> {
             PropKey::Computed(e) => {
                 let end = self.expr(e);
                 // `parseComputedPropertyName`
-                let is_missed = self.byte(self.skip_trivia(end)) != b']';
-                if is_missed && self.hir.has_parse_diagnostics {
+                let mut next = self.skip_trivia(end);
+                if self
+                    .hir
+                    .jsdoc_asterisks
+                    .binary_search(&(next as u32))
+                    .is_ok()
+                {
+                    next = self.skip_trivia(next + 1);
+                }
+                // The errors of a JSDoc comment are no parse diagnostics.
+                if self.byte(next) != b']'
+                    && (self.hir.has_parse_diagnostics || self.hir.is_in_jsdoc(pos as u32))
+                {
                     return end;
                 }
                 self.close(end, b']')
             }
+            // `createMissingIdentifier`. `""` and `[""]` have the same key.
+            PropKey::Name(known::empty) if !matches!(self.byte(pos), b'"' | b'\'' | b'[') => pos,
             _ => self.name(pos),
         }
     }
@@ -1440,11 +1478,7 @@ impl<'s> Checker<'_, 's> {
 
     /// `node.End()` of a class.
     pub(super) fn end_of_class(&self, file: FileId, class: ClassId) -> u32 {
-        let hir = self.hir(file);
-        match self.bound(file).class_owner[class.idx()] {
-            ClassOwner::Expr(e) => hir[e].end,
-            ClassOwner::Stmt(s) => hir[s].loc.end,
-        }
+        self.bound(file).class_owner[class.idx()].end(self.hir(file))
     }
 
     /// `node.End()` of `Base<Args>` in the `extends` clause of a class (`ExpressionWithTypeArguments`). 0 if there is none.
@@ -1544,8 +1578,11 @@ impl<'s> Checker<'_, 's> {
     }
 
     /// `node.End()` of the identifier `name` at `pos`. One that `ScanJSDocToken` returned can
-    /// contain `-`, which ends the token that `Scan` finds there.
+    /// contain `-`, which ends the token that `Scan` finds there. A missing identifier is empty.
     pub(super) fn end_of_identifier_at(&self, file: FileId, name: Atom, pos: u32) -> u32 {
+        if name == known::empty {
+            return pos;
+        }
         let written = self.hir(file).text.get(pos as usize..).unwrap_or_default();
         let name = self.atoms().bytes(name);
         if !name.is_empty() && written.starts_with(name) {
@@ -1629,6 +1666,12 @@ impl Checker<'_, '_> {
             NodeData::Part(Part::NamedBindings, row) => {
                 self.end_of_node(file, row.with(Part::ImportClause))
             }
+            NodeData::Part(Part::JsxExpression, row) => match hir.data(row) {
+                NodeData::Expr(e) => {
+                    crate::hir::jsx_expression_around(hir, e).map_or(0, |braces| braces.1)
+                }
+                _ => 0,
+            },
             NodeData::Part(Part::Body | Part::Literal, row) => self.end_of_node(file, row),
             NodeData::Part(
                 Part::Extends | Part::Implements | Part::DeclarationList | Part::CatchClause,
@@ -1686,6 +1729,11 @@ impl Checker<'_, '_> {
                 start if start as usize == hir.text.len() => (0, super::explain::NO_LENGTH),
                 start => (start, self.end_of_token_at(file, start)),
             },
+            // `NodeIsMissing(errorNode)`: it is empty, and the trivia that follows is not skipped.
+            NodeData::Expr(e) if hir.is_missing(node) => {
+                let pos = hir[e].end.min(hir[e].pos);
+                (pos, pos)
+            }
             NodeData::Expr(e) => (
                 self.error_start_inside_parentheses(file, e),
                 self.error_end_inside_parentheses(file, e),
@@ -1703,6 +1751,14 @@ impl Checker<'_, '_> {
             NodeData::Part(Part::NamedBindings, _) if hir.name(node).is_some() => {
                 self.get_error_range_for_node(file, hir.name(node))
             }
+            NodeData::Type(_)
+            | NodeData::Param(_)
+            | NodeData::TypeParam(_)
+            | NodeData::TupleElem(_)
+            | NodeData::Modifier(_) => (
+                hir.skip_trivia_of_node_at(hir.start(node)),
+                self.end_of_node(file, node),
+            ),
             _ => (hir.start(node), self.end_of_node(file, node)),
         }
     }

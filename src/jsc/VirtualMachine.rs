@@ -4134,7 +4134,9 @@ impl VirtualMachine {
     }
 
     /// `--disallow-code-generation-from-strings`, as a `bun_core::CodeGenerationFromStrings`.
-    /// The process's, so it takes no `VirtualMachine`.
+    /// The process's, so it takes no `VirtualMachine`. C++ does not ask a build that has the
+    /// level as a constant (CodeGenerationFromStrings.h).
+    #[cfg(not(bun_disallow_code_generation_from_strings))]
     #[unsafe(export_name = "Bun__codeGenerationFromStrings")]
     pub(crate) extern "C" fn code_generation_from_strings_for_cpp() -> u8 {
         bun_core::code_generation_from_strings() as u8

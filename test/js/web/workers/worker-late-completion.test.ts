@@ -20,6 +20,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isAndroid, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import path from "node:path";
+import type { ReadableStreamDefaultReader } from "node:stream/web";
 
 type Row = {
   name: string;

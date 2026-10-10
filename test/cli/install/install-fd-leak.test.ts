@@ -13,7 +13,7 @@ const NUM_FILES = 1500;
 const FD_LIMIT = 1024;
 
 const LINKERS = ["isolated", "hoisted"] as const;
-const BACKENDS = (["copyfile", "hardlink"] as const).concat(isMacOS ? (["clonefile"] as const) : []);
+const BACKENDS = (["copyfile", "hardlink"] as string[]).concat(isMacOS ? (["clonefile"] as const) : []);
 
 // `ulimit` isn't available on Windows; skip the matrix there.
 describe.skipIf(isWindows)("install does not leak file descriptors", () => {

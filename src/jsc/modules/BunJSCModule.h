@@ -78,8 +78,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // The debugger evaluates what its client sends, whatever the engine's eval setting.
-    Bun::throwIfMayNotMakeScriptFromStrings(globalObject, scope);
-    RETURN_IF_EXCEPTION(scope, {});
+    RETURN_IF_MAY_NOT_MAKE_SCRIPT_FROM_STRINGS(globalObject, scope, {});
 
 #if ENABLE(REMOTE_INSPECTOR)
     static const char* defaultHost = "127.0.0.1\0";

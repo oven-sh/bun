@@ -456,6 +456,16 @@ impl Host for Virtual {
     fn is_case_sensitive(&self) -> bool {
         self.is_case_sensitive
     }
+    fn share_declaration_files(&self, _: u32, _: usize) {}
+    fn stays_loaded(&self) {}
+    fn shared_file(
+        &self,
+        _: &[u8],
+        _: &[u8],
+        _: u8,
+    ) -> Option<std::sync::Arc<std::sync::OnceLock<bun_sema::portable::SharedFile>>> {
+        None
+    }
     fn parse<'s>(
         &self,
         arena: &'s bun_sema::session::Arena,
@@ -1538,7 +1548,7 @@ fn run_one(
             config_path.as_bytes(),
             &|_| Vec::new(),
         );
-        named_by_config = Some(project.files);
+        named_by_config = project.ok().map(|project| project.files);
         config_unit = Some(units.remove(at));
     }
 
@@ -1622,19 +1632,16 @@ fn run_one(
     }
     // `compileFilesWithHost` creates two programs from it.
     let parsed_command_line = || -> Project {
-        let mut project: Project = match &config_unit {
-            Some(unit) => {
-                let mut over = reported.clone();
-                defaults(&mut over);
-                let path = absolute(&unit.name, &cwd);
-                config::load_overriding(&host, &Session::new(), path.as_bytes(), &|_| over.clone())
-            }
-            None => {
-                let mut compiler = reported.clone();
-                defaults(&mut compiler);
-                config::without_config(&host, cwd.as_bytes(), Json::Object(compiler), files.clone())
-            }
-        };
+        let mut compiler = reported.clone();
+        defaults(&mut compiler);
+        let from_config_file = config_unit.as_ref().and_then(|unit| {
+            let path = absolute(&unit.name, &cwd);
+            let over = |_: bool| compiler.clone();
+            config::load_overriding(&host, &Session::new(), path.as_bytes(), &over).ok()
+        });
+        let mut project: Project = from_config_file.unwrap_or_else(|| {
+            config::without_config(&host, cwd.as_bytes(), Json::Object(compiler), files.clone())
+        });
         // `compileDeclarationFiles` passes on `ConfigFile` and not `Errors`.
         if declaration_files.is_some() {
             project.errors.clear();
@@ -1805,6 +1812,9 @@ fn run_one(
             task_clock: None,
             plan_options: bun_sema_driver::PlanOptions {
                 reproduces_symbol_ids: false,
+                // The tests run side by side, each on one thread. The plan of several threads is the
+                // one with steps, publishing and validation.
+                tasks_on_one_thread: true,
                 ..Default::default()
             },
             retains_everything: false,

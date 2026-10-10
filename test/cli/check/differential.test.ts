@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { env, inTurns, linesOf, tsc } from "./differential";
+import { env, inTurns, linesOf, modulesInRings, tsc } from "./differential";
 
 // Small programs generated as cross products, checked by `bun check` and by TypeScript 7, which have to agree. No
 // expectation is stored: TypeScript is the oracle. Each program is one function on one line, so a line names a
@@ -25,6 +25,20 @@ const tsconfig = JSON.stringify({
     types: [],
     skipLibCheck: true,
   },
+});
+
+test.concurrent.skipIf(!tsc)("one thread enters every cycle where `tsc --singleThreaded` does", async () => {
+  using dir = tempDir("bun-check-differential", {
+    "tsconfig.json": tsconfig,
+    ...modulesInRings(isDebug || isASAN ? 24 : 60),
+  });
+  const root = String(dir);
+  const [theirs, ours] = await Promise.all([
+    linesOf([tsc!, "-p", ".", "--pretty", "false", "--singleThreaded"], root, root),
+    linesOf([bunExe(), "check", "--threads=1"], root, root),
+  ]);
+  expect(theirs.length).toBeGreaterThan(100);
+  expect(ours).toEqual(theirs);
 });
 
 /** The error lines of `cmd`, which are in the format of `tsc --pretty false`, by line of `a.ts`. */

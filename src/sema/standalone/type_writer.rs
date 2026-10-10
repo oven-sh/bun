@@ -26,7 +26,9 @@ struct TypeWalk {
 impl Checker<'_, '_> {
     /// `typeWriterWalker.getTypes`. The file must have been checked, as in the harness.
     pub fn types_at_locations(&mut self, file: FileId) -> Vec<TypeAtLocation> {
-        self.flow_analysis_disabled |= self.is_flow_analysis_left_disabled(file);
+        if self.is_flow_analysis_left_disabled(file) {
+            self.disable_flow_analysis(file);
+        }
         let hir = self.hir(file);
         let mut walk = TypeWalk {
             text_of_expr: vec![None; hir.exprs.len()],
@@ -50,7 +52,9 @@ impl Checker<'_, '_> {
         if !self.reports_semantic_errors(file) || self.is_plain_js(file) {
             return Vec::new();
         }
-        self.flow_analysis_disabled |= self.is_flow_analysis_left_disabled(file);
+        if self.is_flow_analysis_left_disabled(file) {
+            self.disable_flow_analysis(file);
+        }
         let mut found = Vec::new();
         for node in self.visited_nodes(file) {
             if self.is_omitted_from_types(file, node.kind) {
@@ -84,12 +88,20 @@ impl Checker<'_, '_> {
         } else {
             self.type_text_of_visited_node(file, node, ty, walk)
         };
-        results.push(TypeAtLocation {
+        // The other `NonNullExpression`s of a run of `!`, which have the same type: the outermost first.
+        let inside = match node.kind {
+            VisitedKind::Expression(e) => non_null_ends_in(self.hir(file), e),
+            _ => &[],
+        };
+        let ends = [node.end]
+            .into_iter()
+            .chain(inside.iter().rev().map(|it| it.1));
+        results.extend(ends.map(|end| TypeAtLocation {
             start: node.start,
-            end: node.end,
-            type_text,
+            end,
+            type_text: type_text.clone(),
             kind: node.kind,
-        });
+        }));
     }
 
     fn type_text_of_visited_node(
@@ -584,6 +596,7 @@ impl Checker<'_, '_> {
                 flags,
                 source: own.clone_in(self.arena),
                 mapper,
+                name_type: TypeId::UNRESOLVED,
             }
         };
         let Some((prop, _)) = prop else {

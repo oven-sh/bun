@@ -19,11 +19,10 @@ const EXPORT_TYPE: u8 = 2;
 const EXPORT_NAMESPACE: u8 = 4;
 
 impl Checker<'_, '_> {
-    /// The checks that `checkFunctionOrMethodDeclaration`, `checkConstructorDeclaration`,
-    /// `checkClassLikeDeclaration` and the callers of `checkExportsOnMergedDeclarations` run on the
-    /// declarations of `file`.
-    pub(super) fn check_overloads(&mut self, file: FileId) {
-        let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
+    /// The checks that `checkClassLikeDeclaration` and the callers of
+    /// `checkExportsOnMergedDeclarations` run on the declarations of `file`.
+    pub(super) fn check_merged_symbols(&mut self, file: FileId) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
         if hir.has_errors || hir.kind == FileKind::Json {
             return;
         }
@@ -34,54 +33,94 @@ impl Checker<'_, '_> {
             if symbol.export_symbol.is_some() && symbol.decls.len() > 1 {
                 self.check_exports_on_merged_declarations(file, id);
             }
-            let first = symbol.decls.iter().find_map(|&decl| {
-                let function = self.function_of_declaration((file, decl))?;
-                Some((decl, function))
-            });
-            let class = symbol
-                .decls
-                .iter()
-                .find(|decl| matches!(decl, Decl::Class(_)));
-            if first.is_none() && class.is_none() {
-                continue;
+            if (symbol.decls.iter()).any(|decl| matches!(decl, Decl::Class(_))) {
+                self.check_function_or_constructor_symbol_at(file, id, None);
             }
-            // A single declaration with a body: no error is possible.
-            if let Some((_, function)) = first
-                && symbol.decls.len() == 1
-                && !symbol.flags.contains(SymFlags::MERGED)
-                && symbol.name != known::computed
-                && has_body(&hir[function])
+        }
+    }
+
+    /// `checkFunctionOrMethodDeclaration`, from `hasBindableName`, and `checkConstructorDeclaration`:
+    /// `checkFunctionOrConstructorSymbol` for `node.LocalSymbol()` and for the symbol of `decl`.
+    pub(super) fn check_function_or_constructor_symbols_of(&mut self, file: FileId, decl: Decl) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let symbol = bound.symbol_of_declaration(decl);
+        if hir.has_errors || hir.kind == FileKind::Json || symbol.is_none() {
+            return;
+        }
+        if let Decl::Fn(function) = decl
+            && bound.symbols[symbol.idx()].parent.is_some()
+            && let Some(scope) = bound.scope_of_declaration(hir, decl).some()
+            && let Some(local) = bound.lookup(bound.scopes[scope.idx()].locals, hir[function].name)
+            && bound.symbols[local.idx()].export_symbol == symbol
+        {
+            self.check_function_or_constructor_symbol_at(file, local, Some(decl));
+        }
+        self.check_function_or_constructor_symbol_at(file, symbol, Some(decl));
+    }
+
+    /// `checkFunctionOrConstructorSymbol` for the symbol `id` of `file`. "Only check the symbol
+    /// once": a function checks it if it is the first of its functions in `file`. `at`: the
+    /// function. `None`: a class, which comes after all the functions.
+    fn check_function_or_constructor_symbol_at(
+        &mut self,
+        file: FileId,
+        id: SymbolId,
+        at: Option<Decl>,
+    ) {
+        let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
+        let symbol = &bound.symbols[id.idx()];
+        let first = symbol.decls.iter().find_map(|&decl| {
+            let function = self.function_of_declaration((file, decl))?;
+            Some((decl, function))
+        });
+        if at.is_some() && first.map(|first| first.0) != at {
+            return;
+        }
+        // A single declaration with a body: no error is possible.
+        if let Some((_, function)) = first
+            && symbol.decls.len() == 1
+            && !symbol.flags.contains(SymFlags::MERGED)
+            && symbol.name != known::computed
+            && has_body(&hir[function])
+        {
+            return;
+        }
+        let sym = files.sym(file, id);
+        // Checked once per symbol, whichever of its parts the loop over the symbols reaches. A
+        // function has the symbol it declares, which is a part: never the clone they are merged into.
+        if at.is_none() && sym.file == file && sym.id != id {
+            return;
+        }
+        // The declarations in other files ask when those files are checked.
+        let is_checked_by_function = match first {
+            None => false,
+            // `hasBindableName`
+            Some((Decl::Member(m), _))
+                if symbol.name == known::computed
+                    && self.declared_member_name(file, hir[m].key).is_none() =>
             {
-                continue;
+                false
             }
-            let sym = files.sym(file, id);
-            // Checked once per symbol, regardless of which of its parts is reached.
-            if sym.file == file && sym.id != id {
-                continue;
-            }
-            // The declarations in other files ask when those files are checked.
-            let is_checked_by_function = match first {
-                None => false,
-                // `hasBindableName`
-                Some((Decl::Member(m), _))
-                    if symbol.name == known::computed
-                        && self.declared_member_name(file, hir[m].key).is_none() =>
-                {
-                    false
-                }
-                // "ignore javascript function declarations so that redeclaring a function in a JS file is not reported as a duplicate", but
-                // "run check on export symbol" (`symbol.Parent != nil`). A constructor has a parent.
-                Some(_) => !hir.is_js || symbol.parent.is_some(),
-            };
-            // `checkClassLikeDeclaration` checks `getSymbolOfDeclaration(node)`, which is not the
-            // local symbol of an export. FOR SPEED: no error is possible in what is no function.
-            let is_checked_by_class = class.is_some_and(|&decl| {
-                files.flags(sym).contains(SymFlags::FUNCTION)
-                    && files.sym(file, bound.symbol_of_declaration(decl)) == sym
-            });
-            if is_checked_by_function || is_checked_by_class {
-                self.check_function_or_constructor_symbol(sym);
-            }
+            // "ignore javascript function declarations so that redeclaring a function in a JS file is not reported as a duplicate", but
+            // "run check on export symbol" (`symbol.Parent != nil`). A constructor has a parent.
+            Some(_) => !hir.is_js || symbol.parent.is_some(),
+        };
+        // `checkClassLikeDeclaration` checks `getSymbolOfDeclaration(node)`, which is not the
+        // local symbol of an export. FOR SPEED: no error is possible in what is no function.
+        let class = symbol
+            .decls
+            .iter()
+            .find(|decl| matches!(decl, Decl::Class(_)));
+        let is_checked_by_class = class.is_some_and(|&decl| {
+            files.flags(sym).contains(SymFlags::FUNCTION)
+                && files.sym(file, bound.symbol_of_declaration(decl)) == sym
+        });
+        let is_checked = match at {
+            Some(_) => is_checked_by_function,
+            None => !is_checked_by_function && is_checked_by_class,
+        };
+        if is_checked {
+            self.check_function_or_constructor_symbol(sym);
         }
     }
 

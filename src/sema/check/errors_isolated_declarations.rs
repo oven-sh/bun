@@ -56,8 +56,7 @@ pub(super) enum Pseudo {
     Literal(ExprId),
 }
 
-/// `PseudoParameter`. A leading `this` is not one: its type is annotated, and is visited where the
-/// others are emitted.
+/// `PseudoParameter`
 pub(super) struct PseudoParam {
     pub(super) param: ParamId,
     pub(super) is_optional: bool,
@@ -229,7 +228,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `IsDefinitelyReferenceToGlobalSymbolObject`
-    fn iso_is_global_symbol_reference(&self, file: FileId, e: ExprId) -> bool {
+    fn iso_is_global_symbol_reference(&mut self, file: FileId, e: ExprId) -> bool {
         let hir = self.hir(file);
         if !is_entity_name_expression(self.hir(file), e) {
             return false;
@@ -554,6 +553,9 @@ impl<'p, 's> Checker<'p, 's> {
                 return Some(self.type_of_symbol(self.files().sym(file, symbol)));
             }
             NodeData::VarDecl(d) => of_pattern(hir[d].pat)?,
+            NodeData::Param(p) if self.is_this_parameter(file, p) => {
+                return Some(self.type_of_this_parameter(file, bound.param_fn[p.idx()]));
+            }
             NodeData::Param(p) => return Some(self.type_of_param(file, p)),
             NodeData::PatProp(p) => of_pattern(hir[p].value)?,
             NodeData::PatElem(p) => of_pattern(hir[p].pat)?,
@@ -1184,7 +1186,14 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         let params = hir[func].params;
         let last_required = Self::iso_last_required(hir, params);
-        let mut all = Vec::with_capacity(params.len());
+        let mut all = Vec::with_capacity(params.len() + 1);
+        if let Some(this) = hir[func].this_param.some() {
+            all.push(PseudoParam {
+                param: this,
+                is_optional: false,
+                ty: self.iso_pseudo_of_param(file, this),
+            });
+        }
         for (i, p) in params.iter().enumerate() {
             let is_optional = hir[p].flags.contains(Flags::OPTIONAL)
                 || hir[p].default.is_some() && i + 1 >= last_required;
@@ -1209,20 +1218,26 @@ impl<'p, 's> Checker<'p, 's> {
         if hir[func].kind == FnKind::Setter {
             return self.iso_pseudo_of_accessor(file, func);
         }
+        // "Fast path: no initializer means we never need parameter position info."
+        if param.default.is_none() {
+            return match param.ty.some() {
+                Some(written) => Pseudo::Direct(written),
+                None => Pseudo::NoResult(hir.node(p)),
+            };
+        }
         let is_strict = self.files().options.strict_null_checks;
         let params = hir[func].params;
         let has_required_after =
             (p.0 - params.start) as usize + 1 < Self::iso_last_required(hir, params);
         if param.ty.is_some() {
             let written = Pseudo::Direct(param.ty);
-            return if is_strict && param.default.is_some() && has_required_after {
+            return if is_strict && has_required_after {
                 Self::iso_add_undefined(hir, written)
             } else {
                 written
             };
         }
-        if param.default.is_none()
-            || !matches!(hir[param.pat].kind, PatKind::Ident(_))
+        if !matches!(hir[param.pat].kind, PatKind::Ident(_))
             || self.iso_is_contextually_typed(file, hir.node(p))
         {
             return Pseudo::NoResult(hir.node(p));
@@ -1347,6 +1362,12 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     // ───────────────────────────── optional parameters ─────────────────────────────
+
+    /// Whether `p` is `GetThisParameter` of its function.
+    pub(super) fn is_this_parameter(&self, file: FileId, p: ParamId) -> bool {
+        let func = self.bound(file).param_fn[p.idx()];
+        func.is_some() && self.hir(file)[func].this_param == p
+    }
 
     /// `isOptionalParameter`
     pub(super) fn is_optional_parameter(&mut self, file: FileId, p: ParamId) -> bool {
@@ -1884,6 +1905,30 @@ impl<'p, 's> Checker<'p, 's> {
         reports: bool,
         elsewhere: Node,
     ) -> bool {
+        let mut params = params;
+        if let Some((this, _)) = self.sig_this_parameter(sig) {
+            let Some((first, rest)) = params
+                .split_first()
+                .filter(|(first, _)| self.is_this_parameter(tx.file, first.param))
+            else {
+                if reports {
+                    tx.inference_fallbacks.push(elsewhere);
+                }
+                return false;
+            };
+            let options = EquivalenceOptions {
+                is_optional_annotated: first.is_optional,
+                reports: false,
+            };
+            if !self.iso_is_equivalent(tx, &first.ty, this, options) {
+                if reports {
+                    tx.inference_fallbacks
+                        .push(self.hir(tx.file).node(first.param));
+                }
+                return false;
+            }
+            params = rest;
+        }
         let targets = self.sig_params(sig);
         if targets.len() != params.len() {
             if reports {

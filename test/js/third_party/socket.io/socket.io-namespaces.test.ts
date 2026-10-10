@@ -392,7 +392,7 @@ describe.skip("namespaces", () => {
       const sids = await io.of("/chat").in("foo").allSockets();
       clearTimeout(timeout);
       try {
-        expect(sids).toStrictEqual(new Set([chatFooSid]));
+        expect(sids).toStrictEqual(new Set([chatFooSid!]));
         expect(sids).not.toContain(chatBarSid);
         expect(sids).not.toContain(otherSid);
         success(done, io, c1, c2, c3);
@@ -438,7 +438,7 @@ describe.skip("namespaces", () => {
       const sids = await io.of("/chat").allSockets();
       clearTimeout(timeout);
       try {
-        expect(sids).toStrictEqual(new Set([chatFooSid, chatBarSid]));
+        expect(sids).toStrictEqual(new Set([chatFooSid!, chatBarSid!]));
         expect(sids).not.toContain(otherSid);
         success(done, io, c1, c2, c3);
       } catch (err) {
@@ -699,7 +699,7 @@ describe.skip("namespaces", () => {
             dynamicNsp.emit("hello", 1, "2", { 3: "4" });
             partialDone();
           } catch (err) {
-            fail(done, io, err, socket);
+            fail(done, io, err, socket as any);
           }
         })
         .use((socket, next) => {

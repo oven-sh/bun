@@ -48,7 +48,7 @@ it("ServerWebSocket.send() that backpressures inside drain keeps draining", asyn
   // backpressure (so the TCP window is closed), then read everything.
   let received = 0;
   const { promise: gotAll, resolve: resolveGotAll } = Promise.withResolvers<void>();
-  const sock = net.connect(server.port, "127.0.0.1", async () => {
+  const sock = net.connect(server.port!, "127.0.0.1", async () => {
     sock.write(
       "GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
         "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",

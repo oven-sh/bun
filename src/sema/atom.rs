@@ -46,6 +46,9 @@ impl std::fmt::Debug for Atom {
 
 type Texts<'s> = AppendVec<ArenaBox<'s, [u8]>, &'s Session>;
 
+/// The atoms below it are the same in every interner: `known`.
+pub const FIXED: u32 = known::global_augmentation.0 + 1;
+
 pub struct Interner<'s> {
     /// A text is in the arena of the thread that first interns it.
     session: &'s Session,

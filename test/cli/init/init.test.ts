@@ -45,6 +45,9 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       "module": "index.ts",
       "type": "module",
       "private": true,
+      "scripts": {
+        "typecheck": "bun check",
+      },
       "devDependencies": {
         "@types/bun": "latest",
       },
@@ -56,6 +59,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(readme).toStartWith("# " + path.basename(temp).toLowerCase().replaceAll(" ", "-") + "\n");
     expect(readme).toInclude("v" + Bun.version.replaceAll("-debug", ""));
     expect(readme).toInclude("index.ts");
+    expect(readme).toInclude("bun check");
 
     expect(fs.existsSync(path.join(temp, "index.ts"))).toBe(true);
     expect(fs.existsSync(path.join(temp, ".gitignore"))).toBe(true);
@@ -276,6 +280,9 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
         "typescript": "^7",
       },
       "private": true,
+      "scripts": {
+        "typecheck": "bun check",
+      },
       "type": "module",
     }
   `);
@@ -303,95 +310,34 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
 
     expect(await Bun.file(path.join(temp, "package.json")).json()).toEqual({
       name: "x",
+      scripts: { typecheck: "bun check" },
       devDependencies: { "@types/bun": "latest" },
       peerDependencies: { typescript: "^7" },
       module: "index.ts",
       type: "module",
+      private: true,
     });
   }, 30_000);
 
-  // The dependencies bun init would add are already present in these
-  // manifests, so no nested `bun install` runs.
-  const blankDeps = { devDependencies: { "@types/bun": "latest" }, peerDependencies: { typescript: "^7" } };
+  test("bun init writes a typecheck script that is the type checker where `bun check` is a script", async () => {
+    await using temp = tempDir("bun-init-check-script", {
+      "package.json": JSON.stringify({ name: "x", scripts: { check: "echo mine" } }),
+    });
 
-  test.each([
-    {
-      name: "no entry point field",
-      manifest: { name: "cjs-app", version: "1.0.0", type: "commonjs", private: false, ...blankDeps },
-      expected: { name: "cjs-app", version: "1.0.0", type: "commonjs", private: false, main: "index.js", ...blankDeps },
-    },
-    {
-      name: "a module field",
-      manifest: { name: "cjs-app", type: "commonjs", module: "esm.js", ...blankDeps },
-      expected: { name: "cjs-app", type: "commonjs", module: "esm.js", ...blankDeps },
-    },
-    {
-      name: "main and module fields",
-      manifest: { name: "cjs-app", type: "commonjs", main: "main.js", module: "esm.js", ...blankDeps },
-      expected: { name: "cjs-app", type: "commonjs", main: "main.js", module: "esm.js", ...blankDeps },
-    },
-  ])(
-    "bun init -y keeps an explicit type and private in an existing package.json with $name",
-    async ({ manifest, expected }) => {
-      await using temp = tempDir("bun-init-keeps-type", {
-        "package.json": JSON.stringify(manifest, null, 2) + "\n",
-        "index.js": `const os = require("os"); console.log("require works:", os.platform());\n`,
-      });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init", "-y"],
+      cwd: temp,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: initEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "init", "-y"],
-        cwd: temp,
-        stdio: ["ignore", "pipe", "pipe"],
-        env: initEnv,
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      expect(await Bun.file(path.join(temp, "package.json")).json()).toEqual(expected);
-      if (JSON.stringify(manifest) === JSON.stringify(expected)) {
-        expect(stdout).not.toContain("package.json");
-      } else {
-        expect(stdout).toContain(" ~ package.json (updated)");
-      }
-      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    },
-  );
-
-  test.each(["    ", "\t"])(
-    "bun init -y keeps an existing package.json's indentation (%j) and does not add private",
-    async indent => {
-      const original = JSON.stringify({ name: "lib", version: "1.0.0", ...blankDeps }, null, indent) + "\n";
-      await using temp = tempDir("bun-init-keeps-indent", { "package.json": original });
-
-      const run = async () => {
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "init", "-y"],
-          cwd: temp,
-          stdio: ["ignore", "pipe", "pipe"],
-          env: initEnv,
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        return { stdout, stderr, exitCode, packageJson: await Bun.file(path.join(temp, "package.json")).text() };
-      };
-
-      const first = await run();
-      expect(first.packageJson).toBe(
-        JSON.stringify(
-          { name: "lib", version: "1.0.0", ...blankDeps, module: "index.ts", type: "module" },
-          null,
-          indent,
-        ) + "\n",
-      );
-      expect(first.stdout).toContain(" ~ package.json (updated)");
-      expect({ stderr: first.stderr, exitCode: first.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-
-      // A second run has nothing to change: the file is left byte-identical
-      // and no package.json line is printed.
-      const second = await run();
-      expect(second.packageJson).toBe(first.packageJson);
-      expect(second.stdout).not.toContain("package.json");
-      expect({ stderr: second.stderr, exitCode: second.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    },
-  );
+    expect((await Bun.file(path.join(temp, "package.json")).json()).scripts).toEqual({
+      check: "echo mine",
+      typecheck: "bun --check",
+    });
+  }, 30_000);
 
   test("bun init --react works", async () => {
     await using temp = tempDir("bun-init--react-works", {});
@@ -505,10 +451,24 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       const [tscStdout, tscStderr, tscExited] = await Promise.all([tsc.stdout.text(), tsc.stderr.text(), tsc.exited]);
       expect({ tscStdout, tscStderr, tscExited }).toMatchObject({ tscExited: 0 });
 
-      // The blank template has no `build` script; the react templates do.
+      // So does `bun check`, which is what the `typecheck` script of every template runs.
       // bun-plugin-tailwind's `bun` peer dep links a node_modules/.bin/bun that
-      // would otherwise shadow bunExe() in the nested `bun run build.ts`, so
-      // pass --bun.
+      // would otherwise shadow bunExe() in the nested `bun check`, so pass --bun.
+      await using check = Bun.spawn({
+        cmd: [bunExe(), "--bun", "run", "typecheck"],
+        cwd: temp,
+        stdio: ["ignore", "pipe", "pipe"],
+        env: bunEnv,
+      });
+      const [checkStdout, checkStderr, checkExited] = await Promise.all([
+        check.stdout.text(),
+        check.stderr.text(),
+        check.exited,
+      ]);
+      expect({ checkStdout, checkStderr, checkExited }).toMatchObject({ checkStdout: "", checkExited: 0 });
+
+      // The blank template has no `build` script; the react templates do.
+      // --bun for the same reason: the script is `bun run build.ts`.
       const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
       if (pkg.scripts?.build) {
         await using build = Bun.spawn({

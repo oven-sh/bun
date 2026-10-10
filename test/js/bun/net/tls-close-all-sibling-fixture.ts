@@ -87,7 +87,7 @@ async function captureClientHello(): Promise<Buffer> {
     let total = 0;
     sock.on("error", reject);
     sock.on("close", () => reject(new Error("socket closed before a full ClientHello record arrived")));
-    sock.on("data", d => {
+    sock.on("data", (d: Buffer) => {
       chunks.push(d);
       total += d.length;
       const buf = Buffer.concat(chunks, total);

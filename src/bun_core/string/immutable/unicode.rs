@@ -409,6 +409,23 @@ pub(super) fn convert_utf8_bytes_into_utf16(bytes: &[u8]) -> UTF16Replacement {
     convert_utf8_bytes_into_utf16_with_length(sequence, sequence_length, bytes.len())
 }
 
+/// Codepoint at the front of non-empty `bytes`; ill-formed input is U+FFFD per maximal subpart.
+pub fn utf8_codepoint_with_fffd(bytes: &[u8]) -> UTF16Replacement {
+    let lead = bytes[0];
+    if lead < 0x80 {
+        return UTF16Replacement {
+            code_point: u32::from(lead),
+            len: 1,
+            ..Default::default()
+        };
+    }
+    let r = convert_utf8_bytes_into_utf16(bytes);
+    UTF16Replacement {
+        len: r.len.max(1),
+        ..r
+    }
+}
+
 // SWAR body moved down into `crate::strings_impl` (T0) so the canonical
 // `copy_latin1_into_utf8` is the spec-faithful fast path. Re-export here so
 // `pub use unicode_draft::copy_latin1_into_utf8_stop_on_non_ascii` in

@@ -6,16 +6,17 @@ import type { AddressInfo } from "node:net";
 import type { Server, TLSSocket } from "node:tls";
 import { join } from "path";
 import tls from "tls";
+type Certs = { key: string; cert: string; ca: string; single: string; subca: string };
 const clientTls = {
   key: readFileSync(join(import.meta.dir, "fixtures", "ec10-key.pem"), "utf8"),
   cert: readFileSync(join(import.meta.dir, "fixtures", "ec10-cert.pem"), "utf8"),
   ca: readFileSync(join(import.meta.dir, "fixtures", "ca5-cert.pem"), "utf8"),
-};
+} as Certs;
 const serverTls = {
   key: readFileSync(join(import.meta.dir, "fixtures", "agent10-key.pem"), "utf8"),
   cert: readFileSync(join(import.meta.dir, "fixtures", "agent10-cert.pem"), "utf8"),
   ca: readFileSync(join(import.meta.dir, "fixtures", "ca2-cert.pem"), "utf8"),
-};
+} as Certs;
 
 function split(file: any, into: any) {
   const certs = /([^]*END CERTIFICATE-----\r?\n)(-----BEGIN[^]*)/.exec(file) as RegExpExecArray;
@@ -28,7 +29,7 @@ split(clientTls.cert, clientTls);
 split(serverTls.cert, serverTls);
 
 // The certificates aren't for "127.0.0.1", so override the identity check.
-function checkServerIdentity(hostname: string, cert: any) {
+function checkServerIdentity(hostname: string, cert: any): undefined {
   expect(hostname).toBe("127.0.0.1");
   expect(cert.subject.CN).toBe("agent10.example.com");
 }
@@ -353,7 +354,7 @@ it("explicit rejectUnauthorized: false still admits an unverified client certifi
   try {
     const [serverSocket] = await Promise.all([handledSocket, once(client, "secureConnect")]);
     expect(serverSocket.authorized).toBe(false);
-    expect(serverSocket.authorizationError).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+    expect(serverSocket.authorizationError).toBe<string>("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
   } finally {
     client.end();
     server.close();
@@ -514,7 +515,7 @@ it("Check getPeerCertificate can properly handle '\\0' for fix CVE-2009-2408.", 
 });
 
 it("tls.connect should not accept untrusted certificates", async () => {
-  const { promise, resolve, reject } = Promise.withResolvers();
+  const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
   let server: Server | null = null;
   let socket: TLSSocket | null = null;
 

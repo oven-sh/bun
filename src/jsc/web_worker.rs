@@ -75,7 +75,6 @@ pub struct WebWorker {
     /// Created by `node:worker_threads`' `Worker` (as opposed to the Web `Worker`
     /// constructor): loads `node:worker_threads` before preloads and the entry point.
     is_node_worker: bool,
-    store_fd: bool,
     /// Borrowed from the proxy's `WorkerOptions` (alive as long as the proxy).
     argv_ptr: *const WTFStringImpl,
     argv_len: usize,
@@ -286,6 +285,7 @@ impl WebWorker {
         name_str: &BunString,
         specifier_str: &BunString,
         error_message: &mut BunString,
+        error_is_invalid_exec_argv: &mut bool,
         _parent_context_id: u32,
         this_context_id: u32,
         mini: bool,
@@ -351,7 +351,6 @@ impl WebWorker {
         // its own thread; the worker never dereferences `parent`.
         // SAFETY: `parent` is the calling thread's live VM.
         let parent_ref = unsafe { &*parent };
-        let store_fd = parent_ref.transpiler.resolver.store_fd;
         let mut transform_options = (*parent_ref.transpiler.options.transform_options).clone();
         if !inherit_exec_argv {
             let hooks = runtime_hooks().expect("RuntimeHooks not installed");
@@ -364,6 +363,16 @@ impl WebWorker {
                 ))
             };
             if let Some(flags) = parsed {
+                if let Some(invalid) = flags.invalid {
+                    use bun_core::WTFStringImplExt as _;
+                    // SAFETY: an index into the same slice, whose strings the caller keeps alive.
+                    let arg = unsafe { &**exec_argv_ptr.add(invalid) }.to_owned_slice_z();
+                    let mut message = b"Initiated Worker with invalid execArgv flags: ".to_vec();
+                    message.extend_from_slice(arg.as_bytes());
+                    *error_message = BunString::clone_utf8(&message);
+                    *error_is_invalid_exec_argv = true;
+                    return core::ptr::null_mut();
+                }
                 let parent_allows_addons = transform_options.allow_addons.unwrap_or(true);
                 transform_options.allow_addons = Some(parent_allows_addons && flags.allow_addons);
                 let parent_allows_ffi_cc = transform_options.allow_ffi_cc.unwrap_or(true);
@@ -406,7 +415,6 @@ impl WebWorker {
             mini,
             eval_mode,
             is_node_worker,
-            store_fd,
             argv_ptr,
             argv_len,
             exec_argv_ptr,
@@ -692,7 +700,6 @@ impl WebWorker {
             virtual_machine::Options {
                 args: transform_options,
                 env_loader: NonNull::new(loader_ptr),
-                store_fd: self.store_fd,
                 graph: crate::virtual_machine::standalone_module_graph(),
                 ..Default::default()
             },

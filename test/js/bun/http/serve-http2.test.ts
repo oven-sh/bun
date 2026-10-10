@@ -689,7 +689,7 @@ describe("Bun.serve http2 with http1: false", () => {
     const got = await new Promise<string>(resolve => {
       let buf = Buffer.alloc(0);
       sock.on("data", d => {
-        buf = Buffer.concat([buf, d]);
+        buf = Buffer.concat([buf, d as Buffer]);
         for (let off = 0; off + 9 <= buf.length; ) {
           const len = buf.readUIntBE(off, 3);
           if (off + 9 + len > buf.length) break;
@@ -771,7 +771,7 @@ describe("Bun.serve http2 over a unix socket", () => {
     const sock = join(String(dir), "h2.sock");
     await using server = Bun.serve({
       unix: sock,
-      http2: true,
+      http2: true as any,
       fetch: req => new Response("unix:" + new URL(req.url).pathname),
     });
     const session = http2.connect("http://localhost", {
@@ -795,7 +795,7 @@ describe("Bun.serve http2 in-process", () => {
       routes: { "/r": new Response("route-v1") },
       fetch: () => new Response("fetch-v1"),
     });
-    const session = await connectH2(server.port, false);
+    const session = await connectH2(server.port!, false);
     expect((await request(session, { ":path": "/r" })).body.toString()).toBe("route-v1");
     expect((await request(session, { ":path": "/x" })).body.toString()).toBe("fetch-v1");
     server.reload({ routes: { "/r": new Response("route-v2") }, fetch: () => new Response("fetch-v2") });
@@ -819,7 +819,7 @@ describe("Bun.serve http2 in-process", () => {
         return new Response("handled", { status: 555 });
       },
     });
-    const session = await connectH2(server.port, false);
+    const session = await connectH2(server.port!, false);
     const res = await request(session, { ":path": "/" });
     expect(res.status).toBe(555);
     expect(res.body.toString()).toBe("handled");
@@ -840,7 +840,7 @@ describe("Bun.serve http2 in-process", () => {
         return new Response("late");
       },
     });
-    const session = await connectH2(server.port, false);
+    const session = await connectH2(server.port!, false);
     const req = session.request({ ":path": "/" });
     req.on("error", () => {});
     await gotRequest;
@@ -854,5 +854,120 @@ describe("Bun.serve http2 in-process", () => {
     await new Promise<void>((resolve, reject) => session.ping((err: any) => (err ? reject(err) : resolve())));
     expect(aborted).toBe(1);
     await new Promise<void>(r => session.close(() => r()));
+  });
+
+  // A 4-byte stream window stalls the body after its first bytes. One
+  // WINDOW_UPDATE then lets the writable callback send the rest and end the
+  // response, and the same socket event frees the finished stream, before the
+  // promise reaction of the body stream can run: the free has to end the request.
+  test("a streamed response body that ends from the writable callback ends its request", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      http2: true,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            async pull(controller) {
+              controller.enqueue(new TextEncoder().encode("streamed-past-the-window"));
+              controller.close();
+            },
+          }),
+        ),
+    });
+
+    const SETTINGS_INITIAL_WINDOW_SIZE = 0x4;
+    const settings = Buffer.alloc(6);
+    settings.writeUInt16BE(SETTINGS_INITIAL_WINDOW_SIZE, 0);
+    settings.writeUInt32BE(4, 2);
+    const raw = await RawH2.connect(server.port!, false, { settings });
+    raw.headers(1, baseHeaders("/"));
+    const first = await raw.waitFor(f => f.type === T.DATA && f.streamId === 1);
+    const increment = Buffer.alloc(4);
+    increment.writeUInt32BE(1024);
+    raw.write(frame(T.WINDOW_UPDATE, 0, 1, increment));
+    const body = await raw.body(1);
+
+    expect({ first: first.payload.toString(), body: body.toString(), pending: server.pendingRequests }).toEqual({
+      first: "stre",
+      body: "streamed-past-the-window",
+      pending: 0,
+    });
+    raw.close();
+    // A request that never ends keeps a graceful stop pending.
+    await server.stop();
+  });
+
+  // The request hears the controller close, so it does not wait for a pull()
+  // that never settles (the HTTP/1.1 cases are in
+  // serve-direct-readable-stream.test.ts). The end has to come from a later
+  // microtask: an end inside the first pull() leaves the response already
+  // finished when the stream is attached, which takes a different path.
+  test("a direct stream whose pull() never settles after it ended the response", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      http2: true,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write("streamed");
+              await Promise.resolve();
+              controller.end();
+              await new Promise<never>(() => {});
+            },
+          }),
+        ),
+    });
+
+    const session = await connectH2(server.port!, false);
+    const bodies: string[] = [];
+    for (let i = 0; i < 3; i++) bodies.push((await request(session, { ":path": "/" })).body.toString());
+
+    expect({ bodies, pendingRequests: server.pendingRequests }).toEqual({
+      bodies: ["streamed", "streamed", "streamed"],
+      pendingRequests: 0,
+    });
+    await new Promise<void>(r => session.close(() => r()));
+    await server.stop();
+  });
+
+  // stop(true) inside pull() closes the socket at once, so the stream teardown
+  // reports while the response is still being attached. The request then ends
+  // from inside that attach, and the sink it leaves behind is cleaned up by the
+  // caller. A late write on the controller must still fail cleanly.
+  test("stop(true) inside pull() after the response ended", async () => {
+    let lateWriteFailed = false;
+    await using server = Bun.serve({
+      port: 0,
+      http2: true,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write("streamed");
+              controller.end();
+              server.stop(true);
+              try {
+                controller.write("late");
+                await controller.flush();
+              } catch {
+                lateWriteFailed = true;
+              }
+            },
+          }),
+        ),
+    });
+
+    const session = await connectH2(server.port!, false);
+    // The abrupt stop races the response, so the client may or may not see it.
+    await request(session, { ":path": "/" }).catch(() => {});
+    session.destroy();
+
+    expect({ lateWriteFailed, pendingRequests: server.pendingRequests }).toEqual({
+      lateWriteFailed: true,
+      pendingRequests: 0,
+    });
   });
 });

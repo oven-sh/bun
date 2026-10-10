@@ -465,7 +465,6 @@ impl InitCommand {
             b"project".to_vec()
         };
         let mut did_load_package_json = false;
-        let mut package_json_indent = bun_ast::Indentation::default();
         if !package_json_contents.list.is_empty() {
             'process_package_json: {
                 let source = bun_ast::Source::init_path_string(
@@ -473,22 +472,14 @@ impl InitCommand {
                     package_json_contents.list.as_slice(),
                 );
                 let mut log = bun_ast::Log::init();
-                let parsed = match json::parse_package_json_utf8_with_opts(
-                    json::JSONOptions {
-                        guess_indentation: true,
-                        ..json::PACKAGE_JSON_OPTS
-                    },
-                    &source,
-                    &mut log,
-                    &bump,
-                ) {
-                    Ok(parsed) => parsed,
-                    Err(_) => {
-                        package_json_file = None;
-                        break 'process_package_json;
-                    }
-                };
-                let package_json_expr: bun_ast::Expr = parsed.root;
+                let package_json_expr: bun_ast::Expr =
+                    match json::parse_package_json_utf8(&source, &mut log, &bump) {
+                        Ok(e) => e,
+                        Err(_) => {
+                            package_json_file = None;
+                            break 'process_package_json;
+                        }
+                    };
 
                 if !package_json_expr.data.is_e_object() {
                     package_json_file = None;
@@ -496,7 +487,6 @@ impl InitCommand {
                 }
 
                 fields.object = package_json_expr.data.e_object();
-                package_json_indent = parsed.indentation;
 
                 if let Some(name) = package_json_expr.get(b"name") {
                     if let Some(str) = name.as_utf8_string_literal() {
@@ -669,28 +659,18 @@ impl InitCommand {
                 object.put_string(&bump, b"name", &fields.name)?;
             }
             if !fields.entry_point.is_empty() {
-                // An explicit "type" is the user's: never replace it. A package that
-                // declares a non-module type gets its entry point as "main".
-                let existing_type = object.get(b"type");
-                let has_type = existing_type.is_some();
-                let is_module = existing_type
-                    .is_none_or(|ty| ty.as_utf8_string_literal() == Some(b"module".as_slice()));
-                let entry_field: &[u8] = if object.has_property(b"module") {
-                    b"module"
-                } else if object.has_property(b"main") || !is_module {
-                    b"main"
+                if object.has_property(b"module") {
+                    object.put_string(&bump, b"module", &fields.entry_point)?;
+                    object.put_string(&bump, b"type", b"module")?;
+                } else if object.has_property(b"main") {
+                    object.put_string(&bump, b"main", &fields.entry_point)?;
                 } else {
-                    b"module"
-                };
-                object.put_string(&bump, entry_field, &fields.entry_point)?;
-                if entry_field == b"module" && !has_type {
+                    object.put_string(&bump, b"module", &fields.entry_point)?;
                     object.put_string(&bump, b"type", b"module")?;
                 }
             }
 
-            // "private" is a publishing decision. Default a new manifest to
-            // private, but leave an existing one (set or unset) alone.
-            if fields.private && !did_load_package_json {
+            if fields.private {
                 object.put(
                     &bump,
                     b"private",
@@ -761,6 +741,23 @@ impl InitCommand {
             need_run_bun_install =
                 needs_dependencies || needs_dev_dependencies || needs_typescript_dependency;
 
+            // `bun check` needs no script. A script is where people and tools look for how a project is type checked.
+            if !minimal && is_type_script_entry_point(&fields.entry_point) {
+                let mut scripts = dependency_map(object, b"scripts");
+                if scripts.get(b"typecheck").is_none() {
+                    // `bun check` runs a `check` script, if there is one.
+                    let command: &[u8] = match scripts.get(b"check") {
+                        Some(_) => b"bun --check",
+                        None => b"bun check",
+                    };
+                    scripts
+                        .data
+                        .as_e_object_mut()
+                        .put_string(&bump, b"typecheck", command)?;
+                    object.put(&bump, b"scripts", scripts)?;
+                }
+            }
+
             if needs_dependencies {
                 let mut dependencies_object = dependency_map(object, b"dependencies");
                 let mut iter = needed_dependencies.iter_set();
@@ -801,7 +798,6 @@ impl InitCommand {
             template.write_to_package_json(&mut fields, &bump)?;
         }
 
-        let mut did_update_package_json = false;
         'write_package_json: {
             let (fd, created_close): (Fd, Option<bun_sys::CloseOnDrop>) = match package_json_file
                 .as_ref()
@@ -814,8 +810,7 @@ impl InitCommand {
             };
             let _close = created_close;
             let mut buffer_writer = js_printer::BufferWriter::init();
-            buffer_writer.append_newline =
-                !did_load_package_json || package_json_contents.list.last() == Some(&b'\n');
+            buffer_writer.append_newline = true;
             let mut package_json_writer = js_printer::BufferPrinter::init(buffer_writer);
 
             let print_result = js_printer::print_json(
@@ -826,7 +821,7 @@ impl InitCommand {
                 },
                 &bun_ast::Source::init_empty_file(b"package.json"),
                 js_printer::PrintJsonOptions {
-                    indent: package_json_indent,
+                    indent: Default::default(),
                     mangled_props: None,
                     ..Default::default()
                 },
@@ -840,9 +835,6 @@ impl InitCommand {
                 break 'write_package_json;
             }
             let written = package_json_writer.ctx.get_written();
-            if did_load_package_json && written == package_json_contents.list.as_slice() {
-                break 'write_package_json;
-            }
             if let Err(err) = bun_sys::File::borrow(&fd).write_all(written) {
                 bun_core::pretty_errorln!(
                     "package.json failed to write due to error {}",
@@ -861,7 +853,6 @@ impl InitCommand {
                 package_json_file = None;
                 break 'write_package_json;
             }
-            did_update_package_json = did_load_package_json;
         }
 
         if steps.write_gitignore {
@@ -877,9 +868,6 @@ impl InitCommand {
 
                 if package_json_file.is_some() && !did_load_package_json {
                     bun_core::prettyln!(" + <r><d>package.json<r>");
-                    Output::flush();
-                } else if did_update_package_json {
-                    bun_core::prettyln!(" ~ <r><d>package.json (updated)<r>");
                     Output::flush();
                 }
 
@@ -903,23 +891,14 @@ impl InitCommand {
 
                 if steps.write_tsconfig {
                     'brk: {
-                        let extname = bun_paths::extension(&fields.entry_point);
-                        let loader = options::DEFAULT_LOADERS
-                            .get(extname)
-                            .copied()
-                            .unwrap_or(bun_ast::Loader::Ts);
-                        let filename: &[u8] = if loader.is_type_script() {
-                            b"tsconfig.json"
-                        } else {
-                            b"jsconfig.json"
-                        };
-                        if Assets::create_full(
-                            Assets::TSCONFIG_JSON,
-                            filename,
-                            " (for editor autocomplete)",
-                            &[],
-                        )
-                        .is_err()
+                        let (filename, what_for): (&[u8], _) =
+                            if is_type_script_entry_point(&fields.entry_point) {
+                                (b"tsconfig.json", " (for bun check and editor autocomplete)")
+                            } else {
+                                (b"jsconfig.json", " (for editor autocomplete)")
+                            };
+                        if Assets::create_full(Assets::TSCONFIG_JSON, filename, what_for, &[])
+                            .is_err()
                         {
                             break 'brk;
                         }
@@ -952,6 +931,10 @@ impl InitCommand {
                             "<cyan>bun run {}<r>\n\n",
                             bstr::BStr::new(&fields.entry_point),
                         );
+                    }
+
+                    if is_type_script_entry_point(&fields.entry_point) {
+                        bun_core::pretty!("To type check, run:\n\n    <cyan>bun check<r>\n\n");
                     }
                 }
 
@@ -1108,7 +1091,7 @@ impl Assets {
 // PackageJSONFields
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct PackageJSONFields {
+pub(crate) struct PackageJSONFields {
     pub name: Vec<u8>,
     /// ARENA: allocated from `bun_ast::Expr` Store via `initialize_store()`; no deinit.
     pub object: Option<StoreRef<bun_ast::E::Object>>,
@@ -1359,7 +1342,7 @@ impl DependencyGroup {
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 #[repr(u8)]
-pub enum Template {
+pub(crate) enum Template {
     Blank,
     ReactBlank,
     ReactTailwind,
@@ -1367,7 +1350,7 @@ pub enum Template {
     TypescriptLibrary,
 }
 
-pub struct TemplateFile {
+pub(crate) struct TemplateFile {
     pub path: &'static [u8],
     pub(crate) contents: &'static [u8],
 }
@@ -1945,6 +1928,14 @@ fn dependency_map(package_json: &bun_ast::E::Object, key: &[u8]) -> bun_ast::Exp
         .get(key)
         .filter(|value| value.data.is_e_object())
         .unwrap_or_else(|| bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY))
+}
+
+fn is_type_script_entry_point(entry_point: &[u8]) -> bool {
+    options::DEFAULT_LOADERS
+        .get(bun_paths::extension(entry_point))
+        .copied()
+        .unwrap_or(bun_ast::Loader::Ts)
+        .is_type_script()
 }
 
 /// Refuse entry-point paths that would escape the project directory

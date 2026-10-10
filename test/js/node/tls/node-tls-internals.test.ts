@@ -72,7 +72,7 @@ describe("NodeTLS.cpp", () => {
     expect(names.length).toBe(count);
 
     expect(rootCertificates.length).toBe(count);
-    expect(getCACertificates("bundled")).toEqual(rootCertificates);
+    expect(getCACertificates("bundled")).toEqual<readonly string[]>(rootCertificates);
     for (let i = 0; i < count; i++) {
       const der = data.subarray(offset(i), offset(i + 1));
       const cert = new X509Certificate(rootCertificates[i]);

@@ -70,7 +70,7 @@ it("should not allow invalid tls option", () => {
         },
         port: 0,
         hostname: "localhost",
-        tls: value,
+        tls: value as any,
       });
     }).toThrow("TLSOptions must be an object");
   });
@@ -88,7 +88,7 @@ it("should allow using false, null or undefined tls option", () => {
         },
         port: 0,
         hostname: "localhost",
-        tls: value,
+        tls: value as any,
       });
     }).not.toThrow("TLSOptions must be an object");
   });

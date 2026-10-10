@@ -4,7 +4,7 @@ const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapt
 const ObjectCreate = Object.create;
 const kEmptyObject = ObjectCreate(null);
 
-var fetch = Bun.fetch;
+const nativeFetch = Bun.fetch;
 const bindings = $cpp("Undici.cpp", "createUndiciInternalBinding");
 const Response = bindings[0];
 const Request = bindings[1];
@@ -31,6 +31,61 @@ class FileReader extends EventTarget {
 
 function notImplemented() {
   throw new Error("This function is not yet implemented in Bun");
+}
+
+// Proxying is the only dispatcher behaviour implemented: ProxyAgent returns a
+// value for native fetch's `proxy` option here, every other dispatcher returns
+// undefined and the request reaches native fetch (and its *_PROXY env) unchanged.
+const kProxyFor = Symbol("kProxyFor");
+
+function resolveProxy(dispatcher) {
+  if (dispatcher == null) dispatcher = getGlobalDispatcher();
+  if (dispatcher != null && typeof dispatcher[kProxyFor] === "function") {
+    return dispatcher[kProxyFor]();
+  }
+  return undefined;
+}
+
+function fetch(input, init = undefined) {
+  try {
+    const proxy = resolveProxy(init?.dispatcher);
+    // An explicit proxy wins, and a unix socket request cannot go through a proxy.
+    if (proxy === undefined || (init != null && (init.proxy !== undefined || init.unix != null))) {
+      return nativeFetch(input, init);
+    }
+    if (init == null) return nativeFetch(input, { proxy });
+    // A Request as init cannot be spread (its fields are prototype getters);
+    // fold it into the input instead so the proxy can be passed alongside.
+    if (init instanceof Request) return nativeFetch(new Request(input, init), { proxy });
+    return nativeFetch(input, { ...init, proxy });
+  } catch (e) {
+    return Promise.$reject(e);
+  }
+}
+fetch.preconnect = nativeFetch.preconnect;
+
+// Mirrors upstream util.parseURL for the UrlObject forms of request().
+function urlFromUrlObject(obj) {
+  let origin = obj.origin;
+  if (origin == null) {
+    const protocol = obj.protocol ?? "";
+    const port = obj.port ?? (protocol === "https:" ? 443 : 80);
+    origin = `${protocol}//${obj.hostname ?? ""}:${port}`;
+  } else {
+    origin = String(origin);
+  }
+  let path = obj.path ?? `${obj.pathname ?? ""}${obj.search ?? ""}`;
+  path = String(path);
+  if (origin.endsWith("/")) origin = origin.slice(0, -1);
+  if (path && path[0] !== "/") path = "/" + path;
+  try {
+    return new URL(origin + path);
+  } catch (cause) {
+    throw new InvalidArgumentError(
+      `Invalid URL ${JSON.stringify(origin + path)}: a UrlObject needs an origin, or a protocol and hostname`,
+      { cause },
+    );
+  }
 }
 
 /**
@@ -170,7 +225,7 @@ async function request(
     throwOnError = false,
     body: inputBody,
     maxRedirections,
-    // dispatcher,
+    dispatcher,
   } = options;
 
   // TODO: More validations
@@ -179,8 +234,7 @@ async function request(
     if (query) url = new URL(url);
   } else if (typeof url === "object" && url !== null) {
     if (!(url instanceof URL)) {
-      // TODO: Parse undici UrlObject
-      throw new Error("not implemented");
+      url = urlFromUrlObject(url);
     }
   } else throw new TypeError("url must be a string, URL, or UrlObject");
 
@@ -204,9 +258,10 @@ async function request(
   }
 
   const followRedirects = maxRedirections != null && maxRedirections > 0;
+  const proxy = resolveProxy(dispatcher);
 
   /** @type {Response} */
-  const resp = await fetch(url, {
+  const resp = await nativeFetch(url, {
     signal,
     mode: "cors",
     method,
@@ -215,6 +270,7 @@ async function request(
     redirect: followRedirects ? "follow" : "manual",
     maxRedirects: followRedirects ? maxRedirections : undefined,
     keepalive: !reset,
+    proxy,
   });
 
   const { status: statusCode, headers, trailers } = resp;
@@ -254,33 +310,162 @@ class MockAgent {
 
 function mockErrors() {}
 
-class Dispatcher extends EventEmitter {}
-class Agent extends Dispatcher {}
-class Pool extends Dispatcher {
-  request() {}
-}
-class BalancedPool extends Dispatcher {}
-class Client extends Dispatcher {
-  request() {}
-}
+class Dispatcher extends EventEmitter {
+  #closed = false;
+  #destroyed = false;
 
-class DispatcherBase extends EventEmitter {}
+  dispatch() {
+    notImplemented();
+  }
 
-class ProxyAgent extends DispatcherBase {
-  constructor() {
-    super();
+  // `options` is both the UrlObject ({ origin, path }) and the request options.
+  request(options, callback) {
+    const p = request(options, { ...options, dispatcher: this });
+    if (typeof callback === "function") {
+      p.$then(
+        data => callback(null, data),
+        err => callback(err, null),
+      );
+      return;
+    }
+    return p;
+  }
+
+  close(callback) {
+    this.#closed = true;
+    if (typeof callback === "function") {
+      queueMicrotask(callback);
+      return;
+    }
+    return Promise.$resolve();
+  }
+
+  destroy(err, callback) {
+    this.#destroyed = true;
+    if (typeof err === "function") {
+      callback = err;
+    }
+    if (typeof callback === "function") {
+      queueMicrotask(callback);
+      return;
+    }
+    return Promise.$resolve();
+  }
+
+  get closed() {
+    return this.#closed;
+  }
+
+  get destroyed() {
+    return this.#destroyed;
+  }
+
+  [kProxyFor]() {
+    return undefined;
   }
 }
 
-class EnvHttpProxyAgent extends DispatcherBase {
-  constructor() {
+class Agent extends Dispatcher {}
+class BalancedPool extends Dispatcher {}
+
+// Shared by Client and Pool, which are siblings upstream (a Pool is not a Client).
+class OriginDispatcher extends Dispatcher {
+  #origin;
+
+  constructor(origin, _options) {
     super();
+    if (!origin || (typeof origin !== "string" && !(origin instanceof URL))) {
+      throw new InvalidArgumentError("Invalid URL: origin must be a non-empty string or URL");
+    }
+    try {
+      this.#origin = new URL(origin).origin;
+    } catch (cause) {
+      throw new InvalidArgumentError(`Invalid URL: ${JSON.stringify(String(origin))}`, { cause });
+    }
+  }
+
+  request(options, callback) {
+    if (options != null && typeof options === "object" && !(options instanceof URL)) {
+      options = { ...options, origin: this.#origin };
+    }
+    return super.request(options, callback);
+  }
+}
+
+class Client extends OriginDispatcher {}
+class Pool extends OriginDispatcher {}
+
+class ProxyAgent extends Dispatcher {
+  #proxy;
+
+  constructor(opts) {
+    super();
+    if (typeof opts === "string" || opts instanceof URL) {
+      opts = { uri: opts };
+    }
+    if (opts == null || typeof opts !== "object") {
+      throw new InvalidArgumentError("Proxy uri is mandatory");
+    }
+    const { uri, token, auth } = opts;
+    if (!uri || (typeof uri !== "string" && !(uri instanceof URL))) {
+      throw new InvalidArgumentError("Proxy uri is mandatory");
+    }
+    if (token != null && auth != null) {
+      throw new InvalidArgumentError("opts.auth cannot be used in combination with opts.token");
+    }
+    if (token != null && typeof token !== "string") {
+      throw new InvalidArgumentError("opts.token must be a string");
+    }
+    if (auth != null && typeof auth !== "string") {
+      throw new InvalidArgumentError("opts.auth must be a string");
+    }
+    const headers = opts.headers != null ? { ...opts.headers } : {};
+    if (token != null) {
+      headers["proxy-authorization"] = token;
+    } else if (auth != null) {
+      headers["proxy-authorization"] = `Basic ${auth}`;
+    }
+    this.#proxy = Object.keys(headers).length > 0 ? { url: String(uri), headers } : String(uri);
+  }
+
+  [kProxyFor]() {
+    return this.#proxy;
+  }
+}
+
+// Native fetch applies the *_PROXY env itself (per redirect hop), so this
+// inherits the undefined kProxyFor; the per-instance overrides are unsupported.
+class EnvHttpProxyAgent extends Dispatcher {
+  constructor(opts) {
+    super();
+    if (opts != null && (opts.httpProxy != null || opts.httpsProxy != null || opts.noProxy != null)) {
+      throw new Error(
+        "EnvHttpProxyAgent's httpProxy/httpsProxy/noProxy options are not implemented in Bun; " +
+          "set the HTTP_PROXY/HTTPS_PROXY/NO_PROXY environment variables or use ProxyAgent",
+      );
+    }
   }
 }
 
 class RetryAgent extends Dispatcher {
-  constructor() {
+  #inner;
+
+  constructor(dispatcher, _options) {
     super();
+    if (dispatcher == null || typeof dispatcher !== "object") {
+      throw new InvalidArgumentError("RetryAgent requires the dispatcher to wrap as its first argument");
+    }
+    this.#inner = dispatcher;
+  }
+
+  request(options, callback) {
+    const inner = this.#inner;
+    if (typeof inner.request === "function") return inner.request(options, callback);
+    return super.request(options, callback);
+  }
+
+  [kProxyFor]() {
+    return this.#inner[kProxyFor]?.();
   }
 }
 
@@ -316,7 +501,14 @@ class BodyTimeoutError extends UndiciError {}
 class RequestContentLengthMismatchError extends UndiciError {}
 class ConnectTimeoutError extends UndiciError {}
 class ResponseStatusCodeError extends UndiciError {}
-class InvalidArgumentError extends UndiciError {}
+// The one error this module throws itself; upstream's name/code so callers can branch on them.
+class InvalidArgumentError extends UndiciError {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "InvalidArgumentError";
+    this.code = "UND_ERR_INVALID_ARG";
+  }
+}
 class InvalidReturnValueError extends UndiciError {}
 class RequestAbortedError extends AbortError {}
 class ClientDestroyedError extends UndiciError {}
@@ -402,13 +594,12 @@ function serializeAMimeType() {
 
 let globalDispatcher;
 
-// Add missing dispatcher functions
 function setGlobalDispatcher(dispatcher) {
   globalDispatcher = dispatcher;
 }
 
 function getGlobalDispatcher() {
-  return (globalDispatcher ??= new Dispatcher());
+  return (globalDispatcher ??= new Agent());
 }
 
 // Add missing origin functions

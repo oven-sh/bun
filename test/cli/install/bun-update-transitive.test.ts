@@ -650,6 +650,53 @@ test.concurrent(
   },
 );
 
+// A version bump that leaves a patchedDependencies key behind is reported on every install, not only `bun update` (#40106).
+test.concurrent(
+  "`bun install` warns when a patchedDependencies key no longer matches the installed version",
+  async () => {
+    const dir = await setup({
+      "package.json": pkgJson({ "no-deps": "1.0.0" }, PATCHED),
+      "patches/no-deps@1.0.0.patch": NO_DEPS_PATCH,
+    });
+    // the patch applies: installs stay quiet
+    expect(await install(dir)).not.toContain("warn:");
+    // a routine bump makes the key stale
+    await write(join(dir, "package.json"), stringify(pkgJson({ "no-deps": "1.1.0" }, PATCHED)));
+    const orphaned = "warn: patches/no-deps@1.0.0.patch no longer applies (no-deps is now 1.1.0)\n";
+    expect(await install(dir)).toContain(orphaned);
+    // and every later install repeats the warning until package.json is fixed
+    expect(await install(dir)).toContain(orphaned);
+    expect(await file(join(dir, "node_modules", "no-deps", "patched.txt")).exists()).toBeFalse();
+  },
+);
+
+// A declared patch that silently stopped applying fails --frozen-lockfile; a patched map edit alone still passes it (frozen-lockfile-pruned.test.ts) (#40106).
+test.concurrent("`bun install --frozen-lockfile` fails when a patchedDependencies key no longer applies", async () => {
+  const dir = await setup({
+    "package.json": pkgJson({ "no-deps": "1.0.0" }, PATCHED),
+    "patches/no-deps@1.0.0.patch": NO_DEPS_PATCH,
+  });
+  // in sync: frozen install passes
+  await frozen(dir);
+  await write(join(dir, "package.json"), stringify(pkgJson({ "no-deps": "1.1.0" }, PATCHED)));
+  await install(dir);
+  const { stderr, exitCode } = await run(dir, "install", "--frozen-lockfile");
+  expect(stderr).toContain("warn: patches/no-deps@1.0.0.patch no longer applies (no-deps is now 1.1.0)\n");
+  expect(stderr).toContain("lockfile had changes, but lockfile is frozen");
+  expect(stderr).toContain(
+    "a patchedDependencies entry in package.json no longer applies to any installed package version",
+  );
+  // the generic re-run hint cannot converge here: the stale key lives only in package.json
+  expect(stderr).toContain("re-create the patch for the installed version with bun patch, or remove the stale entry");
+  expect(stderr).not.toContain("try re-running without --frozen-lockfile");
+  expect(exitCode).not.toBe(0);
+  // the documented validation form fails too (without the warning: dry runs stay quiet)
+  const dry = await run(dir, "install", "--frozen-lockfile", "--dry-run");
+  expect(dry.stderr).not.toContain("warn:");
+  expect(dry.stderr).toContain("lockfile had changes, but lockfile is frozen");
+  expect(dry.exitCode).not.toBe(0);
+});
+
 // bun.lock still records the `no-deps: 1.0.0` override; package.json is edited without an install in between, so the update sees the new overrides first.
 async function overriddenThenEdited(overrides?: Json) {
   const dependencies = { "one-range-dep": "1.0.0" };

@@ -174,6 +174,8 @@ bun install --frozen-lockfile
 
 Bun does not enable `--frozen-lockfile` automatically in CI; pass the flag or use `bun ci`. If there is no lockfile at all, `--frozen-lockfile` installs from `package.json` without writing one.
 
+`--frozen-lockfile` also fails when a [`patchedDependencies`](/pm/cli/patch) entry in `package.json` no longer applies to any installed version of the package, for example after the package moved to a new version. Re-create the patch for the new version, or remove the stale entry.
+
 `--frozen-lockfile` works on a pruned monorepo checkout (e.g. `turbo prune` output, or a Docker context with only some workspace folders copied in). If a workspace listed in `bun.lock` is missing its `package.json` on disk, Bun skips it with a `note:` and does not install its exclusive dependencies. If a remaining workspace depends on a skipped one, the install fails.
 
 To validate the lockfile without installing, use `bun install --frozen-lockfile --dry-run`.

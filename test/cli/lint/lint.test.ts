@@ -3969,6 +3969,24 @@ describe.concurrent("bun lint", () => {
         });
       });
 
+      test.concurrent.each(["--infer-globals", "--infer-globals=fast"])(
+        "a NUL in a path of the configuration file: %s",
+        async flag => {
+          const { stdout, exitCode } = await lint(
+            {
+              "jsconfig.json": JSON.stringify({
+                compilerOptions: { checkJs: true, lib: ["es2022"] },
+                references: [{ path: "./\0sub" }],
+              }),
+              "a.js": "void [window, Map];\n",
+            },
+            ["-f", "unix", flag],
+          );
+          expect(reported(stdout, "no-undef")).toEqual(["a.js window"]);
+          expect(exitCode).toBe(1);
+        },
+      );
+
       test("each project has its own, and a file that no project includes has the environments", async () => {
         const text = "void [document, process, typo];\n";
         const { stdout, exitCode } = await lint(
@@ -6704,6 +6722,94 @@ describe.concurrent("nativePluginRules", () => {
       timeout,
     );
   });
+
+  describe.each(["eslint.config.js", ".eslintrc.json"])("react: %s", kind => {
+    const config = (rules: Record<string, string>) =>
+      kind === "eslint.config.js"
+        ? {
+            "eslint.config.js": `module.exports = [{
+              languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
+              plugins: { react: require("eslint-plugin-react") },
+              rules: ${JSON.stringify(rules)},
+            }];`,
+          }
+        : {
+            ".eslintrc.json": JSON.stringify({
+              root: true,
+              parserOptions: { ecmaVersion: 2022, sourceType: "module", ecmaFeatures: { jsx: true } },
+              plugins: ["react"],
+              rules,
+            }),
+          };
+    const files = {
+      ...standIn("eslint-plugin-react", ["jsx-key"]),
+      ...config({ "react/jsx-key": "error", "no-debugger": "error" }),
+      "a.js": "export const a = [<b />];\ndebugger;\n",
+    };
+    const by = (react: string) => ({ "react/jsx-key": react, "no-debugger": "built in" });
+    const others = "@typescript-eslint,react-hooks,import,n,prettier";
+
+    test.each([
+      ["nothing", {}, [], "built in"],
+      ["true", bunfig("true"), [], "built in"],
+      ["false", bunfig("false"), [], "package"],
+      [`["import"]`, bunfig(`["import"]`), [], "package"],
+      [`["react"]`, bunfig(`["react"]`), [], "built in"],
+      ["--no-native-plugin-rules", {}, ["--no-native-plugin-rules"], "package"],
+      ["all the others", {}, [`--native-plugin-rules=${others}`], "package"],
+      ["all the others and it", {}, [`--native-plugin-rules=${others},react`], "built in"],
+    ] as const)(
+      "%s",
+      async (_, more, args, expected) => {
+        expect(await who({ ...files, ...more }, [...args])).toEqual(by(expected));
+      },
+      timeout,
+    );
+
+    test(
+      "a comment is about the rule that runs",
+      async () => {
+        const disabled = { "a.js": `/* eslint-disable react/jsx-key */\n${files["a.js"]}` };
+        const expected = { "no-debugger": "built in" };
+        expect(await who({ ...files, ...disabled })).toEqual(expected);
+        expect(await who({ ...files, ...disabled }, ["--no-native-plugin-rules"])).toEqual(expected);
+      },
+      timeout,
+    );
+  });
+
+  // oxlint has them in its `react`. eslint-plugin-react does not.
+  test.each(["rules-of-hooks", "only-export-components"])(
+    "react/%s is no rule of eslint-plugin-react",
+    async rule => {
+      const files = {
+        ...standIn("eslint-plugin-react", ["jsx-key"]),
+        "eslint.config.js": `module.exports = [{ plugins: { react: require("eslint-plugin-react") }, rules: { "react/${rule}": "error" } }];`,
+        "a.js": "export {};\n",
+      };
+      const { stderr, exitCode } = await lint(files, ["a.js"], { mayFail: true });
+      expect(stderr).toContain(`Key "rules": Key "react/${rule}": Could not find "${rule}" in plugin "react".`);
+      expect(exitCode).toBe(2);
+    },
+    timeout,
+  );
+
+  test(
+    "another plugin that a configuration calls `react` answers for itself",
+    async () => {
+      const files = {
+        ...standIn("eslint-plugin-react-x", ["jsx-key"]),
+        "eslint.config.js": `module.exports = [{
+          languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
+          plugins: { react: require("eslint-plugin-react-x") },
+          rules: { "react/jsx-key": "error" },
+        }];`,
+        "a.js": "export const a = [<b />];\n",
+      };
+      expect(await who(files)).toEqual({ "react/jsx-key": "package" });
+    },
+    timeout,
+  );
 
   // `plugins` of an .oxlintrc.json names what is built into oxlint, and what `jsPlugins` names runs in JavaScript anyway.
   test(

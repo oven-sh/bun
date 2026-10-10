@@ -107,7 +107,7 @@ impl Rule for StaticPropertyPlacement {
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        if !file.has_classes() && !may_have_explicit_components(file) {
+        if !file.has_classes() && !(file.mentions_any(&NAMES) && may_have_explicit_components(file)) {
             return On::new();
         }
         // Where all are to be assigned, no assignment is wrong.

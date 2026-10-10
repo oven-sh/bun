@@ -60,7 +60,7 @@ fn write_result(out: &mut Vec<u8>, result: &FileResult) {
             );
             if result.is_fixed {
                 out.extend_from_slice(b",\"output\":");
-                json_stringify(text, out);
+                json_stringify(result.written().unwrap_or_default(), out);
             } else if linted.has_source {
                 out.extend_from_slice(b",\"source\":");
                 json_stringify(text, out);

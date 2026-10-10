@@ -965,12 +965,14 @@ describe.concurrent("a note says that a plugin that is built in is installed in 
           n: { name: "eslint-plugin-n", version: "17.16.2" },
           import: { name: "eslint-plugin-import", version: "2.31.0" },
           "react-hooks": { name: "eslint-plugin-react-hooks", version: "5.2.0" },
+          react: { name: "eslint-plugin-react", version: "7.33.2" },
         }),
       ),
     ).toEqual([
       "note: eslint-plugin-n 17.16.2 is installed; bun lint follows 18.4.1.",
       "note: eslint-plugin-import 2.31.0 is installed; bun lint follows 2.32.0.",
       "note: eslint-plugin-react-hooks 5.2.0 is installed; bun lint follows 7.1.1.",
+      "note: eslint-plugin-react 7.33.2 is installed; bun lint follows 7.37.5.",
     ]);
   });
 

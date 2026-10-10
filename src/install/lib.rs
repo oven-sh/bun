@@ -498,6 +498,7 @@ impl RunCommand {
     pub fn create_fake_temporary_node_executable(
         path: &mut Vec<u8>,
         optional_bun_path: &mut &[u8],
+        original_path: &[u8],
     ) -> Result<(), crate::Error> {
         // If we are already running as "node", the path should exist
         if PRETEND_TO_BE_NODE.load(core::sync::atomic::Ordering::Relaxed) {
@@ -579,6 +580,16 @@ impl RunCommand {
                 // SAFETY: literal ends in NUL; len excludes it.
                 ZStr::from_static(B)
             };
+            const NPM_LINK: &ZStr = {
+                const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "/npm\0").as_bytes();
+                // SAFETY: literal ends in NUL; len excludes it.
+                ZStr::from_static(B)
+            };
+            const NPX_LINK: &ZStr = {
+                const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "/npx\0").as_bytes();
+                // SAFETY: literal ends in NUL; len excludes it.
+                ZStr::from_static(B)
+            };
             const DIR_Z: &ZStr = {
                 const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "\0").as_bytes();
                 // SAFETY: literal ends in NUL; len excludes it.
@@ -602,7 +613,30 @@ impl RunCommand {
                 Err(_) => return Ok(()),
             }
 
-            for dest in [NODE_LINK, BUN_LINK] {
+            let mut which_buf = bun_paths::PathBuffer::uninit();
+            let mut real_in_path = |bin: &[u8]| -> bool {
+                bun_which::which(&mut which_buf, b"node_modules/.bin", b".", bin).is_some()
+                    || bun_which::which(&mut which_buf, original_path, b".", bin).is_some_and(|p| {
+                        let pb = p.as_bytes();
+                        let dir = Self::BUN_NODE_DIR.as_bytes();
+                        !(pb.len() > dir.len()
+                            && pb[dir.len()] == b'/'
+                            && bun_core::strings::starts_with(pb, dir))
+                    })
+            };
+            let need_npm = !real_in_path(b"npm");
+            let need_npx = !real_in_path(b"npx");
+
+            for (dest, wanted) in [
+                (NODE_LINK, true),
+                (BUN_LINK, true),
+                (NPM_LINK, need_npm),
+                (NPX_LINK, need_npx),
+            ] {
+                if !wanted {
+                    let _ = bun_sys::unlink(dest);
+                    continue;
+                }
                 let mut replaced = false;
                 loop {
                     match bun_sys::symlink(argv0_z, dest) {
@@ -706,8 +740,78 @@ impl RunCommand {
                 let _ = bun_sys::Dir::cwd().make_dir(&dir_slice_u8);
             }
 
+            let mut which_buf = bun_paths::PathBuffer::uninit();
+            let shim_dir_utf8 = bun_core::strings::to_utf8_alloc_with_type(
+                &target_path_buffer[prefix.len()..dir_slice_len],
+            );
+            let mut real_in_path = |bin: &[u8]| -> bool {
+                bun_which::which(&mut which_buf, b"node_modules/.bin", b".", bin).is_some()
+                    || bun_which::which(&mut which_buf, original_path, b".", bin).is_some_and(|p| {
+                        let pb = p.as_bytes();
+                        !(pb.len() > shim_dir_utf8.len()
+                            && matches!(pb[shim_dir_utf8.len()], b'\\' | b'/')
+                            && strings::eql_case_insensitive_asciii_check_length(
+                                &pb[..shim_dir_utf8.len()],
+                                &shim_dir_utf8,
+                            ))
+                    })
+            };
+            let need_npm = !real_in_path(b"npm");
+            let need_npx = !real_in_path(b"npx");
+
             let image_path = win::exe_path_w();
-            for name in [strings::w!("\\node.exe\0"), strings::w!("\\bun.exe\0")] {
+            for (name, stale_name, wanted) in [
+                (
+                    strings::w!("\\node.exe\0"),
+                    strings::w!("\\node.exe.stale\0"),
+                    true,
+                ),
+                (
+                    strings::w!("\\bun.exe\0"),
+                    strings::w!("\\bun.exe.stale\0"),
+                    true,
+                ),
+                (
+                    strings::w!("\\npm.exe\0"),
+                    strings::w!("\\npm.exe.stale\0"),
+                    need_npm,
+                ),
+                (
+                    strings::w!("\\npx.exe\0"),
+                    strings::w!("\\npx.exe.stale\0"),
+                    need_npx,
+                ),
+            ] {
+                if !wanted {
+                    target_path_buffer[dir_slice_len..][..name.len()].copy_from_slice(name);
+                    // SAFETY: `name` ends in NUL, so the written path is
+                    // NUL-terminated.
+                    let path_w = bun_core::WStr::from_buf(
+                        &target_path_buffer[..],
+                        dir_slice_len + name.len() - 1,
+                    );
+                    if let Err(e) = bun_sys::unlink_w(path_w)
+                        && matches!(
+                            e.get_errno(),
+                            bun_sys::E::EPERM | bun_sys::E::EACCES | bun_sys::E::EBUSY
+                        )
+                    {
+                        let mut stale_buf = bun_paths::w_path_buffer_pool::get();
+                        stale_buf[..dir_slice_len]
+                            .copy_from_slice(&target_path_buffer[..dir_slice_len]);
+                        stale_buf[dir_slice_len..][..stale_name.len()].copy_from_slice(stale_name);
+                        // SAFETY: both paths are NUL-terminated (the name
+                        // literals end in NUL).
+                        let _ = unsafe {
+                            win::kernel32::MoveFileExW(
+                                target_path_buffer.as_ptr(),
+                                stale_buf.as_ptr(),
+                                win::MOVEFILE_REPLACE_EXISTING,
+                            )
+                        };
+                    }
+                    continue;
+                }
                 target_path_buffer[dir_slice_len..][..name.len()].copy_from_slice(name);
                 // `target_path_buffer` is mutated in place between FFI calls
                 // (the dir-NUL/backslash toggle below).

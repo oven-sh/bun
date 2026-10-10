@@ -2109,10 +2109,11 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             if !matches!(value, Value::Null) {
                 *value = Value::Used;
             }
-            return Ok(
-                JSPromise::rejected_promise(global_object, form_data_mime_error(global_object))
-                    .to_js(),
-            );
+            return Ok(JSPromise::rejected_promise(
+                global_object,
+                form_data_mime_error(global_object),
+            )
+            .to_js());
         };
         let mut blob: AnyBlob = value.use_as_any_blob();
         // `encoder.encoding` is `bun_core::form_data::Encoding`; convert

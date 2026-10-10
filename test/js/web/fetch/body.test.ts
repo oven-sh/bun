@@ -1944,6 +1944,43 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
     }
   });
 
+  // Bun.write() is one more reader of the body, and a Bun.file() is one more
+  // kind of body. After the failed formData() every reader gives the answer
+  // that bodyUsed gives.
+  test.each([
+    ["a string", "", false, false],
+    ["a string", " after .body", false, true],
+    ["a Bun.file()", "", true, false],
+    ["a Bun.file()", " after .body", true, true],
+  ] as const)(
+    "a Response over %s is used up by a failed formData()%s, for Bun.write() too",
+    async (kind, when, onDisk, touch) => {
+      using dir = tempDir("body-formdata-write", { "a.txt": "every byte of a small file on disk\n" });
+      const response = onDisk
+        ? new Response(Bun.file(join(String(dir), "a.txt")))
+        : new Response("payload", { headers: notFormData });
+      const stream = touch ? response.body! : null;
+      expect(await response.formData().then(String, e => e.code)).toBe("ERR_FORMDATA_PARSE_ERROR");
+      expect({
+        bodyUsed: response.bodyUsed,
+        sameStream: stream === null || response.body === stream,
+        locked: response.body!.locked,
+        getReader: errorName(() => response.body!.getReader()),
+        clone: errorName(() => response.clone()),
+        written: await Bun.write(join(String(dir), "out"), response).then(String, e => e.code),
+        text: await settled(response.text()),
+      }).toEqual({
+        bodyUsed: true,
+        sameStream: true,
+        locked: true,
+        getReader: "TypeError",
+        clone: "TypeError",
+        written: "ERR_BODY_ALREADY_USED",
+        text: "TypeError",
+      });
+    },
+  );
+
   // The same holds for a body that is still on the wire when formData() is
   // called: the read waits for the rest of it, then rejects.
   describe("formData() on a body that is still arriving and is not form data", () => {

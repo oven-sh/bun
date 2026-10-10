@@ -587,6 +587,59 @@ test.concurrent("installs a git+file:// dependency", async () => {
   expect(exitCode).toBe(0);
 });
 
+// With GIT_DIR in the environment (git exports it to commit hooks), git ignores
+// the repository that `-C` names and operates on $GIT_DIR instead. The install
+// then resolves and checks out the branch in the user's repository and installs
+// its tree as the dependency. The git children must not inherit it.
+test.concurrent("installs a git dependency when GIT_DIR points at another repository", async () => {
+  using dir = tempDir("git-dep-gitdir", {});
+  const root = String(dir);
+  // an unrelated non-bare repo, on `main`, that also has a `pkg-b` branch
+  const other = join(root, "other");
+  mkdirSync(other);
+  await git(other, "init", "-q", "-b", "main");
+  writeFileSync(join(other, "keep.txt"), "keep\n");
+  await git(other, "add", "-A");
+  await git(other, "-c", "commit.gpgsign=false", "commit", "-qm", "main");
+  await git(other, "checkout", "-qb", "pkg-b");
+  writeFileSync(join(other, "other-file.txt"), "x\n");
+  await git(other, "add", "-A");
+  await git(other, "-c", "commit.gpgsign=false", "commit", "-qm", "pkg-b");
+  await git(other, "checkout", "-q", "main");
+  // the branch line plus one line per changed file
+  const otherState = async () => {
+    await using proc = Bun.spawn({
+      cmd: ["git", "-C", other, "status", "--porcelain=v2", "--branch"],
+      env: gitEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(`git status failed:\n${stderr}`);
+    return stdout.split("\n").filter(line => line.startsWith("# branch.head") || !line.startsWith("#"));
+  };
+  expect(await otherState()).toEqual(["# branch.head main", ""]);
+
+  const repoUrl = `git+${pathToFileURL(sharedBare)}`;
+  const project = writeProject(root, { [nameOf("b")]: `${repoUrl}#pkg-b` });
+  const { resolutions, locked } = expectedGitPackages(repoUrl, sharedCommits, ["b"]);
+
+  const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache"), {
+    GIT_DIR: join(other, ".git"),
+    GIT_INDEX_FILE: join(other, ".git", "index"),
+  });
+  expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+    "Resolving dependencies
+    Resolved, downloaded and extracted [2]
+    Saved lockfile"
+  `);
+  expectInstalled(stdout, resolutions);
+  expect(await installedVersions(project, [nameOf("b")])).toEqual(markers(["b"]));
+  expect(await lockedPackages(project)).toEqual(locked);
+  expect(exitCode).toBe(0);
+  expect(await otherState()).toEqual(["# branch.head main", ""]);
+});
+
 // issue #40803: `bun install <git url>` (no alias) sorted the workspace dep
 // under its version literal. The real name is only known once the repo is
 // fetched; it is rewritten in place after resolution, so the written key

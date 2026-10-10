@@ -342,6 +342,61 @@ it("should create template from local folder", async () => {
   expect(await Bun.file(join(x_dir, testTemplate, "foo", "bar.js")).text()).toBe("hi");
 });
 
+// git exports GIT_DIR and GIT_INDEX_FILE to commit hooks. With them inherited,
+// the `git init` / `git add` / `git commit` that bun create runs in the new
+// project operated on that other repository instead: its tracked files were
+// committed away and the new project got no `.git`.
+it("initializes the new project's own repository when GIT_DIR points at another repository", async () => {
+  using dir = tempDir("create-gitdir", {
+    "bun-create/tmpl/index.js": "// hi\n",
+    "bun-create/tmpl/package.json": JSON.stringify({ name: "tmpl", version: "1.0.0" }),
+    "other/keep.txt": "keep\n",
+  });
+  const root = String(dir);
+  const other = join(root, "other");
+  const gitEnv = {
+    ...env,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_NAME: "Test",
+    GIT_AUTHOR_EMAIL: "test@example.com",
+    GIT_COMMITTER_NAME: "Test",
+    GIT_COMMITTER_EMAIL: "test@example.com",
+  };
+  const git = (cwd: string, ...args: string[]) => {
+    const proc = spawnSync({ cmd: ["git", ...args], cwd, env: gitEnv, stdout: "pipe", stderr: "pipe" });
+    if (proc.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed:\n${proc.stderr}`);
+    return proc.stdout.toString();
+  };
+  git(other, "init", "-q", "-b", "main");
+  git(other, "add", "-A");
+  git(other, "-c", "commit.gpgsign=false", "commit", "-qm", "other-initial");
+  const otherLog = () => git(other, "log", "--format=%s", "--name-status");
+  const before = otherLog();
+  expect(before).toBe("other-initial\n\nA\tkeep.txt\n");
+
+  const proc = spawnSync({
+    cmd: [bunExe(), "create", "tmpl", join(root, "dest"), "--no-install"],
+    cwd: root,
+    env: {
+      ...gitEnv,
+      BUN_CREATE_DIR: join(root, "bun-create"),
+      GIT_DIR: join(other, ".git"),
+      GIT_INDEX_FILE: join(other, ".git", "index"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const stderr = proc.stderr.toString();
+  expect(stderr).not.toContain("error:");
+  expect(proc.exitCode).toBe(0);
+
+  expect(otherLog()).toBe(before);
+  expect(await exists(join(root, "dest", ".git"))).toBe(true);
+  expect(git(join(root, "dest"), "log", "--format=%s", "--name-status")).toBe(
+    "Initial commit (via bun create)\n\nA\tindex.js\nA\tpackage.json\n",
+  );
+});
+
 // `bun create <github-url>` hits https://api.github.com/repos/{owner}/{repo}/tarball.
 // CI exhausts the unauthenticated 60 req/hr limit (403) and the endpoint serves 5xx
 // during outages; skip rather than fail since these tests exercise `bun create`, not GitHub.

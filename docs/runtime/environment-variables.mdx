@@ -224,7 +224,33 @@ For files larger than 4 KB, Bun caches transpiled output into `$BUN_RUNTIME_TRAN
 
 The cache is global and shared across all projects. It is content-addressable, so it never contains duplicate entries. It is safe to delete at any time, even while a Bun process is running.
 
+The cache is enabled by default. When `BUN_RUNTIME_TRANSPILER_CACHE_PATH` is unset, Bun writes it to:
+
+| Platform | Default location                                                                      |
+| -------- | ------------------------------------------------------------------------------------- |
+| Linux    | `~/.bun/install/cache/@t@`, or `$XDG_CACHE_HOME/bun/@t@` when `XDG_CACHE_HOME` is set |
+| macOS    | `~/Library/Caches/bun/@t@`                                                            |
+| Windows  | `%USERPROFILE%\.bun\install\cache\@t@`                                                |
+
+`BUN_INSTALL_CACHE_DIR` does not move this cache. Only `BUN_RUNTIME_TRANSPILER_CACHE_PATH` does.
+
 Disable this cache when using ephemeral filesystems like Docker. Bun's Docker images disable it automatically.
+
+### Windows Defender
+
+On Windows, Defender real-time scanning inspects the `.pile` files in this cache when Bun writes or opens them. An import of a large package touches many cache files at once. The scans can make that import slower than with the cache disabled. Node.js writes a compile cache only when you opt in with `NODE_COMPILE_CACHE` or `module.enableCompileCache()`, so it does not trigger these scans by default.
+
+To keep the cache and avoid the scans, exclude the cache directory from Defender. Run this in an elevated PowerShell. The parent directory also covers the package cache used by `bun install`.
+
+```powershell
+Add-MpPreference -ExclusionPath "$env:USERPROFILE\.bun\install\cache"
+```
+
+Or disable the cache. This needs no administrator rights.
+
+```powershell
+$env:BUN_RUNTIME_TRANSPILER_CACHE_PATH = "0"
+```
 
 ### Disable the runtime transpiler cache
 

@@ -37,6 +37,11 @@ impl<'a> Way<'a> {
 
 /// The scope of `node` and the scopes around it.
 pub(crate) fn scopes_around<'a>(node: Node<'a>) -> impl Iterator<Item = Scope<'a>> {
+    scopes_around_at(node, 1)
+}
+
+/// The same, where what is done in each scope counts for `steps`.
+pub(crate) fn scopes_around_at<'a>(node: Node<'a>, steps: i64) -> impl Iterator<Item = Scope<'a>> {
     let way = Way::new(node.file());
-    node.scope().chain().take_while(move |_| way.take(1))
+    node.scope().chain().take_while(move |_| way.take(steps))
 }

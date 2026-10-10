@@ -443,6 +443,7 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) packages_to_install: Option<&'a [PackageID]>,
     /// Workspace package ids that are hoisting barriers (self-contained node_modules).
     pub(crate) self_contained: Vec<PackageID>,
+    pub(crate) shipped_rows: ShippedRows,
 }
 
 pub struct BuilderEntry {
@@ -460,6 +461,40 @@ bun_collections::multi_array_columns! {
 pub(crate) struct CleanResult {
     pub trees: Vec<Tree>,
     pub dep_ids: Vec<DependencyID>,
+    pub shipped_rows: ShippedRows,
+}
+
+/// `(tree id, dependency id)` of each install-tree row a tarball ships: a bundled dependency
+/// and every row placed below one. Nothing installs them, and no row bun installs resolves
+/// through one. Only `BuilderMethod::Filter` fills it.
+#[derive(Default)]
+pub(crate) struct ShippedRows(ArrayHashMap<(Id, DependencyID), ()>);
+
+impl ShippedRows {
+    pub(crate) fn contains(&self, tree_id: Id, dep_id: DependencyID) -> bool {
+        self.0.contains_key(&(tree_id, dep_id))
+    }
+
+    fn insert(&mut self, tree_id: Id, dep_id: DependencyID) -> Result<(), AllocError> {
+        self.0.put((tree_id, dep_id), ())
+    }
+
+    fn remove(&mut self, tree_id: Id, dep_id: DependencyID) {
+        self.0.swap_remove(&(tree_id, dep_id));
+    }
+
+    /// The folder of `tree_id` is a shipped row of its parent.
+    pub(crate) fn contains_tree(&self, trees: &[Tree], tree_id: Id) -> bool {
+        let tree = trees[tree_id as usize];
+        tree.parent != INVALID_ID && self.contains(tree.parent, tree.dependency_id)
+    }
+}
+
+/// What `Lockfile::hoist` returns.
+pub(crate) struct HoistResult {
+    /// `Builder::late_bound_optional_peer`.
+    pub late_bound_optional_peer: bool,
+    pub shipped_rows: ShippedRows,
 }
 
 impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
@@ -529,7 +564,11 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 
         slice.deinit_owned();
 
-        Ok(CleanResult { trees, dep_ids })
+        Ok(CleanResult {
+            trees,
+            dep_ids,
+            shipped_rows: core::mem::take(&mut self.shipped_rows),
+        })
     }
 }
 
@@ -620,10 +659,12 @@ pub(crate) fn is_filtered_dependency_or_workspace(
 // ──────────────────────────────────────────────────────────────────────────
 
 impl Tree {
+    /// `shipped`: this folder came out of a tarball, so every row it places is shipped too.
     pub(crate) fn process_subtree<const METHOD: BuilderMethod>(
         &self,
         dependency_id: DependencyID,
         hoist_root_id: Id,
+        shipped: bool,
         builder: &mut Builder<'_, METHOD>,
     ) -> Result<(), SubtreeError> {
         let parent_pkg_id = match dependency_id {
@@ -700,24 +741,28 @@ impl Tree {
         'dep: for sort_idx in 0..sort_buf_len {
             let dep_id = builder.sort_buf[sort_idx];
             let pkg_id = builder.resolutions[dep_id as usize];
+            let dependency = &dependencies[dep_id as usize];
 
-            // filter out disabled dependencies
+            // filter out disabled dependencies. A shipped row is placed as in the saved tree.
             if METHOD == BuilderMethod::Filter {
-                if is_filtered_dependency_or_workspace(
-                    dep_id,
-                    parent_pkg_id,
-                    builder.workspace_filters,
-                    builder.install_root_dependencies,
-                    builder.manager.expect("manager set when METHOD == Filter"),
-                    lockfile,
-                    &*builder.resolutions,
-                ) {
+                if !shipped
+                    && !dependency.behavior.is_bundled()
+                    && is_filtered_dependency_or_workspace(
+                        dep_id,
+                        parent_pkg_id,
+                        builder.workspace_filters,
+                        builder.install_root_dependencies,
+                        builder.manager.expect("manager set when METHOD == Filter"),
+                        lockfile,
+                        &*builder.resolutions,
+                    )
+                {
                     continue;
                 }
 
                 // unresolved packages are skipped when filtering. they already had
-                // their chance to resolve.
-                if pkg_id == invalid_package_id {
+                // their chance to resolve. A bundled one still takes its folder.
+                if pkg_id == invalid_package_id && !dependency.behavior.is_bundled() {
                     continue;
                 }
 
@@ -737,8 +782,6 @@ impl Tree {
                     }
                 }
             }
-
-            let dependency = &dependencies[dep_id as usize];
 
             // An empty alias has no `node_modules/<name>` folder to escape, so
             // don't treat it as unsafe — match the lockfile parser and isolated
@@ -776,6 +819,7 @@ impl Tree {
                             pkg_id,
                             dep_id,
                             resolution_list,
+                            shipped,
                             builder,
                         );
                     }
@@ -795,6 +839,7 @@ impl Tree {
                                 pkg_id,
                                 dep_id,
                                 resolution_list,
+                                shipped,
                                 builder,
                             ),
                             HoistDependencyResult::Hoisted
@@ -829,6 +874,7 @@ impl Tree {
                     pkg_id,
                     dep_id,
                     resolution_list,
+                    shipped,
                     builder,
                 )
             };
@@ -891,6 +937,12 @@ impl Tree {
                             }
                         }
                     }
+                    if METHOD == BuilderMethod::Filter {
+                        builder.shipped_rows.remove(replace.id, replace.dep_id);
+                        if shipped {
+                            builder.shipped_rows.insert(replace.id, dep_id)?;
+                        }
+                    }
                     if pkg_id != invalid_package_id
                         && builder.resolution_lists[pkg_id as usize].len > 0
                     {
@@ -898,6 +950,7 @@ impl Tree {
                             tree_id: replace.id,
                             dependency_id: dep_id,
                             hoist_root_id,
+                            shipped,
                         })?;
                     }
                 }
@@ -927,6 +980,10 @@ impl Tree {
                             .dependencies
                             .len += 1;
                     }
+                    let shipped = shipped || dest.bundled;
+                    if METHOD == BuilderMethod::Filter && shipped {
+                        builder.shipped_rows.insert(dest.id, dep_id)?;
+                    }
                     if pkg_id != invalid_package_id
                         && builder.resolution_lists[pkg_id as usize].len > 0
                     {
@@ -936,6 +993,7 @@ impl Tree {
 
                             // if it's bundled, start a new hoist root
                             hoist_root_id: if dest.bundled { dest.id } else { hoist_root_id },
+                            shipped,
                         })?;
                     }
                 }
@@ -968,6 +1026,8 @@ impl Tree {
         package_id: PackageID,
         input_dep_id: DependencyID,
         input_dep_range: DependencyIDSlice,
+        // See `Tree::process_subtree`.
+        shipped: bool,
         builder: &mut Builder<'_, METHOD>,
     ) -> HoistDependencyResult {
         // Copy the slice ref out of `builder` so subsequent `&mut builder` does not conflict.
@@ -991,6 +1051,22 @@ impl Tree {
             }
 
             let res_id = builder.resolutions[dep_id as usize];
+
+            // A row bun installs keeps its own copy below its dependent (`ShippedRows`).
+            // A peer shares the bundled copy itself: the tarball always has that folder.
+            if METHOD == BuilderMethod::Filter
+                && !shipped
+                && package_id != invalid_package_id
+                && !(dependency.behavior.is_peer() && dep.behavior.is_bundled())
+                && builder.shipped_rows.contains(this.id, dep_id)
+            {
+                return HoistDependencyResult::DependencyLoop; // 3
+            }
+
+            // The copy a tarball ships stays in this folder, whether or not the dependency resolved.
+            if res_id == invalid_package_id && dep.behavior.is_bundled() {
+                return HoistDependencyResult::DependencyLoop; // 3
+            }
 
             if res_id == invalid_package_id && package_id == invalid_package_id {
                 debug_assert!(dep.behavior.is_optional_peer());
@@ -1073,6 +1149,7 @@ impl Tree {
                 package_id,
                 input_dep_id,
                 input_dep_range,
+                shipped,
                 builder,
             );
             if !AS_DEFINED || !matches!(id, HoistDependencyResult::DependencyLoop) {
@@ -1100,6 +1177,9 @@ pub struct FillItem {
     /// If valid, dependencies will not hoist
     /// beyond this tree if they're in a subtree
     pub(crate) hoist_root_id: Id,
+
+    /// See `Tree::process_subtree`.
+    pub(crate) shipped: bool,
 }
 
 // Dynamic, heap-backed ring buffer.

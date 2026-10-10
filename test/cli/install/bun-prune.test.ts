@@ -3093,6 +3093,67 @@ test.concurrent("hoisted: the nested tree of a package with bundled dependencies
 });
 
 test.concurrent(
+  "hoisted: a stale copy named like a folder a bundle ships goes, whatever version bun.lock says",
+  async () => {
+    // `bundled-range-host` ships `no-deps@1.0.0` and `a-dep@1.0.1` next to its bundled package,
+    // while bun.lock resolves the bundle's ranges to newer versions. The shipped folders count as
+    // installed as they are. `one-dep` nests under the host with its own `no-deps@1.0.1`.
+    const dir = await setup({
+      name: "foo",
+      dependencies: { "bundled-range-host": "1.0.0", "one-dep": "npm:no-deps@2.0.0" },
+    });
+    const hostNm = join(dir, "node_modules", "bundled-range-host", "node_modules");
+    expect(await file(join(hostNm, "no-deps", "package.json")).json()).toMatchObject({ version: "1.0.0" });
+    expect(await file(join(hostNm, "a-dep", "package.json")).json()).toMatchObject({ version: "1.0.1" });
+    expect(await file(join(hostNm, "one-dep", "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      version: "1.0.1",
+    });
+    expect(await lock(dir)).toContain('"bundled-range-host/a-dep": ["a-dep@1.0.10"');
+    const staleADep = plant(dir, "node_modules/bundled-range-host/node_modules/one-dep/node_modules/a-dep");
+
+    const { stdout, stderr, exitCode } = await prune(dir);
+    expect(stderr).not.toContain("warn:");
+    expect(out(stdout)).toMatchInlineSnapshot(`
+    "bun prune <version> (<revision>)
+
+    - a-dep (node_modules/bundled-range-host/node_modules/one-dep/node_modules)
+    1 package removed (checked 4 installed packages)"
+  `);
+    expect(exitCode).toBe(0);
+    expect(existsSync(staleADep)).toBeFalse();
+    expect(existsSync(join(hostNm, "a-dep", "package.json"))).toBeTrue();
+    expect(existsSync(join(hostNm, "no-deps", "package.json"))).toBeTrue();
+  },
+);
+
+test.concurrent("hoisted: the node_modules of a folder a bundle ships is not walked", async () => {
+  // `bundled-conflict-host` bundles `bundled-shipped-inner` and needs `no-deps@2.0.0` itself,
+  // so the tarball nests the bundle's `no-deps@1.0.0` under the bundled package. The root's
+  // `no-deps@1.1.0` keeps the host's copy in the host's node_modules.
+  const dir = await setup({ name: "foo", dependencies: { "bundled-conflict-host": "1.0.0", "no-deps": "1.1.0" } });
+  const hostNm = join(dir, "node_modules", "bundled-conflict-host", "node_modules");
+  expect(await file(join(dir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({ version: "1.1.0" });
+  expect(await file(join(hostNm, "no-deps", "package.json")).json()).toMatchObject({ version: "2.0.0" });
+  expect(
+    await file(join(hostNm, "bundled-shipped-inner", "node_modules", "no-deps", "package.json")).json(),
+  ).toMatchObject({ version: "1.0.0" });
+  const shippedJunk = plant(
+    dir,
+    "node_modules/bundled-conflict-host/node_modules/bundled-shipped-inner/node_modules/junk",
+  );
+
+  const { stdout, stderr, exitCode } = await prune(dir);
+  expect(stderr).not.toContain("warn:");
+  expect(out(stdout)).toMatchInlineSnapshot(`
+    "bun prune <version> (<revision>)
+
+    Done! Checked 2 installed packages across 1 folder (nothing to prune)"
+  `);
+  expect(exitCode).toBe(0);
+  expect(existsSync(shippedJunk)).toBeTrue();
+});
+
+test.concurrent(
   "hoisted: a nested copy of a git dependency is removed only once the root copy's .bun-tag matches bun.lock",
   async () => {
     const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });

@@ -1296,43 +1296,19 @@ impl BlobExt for Blob {
                 "blob.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write"
             )));
         }
-        let mut mkdirp_if_not_exists: Option<bool> = None;
-        let options = args.next_eat();
-        if let Some(options_object) = options {
-            if options_object.is_object() {
-                if let Some(create_directory) =
-                    options_object.get_truthy(global_this, "createPath")?
-                {
-                    if !create_directory.is_boolean() {
-                        return Err(global_this.throw_invalid_argument_type(
-                            "write",
-                            "options.createPath",
-                            "boolean",
-                        ));
-                    }
-                    mkdirp_if_not_exists = Some(create_directory.to_boolean());
-                }
-                if let Some(content_type) = options_object.get_truthy(global_this, "type")? {
-                    // override the content type
-                    set_content_type_from_js(global_this, self, content_type)?;
-                }
-            } else if !options_object.is_empty_or_undefined_or_null() {
-                return Err(global_this.throw_invalid_argument_type("write", "options", "object"));
+        // An S3 file has no mode, and on Windows only `Bun.write` applies one.
+        let reads_mode = cfg!(not(windows)) && !self.is_s3();
+        let options = WriteFileOptions::from_js(global_this, args.next_eat(), reads_mode)?;
+        if let Some(options_object) = options.extra_options.filter(|value| value.is_object()) {
+            if let Some(content_type) = options_object.get_truthy(global_this, "type")? {
+                // override the content type
+                set_content_type_from_js(global_this, self, content_type)?;
             }
         }
         // A borrowed view with NO ref bumps; `write_file_internal` then `dupe()`s
         // its own owned `destination_blob` from it.
         let mut blob_internal = PathOrBlob::Blob(Box::new(self.borrowed_view()));
-        write_file_internal(
-            &cx,
-            &mut blob_internal,
-            data,
-            WriteFileOptions {
-                mkdirp_if_not_exists,
-                extra_options: options,
-                mode: None,
-            },
-        )
+        write_file_internal(&cx, &mut blob_internal, data, options)
     }
 
     fn do_unlink(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -1550,7 +1526,7 @@ impl BlobExt for Blob {
                 let stream_start = streams::Start::FileSink(streams::FileSinkOptions {
                     truncate: matches!(input_path, webcore::PathOrFileDescriptor::Path(_)),
                     mkdirp: options.mkdirp_if_not_exists.unwrap_or(true),
-                    mode: options.mode.unwrap_or(WRITE_PERMISSIONS),
+                    mode: options.mode_before_write(&store.data.as_file().pathlike),
                     input_path,
                     ..Default::default()
                 });
@@ -4065,6 +4041,77 @@ pub(crate) fn mkdirp_parent(path: &[u8]) -> bun_sys::Result<()> {
         .map(|_| ())
 }
 
+/// `O_TRUNC` for a destination `Bun.write` replaces. With a `mode`, [`apply_mode`] truncates instead.
+pub(crate) fn truncate_on_open(mode: Option<bun_sys::Mode>) -> i32 {
+    // Windows keeps `O_TRUNC`: its files have no permission bits, so `apply_mode` is POSIX only.
+    if cfg!(not(windows)) && mode.is_some() {
+        0
+    } else {
+        bun_sys::O::TRUNC
+    }
+}
+
+/// When the writer drops the old contents of a destination that [`apply_mode`] prepares.
+#[cfg(not(windows))]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Discard {
+    /// The open left out `O_TRUNC` ([`truncate_on_open`]), so `apply_mode` truncates.
+    BeforeWrite,
+    /// The writer overwrites in place and trims to the written length when it is done.
+    AfterWrite,
+}
+
+/// Sets `mode` on a regular file that `Bun.write` opened by path. Returns the mode that an `AfterWrite` writer sets after its trim.
+#[cfg(not(windows))]
+pub(crate) fn apply_mode(
+    fd: Fd,
+    mode: Option<bun_sys::Mode>,
+    discard: Discard,
+) -> bun_sys::Result<Option<bun_sys::Mode>> {
+    let Some(mode) = mode else {
+        return Ok(None);
+    };
+    let stat = bun_sys::fstat(fd)?;
+    if !bun_sys::S::ISREG(stat.st_mode as _) {
+        return Ok(None);
+    }
+    let old = stat.st_mode as bun_sys::Mode & 0o7777;
+    let has_contents = stat.st_size > 0;
+    if old != mode {
+        // With contents, this only removes bits. A chmod the OS refuses fails before anything is discarded.
+        bun_sys::fchmod(fd, if has_contents { old & mode } else { mode })?;
+    }
+    if !has_contents {
+        return Ok(None);
+    }
+    let widen = (old & mode != mode).then_some(mode);
+    if discard == Discard::AfterWrite {
+        return Ok(widen);
+    }
+    bun_sys::ftruncate(fd, 0)?;
+    if let Some(mode) = widen {
+        bun_sys::fchmod(fd, mode)?;
+    }
+    Ok(None)
+}
+
+/// The trim comes first, so the old tail is gone before `mode` lets a new reader in.
+#[cfg(not(windows))]
+fn trim_then_widen(fd: Fd, written: usize, mode: bun_sys::Mode) -> bun_sys::Result<()> {
+    bun_sys::ftruncate(fd, i64::try_from(written).expect("int cast"))?;
+    bun_sys::fchmod(fd, mode)
+}
+
+/// macOS and FreeBSD open these paths as a duplicate of the descriptor, so a truncate cuts the file behind a redirect.
+#[cfg(not(windows))]
+fn opens_as_dup(path: &[u8]) -> bool {
+    cfg!(any(target_os = "macos", target_os = "freebsd"))
+        && (matches!(path, b"/dev/stdin" | b"/dev/stdout" | b"/dev/stderr")
+            || path
+                .strip_prefix(b"/dev/fd/")
+                .is_some_and(|fd| !fd.is_empty() && fd.iter().all(u8::is_ascii_digit)))
+}
+
 // TODO: move this to bun_sys?
 #[inline(never)]
 #[cfg(not(windows))]
@@ -4137,6 +4184,116 @@ pub(crate) struct WriteFileOptions {
     pub(crate) mode: Option<bun_sys::Mode>,
 }
 
+impl WriteFileOptions {
+    /// `mode` for a destination that Bun opens by path. A descriptor that the caller passed keeps its mode.
+    #[cfg(not(windows))]
+    fn mode_for(&self, destination: &PathOrFileDescriptor) -> Option<bun_sys::Mode> {
+        self.mode
+            .filter(|_| matches!(destination, PathOrFileDescriptor::Path(_)))
+    }
+
+    /// [`Self::mode_for`] for an engine that calls [`apply_mode`].
+    #[cfg(not(windows))]
+    fn mode_before_write(&self, destination: &PathOrFileDescriptor) -> Option<bun_sys::Mode> {
+        match destination {
+            PathOrFileDescriptor::Path(path) if !opens_as_dup(path.slice()) => self.mode,
+            _ => None,
+        }
+    }
+
+    /// The options object of `Bun.write` and of `BunFile.prototype.write`. Without `reads_mode`, `mode` is not read.
+    fn from_js(
+        global_this: &JSGlobalObject,
+        options: Option<JSValue>,
+        reads_mode: bool,
+    ) -> JsResult<Self> {
+        let mut parsed = WriteFileOptions {
+            extra_options: options,
+            ..Default::default()
+        };
+        let Some(options_object) = options else {
+            return Ok(parsed);
+        };
+        if !options_object.is_object() {
+            if !options_object.is_empty_or_undefined_or_null() {
+                return Err(global_this.throw_invalid_argument_type("write", "options", "object"));
+            }
+            return Ok(parsed);
+        }
+        if let Some(create_directory) = options_object.get_truthy(global_this, "createPath")? {
+            if !create_directory.is_boolean() {
+                return Err(global_this.throw_invalid_argument_type(
+                    "write",
+                    "options.createPath",
+                    "boolean",
+                ));
+            }
+            parsed.mkdirp_if_not_exists = Some(create_directory.to_boolean());
+        }
+        if !reads_mode {
+            return Ok(parsed);
+        }
+        if let Some(mode_value) = options_object.get(global_this, "mode")? {
+            if !mode_value.is_empty_or_undefined_or_null() {
+                if !mode_value.is_number() {
+                    return Err(global_this.throw_invalid_argument_type(
+                        "write",
+                        "options.mode",
+                        "number",
+                    ));
+                }
+                // `to_int64` maps NaN to 0 and truncates a fraction, which would chmod to 000.
+                if !mode_value.is_integer() {
+                    return Err(global_this.throw_range_error(
+                        mode_value.as_number(),
+                        jsc::RangeErrorOptions {
+                            field_name: b"mode",
+                            msg: b"an integer",
+                            ..Default::default()
+                        },
+                    ));
+                }
+                let mode_int = mode_value.to_int64();
+                if mode_int < 0 || mode_int > 0o777 {
+                    return Err(global_this.throw_range_error(
+                        mode_int,
+                        jsc::RangeErrorOptions {
+                            field_name: b"mode",
+                            min: 0,
+                            max: 0o777,
+                            msg: b"",
+                        },
+                    ));
+                }
+                parsed.mode = Some(mode_int as bun_sys::Mode);
+            }
+        }
+        Ok(parsed)
+    }
+}
+
+/// An empty source written to `path`: creates the file, or discards its contents.
+#[cfg(not(windows))]
+fn empty_file(
+    path: &PathLike<'_>,
+    mode: Option<bun_sys::Mode>,
+    mkdirp: bool,
+) -> bun_sys::Result<()> {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let path_z = path.slice_z(&mut buf);
+    let flags =
+        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK | truncate_on_open(mode);
+    let create_mode = mode.unwrap_or(node::fs::DEFAULT_PERMISSION);
+    let mut result = bun_sys::open(path_z, flags, create_mode);
+    if mkdirp && matches!(&result, Err(err) if err.get_errno() == bun_sys::E::ENOENT) {
+        result =
+            mkdirp_parent(path.slice()).and_then(|()| bun_sys::open(path_z, flags, create_mode));
+    }
+    let fd = result?;
+    let _close = bun_sys::CloseOnDrop::new(fd);
+    apply_mode(fd, mode, Discard::BeforeWrite).map(|_| ())
+}
+
 /// Write an empty string to a file by truncating it.
 ///
 /// This behavior matches what we do with the fast path.
@@ -4162,6 +4319,21 @@ fn write_file_with_empty_source_to_destination(
 
     match &destination_store.data {
         store::Data::File(file) => {
+            #[cfg(not(windows))]
+            if let PathOrFileDescriptor::Path(path) = &file.pathlike {
+                let mkdirp = options.mkdirp_if_not_exists != Some(false);
+                let mode = options.mode_before_write(&file.pathlike);
+                return Ok(match empty_file(path, mode, mkdirp) {
+                    Ok(()) => {
+                        JSPromise::resolved_promise_value(cx.global(), JSValue::js_number(0.0))
+                    }
+                    Err(err) => JSPromise::rejected_promise(
+                        cx.global(),
+                        err.with_path(path.slice()).to_js(cx.global()),
+                    )
+                    .to_js(),
+                });
+            }
             // TODO: make this async
             // `VirtualMachine::node_fs()` currently returns `*mut c_void`; the
             // typed `&mut NodeFS` accessor isn't wired yet, so use a fresh
@@ -4398,6 +4570,7 @@ pub(crate) fn write_file_with_source_destination(
                 destination_blob.borrowed_view(),
                 source_blob.borrowed_view(),
                 options.mkdirp_if_not_exists.unwrap_or(true),
+                options.mode_before_write(&destination_store.data.as_file().pathlike),
             )
             .expect("unreachable");
             // SAFETY: `write_file_promise` was just produced by heap::alloc above; sole owner.
@@ -4426,6 +4599,7 @@ pub(crate) fn write_file_with_source_destination(
         }
         #[cfg(not(windows))]
         {
+            let mode = options.mode_for(&destination_store.data.as_file().pathlike);
             return Ok(copy_file::CopyFile::create(
                 destination_store,
                 source_store,
@@ -4433,7 +4607,7 @@ pub(crate) fn write_file_with_source_destination(
                 destination_blob.size.get(),
                 cx,
                 options.mkdirp_if_not_exists.unwrap_or(true),
-                options.mode,
+                mode,
             ));
         }
     } else if destination_type == store::DataTag::File && source_type == store::DataTag::S3 {
@@ -4718,6 +4892,7 @@ pub(crate) fn write_file_internal(
                             cx.global(),
                             pathlike,
                             &str,
+                            options.mode_before_write(pathlike),
                             &mut needs_async,
                         )
                     } else {
@@ -4725,6 +4900,7 @@ pub(crate) fn write_file_internal(
                             cx.global(),
                             pathlike,
                             &str,
+                            options.mode_before_write(pathlike),
                             &mut needs_async,
                         )
                     };
@@ -4749,6 +4925,7 @@ pub(crate) fn write_file_internal(
                             cx.global(),
                             pathlike,
                             buffer_view.byte_slice(),
+                            options.mode_before_write(pathlike),
                             &mut needs_async,
                         )
                     } else {
@@ -4756,6 +4933,7 @@ pub(crate) fn write_file_internal(
                             cx.global(),
                             pathlike,
                             buffer_view.byte_slice(),
+                            options.mode_before_write(pathlike),
                             &mut needs_async,
                         )
                     };
@@ -4966,6 +5144,8 @@ pub(crate) fn write_file_internal(
                             ),
                             promise: jsc::JSPromiseStrong::init(cx.global()),
                             mkdirp_if_not_exists: options.mkdirp_if_not_exists.unwrap_or(true),
+                            #[cfg(not(windows))]
+                            mode: options.mode,
                         }));
                     // SAFETY: re-borrow after the early-return paths.
                     let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
@@ -5094,68 +5274,23 @@ pub(crate) fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) ->
             "Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write"
         )));
     };
-    let mut mkdirp_if_not_exists: Option<bool> = None;
-    let mut mode: Option<bun_sys::Mode> = None;
-    let options = args.next_eat();
-    if let Some(options_object) = options {
-        if options_object.is_object() {
-            if let Some(create_directory) = options_object.get_truthy(global_this, "createPath")? {
-                if !create_directory.is_boolean() {
-                    return Err(global_this.throw_invalid_argument_type(
-                        "write",
-                        "options.createPath",
-                        "boolean",
-                    ));
-                }
-                mkdirp_if_not_exists = Some(create_directory.to_boolean());
-            }
-            if let Some(mode_value) = options_object.get(global_this, "mode")? {
-                if !mode_value.is_empty_or_undefined_or_null() {
-                    if !mode_value.is_number() {
-                        return Err(global_this.throw_invalid_argument_type(
-                            "write",
-                            "options.mode",
-                            "number",
-                        ));
-                    }
-                    let mode_int = mode_value.to_int64();
-                    if mode_int < 0 || mode_int > 0o777 {
-                        return Err(global_this.throw_range_error(
-                            mode_int,
-                            jsc::RangeErrorOptions {
-                                field_name: b"mode",
-                                min: 0,
-                                max: 0o777,
-                                msg: b"",
-                            },
-                        ));
-                    }
-                    mode = Some(mode_int as bun_sys::Mode);
-                }
-            }
-        } else if !options_object.is_empty_or_undefined_or_null() {
-            return Err(global_this.throw_invalid_argument_type("write", "options", "object"));
-        }
-    }
+    let options = WriteFileOptions::from_js(global_this, args.next_eat(), true)?;
     write_file_internal(
         &global_this.js_thread(context),
         &mut path_or_blob,
         data,
-        WriteFileOptions {
-            mkdirp_if_not_exists,
-            extra_options: options,
-            mode,
-        },
+        options,
     )
 }
 
-const WRITE_PERMISSIONS: bun_sys::Mode = 0o664;
+pub(crate) const WRITE_PERMISSIONS: bun_sys::Mode = 0o664;
 
 #[cfg(not(windows))]
 fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     global_this: &JSGlobalObject,
     pathlike: &PathOrFileDescriptor,
     str: &BunString,
+    mode: Option<bun_sys::Mode>,
     needs_async: &mut bool,
 ) -> JSValue {
     let fd: Fd = if !NEEDS_OPEN {
@@ -5167,7 +5302,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
             // we deliberately don't use O_TRUNC here
             // it's a perf optimization
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
-            WRITE_PERMISSIONS,
+            mode.unwrap_or(WRITE_PERMISSIONS),
         ) {
             bun_sys::Result::Ok(result) => result,
             bun_sys::Result::Err(err) => {
@@ -5186,6 +5321,20 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
 
     // Declared before the truncate guard so it drops *after* it (close runs last).
     let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
+
+    let mut widen = None;
+    if NEEDS_OPEN {
+        match apply_mode(fd, mode, Discard::AfterWrite) {
+            bun_sys::Result::Ok(pending) => widen = pending,
+            bun_sys::Result::Err(err) => {
+                return JSPromise::rejected_promise(
+                    global_this,
+                    err.with_path(pathlike.path().slice()).to_js(global_this),
+                )
+                .to_js();
+            }
+        }
+    }
 
     // scopeguard's closure captures borrows at construction, conflicting
     // with later `written += ...` / `truncate = false`. Route through `Cell`
@@ -5230,6 +5379,17 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
         }
     }
 
+    if let Some(mode) = widen {
+        truncate.set(false);
+        if let bun_sys::Result::Err(err) = trim_then_widen(fd, written.get(), mode) {
+            return JSPromise::rejected_promise(
+                global_this,
+                err.with_path(pathlike.path().slice()).to_js(global_this),
+            )
+            .to_js();
+        }
+    }
+
     JSPromise::resolved_promise_value(global_this, JSValue::js_number(written.get() as f64))
 }
 
@@ -5238,6 +5398,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     global_this: &JSGlobalObject,
     pathlike: &PathOrFileDescriptor,
     bytes: &[u8],
+    mode: Option<bun_sys::Mode>,
     needs_async: &mut bool,
 ) -> JSValue {
     let fd: Fd = if !NEEDS_OPEN {
@@ -5252,7 +5413,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
         match bun_sys::open(
             pathlike.path().slice_z(&mut file_path),
             flags,
-            WRITE_PERMISSIONS,
+            mode.unwrap_or(WRITE_PERMISSIONS),
         ) {
             bun_sys::Result::Ok(result) => result,
             bun_sys::Result::Err(err) => {
@@ -5274,6 +5435,20 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     let truncate = NEEDS_OPEN || bytes.is_empty();
     let mut written: usize = 0;
     let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
+
+    let mut widen = None;
+    if NEEDS_OPEN {
+        match apply_mode(fd, mode, Discard::AfterWrite) {
+            bun_sys::Result::Ok(pending) => widen = pending,
+            bun_sys::Result::Err(err) => {
+                return JSPromise::rejected_promise(
+                    global_this,
+                    err.with_path(pathlike.path().slice()).to_js(global_this),
+                )
+                .to_js();
+            }
+        }
+    }
 
     let mut remain = bytes;
     while !remain.is_empty() {
@@ -5300,7 +5475,15 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
         }
     }
 
-    if truncate {
+    if let Some(mode) = widen {
+        if let bun_sys::Result::Err(err) = trim_then_widen(fd, written, mode) {
+            return JSPromise::rejected_promise(
+                global_this,
+                err.with_path(pathlike.path().slice()).to_js(global_this),
+            )
+            .to_js();
+        }
+    } else if truncate {
         let _ = bun_sys::ftruncate(fd, i64::try_from(written).expect("int cast"));
     }
 
@@ -6483,6 +6666,11 @@ pub(crate) trait FileOpener: Sized {
     const OPEN_FLAGS: i32 = bun_sys::O::RDONLY;
     const OPENER_FLAGS: i32 = bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC;
 
+    /// The flags and permission bits of the open. Override when they depend on the instance.
+    #[cfg(not(windows))]
+    fn open_args(&self) -> (i32, bun_sys::Mode) {
+        (Self::OPEN_FLAGS, crate::node::fs::DEFAULT_PERMISSION)
+    }
     fn opened_fd(&self) -> Fd;
     fn set_opened_fd(&mut self, fd: Fd);
     fn set_errno(&mut self, e: crate::Error);
@@ -6605,12 +6793,9 @@ pub(crate) trait FileOpener: Sized {
 
         #[cfg(not(windows))]
         {
+            let (open_flags, open_mode) = self.open_args();
             loop {
-                match bun_sys::open(
-                    path,
-                    Self::OPEN_FLAGS | Self::OPENER_FLAGS,
-                    crate::node::fs::DEFAULT_PERMISSION,
-                ) {
+                match bun_sys::open(path, open_flags | Self::OPENER_FLAGS, open_mode) {
                     bun_sys::Result::Ok(fd) => {
                         self.set_opened_fd(fd);
                         break;

@@ -162,7 +162,8 @@ bun_io::impl_streaming_writer_parent! {
 
 pub struct Options {
     pub(crate) input_path: PathOrFileDescriptor,
-    pub(crate) mode: bun_sys::Mode,
+    /// The create mode. With `truncate`, the file gets exactly this mode before the first chunk.
+    pub(crate) mode: Option<bun_sys::Mode>,
     /// `Bun.write(path, stream)`: replace the file's contents.
     pub(crate) truncate: bool,
     /// `Bun.write(path, stream)`: create missing parent directories.
@@ -173,7 +174,7 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             input_path: PathOrFileDescriptor::Fd(Fd::INVALID),
-            mode: 0o664,
+            mode: None,
             truncate: false,
             mkdirp: false,
         }
@@ -185,7 +186,7 @@ impl Options {
         let flags =
             bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY;
         if self.truncate {
-            flags | bun_sys::O::TRUNC
+            flags | webcore::blob::truncate_on_open(self.mode)
         } else {
             flags
         }
@@ -701,7 +702,7 @@ impl FileSink {
                 Fd::cwd(),
                 &io_path,
                 options.flags(),
-                options.mode,
+                options.mode.unwrap_or(webcore::blob::WRITE_PERMISSIONS),
                 pollable_out,
                 is_socket_out,
                 self.force_sync.get(),
@@ -757,6 +758,16 @@ impl FileSink {
             }
             sys::Result::Ok(fd) => fd,
         };
+
+        #[cfg(not(windows))]
+        if let (true, bun_io::PathOrFileDescriptor::Path(path)) = (options.truncate, &io_path) {
+            if let sys::Result::Err(err) =
+                webcore::blob::apply_mode(fd, options.mode, webcore::blob::Discard::BeforeWrite)
+            {
+                fd.close();
+                return sys::Result::Err(err.with_path(*path));
+            }
+        }
 
         if matches!(options.input_path, PathOrFileDescriptor::Path(_)) {
             self.close_with_graph(context);

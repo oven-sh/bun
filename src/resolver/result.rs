@@ -133,6 +133,8 @@ bitflags::bitflags! {
         const IS_STANDALONE_MODULE = 1 << 2;
         // This is true when the package was loaded from within the node_modules directory.
         const IS_FROM_NODE_MODULES = 1 << 3;
+        /// The import path (a CSS or HTML URL) resolved only after its `?query#fragment` was removed.
+        const REMOVED_URL_SUFFIX = 1 << 4;
         const EMIT_DECORATOR_METADATA = 1 << 5;
         const EXPERIMENTAL_DECORATORS = 1 << 6;
         /// tsconfig `"useDefineForClassFields": false` was set explicitly.
@@ -181,6 +183,10 @@ impl ResultFlags {
     #[inline]
     pub(crate) fn is_standalone_module(self) -> bool {
         self.contains(Self::IS_STANDALONE_MODULE)
+    }
+    #[inline]
+    pub fn removed_url_suffix(self) -> bool {
+        self.contains(Self::REMOVED_URL_SUFFIX)
     }
     #[inline]
     pub(crate) fn is_from_node_modules(self) -> bool {

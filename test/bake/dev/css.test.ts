@@ -193,6 +193,39 @@ devTest("asset referenced in css", {
     await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun2);
   },
 });
+// A literal `#` in a directory name is part of the path. Only a suffix that was
+// removed to find the file goes back on the rewritten url().
+devTest("asset under a directory with a literal # referenced in css", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+    }),
+    "styles.css": `
+      .a { background-image: url("./C#/big.svg"); }
+      .b { mask: url(./big.svg#frag); }
+      .c { background-image: url("./big.svg?v=3#frag"); }
+      .d { background-image: url("./C#/bun.png"); }
+      .e { mask: url(./bun.png#frag); }
+    `,
+    "C#/big.svg": Buffer.alloc(128 * 1024 + 1, "A"),
+    "big.svg": Buffer.alloc(128 * 1024 + 1, "Z"),
+    "C#/bun.png": imageFixtures.bun,
+    "bun.png": imageFixtures.bun2,
+  },
+  async test(dev) {
+    const stylesheetHref = (await (await dev.fetch("/")).text()).match(/<link rel="stylesheet"[^>]*href="([^"]+)"/)![1];
+    const stylesheet = await (await dev.fetch(stylesheetHref)).text();
+    const urls = stylesheet.match(/url\([^)]*\)/g)!.map(url => url.replace(/\/_bun\/asset\/[0-9a-f]+/, "<asset>"));
+    const png = (image: Buffer) => "data:image/png;base64," + image.toString("base64");
+    expect(urls).toEqual([
+      `url("<asset>.svg")`,
+      `url("<asset>.svg#frag")`,
+      `url("<asset>.svg?v=3#frag")`,
+      `url("${png(imageFixtures.bun)}")`,
+      `url("${png(imageFixtures.bun2)}#frag")`,
+    ]);
+  },
+});
 devTest("syntax error crash", {
   files: {
     "styles.css": `

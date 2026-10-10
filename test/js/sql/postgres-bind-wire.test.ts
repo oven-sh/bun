@@ -251,3 +251,74 @@ describe("prepare: false", () => {
     );
   });
 });
+
+// `$N` in a nested sql.unsafe() is the N-th parameter of the whole query. A fragment that has values and follows
+// another parameter would read that parameter's value, so the query is rejected before anything is sent.
+describe("sql.unsafe nested in a tagged template", () => {
+  const sql = new SQL({ url: `postgres://u@127.0.0.1:${mock.port}/db`, max: 1 });
+  afterAll(() => sql.close({ timeout: 0 }));
+
+  const int4 = (value: number) => {
+    const encoded = Buffer.alloc(4);
+    encoded.writeInt32BE(value);
+    return encoded;
+  };
+  /** The frames of the first execution of `query` in `stream`, every parameter an integer. */
+  const firstExecution = (stream: string[], query: string, values: number[]) => {
+    const statement = statementName(stream);
+    return hex([
+      pgParse(
+        statement,
+        query,
+        values.map(() => OID.int4),
+      ),
+      pgDescribe("S", statement),
+      pgSync(),
+      pgBind({ statement, paramFormats: values.map(() => 1), params: values.map(int4), resultFormats: [] }),
+      pgExecute(),
+      pgFlush(),
+      pgSync(),
+    ]);
+  };
+
+  test("a fragment in front of every parameter, one without values and an identifier are sent as written", async () => {
+    // In front of every parameter, $1 is the fragment's own value.
+    await sql`select ${sql.unsafe("$1::int", [1])}, ${2} /* in front: params=23,23 cols=25 */`;
+    let stream = drain();
+    expect(stream).toEqual(firstExecution(stream, "select $1::int, $2  /* in front: params=23,23 cols=25 */", [1, 2]));
+
+    // Without values of its own, $1 is the first parameter of the enclosing query.
+    await sql`select ${5}, ${sql.unsafe("$1")} /* no values: params=23 cols=25 */`;
+    stream = drain();
+    expect(stream).toEqual(firstExecution(stream, "select $1 , $1 /* no values: params=23 cols=25 */", [5]));
+
+    // An identifier is not sql.unsafe. Its extra argument stays a parameter that nothing reads.
+    await sql`select ${5} as ${sql("n", 6)} /* identifier: params=23,23 cols=25 */`;
+    stream = drain();
+    expect(stream).toEqual(firstExecution(stream, 'select $1  as "n" /* identifier: params=23,23 cols=25 */', [5, 6]));
+  });
+
+  test("a sql.unsafe with values behind a parameter is rejected before anything is sent", async () => {
+    await sql`select ${1} /* before: params=23 cols=25 */`;
+    drain();
+
+    // Sent as written this is `owner = $1 and id = $1` with [7, 99] bound: it compares id with the owner.
+    const err =
+      await sql`delete from t where owner = ${7} and ${sql.unsafe("id = $1", [99])} /* params=23,23 cols=25 */`.catch(
+        e => e,
+      );
+    expect(err).toBeInstanceOf(SyntaxError);
+    expect(drain()).toEqual([]);
+
+    // The sql template that the error names is numbered by Bun, on the same connection.
+    await sql`delete from t where owner = ${7} and ${sql`id = ${99}`} /* template: params=23,23 cols=25 */`;
+    const stream = drain();
+    expect(stream).toEqual(
+      firstExecution(
+        stream,
+        "delete from t where owner = $1  and id = $2  /* template: params=23,23 cols=25 */",
+        [7, 99],
+      ),
+    );
+  });
+});

@@ -4,7 +4,7 @@ const PublicArray = globalThis.Array;
 const {
   Query,
   SQLQueryFlags,
-  symbols: { _strings, _values },
+  symbols: { _strings, _values, _flags },
 } = require("internal/sql/query");
 const AsyncContextFrame = require("internal/async_context_frame");
 const { isStoppedModuleGraphRunning } = require("internal/shared");
@@ -363,6 +363,8 @@ interface QueryNormalizationAdapter {
   placeholder(index: number): string;
   /** Pushes a plain bound value and returns its SQL fragment (always consumes one binding index). */
   bindParam(value: unknown, binding_values: unknown[], index: number): string;
+  /** Called when a nested `sql.unsafe` with values follows other parameters. Throws if placeholders are numbered ("$N"). */
+  checkNestedUnsafeValues(): void;
   /** Detects the SQL command preceding a helper, throwing if helpers are not allowed there. */
   getHelperCommand(query: string): SQLCommand;
   /** Whether the UPDATE helper should omit the SET keyword (MySQL upsert). */
@@ -423,7 +425,17 @@ function normalizeQuery(
 
         if (value instanceof Query) {
           const q = value as QueryType<any, any>;
-          const [sub_query, sub_values] = normalizeQuery(adapter, q[_strings], q[_values], binding_idx);
+          const sub_strings = q[_strings];
+          const [sub_query, sub_values] = normalizeQuery(adapter, sub_strings, q[_values], binding_idx);
+
+          if (
+            typeof sub_strings === "string" &&
+            binding_idx > 1 &&
+            sub_values.length > 0 &&
+            q[_flags] & SQLQueryFlags.unsafe
+          ) {
+            adapter.checkNestedUnsafeValues();
+          }
 
           query += sub_query;
           for (let j = 0; j < sub_values.length; j++) {
@@ -1016,6 +1028,9 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
       throw new SyntaxError("Update needs to have at least one column");
     }
   }
+
+  // MySQL's "?" binds by position, so a nested fragment always reads the values pushed with it.
+  checkNestedUnsafeValues(): void {}
 
   normalizeQuery(strings: QueryStrings, values: unknown[], binding_idx = 1): [string, unknown[]] {
     return normalizeQuery(this, strings, values, binding_idx);

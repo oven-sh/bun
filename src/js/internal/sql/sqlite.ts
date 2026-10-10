@@ -427,6 +427,8 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
     }
   }
 
+  checkNestedUnsafeValues(): void {}
+
   connect(onConnected: OnConnected<BunSQLiteModule.Database>, reserved?: boolean) {
     if (this._closed) {
       return onConnected(this.connectionClosedError(), null);

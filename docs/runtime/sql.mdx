@@ -466,6 +466,13 @@ const sql = new SQL({ adapter: "sqlite", filename: "myapp.db", strict: true });
 const result = await sql.unsafe("SELECT * FROM users WHERE id = :id", { id: 1 });
 ```
 
+You can nest `sql.unsafe` in a tagged template. Bun adds the nested text to the query as written and does not number its placeholders. With PostgreSQL, a nested `sql.unsafe` that has parameters cannot follow other parameters, because `$1` in its text is the first parameter of the whole query. The query rejects with a `SyntaxError` before Bun sends it. To add a condition that has a value, nest a `sql` template, or keep the value outside the unsafe text:
+
+```ts
+const users = await sql`SELECT * FROM users WHERE org_id = ${orgId} AND ${sql`status = ${status}`}`;
+const users = await sql`SELECT * FROM users WHERE org_id = ${orgId} AND ${sql.unsafe("status =")} ${status}`;
+```
+
 ### Execute and Cancelling Queries
 
 Queries are lazy: they only start executing when awaited or run with `.execute()`.

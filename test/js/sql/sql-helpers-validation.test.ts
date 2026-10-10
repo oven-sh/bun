@@ -77,6 +77,50 @@ describe.each(adapters)("%s helper validation", (_adapter, makeSql) => {
   });
 });
 
+// On PostgreSQL `$N` in a nested sql.unsafe() is the N-th parameter of the whole query, so a fragment that has
+// values and follows other parameters reads theirs: `owner = ${7} and ${sql.unsafe("id = $1", [99])}` was sent
+// as `owner = $1 and id = $1` with [7, 99] bound. Such a query rejects before any I/O.
+describe("postgres nested sql.unsafe with values", () => {
+  const makeSql = () => new SQL("postgres://bun_sql_test@127.0.0.1:1/bun_sql_test", { max: 1 });
+  const outcome = (query: PromiseLike<unknown>) =>
+    query.then(
+      () => "resolved",
+      e => `${e.name}: ${e.message}`,
+    );
+  const rejected =
+    "SyntaxError: Nested sql.unsafe() cannot have values when it follows other parameters: on PostgreSQL its $1 is the first parameter of the whole query. Use a sql`` fragment for the values";
+
+  test("is rejected when it follows other parameters", async () => {
+    await using sql = makeSql();
+    const reused = sql.unsafe("id = $1", [99]);
+    const outcomes = {
+      "behind a value": await outcome(sql`delete from t where owner = ${7} and ${sql.unsafe("id = $1", [99])}`),
+      "numbered for the whole query": await outcome(
+        sql`delete from t where owner = ${7} and ${sql.unsafe("id = $2", [99])}`,
+      ),
+      // The first fragment is in front of every parameter, so its $1 is its own value.
+      "second of two fragments": await outcome(
+        sql`delete from t where ${sql.unsafe("owner = $1", [7])} and ${sql.unsafe("id = $1", [99])}`,
+      ),
+      "inside a nested template": await outcome(
+        sql`select * from t where ${sql`a = ${1} and ${sql.unsafe("b = $1", [2])}`}`,
+      ),
+      "first in a nested template that follows a parameter": await outcome(
+        sql`select * from t where a = ${1} and ${sql`${sql.unsafe("b = $1", [2])}`}`,
+      ),
+      "one fragment used twice": await outcome(sql`select * from t where ${reused} or ${reused}`),
+      "behind an IN helper": await outcome(
+        sql`select * from t where id in ${sql([1, 2, 3])} and ${sql.unsafe("b = $1", [4])}`,
+      ),
+      "string values": await outcome(sql`select * from t where a = ${"a"} and ${sql.unsafe("b = $1", ["b"])}`),
+      "values() on the outer query": await outcome(
+        sql`delete from t where owner = ${7} and ${sql.unsafe("id = $1", [99])}`.values(),
+      ),
+    };
+    expect(outcomes).toEqual(Object.fromEntries(Object.keys(outcomes).map(shape => [shape, rejected])));
+  });
+});
+
 const distributedAdapters: [string, () => SQL][] = [
   ["postgres", () => new SQL("postgres://bun_sql_test@127.0.0.1:1/bun_sql_test", { max: 1 })],
   ["mysql", () => new SQL("mysql://bun_sql_test@127.0.0.1:1/bun_sql_test", { max: 1 })],
@@ -174,5 +218,12 @@ describe("sqlite helper behavior preserved", () => {
     expect(await sql`SELECT 1 as num WHERE 1 IN ${sql([{ id: null }, { id: 1 }], "id")}`).toEqual([{ num: 1 }]);
     // a null item without a column binds NULL
     expect(await sql`SELECT 1 as num WHERE 1 IN ${sql([null, 1])}`).toEqual([{ num: 1 }]);
+  });
+
+  test("nested sql.unsafe with positional values still binds its own values", async () => {
+    await using sql = new SQL("sqlite://:memory:");
+    expect(await sql`SELECT ${1} AS a, ${sql.unsafe("? AS b, ? AS c", [2, 3])}, ${4} AS d`).toEqual([
+      { a: 1, b: 2, c: 3, d: 4 },
+    ]);
   });
 });

@@ -521,6 +521,12 @@ class PostgresAdapter
     return "$" + index;
   }
 
+  checkNestedUnsafeValues(): void {
+    throw new SyntaxError(
+      "Nested sql.unsafe() cannot have values when it follows other parameters: on PostgreSQL its $1 is the first parameter of the whole query. Use a sql`` fragment for the values",
+    );
+  }
+
   bindParam(value: unknown, binding_values: unknown[], index: number): string {
     if (value instanceof SQLArrayParameter) {
       binding_values.push(value.serializedValues);

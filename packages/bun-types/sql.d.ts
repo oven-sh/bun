@@ -964,7 +964,14 @@ declare module "bun" {
      * string contains untrusted input.
      *
      * `sql.unsafe` can be nested inside a safe `sql` expression, for example
-     * when only part of the query is unsafe.
+     * when only part of the query is unsafe. The nested text is added to the
+     * query as written.
+     *
+     * With PostgreSQL, a nested `sql.unsafe` that has `values` cannot follow
+     * other parameters: `$1` in its text is the first parameter of the whole
+     * query, not its own value. Such a query rejects with a `SyntaxError`
+     * before it is sent. To nest a fragment that has a value, use a `sql`
+     * template, or keep the value outside the unsafe text.
      *
      * With the SQLite adapter, `values` may also be an object of named
      * parameters (`:name`, `$name`, or `@name` placeholders). Object keys
@@ -973,6 +980,8 @@ declare module "bun" {
      * ```ts
      * const result = await sql.unsafe(`select ${danger} from users where id = ${dragons}`)
      * const row = await sql.unsafe("select * from users where id = :id", { ":id": 1 })
+     * // nested behind another parameter: the value stays outside the unsafe text
+     * const rows = await sql`select * from users where org = ${org} and ${sql.unsafe("id =")} ${id}`
      * ```
      */
     unsafe<T = any>(string: string, values?: any[] | Record<string, any>): SQL.Query<T>;

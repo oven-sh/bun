@@ -815,6 +815,15 @@ if (isDockerEnabled()) {
           expect(result[0].x).toBe(1);
         });
 
+        test("sql.unsafe with values nested behind a parameter binds its own values", async () => {
+          // "?" binds by position, so the PostgreSQL rejection of this shape does not apply.
+          await using db = new SQL({ ...getOptions(), max: 1 });
+          const t = "nested_unsafe_" + randomUUIDv7("hex").replaceAll("-", "");
+          await db`CREATE TEMPORARY TABLE ${db(t)} (a INT, b INT, c INT, d INT)`;
+          await db`INSERT INTO ${db(t)} VALUES (${1}, ${db.unsafe("?, ?", [2, 3])}, ${4})`;
+          expect(await db`SELECT a, b, c, d FROM ${db(t)}`).toEqual([{ a: 1, b: 2, c: 3, d: 4 }]);
+        });
+
         test("Undefined values throws", async () => {
           const result = await sql`select ${undefined} as x`;
           expect(result[0].x).toBeNull();

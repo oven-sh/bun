@@ -43,8 +43,7 @@ PerformanceUserTiming::PerformanceUserTiming(Performance& performance)
 size_t PerformanceUserTiming::memoryCost() const
 {
     size_t size = sizeof(PerformanceUserTiming);
-    size += m_marksMap.byteSize();
-    size += m_measuresMap.byteSize();
+    size += (m_marksMap.size() + m_measuresMap.size()) * sizeof(PerformanceEntryMap::KeyValuePairType);
 
     for (const auto& entry : m_marksMap) {
         size += entry.value.sizeInBytes();

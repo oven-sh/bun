@@ -59,4 +59,6 @@ Ref<WTF::StringImpl> threadShareableCopy(const WTF::StringImpl&);
 Ref<WTF::StringImpl> makeThreadShareable(WTF::StringImpl&);
 WTF::String toCrossThreadShareable(const WTF::String&);
 
+JSC_DECLARE_HOST_FUNCTION(jsMapKeyHashForTesting);
+
 }

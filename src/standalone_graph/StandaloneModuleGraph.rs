@@ -773,32 +773,18 @@ impl File {
             return BunString::EMPTY;
         }
         self.wtf_string
-            .get_or_init(|| {
-                let mut s = match self.encoding {
-                    Encoding::Binary => BunString::clone_utf8(self.contents.as_bytes()),
-                    Encoding::Latin1 if self.source_hash != 0 => {
-                        // Already thread-shareable: hash known, never atomized.
-                        return BunString::create_static_external_latin1_with_hash(
-                            self.contents.as_bytes(),
-                            self.source_hash,
-                        );
-                    }
-                    Encoding::Latin1 => {
-                        BunString::create_static_external(self.contents.as_bytes(), true)
-                    }
-                    Encoding::Utf16 => {
-                        let units = self.utf16_units();
-                        if self.source_hash != 0 {
-                            return BunString::create_static_external_utf16_with_hash(
-                                units,
-                                self.source_hash,
-                            );
-                        }
-                        BunString::create_static_external_utf16(units)
-                    }
-                };
-                s.make_thread_shareable();
-                s
+            .get_or_init(|| match self.encoding {
+                Encoding::Binary => {
+                    let mut s = BunString::clone_utf8(self.contents.as_bytes());
+                    s.make_thread_shareable();
+                    s
+                }
+                Encoding::Latin1 => {
+                    BunString::create_static_external_shareable_latin1(self.contents.as_bytes())
+                }
+                Encoding::Utf16 => {
+                    BunString::create_static_external_shareable_utf16(self.utf16_units())
+                }
             })
             .clone()
     }
@@ -947,13 +933,13 @@ bitflags::bitflags! {
 const TRAILER: &[u8] = b"\n---- Bun! ----\n";
 
 unsafe extern "C" {
-    fn Bun__WTFStringHashLatin1(ptr: *const u8, len: usize) -> u32;
-    fn Bun__WTFStringHashUTF16(ptr: *const u16, len: usize) -> u32;
+    fn Bun__WTFStringStableHashLatin1(ptr: *const u8, len: usize) -> u32;
+    fn Bun__WTFStringStableHashUTF16(ptr: *const u16, len: usize) -> u32;
 }
-/// `WTF::StringImpl::hash()` for an 8-bit string with these bytes.
+/// `WTF::StringImpl::stableHash()` for an 8-bit string with these bytes.
 fn wtf_latin1_string_hash(bytes: &[u8]) -> u32 {
     // SAFETY: reads `len` bytes from `ptr`; pure function.
-    unsafe { Bun__WTFStringHashLatin1(bytes.as_ptr(), bytes.len()) }
+    unsafe { Bun__WTFStringStableHashLatin1(bytes.as_ptr(), bytes.len()) }
 }
 
 impl StandaloneModuleGraph {
@@ -1430,7 +1416,7 @@ fn encode_text_module(
         reason = "written at an even offset just above"
     )]
     // SAFETY: `byte_len` initialized bytes at an even offset of the (page-aligned) section buffer.
-    let hash = unsafe { Bun__WTFStringHashUTF16(dst.as_ptr().cast::<u16>(), byte_len / 2) };
+    let hash = unsafe { Bun__WTFStringStableHashUTF16(dst.as_ptr().cast::<u16>(), byte_len / 2) };
     string_builder.len += byte_len + 2;
     (
         StringPointer {

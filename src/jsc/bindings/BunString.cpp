@@ -19,6 +19,7 @@
 #include <limits>
 #include <wtf/Seconds.h>
 #include <wtf/text/ExternalStringImpl.h>
+#include <JavaScriptCore/HashMapHelper.h>
 #include <JavaScriptCore/JSONObject.h>
 #include <wtf/text/AtomString.h>
 #include <wtf/text/WTFString.h>
@@ -331,7 +332,7 @@ static constexpr unsigned int kMinCrossThreadShareableLength = 256;
 // pre-hash + never-atomize treatment as a directly-shared original. Otherwise
 // the receivers race the lazy m_hashAndFlags update (debug: ASSERT(!hasHash())
 // in setHash; e.g. two workers switch()ing on the same BroadcastChannel
-// message). Static strings are immortal, pre-hashed and safe to share as-is.
+// message). Static strings are immortal, add their hash atomically and are safe to share as-is.
 Ref<WTF::StringImpl> threadShareableCopy(const WTF::StringImpl& impl)
 {
     Ref<WTF::StringImpl> copy = impl.isolatedCopy();
@@ -501,16 +502,29 @@ extern "C" BunString BunString__createStaticExternal(const char* bytes, size_t l
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
 
-extern "C" BunString BunString__createStaticExternalLatin1WithHash(const char* bytes, size_t length, unsigned hash)
+extern "C" void Bun__initializeHashSecrets(bool perProcess)
 {
-    Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::createStatic({ reinterpret_cast<const Latin1Character*>(bytes), length }, hash);
-    impl->setNeverAtomize();
-    return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
+    WTF::initializeHashSecrets(perProcess ? WTF::HashSecretsChoice::PerProcess : WTF::HashSecretsChoice::Stable);
 }
 
-extern "C" BunString BunString__createStaticExternalUTF16WithHash(const char16_t* units, size_t length, unsigned hash)
+namespace Bun {
+
+// bun:internal-for-testing: the hash a Map or Set files this key under. A string's is also its property-table and atom-table hash.
+JSC_DEFINE_HOST_FUNCTION(jsMapKeyHashForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::createStatic({ units, length }, hash);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    uint32_t hash = JSC::jsMapHash(globalObject, vm, JSC::normalizeMapKey(callFrame->argument(0)));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsNumber(hash));
+}
+
+} // namespace Bun
+
+// Thread-shareable without reading the characters: never atomized, and StringImpl::hashSlowCase() adds such a string's hash atomically.
+extern "C" BunString BunString__createStaticExternalShareable(const char* bytes, size_t length, bool isLatin1)
+{
+    Ref<WTF::ExternalStringImpl> impl = isLatin1 ? WTF::ExternalStringImpl::createStatic({ reinterpret_cast<const Latin1Character*>(bytes), length }) : WTF::ExternalStringImpl::createStatic({ reinterpret_cast<const char16_t*>(bytes), length });
     impl->setNeverAtomize();
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }

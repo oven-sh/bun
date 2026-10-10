@@ -42,7 +42,7 @@ static size_t getRSAModulusLength(RSA* rsa)
 {
     if (!rsa)
         return 0;
-    return RSA_size(rsa) * 8;
+    return RSA_bits(rsa);
 }
 
 RefPtr<CryptoKeyRSA> CryptoKeyRSA::create(CryptoAlgorithmIdentifier identifier, CryptoAlgorithmIdentifier hash, bool hasHash, const CryptoKeyRSAComponents& keyData, bool extractable, CryptoKeyUsageBitmap usages)

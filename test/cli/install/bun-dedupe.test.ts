@@ -314,6 +314,119 @@ test.concurrent("--dry-run prints what --check prints and exits 0", async () => 
   expect(await nodeModulesVersion(packageDir, "one-range-dep", "node_modules", "no-deps")).toBe("1.1.0");
 });
 
+// A `wanted <range> by <dependents>` line under a row; ranges are padded to the row's widest range.
+const wanted = (range: string, by: string, width = range.length) => `    wanted ${range.padEnd(width)} by ${by}`;
+
+test.concurrent("--why lists one level of dependents grouped by requested range", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  await Promise.all(
+    ["a", "b", "c", "d"].map(name =>
+      write(
+        join(packageDir, "packages", name, "package.json"),
+        JSON.stringify({ name, dependencies: { "no-deps": "^1.0.0" } }),
+      ),
+    ),
+  );
+  const lockfile = await installTwice(
+    packageDir,
+    packageJson,
+    { name: "root", workspaces: ["packages/*"] },
+    { name: "root", workspaces: ["packages/*"], dependencies: { "no-deps": "1.0.0" } },
+  );
+  expect(lockfile).toContain('"no-deps@1.0.0"');
+  expect(lockfile).toContain('"no-deps@1.1.0"');
+
+  // The larger group first, dependents in name order, capped at three with a count of the rest.
+  const checked = lockPackageCount(lockfile);
+  const rows = [
+    "~ no-deps 1.1.0 -> 1.0.0",
+    wanted("^1.0.0", "a, b, c +1 more"),
+    wanted("1.0.0", "root", "^1.0.0".length),
+  ];
+  const check = await dedupe(packageDir, "--check", "--why");
+  expect(lines(check.stdout)).toStrictEqual([HEADER, ...rows, "", wouldRemove(1, checked), HINT]);
+  expect(check.stderr).toBe("");
+  expect(check.exitCode).toBe(1);
+  expect(await lock(packageDir)).toBe(lockfile);
+
+  // Without --why the rows stay terse.
+  const plain = await dedupe(packageDir, "--check");
+  expectWouldRemove(plain, "no-deps 1.1.0 -> 1.0.0", checked);
+  expect(plain.stdout).not.toContain("wanted");
+
+  // Applying with --why prints the same block before the summary.
+  const { stdout, stderr, exitCode } = await dedupe(packageDir, "--why");
+  const out = lines(stdout);
+  expect(out.slice(-5, -1)).toStrictEqual([...rows, ""]);
+  expect(out.at(-1)).toMatch(removedSummary(1, checked));
+  expect(stderr).not.toContain("error:");
+  expect(exitCode).toBe(0);
+  expect(await lock(packageDir)).not.toContain('"no-deps@1.1.0"');
+  await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
+});
+
+// The dropped no-deps@2.0.0 has no surviving dependent: --why shows the removed one-fixed-dep@2.0.0, versioned because the name is ambiguous.
+test.concurrent("--why explains a dropped version through its removed dependent", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const lockfile = await installTwice(
+    packageDir,
+    packageJson,
+    { name: "foo", dependencies: { "one-fixed-dep": ">=1.0.0" } },
+    { name: "foo", dependencies: { "one-fixed-dep": ">=1.0.0", "ofd": "npm:one-fixed-dep@1.0.0" } },
+  );
+  for (const label of ['"one-fixed-dep@1.0.0"', '"one-fixed-dep@2.0.0"', '"no-deps@1.0.0"', '"no-deps@2.0.0"']) {
+    expect(lockfile).toContain(label);
+  }
+
+  const checked = lockPackageCount(lockfile);
+  const check = await dedupe(packageDir, "--check", "--why");
+  expect(lines(check.stdout)).toStrictEqual([
+    HEADER,
+    "~ no-deps 2.0.0 -> (removed)",
+    wanted("2.0.0", "one-fixed-dep@2.0.0"),
+    "~ one-fixed-dep 2.0.0 -> 1.0.0 (downgrade)",
+    wanted(">=1.0.0", "foo", "npm:one-fixed-dep@1.0.0".length),
+    wanted("npm:one-fixed-dep@1.0.0", "foo"),
+    "",
+    wouldRemove(2, checked),
+    HINT,
+  ]);
+  expect(check.stderr).toBe("");
+  expect(check.exitCode).toBe(1);
+  expect(await lock(packageDir)).toBe(lockfile);
+});
+
+// Two aliases produce two identical edges from one package; --why lists the dependent once.
+test.concurrent("--why lists a dependent once when two aliases share the same range", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const lockfile = await installTwice(
+    packageDir,
+    packageJson,
+    { name: "foo", dependencies: { "one-range-dep": "1.0.0" } },
+    {
+      name: "foo",
+      dependencies: { "one-range-dep": "1.0.0", "nd1": "npm:no-deps@1.0.0", "nd2": "npm:no-deps@1.0.0" },
+    },
+  );
+  expect(lockfile).toContain('"no-deps@1.0.0"');
+  expect(lockfile).toContain('"no-deps@1.1.0"');
+
+  const checked = lockPackageCount(lockfile);
+  const check = await dedupe(packageDir, "--check", "--why");
+  expect(lines(check.stdout)).toStrictEqual([
+    HEADER,
+    "~ no-deps 1.1.0 -> 1.0.0",
+    wanted("^1.0.0", "one-range-dep", "npm:no-deps@1.0.0".length),
+    wanted("npm:no-deps@1.0.0", "foo"),
+    "",
+    wouldRemove(1, checked),
+    HINT,
+  ]);
+  expect(check.stderr).toBe("");
+  expect(check.exitCode).toBe(1);
+  expect(await lock(packageDir)).toBe(lockfile);
+});
+
 test.concurrent("--no-summary keeps the rows and the hint but drops the count line", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
   const lockBefore = await setupRangeDuplicate(packageDir, packageJson);
@@ -501,6 +614,7 @@ test.concurrent("--help", async () => {
   expect(flagLines.map(line => line.match(/--[\w-]+/)![0])).toStrictEqual([
     "--check",
     "--dry-run",
+    "--why",
     "--lockfile-only",
     "--frozen-lockfile",
     "--linker",

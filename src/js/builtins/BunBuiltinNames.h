@@ -97,6 +97,7 @@ using namespace JSC;
     macro(host) \
     macro(hostDefinedImportType) \
     macro(hostname) \
+    macro(hotReloaded) \
     macro(httpOnly) \
     macro(ignoreBOM) \
     macro(importer) \

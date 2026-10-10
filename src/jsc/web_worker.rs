@@ -336,7 +336,13 @@ impl WebWorker {
             // SAFETY: `parent` is the live VM on the calling (parent) thread;
             // `resolve_entry_point_specifier` takes the raw pointer.
             if let Some(preload) = unsafe {
-                resolve_entry_point_specifier(parent, utf8_slice.slice(), error_message, temp_log)
+                resolve_entry_point_specifier(
+                    parent,
+                    utf8_slice.slice(),
+                    error_message,
+                    temp_log,
+                    false,
+                )
             } {
                 preloads.push(preload.to_vec().into_boxed_slice());
             }
@@ -822,6 +828,7 @@ impl WebWorker {
                 &self.unresolved_specifier,
                 &mut resolve_error,
                 vm_log,
+                true,
             )
         } {
             Some(p) => p,
@@ -1284,6 +1291,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
     str: &'s [u8],
     error_message: &mut BunString,
     log: &mut bun_ast::Log,
+    is_main_entry: bool,
 ) -> Option<&'s [u8]> {
     // In a `bun build --compile` executable, a relative specifier names an embedded entry point (relative to the
     // embedded root) before it names a file on disk, and an absolute one may be an embedded path in either syntax
@@ -1350,10 +1358,19 @@ unsafe fn resolve_entry_point_specifier<'s>(
     // `Path::text` borrows the resolver's process-lifetime `dirname_store` /
     // `filename_store` (`Path<'static>`), NOT `resolved_entry_point` itself —
     // copy the slice out and let `resolved_entry_point` drop on the stack.
-    Some(
-        resolved_entry_point
-            .path_const()
-            .expect("resolve_entry_point rejects disabled results")
-            .text,
-    )
+    let entry_path = resolved_entry_point
+        .path_const()
+        .expect("resolve_entry_point rejects disabled results");
+    // Node applies --preserve-symlinks-main to a worker's entry too (but not
+    // to preloads): recover the link spelling that `set_realpath` stashed in
+    // `pretty`. (With --preserve-symlinks off and -main on, the resolver above
+    // ran in realpath mode.)
+    let preserve_main = is_main_entry
+        && bun_options_types::context::try_get()
+            .is_some_and(|c| c.runtime_options.preserve_symlinks_main_enabled());
+    if preserve_main && entry_path.is_symlink && !entry_path.pretty.is_empty() {
+        Some(entry_path.pretty)
+    } else {
+        Some(entry_path.text)
+    }
 }

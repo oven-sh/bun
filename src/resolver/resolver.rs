@@ -1600,7 +1600,11 @@ impl<'a> Resolver<'a> {
             // concurrent resolver at a newer generation rewrites this `DirEntry`'s
             // map in place under that lock. The entry pointer stays valid after
             // unlock (EntryStore-owned).
-            if let Some(query) = dir.get_entry(self.generation, name.filename) {
+            // With --preserve-symlinks, the link path stays the module's
+            // identity (matching Node), so skip resolving it to the target.
+            if !self.opts.preserve_symlinks
+                && let Some(query) = dir.get_entry(self.generation, name.filename)
+            {
                 // SAFETY: rfs points at the process-global RealFS; the lazy-stat
                 // rewrite inside `symlink()` is serialized on the per-entry mutex.
                 let symlink_path = unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };

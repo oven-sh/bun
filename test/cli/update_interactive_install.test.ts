@@ -1,9 +1,103 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "fs";
+import { mkdir } from "fs/promises";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import {
+  createTestContext,
+  destroyTestContext,
+  dummyAfterAll,
+  dummyBeforeAll,
+  dummyRegistryForContext,
+  setContextHandler,
+} from "./install/dummy.registry";
+
+beforeAll(dummyBeforeAll);
+afterAll(dummyAfterAll);
 
 describe.concurrent("bun update --interactive actually installs packages", () => {
+  test("does not offer dependencies removed from package.json but still present in bun.lock", async () => {
+    const ctx = await createTestContext();
+    try {
+      setContextHandler(
+        ctx,
+        dummyRegistryForContext(ctx, [], {
+          "1.0.0": {},
+          "2.0.0": {},
+          latest: "2.0.0",
+        }),
+      );
+      await Bun.write(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "root",
+          version: "1.0.0",
+          private: true,
+          workspaces: ["packages/*"],
+          dependencies: {
+            "dep-universal": "1.0.0",
+          },
+        }),
+      );
+      await mkdir(join(ctx.package_dir, "packages/app"), { recursive: true });
+      await Bun.write(
+        join(ctx.package_dir, "packages/app/package.json"),
+        JSON.stringify({
+          name: "@test/app",
+          version: "1.0.0",
+          dependencies: {
+            "dep-multi-cpu": "1.0.0",
+          },
+        }),
+      );
+
+      await using install = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [installStdout, installStderr, installExitCode] = await Promise.all([
+        install.stdout.text(),
+        install.stderr.text(),
+        install.exited,
+      ]);
+      expect({ stdout: installStdout, stderr: installStderr, exitCode: installExitCode }).toMatchObject({
+        exitCode: 0,
+      });
+
+      await Bun.write(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "root",
+          version: "1.0.0",
+          private: true,
+          workspaces: ["packages/*"],
+        }),
+      );
+
+      await using update = Bun.spawn({
+        cmd: [bunExe(), "update", "--latest", "--recursive", "--force", "--save", "-i"],
+        cwd: ctx.package_dir,
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      update.stdin.write("\u0003");
+      update.stdin.end();
+
+      const [stdout, stderr, exitCode] = await Promise.all([update.stdout.text(), update.stderr.text(), update.exited]);
+
+      expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+      expect(stdout).toContain("dep-multi-cpu");
+      expect(stdout).not.toContain("dep-universal");
+    } finally {
+      destroyTestContext(ctx);
+    }
+  });
+
   test("should update package.json AND install packages", async () => {
     using dir = tempDir("update-interactive-install", {
       "package.json": JSON.stringify({

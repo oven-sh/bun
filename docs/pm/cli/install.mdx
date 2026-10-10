@@ -616,6 +616,43 @@ Bun migrates the following pnpm configuration from both `pnpm-lock.yaml` and `pn
 
 After migration, you can safely remove `pnpm-lock.yaml` and `pnpm-workspace.yaml` files.
 
+## Yarn migration
+
+Bun migrates a `yarn.lock` the same way when no `bun.lock` exists: both Yarn v1 lockfiles and Yarn 2+ ("Berry", the YAML format with a `__metadata` header) are converted to `bun.lock` during `bun install` or `bun pm migrate`, keeping every locked version. The original `yarn.lock` is left in place.
+
+A Yarn Berry lockfile is migrated only when Bun can keep everything it pins. If one package, patch, workspace or dependency cannot be carried over exactly, Bun prints the reason, does not migrate, and resolves from `package.json` instead (`bun pm migrate` exits with an error).
+
+For Yarn Berry lockfiles the migration handles:
+
+- npm packages, including `npm:` aliases, dist-tags, and per-package tarball URLs (`__archiveUrl`); integrity hashes are taken from the registry, because Berry's `checksum` is a hash of Yarn's own cache archive
+- workspaces (from the root `package.json` `workspaces` globs) and `workspace:` ranges
+- `patch:` dependencies: patches in your project (for example `.yarn/patches`) are added to `patchedDependencies` in `package.json` for npm, git and tarball packages, and `patch:` ranges in `package.json` are rewritten to the plain range they patch; Yarn's builtin compatibility patches are dropped
+- `file:` folders and tarballs, tarball URLs, and git / `github:` dependencies (pinned to the locked commit)
+- `portal:` and `link:` dependencies, which are installed like `file:` dependencies; Bun does not support these protocols in `package.json`, so the ranges are rewritten to `file:` and a warning reports that the folder is now copied instead of linked
+- optional dependencies and peer dependencies (`dependenciesMeta` / `peerDependenciesMeta`), and `conditions` (`os` / `cpu`)
+- `resolutions` in the root `package.json`, applied the way Yarn applies them: the first matching entry wins, and `parent@version/name` names the version the parent is locked to
+- `catalog:` ranges, read from `catalog` / `catalogs` in `.yarnrc.yml` and copied into the `workspaces` object of `package.json`
+- Yarn 2 and 3 lockfiles, which write ranges without quotes (`wrappy: 1`)
+
+Limitations:
+
+- the `dependencies` that `packageExtensions` in `.yarnrc.yml` add to a package; the extensions built into Yarn are not applied
+- `libc` conditions are ignored, and Yarn settings such as `nodeLinker` and `supportedArchitectures` are not migrated
+- integrity hashes come from the registry manifest; Yarn's `checksum` is not checked
+
+The lockfile is not migrated when it has:
+
+- a dependency with no lockfile entry (`yarn.lock` is older than `package.json`), or a workspace that the `package.json` `workspaces` globs do not match
+- a registry for Yarn (`npmRegistryServer` or `npmScopes` in a `.yarnrc.yml` of the project, a parent folder or the home folder, or `YARN_NPM_REGISTRY_SERVER`) that is not the registry Bun is configured with for that package, or that is written with an environment variable (`${VAR}`); configure the registry in `bunfig.toml` or `.npmrc` and run the migration again. Yarn fetches the `@jsr` scope from `npm.jsr.io` by default, so that scope needs the same configuration
+- a package whose integrity the registry manifest does not give, for example an `__archiveUrl` on another host
+- a patch that `patchedDependencies` cannot express: several patch files for one package, a patch on a `file:` / `portal:` / `link:` folder, or a patch file outside the project
+- an entry with a protocol Bun does not have (for example `exec:`), or a git dependency on a package inside a repository (`#workspace=`)
+- a dependency of the root `package.json` that has the name of a workspace and that Yarn installed from somewhere else (`enableTransparentWorkspaces: false`); Bun links the workspace under that name
+- a name in both `dependencies` and `devDependencies` when the version Yarn installed for the `devDependencies` range is not in the `dependencies` range, which is the one Bun reads
+- a `__metadata.version` outside 4 to 10, a key written twice, or a YAML merge key (`<<`)
+
+The edits to `package.json` (rewritten ranges, `patchedDependencies`, catalogs) are written when `bun.lock` is saved. A command that does not write `package.json` (`--dry-run`, `--no-save`) does not migrate a lockfile that needs them.
+
 ---
 
 <Install />

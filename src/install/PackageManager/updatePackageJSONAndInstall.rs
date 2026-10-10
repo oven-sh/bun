@@ -327,7 +327,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     // valid until the next `get_with_path`. No `&mut manager.workspace_package_json_cache`
     // is taken across this borrow; `PackageJSONEditor` and `do_patch_commit` touch only
     // disjoint manager fields.
-    let current_package_json: &mut MapEntry = unsafe { &mut *current_package_json_ptr };
+    let mut current_package_json: &mut MapEntry = unsafe { &mut *current_package_json_ptr };
     let mut current_package_json_root: bun_ast::Expr = current_package_json.root;
     let current_package_json_indent = current_package_json.indentation;
 
@@ -426,9 +426,35 @@ fn update_package_json_and_install_with_manager_with_updates(
         _ => {
             if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
                 let mut pathbuf = bun_paths::path_buffer_pool::get();
-                if let Some(stuff) =
-                    patch_package::do_patch_commit(manager, &mut pathbuf, log_level)?
-                {
+                let stuff = patch_package::do_patch_commit(manager, &mut pathbuf, log_level)?;
+                // `do_patch_commit` loads the lockfile. A yarn or pnpm migration there adds
+                // every workspace package.json to the cache, which can move this entry, and
+                // re-parses it, which frees the tree copied above.
+                let refetched: *mut MapEntry =
+                    match manager.workspace_package_json_cache.get_with_path(
+                        manager.log_mut(),
+                        manager.original_package_json_path.as_bytes(),
+                        GetJSONOptions {
+                            guess_indentation: true,
+                            init_reset_store: false,
+                        },
+                    ) {
+                        GetResult::Entry(entry) => core::ptr::from_mut(entry),
+                        GetResult::ParseErr(err) | GetResult::ReadErr(err) => {
+                            Output::err_generic(
+                                "failed to read package.json \"{s}\": {s}",
+                                (
+                                    BStr::new(manager.original_package_json_path.as_bytes()),
+                                    err.name(),
+                                ),
+                            );
+                            Global::crash();
+                        }
+                    };
+                // SAFETY: as for `current_package_json_ptr` above.
+                current_package_json = unsafe { &mut *refetched };
+                current_package_json_root = current_package_json.root;
+                if let Some(stuff) = stuff {
                     // we're inside a workspace package, we need to edit the
                     // root json, not the `current_package_json`
                     if stuff.not_in_workspace_root {
@@ -660,6 +686,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     }
 
     if manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
+        let after_install_source: Vec<u8>;
         let (source, path): (&[u8], &ZStr) =
             if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
                 'source_and_path: {
@@ -689,8 +716,20 @@ fn update_package_json_and_install_with_manager_with_updates(
                     );
                 }
             } else {
+                // A yarn or pnpm lockfile migration during the install edits the cached entry
+                // (ranges only that package manager reads) after it was printed above.
+                let cached = manager.workspace_package_json_cache.get_with_path(
+                    manager.log_mut(),
+                    manager.original_package_json_path.as_bytes(),
+                    GetJSONOptions::default(),
+                );
+                if let Ok(entry) = cached.unwrap() {
+                    after_install_source = entry.source.contents.to_vec();
+                } else {
+                    after_install_source = new_package_json_source;
+                }
                 (
-                    &new_package_json_source,
+                    &after_install_source,
                     manager.original_package_json_path.as_zstr(),
                 )
             };

@@ -457,7 +457,7 @@ fn e_object(expr: &Expr) -> &E::Object {
     }
 }
 
-fn e_object_mut(expr: &mut Expr) -> &mut E::Object {
+pub(crate) fn e_object_mut(expr: &mut Expr) -> &mut E::Object {
     match &mut expr.data {
         ExprData::EObject(o) => &mut **o,
         _ => unreachable!("e_object_mut called on non-object"),
@@ -1620,7 +1620,8 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     lockfile.tag_workspace_links(manager.options.link_workspace_packages);
     lockfile.resolve(log)?;
 
-    lockfile.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<false>(manager)?;
+    lockfile
+        .fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<false, false>(manager)?;
 
     update_package_json_after_migration(manager, log, dir, &found_patches)?;
 

@@ -1,0 +1,17 @@
+{
+  "name": "berry-basic",
+  "version": "1.0.0",
+  "dependencies": {
+    "a-dep": "~1.0.1",
+    "no-deps": "^1.0.0",
+    "one-range-dep": "^1.0.0",
+    "peer-deps-fixed": "1.0.0",
+    "what-bin": "^1.5.0"
+  },
+  "devDependencies": {
+    "@types/is-number": "^1.0.0"
+  },
+  "optionalDependencies": {
+    "what-bin": "^1.0.0"
+  }
+}

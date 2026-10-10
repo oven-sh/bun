@@ -607,3 +607,36 @@ exports[`snapshot numbering 4`] = `"snap"`;
 exports[`snapshot numbering 6`] = `"hello"`;
 
 exports[`snapshot numbering: hinted 1`] = `"hello"`;
+
+exports[`JSX elements: children 1`] = `
+<div>
+  <span />
+  <b />
+</div>
+`;
+
+exports[`JSX elements: long text child 1`] = `
+<p>
+  xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+</p>
+`;
+
+exports[`JSX elements: object prop 1`] = `
+<div style={
+    "color": "red",
+  } />
+`;
+
+exports[`JSX elements: self-closing 1`] = `<div />`;
+
+exports[`JSX elements: string prop 1`] = `<div id="a" />`;
+
+exports[`JSX elements: short text child 1`] = `<p>hi</p>`;
+
+exports[`JSX elements: nested in object 1`] = `
+{
+  "el": <div>
+    <span />
+  </div>,
+}
+`;

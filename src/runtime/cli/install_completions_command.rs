@@ -338,6 +338,23 @@ impl InstallCompletionsCommand {
 
                 match shell {
                     Shell::Fish => {
+                        // Prefer the fish "vendor" completions directory so
+                        // completions are available without touching user config.
+                        // See https://fishshell.com/docs/current/completions.html#where-to-put-completions
+                        // and https://github.com/oven-sh/bun/issues/17855
+                        const VENDOR_DIRS: [&[u8]; 3] = [
+                            b"/usr/share/fish/vendor_completions.d",
+                            b"/usr/local/share/fish/vendor_completions.d",
+                            b"/opt/homebrew/share/fish/vendor_completions.d",
+                        ];
+
+                        for dir in VENDOR_DIRS {
+                            completions_dir = dir;
+                            if let Ok(d) = bun_sys::open_dir_absolute(dir) {
+                                break 'found d;
+                            }
+                        }
+
                         if let Some(config_dir) = env_var::XDG_CONFIG_HOME.get() {
                             let paths: [&[u8]; 2] = [config_dir, b"./fish/completions"];
                             completions_dir =

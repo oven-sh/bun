@@ -638,7 +638,6 @@ describe("constant arguments", () => {
   `;
   const header = `import { id, getFoo, getObj, getUndefined } from "./m.ts" with { type: "macro" };\n`;
   const identifierError = '"Cannot convert identifier to JS. Try a statically-known value" error in macro';
-  const argumentError = '"Cannot convert argument type to JS" error in macro';
 
   async function bun(cwd: string, ...args: string[]) {
     await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
@@ -646,30 +645,46 @@ describe("constant arguments", () => {
     return { stdout, stderr, exitCode };
   }
 
-  const plainBuild = ["--target=bun"];
+  // The three ways a file reaches the parser. Most cases load the file in this process,
+  // because a debug build needs about a second to start.
   const modes = [
-    { mode: "bun run", build: null },
-    { mode: "bun build", build: plainBuild },
-    { mode: "bun build --minify-syntax", build: [...plainBuild, "--minify-syntax"] },
+    { mode: "the runtime transpiler", minifySyntax: null },
+    { mode: "Bun.build", minifySyntax: false },
+    { mode: "Bun.build with minify.syntax", minifySyntax: true },
   ];
 
-  // Debug builds print "[macro] call id" to stdout, so only the last line is compared.
-  async function lastLineOf(
+  // What the entry exports as `result`, or the errors of the build.
+  async function resultOf(
     entry: string,
-    build: string[] | null,
+    minifySyntax: boolean | null,
     files: Record<string, string> = {},
     entryFile = "entry.ts",
+    features: string[] = [],
   ) {
     using dir = tempDir("macro-constant-arguments", { "m.ts": macroFile, [entryFile]: entry, ...files });
-    let file = entryFile;
-    if (build) {
-      const built = await bun(String(dir), "build", ...build, entryFile, "--outfile=out.js");
-      if (built.exitCode !== 0) return built;
-      file = "out.js";
+    let file = path.join(String(dir), entryFile);
+    if (minifySyntax !== null) {
+      const built = await Bun.build({
+        entrypoints: [file],
+        target: "bun",
+        minify: { syntax: minifySyntax },
+        outdir: path.join(String(dir), "out"),
+        features,
+        throw: false,
+      });
+      if (!built.success) return { errors: built.logs.map(log => log.message) };
+      file = built.outputs[0].path;
     }
-    const ran = await bun(String(dir), "run", file);
-    return { ...ran, stdout: ran.stdout.trimEnd().split("\n").at(-1) };
+    return { result: (await import(file)).result };
   }
+
+  // The same three ways through the command line. A build prints the module, a run prints its output.
+  const builtLine = 'console.log(JSON.stringify([40, "https://example.com/foo"]));';
+  const cliModes = [
+    { mode: "bun run", args: ["run"], line: '[40,"https://example.com/foo"]' },
+    { mode: "bun build", args: ["build", "--target=bun"], line: builtLine },
+    { mode: "bun build --minify-syntax", args: ["build", "--target=bun", "--minify-syntax"], line: builtLine },
+  ];
 
   const accepted = `
     import { fromOther } from "./other.ts";
@@ -717,7 +732,7 @@ describe("constant arguments", () => {
     out.push(mixed(), fromOther);
     // A declaration in an argument that folds away.
     out.push(id(typeof (() => { console.log("a statement"); const y = 5; return id(y); })));
-    console.log(JSON.stringify(out));
+    export const result = JSON.stringify(out);
   `;
   const acceptedFiles = {
     "other.ts": `
@@ -762,80 +777,87 @@ describe("constant arguments", () => {
     "function",
   ]);
 
-  test.concurrent.each(modes)("$mode accepts a const in any statement position", async ({ build }) => {
-    expect(await lastLineOf(header + accepted, build, acceptedFiles)).toEqual({
-      stdout: acceptedOutput,
+  test.concurrent.each(modes)("$mode accepts a const in any statement position", async ({ minifySyntax }) => {
+    expect(await resultOf(header + accepted, minifySyntax, acceptedFiles)).toEqual({ result: acceptedOutput });
+  });
+
+  test.concurrent.each(cliModes)("$mode accepts a const below a statement", async ({ args, line }) => {
+    const entry = `
+      console.log(id(40));
+      const data = 40;
+      const foo = getFoo();
+      console.log(JSON.stringify([id(data), id(\`https://example.com/\${foo}\`)]));
+    `;
+    using dir = tempDir("macro-constant-arguments-cli", { "m.ts": macroFile, "entry.ts": header + entry });
+    const { stdout, stderr, exitCode } = await bun(String(dir), ...args, "entry.ts");
+    // Debug builds print "[macro] call id" to stdout, so only the last line is compared.
+    expect({ line: stdout.trimEnd().split("\n").at(-1), stderr, exitCode }).toEqual({
+      line,
       stderr: expect.any(String),
       exitCode: 0,
     });
   });
 
-  test.concurrent("Bun.build and Bun.Transpiler accept a const in any statement position", async () => {
+  // Bun.Transpiler resolves the macro import from the working directory, so this case needs a process.
+  test.concurrent("Bun.Transpiler accepts a const in any statement position", async () => {
     using dir = tempDir("macro-constant-arguments-api", {
       "m.ts": macroFile,
       "entry.ts": header + accepted.replace(`import { fromOther } from "./other.ts";`, "const fromOther = [9, 9];"),
       "api.ts": `
-        const built = await Bun.build({ entrypoints: ["./entry.ts"], target: "bun", outdir: "./dist" });
-        if (!built.success) throw new AggregateError(built.logs);
         const source = await Bun.file("entry.ts").text();
         const options = { "default": {}, "inline": { inline: true }, "minify": { minify: { syntax: true } } };
         for (const [name, option] of Object.entries(options)) {
-          await Bun.write("transpiled-" + name + ".js", new Bun.Transpiler({ loader: "ts", ...option }).transformSync(source));
-        }
-        for (const file of ["./dist/entry.js", ...Object.keys(options).map(name => "./transpiled-" + name + ".js")]) {
-          await import(file);
+          const file = "./transpiled-" + name + ".js";
+          await Bun.write(file, new Bun.Transpiler({ loader: "ts", ...option }).transformSync(source));
+          console.log((await import(file)).result);
         }
       `,
     });
     const { stdout, stderr, exitCode } = await bun(String(dir), "run", "api.ts");
     expect({ lines: stdout.split("\n").filter(line => line.startsWith("[5,")), stderr, exitCode }).toEqual({
-      lines: [acceptedOutput, acceptedOutput, acceptedOutput, acceptedOutput],
+      lines: [acceptedOutput, acceptedOutput, acceptedOutput],
       stderr: expect.any(String),
       exitCode: 0,
     });
   });
 
   test.concurrent("the example of docs/bundler/macros.mdx builds", async () => {
-    const files = {
+    using dir = tempDir("macro-constant-arguments-docs", {
       "getText.ts": `export function getText(url) { return "<" + url + ">"; }`,
       "getFoo.ts": `export function getFoo() { return "foo"; }`,
-    };
-    const entry = `
-      import { getText } from "./getText.ts" with { type: "macro" };
-      import { getFoo } from "./getFoo.ts" with { type: "macro" };
+      "index.ts": `
+        import { getText } from "./getText.ts" with { type: "macro" };
+        import { getFoo } from "./getFoo.ts" with { type: "macro" };
 
-      export function howLong() {
-        // this works because getFoo() is statically known
-        const foo = getFoo();
-        const text = getText(\`https://example.com/\${foo}\`);
-        console.log("The page is", text.length, "characters long");
-      }
-      howLong();
-    `;
-    using dir = tempDir("macro-constant-arguments-docs", { ...files, "entry.ts": entry });
-    const [ran, minified] = await Promise.all([
-      lastLineOf(entry, plainBuild, files),
-      bun(String(dir), "build", "--target=bun", "--minify-syntax", "entry.ts"),
-    ]);
-    expect(ran).toEqual({ stdout: "The page is 25 characters long", stderr: expect.any(String), exitCode: 0 });
-    // The output block of the docs page.
-    expect(minified).toMatchObject({
-      stdout: expect.stringContaining('console.log("The page is", 25, "characters long");'),
-      exitCode: 0,
+        export function howLong() {
+          // this works because getFoo() is statically known
+          const foo = getFoo();
+          const text = getText(\`https://example.com/\${foo}\`);
+          console.log("The page is", text.length, "characters long");
+        }
+      `,
     });
+    const build = (syntax: boolean) =>
+      Bun.build({ entrypoints: [path.join(String(dir), "index.ts")], minify: { syntax }, throw: false });
+    const [plain, minified] = await Promise.all([build(false), build(true)]);
+    expect([plain, minified].map(built => built.logs.map(log => log.message))).toEqual([[], []]);
+    // The macro got the whole URL.
+    expect(await plain.outputs[0].text()).toContain('const text = "<https://example.com/foo>";');
+    // The output block of the docs page.
+    expect(await minified.outputs[0].text()).toContain('console.log("The page is", 25, "characters long");');
   });
 
   // A macro call is replaced when the file is built. It does not read the binding when the
   // program runs, so the TDZ of the const does not apply to it: plain JS throws here.
-  test.concurrent.each(modes)("$mode: an argument is a value at build time", async ({ build }) => {
+  test.concurrent.each(modes)("$mode: an argument is a value at build time", async ({ minifySyntax }) => {
     const entry = `
       const early = below();
       console.log("a statement");
       const N = 5;
       function below() { return id(N); }
-      console.log(JSON.stringify([early]));
+      export const result = JSON.stringify([early]);
     `;
-    expect(await lastLineOf(header + entry, build)).toMatchObject({ stdout: "[5]", exitCode: 0 });
+    expect(await resultOf(header + entry, minifySyntax)).toEqual({ result: "[5]" });
   });
 
   // The macro runtime does not run a macro that a macro module imports. It keeps the call.
@@ -854,13 +876,13 @@ describe("constant arguments", () => {
     };
     const entry = `
       import { show } from "./outer.ts" with { type: "macro" };
-      console.log(show());
+      export const result = show();
     `;
-    expect(await lastLineOf(entry, null, files)).toMatchObject({ stdout: "() => answer(N)", exitCode: 0 });
+    expect(await resultOf(entry, null, files)).toEqual({ result: "() => answer(N)" });
   });
 
   // The macro gives undefined, so the binding holds its default when the program runs.
-  test.concurrent.each(modes)("$mode: a binding that takes its default holds the default", async ({ build }) => {
+  test.concurrent.each(modes)("$mode: a binding that takes its default holds the default", async ({ minifySyntax }) => {
     const entry = `
       const { a = 5 } = getUndefined();
       const { list: [x = 8, y = 9] } = getUndefined();
@@ -870,16 +892,15 @@ describe("constant arguments", () => {
       let { a: changed = 5 } = getUndefined();
       changed = 9;
       const own = [typeof random, random === random, object.a, object === object, changed, joined + "1", joined];
-      console.log(JSON.stringify([id(a), a, id(x), x, id(y), y, ...own]));
+      export const result = JSON.stringify([id(a), a, id(x), x, id(y), y, ...own]);
     `;
-    expect(await lastLineOf(header + entry, build)).toMatchObject({
-      stdout: '[5,5,8,8,2,2,"number",true,1,true,9,"xy1","xy"]',
-      exitCode: 0,
+    expect(await resultOf(header + entry, minifySyntax)).toEqual({
+      result: '[5,5,8,8,2,2,"number",true,1,true,9,"xy1","xy"]',
     });
   });
 
   // A module is strict, so a var that a direct eval declares stays inside the eval.
-  test.concurrent.each(modes)("$mode: a direct eval does not hide the const", async ({ build }) => {
+  test.concurrent.each(modes)("$mode: a direct eval does not hide the const", async ({ minifySyntax }) => {
     const entry = `
       function helper(s) { return eval(s); }
       console.log("a statement");
@@ -888,9 +909,9 @@ describe("constant arguments", () => {
       { eval("0"); out.push(id(N)); }
       function sameFunction() { eval("var N = 7"); return id(N); }
       out.push(sameFunction());
-      console.log(JSON.stringify(out));
+      export const result = JSON.stringify(out);
     `;
-    expect(await lastLineOf(header + entry, build, {}, "entry.js")).toMatchObject({ stdout: "[5,2,5,5]", exitCode: 0 });
+    expect(await resultOf(header + entry, minifySyntax, {}, "entry.js")).toEqual({ result: "[5,2,5,5]" });
   });
 
   test.concurrent("a joined flag name in an argument is read whole", async () => {
@@ -898,14 +919,13 @@ describe("constant arguments", () => {
       import { feature } from "bun:bundle";
       console.log("a statement");
       const F = "SUPER";
-      console.log(id(feature(F + "_SECRET") ? 1 : 2));
+      export const result = id(feature(F + "_SECRET") ? 1 : 2);
     `;
     const [whole, firstPiece] = await Promise.all([
-      lastLineOf(header + entry, [...plainBuild, "--feature=SUPER_SECRET"]),
-      lastLineOf(header + entry, [...plainBuild, "--feature=SUPER"]),
+      resultOf(header + entry, false, {}, "entry.ts", ["SUPER_SECRET"]),
+      resultOf(header + entry, false, {}, "entry.ts", ["SUPER"]),
     ]);
-    expect(whole).toMatchObject({ stdout: "1", exitCode: 0 });
-    expect(firstPiece).toMatchObject({ stdout: "2", exitCode: 0 });
+    expect([whole, firstPiece]).toEqual([{ result: 1 }, { result: 2 }]);
   });
 
   const rejected = [
@@ -985,25 +1005,20 @@ describe("constant arguments", () => {
     },
   ];
 
-  // Built in this process, with no minify option: one error, and it is the error of the row.
-  test.concurrent.each(rejected)("Bun.build rejects $what", async ({ entry, error, entryFile = "entry.ts" }) => {
-    using dir = tempDir("macro-constant-arguments-rejected", { "m.ts": macroFile, [entryFile]: header + entry });
-    const built = await Bun.build({ entrypoints: [path.join(String(dir), entryFile)], target: "bun", throw: false });
-    expect({ success: built.success, errors: built.logs.map(log => log.message) }).toEqual({
-      success: false,
-      errors: [error],
-    });
+  // With no minify option: one error, and it is the error of the row.
+  test.concurrent.each(rejected)("Bun.build rejects $what", async ({ entry, error, entryFile }) => {
+    expect(await resultOf(header + entry, false, {}, entryFile)).toEqual({ errors: [error] });
   });
 
   // The table that macro arguments read must not change what happens to other code in the
   // same file: a const below a statement is not inlined there, so its TDZ error stays.
   test.concurrent("code outside the arguments keeps the rules of the inliner", async () => {
     const tdz = `
-      let result;
-      try { read(); result = "no throw"; } catch (e) { result = e.name; }
+      let thrown;
+      try { read(); thrown = "no throw"; } catch (e) { thrown = e.name; }
       const N = 5;
       function read() { return N; }
-      console.log(result, id(N));
+      export const result = thrown + " " + id(N);
     `;
     const assignment = `
       console.log("a statement");
@@ -1018,28 +1033,32 @@ describe("constant arguments", () => {
       export const q = () => require(\`./b/\${x}.js\`);
       export const r = () => require("./c/" + getFoo() + ".js");
     `;
-    using dir = tempDir("macro-constant-arguments-specifiers", { "m.ts": macroFile, "entry.ts": header + specifiers });
+    using dir = tempDir("macro-constant-arguments-outside", {
+      "m.ts": macroFile,
+      "assignment.ts": header + assignment,
+      "specifiers.ts": header + specifiers,
+    });
     const [tdzResult, assignmentResult, specifiersResult] = await Promise.all([
-      lastLineOf(header + tdz, null),
-      lastLineOf(header + assignment, null),
-      bun(String(dir), "build", "--target=bun", "entry.ts"),
+      resultOf(header + tdz, null),
+      bun(String(dir), "run", "assignment.ts"),
+      Bun.build({ entrypoints: [path.join(String(dir), "specifiers.ts")], target: "bun", throw: false }),
     ]);
-    expect(tdzResult).toMatchObject({ stdout: "ReferenceError 5", exitCode: 0 });
+    expect(tdzResult).toEqual({ result: "ReferenceError 5" });
     expect(assignmentResult).toMatchObject({
       stderr: expect.stringContaining('This assignment will throw because "N" is a constant'),
       exitCode: 1,
     });
-    expect(specifiersResult).toMatchObject({
-      stdout: expect.stringMatching(
+    expect({ success: specifiersResult.success, text: await specifiersResult.outputs[0]?.text() }).toEqual({
+      success: true,
+      text: expect.stringMatching(
         /import\(`\.\/a\/\$\{x\}\.js`\)[^]*require\(`\.\/b\/\$\{x\}\.js`\)[^]*require\("\.\/c\/" \+ "foo" \+ "\.js"\)/,
       ),
-      exitCode: 0,
     });
   });
 
   // Under inlining a const can hold a joined string or what a macro returned, and a function
   // that an argument holds can fold away.
-  test.concurrent.each([modes[0], modes[2]])("$mode keeps what inlining accepts", async ({ build }) => {
+  test.concurrent.each([modes[0], modes[2]])("$mode keeps what inlining accepts", async ({ minifySyntax }) => {
     const entry = `
       const base = "https://example.com";
       const url = base + "/api";
@@ -1047,19 +1066,19 @@ describe("constant arguments", () => {
       const { list } = getUndefined();
       console.log("a statement");
       const lateObj = getObj();
-      console.log(JSON.stringify([
+      export const result = JSON.stringify([
         id(url), id(url + "/x"), id(url + "/y"), url,
         id(o), id(list), id(lateObj),
         id(typeof (() => { const y = getFoo(); return id(y); })),
         id(typeof function () { const K = 5; return id(K); }),
         id((() => { const y = getFoo(); return id(y); }, 5)),
         id(typeof (() => { console.log("a statement"); const K = 5; return id(K); })),
-      ]));
+      ]);
     `;
     const api = "https://example.com/api";
     const obj = { a: 1, b: "two" };
-    expect(await lastLineOf(header + entry, build)).toMatchObject({
-      stdout: JSON.stringify([
+    expect(await resultOf(header + entry, minifySyntax)).toEqual({
+      result: JSON.stringify([
         api,
         api + "/x",
         api + "/y",
@@ -1072,7 +1091,6 @@ describe("constant arguments", () => {
         5,
         "function",
       ]),
-      exitCode: 0,
     });
   });
 

@@ -2,7 +2,16 @@ import type { BunLockFile } from "bun";
 import { $, file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  readdirSorted,
+  tempDir,
+  tmpdirSync,
+  toBeValidBin,
+  toBeWorkspaceLink,
+  toHaveBins,
+} from "harness";
 import { join, relative, resolve } from "path";
 import { pathToFileURL } from "url";
 import {
@@ -2998,4 +3007,267 @@ it("bun add --trust keeps the new package when another --trust package is alread
       "b-scripted": "file:./b-scripted",
     },
   });
+});
+
+// Pins every global-install location under <home> so the ambient BUN_INSTALL* cannot redirect the tests below.
+function globalInstallEnv(home: string) {
+  return {
+    ...env,
+    HOME: home,
+    BUN_INSTALL: join(home, ".bun"),
+    BUN_INSTALL_GLOBAL_DIR: join(home, ".bun", "install", "global"),
+    BUN_INSTALL_BIN: join(home, ".bun", "bin"),
+  };
+}
+
+// A registry that knows no packages, so resolution fails in-process after init has run.
+function emptyRegistry() {
+  return Bun.serve({ port: 0, fetch: () => new Response(null, { status: 404 }) });
+}
+
+// #40683: the first -g add must create <global>/package.json, not adopt ~/package.json.
+it("first `bun add -g` creates the global package.json instead of adopting ~/package.json", async () => {
+  const homeProject = JSON.stringify({ name: "home-project", private: true });
+  using home = tempDir("bun-add-global-home-project", {
+    "package.json": homeProject,
+    "pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
+  });
+  const homeDir = String(home);
+  const globalDir = join(homeDir, ".bun", "install", "global");
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "-g", `file:${join(homeDir, "pkg").replaceAll("\\", "/")}`],
+    cwd: homeDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: globalInstallEnv(homeDir),
+  });
+
+  const err = await stderr.text();
+  expect(err).not.toContain("error:");
+  const out = await stdout.text();
+  expect(out).toContain("installed pkg@");
+  expect(await exited).toBe(0);
+
+  expect(await file(join(globalDir, "package.json")).json()).toEqual({
+    dependencies: { pkg: expect.any(String) },
+  });
+  expect(await file(join(globalDir, "node_modules", "pkg", "package.json")).json()).toEqual({
+    name: "pkg",
+    version: "1.0.0",
+  });
+
+  // The home project gained no lockfile or node_modules, and its package.json is untouched.
+  expect(await readdirSorted(homeDir)).toEqual([".bun", "package.json", "pkg"]);
+  expect(await file(join(homeDir, "package.json")).text()).toBe(homeProject);
+});
+
+// #30658: a stray ~/package.json + v1 package-lock.json must not reach the migrator.
+it("`bun add -g` ignores package.json/package-lock.json above the global dir", async () => {
+  using home = tempDir("bun-add-global-parent-lockfile", {
+    // stray files in the parent of <home>/.bun/install/global
+    "package.json": JSON.stringify({ name: "stray-root", version: "1.0.0" }),
+    "package-lock.json": JSON.stringify({
+      name: "stray-root",
+      version: "1.0.0",
+      lockfileVersion: 1,
+      requires: true,
+      dependencies: {},
+    }),
+    ".bun": { install: { global: {} } },
+  });
+
+  using registry = emptyRegistry();
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "-g", `--registry=${registry.url}`, "chalk"],
+    cwd: `${home}`,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: globalInstallEnv(`${home}`),
+  });
+
+  const err = await stderr.text();
+  // the bug: the stray lockfile used to get picked up by the migrator here.
+  expect(err).not.toContain("which bun cannot migrate");
+  expect(err).not.toContain("lockfileVersion");
+  await stdout.text();
+  // The install itself fails (registry is unreachable on purpose), but the
+  // failure must come after lockfile migration, not from it.
+  expect(await exited).not.toBe(0);
+
+  // And the stray root's package.json must not have been mutated.
+  expect(await file(join(`${home}`, "package.json")).text()).toBe(
+    JSON.stringify({ name: "stray-root", version: "1.0.0" }),
+  );
+});
+
+// #28247: a parent package.json with `workspaces` must not become the root of a -g install.
+it("`bun add -g` ignores a workspaces package.json above the global dir", async () => {
+  using home = tempDir("bun-add-global-parent-workspaces", {
+    // parent package.json declares workspaces + a workspace-protocol dep
+    // that doesn't actually exist on disk, the same shape as the reports.
+    "package.json": JSON.stringify({
+      name: "stray-root",
+      version: "1.0.0",
+      workspaces: ["packages/*"],
+      dependencies: { "@scope/nonexistent": "workspace:*" },
+    }),
+    ".bun": { install: { global: {} } },
+  });
+
+  using registry = emptyRegistry();
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "-g", `--registry=${registry.url}`, "chalk"],
+    cwd: `${home}`,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: globalInstallEnv(`${home}`),
+  });
+
+  const err = await stderr.text();
+  expect(err).not.toContain("Workspace dependency");
+  // If bun touches the parent workspace at all, its deps (this one in particular)
+  // would appear in the error output. They must not.
+  expect(err).not.toContain("@scope/nonexistent");
+  // Positive check: bun must have gotten *past* init into dependency
+  // resolution (and failed there on the unreachable registry), proving the
+  // walk-up path actually ran rather than an unrelated early init failure.
+  expect(err).toContain("Resolving dependencies");
+  await stdout.text();
+  expect(await exited).not.toBe(0);
+});
+
+// #28247: pins the workspace-hop gate alone; <global>/package.json pre-exists so the walk-up break never fires.
+it("`bun add -g` does not adopt a parent workspace that lists the global dir", async () => {
+  using home = tempDir("bun-add-global-parent-workspace-member", {
+    "package.json": JSON.stringify({
+      name: "stray-root",
+      version: "1.0.0",
+      workspaces: [".bun/install/global"],
+      dependencies: { "@scope/nonexistent": "workspace:*" },
+    }),
+    // the global dir already has a package.json, so the walk-up loop stops
+    // here immediately and the first guard is never exercised.
+    ".bun": { install: { global: { "package.json": JSON.stringify({ name: "g", version: "1.0.0" }) } } },
+  });
+
+  using registry = emptyRegistry();
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "-g", `--registry=${registry.url}`, "chalk"],
+    cwd: `${home}`,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: globalInstallEnv(`${home}`),
+  });
+
+  const err = await stderr.text();
+  expect(err).not.toContain("Workspace dependency");
+  expect(err).not.toContain("@scope/nonexistent");
+  // Positive check: resolution began, so init got past the workspace-root hop
+  // instead of erroring out early (which would pass the negative checks too).
+  expect(err).toContain("Resolving dependencies");
+  // The parent workspace must be left untouched, not adopted as the root.
+  expect(await file(join(`${home}`, "package.json")).text()).toBe(
+    JSON.stringify({
+      name: "stray-root",
+      version: "1.0.0",
+      workspaces: [".bun/install/global"],
+      dependencies: { "@scope/nonexistent": "workspace:*" },
+    }),
+  );
+  await stdout.text();
+  expect(await exited).not.toBe(0);
+});
+
+// Pins the bootstrap arm: a non-add -g command on a fresh machine must not hit MissingPackageJSON.
+it("`bun pm bin -g` works before the first global add and does not adopt ~/package.json", async () => {
+  const homeProject = JSON.stringify({ name: "home-project", private: true });
+  using home = tempDir("bun-pm-bin-global-fresh", {
+    "package.json": homeProject,
+  });
+  const homeDir = String(home);
+  const globalDir = join(homeDir, ".bun", "install", "global");
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "pm", "bin", "-g"],
+    cwd: homeDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: globalInstallEnv(homeDir),
+  });
+
+  const err = await stderr.text();
+  expect(err).not.toContain("No package.json");
+  const out = await stdout.text();
+  expect(out.trim()).toBe(join(homeDir, ".bun", "bin"));
+  expect(await exited).toBe(0);
+
+  // The global dir got its own package.json, and the home project is untouched.
+  expect(await file(join(globalDir, "package.json")).json()).toEqual({ dependencies: {} });
+  expect(await file(join(homeDir, "package.json")).text()).toBe(homeProject);
+});
+
+// A mutating -g command must not bootstrap an empty manifest and wipe an existing global bun.lock.
+it.each([
+  ["update", "nothing to update"],
+  ["remove", "nothing to remove"],
+])("`bun %s -g` refuses when the global package.json is missing but bun.lock exists", async (sub, msg) => {
+  const lock = JSON.stringify({ lockfileVersion: 1, workspaces: { "": { dependencies: { pkg: "1.0.0" } } } });
+  using home = tempDir(`bun-${sub}-global-lock-no-manifest`, {
+    "package.json": JSON.stringify({ name: "home-project", private: true }),
+    ".bun": { install: { global: { "bun.lock": lock } } },
+  });
+  const homeDir = String(home);
+  const globalDir = join(homeDir, ".bun", "install", "global");
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), sub, "-g", ...(sub === "remove" ? ["pkg"] : [])],
+    cwd: homeDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: globalInstallEnv(homeDir),
+  });
+
+  const err = await stderr.text();
+  expect(err).toContain(msg);
+  await stdout.text();
+  expect(await exited).toBe(1);
+
+  // Nothing was created or destroyed in the global dir.
+  expect(await readdirSorted(globalDir)).toEqual(["bun.lock"]);
+  expect(await file(join(globalDir, "bun.lock")).text()).toBe(lock);
+});
+
+// A read-only -g command must not plant an empty manifest beside an existing lockfile for a later update to wipe against.
+it("`bun pm bin -g` does not create the global package.json when bun.lock exists", async () => {
+  const lock = JSON.stringify({ lockfileVersion: 1, workspaces: { "": { dependencies: { pkg: "1.0.0" } } } });
+  using home = tempDir("bun-pm-bin-global-lock-no-manifest", {
+    "package.json": JSON.stringify({ name: "home-project", private: true }),
+    ".bun": { install: { global: { "bun.lock": lock } } },
+  });
+  const homeDir = String(home);
+  const globalDir = join(homeDir, ".bun", "install", "global");
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "pm", "bin", "-g"],
+    cwd: homeDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: globalInstallEnv(homeDir),
+  });
+
+  const err = await stderr.text();
+  expect(err).toContain("No package.json");
+  await stdout.text();
+  expect(await exited).toBe(1);
+
+  expect(await readdirSorted(globalDir)).toEqual(["bun.lock"]);
+  expect(await file(join(globalDir, "bun.lock")).text()).toBe(lock);
 });

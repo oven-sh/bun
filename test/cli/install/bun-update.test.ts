@@ -2802,7 +2802,7 @@ describe("bun update <name> semantics", () => {
     );
   });
 
-  // The global dir (<dir>/.global/install/global) is a sibling of the cwd project: a first `-g` install into a global dir nested under a project walks up to that project's package.json.
+  // The global dir (<dir>/.global/install/global) is kept a sibling of the cwd project so the two stay visibly separate.
   describe("--global", () => {
     const PROJECT = { name: "project", dependencies: { "no-deps": "^1.0.0" } };
     const GLOBAL_PINNED = { "no-deps": "1.0.0", "a-dep": "1.0.1" };

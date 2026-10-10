@@ -671,6 +671,22 @@ const x = /*@__PURE__*/ expensive();
 // removed entirely
 ```
 
+### Function and class expression name removal
+
+**Mode:** `--minify-syntax`
+
+Removes unused names from function and class expressions, matching esbuild. A name is only removed when bundling (not in transform-only mode), the symbol is never referenced, and the scope contains no direct `eval`. Pass `--keep-names` to preserve the original names (useful for debugging or runtime reflection).
+
+```ts Input
+export var AB = function A() {};
+export var CD = class C {};
+```
+
+```js Output
+export var AB = function() {};
+export var CD = class {};
+```
+
 ### Identifier renaming
 
 **Mode:** `--minify-identifiers`

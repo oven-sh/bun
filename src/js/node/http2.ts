@@ -2079,7 +2079,7 @@ enum StreamState {
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
-// not invoke the write callback. The Writable callback is completed on a later turn instead, so
+// not leave a frame to report. The Writable callback is completed on a later turn instead, so
 // write() never settles synchronously — node's Http2Stream writes also only complete after the
 // session flushes to the socket, which is what makes write() return false past the
 // highWaterMark and 'drain' fire afterwards. streamWriteDone completes a chunk that was queued.

@@ -239,7 +239,7 @@ const MAX_WINDOW_SIZE_F64: f64 = MAX_WINDOW_SIZE as f64;
 const MAX_HEADER_TABLE_SIZE_F64: f64 = MAX_HEADER_TABLE_SIZE as f64;
 const MAX_FRAME_SIZE_F64: f64 = MAX_FRAME_SIZE as f64;
 // writeStream() return-value flag (bitwise-OR'd with the settled stream state, which is < 8):
-// the data was flushed without queueing and the engine did not invoke the write callback —
+// the data was flushed without queueing and no onStreamWriteDone follows for the write:
 // the JS caller (Http2Stream._write/_writev) completes it asynchronously. Mirrored in
 // src/js/node/http2.ts (kWriteFlushedWithoutCallback).
 const WRITE_FLUSHED_WITHOUT_CALLBACK: u32 = 0x10;
@@ -5858,7 +5858,7 @@ impl H2FrameParser {
         // 5 = HALF_CLOSED_LOCAL: the JS caller runs markWritableDone itself instead of
         // the engine re-entering the VM with an onStreamEnd(5) dispatch.
         // WRITE_FLUSHED_WITHOUT_CALLBACK: the data was handed to the socket synchronously and
-        // the write callback was not (and will not be) invoked by the engine; the JS caller
+        // no onStreamWriteDone follows (nothing was queued), so the JS caller
         // completes the Writable callback asynchronously.
         let mut result = settled_state as u32;
         if flushed {

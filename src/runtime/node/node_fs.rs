@@ -7672,7 +7672,7 @@ impl NodeFS {
         .unwrap_or(Ok(()))
     }
 
-    pub(crate) fn rm(&mut self, args: &args::Rm, _: Flavor) -> Maybe<ret::Rm> {
+    pub(crate) fn rm(&mut self, args: &args::Rm, flavor: Flavor) -> Maybe<ret::Rm> {
         // We cannot use removefileat() on macOS because it does not handle write-protected files as expected.
         if args.recursive {
             // slice_z adds the cwd drive to a rooted path; Syscall::*at does not.
@@ -7680,9 +7680,14 @@ impl NodeFS {
             let resolved = args.path.slice_z(&mut self.sync_error_buf).as_bytes();
             #[cfg(not(windows))]
             let resolved = args.path.slice();
-            if let Err(err) = rm_with_retries(args, || {
-                zig_delete_tree(&sys::Dir::cwd(), resolved, sys::FileKind::File)
-            }) {
+            let walk = || zig_delete_tree(&sys::Dir::cwd(), resolved, sys::FileKind::File);
+            // `fs.promises.rm` retries an async call on a timer, so a retry
+            // delay never holds a work-pool thread.
+            let result = match flavor {
+                Flavor::Sync => rm_with_retries(args, walk),
+                Flavor::Async => walk(),
+            };
+            if let Err(err) = result {
                 // The walker swallows ENOENT below the root, so this is the
                 // root itself.
                 if err.get_errno() == E::ENOENT {
@@ -7703,7 +7708,6 @@ impl NodeFS {
         }
 
         let dest = args.path.slice_z(&mut self.sync_error_buf);
-        // Node ignores maxRetries and retryDelay when recursive is not true.
         if let Err(err1) = sys::unlink(dest) {
             let e1 = err1.get_errno();
             if e1 == E::ENOENT {
@@ -7716,7 +7720,8 @@ impl NodeFS {
                     sys::Error::from_code(E::ENOENT, sys::Tag::lstat).with_path(args.path.slice())
                 );
             }
-            return Err(err1.with_path_and_syscall(args.path.slice(), sys::Tag::rm));
+            return Err(sys::Error::from_code(map_rm_errno_narrow(e1), sys::Tag::rm)
+                .with_path(args.path.slice()));
         }
         Ok(())
     }
@@ -9393,6 +9398,19 @@ impl ReaddirEntry for Buffer {
     }
 }
 
+// `rm` non-recursive unlink/rmdir fallback — narrower table; anything not
+// listed here falls through to EFAULT.
+//
+// `bun_sys::unlink`/`libc::rmdir` yield a raw errno. Notably raw EPERM —
+// like EISDIR/ENOTDIR/ENOTEMPTY — intentionally falls through to EFAULT here.
+fn map_rm_errno_narrow(e: E) -> E {
+    match e {
+        E::EACCES => E::EACCES,
+        E::ELOOP | E::ENAMETOOLONG | E::ENOMEM | E::EROFS | E::EBUSY | E::ENOENT => e,
+        _ => E::EFAULT,
+    }
+}
+
 /// # Safety
 /// `path` must point to a valid NUL-terminated C string.
 #[unsafe(no_mangle)]
@@ -9554,6 +9572,8 @@ struct DeleteTreeStackItem {
     /// owner; this is just the raw fd for `Dir::borrow` at call sites.
     parent_dir: FD,
     iter: DirIterator::WrappedIterator,
+    /// This listing of the directory removed at least one entry.
+    removed: bool,
 }
 
 pub(crate) fn zig_delete_tree(
@@ -9585,6 +9605,7 @@ pub(crate) fn zig_delete_tree(
         name_is_borrowed: true,
         parent_dir: self_.fd,
         iter: DirIterator::WrappedIterator::init(initial_iterable_dir.into_raw()),
+        removed: false,
     });
 
     'process_stack: while !stack.is_empty() {
@@ -9617,6 +9638,7 @@ pub(crate) fn zig_delete_tree(
                                     iter: DirIterator::WrappedIterator::init(
                                         iterable_dir.into_raw(),
                                     ),
+                                    removed: false,
                                 });
                                 continue 'process_stack;
                             }
@@ -9671,7 +9693,10 @@ pub(crate) fn zig_delete_tree(
                             &entry_name,
                             entry.kind,
                         ) {
-                            Ok(()) => break 'handle_entry,
+                            Ok(()) => {
+                                stack[top_idx].removed = true;
+                                break 'handle_entry;
+                            }
                             Err(e) => {
                                 // Another process removed it first.
                                 if e.get_errno() == E::ENOENT {
@@ -9688,7 +9713,10 @@ pub(crate) fn zig_delete_tree(
                 } else {
                     let top_fd = stack[top_idx].iter.iter.dir;
                     match dt_delete_file(sys::Dir::borrow(&top_fd), &entry_name) {
-                        Ok(()) => break 'handle_entry,
+                        Ok(()) => {
+                            stack[top_idx].removed = true;
+                            break 'handle_entry;
+                        }
                         // Another process removed it first.
                         Err(E::ENOENT) => break 'handle_entry,
                         Err(E::EISDIR) => {
@@ -9767,12 +9795,22 @@ pub(crate) fn zig_delete_tree(
 
         let mut need_to_retry = false;
         match dt_delete_dir(sys::Dir::borrow(&parent_dir), name) {
-            Ok(()) => {}
+            Ok(()) => {
+                if let Some(parent) = stack.last_mut() {
+                    parent.removed = true;
+                }
+            }
             Err(E::ENOENT) => {}
-            Err(E::ENOTEMPTY) => need_to_retry = true,
             // Some OSes report EEXIST instead of ENOTEMPTY for a non-empty
             // directory; treat it the same.
-            Err(E::EEXIST) => need_to_retry = true,
+            Err(e @ (E::ENOTEMPTY | E::EEXIST)) => {
+                // Another listing cannot empty a directory when this one
+                // removed nothing: what is left cannot be removed by name.
+                if !top.removed {
+                    return Err(dt_err(e, sys::Tag::rmdir, &top_path(stack)));
+                }
+                need_to_retry = true;
+            }
             #[cfg(target_os = "macos")]
             Err(e @ (E::EACCES | E::EPERM)) => {
                 // Node's rimraf keeps going after a child deletion is denied and
@@ -9839,6 +9877,7 @@ pub(crate) fn zig_delete_tree(
                 name_is_borrowed: top.name_is_borrowed,
                 parent_dir,
                 iter: DirIterator::WrappedIterator::init(iterable_dir.into_raw()),
+                removed: false,
             });
             continue 'process_stack;
         }
@@ -9902,6 +9941,8 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
         // Here we must avoid recursion, in order to provide O(1) memory guarantee of this function.
         // Go through each entry and if it is not a directory, delete it. If it is a directory,
         // open it, and close the original directory. Repeat. Then start the entire operation over.
+        // The listing of `dir` removed at least one entry.
+        let mut removed = false;
         let result: sys::Maybe<()> = 'scan_dir: loop {
             let mut dir_it = DirIterator::WrappedIterator::init(dir.fd);
             'dir_it: loop {
@@ -9924,6 +9965,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
                                 dir_name_buf[..n].copy_from_slice(&entry_name[..n]);
                                 dir_name_len = n;
                                 dir_name_is_sub_path = false;
+                                removed = false;
                                 continue 'scan_dir;
                             }
                             Err(E::ENOTDIR) => {
@@ -9938,7 +9980,10 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
                         }
                     } else {
                         match dt_delete_file(&dir, &entry_name) {
-                            Ok(()) => continue 'dir_it,
+                            Ok(()) => {
+                                removed = true;
+                                continue 'dir_it;
+                            }
                             Err(E::ENOENT) => continue 'dir_it,
                             Err(E::EISDIR) => {
                                 treat_as_dir = true;
@@ -9960,6 +10005,9 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
             };
             if let Some(d) = cleanup_dir_parent {
                 match dt_delete_dir(&d, dir_name) {
+                    Err(e @ (E::ENOTEMPTY | E::EEXIST)) if !removed => {
+                        return Err(dt_err(e, sys::Tag::rmdir, sub_path));
+                    }
                     Ok(()) | Err(E::ENOENT) | Err(E::ENOTEMPTY) | Err(E::EEXIST) => {
                         // These two things can happen due to file system race conditions.
                         continue 'start_over;
@@ -9971,6 +10019,9 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
             } else {
                 match dt_delete_dir(self_, sub_path) {
                     Ok(()) | Err(E::ENOENT) => return Ok(()),
+                    Err(e @ (E::ENOTEMPTY | E::EEXIST)) if !removed => {
+                        return Err(dt_err(e, sys::Tag::rmdir, sub_path));
+                    }
                     Err(E::ENOTEMPTY) | Err(E::EEXIST) => continue 'start_over,
                     Err(e) => return Err(dt_err(e, sys::Tag::rmdir, sub_path)),
                 }

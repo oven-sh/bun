@@ -8,8 +8,27 @@ pub struct JsxQuotes {
 
 const UNEXPECTED: Message = Message::new("unexpected", "Unexpected usage of {{description}}.");
 
-impl JsxQuotes {
-    fn check<'a>(&self, attribute: Prop<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for JsxQuotes {
+    const META: Meta = Meta::eslint("jsx-quotes", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new().props();
+    type State<'a> = ();
+
+    fn new(options: &Options) -> Self {
+        JsxQuotes {
+            quote: match options.str(0) {
+                Some("prefer-single") => b'\'',
+                _ => b'"',
+            },
+        }
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.has_exprs([ExprTag::Jsx]).then_some(())
+    }
+
+    fn prop<'a>(&self, attribute: Prop<'a>, cx: &mut Cx<'a, Self>) {
         if !attribute.is_jsx_attribute() || attribute.kind() != PropKind::Init {
             return;
         }
@@ -32,27 +51,5 @@ impl JsxQuotes {
             let converted: Vec<u8> = raw.iter().map(|&b| if b == other { quote } else { b }).collect();
             fixer.replace(value, converted)
         });
-    }
-}
-
-impl Rule for JsxQuotes {
-    const META: Meta = Meta::eslint("jsx-quotes", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        JsxQuotes {
-            quote: match options.str(0) {
-                Some("prefer-single") => b'\'',
-                _ => b'"',
-            },
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.has_exprs([ExprTag::Jsx]) {
-            on.props(Self::check);
-        }
     }
 }

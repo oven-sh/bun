@@ -26,41 +26,44 @@ fn leftmost_identifier_reference(e: Expr<'_>) -> Option<Expr<'_>> {
 
 impl Rule for NoArrayForEach {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-array-for-each", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoArrayForEach
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("forEach") {
+            return None;
+        }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(ExprKind::Dot { obj, name, .. }) = e.callee().and_then(get_member_expr).map(Expr::kind) else {
+            return;
+        };
+        if !name.name().is("forEach") {
             return;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(ExprKind::Dot { obj, name, .. }) = e.callee().and_then(get_member_expr).map(Expr::kind) else {
-                return;
-            };
-            if !name.name().is("forEach") {
-                return;
-            }
-            let object_name = match obj.as_ident() {
-                Some(name) => (!obj.is_parenthesized()).then_some(name),
-                None => as_member_expression(obj).and_then(static_property_name),
-            };
-            if object_name.is_some_and(|it| it.is_any(&IGNORED_OBJECTS))
-                || cx.file().mentions("effect")
-                    && leftmost_identifier_reference(obj).is_some_and(|it| is_import_symbol(it, "effect", "Effect"))
-            {
-                return;
-            }
-            // By the parameters of the callback.
-            let first = e.as_call().and_then(|it| it.args().first());
-            let params = first.map(get_inner_expression).and_then(Expr::as_fn).map(Func::params);
-            cx.report(name, NO_ARRAY_FOR_EACH).help(match params {
-                Some(params) if params.len() >= 3 || params.iter().any(Param::is_rest) => EXTRA_ARGUMENTS,
-                Some(params) if params.len() == 2 => INDEX,
-                _ => ELEMENT_ONLY,
-            });
+        let object_name = match obj.as_ident() {
+            Some(name) => (!obj.is_parenthesized()).then_some(name),
+            None => as_member_expression(obj).and_then(static_property_name),
+        };
+        if object_name.is_some_and(|it| it.is_any(&IGNORED_OBJECTS))
+            || cx.file().mentions("effect")
+                && leftmost_identifier_reference(obj).is_some_and(|it| is_import_symbol(it, "effect", "Effect"))
+        {
+            return;
+        }
+        // By the parameters of the callback.
+        let first = e.as_call().and_then(|it| it.args().first());
+        let params = first.map(get_inner_expression).and_then(Expr::as_fn).map(Func::params);
+        cx.report(name, NO_ARRAY_FOR_EACH).help(match params {
+            Some(params) if params.len() >= 3 || params.iter().any(Param::is_rest) => EXTRA_ARGUMENTS,
+            Some(params) if params.len() == 2 => INDEX,
+            _ => ELEMENT_ONLY,
         });
     }
 }

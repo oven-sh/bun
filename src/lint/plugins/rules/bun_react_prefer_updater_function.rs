@@ -58,22 +58,21 @@ fn is_setter_of<'a>(setter: Expr<'a>, state: Expr<'a>) -> bool {
 
 impl Rule for ReactPreferUpdaterFunction {
     const META: Meta = Meta::plugin(Plugin::Bun, "react-prefer-updater-function", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         ReactPreferUpdaterFunction
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            if let Some(call) = e.as_call()
-                && call.args().len() == 1
-                && call.callee().tag() == ExprTag::Ident
-                && let Some(value) = call.args().first()
-                && let Some(state) = spread_identifiers(value).find(|it| is_setter_of(call.callee(), *it))
-            {
-                cx.report(state, STALE_STATE).data("state", state.text()).data("setter", call.callee().text());
-            }
-        });
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(call) = e.as_call()
+            && call.args().len() == 1
+            && call.callee().tag() == ExprTag::Ident
+            && let Some(value) = call.args().first()
+            && let Some(state) = spread_identifiers(value).find(|it| is_setter_of(call.callee(), *it))
+        {
+            cx.report(state, STALE_STATE).data("state", state.text()).data("setter", call.callee().text());
+        }
     }
 }

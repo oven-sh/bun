@@ -10,32 +10,35 @@ const PREFER_STRING_TRIM_START_END: Message = Message::new("", "Prefer `{{good_t
 impl Rule for PreferStringTrimStartEnd {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "prefer-string-trim-start-end", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferStringTrimStartEnd
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if !file.mentions_any(&["trimLeft", "trimRight"]) {
-            return;
+            return None;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            if let Some(call_expr) = e.as_call()
-                && call_expr.args().is_empty()
-                && !call_expr.is_optional()
-                && let Some(ExprKind::Dot { name, .. }) = get_member_expr(call_expr.callee()).map(Expr::kind)
-                && let Some(good_trim) = match name.bytes() {
-                    b"trimLeft" => Some("trimStart"),
-                    b"trimRight" => Some("trimEnd"),
-                    _ => None,
-                }
-            {
-                cx.report(name, PREFER_STRING_TRIM_START_END)
-                    .data("good_trim", good_trim)
-                    .data("bad_trim", name.bytes())
-                    .fix(|fixer| fixer.replace(name, good_trim));
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(call_expr) = e.as_call()
+            && call_expr.args().is_empty()
+            && !call_expr.is_optional()
+            && let Some(ExprKind::Dot { name, .. }) = get_member_expr(call_expr.callee()).map(Expr::kind)
+            && let Some(good_trim) = match name.bytes() {
+                b"trimLeft" => Some("trimStart"),
+                b"trimRight" => Some("trimEnd"),
+                _ => None,
             }
-        });
+        {
+            cx.report(name, PREFER_STRING_TRIM_START_END)
+                .data("good_trim", good_trim)
+                .data("bad_trim", name.bytes())
+                .fix(|fixer| fixer.replace(name, good_trim));
+        }
     }
 }

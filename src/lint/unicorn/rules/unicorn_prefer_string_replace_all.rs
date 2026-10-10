@@ -72,46 +72,49 @@ fn get_pattern_replacement(e: Expr) -> Option<Vec<u8>> {
 impl Rule for PreferStringReplaceAll {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "prefer-string-replace-all", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferStringReplaceAll
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if !file.mentions_any(&["replace", "replaceAll"]) {
-            return;
+            return None;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(call) = e.as_call().filter(|it| it.args().len() == 2) else {
-                return;
-            };
-            let Some(name) = get_member_expr(call.callee()).and_then(Expr::member_name) else {
-                return;
-            };
-            let Some(pattern) = call.args().first() else {
-                return;
-            };
-            match name.bytes() {
-                b"replaceAll" => {
-                    if let Some(replacement) = get_pattern_replacement(pattern) {
-                        let literal = generate_string_literal(&replacement);
-                        cx.report(pattern.outer_span(), STRING_LITERAL)
-                            .data("replacement", replacement)
-                            .fix(|fixer| fixer.replace(pattern.outer_span(), literal));
-                    }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call) = e.as_call().filter(|it| it.args().len() == 2) else {
+            return;
+        };
+        let Some(name) = get_member_expr(call.callee()).and_then(Expr::member_name) else {
+            return;
+        };
+        let Some(pattern) = call.args().first() else {
+            return;
+        };
+        match name.bytes() {
+            b"replaceAll" => {
+                if let Some(replacement) = get_pattern_replacement(pattern) {
+                    let literal = generate_string_literal(&replacement);
+                    cx.report(pattern.outer_span(), STRING_LITERAL)
+                        .data("replacement", replacement)
+                        .fix(|fixer| fixer.replace(pattern.outer_span(), literal));
                 }
-                b"replace" if is_reg_exp_with_global_flag(pattern) => {
-                    cx.report(name, USE_REPLACE_ALL).fix(|fixer| {
-                        let mut fixes = vec![fixer.replace(name, "replaceAll")];
-                        if let Some(replacement) = get_pattern_replacement(pattern) {
-                            fixes.push(fixer.replace(pattern.outer_span(), generate_string_literal(&replacement)));
-                        }
-                        fixes
-                    });
-                }
-                _ => {}
             }
-        });
+            b"replace" if is_reg_exp_with_global_flag(pattern) => {
+                cx.report(name, USE_REPLACE_ALL).fix(|fixer| {
+                    let mut fixes = vec![fixer.replace(name, "replaceAll")];
+                    if let Some(replacement) = get_pattern_replacement(pattern) {
+                        fixes.push(fixer.replace(pattern.outer_span(), generate_string_literal(&replacement)));
+                    }
+                    fixes
+                });
+            }
+            _ => {}
+        }
     }
 }

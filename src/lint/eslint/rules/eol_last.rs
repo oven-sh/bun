@@ -25,8 +25,22 @@ fn final_line_breaks_start(text: &[u8]) -> usize {
     rest.len()
 }
 
-impl EolLast {
-    fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
+impl Rule for EolLast {
+    const META: Meta = Meta::eslint("eol-last", Kind::Layout).fixable(Fixable::Whitespace).deprecated();
+    const ON: On = On::new().finish();
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        EolLast {
+            mode: match options.str(0) {
+                Some("never") => Mode::Never,
+                Some("windows") => Mode::Windows,
+                _ => Mode::Always,
+            },
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
         let text = cx.text();
         let end = text.len() as u32;
         // ESLint's text is without the byte order mark.
@@ -43,24 +57,5 @@ impl EolLast {
             cx.report(Span::new(start, end), UNEXPECTED)
                 .fix(|fixer| fixer.remove(Span::new(final_line_breaks_start(text) as u32, end)));
         }
-    }
-}
-
-impl Rule for EolLast {
-    const META: Meta = Meta::eslint("eol-last", Kind::Layout).fixable(Fixable::Whitespace).deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        EolLast {
-            mode: match options.str(0) {
-                Some("never") => Mode::Never,
-                Some("windows") => Mode::Windows,
-                _ => Mode::Always,
-            },
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.finish(Self::check);
     }
 }

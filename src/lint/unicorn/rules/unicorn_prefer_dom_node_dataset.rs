@@ -11,75 +11,78 @@ const PREFER_DATASET: Message = Message::new("", "Prefer using `dataset` over `{
 
 impl Rule for PreferDomNodeDataset {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-dom-node-dataset", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferDomNodeDataset
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions_any(&["setAttribute", "getAttribute", "removeAttribute", "hasAttribute"]) {
-            return;
+            return None;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(call_expr) = e.as_call() else {
-                return;
-            };
-            let Some(member_expr) = get_member_expr(call_expr.callee()).filter(|it| !it.is_private_member()) else {
-                return;
-            };
-            let ExprKind::Dot { obj, name: method, .. } = member_expr.kind() else {
-                return;
-            };
-            let args = call_expr.args();
-            let is_candidate = match method.bytes() {
-                b"setAttribute" => args.len() == 2,
-                b"removeAttribute" | b"hasAttribute" => args.len() == 1,
-                // `Locator#getAttribute()` of Playwright returns a promise.
-                b"getAttribute" => {
-                    let is_awaited = matches!(e.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Await);
-                    args.len() == 1 && !(is_awaited && !e.is_parenthesized() && !e.is_chain_root())
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call_expr) = e.as_call() else {
+            return;
+        };
+        let Some(member_expr) = get_member_expr(call_expr.callee()).filter(|it| !it.is_private_member()) else {
+            return;
+        };
+        let ExprKind::Dot { obj, name: method, .. } = member_expr.kind() else {
+            return;
+        };
+        let args = call_expr.args();
+        let is_candidate = match method.bytes() {
+            b"setAttribute" => args.len() == 2,
+            b"removeAttribute" | b"hasAttribute" => args.len() == 1,
+            // `Locator#getAttribute()` of Playwright returns a promise.
+            b"getAttribute" => {
+                let is_awaited = matches!(e.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Await);
+                args.len() == 1 && !(is_awaited && !e.is_parenthesized() && !e.is_chain_root())
+            }
+            _ => false,
+        };
+        let Some(string_lit) = args.first().filter(|it| is_candidate && !it.is_parenthesized()) else {
+            return;
+        };
+        let Some(attribute) = string_lit.as_string().map(Name::bytes) else {
+            return;
+        };
+        let Some(dataset_property_name) = attribute.strip_prefix(b"data-").or_else(|| attribute.strip_prefix(b"DATA-")) else {
+            return;
+        };
+        let is_removal = method.name().is("removeAttribute");
+        let place = if is_removal { string_lit.span() } else { method.span() };
+        cx.report(place, PREFER_DATASET).data("method_name", method).fix(|fixer| {
+            let file = fixer.file();
+            let name = dash_to_camel_case(dataset_property_name);
+            let access: &[u8] = if member_expr.is_optional() { b"?.dataset" } else { b".dataset" };
+            let object_text = file.slice(obj.outer_span());
+            let fixed = match method.bytes() {
+                b"setAttribute" => {
+                    if call_uses_optional_chain(call_expr) || !is_expression_statement(e) {
+                        return None;
+                    }
+                    let value = file.slice(args.get(1)?.outer_span());
+                    concat(&[object_text, b".dataset", &dataset_property_text(&name), b" = ", value])
                 }
-                _ => false,
+                b"getAttribute" if !call_expr.is_optional() => concat(&[object_text, access, &dataset_property_text(&name)]),
+                b"removeAttribute" if !call_expr.is_optional() && is_expression_statement(e) => {
+                    concat(&[b"delete ", object_text, access, &dataset_property_text(&name)])
+                }
+                b"hasAttribute" if !call_uses_optional_chain(call_expr) => {
+                    let mut fixed = concat(&[b"Object.hasOwn(", object_text, b".dataset, "]);
+                    print_string(&mut fixed, &name, b'"');
+                    fixed.push(b')');
+                    fixed
+                }
+                _ => return None,
             };
-            let Some(string_lit) = args.first().filter(|it| is_candidate && !it.is_parenthesized()) else {
-                return;
-            };
-            let Some(attribute) = string_lit.as_string().map(Name::bytes) else {
-                return;
-            };
-            let Some(dataset_property_name) = attribute.strip_prefix(b"data-").or_else(|| attribute.strip_prefix(b"DATA-")) else {
-                return;
-            };
-            let is_removal = method.name().is("removeAttribute");
-            let place = if is_removal { string_lit.span() } else { method.span() };
-            cx.report(place, PREFER_DATASET).data("method_name", method).fix(|fixer| {
-                let file = fixer.file();
-                let name = dash_to_camel_case(dataset_property_name);
-                let access: &[u8] = if member_expr.is_optional() { b"?.dataset" } else { b".dataset" };
-                let object_text = file.slice(obj.outer_span());
-                let fixed = match method.bytes() {
-                    b"setAttribute" => {
-                        if call_uses_optional_chain(call_expr) || !is_expression_statement(e) {
-                            return None;
-                        }
-                        let value = file.slice(args.get(1)?.outer_span());
-                        concat(&[object_text, b".dataset", &dataset_property_text(&name), b" = ", value])
-                    }
-                    b"getAttribute" if !call_expr.is_optional() => concat(&[object_text, access, &dataset_property_text(&name)]),
-                    b"removeAttribute" if !call_expr.is_optional() && is_expression_statement(e) => {
-                        concat(&[b"delete ", object_text, access, &dataset_property_text(&name)])
-                    }
-                    b"hasAttribute" if !call_uses_optional_chain(call_expr) => {
-                        let mut fixed = concat(&[b"Object.hasOwn(", object_text, b".dataset, "]);
-                        print_string(&mut fixed, &name, b'"');
-                        fixed.push(b')');
-                        fixed
-                    }
-                    _ => return None,
-                };
-                Some(fixer.replace(e, fixed))
-            });
+            Some(fixer.replace(e, fixed))
         });
     }
 }

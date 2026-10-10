@@ -8,18 +8,19 @@ pub struct PreferToBe;
 
 impl Rule for PreferToBe {
     const META: Meta = Meta::oxlint(Plugin::Jest, "prefer-to-be", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferToBe
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if jest::is_test(file) {
-            on.finish(|_, cx| {
-                let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
-                jest::run_on_jest_nodes(&ctx, &prefer_to_be::run);
-            });
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        jest::is_test(file).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        jest::run_on_jest_nodes(&ctx, &prefer_to_be::run);
     }
 }

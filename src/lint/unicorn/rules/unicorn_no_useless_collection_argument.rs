@@ -11,48 +11,51 @@ const NO_USELESS_COLLECTION_ARGUMENT: Message = Message::new("", "The {{expr_typ
 impl Rule for NoUselessCollectionArgument {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "no-useless-collection-argument", Kind::Suggestion).has_suggestions();
+    const ON: On = On::new().exprs(&[ExprTag::New]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoUselessCollectionArgument
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions_any(&["Set", "Map", "WeakSet", "WeakMap"]) {
+            return None;
+        }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::New(new_expr) = e.kind() else {
+            return;
+        };
+        if !is_new_expression(new_expr, &["Set", "Map", "WeakSet", "WeakMap"], Some(1), Some(1)) {
             return;
         }
-        on.exprs([ExprTag::New], |_, e, cx| {
-            let ExprKind::New(new_expr) = e.kind() else {
-                return;
-            };
-            if !is_new_expression(new_expr, &["Set", "Map", "WeakSet", "WeakMap"], Some(1), Some(1)) {
-                return;
-            }
-            let Some(first_arg_expr) = new_expr.args().first().filter(|it| it.tag() != ExprTag::Spread) else {
-                return;
-            };
-            let first_arg_expr_inner = get_inner_expression(first_arg_expr);
-            // `a ?? []`
-            let (useless_expr, left_of_logical_expr) = match first_arg_expr_inner.kind() {
-                ExprKind::Binary { op: BinOp::Nullish, left, right } => (get_inner_expression(right), Some(left)),
-                _ => (first_arg_expr_inner, None),
-            };
-            let description = match useless_expr.kind() {
-                ExprKind::Array(elements) if elements.is_empty() => "empty array",
-                ExprKind::String(value) if value.bytes().is_empty() => "empty string",
-                ExprKind::Null => "null",
-                ExprKind::Ident(name) if name.is("undefined") => "undefined",
-                _ => return,
-            };
-            cx.report(useless_expr, NO_USELESS_COLLECTION_ARGUMENT).data("expr_type", description).suggest_with(
-                NO_USELESS_COLLECTION_ARGUMENT,
-                &[("expr_type", description.as_bytes())],
-                |fixer| match left_of_logical_expr {
-                    Some(left) => remove_fallback(fixer, first_arg_expr, first_arg_expr_inner, left),
-                    None => remove_argument(fixer, first_arg_expr),
-                },
-            );
-        });
+        let Some(first_arg_expr) = new_expr.args().first().filter(|it| it.tag() != ExprTag::Spread) else {
+            return;
+        };
+        let first_arg_expr_inner = get_inner_expression(first_arg_expr);
+        // `a ?? []`
+        let (useless_expr, left_of_logical_expr) = match first_arg_expr_inner.kind() {
+            ExprKind::Binary { op: BinOp::Nullish, left, right } => (get_inner_expression(right), Some(left)),
+            _ => (first_arg_expr_inner, None),
+        };
+        let description = match useless_expr.kind() {
+            ExprKind::Array(elements) if elements.is_empty() => "empty array",
+            ExprKind::String(value) if value.bytes().is_empty() => "empty string",
+            ExprKind::Null => "null",
+            ExprKind::Ident(name) if name.is("undefined") => "undefined",
+            _ => return,
+        };
+        cx.report(useless_expr, NO_USELESS_COLLECTION_ARGUMENT).data("expr_type", description).suggest_with(
+            NO_USELESS_COLLECTION_ARGUMENT,
+            &[("expr_type", description.as_bytes())],
+            |fixer| match left_of_logical_expr {
+                Some(left) => remove_fallback(fixer, first_arg_expr, first_arg_expr_inner, left),
+                None => remove_argument(fixer, first_arg_expr),
+            },
+        );
     }
 }
 

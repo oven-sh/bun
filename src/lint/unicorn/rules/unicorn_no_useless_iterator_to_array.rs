@@ -110,52 +110,55 @@ impl Rule for NoUselessIteratorToArray {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-useless-iterator-to-array", Kind::Problem)
         .fixable(Fixable::Code)
         .has_suggestions();
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoUselessIteratorToArray
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("toArray") {
+            return None;
+        }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call) = e.as_call().filter(|it| it.args().is_empty()) else {
+            return;
+        };
+        let Some(member) = plain_method_callee(call) else {
+            return;
+        };
+        let (Some(object), Some(property)) = (member.object(), member.member_name()) else {
+            return;
+        };
+        if !property.name().is("toArray") {
             return;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(call) = e.as_call().filter(|it| it.args().is_empty()) else {
-                return;
-            };
-            let Some(member) = plain_method_callee(call) else {
-                return;
-            };
-            let (Some(object), Some(property)) = (member.object(), member.member_name()) else {
-                return;
-            };
-            if !property.name().is("toArray") {
-                return;
+        let Some(problem) = outermost_wrapper(e).and_then(problem_of) else {
+            return;
+        };
+        let fix = |fixer: Fixer<'a>| {
+            [
+                // `.toArray`
+                fixer.remove(Span::after(object.outer_span(), member.span().end)),
+                // `()`
+                fixer.remove(Span::after(call.callee().outer_span(), e.span().end)),
+            ]
+        };
+        match problem {
+            Problem::IterableAccepting { description, is_safe } => {
+                let report = cx.report(property, ITERABLE_ACCEPTING).data("description", description);
+                if is_safe { report.fix(fix) } else { report.suggest(REMOVE_TO_ARRAY, fix) }
             }
-            let Some(problem) = outermost_wrapper(e).and_then(problem_of) else {
-                return;
-            };
-            let fix = |fixer: Fixer<'a>| {
-                [
-                    // `.toArray`
-                    fixer.remove(Span::after(object.outer_span(), member.span().end)),
-                    // `()`
-                    fixer.remove(Span::after(call.callee().outer_span(), e.span().end)),
-                ]
-            };
-            match problem {
-                Problem::IterableAccepting { description, is_safe } => {
-                    let report = cx.report(property, ITERABLE_ACCEPTING).data("description", description);
-                    if is_safe { report.fix(fix) } else { report.suggest(REMOVE_TO_ARRAY, fix) }
-                }
-                Problem::ForOf => cx.report(property, FOR_OF).fix(fix),
-                Problem::YieldStar => cx.report(property, YIELD_STAR).fix(fix),
-                Problem::Spread => cx.report(property, SPREAD).fix(fix),
-                Problem::IteratorMethod(method) => {
-                    cx.report(property, ITERATOR_METHOD).data("method", method).suggest(REMOVE_TO_ARRAY, fix)
-                }
-            };
-        });
+            Problem::ForOf => cx.report(property, FOR_OF).fix(fix),
+            Problem::YieldStar => cx.report(property, YIELD_STAR).fix(fix),
+            Problem::Spread => cx.report(property, SPREAD).fix(fix),
+            Problem::IteratorMethod(method) => {
+                cx.report(property, ITERATOR_METHOD).data("method", method).suggest(REMOVE_TO_ARRAY, fix)
+            }
+        };
     }
 }

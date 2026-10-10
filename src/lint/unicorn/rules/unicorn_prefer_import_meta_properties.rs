@@ -188,68 +188,69 @@ fn iterate_problems_from_filename<'a>(node: Expr<'a>, report_filename_node: bool
 impl Rule for PreferImportMetaProperties {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "prefer-import-meta-properties", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::ImportMeta]);
     type State<'a> = Known<'a>;
 
     fn new(_: &Options) -> Self {
         PreferImportMetaProperties
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Known<'a> {
-        if file.mentions_any(&["dirname", "fileURLToPath"]) {
-            on.exprs([ExprTag::ImportMeta], check);
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Known<'a>> {
+        if !file.mentions_any(&["dirname", "fileURLToPath"]) {
+            return None;
         }
-        Known::default()
+        Some(Known::default())
     }
-}
 
-fn check<'a>(_: &PreferImportMetaProperties, meta: Expr<'a>, cx: Context<'_, 'a>) {
-    let Some(Node::Expr(member)) = parent_node(meta) else {
-        return;
-    };
-    let ExprKind::Dot { name, chain: Chain::No, .. } = member.kind() else {
-        return;
-    };
-    if name.name().is("filename") {
-        iterate_problems_from_filename(member, false, cx);
-        return;
-    }
-    let Some(Node::Expr(parent)) = parent_node(member).filter(|_| name.name().is("url")) else {
-        return;
-    };
-    match parent.kind() {
-        // `fileURLToPath(import.meta.url)`
-        ExprKind::Call(call) => {
-            if call.args().first() == Some(member)
-                && is_node_builtin_module_function_call(parent, Function::FileUrlToPath, &mut cx.state)
-            {
-                iterate_problems_from_filename(parent, true, cx);
-            }
+    fn expr<'a>(&self, meta: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(Node::Expr(member)) = parent_node(meta) else {
+            return;
+        };
+        let ExprKind::Dot { name, chain: Chain::No, .. } = member.kind() else {
+            return;
+        };
+        if name.name().is("filename") {
+            iterate_problems_from_filename(member, false, cx);
+            return;
         }
-        ExprKind::New(new_url) => {
-            let (callee, args) = (new_url.callee(), new_url.args());
-            if !callee.is_ident("URL") || callee.is_parenthesized() || callee.symbol().is_some() {
-                return;
-            }
-            let Some(url_parent) = call_with_first_argument(parent) else {
-                return;
-            };
-            if !is_node_builtin_module_function_call(url_parent, Function::FileUrlToPath, &mut cx.state) {
-                return;
-            }
-            match (args.len(), args.first()) {
-                // `fileURLToPath(new URL(import.meta.url))`
-                (1, Some(first)) if first == member => iterate_problems_from_filename(url_parent, true, cx),
-                // `fileURLToPath(new URL(".", import.meta.url))`
-                (2, Some(first))
-                    if args.get(1) == Some(member)
-                        && !first.is_parenthesized()
-                        && first.as_string().is_some_and(|it| it.is_any(&[".", "./"])) =>
+        let Some(Node::Expr(parent)) = parent_node(member).filter(|_| name.name().is("url")) else {
+            return;
+        };
+        match parent.kind() {
+            // `fileURLToPath(import.meta.url)`
+            ExprKind::Call(call) => {
+                if call.args().first() == Some(member)
+                    && is_node_builtin_module_function_call(parent, Function::FileUrlToPath, &mut cx.state)
                 {
-                    report_dirname(url_parent, cx);
+                    iterate_problems_from_filename(parent, true, cx);
                 }
-                _ => {}
             }
+            ExprKind::New(new_url) => {
+                let (callee, args) = (new_url.callee(), new_url.args());
+                if !callee.is_ident("URL") || callee.is_parenthesized() || callee.symbol().is_some() {
+                    return;
+                }
+                let Some(url_parent) = call_with_first_argument(parent) else {
+                    return;
+                };
+                if !is_node_builtin_module_function_call(url_parent, Function::FileUrlToPath, &mut cx.state) {
+                    return;
+                }
+                match (args.len(), args.first()) {
+                    // `fileURLToPath(new URL(import.meta.url))`
+                    (1, Some(first)) if first == member => iterate_problems_from_filename(url_parent, true, cx),
+                    // `fileURLToPath(new URL(".", import.meta.url))`
+                    (2, Some(first))
+                        if args.get(1) == Some(member)
+                            && !first.is_parenthesized()
+                            && first.as_string().is_some_and(|it| it.is_any(&[".", "./"])) =>
+                    {
+                        report_dirname(url_parent, cx);
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
         }
-        _ => {}
     }
 }

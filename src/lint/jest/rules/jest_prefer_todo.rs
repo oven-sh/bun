@@ -8,18 +8,19 @@ pub struct PreferTodo;
 
 impl Rule for PreferTodo {
     const META: Meta = Meta::oxlint(Plugin::Jest, "prefer-todo", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferTodo
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if jest::is_test(file) {
-            on.finish(|_, cx| {
-                let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
-                jest::run_on_jest_nodes(&ctx, &prefer_todo::run);
-            });
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        jest::is_test(file).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        jest::run_on_jest_nodes(&ctx, &prefer_todo::run);
     }
 }

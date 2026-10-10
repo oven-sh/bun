@@ -35,37 +35,40 @@ fn is_length_member_for<'a>(index: Expr<'a>, object: Expr<'a>) -> bool {
 
 impl Rule for NoConfusingArrayWith {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-confusing-array-with", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoConfusingArrayWith
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("with") {
+            return None;
+        }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call) = e.as_call().filter(|it| !it.is_optional()) else {
+            return;
+        };
+        let Some(member) = get_member_expr(call.callee()) else {
+            return;
+        };
+        let Some(property) = plain_member_name(member) else {
+            return;
+        };
+        let (Some(object), Some(index)) = (member.object(), call.args().first()) else {
+            return;
+        };
+        if !property.name().is("with") || index.tag() == ExprTag::Spread {
             return;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(call) = e.as_call().filter(|it| !it.is_optional()) else {
-                return;
-            };
-            let Some(member) = get_member_expr(call.callee()) else {
-                return;
-            };
-            let Some(property) = plain_member_name(member) else {
-                return;
-            };
-            let (Some(object), Some(index)) = (member.object(), call.args().first()) else {
-                return;
-            };
-            if !property.name().is("with") || index.tag() == ExprTag::Spread {
-                return;
-            }
-            if get_static_number_value(index).is_some_and(|it| it.is_finite() && it.trunc() < 0.0) {
-                cx.report(property, NEGATIVE_INDEX);
-            } else if is_length_member_for(index, object) {
-                cx.report(property, LENGTH_INDEX);
-            }
-        });
+        if get_static_number_value(index).is_some_and(|it| it.is_finite() && it.trunc() < 0.0) {
+            cx.report(property, NEGATIVE_INDEX);
+        } else if is_length_member_for(index, object) {
+            cx.report(property, LENGTH_INDEX);
+        }
     }
 }

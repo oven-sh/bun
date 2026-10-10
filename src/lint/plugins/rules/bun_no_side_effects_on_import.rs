@@ -74,20 +74,19 @@ impl NoSideEffectsOnImport {
 
 impl Rule for NoSideEffectsOnImport {
     const META: Meta = Meta::plugin(Plugin::Bun, "no-side-effects-on-import", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::Expr]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         NoSideEffectsOnImport { allow: list_option(options, "allow", &TEST_FUNCTIONS) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Expr], |rule, statement, cx| {
-            if let StmtKind::Expr(e) = statement.kind()
-                && Node::Stmt(statement).enclosing_function().is_none()
-                && let Some((effect, message)) = rule.effect_in(e)
-            {
-                cx.report(effect, message);
-            }
-        });
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if let StmtKind::Expr(e) = statement.kind()
+            && Node::Stmt(statement).enclosing_function().is_none()
+            && let Some((effect, message)) = self.effect_in(e)
+        {
+            cx.report(effect, message);
+        }
     }
 }

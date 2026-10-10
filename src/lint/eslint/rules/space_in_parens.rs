@@ -77,8 +77,27 @@ impl SpaceInParens {
             cx.report(space, REJECTED_CLOSING_SPACE).fix(|fixer| fixer.remove(space));
         }
     }
+}
 
-    fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
+impl Rule for SpaceInParens {
+    const META: Meta = Meta::eslint("space-in-parens", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new().finish();
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let exceptions = options.object(1).strings("exceptions");
+        SpaceInParens {
+            is_always: options.str(0) == Some("always"),
+            has_brace_exception: exceptions.contains(&"{}"),
+            has_bracket_exception: exceptions.contains(&"[]"),
+            has_paren_exception: exceptions.contains(&"()"),
+            has_empty_exception: exceptions.contains(&"empty"),
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
         let mut tokens = cx.file().tokens().with_comments().peekable();
         let mut previous = None;
         while let Some(token) = tokens.next() {
@@ -93,27 +112,5 @@ impl SpaceInParens {
             }
             previous = Some(token);
         }
-    }
-}
-
-impl Rule for SpaceInParens {
-    const META: Meta = Meta::eslint("space-in-parens", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let exceptions = options.object(1).strings("exceptions");
-        SpaceInParens {
-            is_always: options.str(0) == Some("always"),
-            has_brace_exception: exceptions.contains(&"{}"),
-            has_bracket_exception: exceptions.contains(&"[]"),
-            has_paren_exception: exceptions.contains(&"()"),
-            has_empty_exception: exceptions.contains(&"empty"),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.finish(Self::check);
     }
 }

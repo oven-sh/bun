@@ -12,23 +12,26 @@ const REQUIRE_MOCK_TYPE_PARAMETERS: Message = Message::new("", "Missing type par
 
 impl Rule for RequireMockTypeParameters {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "require-mock-type-parameters", Kind::Problem);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         RequireMockTypeParameters { check_import_functions: options.object(0).bool_or("checkImportFunctions", false) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         // `.ts`, `.mts`, `.tsx`, ..
         let file_name = strings::last_index_of_any(file.path(), b"/\\").and_then(|at| file.path().get(at + 1..));
         let extension = strings::rsplit_once_char(file_name.unwrap_or_else(|| file.path()), b'.').filter(|it| !it.0.is_empty());
         let names: &[&str] = if self.check_import_functions { &["fn", "importMock", "importActual"] } else { &["fn"] };
-        if extension.is_some_and(|it| it.1.ends_with(b"ts") || it.1.ends_with(b"tsx"))
+        (extension.is_some_and(|it| it.1.ends_with(b"ts") || it.1.ends_with(b"tsx"))
             && jest::is_test(file)
-            && file.mentions_any(names)
-        {
-            on.finish(|rule, cx| jest::iter_possible_jest_call_node(cx.file()).for_each(|node| rule.run(node, cx)));
-        }
+            && file.mentions_any(names))
+        .then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        jest::iter_possible_jest_call_node(cx.file()).for_each(|node| self.run(node, cx))
     }
 }
 

@@ -12,69 +12,72 @@ const PREFER_SINGLE_CALL: Message = Message::new("", "Do not call `{{description
 
 impl Rule for PreferSingleCall {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-single-call", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().stmts(&[StmtTag::Expr]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         PreferSingleCall { ignore: options.object(0).strings("ignore").into_iter().map(String::from).collect() }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions_any(&["push", "unshift", "classList", "importScripts"]) {
+            return None;
+        }
+        Some(())
+    }
+
+    fn stmt<'a>(&self, curr_es: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let Some((curr_call, curr_info)) = self.classify_statement(curr_es) else {
+            return;
+        };
+        let Some(prev_es) = statements_around(curr_es).and_then(|it| it.before(curr_es.span().start)) else {
+            return;
+        };
+        let Some((prev_call, prev_info)) = self.classify_statement(prev_es) else {
+            return;
+        };
+        if prev_info.description != curr_info.description || prev_info.receiver_text != curr_info.receiver_text {
             return;
         }
-        on.stmts([StmtTag::Expr], |rule, curr_es, cx| {
-            let Some((curr_call, curr_info)) = rule.classify_statement(curr_es) else {
-                return;
-            };
-            let Some(prev_es) = statements_around(curr_es).and_then(|it| it.before(curr_es.span().start)) else {
-                return;
-            };
-            let Some((prev_call, prev_info)) = rule.classify_statement(prev_es) else {
-                return;
-            };
-            if prev_info.description != curr_info.description || prev_info.receiver_text != curr_info.receiver_text {
-                return;
+        cx.report(curr_info.diagnostic_span, PREFER_SINGLE_CALL).data("description", curr_info.description).fix(|fixer| {
+            let file = fixer.file();
+            let text_of = |it: Expr<'a>| file.slice(it.outer_span());
+            let (first, second) = (prev_es.span(), curr_es.span());
+            let keep_second_call = curr_info.keep_second_call;
+            let removal_span = if keep_second_call { Span::new(first.start, second.start) } else { Span::new(first.end, second.end) };
+            // The first call changes what an argument of the second reads. A comment would be lost.
+            if curr_call.1.args().iter().any(|it| arg_references_receiver(text_of(it), prev_info.receiver_text))
+                || file.comments_in(removal_span).next().is_some()
+            {
+                return None;
             }
-            cx.report(curr_info.diagnostic_span, PREFER_SINGLE_CALL).data("description", curr_info.description).fix(|fixer| {
-                let file = fixer.file();
-                let text_of = |it: Expr<'a>| file.slice(it.outer_span());
-                let (first, second) = (prev_es.span(), curr_es.span());
-                let keep_second_call = curr_info.keep_second_call;
-                let removal_span = if keep_second_call { Span::new(first.start, second.start) } else { Span::new(first.end, second.end) };
-                // The first call changes what an argument of the second reads. A comment would be lost.
-                if curr_call.1.args().iter().any(|it| arg_references_receiver(text_of(it), prev_info.receiver_text))
-                    || file.comments_in(removal_span).next().is_some()
-                {
-                    return None;
+            let (target, source) = if keep_second_call { (curr_call, prev_call) } else { (prev_call, curr_call) };
+            let mut fix = Vec::with_capacity(2);
+            if !source.1.args().is_empty() {
+                let target_src = target.0.text();
+                let before_paren = strings::trim_js_whitespace_end(
+                    target_src.get(..target_src.len().saturating_sub(1)).unwrap_or_default(),
+                );
+                let mut arguments = if target.1.args().is_empty() {
+                    Vec::new()
+                } else if before_paren.ends_with(b",") {
+                    b" ".to_vec()
+                } else {
+                    b", ".to_vec()
+                };
+                for (i, argument) in source.1.args().iter().enumerate() {
+                    arguments.extend_from_slice(if i == 0 { "" } else { ", " }.as_bytes());
+                    arguments.extend_from_slice(text_of(argument));
                 }
-                let (target, source) = if keep_second_call { (curr_call, prev_call) } else { (prev_call, curr_call) };
-                let mut fix = Vec::with_capacity(2);
-                if !source.1.args().is_empty() {
-                    let target_src = target.0.text();
-                    let before_paren = strings::trim_js_whitespace_end(
-                        target_src.get(..target_src.len().saturating_sub(1)).unwrap_or_default(),
-                    );
-                    let mut arguments = if target.1.args().is_empty() {
-                        Vec::new()
-                    } else if before_paren.ends_with(b",") {
-                        b" ".to_vec()
-                    } else {
-                        b", ".to_vec()
-                    };
-                    for (i, argument) in source.1.args().iter().enumerate() {
-                        arguments.extend_from_slice(if i == 0 { "" } else { ", " }.as_bytes());
-                        arguments.extend_from_slice(text_of(argument));
-                    }
-                    arguments.push(b')');
-                    let end = target.0.span().end;
-                    fix.push(fixer.replace(Span::new(end.saturating_sub(1), end), arguments));
-                }
-                // The `;` of the second statement stays if the first has none.
-                let has_semi = |it: Stmt<'a>| strings::trim_js_whitespace_end(it.text()).ends_with(b";");
-                let needs_semi = !keep_second_call && !has_semi(prev_es) && has_semi(curr_es);
-                fix.push(fixer.replace(removal_span, if needs_semi { ";" } else { "" }));
-                Some(fix)
-            });
+                arguments.push(b')');
+                let end = target.0.span().end;
+                fix.push(fixer.replace(Span::new(end.saturating_sub(1), end), arguments));
+            }
+            // The `;` of the second statement stays if the first has none.
+            let has_semi = |it: Stmt<'a>| strings::trim_js_whitespace_end(it.text()).ends_with(b";");
+            let needs_semi = !keep_second_call && !has_semi(prev_es) && has_semi(curr_es);
+            fix.push(fixer.replace(removal_span, if needs_semi { ";" } else { "" }));
+            Some(fix)
         });
     }
 }

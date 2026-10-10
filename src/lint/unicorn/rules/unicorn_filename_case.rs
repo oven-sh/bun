@@ -179,6 +179,7 @@ impl FilenameCase {
 
 impl Rule for FilenameCase {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "filename-case", Kind::Suggestion);
+    const ON: On = On::new().finish();
     /// See [`FilenameCase::expected_cases`].
     type State<'a> = Option<String>;
 
@@ -196,15 +197,16 @@ impl Rule for FilenameCase {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Option<String> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Option<String>> {
         let expected = self.expected_cases(file.path()).filter(|_| !file.vue_script().is_second)?;
-        on.finish(|rule, cx| {
-            if let Some(cases) = &cx.state {
-                cx.report(Span::empty(0), FILENAME_CASE)
-                    .data("cases", cases.clone())
-                    .help_with(|| rule.help(cx.file().path()));
-            }
-        });
-        Some(expected)
+        Some(Some(expected))
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        if let Some(cases) = &cx.state {
+            cx.report(Span::empty(0), FILENAME_CASE)
+                .data("cases", cases.clone())
+                .help_with(|| self.help(cx.file().path()));
+        }
     }
 }

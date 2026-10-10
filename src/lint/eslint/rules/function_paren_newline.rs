@@ -151,8 +151,71 @@ impl FunctionParenNewline {
             }
         }
     }
+}
 
-    fn check_function<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for FunctionParenNewline {
+    const META: Meta = Meta::eslint("function-paren-newline", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new()
+        .funcs()
+        .exprs(&[ExprTag::Call, ExprTag::New, ExprTag::ImportCall]);
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let mode = match options.str(0) {
+            Some("always") => Mode::MinItems(0),
+            Some("never") => Mode::MinItems(usize::MAX),
+            Some("consistent") => Mode::Consistent,
+            Some("multiline-arguments") => Mode::MultilineArguments,
+            Some(_) => Mode::Multiline,
+            None if options.get(0).is_some_and(|it| it.as_object().is_some()) => {
+                Mode::MinItems(options.object(0).usize("minItems").unwrap_or(usize::MAX))
+            }
+            None => Mode::Multiline,
+        };
+        FunctionParenNewline { mode }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let (file, text) = (cx.file(), cx.text());
+        let before_right = |args: List<'a, Expr<'a>>, right: u32| match args.last() {
+            Some(last) => end_of_list(text, last.outer_span().end),
+            None => file.end_of_token_before(right),
+        };
+        match e.kind() {
+            ExprKind::Call(call) | ExprKind::New(call) => {
+                // `new C` has none.
+                let Some(right) = call.close_paren() else {
+                    return;
+                };
+                let Some(left) = opening_paren_of_call(file, call) else {
+                    return;
+                };
+                let args = call.args();
+                let parens = Parens {
+                    left,
+                    right: Span::new(right, right + 1),
+                    before_right: before_right(args, right),
+                };
+                self.validate(cx, parens, args.len(), &mut args.iter().map(|it| it.span()));
+            }
+            ExprKind::ImportCall { args } => {
+                let whole = e.span();
+                let right = whole.end.saturating_sub(1);
+                let parens = Parens {
+                    left: next_token(text, whole.start + "import".len() as u32),
+                    right: Span::new(right, whole.end),
+                    before_right: before_right(args, right),
+                };
+                // Only the source counts.
+                self.validate(cx, parens, 1, &mut args.first().into_iter().map(|it| it.span()));
+            }
+            _ => {}
+        }
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         if !func.has_body() {
             return;
         }
@@ -191,70 +254,5 @@ impl FunctionParenNewline {
         let count = params.len() + usize::from(func.this_param().is_some());
         let mut elements = func.params_with_this().map(|it| utils::estree_span(Node::Param(it)));
         self.validate(cx, parens, count, &mut elements);
-    }
-
-    fn check_call<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let (file, text) = (cx.file(), cx.text());
-        let before_right = |args: List<'a, Expr<'a>>, right: u32| match args.last() {
-            Some(last) => end_of_list(text, last.outer_span().end),
-            None => file.end_of_token_before(right),
-        };
-        match e.kind() {
-            ExprKind::Call(call) | ExprKind::New(call) => {
-                // `new C` has none.
-                let Some(right) = call.close_paren() else {
-                    return;
-                };
-                let Some(left) = opening_paren_of_call(file, call) else {
-                    return;
-                };
-                let args = call.args();
-                let parens = Parens {
-                    left,
-                    right: Span::new(right, right + 1),
-                    before_right: before_right(args, right),
-                };
-                self.validate(cx, parens, args.len(), &mut args.iter().map(|it| it.span()));
-            }
-            ExprKind::ImportCall { args } => {
-                let whole = e.span();
-                let right = whole.end.saturating_sub(1);
-                let parens = Parens {
-                    left: next_token(text, whole.start + "import".len() as u32),
-                    right: Span::new(right, whole.end),
-                    before_right: before_right(args, right),
-                };
-                // Only the source counts.
-                self.validate(cx, parens, 1, &mut args.first().into_iter().map(|it| it.span()));
-            }
-            _ => {}
-        }
-    }
-}
-
-impl Rule for FunctionParenNewline {
-    const META: Meta = Meta::eslint("function-paren-newline", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let mode = match options.str(0) {
-            Some("always") => Mode::MinItems(0),
-            Some("never") => Mode::MinItems(usize::MAX),
-            Some("consistent") => Mode::Consistent,
-            Some("multiline-arguments") => Mode::MultilineArguments,
-            Some(_) => Mode::Multiline,
-            None if options.get(0).is_some_and(|it| it.as_object().is_some()) => {
-                Mode::MinItems(options.object(0).usize("minItems").unwrap_or(usize::MAX))
-            }
-            None => Mode::Multiline,
-        };
-        FunctionParenNewline { mode }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.funcs(Self::check_function);
-        on.exprs([ExprTag::Call, ExprTag::New, ExprTag::ImportCall], Self::check_call);
     }
 }

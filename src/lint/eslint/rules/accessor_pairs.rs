@@ -186,7 +186,43 @@ impl AccessorPairs {
         }
     }
 
-    fn check_object_expression<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+    fn check_type<'a>(&self, members: List<'a, Member<'a>>, cx: &Cx<'a, Self>) {
+        self.check_list(
+            &mut members.iter().filter_map(Accessor::of_member),
+            MISSING_GETTER_IN_TYPE,
+            MISSING_SETTER_IN_TYPE,
+            cx,
+        );
+    }
+}
+
+impl Rule for AccessorPairs {
+    const META: Meta = Meta::eslint("accessor-pairs", Kind::Suggestion);
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Object])
+        .classes()
+        .types(&[TypeTag::Object])
+        .stmts(&[StmtTag::Interface]);
+    type State<'a> = ();
+
+    fn new(options: &Options) -> Self {
+        let options = options.object(0);
+        AccessorPairs {
+            get_without_set: options.bool_or("getWithoutSet", false),
+            set_without_get: options.bool_or("setWithoutGet", true),
+            enforce_for_class_members: options.bool_or("enforceForClassMembers", true),
+            enforce_for_ts_types: options.bool_or("enforceForTSTypes", false),
+        }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<()> {
+        if !self.get_without_set && !self.set_without_get {
+            return None;
+        }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Object(props) = e.kind() else {
             return;
         };
@@ -224,7 +260,10 @@ impl AccessorPairs {
         }
     }
 
-    fn check_class_body<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        if !self.enforce_for_class_members {
+            return;
+        }
         for is_static in [true, false] {
             // An abstract accessor is not a `MethodDefinition`.
             let methods = class.members().iter().filter(move |member| {
@@ -239,49 +278,21 @@ impl AccessorPairs {
         }
     }
 
-    fn check_type<'a>(&self, members: List<'a, Member<'a>>, cx: &Cx<'a, Self>) {
-        self.check_list(
-            &mut members.iter().filter_map(Accessor::of_member),
-            MISSING_GETTER_IN_TYPE,
-            MISSING_SETTER_IN_TYPE,
-            cx,
-        );
-    }
-}
-
-impl Rule for AccessorPairs {
-    const META: Meta = Meta::eslint("accessor-pairs", Kind::Suggestion);
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let options = options.object(0);
-        AccessorPairs {
-            get_without_set: options.bool_or("getWithoutSet", false),
-            set_without_get: options.bool_or("setWithoutGet", true),
-            enforce_for_class_members: options.bool_or("enforceForClassMembers", true),
-            enforce_for_ts_types: options.bool_or("enforceForTSTypes", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        if !self.get_without_set && !self.set_without_get {
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        if !self.enforce_for_ts_types {
             return;
         }
-        on.exprs([ExprTag::Object], Self::check_object_expression);
-        if self.enforce_for_class_members {
-            on.classes(Self::check_class_body);
+        if let TypeKind::Object(members) = ty.kind() {
+            self.check_type(members, cx);
         }
-        if self.enforce_for_ts_types {
-            on.types([TypeTag::Object], |rule, ty, cx| {
-                if let TypeKind::Object(members) = ty.kind() {
-                    rule.check_type(members, cx);
-                }
-            });
-            on.stmts([StmtTag::Interface], |rule, statement, cx| {
-                if let StmtKind::Interface(interface) = statement.kind() {
-                    rule.check_type(interface.members(), cx);
-                }
-            });
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if !self.enforce_for_ts_types {
+            return;
+        }
+        if let StmtKind::Interface(interface) = statement.kind() {
+            self.check_type(interface.members(), cx);
         }
     }
 }

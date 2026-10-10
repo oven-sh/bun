@@ -15,6 +15,15 @@ const REPLACE_FILTER_LENGTH: Message = Message::new("", "Replace `.filter(…).l
 
 impl Rule for PreferArraySome {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-array-some", Kind::Suggestion).has_suggestions();
+    const ON: On = On::new().exprs(&[ExprTag::Call]).binaries(&[
+        BinOp::NotEqEq,
+        BinOp::NotEq,
+        BinOp::Gt,
+        BinOp::EqEqEq,
+        BinOp::EqEq,
+        BinOp::Ge,
+        BinOp::Lt,
+    ]);
     /// See [`is_boolean_node`].
     type State<'a> = AncestorMemo<'a, bool>;
 
@@ -22,19 +31,31 @@ impl Rule for PreferArraySome {
         PreferArraySome
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if file.mentions_any(&["find", "findLast"]) {
-            on.exprs([ExprTag::Call], check_find);
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        let has_find = file.mentions_any(&["find", "findLast", "findIndex", "findLastIndex"]);
+        if !has_find && !(file.mentions("filter") && file.mentions("length")) {
+            return None;
         }
+        Some(AncestorMemo::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.file().mentions_any(&["find", "findLast"]) {
+            check_find(self, e, cx);
+        }
+    }
+
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let file = cx.file();
         if file.mentions_any(&["findIndex", "findLastIndex"]) {
-            let operators =
-                [BinOp::NotEqEq, BinOp::NotEq, BinOp::Gt, BinOp::EqEqEq, BinOp::EqEq, BinOp::Ge, BinOp::Lt];
-            on.binaries(operators, check_find_index);
+            check_find_index(self, e, cx);
         }
-        if file.mentions("filter") && file.mentions("length") {
-            on.binaries([BinOp::Gt, BinOp::NotEqEq], check_filter_length);
+        if file.mentions("filter")
+            && file.mentions("length")
+            && matches!(e.kind(), ExprKind::Binary { op: BinOp::Gt | BinOp::NotEqEq, .. })
+        {
+            check_filter_length(self, e, cx);
         }
-        AncestorMemo::default()
     }
 }
 

@@ -8,43 +8,45 @@ const EMPTY_BRACE_SPACES: Message = Message::new("", "No spaces inside empty pai
 
 impl Rule for EmptyBraceSpaces {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "empty-brace-spaces", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Object]).funcs().classes().stmts(&[StmtTag::Block]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         EmptyBraceSpaces
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Object], |_, e, cx| {
-            // Not a pattern, nor the attributes of an import.
-            if e.span().len() > 2
-                && matches!(e.kind(), ExprKind::Object(properties) if properties.is_empty())
-                && !matches!(e.parent(), Node::File(_))
-                && !e.is_assignment_target()
-            {
-                check(e.span(), e.span(), "{}", cx);
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        // Not a pattern, nor the attributes of an import.
+        if e.span().len() > 2
+            && matches!(e.kind(), ExprKind::Object(properties) if properties.is_empty())
+            && !matches!(e.parent(), Node::File(_))
+            && !e.is_assignment_target()
+        {
+            check(e.span(), e.span(), "{}", cx);
+        }
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if matches!(func.body(), FnBody::Block(statements) if statements.is_empty())
+            && let Some(braces) = func.body_span()
+        {
+            match func.kind() {
+                FnKind::StaticBlock => check(braces, func.span(), "static {}", cx),
+                _ => check(braces, braces, "{}", cx),
             }
-        });
-        on.funcs(|_, func, cx| {
-            if matches!(func.body(), FnBody::Block(statements) if statements.is_empty())
-                && let Some(braces) = func.body_span()
-            {
-                match func.kind() {
-                    FnKind::StaticBlock => check(braces, func.span(), "static {}", cx),
-                    _ => check(braces, braces, "{}", cx),
-                }
-            }
-        });
-        on.classes(|_, class, cx| {
-            if class.members().is_empty() {
-                check(class.body_span(), class.body_span(), "{}", cx);
-            }
-        });
-        on.stmts([StmtTag::Block], |_, block, cx| {
-            if block.as_block().is_some_and(|it| it.is_empty()) {
-                check(block.span(), block.span(), "{}", cx);
-            }
-        });
+        }
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        if class.members().is_empty() {
+            check(class.body_span(), class.body_span(), "{}", cx);
+        }
+    }
+
+    fn stmt<'a>(&self, block: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if block.as_block().is_some_and(|it| it.is_empty()) {
+            check(block.span(), block.span(), "{}", cx);
+        }
     }
 }
 

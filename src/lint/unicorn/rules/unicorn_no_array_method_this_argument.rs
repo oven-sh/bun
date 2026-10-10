@@ -14,44 +14,43 @@ const METHODS: [&str; 10] =
 
 impl Rule for NoArrayMethodThisArgument {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-array-method-this-argument", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoArrayMethodThisArgument
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(call_expr) = e.as_call().filter(|it| matches!(it.args().len(), 2 | 3) && !it.is_optional()) else {
-                return;
-            };
-            let arguments = call_expr.args();
-            let is_spread = |it: Expr| it.tag() == ExprTag::Spread;
-            match (arguments.first(), arguments.get(1), arguments.get(2)) {
-                // `array.map(callback, thisArgument)`
-                (Some(callback), Some(this_argument), None) => {
-                    if is_method_call(call_expr, None, Some(&METHODS), None, None)
-                        && !is_node_not_function(callback)
-                        && !is_spread(this_argument)
-                        && !does_expr_match_any_path(call_expr.callee(), IGNORED)
-                    {
-                        cx.report(callback.outer_span(), NO_ARRAY_METHOD_THIS_ARGUMENT);
-                    }
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call_expr) = e.as_call().filter(|it| matches!(it.args().len(), 2 | 3) && !it.is_optional()) else {
+            return;
+        };
+        let arguments = call_expr.args();
+        let is_spread = |it: Expr| it.tag() == ExprTag::Spread;
+        match (arguments.first(), arguments.get(1), arguments.get(2)) {
+            // `array.map(callback, thisArgument)`
+            (Some(callback), Some(this_argument), None) => {
+                if is_method_call(call_expr, None, Some(&METHODS), None, None)
+                    && !is_node_not_function(callback)
+                    && !is_spread(this_argument)
+                    && !does_expr_match_any_path(call_expr.callee(), IGNORED)
+                {
+                    cx.report(callback.outer_span(), NO_ARRAY_METHOD_THIS_ARGUMENT);
                 }
-                // `Array.from(iterable, callback, thisArgument)`
-                (Some(iterable), Some(callback), Some(this_argument)) => {
-                    if is_method_call(call_expr, Some(&["Array"]), Some(&["from", "fromAsync"]), None, None)
-                        && !as_member_expression(call_expr.callee()).is_some_and(Expr::is_optional)
-                        && !is_spread(iterable)
-                        && !is_spread(this_argument)
-                        && !is_node_not_function(callback)
-                    {
-                        cx.report(this_argument.outer_span(), NO_ARRAY_METHOD_THIS_ARGUMENT);
-                    }
-                }
-                _ => {}
             }
-        });
+            // `Array.from(iterable, callback, thisArgument)`
+            (Some(iterable), Some(callback), Some(this_argument)) => {
+                if is_method_call(call_expr, Some(&["Array"]), Some(&["from", "fromAsync"]), None, None)
+                    && !as_member_expression(call_expr.callee()).is_some_and(Expr::is_optional)
+                    && !is_spread(iterable)
+                    && !is_spread(this_argument)
+                    && !is_node_not_function(callback)
+                {
+                    cx.report(this_argument.outer_span(), NO_ARRAY_METHOD_THIS_ARGUMENT);
+                }
+            }
+            _ => {}
+        }
     }
 }
 

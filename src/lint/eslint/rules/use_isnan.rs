@@ -178,6 +178,19 @@ impl UseIsnan {
 
 impl Rule for UseIsnan {
     const META: Meta = Meta::eslint("use-isnan", Kind::Problem).has_suggestions().recommended();
+    const ON: On = On::new()
+        .binaries(&[
+            BinOp::Lt,
+            BinOp::Le,
+            BinOp::Gt,
+            BinOp::Ge,
+            BinOp::EqEq,
+            BinOp::NotEq,
+            BinOp::EqEqEq,
+            BinOp::NotEqEq,
+        ])
+        .stmts(&[StmtTag::Switch])
+        .exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -188,19 +201,28 @@ impl Rule for UseIsnan {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("NaN") {
+            return None;
+        }
+        Some(())
+    }
+
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_binary_expression(e, cx);
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if !self.enforce_for_switch_case {
             return;
         }
-        on.binaries(
-            [BinOp::Lt, BinOp::Le, BinOp::Gt, BinOp::Ge, BinOp::EqEq, BinOp::NotEq, BinOp::EqEqEq, BinOp::NotEqEq],
-            Self::check_binary_expression,
-        );
-        if self.enforce_for_switch_case {
-            on.stmts([StmtTag::Switch], Self::check_switch_statement);
+        self.check_switch_statement(statement, cx);
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if !self.enforce_for_index_of {
+            return;
         }
-        if self.enforce_for_index_of {
-            on.exprs([ExprTag::Call], Self::check_call_expression);
-        }
+        self.check_call_expression(e, cx);
     }
 }

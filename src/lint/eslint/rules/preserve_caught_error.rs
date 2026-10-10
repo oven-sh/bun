@@ -378,6 +378,7 @@ impl Rule for PreserveCaughtError {
     const META: Meta = Meta::eslint("preserve-caught-error", Kind::Suggestion)
         .has_suggestions()
         .recommended();
+    const ON: On = On::new().stmts(&[StmtTag::Throw, StmtTag::Try]);
     type State<'a> = ParentCatches<'a>;
 
     fn new(options: &Options) -> Self {
@@ -398,17 +399,24 @@ impl Rule for PreserveCaughtError {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> ParentCatches<'a> {
-        on.stmts([StmtTag::Throw], Self::check);
-        if self.requires_catch_parameter && file.language().is_oxlint {
-            on.stmts([StmtTag::Try], |_, statement, cx| {
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<ParentCatches<'a>> {
+        Some(ParentCatches::default())
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match statement.tag() {
+            StmtTag::Throw => self.check(statement, cx),
+            StmtTag::Try => {
+                if !(self.requires_catch_parameter && cx.language().is_oxlint) {
+                    return;
+                }
                 if matches!(statement.kind(), StmtKind::Try { param: None, .. })
                     && let Some(catch_clause) = statement.catch_clause_span()
                 {
                     cx.report(catch_clause, MISSING_CATCH_ERROR_PARAM);
                 }
-            });
+            }
+            _ => {}
         }
-        ParentCatches::default()
     }
 }

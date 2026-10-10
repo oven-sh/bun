@@ -242,7 +242,8 @@ impl Rule for ConsistentTypeExports {
     const META: Meta = Meta::typescript("consistent-type-exports", Kind::Suggestion)
         .fixable(Fixable::Code)
         .requires_types();
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::ExportStar, StmtTag::ExportNamed]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         ConsistentTypeExports {
@@ -252,8 +253,11 @@ impl Rule for ConsistentTypeExports {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::ExportStar], Self::check_export_all);
-        on.stmts([StmtTag::ExportNamed], Self::check_export_named);
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match stmt.tag() {
+            StmtTag::ExportStar => self.check_export_all(stmt, cx),
+            StmtTag::ExportNamed => self.check_export_named(stmt, cx),
+            _ => {}
+        }
     }
 }

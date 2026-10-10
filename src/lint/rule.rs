@@ -440,7 +440,14 @@ pub trait Rule: Send + Sync + Sized + 'static {
         unreachable!("a rule has `ON` or `register`")
     }
 
-    /// Once for each file that has something of [`Rule::ON`]. `None`: not this file.
+    /// What of [`Rule::ON`] the rule listens to with its options, in this file: for a rule that is about fewer kinds then, or
+    /// about kinds that only its options know. What is not in `ON` does not count: which methods are called is a constant.
+    #[inline(always)]
+    fn narrow<'a>(&self, _file: &'a File<'a>) -> On {
+        Self::ON
+    }
+
+    /// Once for each file that has something of that. `None`: not this file.
     fn start<'a>(&self, _file: &'a File<'a>) -> Option<Self::State<'a>> {
         None
     }
@@ -658,6 +665,23 @@ impl On {
     pub const fn exit(mut self, kinds: NodeTags) -> On {
         self.exit = self.exit.union(kinds);
         self
+    }
+
+    /// What is in both.
+    #[inline]
+    pub(crate) const fn and(self, other: On) -> On {
+        On {
+            exprs: self.exprs & other.exprs,
+            binaries: self.binaries & other.binaries,
+            unaries: self.unaries & other.unaries,
+            stmts: self.stmts & other.stmts,
+            types: self.types & other.types,
+            pats: self.pats & other.pats,
+            sorts: self.sorts & other.sorts,
+            nodes: self.nodes.and(other.nodes),
+            enter: self.enter.and(other.enter),
+            exit: self.exit.and(other.exit),
+        }
     }
 
     #[inline]
@@ -1064,6 +1088,11 @@ impl NodeTags {
     #[inline]
     pub const fn union(self, other: NodeTags) -> NodeTags {
         NodeTags(self.0 | other.0)
+    }
+
+    #[inline]
+    pub(crate) const fn and(self, other: NodeTags) -> NodeTags {
+        NodeTags(self.0 & other.0)
     }
 
     #[inline]

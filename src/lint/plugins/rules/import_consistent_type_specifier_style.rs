@@ -26,6 +26,7 @@ const TOP_LEVEL_IF_ONLY_TYPE_IMPORTS: Message = Message::new(
 
 impl Rule for ConsistentTypeSpecifierStyle {
     const META: Meta = Meta::oxlint(Plugin::Import, "consistent-type-specifier-style", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().stmts(&[StmtTag::Import]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -36,15 +37,11 @@ impl Rule for ConsistentTypeSpecifierStyle {
         })
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.is_javascript() {
-            on.stmts([StmtTag::Import], Self::check);
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        (!file.is_javascript()).then_some(())
     }
-}
 
-impl ConsistentTypeSpecifierStyle {
-    fn check<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let StmtKind::Import(import) = stmt.kind() else {
             return;
         };

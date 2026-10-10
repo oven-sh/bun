@@ -23,18 +23,20 @@ fn names_a_module_for_vitest(e: Expr) -> bool {
 
 impl Rule for NoEagerDynamicImport {
     const META: Meta = Meta::plugin(Plugin::Bun, "no-eager-dynamic-import", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::ImportCall]);
     type State<'a> = RunsLater<'a>;
 
     fn new(_: &Options) -> Self {
         NoEagerDynamicImport
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> RunsLater<'a> {
-        on.exprs([ExprTag::ImportCall], |_, e, cx| {
-            if !names_a_module_for_vitest(e) && runs_while_module_is_evaluated(Node::Expr(e), &mut cx.state) {
-                cx.report(e, EAGER_IMPORT);
-            }
-        });
-        RunsLater::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<RunsLater<'a>> {
+        Some(RunsLater::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if !names_a_module_for_vitest(e) && runs_while_module_is_evaluated(Node::Expr(e), &mut cx.state) {
+            cx.report(e, EAGER_IMPORT);
+        }
     }
 }

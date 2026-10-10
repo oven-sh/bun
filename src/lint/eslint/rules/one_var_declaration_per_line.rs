@@ -10,8 +10,20 @@ const EXPECT_VAR_ON_NEWLINE: Message = Message::new(
     "Expected variable declaration to be on a new line.",
 );
 
-impl OneVarDeclarationPerLine {
-    fn check<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for OneVarDeclarationPerLine {
+    const META: Meta = Meta::eslint("one-var-declaration-per-line", Kind::Suggestion)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new().stmts(&[StmtTag::Var]);
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        OneVarDeclarationPerLine {
+            is_always: options.str(0) == Some("always"),
+        }
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let StmtKind::Var(declarations) = stmt.kind() else {
             return;
         };
@@ -34,22 +46,5 @@ impl OneVarDeclarationPerLine {
             }
             prev = current;
         }
-    }
-}
-
-impl Rule for OneVarDeclarationPerLine {
-    const META: Meta = Meta::eslint("one-var-declaration-per-line", Kind::Suggestion)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        OneVarDeclarationPerLine {
-            is_always: options.str(0) == Some("always"),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Var], Self::check);
     }
 }

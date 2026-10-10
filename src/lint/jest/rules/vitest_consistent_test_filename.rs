@@ -45,6 +45,7 @@ fn kind_of_test(path: &[u8]) -> Option<&'static [u8]> {
 
 impl Rule for ConsistentTestFilename {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "consistent-test-filename", Kind::Suggestion);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -56,19 +57,19 @@ impl Rule for ConsistentTestFilename {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         let path = file.path();
         let is_match = |matcher: &Matcher, is_default: fn(&[u8]) -> bool| match matcher {
             Matcher::Default => kind_of_test(path).is_some_and(is_default),
             Matcher::Pattern(pattern) => pattern.as_ref().is_some_and(|it| it.test(path)),
         };
-        if is_match(&self.all_test_pattern, |_| true) && !is_match(&self.pattern, |kind| kind == b"test") {
-            on.finish(|rule, cx| {
-                let file_name = bun_lint::paths::file_name(cx.file().path());
-                cx.report_file(CONSISTENT_TEST_FILENAME)
-                    .data("file_path", file_name)
-                    .data("pattern", rule.pattern_source.clone());
-            });
-        }
+        (is_match(&self.all_test_pattern, |_| true) && !is_match(&self.pattern, |kind| kind == b"test")).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let file_name = bun_lint::paths::file_name(cx.file().path());
+        cx.report_file(CONSISTENT_TEST_FILENAME)
+            .data("file_path", file_name)
+            .data("pattern", self.pattern_source.clone());
     }
 }

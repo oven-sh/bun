@@ -141,20 +141,59 @@ fn report_directive<'a>(cx: &Cx<'a, Strict>, directive: Stmt<'a>, message: Messa
 }
 
 impl Strict {
-    fn check_program<'a>(&self, cx: &mut Cx<'a, Self>) {
-        let mode = cx.state.mode;
-        let body = cx.file().body();
-        let mut directives = get_use_strict_directives(Some(body));
-        if mode != Mode::Global {
-            directives.for_each(|it| report_directive(cx, it, mode.message(), mode.should_fix()));
-        } else if directives.next().is_some() {
-            directives.for_each(|it| report_directive(cx, it, MULTIPLE, true));
-        } else if let (Some(first), Some(last)) = (body.first(), body.last()) {
-            cx.report(Span::new(first.span().start, last.span().end), GLOBAL);
+    /// In the mode `Function`.
+    fn check_function_without_directive<'a>(func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        // A static block is in a class.
+        if func.enclosing().is_some_and(Func::has_body) {
+            return;
+        }
+        let around = Surroundings::of(func, &mut cx.state.containers);
+        if around.is_in_function || around.is_in_class {
+            return;
+        }
+        if is_simple_parameter_list(func) {
+            cx.report(func.estree_span(), FUNCTION);
+        } else {
+            cx.report(func.estree_span(), WRAP)
+                .data("name", ast_utils::get_function_name_with_kind(func));
+        }
+    }
+}
+
+impl Rule for Strict {
+    const META: Meta = Meta::eslint("strict", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().funcs().finish();
+    type State<'a> = State<'a>;
+
+    fn new(options: &Options) -> Self {
+        Strict {
+            mode: match options.str(0) {
+                Some("never") => Mode::Never,
+                Some("global") => Mode::Global,
+                Some("function") => Mode::Function,
+                _ => Mode::Safe,
+            },
         }
     }
 
-    fn check_function<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+        let language = file.language();
+        let mode = match self.mode {
+            _ if is_module(file) => Mode::Module,
+            _ if language.implied_strict => Mode::Implied,
+            Mode::Safe if language.global_return || language.source_type == SourceType::CommonJs => {
+                Mode::Global
+            }
+            Mode::Safe => Mode::Function,
+            mode => mode,
+        };
+        Some(State {
+            mode,
+            containers: Containers::default(),
+        })
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         if !ast_utils::is_function_with_body(func) {
             return;
         }
@@ -183,56 +222,16 @@ impl Strict {
         directives.for_each(|it| report_directive(cx, it, MULTIPLE, true));
     }
 
-    /// In the mode `Function`.
-    fn check_function_without_directive<'a>(func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        // A static block is in a class.
-        if func.enclosing().is_some_and(Func::has_body) {
-            return;
-        }
-        let around = Surroundings::of(func, &mut cx.state.containers);
-        if around.is_in_function || around.is_in_class {
-            return;
-        }
-        if is_simple_parameter_list(func) {
-            cx.report(func.estree_span(), FUNCTION);
-        } else {
-            cx.report(func.estree_span(), WRAP)
-                .data("name", ast_utils::get_function_name_with_kind(func));
-        }
-    }
-}
-
-impl Rule for Strict {
-    const META: Meta = Meta::eslint("strict", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = State<'a>;
-
-    fn new(options: &Options) -> Self {
-        Strict {
-            mode: match options.str(0) {
-                Some("never") => Mode::Never,
-                Some("global") => Mode::Global,
-                Some("function") => Mode::Function,
-                _ => Mode::Safe,
-            },
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        on.funcs(Self::check_function);
-        on.finish(Self::check_program);
-        let language = file.language();
-        let mode = match self.mode {
-            _ if is_module(file) => Mode::Module,
-            _ if language.implied_strict => Mode::Implied,
-            Mode::Safe if language.global_return || language.source_type == SourceType::CommonJs => {
-                Mode::Global
-            }
-            Mode::Safe => Mode::Function,
-            mode => mode,
-        };
-        State {
-            mode,
-            containers: Containers::default(),
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let mode = cx.state.mode;
+        let body = cx.file().body();
+        let mut directives = get_use_strict_directives(Some(body));
+        if mode != Mode::Global {
+            directives.for_each(|it| report_directive(cx, it, mode.message(), mode.should_fix()));
+        } else if directives.next().is_some() {
+            directives.for_each(|it| report_directive(cx, it, MULTIPLE, true));
+        } else if let (Some(first), Some(last)) = (body.first(), body.last()) {
+            cx.report(Span::new(first.span().start, last.span().end), GLOBAL);
         }
     }
 }

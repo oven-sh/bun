@@ -256,8 +256,11 @@ impl Curly {
     }
 }
 
+const LOOPS: [StmtTag; 5] = [StmtTag::While, StmtTag::DoWhile, StmtTag::For, StmtTag::ForIn, StmtTag::ForOf];
+
 impl Rule for Curly {
     const META: Meta = Meta::eslint("curly", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().stmts(&[StmtTag::If]).stmts(&LOOPS).finish();
     /// What is to be reported.
     type State<'a> = Vec<Check<'a>>;
 
@@ -273,13 +276,22 @@ impl Rule for Curly {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Vec<Check<'a>> {
-        const LOOPS: [StmtTag; 5] = [StmtTag::While, StmtTag::DoWhile, StmtTag::For, StmtTag::ForIn, StmtTag::ForOf];
-        on.stmts([StmtTag::If], Self::check_if);
-        on.stmts(LOOPS, Self::check_loop);
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Vec<Check<'a>>> {
         if file.has_stmts([StmtTag::If]) || file.has_stmts(LOOPS) {
-            on.finish(Self::report_all);
+            Some(Vec::new())
+        } else {
+            None
         }
-        Vec::new()
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match stmt.tag() {
+            StmtTag::If => self.check_if(stmt, cx),
+            _ => self.check_loop(stmt, cx),
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        self.report_all(cx);
     }
 }

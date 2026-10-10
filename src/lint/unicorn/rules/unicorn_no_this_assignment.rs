@@ -8,14 +8,15 @@ const NO_THIS_ASSIGNMENT: Message = Message::new("", "Do not assign `this` to `{
 
 impl Rule for NoThisAssignment {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-this-assignment", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::This]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoThisAssignment
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::This], |_, this, cx| match this.parent() {
+    fn expr<'a>(&self, this: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match this.parent() {
             Node::VarDecl(declarator) => {
                 if let Some(ident_name) = declarator.pat().as_ident() {
                     cx.report(declarator, NO_THIS_ASSIGNMENT).data("ident_name", ident_name);
@@ -31,6 +32,6 @@ impl Rule for NoThisAssignment {
                 }
             }
             _ => {}
-        });
+        }
     }
 }

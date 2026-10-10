@@ -25,23 +25,25 @@ pub struct State<'a> {
 
 impl Rule for PreferExportFrom {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-export-from", Kind::Suggestion).has_suggestions();
+    const ON: On = On::new().stmts(&[StmtTag::Import]);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         PreferExportFrom { check_used_variables: options.object(0).bool_or("checkUsedVariables", true) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        on.stmts([StmtTag::Import], |rule, statement, cx| {
-            let file = cx.file();
-            if let StmtKind::Import(import_decl) = statement.kind()
-                && !import_decl.is_side_effect()
-                && *cx.state.has_candidates.get_or_insert_with(|| has_candidates(file))
-            {
-                rule.check_re_export(import_decl, cx);
-            }
-        });
-        State::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(State::default())
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let file = cx.file();
+        if let StmtKind::Import(import_decl) = statement.kind()
+            && !import_decl.is_side_effect()
+            && *cx.state.has_candidates.get_or_insert_with(|| has_candidates(file))
+        {
+            self.check_re_export(import_decl, cx);
+        }
     }
 }
 

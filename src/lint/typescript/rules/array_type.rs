@@ -214,7 +214,8 @@ impl Rule for ArrayType {
     const META: Meta = Meta::typescript("array-type", Kind::Suggestion)
         .fixable(Fixable::Code)
         .presets(Presets::STYLISTIC);
-    type State<'a> = ();
+    const ON: On = On::new().types(&[TypeTag::Array, TypeTag::Ref]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -225,12 +226,15 @@ impl Rule for ArrayType {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        if self.default != Style::Array || self.readonly != Style::Array {
-            on.types([TypeTag::Array], Self::check_array);
-        }
-        if self.default != Style::Generic || self.readonly != Style::Generic {
-            on.types([TypeTag::Ref], Self::check_reference);
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        match ty.tag() {
+            TypeTag::Array if self.default != Style::Array || self.readonly != Style::Array => {
+                self.check_array(ty, cx);
+            }
+            TypeTag::Ref if self.default != Style::Generic || self.readonly != Style::Generic => {
+                self.check_reference(ty, cx);
+            }
+            _ => {}
         }
     }
 }

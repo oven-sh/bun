@@ -185,8 +185,30 @@ impl ConsistentTypeAssertions {
             }
         }
     }
+}
 
-    fn check<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for ConsistentTypeAssertions {
+    const META: Meta = Meta::typescript("consistent-type-assertions", Kind::Suggestion)
+        .fixable(Fixable::Code)
+        .has_suggestions()
+        .presets(Presets::STYLISTIC);
+    const ON: On = On::new().exprs(&[ExprTag::As, ExprTag::AsConst]);
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let options = options.object(0);
+        ConsistentTypeAssertions {
+            assertion_style: match options.str("assertionStyle") {
+                Some("angle-bracket") => Style::AngleBracket,
+                Some("never") => Style::Never,
+                _ => Style::As,
+            },
+            object_literal_type_assertions: Literals::parse(options.str("objectLiteralTypeAssertions")),
+            array_literal_type_assertions: Literals::parse(options.str("arrayLiteralTypeAssertions")),
+        }
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let (expression, ty) = match node.kind() {
             ExprKind::As { expr, ty } => (expr, Some(ty)),
             ExprKind::AsConst(expr) => (expr, None),
@@ -245,30 +267,5 @@ impl ConsistentTypeAssertions {
                 fixer.insert_after(node, [&b" satisfies "[..], cast].concat()),
             ]
         });
-    }
-}
-
-impl Rule for ConsistentTypeAssertions {
-    const META: Meta = Meta::typescript("consistent-type-assertions", Kind::Suggestion)
-        .fixable(Fixable::Code)
-        .has_suggestions()
-        .presets(Presets::STYLISTIC);
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let options = options.object(0);
-        ConsistentTypeAssertions {
-            assertion_style: match options.str("assertionStyle") {
-                Some("angle-bracket") => Style::AngleBracket,
-                Some("never") => Style::Never,
-                _ => Style::As,
-            },
-            object_literal_type_assertions: Literals::parse(options.str("objectLiteralTypeAssertions")),
-            array_literal_type_assertions: Literals::parse(options.str("arrayLiteralTypeAssertions")),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::As, ExprTag::AsConst], Self::check);
     }
 }

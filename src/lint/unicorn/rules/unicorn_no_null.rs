@@ -14,6 +14,7 @@ const NO_NULL: Message = Message::new("", "Do not use `null` literals");
 
 impl Rule for NoNull {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-null", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Null]);
     /// Whether a `switch` has a `case undefined`, by where it starts.
     type State<'a> = RefCell<FxHashMap<u32, bool>>;
 
@@ -25,64 +26,64 @@ impl Rule for NoNull {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        on.exprs([ExprTag::Null], |rule, null_literal, cx| {
-            let fix_null = |fixer: Fixer<'a>| Some(fixer.replace(null_literal, "undefined"));
-            let parent = iter_outer_expressions(null_literal).next();
-            match parent {
-                Some(Node::Expr(parent)) => match parent.kind() {
-                    ExprKind::Call(call_expr) if match_call_expression_pass_case(null_literal, call_expr) => return,
-                    ExprKind::Call(call) | ExprKind::New(call)
-                        if !rule.check_arguments && get_inner_expression(call.callee()) != null_literal =>
-                    {
-                        return;
-                    }
-                    // `foo === null`
-                    ExprKind::Binary { op: BinOp::EqEqEq | BinOp::NotEqEq, .. } if !rule.check_strict_equality => {
-                        return;
-                    }
-                    _ => {}
-                },
-                // `let foo = null;`
-                Some(Node::VarDecl(declarator))
-                    if declarator.init() == Some(null_literal)
-                        && !null_literal.is_parenthesized()
-                        && declarator.var_kind() != VarKind::Const =>
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(RefCell::default())
+    }
+
+    fn expr<'a>(&self, null_literal: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let fix_null = |fixer: Fixer<'a>| Some(fixer.replace(null_literal, "undefined"));
+        let parent = iter_outer_expressions(null_literal).next();
+        match parent {
+            Some(Node::Expr(parent)) => match parent.kind() {
+                ExprKind::Call(call_expr) if match_call_expression_pass_case(null_literal, call_expr) => return,
+                ExprKind::Call(call) | ExprKind::New(call)
+                    if !self.check_arguments && get_inner_expression(call.callee()) != null_literal =>
                 {
-                    let span = Span::new(declarator.pat().span().end, null_literal.span().end);
-                    cx.report(null_literal, NO_NULL).fix_dangerously(|fixer| fixer.remove(span));
                     return;
                 }
-                Some(Node::Stmt(statement)) if statement.tag() == StmtTag::Return => {
-                    cx.report(null_literal, NO_NULL).fix_dangerously(|fixer| {
-                        // With the outermost `as T` or `!`.
-                        let wrappers = Node::Expr(null_literal).ancestors().map_while(Node::as_expr);
-                        let is_wrapper =
-                            |it: &Expr| matches!(it.tag(), ExprTag::As | ExprTag::AsConst | ExprTag::NonNull);
-                        fixer.remove(wrappers.filter(is_wrapper).last().unwrap_or(null_literal))
-                    });
-                    return;
-                }
-                Some(Node::Case(case)) => {
-                    cx.report(null_literal, NO_NULL).fix_dangerously(|fixer| {
-                        let switch = case.parent().as_stmt()?;
-                        let StmtKind::Switch { cases, .. } = switch.kind() else {
-                            return None;
-                        };
-                        let is_undefined =
-                            |it: Case| it.test().is_some_and(|test| get_inner_expression(test).is_ident("undefined"));
-                        let mut known = cx.state.borrow_mut();
-                        let has_undefined =
-                            *known.entry(switch.span().start).or_insert_with(|| cases.iter().any(is_undefined));
-                        if has_undefined { None } else { fix_null(fixer) }
-                    });
+                // `foo === null`
+                ExprKind::Binary { op: BinOp::EqEqEq | BinOp::NotEqEq, .. } if !self.check_strict_equality => {
                     return;
                 }
                 _ => {}
+            },
+            // `let foo = null;`
+            Some(Node::VarDecl(declarator))
+                if declarator.init() == Some(null_literal)
+                    && !null_literal.is_parenthesized()
+                    && declarator.var_kind() != VarKind::Const =>
+            {
+                let span = Span::new(declarator.pat().span().end, null_literal.span().end);
+                cx.report(null_literal, NO_NULL).fix_dangerously(|fixer| fixer.remove(span));
+                return;
             }
-            cx.report(null_literal, NO_NULL).fix_dangerously(fix_null);
-        });
-        RefCell::default()
+            Some(Node::Stmt(statement)) if statement.tag() == StmtTag::Return => {
+                cx.report(null_literal, NO_NULL).fix_dangerously(|fixer| {
+                    // With the outermost `as T` or `!`.
+                    let wrappers = Node::Expr(null_literal).ancestors().map_while(Node::as_expr);
+                    let is_wrapper = |it: &Expr| matches!(it.tag(), ExprTag::As | ExprTag::AsConst | ExprTag::NonNull);
+                    fixer.remove(wrappers.filter(is_wrapper).last().unwrap_or(null_literal))
+                });
+                return;
+            }
+            Some(Node::Case(case)) => {
+                cx.report(null_literal, NO_NULL).fix_dangerously(|fixer| {
+                    let switch = case.parent().as_stmt()?;
+                    let StmtKind::Switch { cases, .. } = switch.kind() else {
+                        return None;
+                    };
+                    let is_undefined =
+                        |it: Case| it.test().is_some_and(|test| get_inner_expression(test).is_ident("undefined"));
+                    let mut known = cx.state.borrow_mut();
+                    let has_undefined =
+                        *known.entry(switch.span().start).or_insert_with(|| cases.iter().any(is_undefined));
+                    if has_undefined { None } else { fix_null(fixer) }
+                });
+                return;
+            }
+            _ => {}
+        }
+        cx.report(null_literal, NO_NULL).fix_dangerously(fix_null);
     }
 }
 

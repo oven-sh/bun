@@ -175,7 +175,8 @@ impl Rule for SpacedComment {
     const META: Meta = Meta::eslint("spaced-comment", Kind::Suggestion)
         .fixable(Fixable::Whitespace)
         .deprecated();
-    type State<'a> = ();
+    const ON: On = On::new().finish();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let config = options.object(1);
@@ -187,13 +188,11 @@ impl Rule for SpacedComment {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.finish(|rule, cx| {
-            for comment in cx.file().comments() {
-                if comment.kind() != TokenKind::Shebang {
-                    rule.check(comment, cx);
-                }
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        for comment in cx.file().comments() {
+            if comment.kind() != TokenKind::Shebang {
+                self.check(comment, cx);
             }
-        });
+        }
     }
 }

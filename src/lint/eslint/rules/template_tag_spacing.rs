@@ -32,8 +32,20 @@ fn has_whitespace<'a>(file: &'a File<'a>, between: Span) -> bool {
     between.end > at
 }
 
-impl TemplateTagSpacing {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for TemplateTagSpacing {
+    const META: Meta = Meta::eslint("template-tag-spacing", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new().exprs(&[ExprTag::TaggedTemplate]);
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        TemplateTagSpacing {
+            is_never: options.str(0) != Some("always"),
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::TaggedTemplate(call) = e.kind() else {
             return;
         };
@@ -61,22 +73,5 @@ impl TemplateTagSpacing {
             cx.report(Span::new(e.span().start, between.end), MISSING)
                 .fix(|fixer| fixer.insert_after(Span::empty(tag_end), " "));
         }
-    }
-}
-
-impl Rule for TemplateTagSpacing {
-    const META: Meta = Meta::eslint("template-tag-spacing", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        TemplateTagSpacing {
-            is_never: options.str(0) != Some("always"),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::TaggedTemplate], Self::check);
     }
 }

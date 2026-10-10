@@ -33,39 +33,42 @@ fn is_global_this_reference_or_global_window<'a>(call: Expr<'a>, object: Expr<'a
 
 impl Rule for NoAlert {
     const META: Meta = Meta::eslint("no-alert", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoAlert
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions_any(&["alert", "confirm", "prompt"]) {
-            return;
+            return None;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let ExprKind::Call(call) = e.kind() else {
-                return;
-            };
-            let callee = call.callee();
-            // oxlint points at what is called.
-            let place = if cx.language().is_oxlint { callee.span() } else { e.span() };
-            match callee.kind() {
-                ExprKind::Ident(name) => {
-                    if is_prohibited_identifier(name.bytes()) && !is_shadowed(callee) {
-                        cx.report(place, UNEXPECTED).data("name", name);
-                    }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Call(call) = e.kind() else {
+            return;
+        };
+        let callee = call.callee();
+        // oxlint points at what is called.
+        let place = if cx.language().is_oxlint { callee.span() } else { e.span() };
+        match callee.kind() {
+            ExprKind::Ident(name) => {
+                if is_prohibited_identifier(name.bytes()) && !is_shadowed(callee) {
+                    cx.report(place, UNEXPECTED).data("name", name);
                 }
-                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
-                    if let Some(name) = ast_utils::get_static_property_name(callee)
-                        && is_prohibited_identifier(&name)
-                        && is_global_this_reference_or_global_window(e, obj)
-                    {
-                        cx.report(place, UNEXPECTED).data("name", name);
-                    }
-                }
-                _ => {}
             }
-        });
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => {
+                if let Some(name) = ast_utils::get_static_property_name(callee)
+                    && is_prohibited_identifier(&name)
+                    && is_global_this_reference_or_global_window(e, obj)
+                {
+                    cx.report(place, UNEXPECTED).data("name", name);
+                }
+            }
+            _ => {}
+        }
     }
 }

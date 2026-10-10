@@ -6,19 +6,19 @@
 //! ```ignore
 //! // In `Rule::new`:
 //! let selector = Selector::parse(b"CallExpression[callee.name='foo']")?;
-//! // In `Rule::register`: only the kinds of nodes that a match can be made of.
-//! selector::listen(on, self.selector.listens_to());
-//!
-//! impl selector::OnNode for MyRule {
-//!     fn on_node<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-//!         self.selector.for_each_match(node, |found| {
-//!             cx.report(found, MESSAGE);
-//!         });
-//!     }
+//! const ON: On = On::new().nodes(NodeTags::ALL);
+//! // Only the kinds of nodes that a match can be made of.
+//! fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+//!     On::new().nodes(self.selector.listens_to())
+//! }
+//! fn node<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+//!     self.selector.for_each_match(node, |found| {
+//!         cx.report(found, MESSAGE);
+//!     });
 //! }
 //! ```
 //!
-//! [`listen`] calls in no particular order. `on.enter(selector.listens_to(), ..)` and `on.exit(..)` work as well.
+//! That is in no particular order: [`sort_as_called`]. `enter` and `exit` work as well.
 //!
 //! The grammar is that of esquery 1.7, and what matches is what ESLint calls a listener with: see [`Selector::parse`]. The nodes are
 //! those of the parser that `languageOptions.parser` says, so with ESLint's own there is no `[optional]` in an `Identifier`.
@@ -39,7 +39,7 @@ mod parse;
 mod program;
 mod value;
 
-pub use listen::{OnNode, listen, sort_as_called};
+pub use listen::sort_as_called;
 
 use crate::ast::Node;
 use crate::estree::{Dialect, NodeType, VNode};

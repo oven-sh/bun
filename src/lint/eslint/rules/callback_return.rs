@@ -50,8 +50,25 @@ pub struct State<'a> {
     functions: AncestorMemo<'a, Func<'a>>,
 }
 
-impl CallbackReturn {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for CallbackReturn {
+    const META: Meta = Meta::eslint("callback-return", Kind::Suggestion).deprecated();
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    type State<'a> = State<'a>;
+
+    fn new(options: &Options) -> Self {
+        CallbackReturn {
+            callbacks: match options.get(0).and_then(Json::as_array) {
+                Some(names) => names.iter().filter_map(Json::as_str).map(Box::from).collect(),
+                None => [&b"callback"[..], b"cb", b"next"].into_iter().map(Box::from).collect(),
+            },
+        }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Call(call) = e.kind() else {
             return;
         };
@@ -90,24 +107,5 @@ impl CallbackReturn {
         if cx.state.functions.find(Node::Expr(e), |_, it| ast_utils::as_function(it)).is_some() {
             cx.report(e, MISSING_RETURN);
         }
-    }
-}
-
-impl Rule for CallbackReturn {
-    const META: Meta = Meta::eslint("callback-return", Kind::Suggestion).deprecated();
-    type State<'a> = State<'a>;
-
-    fn new(options: &Options) -> Self {
-        CallbackReturn {
-            callbacks: match options.get(0).and_then(Json::as_array) {
-                Some(names) => names.iter().filter_map(Json::as_str).map(Box::from).collect(),
-                None => [&b"callback"[..], b"cb", b"next"].into_iter().map(Box::from).collect(),
-            },
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
-        on.exprs([ExprTag::Call], Self::check);
-        State::default()
     }
 }

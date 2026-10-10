@@ -31,28 +31,31 @@ fn is_non_dom_node(e: Expr) -> bool {
 
 impl Rule for PreferDomNodeRemove {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-dom-node-remove", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferDomNodeRemove
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("removeChild") {
-            return;
+            return None;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(call) = e.as_call().filter(|it| !it.is_optional()) else {
-                return;
-            };
-            if is_method_call(call, None, Some(&["removeChild"]), Some(1), Some(1))
-                && let Some(member) = get_member_expr(call.callee()).filter(|it| !is_computed(*it))
-                && !member.object().is_some_and(is_non_dom_node)
-                && call.args().first().is_some_and(|it| it.tag() != ExprTag::Spread && !is_non_dom_node(it))
-                && let Some((span, _)) = call_expr_method_callee_info(call)
-            {
-                cx.report(span, PREFER_DOM_NODE_REMOVE);
-            }
-        });
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call) = e.as_call().filter(|it| !it.is_optional()) else {
+            return;
+        };
+        if is_method_call(call, None, Some(&["removeChild"]), Some(1), Some(1))
+            && let Some(member) = get_member_expr(call.callee()).filter(|it| !is_computed(*it))
+            && !member.object().is_some_and(is_non_dom_node)
+            && call.args().first().is_some_and(|it| it.tag() != ExprTag::Spread && !is_non_dom_node(it))
+            && let Some((span, _)) = call_expr_method_callee_info(call)
+        {
+            cx.report(span, PREFER_DOM_NODE_REMOVE);
+        }
     }
 }

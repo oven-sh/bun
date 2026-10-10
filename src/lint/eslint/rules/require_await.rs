@@ -95,40 +95,53 @@ fn report<'a>(func: Func<'a>, cx: &Cx<'a, RequireAwait>) {
 
 impl Rule for RequireAwait {
     const META: Meta = Meta::eslint("require-await", Kind::Suggestion).has_suggestions();
+    const ON: On = On::new()
+        .funcs()
+        .exprs(&[ExprTag::Await])
+        .stmts(&[StmtTag::ForOf])
+        .var_decls()
+        .finish();
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         RequireAwait
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
-        on.funcs(|_, func, cx| {
-            if func.is_async()
-                && !func.is_generator()
-                && ast_utils::is_function_with_body(func)
-                && !ast_utils::is_empty_function(func)
-            {
-                cx.state.candidates.push(func);
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if func.is_async()
+            && !func.is_generator()
+            && ast_utils::is_function_with_body(func)
+            && !ast_utils::is_empty_function(func)
+        {
+            cx.state.candidates.push(func);
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        mark_function_around(e.into(), cx);
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if matches!(statement.kind(), StmtKind::ForOf { is_await: true, .. }) {
+            mark_function_around(statement.into(), cx);
+        }
+    }
+
+    fn var_decl<'a>(&self, declaration: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        if declaration.var_kind() == VarKind::AwaitUsing {
+            mark_function_around(declaration.into(), cx);
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        for func in std::mem::take(&mut cx.state.candidates) {
+            if !cx.state.with_await.contains(&func) {
+                report(func, cx);
             }
-        });
-        on.exprs([ExprTag::Await], |_, e, cx| mark_function_around(e.into(), cx));
-        on.stmts([StmtTag::ForOf], |_, statement, cx| {
-            if matches!(statement.kind(), StmtKind::ForOf { is_await: true, .. }) {
-                mark_function_around(statement.into(), cx);
-            }
-        });
-        on.var_decls(|_, declaration, cx| {
-            if declaration.var_kind() == VarKind::AwaitUsing {
-                mark_function_around(declaration.into(), cx);
-            }
-        });
-        on.finish(|_, cx| {
-            for func in std::mem::take(&mut cx.state.candidates) {
-                if !cx.state.with_await.contains(&func) {
-                    report(func, cx);
-                }
-            }
-        });
-        State::default()
+        }
     }
 }

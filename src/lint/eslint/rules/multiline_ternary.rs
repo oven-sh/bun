@@ -33,8 +33,21 @@ fn join_lines(fixer: Fixer, before: Span, operator: Span, after: Span) -> Vec<Fi
         .collect()
 }
 
-impl MultilineTernary {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for MultilineTernary {
+    const META: Meta = Meta::eslint("multiline-ternary", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new().exprs(&[ExprTag::Cond]);
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        MultilineTernary {
+            multiline: options.str(0) != Some("never"),
+            allow_single_line: options.str(0) == Some("always-multiline"),
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Cond { test, yes, no } = e.kind() else {
             return;
         };
@@ -75,23 +88,5 @@ impl MultilineTernary {
                 (!has_comments()).then(|| fixer.replace(yes.between(operator_after(yes)), "\n"))
             });
         }
-    }
-}
-
-impl Rule for MultilineTernary {
-    const META: Meta = Meta::eslint("multiline-ternary", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        MultilineTernary {
-            multiline: options.str(0) != Some("never"),
-            allow_single_line: options.str(0) == Some("always-multiline"),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Cond], Self::check);
     }
 }

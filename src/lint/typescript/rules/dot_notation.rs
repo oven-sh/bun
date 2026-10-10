@@ -103,6 +103,10 @@ impl Rule for DotNotation {
         .presets(Presets::STYLISTIC_TYPE_CHECKED)
         .requires_types()
         .extends_base_rule("dot-notation");
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Index, ExprTag::Dot])
+        .stmts(&[StmtTag::Interface])
+        .classes();
     /// Whether an access that an index signature allows can be written with brackets.
     type State<'a> = bool;
 
@@ -116,29 +120,46 @@ impl Rule for DotNotation {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> bool {
-        on.exprs([ExprTag::Index], Self::check_computed);
-        if self.base.checks_keywords() {
-            on.exprs([ExprTag::Dot], |rule, node, cx| rule.base.check_member_expression(node, cx));
-            if !file.is_javascript() {
-                on.classes(|rule, class, cx| {
-                    for ty in class.implements() {
-                        rule.base.check_heritage(ty, cx);
-                    }
-                });
-                on.stmts([StmtTag::Interface], |rule, statement, cx| {
-                    if let StmtKind::Interface(interface) = statement.kind() {
-                        for ty in interface.extends() {
-                            rule.base.check_heritage(ty, cx);
-                        }
-                    }
-                });
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<bool> {
+        Some(
+            self.allow_index_signature_property_access
+                || is_compiler_option_enabled(
+                    file.type_checker().compiler_options(),
+                    CompilerOption::NoPropertyAccessFromIndexSignature,
+                ),
+        )
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match node.tag() {
+            ExprTag::Index => self.check_computed(node, cx),
+            ExprTag::Dot => {
+                if !self.base.checks_keywords() {
+                    return;
+                }
+                self.base.check_member_expression(node, cx);
+            }
+            _ => {}
+        }
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if !self.base.checks_keywords() || cx.file().is_javascript() {
+            return;
+        }
+        if let StmtKind::Interface(interface) = statement.kind() {
+            for ty in interface.extends() {
+                self.base.check_heritage(ty, cx);
             }
         }
-        self.allow_index_signature_property_access
-            || is_compiler_option_enabled(
-                file.type_checker().compiler_options(),
-                CompilerOption::NoPropertyAccessFromIndexSignature,
-            )
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        if !self.base.checks_keywords() || cx.file().is_javascript() {
+            return;
+        }
+        for ty in class.implements() {
+            self.base.check_heritage(ty, cx);
+        }
     }
 }

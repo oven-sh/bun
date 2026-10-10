@@ -175,34 +175,29 @@ impl Semi {
             self.report_missing(end, cx);
         }
     }
-
-    fn check_statement<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        let is_checked = match statement.kind() {
-            StmtKind::Var(_) => !utils::is_for_init(statement),
-            StmtKind::Expr(_) => !statement.is_wrapper(),
-            // After `export default`, all but a `ClassDeclaration` and a `FunctionDeclaration`.
-            StmtKind::Interface(_) => statement.is_default_export(),
-            StmtKind::Fn(func) => !func.has_body() && statement.is_default_export(),
-            _ => true,
-        };
-        if is_checked {
-            self.check_for_semicolon(statement.into(), cx);
-        }
-    }
-
-    fn check_member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
-        if member.kind() == MemberKind::Property
-            && !member.flags().intersects(Flags::ABSTRACT | Flags::ACCESSOR)
-            && !member.is_signature()
-        {
-            self.check_for_semicolon(member.into(), cx);
-        }
-    }
 }
 
 impl Rule for Semi {
     const META: Meta = Meta::eslint("semi", Kind::Layout).fixable(Fixable::Code).deprecated();
-    type State<'a> = ();
+    const ON: On = On::new()
+        .stmts(&[
+            StmtTag::Var,
+            StmtTag::Expr,
+            StmtTag::Return,
+            StmtTag::Throw,
+            StmtTag::DoWhile,
+            StmtTag::Debugger,
+            StmtTag::Break,
+            StmtTag::Continue,
+            StmtTag::Import,
+            StmtTag::ExportStar,
+            StmtTag::ExportNamed,
+            StmtTag::ExportDefault,
+            StmtTag::Interface,
+            StmtTag::Fn,
+        ])
+        .members();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let object = options.object(1);
@@ -218,26 +213,26 @@ impl Rule for Semi {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts(
-            [
-                StmtTag::Var,
-                StmtTag::Expr,
-                StmtTag::Return,
-                StmtTag::Throw,
-                StmtTag::DoWhile,
-                StmtTag::Debugger,
-                StmtTag::Break,
-                StmtTag::Continue,
-                StmtTag::Import,
-                StmtTag::ExportStar,
-                StmtTag::ExportNamed,
-                StmtTag::ExportDefault,
-                StmtTag::Interface,
-                StmtTag::Fn,
-            ],
-            Self::check_statement,
-        );
-        on.members(Self::check_member);
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let is_checked = match statement.kind() {
+            StmtKind::Var(_) => !utils::is_for_init(statement),
+            StmtKind::Expr(_) => !statement.is_wrapper(),
+            // After `export default`, all but a `ClassDeclaration` and a `FunctionDeclaration`.
+            StmtKind::Interface(_) => statement.is_default_export(),
+            StmtKind::Fn(func) => !func.has_body() && statement.is_default_export(),
+            _ => true,
+        };
+        if is_checked {
+            self.check_for_semicolon(statement.into(), cx);
+        }
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        if member.kind() == MemberKind::Property
+            && !member.flags().intersects(Flags::ABSTRACT | Flags::ACCESSOR)
+            && !member.is_signature()
+        {
+            self.check_for_semicolon(member.into(), cx);
+        }
     }
 }

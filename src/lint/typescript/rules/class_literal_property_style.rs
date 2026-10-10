@@ -205,6 +205,7 @@ impl Rule for ClassLiteralPropertyStyle {
     const META: Meta = Meta::typescript("class-literal-property-style", Kind::Problem)
         .has_suggestions()
         .presets(Presets::STYLISTIC);
+    const ON: On = On::new().exprs(&[ExprTag::This]).members().finish();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -213,17 +214,32 @@ impl Rule for ClassLiteralPropertyStyle {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         if !file.has_classes() {
-            return State::default();
+            return None;
         }
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, this: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if !self.prefers_getters {
+            return;
+        }
+        self.check_this(this, cx);
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         if self.prefers_getters {
-            on.exprs([ExprTag::This], Self::check_this);
-            on.members(Self::collect_property);
-            on.finish(Self::check_properties);
+            self.collect_property(member, cx);
         } else {
-            on.members(Self::check_getter);
+            self.check_getter(member, cx);
         }
-        State::default()
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        if !self.prefers_getters {
+            return;
+        }
+        self.check_properties(cx);
     }
 }

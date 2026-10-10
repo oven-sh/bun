@@ -10,21 +10,20 @@ const REQUIRE_PARENS: Message = Message::new(
 
 impl Rule for WrapRegex {
     const META: Meta = Meta::eslint("wrap-regex", Kind::Layout).fixable(Fixable::Code).deprecated();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Regex]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         WrapRegex
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Regex], |_, e, cx| {
-            let Node::Expr(parent) = e.parent() else {
-                return;
-            };
-            if ast_utils::member_object(parent) == Some(e) && !e.is_parenthesized() {
-                cx.report(e, REQUIRE_PARENS)
-                    .fix(|fixer| [fixer.insert_before(e, "("), fixer.insert_after(e, ")")]);
-            }
-        });
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Node::Expr(parent) = e.parent() else {
+            return;
+        };
+        if ast_utils::member_object(parent) == Some(e) && !e.is_parenthesized() {
+            cx.report(e, REQUIRE_PARENS)
+                .fix(|fixer| [fixer.insert_before(e, "("), fixer.insert_after(e, ")")]);
+        }
     }
 }

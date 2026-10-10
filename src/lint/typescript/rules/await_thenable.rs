@@ -183,16 +183,28 @@ impl Rule for AwaitThenable {
         .has_suggestions()
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Await, ExprTag::Call])
+        .stmts(&[StmtTag::ForOf, StmtTag::Var]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         AwaitThenable
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Await], Self::check_await);
-        on.exprs([ExprTag::Call], Self::check_call);
-        on.stmts([StmtTag::ForOf], Self::check_for_of);
-        on.stmts([StmtTag::Var], Self::check_variable_declaration);
+    fn expr<'a>(&self, expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match expr.tag() {
+            ExprTag::Await => self.check_await(expr, cx),
+            ExprTag::Call => self.check_call(expr, cx),
+            _ => {}
+        }
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match stmt.tag() {
+            StmtTag::ForOf => self.check_for_of(stmt, cx),
+            StmtTag::Var => self.check_variable_declaration(stmt, cx),
+            _ => {}
+        }
     }
 }

@@ -106,110 +106,6 @@ impl Camelcase {
         }
     }
 
-    fn check_statement<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        match stmt.kind() {
-            StmtKind::Labeled { .. } | StmtKind::Break(_) | StmtKind::Continue(_) => {
-                if let Some(label) = stmt.label() {
-                    self.check_name(label, cx);
-                }
-            }
-            StmtKind::ExportStar {
-                alias: Some(alias), ..
-            } if !alias.is_string() => self.check_name(alias, cx),
-            StmtKind::Import(import) => {
-                for local in import.default().into_iter().chain(import.namespace()) {
-                    self.note_variable_name(local.name(), cx);
-                }
-            }
-            StmtKind::ImportEquals(import) => {
-                if let ImportEqualsTarget::Entity(entity) = import.target()
-                    && let Some(first) = entity.first()
-                {
-                    self.note_variable_name(first.name(), cx);
-                }
-            }
-            StmtKind::ExportAsNamespace(name) => self.note_variable_name(name, cx),
-            _ => {}
-        }
-    }
-
-    /// The names in a type that are references, and the keys in `import("m", { with: { key: "" } })`,
-    /// which ESLint has as an object literal.
-    fn check_type<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
-        match ty.kind() {
-            TypeKind::Ref { name, .. } => {
-                if let Some(first) = name.first() {
-                    self.note_variable_name(first.name(), cx);
-                }
-            }
-            TypeKind::Predicate { param, .. } => self.note_variable_name(param, cx),
-            TypeKind::Import { .. } if self.checks_properties => {
-                for entry in ty.import_attributes().into_iter().flat_map(ImportAttributes::entries) {
-                    if let Some(key) = entry.key()
-                        && let KeyKind::Ident(name) = key.kind()
-                        && !self.is_good_name(name.bytes())
-                    {
-                        let at = key.span(cx.file());
-                        report(cx, at, name.bytes(), NOT_CAMEL_CASE);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn check_export_spec<'a>(&self, spec: ExportSpec<'a>, cx: &mut Cx<'a, Self>) {
-        if !spec.exported().is_string() {
-            self.check_name(spec.exported(), cx);
-        }
-        if !spec.export().has_from() {
-            self.note_variable_name(spec.local().name(), cx);
-        }
-    }
-
-    /// The key of a property of an object literal.
-    fn check_prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(key) = prop.key() else {
-            return;
-        };
-        let KeyKind::Ident(name) = key.kind() else {
-            return;
-        };
-        if self.is_good_name(name.bytes())
-            || prop.is_jsx_attribute()
-            || ast_utils::is_import_attribute_key(prop)
-            || !matches!(prop.parent(), Node::Expr(object) if !utils::is_assignment_target(object))
-        {
-            return;
-        }
-        let at = key.span(cx.file());
-        report(cx, at, name.bytes(), NOT_CAMEL_CASE);
-    }
-
-    /// The key of a method or a field of a class.
-    fn check_member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(key) = member.key() else {
-            return;
-        };
-        let (name, message) = match key.kind() {
-            KeyKind::Ident(name) => (name.bytes(), NOT_CAMEL_CASE),
-            KeyKind::Private(name) => {
-                let name = name.bytes();
-                (name.strip_prefix(b"#").unwrap_or(name), NOT_CAMEL_CASE_PRIVATE)
-            }
-            _ => return,
-        };
-        // An abstract member and an `accessor` field are nodes of other types.
-        if self.is_good_name(name)
-            || member.is_signature()
-            || member.flags().intersects(Flags::ABSTRACT | Flags::ACCESSOR)
-        {
-            return;
-        }
-        let at = key.span(cx.file());
-        report(cx, at, name, message);
-    }
-
     /// The `b` of an `a.b` that is assigned to.
     fn check_member_access<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Dot { name, .. } = e.kind() else {
@@ -311,8 +207,207 @@ impl Camelcase {
             }
         }
     }
+}
 
-    fn check_variables<'a>(&self, cx: &mut Cx<'a, Self>) {
+impl Rule for Camelcase {
+    const META: Meta = Meta::eslint("camelcase", Kind::Suggestion);
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Dot, ExprTag::Ident, ExprTag::Jsx])
+        .stmts(&[
+            StmtTag::Labeled,
+            StmtTag::Break,
+            StmtTag::Continue,
+            StmtTag::ExportStar,
+            StmtTag::Import,
+            StmtTag::ImportEquals,
+            StmtTag::ExportAsNamespace,
+        ])
+        .types(&[TypeTag::Ref, TypeTag::Predicate, TypeTag::Import])
+        .pats(&[PatTag::Ident])
+        .funcs()
+        .classes()
+        .members()
+        .props()
+        .import_specs()
+        .export_specs()
+        .finish();
+    type State<'a> = State;
+
+    fn new(options: &Options) -> Self {
+        let object = options.object(0);
+        Camelcase {
+            allow: (object.strings("allow").into_iter())
+                .map(|entry| (entry.as_bytes().into(), Regex::new(entry, "u").ok()))
+                .collect(),
+            ignores_destructuring: object.bool_or("ignoreDestructuring", false),
+            ignores_globals: object.bool_or("ignoreGlobals", false),
+            ignores_imports: object.bool_or("ignoreImports", false),
+            checks_properties: object.str("properties") != Some("never"),
+        }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State> {
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Dot if self.checks_properties => self.check_member_access(e, cx),
+            ExprTag::Ident => {
+                if let Some(name) = e.as_ident() {
+                    self.note_variable_name(name, cx);
+                }
+            }
+            // The tags `a-b` and `a:b` are references too.
+            ExprTag::Jsx => {
+                if let ExprKind::Jsx(jsx) = e.kind()
+                    && let Some(tag) = jsx.tag()
+                    && matches!(tag.kind(), ExprKind::String(_))
+                    && strings::contains_char(tag.text(), b'_')
+                {
+                    cx.state.has_bad_variable_name = true;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match stmt.kind() {
+            StmtKind::Labeled { .. } | StmtKind::Break(_) | StmtKind::Continue(_) => {
+                if let Some(label) = stmt.label() {
+                    self.check_name(label, cx);
+                }
+            }
+            StmtKind::ExportStar {
+                alias: Some(alias), ..
+            } if !alias.is_string() => self.check_name(alias, cx),
+            StmtKind::Import(import) => {
+                for local in import.default().into_iter().chain(import.namespace()) {
+                    self.note_variable_name(local.name(), cx);
+                }
+            }
+            StmtKind::ImportEquals(import) => {
+                if let ImportEqualsTarget::Entity(entity) = import.target()
+                    && let Some(first) = entity.first()
+                {
+                    self.note_variable_name(first.name(), cx);
+                }
+            }
+            StmtKind::ExportAsNamespace(name) => self.note_variable_name(name, cx),
+            _ => {}
+        }
+    }
+
+    /// The names in a type that are references, and the keys in `import("m", { with: { key: "" } })`,
+    /// which ESLint has as an object literal.
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.file().is_javascript() {
+            return;
+        }
+        match ty.kind() {
+            TypeKind::Ref { name, .. } => {
+                if let Some(first) = name.first() {
+                    self.note_variable_name(first.name(), cx);
+                }
+            }
+            TypeKind::Predicate { param, .. } => self.note_variable_name(param, cx),
+            TypeKind::Import { .. } if self.checks_properties => {
+                for entry in ty.import_attributes().into_iter().flat_map(ImportAttributes::entries) {
+                    if let Some(key) = entry.key()
+                        && let KeyKind::Ident(name) = key.kind()
+                        && !self.is_good_name(name.bytes())
+                    {
+                        let at = key.span(cx.file());
+                        report(cx, at, name.bytes(), NOT_CAMEL_CASE);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(name) = pat.as_ident() {
+            self.note_variable_name(name, cx);
+        }
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(name) = func.name() {
+            self.note_variable_name(name.name(), cx);
+        }
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(name) = class.name() {
+            self.note_variable_name(name.name(), cx);
+        }
+    }
+
+    /// The key of a method or a field of a class.
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        if !self.checks_properties {
+            return;
+        }
+        let Some(key) = member.key() else {
+            return;
+        };
+        let (name, message) = match key.kind() {
+            KeyKind::Ident(name) => (name.bytes(), NOT_CAMEL_CASE),
+            KeyKind::Private(name) => {
+                let name = name.bytes();
+                (name.strip_prefix(b"#").unwrap_or(name), NOT_CAMEL_CASE_PRIVATE)
+            }
+            _ => return,
+        };
+        // An abstract member and an `accessor` field are nodes of other types.
+        if self.is_good_name(name)
+            || member.is_signature()
+            || member.flags().intersects(Flags::ABSTRACT | Flags::ACCESSOR)
+        {
+            return;
+        }
+        let at = key.span(cx.file());
+        report(cx, at, name, message);
+    }
+
+    /// The key of a property of an object literal.
+    fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        if !self.checks_properties {
+            return;
+        }
+        let Some(key) = prop.key() else {
+            return;
+        };
+        let KeyKind::Ident(name) = key.kind() else {
+            return;
+        };
+        if self.is_good_name(name.bytes())
+            || prop.is_jsx_attribute()
+            || ast_utils::is_import_attribute_key(prop)
+            || !matches!(prop.parent(), Node::Expr(object) if !utils::is_assignment_target(object))
+        {
+            return;
+        }
+        let at = key.span(cx.file());
+        report(cx, at, name.bytes(), NOT_CAMEL_CASE);
+    }
+
+    fn import_spec<'a>(&self, spec: ImportSpec<'a>, cx: &mut Cx<'a, Self>) {
+        self.note_variable_name(spec.local().name(), cx);
+    }
+
+    fn export_spec<'a>(&self, spec: ExportSpec<'a>, cx: &mut Cx<'a, Self>) {
+        if !spec.exported().is_string() {
+            self.check_name(spec.exported(), cx);
+        }
+        if !spec.export().has_from() {
+            self.note_variable_name(spec.local().name(), cx);
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
         if !cx.state.has_bad_variable_name {
             return;
         }
@@ -330,81 +425,5 @@ impl Camelcase {
                 self.report_reference(reference, cx);
             }
         }
-    }
-}
-
-impl Rule for Camelcase {
-    const META: Meta = Meta::eslint("camelcase", Kind::Suggestion);
-    type State<'a> = State;
-
-    fn new(options: &Options) -> Self {
-        let object = options.object(0);
-        Camelcase {
-            allow: (object.strings("allow").into_iter())
-                .map(|entry| (entry.as_bytes().into(), Regex::new(entry, "u").ok()))
-                .collect(),
-            ignores_destructuring: object.bool_or("ignoreDestructuring", false),
-            ignores_globals: object.bool_or("ignoreGlobals", false),
-            ignores_imports: object.bool_or("ignoreImports", false),
-            checks_properties: object.str("properties") != Some("never"),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State {
-        if self.checks_properties {
-            on.props(Self::check_prop);
-            on.members(Self::check_member);
-            on.exprs([ExprTag::Dot], Self::check_member_access);
-        }
-        on.stmts(
-            [
-                StmtTag::Labeled,
-                StmtTag::Break,
-                StmtTag::Continue,
-                StmtTag::ExportStar,
-                StmtTag::Import,
-                StmtTag::ImportEquals,
-                StmtTag::ExportAsNamespace,
-            ],
-            Self::check_statement,
-        );
-        on.export_specs(Self::check_export_spec);
-
-        on.import_specs(|rule, spec, cx| rule.note_variable_name(spec.local().name(), cx));
-        on.pats([PatTag::Ident], |rule, pat, cx| {
-            if let Some(name) = pat.as_ident() {
-                rule.note_variable_name(name, cx);
-            }
-        });
-        on.funcs(|rule, func, cx| {
-            if let Some(name) = func.name() {
-                rule.note_variable_name(name.name(), cx);
-            }
-        });
-        on.classes(|rule, class, cx| {
-            if let Some(name) = class.name() {
-                rule.note_variable_name(name.name(), cx);
-            }
-        });
-        on.exprs([ExprTag::Ident], |rule, e, cx| {
-            if let Some(name) = e.as_ident() {
-                rule.note_variable_name(name, cx);
-            }
-        });
-        // The tags `a-b` and `a:b` are references too.
-        on.exprs([ExprTag::Jsx], |_, e, cx| {
-            if let ExprKind::Jsx(jsx) = e.kind()
-                && let Some(tag) = jsx.tag()
-                && matches!(tag.kind(), ExprKind::String(_))
-                && strings::contains_char(tag.text(), b'_')
-            {
-                cx.state.has_bad_variable_name = true;
-            }
-        });
-        if !file.is_javascript() {
-            on.types([TypeTag::Ref, TypeTag::Predicate, TypeTag::Import], Self::check_type);
-        }
-        on.finish(Self::check_variables);
-        State::default()
     }
 }

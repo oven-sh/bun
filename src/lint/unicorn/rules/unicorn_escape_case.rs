@@ -9,27 +9,38 @@ const ESCAPE_CASE: Message = Message::new("", "Use uppercase characters for the 
 
 impl Rule for EscapeCase {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "escape-case", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().string_literals().exprs(&[ExprTag::Regex, ExprTag::Template]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         EscapeCase
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.string_literals(|_, literal, cx| check(literal.span(), false, cx));
-        on.exprs([ExprTag::Regex], |_, regex, cx| check(regex.span(), true, cx));
-        on.exprs([ExprTag::Template], |_, e, cx| {
-            let ExprKind::Template(template) = e.kind() else {
-                return;
-            };
-            if !bun_core::strings::contains_char(e.text(), b'\\') || is_string_raw_tagged_template_expression(e.parent()) {
-                return;
-            }
-            let count = template.quasi_count();
-            for i in 0..count {
-                check(template.quasi_span(i).shrink(1, if i + 1 == count { 1 } else { 2 }), false, cx);
-            }
-        });
+    fn string_literal<'a>(&self, literal: Literal<'a>, cx: &mut Cx<'a, Self>) {
+        check(literal.span(), false, cx);
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Regex => check(e.span(), true, cx),
+            ExprTag::Template => self.template(e, cx),
+            _ => {}
+        }
+    }
+}
+
+impl EscapeCase {
+    fn template<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Template(template) = e.kind() else {
+            return;
+        };
+        if !bun_core::strings::contains_char(e.text(), b'\\') || is_string_raw_tagged_template_expression(e.parent()) {
+            return;
+        }
+        let count = template.quasi_count();
+        for i in 0..count {
+            check(template.quasi_span(i).shrink(1, if i + 1 == count { 1 } else { 2 }), false, cx);
+        }
     }
 }
 

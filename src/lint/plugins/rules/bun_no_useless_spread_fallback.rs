@@ -38,33 +38,32 @@ impl NoUselessSpreadFallback {
 
 impl Rule for NoUselessSpreadFallback {
     const META: Meta = Meta::plugin(Plugin::Bun, "no-useless-spread-fallback", Kind::Suggestion).has_suggestions();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Cond]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         NoUselessSpreadFallback { ignore_conditions_that_call: list_option(options, "ignoreConditionsThatCall", &[]) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Cond], |rule, e, cx| {
-            // Of an object literal or of the attributes of an element. What is spread into an array has to be iterable.
-            if !matches!(e.parent(), Node::Prop(it) if it.kind() == PropKind::Spread) {
-                return;
-            }
-            let ExprKind::Cond { test, yes, no } = e.kind() else {
-                return;
-            };
-            let Some(fallback) = [no, yes].into_iter().find(|it| is_empty_object(*it)) else {
-                return;
-            };
-            if rule.ignores(test) {
-                return;
-            }
-            let report = cx.report(fallback, USELESS_FALLBACK);
-            if fallback == no {
-                report.suggest(USE_LOGICAL_AND, |fixer| {
-                    fixer.replace(e, [&operand_text(test)[..], b" && ", &operand_text(yes)].concat())
-                });
-            }
-        });
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        // Of an object literal or of the attributes of an element. What is spread into an array has to be iterable.
+        if !matches!(e.parent(), Node::Prop(it) if it.kind() == PropKind::Spread) {
+            return;
+        }
+        let ExprKind::Cond { test, yes, no } = e.kind() else {
+            return;
+        };
+        let Some(fallback) = [no, yes].into_iter().find(|it| is_empty_object(*it)) else {
+            return;
+        };
+        if self.ignores(test) {
+            return;
+        }
+        let report = cx.report(fallback, USELESS_FALLBACK);
+        if fallback == no {
+            report.suggest(USE_LOGICAL_AND, |fixer| {
+                fixer.replace(e, [&operand_text(test)[..], b" && ", &operand_text(yes)].concat())
+            });
+        }
     }
 }

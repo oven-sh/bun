@@ -34,13 +34,14 @@ pub fn check<'a, R: Rule>(func: Func<'a>, reports_rest: bool, cx: &Cx<'a, R>) {
 
 impl Rule for DefaultParamLast {
     const META: Meta = Meta::eslint("default-param-last", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().funcs();
+    no_state!();
 
     fn new(_: &Options) -> Self {
         DefaultParamLast
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.funcs(|_, func, cx| check(func, true, cx));
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        check(func, true, cx);
     }
 }

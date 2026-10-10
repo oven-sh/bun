@@ -8,18 +8,19 @@ pub struct NoCommentedOutTests;
 
 impl Rule for NoCommentedOutTests {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "no-commented-out-tests", Kind::Problem);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoCommentedOutTests
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.comments().next().is_some() {
-            on.finish(|_, cx| {
-                let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
-                no_commented_out_tests::run_once(&ctx);
-            });
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.comments().next().is_some().then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        no_commented_out_tests::run_once(&ctx);
     }
 }

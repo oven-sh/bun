@@ -3,7 +3,7 @@
 //!
 //! | Case | Answer |
 //! |---|---|
-//! | `{ mode: "bun" \| "oxc" \| "minimatch" \| "minimatch-nodot" \| "micromatch" \| "micromatch-nodot" \| "fast-glob", pattern, path, flipNegate?, partial? }` | `true`, `false` |
+//! | `{ mode: "bun" \| "oxc" \| "minimatch" \| "minimatch-nodot" \| "micromatch" \| "micromatch-nodot" \| "fast-glob" \| "minimatch3" \| "minimatch3-nodot" \| "minimatch3-makere" \| "minimatch3-makere-dot", pattern, path, flipNegate?, partial?, matchBase? }` | `true`, `false` |
 //! | the same with `ask: "heads"` | an array, `null` |
 //! | `{ mode: "git" \| "globset" \| "npm5" \| "npm705" \| "npm7012", lines or text, ignoreCase?, path, directory?, ask: "verdict" \| "parents" }` | `"ignored"`, `"kept"`, `"none"` |
 //! | the same with `ask: "ignores" \| "inside"` | `true`, `false` |
@@ -42,6 +42,8 @@ fn options_of(mode: &[u8]) -> Option<Options> {
         b"bun" => Options::BUN,
         b"minimatch" => Options::MINIMATCH_DOT,
         b"minimatch-nodot" => Options::MINIMATCH,
+        b"minimatch3" => Options::MINIMATCH_3_DOT,
+        b"minimatch3-nodot" => Options::MINIMATCH_3,
         b"minimatch3-makere" => Options::MINIMATCH_3_MAKE_RE,
         b"minimatch3-makere-dot" => Options {
             dot: true,
@@ -111,6 +113,9 @@ fn answer(case: &Json, memory: &mut Kept) -> Json {
         if ask == b"heads" {
             let heads = |all: Vec<&[u8]>| Json::Array(all.into_iter().map(string).collect());
             return pattern.heads().map_or(Json::Null, heads);
+        }
+        if is_set(b"matchBase") {
+            return Json::Bool(pattern.matches_base(&path));
         }
         let how = How {
             flip_negate: is_set(b"flipNegate"),

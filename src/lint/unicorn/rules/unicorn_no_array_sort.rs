@@ -45,6 +45,7 @@ fn leftmost_identifier_reference(e: Expr<'_>) -> Option<Expr<'_>> {
 
 impl Rule for NoArraySort {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-array-sort", Kind::Problem).has_suggestions();
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -55,38 +56,40 @@ impl Rule for NoArraySort {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("sort") {
+            return None;
+        }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call) = e.as_call().filter(|it| it.args().len() <= 1 && !it.is_optional()) else {
+            return;
+        };
+        let Some(member) = get_member_expr(call.callee()) else {
+            return;
+        };
+        let (Some((span, name)), Some(object)) = (static_property_info(member), member.object()) else {
+            return;
+        };
+        if !name.is("sort")
+            || call.args().first().is_some_and(|it| it.tag() == ExprTag::Spread || is_non_compare_fn_argument(it))
+        {
             return;
         }
-        on.exprs([ExprTag::Call], |rule, e, cx| {
-            let Some(call) = e.as_call().filter(|it| it.args().len() <= 1 && !it.is_optional()) else {
-                return;
-            };
-            let Some(member) = get_member_expr(call.callee()) else {
-                return;
-            };
-            let (Some((span, name)), Some(object)) = (static_property_info(member), member.object()) else {
-                return;
-            };
-            if !name.is("sort")
-                || call.args().first().is_some_and(|it| it.tag() == ExprTag::Spread || is_non_compare_fn_argument(it))
-            {
-                return;
-            }
-            let is_allowed = match is_array_of_one_spread(object) {
-                true => rule.allow_after_spread,
-                false => rule.allow_expression_statement && is_expression_statement(e),
-            };
-            if is_allowed {
-                return;
-            }
-            if cx.file().mentions("effect")
-                && leftmost_identifier_reference(object).is_some_and(|it| is_import_symbol(it, "effect", "Chunk"))
-            {
-                return;
-            }
-            cx.report(span, NO_ARRAY_SORT).suggest(USE_TO_SORTED, |fixer| fixer.replace(span, "toSorted"));
-        });
+        let is_allowed = match is_array_of_one_spread(object) {
+            true => self.allow_after_spread,
+            false => self.allow_expression_statement && is_expression_statement(e),
+        };
+        if is_allowed {
+            return;
+        }
+        if cx.file().mentions("effect")
+            && leftmost_identifier_reference(object).is_some_and(|it| is_import_symbol(it, "effect", "Chunk"))
+        {
+            return;
+        }
+        cx.report(span, NO_ARRAY_SORT).suggest(USE_TO_SORTED, |fixer| fixer.replace(span, "toSorted"));
     }
 }

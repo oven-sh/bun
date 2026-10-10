@@ -33,22 +33,21 @@ fn is_guarded(body: Stmt) -> bool {
 
 impl Rule for GuardForIn {
     const META: Meta = Meta::eslint("guard-for-in", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::ForIn]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         GuardForIn
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::ForIn], |_, stmt, cx| {
-            if let StmtKind::ForIn { expr, body, .. } = stmt.kind()
-                && !is_guarded(body)
-            {
-                let whole = stmt.span();
-                // oxlint points at the head, which it takes to end one byte after the object.
-                let end = if cx.language().is_oxlint { expr.outer_span().end + 1 } else { whole.end };
-                cx.report(Span::new(whole.start, end), WRAP);
-            }
-        });
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if let StmtKind::ForIn { expr, body, .. } = stmt.kind()
+            && !is_guarded(body)
+        {
+            let whole = stmt.span();
+            // oxlint points at the head, which it takes to end one byte after the object.
+            let end = if cx.language().is_oxlint { expr.outer_span().end + 1 } else { whole.end };
+            cx.report(Span::new(whole.start, end), WRAP);
+        }
     }
 }

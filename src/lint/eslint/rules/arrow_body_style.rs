@@ -303,30 +303,6 @@ fn add_block_as_oxlint<'a>(fixer: Fixer<'a>, body: Expr<'a>) -> Fix {
 }
 
 impl ArrowBodyStyle {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(func) = e.as_fn().filter(|it| it.is_arrow()) else {
-            return;
-        };
-        match func.body() {
-            FnBody::Block(statements) => self.check_block(e, func, statements, cx),
-            FnBody::Expr(body) => {
-                if self.mode == Mode::Always
-                    || (self.mode == Mode::AsNeeded
-                        && self.require_return_for_object_literal
-                        && body.tag() == ExprTag::Object)
-                {
-                    // For oxlint the parentheses are part of the body.
-                    match cx.language().is_oxlint {
-                        true => (cx.report(body.outer_span(), EXPECTED_BLOCK))
-                            .fix(|fixer| add_block_as_oxlint(fixer, body)),
-                        false => cx.report(body, EXPECTED_BLOCK).fix(|fixer| add_block(fixer, &cx.state, e, func)),
-                    };
-                }
-            }
-            FnBody::None => {}
-        }
-    }
-
     fn check_block<'a>(
         &self,
         e: Expr<'a>,
@@ -383,6 +359,7 @@ impl ArrowBodyStyle {
 
 impl Rule for ArrowBodyStyle {
     const META: Meta = Meta::eslint("arrow-body-style", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Fn]);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -398,8 +375,31 @@ impl Rule for ArrowBodyStyle {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
-        on.exprs([ExprTag::Fn], Self::check);
-        State::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(func) = e.as_fn().filter(|it| it.is_arrow()) else {
+            return;
+        };
+        match func.body() {
+            FnBody::Block(statements) => self.check_block(e, func, statements, cx),
+            FnBody::Expr(body) => {
+                if self.mode == Mode::Always
+                    || (self.mode == Mode::AsNeeded
+                        && self.require_return_for_object_literal
+                        && body.tag() == ExprTag::Object)
+                {
+                    // For oxlint the parentheses are part of the body.
+                    match cx.language().is_oxlint {
+                        true => (cx.report(body.outer_span(), EXPECTED_BLOCK))
+                            .fix(|fixer| add_block_as_oxlint(fixer, body)),
+                        false => cx.report(body, EXPECTED_BLOCK).fix(|fixer| add_block(fixer, &cx.state, e, func)),
+                    };
+                }
+            }
+            FnBody::None => {}
+        }
     }
 }

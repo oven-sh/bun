@@ -11,40 +11,40 @@ const REPLACE: Message = Message::new("", "Replace this call with `{{replacement
 
 impl Rule for PreferNumberCoercion {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-number-coercion", Kind::Suggestion).has_suggestions();
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferNumberCoercion
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions_any(&["parseFloat", "parseInt"]) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions_any(&["parseFloat", "parseInt"]).then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call_expr) = e.as_call().filter(|it| !it.is_optional()) else {
+            return;
+        };
+        let Some(is_parse_int) = parse_target(call_expr.callee()) else {
+            return;
+        };
+        let args = call_expr.args();
+        let is_base_10 = |it: Expr| matches!(it.kind(), ExprKind::Number(value) if value == 10.0) && !it.is_parenthesized();
+        if args.len() != (if is_parse_int { 2 } else { 1 }) || is_parse_int && !args.get(1).is_some_and(is_base_10) {
             return;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(call_expr) = e.as_call().filter(|it| !it.is_optional()) else {
-                return;
-            };
-            let Some(is_parse_int) = parse_target(call_expr.callee()) else {
-                return;
-            };
-            let args = call_expr.args();
-            let is_base_10 = |it: Expr| matches!(it.kind(), ExprKind::Number(value) if value == 10.0) && !it.is_parenthesized();
-            if args.len() != (if is_parse_int { 2 } else { 1 }) || is_parse_int && !args.get(1).is_some_and(is_base_10) {
-                return;
-            }
-            let Some(first_argument) = args.first().filter(|it| it.tag() != ExprTag::Spread) else {
-                return;
-            };
-            let first_argument_text = cx.slice(first_argument.outer_span());
-            let replacement_text = match is_parse_int {
-                true => concat(&[b"Math.trunc(Number(", first_argument_text, b"))"]),
-                false => concat(&[b"Number(", first_argument_text, b")"]),
-            };
-            cx.report(e, PREFER_NUMBER_COERCION)
-                .data("replacement", replacement_text.clone())
-                .suggest_with(REPLACE, &[("replacement", &replacement_text[..])], |fixer| fixer.replace(e, &replacement_text[..]));
-        });
+        let Some(first_argument) = args.first().filter(|it| it.tag() != ExprTag::Spread) else {
+            return;
+        };
+        let first_argument_text = cx.slice(first_argument.outer_span());
+        let replacement_text = match is_parse_int {
+            true => concat(&[b"Math.trunc(Number(", first_argument_text, b"))"]),
+            false => concat(&[b"Number(", first_argument_text, b")"]),
+        };
+        cx.report(e, PREFER_NUMBER_COERCION)
+            .data("replacement", replacement_text.clone())
+            .suggest_with(REPLACE, &[("replacement", &replacement_text[..])], |fixer| fixer.replace(e, &replacement_text[..]));
     }
 }
 

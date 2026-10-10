@@ -17,23 +17,29 @@ const PREFER_CALLED_EXACTLY_ONCE_WITH: Message = Message::new(
 impl Rule for PreferCalledExactlyOnceWith {
     const META: Meta =
         Meta::oxlint(Plugin::Vitest, "prefer-called-exactly-once-with", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().stmts(&[StmtTag::Block]).finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferCalledExactlyOnceWith
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("toHaveBeenCalledOnce") || !file.mentions("toHaveBeenCalledWith") {
-            return;
+            return None;
         }
+        Some(())
+    }
+
+    fn stmt<'a>(&self, block_statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if let StmtKind::Block(body) = block_statement.kind() {
+            check_block_body(body, cx);
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
         // The bodies of the callbacks of tests are reached from the statements that call the tests.
-        on.finish(|_, cx| check_block_body(cx.file().body(), cx));
-        on.stmts([StmtTag::Block], |_, block_statement, cx| {
-            if let StmtKind::Block(body) = block_statement.kind() {
-                check_block_body(body, cx);
-            }
-        });
+        check_block_body(cx.file().body(), cx);
     }
 }
 

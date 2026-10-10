@@ -28,8 +28,23 @@ fn lines_without_code<'a>(file: &'a File<'a>, comment: Token<'a>) -> (u32, u32) 
     (start, end)
 }
 
-impl MaxLines {
-    fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
+impl Rule for MaxLines {
+    const META: Meta = Meta::eslint("max-lines", Kind::Suggestion);
+    const ON: On = On::new().finish();
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let object = options.object(0);
+        MaxLines {
+            max: (object.usize("max"))
+                .or_else(|| options.number(0).map(|n| n as usize))
+                .unwrap_or(300),
+            skip_comments: object.bool_or("skipComments", false),
+            skip_blank_lines: object.bool_or("skipBlankLines", false),
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         let mut count = file.line_count();
         // After a line break at the end of the file there is no line.
@@ -87,25 +102,5 @@ impl MaxLines {
                 .data("max", self.max)
                 .data("actual", actual);
         }
-    }
-}
-
-impl Rule for MaxLines {
-    const META: Meta = Meta::eslint("max-lines", Kind::Suggestion);
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let object = options.object(0);
-        MaxLines {
-            max: (object.usize("max"))
-                .or_else(|| options.number(0).map(|n| n as usize))
-                .unwrap_or(300),
-            skip_comments: object.bool_or("skipComments", false),
-            skip_blank_lines: object.bool_or("skipBlankLines", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.finish(Self::check);
     }
 }

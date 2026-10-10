@@ -83,6 +83,19 @@ impl Rule for NoLabels {
         }
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new().stmts(&[StmtTag::Labeled]);
+        if !self.allow_loop && !self.allow_switch {
+            // Whatever has the label.
+            on = on.stmts(&[StmtTag::Break, StmtTag::Continue]);
+        } else if file.has_stmts([StmtTag::Labeled]) && file.has_stmts([StmtTag::Break, StmtTag::Continue]) {
+            on = on
+                .enter(NodeTags::new().stmts(&[StmtTag::Labeled, StmtTag::Break, StmtTag::Continue]))
+                .exit(NodeTags::new().stmts(&[StmtTag::Labeled]));
+        }
+        on
+    }
+
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
         Some(FxHashMap::default())
     }
@@ -90,21 +103,15 @@ impl Rule for NoLabels {
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         match stmt.tag() {
             StmtTag::Labeled => self.check_labeled(stmt, cx),
-            // Whatever has the label.
-            _ if !self.allow_loop && !self.allow_switch => self.check_jump(stmt, cx),
-            _ => {}
+            _ => self.check_jump(stmt, cx),
         }
     }
 
     fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        if self.allow_loop || self.allow_switch {
-            self.visit(node, true, cx);
-        }
+        self.visit(node, true, cx);
     }
 
     fn exit<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        if self.allow_loop || self.allow_switch {
-            self.visit(node, false, cx);
-        }
+        self.visit(node, false, cx);
     }
 }

@@ -96,8 +96,24 @@ impl<'a> Owner<'a> {
     }
 }
 
-impl ConsistentGenericConstructors {
-    fn check<'a>(&self, rhs: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for ConsistentGenericConstructors {
+    const META: Meta = Meta::typescript("consistent-generic-constructors", Kind::Suggestion)
+        .fixable(Fixable::Code)
+        .presets(Presets::STYLISTIC);
+    const ON: On = On::new().exprs(&[ExprTag::New]);
+    type State<'a> = GlobalFunctions<'a>;
+
+    fn new(options: &Options) -> Self {
+        ConsistentGenericConstructors {
+            prefers_type_annotation: options.str(0) == Some("type-annotation"),
+        }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<GlobalFunctions<'a>> {
+        Some(GlobalFunctions::default())
+    }
+
+    fn expr<'a>(&self, rhs: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::New(call) = rhs.kind() else {
             return;
         };
@@ -172,23 +188,5 @@ impl ConsistentGenericConstructors {
             }
             [fixer.remove(annotation), fixer.insert_after(callee, text)]
         });
-    }
-}
-
-impl Rule for ConsistentGenericConstructors {
-    const META: Meta = Meta::typescript("consistent-generic-constructors", Kind::Suggestion)
-        .fixable(Fixable::Code)
-        .presets(Presets::STYLISTIC);
-    type State<'a> = GlobalFunctions<'a>;
-
-    fn new(options: &Options) -> Self {
-        ConsistentGenericConstructors {
-            prefers_type_annotation: options.str(0) == Some("type-annotation"),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> GlobalFunctions<'a> {
-        on.exprs([ExprTag::New], Self::check);
-        GlobalFunctions::default()
     }
 }

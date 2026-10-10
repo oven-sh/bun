@@ -14,24 +14,27 @@ const CONSOLE_WINDOW: Message = Message::new(
 
 impl Rule for NoConsoleWindowFlash {
     const META: Meta = Meta::plugin(Plugin::Bun, "no-console-window-flash", Kind::Suggestion);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoConsoleWindowFlash
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !can_launch(file) {
-            return;
+            return None;
         }
-        on.finish(|_, cx| {
-            for (call, starter) in launches(cx.file()) {
-                let options = LaunchOptions::of(call, starter);
-                let is_unknown = matches!(options, LaunchOptions::Unknown);
-                if !is_unknown && !options.has("windowsHide") && !options.shares_a_stream() {
-                    cx.report(call.callee(), CONSOLE_WINDOW);
-                }
+        Some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        for (call, starter) in launches(cx.file()) {
+            let options = LaunchOptions::of(call, starter);
+            let is_unknown = matches!(options, LaunchOptions::Unknown);
+            if !is_unknown && !options.has("windowsHide") && !options.shares_a_stream() {
+                cx.report(call.callee(), CONSOLE_WINDOW);
             }
-        });
+        }
     }
 }

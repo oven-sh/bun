@@ -268,7 +268,8 @@ impl Rule for LinesAroundComment {
     const META: Meta = Meta::eslint("lines-around-comment", Kind::Layout)
         .fixable(Fixable::Whitespace)
         .deprecated();
-    type State<'a> = ();
+    const ON: On = On::new().finish();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -286,19 +287,17 @@ impl Rule for LinesAroundComment {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.finish(|rule, cx| {
-            for comment in cx.file().comments() {
-                let (before, after) = match comment.kind() {
-                    TokenKind::Line => (rule.before_line_comment, rule.after_line_comment),
-                    TokenKind::Block => (rule.before_block_comment, rule.after_block_comment),
-                    TokenKind::Shebang => (false, rule.after_hashbang_comment),
-                    _ => continue,
-                };
-                if before || after {
-                    rule.check_comment(comment, before, after, cx);
-                }
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+        for comment in cx.file().comments() {
+            let (before, after) = match comment.kind() {
+                TokenKind::Line => (self.before_line_comment, self.after_line_comment),
+                TokenKind::Block => (self.before_block_comment, self.after_block_comment),
+                TokenKind::Shebang => (false, self.after_hashbang_comment),
+                _ => continue,
+            };
+            if before || after {
+                self.check_comment(comment, before, after, cx);
             }
-        });
+        }
     }
 }

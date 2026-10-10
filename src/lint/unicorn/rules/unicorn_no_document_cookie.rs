@@ -13,6 +13,7 @@ const NO_DOCUMENT_COOKIE: Message = Message::new("", "Do not use `document.cooki
 
 impl Rule for NoDocumentCookie {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-document-cookie", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Assign]);
     /// Whether a variable is `document`.
     type State<'a> = FxHashMap<Symbol<'a>, bool>;
 
@@ -20,19 +21,20 @@ impl Rule for NoDocumentCookie {
         NoDocumentCookie
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if !file.mentions("cookie") || !file.mentions("document") {
-            return FxHashMap::default();
+            return None;
         }
-        on.exprs([ExprTag::Assign], |_, e, cx| {
-            if let Some(left) = e.left()
-                && static_property_name(left).is_some_and(|it| it.is("cookie"))
-                && left.object().is_some_and(|it| is_document_cookie_reference(it, &mut cx.state))
-            {
-                cx.report(left, NO_DOCUMENT_COOKIE);
-            }
-        });
-        FxHashMap::default()
+        Some(FxHashMap::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(left) = e.left()
+            && static_property_name(left).is_some_and(|it| it.is("cookie"))
+            && left.object().is_some_and(|it| is_document_cookie_reference(it, &mut cx.state))
+        {
+            cx.report(left, NO_DOCUMENT_COOKIE);
+        }
     }
 }
 

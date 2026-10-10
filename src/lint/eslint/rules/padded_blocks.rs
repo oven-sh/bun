@@ -79,7 +79,8 @@ impl Rule for PaddedBlocks {
     const META: Meta = Meta::eslint("padded-blocks", Kind::Layout)
         .fixable(Fixable::Whitespace)
         .deprecated();
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::Switch, StmtTag::Block]).funcs().classes();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let kinds = options.object(0);
@@ -96,44 +97,49 @@ impl Rule for PaddedBlocks {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        if self.switches.is_some() {
-            on.stmts([StmtTag::Switch], |rule, stmt, cx| {
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match stmt.tag() {
+            StmtTag::Switch if self.switches.is_some() => {
                 if let StmtKind::Switch { expr, cases } = stmt.kind()
                     && !cases.is_empty()
-                    && let Some(requires_padding) = rule.switches
+                    && let Some(requires_padding) = self.switches
                 {
                     let close_paren = skip_trivia(cx.text(), expr.outer_span().end);
                     let open_brace = skip_trivia(cx.text(), close_paren + 1);
-                    rule.check_padding(Span::new(open_brace, stmt.span().end), requires_padding, cx);
+                    self.check_padding(Span::new(open_brace, stmt.span().end), requires_padding, cx);
                 }
-            });
-        }
-        if self.blocks.is_some() {
-            on.stmts([StmtTag::Block], |rule, stmt, cx| {
+            }
+            StmtTag::Block if self.blocks.is_some() => {
                 if stmt.as_block().is_some_and(|body| !body.is_empty())
-                    && let Some(requires_padding) = rule.blocks
+                    && let Some(requires_padding) = self.blocks
                 {
-                    rule.check_padding(stmt.span(), requires_padding, cx);
+                    self.check_padding(stmt.span(), requires_padding, cx);
                 }
-            });
-            on.funcs(|rule, func, cx| {
-                if func.body_statements().is_some_and(|body| !body.is_empty())
-                    && let Some(braces) = func.body_span()
-                    && let Some(requires_padding) = rule.blocks
-                {
-                    rule.check_padding(braces, requires_padding, cx);
-                }
-            });
+            }
+            _ => {}
         }
-        if self.classes.is_some() {
-            on.classes(|rule, class, cx| {
-                if !class.members().is_empty()
-                    && let Some(requires_padding) = rule.classes
-                {
-                    rule.check_padding(class.body_span(), requires_padding, cx);
-                }
-            });
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if self.blocks.is_none() {
+            return;
+        }
+        if func.body_statements().is_some_and(|body| !body.is_empty())
+            && let Some(braces) = func.body_span()
+            && let Some(requires_padding) = self.blocks
+        {
+            self.check_padding(braces, requires_padding, cx);
+        }
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        if self.classes.is_none() {
+            return;
+        }
+        if !class.members().is_empty()
+            && let Some(requires_padding) = self.classes
+        {
+            self.check_padding(class.body_span(), requires_padding, cx);
         }
     }
 }

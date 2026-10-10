@@ -19,7 +19,9 @@ const USE_AT: Message = Message::new("", "Use `.at()` for index access.");
 impl Rule for PreferAt {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "prefer-at", Kind::Suggestion).fixable(Fixable::Code).has_suggestions();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Index, ExprTag::Call]);
+    /// Whether the file can have an `Index` that is reported, and a `Call`.
+    type State<'a> = (bool, bool);
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -33,23 +35,28 @@ impl Rule for PreferAt {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if self.check_all_index_access || file.mentions_any(&["length", "slice"]) {
-            on.exprs([ExprTag::Index], |rule, e, cx| {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<(bool, bool)> {
+        let index = self.check_all_index_access || file.mentions_any(&["length", "slice"]);
+        let call = file.mentions_any(&["charAt", "substring", "slice", "last"]);
+        (index || call).then_some((index, call))
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Index if cx.state.0 => {
                 if !is_assignment_target(e) {
-                    rule.handle_computed_member(e, cx);
+                    self.handle_computed_member(e, cx);
                 }
-            });
-        }
-        if file.mentions_any(&["charAt", "substring", "slice", "last"]) {
-            on.exprs([ExprTag::Call], |rule, e, cx| {
+            }
+            ExprTag::Call if cx.state.1 => {
                 if let Some(call_expr) = e.as_call()
                     && let Some(static_member) = as_static_member(call_expr.callee())
                     && !is_assignment_target(e)
                 {
-                    rule.check_call_expression(e, call_expr, static_member, cx);
+                    self.check_call_expression(e, call_expr, static_member, cx);
                 }
-            });
+            }
+            _ => {}
         }
     }
 }

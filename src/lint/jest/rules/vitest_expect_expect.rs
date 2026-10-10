@@ -9,18 +9,19 @@ pub struct ExpectExpect(ExpectExpectConfig);
 
 impl Rule for ExpectExpect {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "expect-expect", Kind::Problem);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         ExpectExpect(ExpectExpectConfig::new(options))
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if jest::is_test(file) {
-            on.finish(|rule, cx| {
-                let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
-                rule.0.run_once(&ctx, true);
-            });
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        jest::is_test(file).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        self.0.run_once(&ctx, true);
     }
 }

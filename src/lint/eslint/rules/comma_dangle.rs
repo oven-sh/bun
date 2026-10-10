@@ -173,19 +173,6 @@ impl CommaDangle {
         }
     }
 
-    /// A `FunctionDeclaration`, a `FunctionExpression` or an `ArrowFunctionExpression`.
-    fn check_function<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        if ast_utils::is_function_with_body(func)
-            && let Some(last) = func.params().last().or_else(|| func.this_param())
-        {
-            let item = LastItem {
-                end: last.span().end,
-                is_rest: last.is_rest(),
-            };
-            check(cx.state.functions, item, cx);
-        }
-    }
-
     /// A `CallExpression` or a `NewExpression`.
     fn check_call<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let ExprKind::Call(call) | ExprKind::New(call) = e.kind()
@@ -202,6 +189,12 @@ impl CommaDangle {
 
 impl Rule for CommaDangle {
     const META: Meta = Meta::eslint("comma-dangle", Kind::Layout).fixable(Fixable::Code).deprecated();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Object, ExprTag::Array, ExprTag::Call, ExprTag::New])
+        .stmts(&[StmtTag::Import, StmtTag::ExportNamed])
+        .types(&[TypeTag::Import])
+        .pats(&[PatTag::Object, PatTag::Array])
+        .funcs();
     type State<'a> = Modes;
 
     fn new(options: &Options) -> Self {
@@ -221,8 +214,8 @@ impl Rule for CommaDangle {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Modes {
-        let modes = match self.option {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Modes> {
+        Some(match self.option {
             OptionValue::All(mode) => Modes {
                 arrays: mode,
                 objects: mode,
@@ -231,28 +224,21 @@ impl Rule for CommaDangle {
                 functions: if file.language().ecma_version < 2017 { Mode::Ignore } else { mode },
             },
             OptionValue::Each(modes) => modes,
-        };
-        if modes.objects != Mode::Ignore {
-            on.exprs([ExprTag::Object], Self::check_object);
-            on.pats([PatTag::Object], Self::check_binding_pattern);
-            // ESLint has `{ with: { type: "json" } }` in `import("m", { with: { type: "json" } })`
-            // as two object literals.
-            on.types([TypeTag::Import], |_, ty, cx| {
-                let Some(attributes) = ty.import_attributes() else {
-                    return;
-                };
-                let ends = [attributes.entries().last().map(|last| last.span().end), Some(attributes.braces_span().end)];
-                for end in ends.into_iter().flatten() {
-                    check(cx.state.objects, LastItem { end, is_rest: false }, cx);
-                }
-            });
+        })
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Object if cx.state.objects != Mode::Ignore => self.check_object(e, cx),
+            ExprTag::Array if cx.state.arrays != Mode::Ignore => self.check_array(e, cx),
+            ExprTag::Call | ExprTag::New if cx.state.functions != Mode::Ignore => self.check_call(e, cx),
+            _ => {}
         }
-        if modes.arrays != Mode::Ignore {
-            on.exprs([ExprTag::Array], Self::check_array);
-            on.pats([PatTag::Array], Self::check_binding_pattern);
-        }
-        if modes.imports != Mode::Ignore {
-            on.stmts([StmtTag::Import], |_, statement, cx| {
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match statement.tag() {
+            StmtTag::Import if cx.state.imports != Mode::Ignore => {
                 if let StmtKind::Import(import) = statement.kind()
                     && let Some(last) = import.named().last()
                 {
@@ -262,10 +248,8 @@ impl Rule for CommaDangle {
                     };
                     check(cx.state.imports, item, cx);
                 }
-            });
-        }
-        if modes.exports != Mode::Ignore {
-            on.stmts([StmtTag::ExportNamed], |_, statement, cx| {
+            }
+            StmtTag::ExportNamed if cx.state.exports != Mode::Ignore => {
                 if let StmtKind::ExportNamed(export) = statement.kind()
                     && let Some(last) = export.items().last()
                 {
@@ -275,12 +259,47 @@ impl Rule for CommaDangle {
                     };
                     check(cx.state.exports, item, cx);
                 }
-            });
+            }
+            _ => {}
         }
-        if modes.functions != Mode::Ignore {
-            on.funcs(Self::check_function);
-            on.exprs([ExprTag::Call, ExprTag::New], Self::check_call);
+    }
+
+    // ESLint has `{ with: { type: "json" } }` in `import("m", { with: { type: "json" } })`
+    // as two object literals.
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.state.objects == Mode::Ignore {
+            return;
         }
-        modes
+        let Some(attributes) = ty.import_attributes() else {
+            return;
+        };
+        let ends = [attributes.entries().last().map(|last| last.span().end), Some(attributes.braces_span().end)];
+        for end in ends.into_iter().flatten() {
+            check(cx.state.objects, LastItem { end, is_rest: false }, cx);
+        }
+    }
+
+    fn pat<'a>(&self, pattern: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        match pattern.tag() {
+            PatTag::Object if cx.state.objects != Mode::Ignore => self.check_binding_pattern(pattern, cx),
+            PatTag::Array if cx.state.arrays != Mode::Ignore => self.check_binding_pattern(pattern, cx),
+            _ => {}
+        }
+    }
+
+    /// A `FunctionDeclaration`, a `FunctionExpression` or an `ArrowFunctionExpression`.
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.state.functions == Mode::Ignore {
+            return;
+        }
+        if ast_utils::is_function_with_body(func)
+            && let Some(last) = func.params().last().or_else(|| func.this_param())
+        {
+            let item = LastItem {
+                end: last.span().end,
+                is_rest: last.is_rest(),
+            };
+            check(cx.state.functions, item, cx);
+        }
     }
 }

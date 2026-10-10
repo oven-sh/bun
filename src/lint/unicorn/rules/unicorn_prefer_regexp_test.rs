@@ -40,43 +40,46 @@ fn is_in_boolean_position(call: Expr) -> bool {
 
 impl Rule for PreferRegexpTest {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-regexp-test", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferRegexpTest
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions_any(&["match", "exec"]) {
+            return None;
+        }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call) = e.as_call().filter(|it| it.args().len() == 1 && !it.is_optional()) else {
+            return;
+        };
+        let Some(ExprKind::Dot { obj, name, .. }) = get_member_expr(call.callee()).map(Expr::kind) else {
+            return;
+        };
+        let Some(argument) = call.args().first().filter(|it| it.tag() != ExprTag::Spread) else {
+            return;
+        };
+        let is_match = match name.bytes() {
+            b"match" => true,
+            b"exec" => false,
+            _ => return,
+        };
+        if is_other_literal(obj) || is_match && is_other_literal(argument) || !is_in_boolean_position(e) {
             return;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(call) = e.as_call().filter(|it| it.args().len() == 1 && !it.is_optional()) else {
-                return;
-            };
-            let Some(ExprKind::Dot { obj, name, .. }) = get_member_expr(call.callee()).map(Expr::kind) else {
-                return;
-            };
-            let Some(argument) = call.args().first().filter(|it| it.tag() != ExprTag::Spread) else {
-                return;
-            };
-            let is_match = match name.bytes() {
-                b"match" => true,
-                b"exec" => false,
-                _ => return,
-            };
-            if is_other_literal(obj) || is_match && is_other_literal(argument) || !is_in_boolean_position(e) {
-                return;
+        cx.report(name, PREFER_REGEXP_TEST).fix(|fixer| {
+            let mut fixes = vec![fixer.replace(name, "test")];
+            if is_match {
+                let (file, string, regexp) = (fixer.file(), obj.outer_span(), argument.outer_span());
+                fixes.push(fixer.replace(regexp, file.slice(string)));
+                fixes.push(fixer.replace(string, file.slice(regexp)));
             }
-            cx.report(name, PREFER_REGEXP_TEST).fix(|fixer| {
-                let mut fixes = vec![fixer.replace(name, "test")];
-                if is_match {
-                    let (file, string, regexp) = (fixer.file(), obj.outer_span(), argument.outer_span());
-                    fixes.push(fixer.replace(regexp, file.slice(string)));
-                    fixes.push(fixer.replace(string, file.slice(regexp)));
-                }
-                fixes
-            });
+            fixes
         });
     }
 }

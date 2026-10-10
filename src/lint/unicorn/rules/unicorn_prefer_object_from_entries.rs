@@ -33,6 +33,7 @@ fn is_plain_property(property: Prop) -> bool {
 
 impl Rule for PreferObjectFromEntries {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-object-from-entries", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -46,16 +47,12 @@ impl Rule for PreferObjectFromEntries {
         PreferObjectFromEntries { functions: functions.into_iter().map(split).collect() }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         let is_mentioned = |function: &Vec<String>| function.last().is_some_and(|it| file.mentions(it));
-        if file.mentions("reduce") || self.functions.iter().any(is_mentioned) {
-            on.exprs([ExprTag::Call], Self::check);
-        }
+        (file.mentions("reduce") || self.functions.iter().any(is_mentioned)).then_some(())
     }
-}
 
-impl PreferObjectFromEntries {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(call) = e.as_call().filter(|it| matches!(it.args().len(), 1 | 2) && !it.is_optional()) else {
             return;
         };

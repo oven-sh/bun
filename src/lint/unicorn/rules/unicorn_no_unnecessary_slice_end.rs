@@ -11,25 +11,28 @@ const METHODS: &[&str] = &["slice"];
 impl Rule for NoUnnecessarySliceEnd {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "no-unnecessary-slice-end", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoUnnecessarySliceEnd
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions_any(METHODS) {
-            return;
+            return None;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            if let Some(call) = e.as_call()
-                && let Some(argument) = unnecessary_length_or_infinity_argument(call, METHODS)
-            {
-                let UnnecessaryArgument { first, second, arg_str } = argument;
-                cx.report(second.outer_span(), UNNECESSARY_ARGUMENT)
-                    .data("arg_str", arg_str)
-                    .fix(|fixer| fixer.remove(Span::after(first.outer_span(), second.outer_span().end)));
-            }
-        });
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(call) = e.as_call()
+            && let Some(argument) = unnecessary_length_or_infinity_argument(call, METHODS)
+        {
+            let UnnecessaryArgument { first, second, arg_str } = argument;
+            cx.report(second.outer_span(), UNNECESSARY_ARGUMENT)
+                .data("arg_str", arg_str)
+                .fix(|fixer| fixer.remove(Span::after(first.outer_span(), second.outer_span().end)));
+        }
     }
 }

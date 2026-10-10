@@ -12,50 +12,53 @@ const PREFER_CLASSLIST_TOGGLE: Message =
 impl Rule for PreferClasslistToggle {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "prefer-classlist-toggle", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Cond]).stmts(&[StmtTag::If]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferClasslistToggle
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("classList") || !file.mentions("add") || !file.mentions("remove") {
-            return;
+            return None;
         }
-        on.stmts([StmtTag::If], |_, if_stmt, cx| {
-            if let StmtKind::If { test, yes, no: Some(no) } = if_stmt.kind()
-                && let Some(consequent) = extract_single_expression_from_statement(yes)
-                && let Some(alternate) = extract_single_expression_from_statement(no)
-                && let Some((add_call, is_add_first)) = identify_add_remove_pair(consequent, alternate)
-            {
-                cx.report(if_stmt, PREFER_CLASSLIST_TOGGLE).fix(|fixer| {
-                    Some(fixer.replace(
+        Some(())
+    }
+
+    fn stmt<'a>(&self, if_stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if let StmtKind::If { test, yes, no: Some(no) } = if_stmt.kind()
+            && let Some(consequent) = extract_single_expression_from_statement(yes)
+            && let Some(alternate) = extract_single_expression_from_statement(no)
+            && let Some((add_call, is_add_first)) = identify_add_remove_pair(consequent, alternate)
+        {
+            cx.report(if_stmt, PREFER_CLASSLIST_TOGGLE).fix(|fixer| {
+                Some(
+                    fixer.replace(
                         if_stmt,
                         toggle(get_member_expr(add_call.callee())?, add_call, test, is_add_first, ";")?,
-                    ))
-                });
-            }
-        });
-        on.exprs([ExprTag::Cond], |_, e, cx| {
-            let ExprKind::Cond { test, yes: consequent, no: alternate } = e.kind() else {
-                return;
-            };
-            if let Some((add_call, is_add_first)) = identify_add_remove_pair(consequent, alternate) {
-                cx.report(consequent.outer_span().to(alternate.outer_span()), PREFER_CLASSLIST_TOGGLE).fix(|fixer| {
-                    Some(
-                        fixer
-                            .replace(e, toggle(get_member_expr(add_call.callee())?, add_call, test, is_add_first, "")?),
-                    )
-                });
-            }
-            // `a.classList[b ? "add" : "remove"](c)`
-            if let Some(Node::Expr(parent)) = plain(e).map(Expr::parent)
-                && parent.tag() == ExprTag::Index
-                && let Some(Node::Expr(grand_parent)) = plain(parent).map(Expr::parent)
-            {
-                check_computed_member_call(grand_parent, cx);
-            }
-        });
+                    ),
+                )
+            });
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Cond { test, yes: consequent, no: alternate } = e.kind() else {
+            return;
+        };
+        if let Some((add_call, is_add_first)) = identify_add_remove_pair(consequent, alternate) {
+            cx.report(consequent.outer_span().to(alternate.outer_span()), PREFER_CLASSLIST_TOGGLE).fix(|fixer| {
+                Some(fixer.replace(e, toggle(get_member_expr(add_call.callee())?, add_call, test, is_add_first, "")?))
+            });
+        }
+        // `a.classList[b ? "add" : "remove"](c)`
+        if let Some(Node::Expr(parent)) = plain(e).map(Expr::parent)
+            && parent.tag() == ExprTag::Index
+            && let Some(Node::Expr(grand_parent)) = plain(parent).map(Expr::parent)
+        {
+            check_computed_member_call(grand_parent, cx);
+        }
     }
 }
 

@@ -1,6 +1,6 @@
 use bun_lint_oxlint::ast_util::static_property_name;
 use crate::react_perf::{
-    NativeAllowList, ReactPerfRule, State, is_constructor_matching_name, react_perf_from_configuration, register,
+    NativeAllowList, ON, ReactPerfRule, State, expr, is_constructor_matching_name, react_perf_from_configuration,
 };
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -10,15 +10,19 @@ pub struct JsxNoNewFunctionAsProp(NativeAllowList);
 
 impl Rule for JsxNoNewFunctionAsProp {
     const META: Meta = Meta::oxlint(Plugin::ReactPerf, "jsx-no-new-function-as-prop", Kind::Suggestion);
+    const ON: On = ON;
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         JsxNoNewFunctionAsProp(react_perf_from_configuration(options))
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        register(on);
-        State::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        expr(self, e, cx);
     }
 }
 

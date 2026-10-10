@@ -49,35 +49,47 @@ type Known<'a> = FxHashMap<(Symbol<'a>, bool), Option<Method>>;
 
 impl Rule for NoInvalidFetchOptions {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-invalid-fetch-options", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]);
     type State<'a> = Known<'a>;
 
     fn new(_: &Options) -> Self {
         NoInvalidFetchOptions
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Known<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Known<'a>> {
         if !file.mentions("body") {
-            return Known::default();
+            return None;
         }
-        if file.mentions("fetch") {
-            on.exprs([ExprTag::Call], |_, e, cx| {
+        if !file.mentions("fetch") && !file.mentions("Request") {
+            return None;
+        }
+        Some(Known::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Call => {
+                if !cx.file().mentions("fetch") {
+                    return;
+                }
                 if let Some(call) = e.as_call()
                     && get_inner_expression(call.callee()).is_ident("fetch")
                 {
                     check(call, cx);
                 }
-            });
-        }
-        if file.mentions("Request") {
-            on.exprs([ExprTag::New], |_, e, cx| {
+            }
+            ExprTag::New => {
+                if !cx.file().mentions("Request") {
+                    return;
+                }
                 if let ExprKind::New(new) = e.kind()
                     && is_new_expression(new, &["Request"], Some(2), None)
                 {
                     check(new, cx);
                 }
-            });
+            }
+            _ => {}
         }
-        Known::default()
     }
 }
 

@@ -34,8 +34,31 @@ fn option_to_definition(option: Option<&Json>, defaults: Mode) -> Mode {
     Mode { before, after }
 }
 
-impl GeneratorStarSpacing {
-    fn check_function<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for GeneratorStarSpacing {
+    const META: Meta = Meta::eslint("generator-star-spacing", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new().funcs();
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let option = options.get(0);
+        let defaults = option_to_definition(
+            option,
+            Mode {
+                before: true,
+                after: false,
+            },
+        );
+        let of = |kind: &str| option_to_definition(Object::of(option).get(kind), defaults);
+        GeneratorStarSpacing {
+            named: of("named"),
+            anonymous: of("anonymous"),
+            method: of("method"),
+        }
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         if !func.is_generator() || !func.has_body() {
             return;
         }
@@ -75,33 +98,5 @@ impl GeneratorStarSpacing {
                     .fix(|fixer| fixer.remove(star.span().between(next.span()))),
             };
         }
-    }
-}
-
-impl Rule for GeneratorStarSpacing {
-    const META: Meta = Meta::eslint("generator-star-spacing", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let option = options.get(0);
-        let defaults = option_to_definition(
-            option,
-            Mode {
-                before: true,
-                after: false,
-            },
-        );
-        let of = |kind: &str| option_to_definition(Object::of(option).get(kind), defaults);
-        GeneratorStarSpacing {
-            named: of("named"),
-            anonymous: of("anonymous"),
-            method: of("method"),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.funcs(Self::check_function);
     }
 }

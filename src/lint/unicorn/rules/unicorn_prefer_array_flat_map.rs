@@ -168,52 +168,54 @@ impl Rule for PreferArrayFlatMap {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-array-flat-map", Kind::Suggestion)
         .fixable(Fixable::Code)
         .has_suggestions();
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferArrayFlatMap
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         let has_map_and_flat = file.mentions("flat") && file.mentions("map");
         if !has_map_and_flat && !(file.mentions("filter") && file.mentions("flatMap")) {
+            return None;
+        }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(flat_call) = e.as_call().filter(|it| it.args().len() <= 1 && !it.is_optional()) else {
+            return;
+        };
+        check_filter_flat_map(e, flat_call, cx);
+        let callee = flat_call.callee();
+        if !is_method_call(flat_call, None, Some(&["flat"]), None, None)
+            || callee.is_parenthesized()
+            || callee.is_optional()
+        {
             return;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(flat_call) = e.as_call().filter(|it| it.args().len() <= 1 && !it.is_optional()) else {
-                return;
-            };
-            check_filter_flat_map(e, flat_call, cx);
-            let callee = flat_call.callee();
-            if !is_method_call(flat_call, None, Some(&["flat"]), None, None)
-                || callee.is_parenthesized()
-                || callee.is_optional()
-            {
-                return;
-            }
-            let Some(object) = callee.object().filter(|it| !it.is_chain_root()) else {
-                return;
-            };
-            let Some(map_call) = object.as_call().filter(|it| !it.is_optional()) else {
-                return;
-            };
-            if !is_method_call(map_call, None, Some(&["map"]), None, None) || is_ignored_call_expression(map_call) {
-                return;
-            }
-            // `.flat(1.5)` is `.flat(1)`.
-            let is_one = |it: Expr| {
-                !it.is_parenthesized() && matches!(it.kind(), ExprKind::Number(depth) if depth.floor() == 1.0)
-            };
-            if !flat_call.args().first().is_none_or(is_one) {
-                return;
-            }
-            cx.report(e, PREFER_ARRAY_FLAT_MAP).fix(|fixer| {
-                let end_of_map = map_call.callee().outer_span().end;
-                [
-                    fixer.remove(Span::after(object.outer_span(), e.span().end)),
-                    fixer.replace(Span::new(end_of_map.saturating_sub(3), end_of_map), "flatMap"),
-                ]
-            });
+        let Some(object) = callee.object().filter(|it| !it.is_chain_root()) else {
+            return;
+        };
+        let Some(map_call) = object.as_call().filter(|it| !it.is_optional()) else {
+            return;
+        };
+        if !is_method_call(map_call, None, Some(&["map"]), None, None) || is_ignored_call_expression(map_call) {
+            return;
+        }
+        // `.flat(1.5)` is `.flat(1)`.
+        let is_one =
+            |it: Expr| !it.is_parenthesized() && matches!(it.kind(), ExprKind::Number(depth) if depth.floor() == 1.0);
+        if !flat_call.args().first().is_none_or(is_one) {
+            return;
+        }
+        cx.report(e, PREFER_ARRAY_FLAT_MAP).fix(|fixer| {
+            let end_of_map = map_call.callee().outer_span().end;
+            [
+                fixer.remove(Span::after(object.outer_span(), e.span().end)),
+                fixer.replace(Span::new(end_of_map.saturating_sub(3), end_of_map), "flatMap"),
+            ]
         });
     }
 }

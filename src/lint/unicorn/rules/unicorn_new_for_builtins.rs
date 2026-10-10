@@ -62,38 +62,46 @@ fn global_builtin<'a>(callee: Expr<'a>, is_builtin: fn(&[u8]) -> bool) -> Option
 
 impl Rule for NewForBuiltins {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "new-for-builtins", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::New, ExprTag::Call]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NewForBuiltins
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::New], |_, e, cx| {
-            if let Some(fn_name) = e.callee().and_then(|it| global_builtin(it, is_disallowed)) {
-                cx.report(e, DISALLOW).data("fn_name", fn_name);
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::New => {
+                if let Some(fn_name) = e.callee().and_then(|it| global_builtin(it, is_disallowed)) {
+                    cx.report(e, DISALLOW).data("fn_name", fn_name);
+                }
             }
-        });
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(fn_name) = e.callee().and_then(|it| global_builtin(it, is_enforced)) else {
-                return;
-            };
-            if e.is_optional() {
-                return;
-            }
-            // `Object(a) === a`
-            if fn_name.is("Object")
-                && !e.is_parenthesized()
-                && matches!(e.parent(), Node::Expr(parent)
-                    if matches!(parent.binary_op(), Some(BinOp::EqEqEq | BinOp::NotEqEq)))
-            {
-                return;
-            }
-            if fn_name.is("Date") {
-                cx.report(e, ERROR_DATE);
-            } else {
-                cx.report(e, ENFORCE).data("fn_name", fn_name);
-            }
-        });
+            ExprTag::Call => self.call(e, cx),
+            _ => {}
+        }
+    }
+}
+
+impl NewForBuiltins {
+    fn call<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(fn_name) = e.callee().and_then(|it| global_builtin(it, is_enforced)) else {
+            return;
+        };
+        if e.is_optional() {
+            return;
+        }
+        // `Object(a) === a`
+        if fn_name.is("Object")
+            && !e.is_parenthesized()
+            && matches!(e.parent(), Node::Expr(parent)
+                if matches!(parent.binary_op(), Some(BinOp::EqEqEq | BinOp::NotEqEq)))
+        {
+            return;
+        }
+        if fn_name.is("Date") {
+            cx.report(e, ERROR_DATE);
+        } else {
+            cx.report(e, ENFORCE).data("fn_name", fn_name);
+        }
     }
 }

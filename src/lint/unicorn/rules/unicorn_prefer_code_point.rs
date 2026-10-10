@@ -9,32 +9,35 @@ const PREFER_CODE_POINT: Message = Message::new("", "Prefer `{{good_method}}` ov
 
 impl Rule for PreferCodePoint {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-code-point", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Dot]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferCodePoint
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions_any(&["fromCharCode", "charCodeAt"]) {
-            return;
+            return None;
         }
-        on.exprs([ExprTag::Dot], |_, member_expr, cx| {
-            let ExprKind::Dot { obj, name, .. } = member_expr.kind() else {
-                return;
-            };
-            let replacement = match name.bytes() {
-                b"fromCharCode" if get_inner_expression(obj).is_ident("String") => "fromCodePoint",
-                b"charCodeAt" if is_in_call_of_char_code_at(member_expr) => "codePointAt",
-                _ => return,
-            };
-            if !member_expr.is_jsx_tag_name() && !member_expr.is_in_type_query() {
-                cx.report(name, PREFER_CODE_POINT)
-                    .data("good_method", replacement)
-                    .data("bad_method", name)
-                    .fix_dangerously(|fixer| fixer.replace(name, replacement));
-            }
-        });
+        Some(())
+    }
+
+    fn expr<'a>(&self, member_expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Dot { obj, name, .. } = member_expr.kind() else {
+            return;
+        };
+        let replacement = match name.bytes() {
+            b"fromCharCode" if get_inner_expression(obj).is_ident("String") => "fromCodePoint",
+            b"charCodeAt" if is_in_call_of_char_code_at(member_expr) => "codePointAt",
+            _ => return,
+        };
+        if !member_expr.is_jsx_tag_name() && !member_expr.is_in_type_query() {
+            cx.report(name, PREFER_CODE_POINT)
+                .data("good_method", replacement)
+                .data("bad_method", name)
+                .fix_dangerously(|fixer| fixer.replace(name, replacement));
+        }
     }
 }
 

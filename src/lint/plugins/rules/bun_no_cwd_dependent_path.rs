@@ -62,8 +62,16 @@ fn is_relative_path(e: Expr) -> bool {
     written_start(e).is_some_and(|it| is_relative(it.0))
 }
 
-impl NoCwdDependentPath {
-    fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
+impl Rule for NoCwdDependentPath {
+    const META: Meta = Meta::plugin(Plugin::Bun, "no-cwd-dependent-path", Kind::Suggestion);
+    const ON: On = On::new().finish();
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        NoCwdDependentPath { functions: list_option(options, "functions", &[]) }
+    }
+
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
         let report = |path: Option<Expr<'a>>| {
             if let Some(path) = path.filter(|it| is_relative_path(*it)) {
@@ -102,18 +110,5 @@ impl NoCwdDependentPath {
                 }
             }
         }
-    }
-}
-
-impl Rule for NoCwdDependentPath {
-    const META: Meta = Meta::plugin(Plugin::Bun, "no-cwd-dependent-path", Kind::Suggestion);
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        NoCwdDependentPath { functions: list_option(options, "functions", &[]) }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.finish(Self::check);
     }
 }

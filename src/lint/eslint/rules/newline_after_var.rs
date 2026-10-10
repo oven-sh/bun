@@ -54,8 +54,23 @@ fn is_var_keyword<'a>(file: &'a File<'a>, at: u32) -> bool {
     }
 }
 
-impl NewlineAfterVar {
-    fn check_for_blank_line<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NewlineAfterVar {
+    const META: Meta = Meta::eslint("newline-after-var", Kind::Layout).fixable(Fixable::Whitespace).deprecated();
+    const ON: On = On::new().stmts(&[StmtTag::Var]);
+    /// [`last_comment_lines_of_blocks`], once it is asked for.
+    type State<'a> = Option<Vec<(u32, u32)>>;
+
+    fn new(options: &Options) -> Self {
+        NewlineAfterVar {
+            is_never: options.str(0) == Some("never"),
+        }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(None)
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let StmtKind::Var(declarations) = statement.kind() else {
             return;
         };
@@ -122,22 +137,5 @@ impl NewlineAfterVar {
                 false => fixer.insert_before(Span::empty(file.line_span(next_line).start), "\n"),
             }
         });
-    }
-}
-
-impl Rule for NewlineAfterVar {
-    const META: Meta = Meta::eslint("newline-after-var", Kind::Layout).fixable(Fixable::Whitespace).deprecated();
-    /// [`last_comment_lines_of_blocks`], once it is asked for.
-    type State<'a> = Option<Vec<(u32, u32)>>;
-
-    fn new(options: &Options) -> Self {
-        NewlineAfterVar {
-            is_never: options.str(0) == Some("never"),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        on.stmts([StmtTag::Var], Self::check_for_blank_line);
-        None
     }
 }

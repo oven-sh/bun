@@ -82,8 +82,28 @@ impl MaxLinesPerFunction {
         });
         std::iter::once(0).chain(counts).collect()
     }
+}
 
-    fn check<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for MaxLinesPerFunction {
+    const META: Meta = Meta::eslint("max-lines-per-function", Kind::Suggestion);
+    const ON: On = On::new().funcs();
+    type State<'a> = Counts;
+
+    fn new(options: &Options) -> Self {
+        let object = options.object(0);
+        MaxLinesPerFunction {
+            max: object.number("max").or_else(|| options.number(0)).map_or(50, |max| max as u32),
+            skips_comments: object.bool_or("skipComments", false),
+            skips_blank_lines: object.bool_or("skipBlankLines", false),
+            counts_iifes: object.bool_or("IIFEs", false),
+        }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Counts> {
+        Some(Counts::default())
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         // For oxlint a method of a class is a function also if it has no body.
         let is_method_without_body = || {
             cx.language().is_oxlint
@@ -142,25 +162,5 @@ impl MaxLinesPerFunction {
             .data("name", name)
             .data("lineCount", line_count)
             .data("maxLines", self.max);
-    }
-}
-
-impl Rule for MaxLinesPerFunction {
-    const META: Meta = Meta::eslint("max-lines-per-function", Kind::Suggestion);
-    type State<'a> = Counts;
-
-    fn new(options: &Options) -> Self {
-        let object = options.object(0);
-        MaxLinesPerFunction {
-            max: object.number("max").or_else(|| options.number(0)).map_or(50, |max| max as u32),
-            skips_comments: object.bool_or("skipComments", false),
-            skips_blank_lines: object.bool_or("skipBlankLines", false),
-            counts_iifes: object.bool_or("IIFEs", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Counts {
-        on.funcs(Self::check);
-        Counts::default()
     }
 }

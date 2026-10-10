@@ -77,26 +77,6 @@ fn is_overloaded_function<'a>(
 }
 
 impl FuncStyle {
-    fn check_declaration<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        let StmtKind::Fn(func) = statement.kind() else {
-            return;
-        };
-        let flags = func.flags();
-        if !func.has_body() || flags.contains(Flags::DEFAULT) {
-            return;
-        }
-        let is_exported = flags.contains(Flags::EXPORT);
-        let expects_expression = match self.named_exports {
-            Some(style) if is_exported => style == Style::Expression,
-            _ => !self.enforce_declarations,
-        };
-        // oxlint leaves alone what is declared more than once: with a namespace, an interface, a type of the same name.
-        let is_merged = cx.language().is_oxlint && func.symbol().is_some_and(|it| it.declaration_count() > 1);
-        if expects_expression && !is_merged && !is_overloaded_function(statement, func, is_exported, cx) {
-            cx.report(statement.span_without_export(), EXPRESSION);
-        }
-    }
-
     fn check_expression<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Fn(func) = e.kind() else {
             return;
@@ -150,18 +130,14 @@ impl FuncStyle {
             cx.state.with_this_or_super.insert(func);
         }
     }
-
-    fn report_arrows<'a>(&self, cx: &mut Cx<'a, Self>) {
-        for (func, declarator) in &cx.state.candidates {
-            if !cx.state.with_this_or_super.contains(func) {
-                cx.report(declarator, DECLARATION);
-            }
-        }
-    }
 }
 
 impl Rule for FuncStyle {
     const META: Meta = Meta::eslint("func-style", Kind::Suggestion);
+    const ON: On = On::new()
+        .stmts(&[StmtTag::Fn])
+        .exprs(&[ExprTag::Fn, ExprTag::This, ExprTag::Super])
+        .finish();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -179,17 +155,58 @@ impl Rule for FuncStyle {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new();
         if !self.enforce_declarations || self.named_exports == Some(Style::Expression) {
-            on.stmts([StmtTag::Fn], Self::check_declaration);
+            on = on.stmts(&[StmtTag::Fn]);
         }
         if self.enforce_declarations || self.named_exports == Some(Style::Declaration) {
-            on.exprs([ExprTag::Fn], Self::check_expression);
+            on = on.exprs(&[ExprTag::Fn]);
             if !self.allow_arrow_functions {
-                on.exprs([ExprTag::This, ExprTag::Super], Self::check_this_or_super);
-                on.finish(Self::report_arrows);
+                on = on.exprs(&[ExprTag::This, ExprTag::Super]);
+                on = on.finish();
             }
         }
-        State::default()
+        on
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Fn => self.check_expression(e, cx),
+            ExprTag::This | ExprTag::Super => self.check_this_or_super(e, cx),
+            _ => {}
+        }
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::Fn(func) = statement.kind() else {
+            return;
+        };
+        let flags = func.flags();
+        if !func.has_body() || flags.contains(Flags::DEFAULT) {
+            return;
+        }
+        let is_exported = flags.contains(Flags::EXPORT);
+        let expects_expression = match self.named_exports {
+            Some(style) if is_exported => style == Style::Expression,
+            _ => !self.enforce_declarations,
+        };
+        // oxlint leaves alone what is declared more than once: with a namespace, an interface, a type of the same name.
+        let is_merged = cx.language().is_oxlint && func.symbol().is_some_and(|it| it.declaration_count() > 1);
+        if expects_expression && !is_merged && !is_overloaded_function(statement, func, is_exported, cx) {
+            cx.report(statement.span_without_export(), EXPRESSION);
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        for (func, declarator) in &cx.state.candidates {
+            if !cx.state.with_this_or_super.contains(func) {
+                cx.report(declarator, DECLARATION);
+            }
+        }
     }
 }

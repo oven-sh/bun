@@ -10,18 +10,19 @@ pub struct PreferToHaveBeenCalledTimes;
 
 impl Rule for PreferToHaveBeenCalledTimes {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "prefer-to-have-been-called-times", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferToHaveBeenCalledTimes
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if jest::is_test(file) && file.mentions("toHaveLength") && file.mentions("calls") {
-            on.finish(|_, cx| {
-                let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
-                jest::run_on_jest_nodes(&ctx, &prefer_to_have_been_called_times::run);
-            });
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        (jest::is_test(file) && file.mentions("toHaveLength") && file.mentions("calls")).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        jest::run_on_jest_nodes(&ctx, &prefer_to_have_been_called_times::run);
     }
 }

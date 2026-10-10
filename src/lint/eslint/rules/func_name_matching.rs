@@ -82,42 +82,6 @@ impl FuncNameMatching {
         cx.report(place, message).data("name", name).data("funcName", func_name);
     }
 
-    fn check<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        if func.kind() != FnKind::Expr {
-            return;
-        }
-        let (Some(func_name), Node::Expr(function)) = (func.name(), func.owner()) else {
-            return;
-        };
-        match function.parent() {
-            Node::VarDecl(declarator) => {
-                if let Some(name) = declarator.pat().as_ident()
-                    && self.should_warn(name.bytes(), func_name.bytes())
-                {
-                    self.report(cx, declarator, name, func_name, false);
-                }
-            }
-            Node::Expr(assignment) => self.check_assignment(assignment, function, func_name, cx),
-            Node::Prop(prop) => {
-                if prop.value() == Some(function)
-                    && !prop.is_jsx_attribute()
-                    && let Some(key) = prop.key()
-                {
-                    self.check_property(Node::Prop(prop), key, func_name, cx);
-                }
-            }
-            Node::Member(member) => {
-                if member.init() == Some(function)
-                    && !member.flags().contains(Flags::ACCESSOR)
-                    && let Some(key) = member.key()
-                {
-                    self.check_property(Node::Member(member), key, func_name, cx);
-                }
-            }
-            _ => {}
-        }
-    }
-
     fn check_assignment<'a>(
         &self,
         assignment: Expr<'a>,
@@ -214,7 +178,8 @@ impl FuncNameMatching {
 
 impl Rule for FuncNameMatching {
     const META: Meta = Meta::eslint("func-name-matching", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().funcs();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let object = options.first_object();
@@ -225,7 +190,39 @@ impl Rule for FuncNameMatching {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.funcs(Self::check);
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if func.kind() != FnKind::Expr {
+            return;
+        }
+        let (Some(func_name), Node::Expr(function)) = (func.name(), func.owner()) else {
+            return;
+        };
+        match function.parent() {
+            Node::VarDecl(declarator) => {
+                if let Some(name) = declarator.pat().as_ident()
+                    && self.should_warn(name.bytes(), func_name.bytes())
+                {
+                    self.report(cx, declarator, name, func_name, false);
+                }
+            }
+            Node::Expr(assignment) => self.check_assignment(assignment, function, func_name, cx),
+            Node::Prop(prop) => {
+                if prop.value() == Some(function)
+                    && !prop.is_jsx_attribute()
+                    && let Some(key) = prop.key()
+                {
+                    self.check_property(Node::Prop(prop), key, func_name, cx);
+                }
+            }
+            Node::Member(member) => {
+                if member.init() == Some(function)
+                    && !member.flags().contains(Flags::ACCESSOR)
+                    && let Some(key) = member.key()
+                {
+                    self.check_property(Node::Member(member), key, func_name, cx);
+                }
+            }
+            _ => {}
+        }
     }
 }

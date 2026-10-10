@@ -13,6 +13,7 @@ const PREFER_IMPORT_IN_MOCK: Message = Message::new("", "Mocked modules must be 
 
 impl Rule for PreferImportInMock {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "prefer-import-in-mock", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -21,10 +22,12 @@ impl Rule for PreferImportInMock {
         PreferImportInMock { fixable: config.entries().len() != 1 || config.bool_or("fixable", true) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if jest::is_test(file) && file.mentions_any(&["mock", "doMock"]) {
-            on.finish(|rule, cx| jest::iter_possible_jest_call_node(cx.file()).for_each(|node| rule.run(node, cx)));
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        (jest::is_test(file) && file.mentions_any(&["mock", "doMock"])).then_some(())
+    }
+
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+        jest::iter_possible_jest_call_node(cx.file()).for_each(|node| self.run(node, cx));
     }
 }
 

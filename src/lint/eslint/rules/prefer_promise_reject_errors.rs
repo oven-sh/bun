@@ -112,6 +112,7 @@ impl PreferPromiseRejectErrors {
 
 impl Rule for PreferPromiseRejectErrors {
     const META: Meta = Meta::eslint("prefer-promise-reject-errors", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -120,11 +121,15 @@ impl Rule for PreferPromiseRejectErrors {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("Promise") {
-            return;
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("Promise").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Call => self.check_call(e, cx),
+            ExprTag::New => self.check_new(e, cx),
+            _ => {}
         }
-        on.exprs([ExprTag::Call], Self::check_call);
-        on.exprs([ExprTag::New], Self::check_new);
     }
 }

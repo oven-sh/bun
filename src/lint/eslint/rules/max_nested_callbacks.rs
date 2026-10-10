@@ -62,8 +62,32 @@ impl MaxNestedCallbacks {
             _ => false,
         }
     }
+}
 
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for MaxNestedCallbacks {
+    const META: Meta = Meta::eslint("max-nested-callbacks", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Fn]).enter(NodeTags::FUNC).exit(NodeTags::FUNC);
+    type State<'a> = State<'a>;
+
+    fn new(options: &Options) -> Self {
+        let object = options.object(0);
+        MaxNestedCallbacks {
+            max: match object.has("maximum") || object.has("max") {
+                true => object.usize("maximum").filter(|max| *max != 0).or_else(|| object.usize("max")),
+                false => Some(options.number(0).map_or(10, |max| max as usize)),
+            },
+            check_constructor_call_callbacks: object.bool_or("checkConstructorCallCallbacks", false),
+        }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.language().eslint_major < 10 {
+            return;
+        }
         let (Some(max), Some(func)) = (self.max, e.as_fn()) else {
             return;
         };
@@ -84,34 +108,20 @@ impl MaxNestedCallbacks {
             cx.report(place, EXCEED).data("num", depth).data("max", max);
         }
     }
-}
 
-impl Rule for MaxNestedCallbacks {
-    const META: Meta = Meta::eslint("max-nested-callbacks", Kind::Suggestion);
-    type State<'a> = State<'a>;
-
-    fn new(options: &Options) -> Self {
-        let object = options.object(0);
-        MaxNestedCallbacks {
-            max: match object.has("maximum") || object.has("max") {
-                true => object.usize("maximum").filter(|max| *max != 0).or_else(|| object.usize("max")),
-                false => Some(options.number(0).map_or(10, |max| max as usize)),
-            },
-            check_constructor_call_callbacks: object.bool_or("checkConstructorCallCallbacks", false),
+    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.language().eslint_major >= 10 {
+            return;
         }
+        self.enter_before_10(node, cx);
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        if file.language().eslint_major < 10 {
-            on.enter(NodeTags::FUNC, Self::enter_before_10);
-            on.exit(NodeTags::FUNC, |_, node, cx| {
-                if as_function_expression(node).is_some() {
-                    cx.state.depth = cx.state.depth.saturating_sub(1);
-                }
-            });
-            return State::default();
+    fn exit<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.language().eslint_major >= 10 {
+            return;
         }
-        on.exprs([ExprTag::Fn], Self::check);
-        State::default()
+        if as_function_expression(node).is_some() {
+            cx.state.depth = cx.state.depth.saturating_sub(1);
+        }
     }
 }

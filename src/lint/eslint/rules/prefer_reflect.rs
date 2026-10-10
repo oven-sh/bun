@@ -70,7 +70,8 @@ impl PreferReflect {
 
 impl Rule for PreferReflect {
     const META: Meta = Meta::eslint("prefer-reflect", Kind::Suggestion).deprecated();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::Unary]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let exceptions = options.object(0).strings("exceptions");
@@ -86,10 +87,11 @@ impl Rule for PreferReflect {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Call], Self::check_call);
-        if !self.allows_delete {
-            on.exprs([ExprTag::Unary], Self::check_unary);
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Call => self.check_call(e, cx),
+            ExprTag::Unary if !self.allows_delete => self.check_unary(e, cx),
+            _ => {}
         }
     }
 }

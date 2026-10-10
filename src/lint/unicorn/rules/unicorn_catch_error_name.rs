@@ -72,7 +72,9 @@ impl CatchErrorName {
 
 impl Rule for CatchErrorName {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "catch-error-name", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::Try]).exprs(&[ExprTag::Call]);
+    /// Whether the file mentions `catch` or `then`.
+    type State<'a> = bool;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -85,23 +87,27 @@ impl Rule for CatchErrorName {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        on.stmts([StmtTag::Try], |rule, stmt, cx| {
-            if let StmtKind::Try { param: Some(param), .. } = stmt.kind() {
-                rule.check_binding_identifier(param.pat(), cx);
-            }
-        });
-        if file.mentions_any(&["catch", "then"]) {
-            on.exprs([ExprTag::Call], |rule, e, cx| {
-                let Some(call) = e.as_call() else {
-                    return;
-                };
-                match as_member_expression(call.callee()).and_then(static_property_name).map(Name::bytes) {
-                    Some(b"catch") => rule.check_function_arguments(call.args().first(), cx),
-                    Some(b"then") => rule.check_function_arguments(call.args().get(1), cx),
-                    _ => {}
-                }
-            });
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<bool> {
+        Some(file.mentions_any(&["catch", "then"]))
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if let StmtKind::Try { param: Some(param), .. } = stmt.kind() {
+            self.check_binding_identifier(param.pat(), cx);
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if !cx.state {
+            return;
+        }
+        let Some(call) = e.as_call() else {
+            return;
+        };
+        match as_member_expression(call.callee()).and_then(static_property_name).map(Name::bytes) {
+            Some(b"catch") => self.check_function_arguments(call.args().first(), cx),
+            Some(b"then") => self.check_function_arguments(call.args().get(1), cx),
+            _ => {}
         }
     }
 }

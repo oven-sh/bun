@@ -54,8 +54,27 @@ impl SpaceInfixOps {
             self.check(cx, left_end, "=", Some(default.outer_span().end));
         }
     }
+}
 
-    fn check_expression<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for SpaceInfixOps {
+    const META: Meta = Meta::eslint("space-infix-ops", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Binary, ExprTag::Assign, ExprTag::Cond])
+        .pats(&[PatTag::Object, PatTag::Array])
+        .params()
+        .var_decls()
+        .members();
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        SpaceInfixOps {
+            int32_hint: options.object(0).bool_or("int32Hint", false),
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.kind() {
             ExprKind::Binary { op: BinOp::Comma, .. } => {}
             ExprKind::Binary { op, left, .. } => {
@@ -72,7 +91,7 @@ impl SpaceInfixOps {
         }
     }
 
-    fn check_pattern<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
+    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
         match pat.kind() {
             PatKind::Object(props) => {
                 for prop in props {
@@ -91,7 +110,7 @@ impl SpaceInfixOps {
     }
 
     /// A `PropertyDefinition`.
-    fn check_member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         if member.init().is_none()
             || member.kind() != MemberKind::Property
             || member.flags().intersects(Flags::ACCESSOR | Flags::ABSTRACT)
@@ -111,33 +130,16 @@ impl SpaceInfixOps {
         };
         self.check(cx, left_end, "=", None);
     }
-}
 
-impl Rule for SpaceInfixOps {
-    const META: Meta = Meta::eslint("space-infix-ops", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        SpaceInfixOps {
-            int32_hint: options.object(0).bool_or("int32Hint", false),
+    fn param<'a>(&self, param: Param<'a>, cx: &mut Cx<'a, Self>) {
+        if param.default().is_some() {
+            self.check_default(cx, param.binding_span().end, param.default());
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Binary, ExprTag::Assign, ExprTag::Cond], Self::check_expression);
-        on.pats([PatTag::Object, PatTag::Array], Self::check_pattern);
-        on.params(|rule, param, cx| {
-            if param.default().is_some() {
-                rule.check_default(cx, param.binding_span().end, param.default());
-            }
-        });
-        on.var_decls(|rule, declaration, cx| {
-            if declaration.init().is_some() {
-                rule.check(cx, declaration.binding_span().end, "=", None);
-            }
-        });
-        on.members(Self::check_member);
+    fn var_decl<'a>(&self, declaration: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        if declaration.init().is_some() {
+            self.check(cx, declaration.binding_span().end, "=", None);
+        }
     }
 }

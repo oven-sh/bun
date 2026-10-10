@@ -140,7 +140,8 @@ impl Rule for LinesBetweenClassMembers {
     const META: Meta = Meta::eslint("lines-between-class-members", Kind::Layout)
         .fixable(Fixable::Whitespace)
         .deprecated();
-    type State<'a> = ();
+    const ON: On = On::new().classes();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let configure_list = match options.get(0).and_then(Json::as_object) {
@@ -166,16 +167,14 @@ impl Rule for LinesBetweenClassMembers {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.classes(|rule, class, cx| {
-            let mut members = class.members().iter();
-            let Some(mut current) = members.next() else {
-                return;
-            };
-            for next in members {
-                rule.check_pair(current, next, cx);
-                current = next;
-            }
-        });
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        let mut members = class.members().iter();
+        let Some(mut current) = members.next() else {
+            return;
+        };
+        for next in members {
+            self.check_pair(current, next, cx);
+            current = next;
+        }
     }
 }

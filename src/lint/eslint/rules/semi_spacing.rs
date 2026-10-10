@@ -119,9 +119,51 @@ impl SemiSpacing {
             }
         }
     }
+}
+
+impl Rule for SemiSpacing {
+    const META: Meta = Meta::eslint("semi-spacing", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new()
+        .stmts(&[
+            StmtTag::Var,
+            StmtTag::Expr,
+            StmtTag::Break,
+            StmtTag::Continue,
+            StmtTag::Debugger,
+            StmtTag::DoWhile,
+            StmtTag::Return,
+            StmtTag::Throw,
+            StmtTag::Import,
+            StmtTag::ExportNamed,
+            StmtTag::ExportStar,
+            StmtTag::ExportDefault,
+            StmtTag::Fn,
+            StmtTag::TypeAlias,
+            StmtTag::ImportEquals,
+            StmtTag::For,
+        ])
+        .members();
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let config = options.object(0);
+        SemiSpacing {
+            requires_space_before: config.bool_or("before", false),
+            requires_space_after: config.bool_or("after", true),
+        }
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match statement.tag() {
+            StmtTag::For => self.check_for(statement, cx),
+            _ => self.check_statement(statement, cx),
+        }
+    }
 
     /// For ESLint's `PropertyDefinition`.
-    fn check_member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         if member.kind() != MemberKind::Property
             || member.flags().intersects(Flags::ABSTRACT | Flags::ACCESSOR)
             || member.is_signature()
@@ -132,45 +174,5 @@ impl SemiSpacing {
         if end > 0 && cx.text().get(end as usize - 1) == Some(&b';') {
             self.check_semicolon_spacing(end - 1, cx);
         }
-    }
-}
-
-impl Rule for SemiSpacing {
-    const META: Meta = Meta::eslint("semi-spacing", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let config = options.object(0);
-        SemiSpacing {
-            requires_space_before: config.bool_or("before", false),
-            requires_space_after: config.bool_or("after", true),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts(
-            [
-                StmtTag::Var,
-                StmtTag::Expr,
-                StmtTag::Break,
-                StmtTag::Continue,
-                StmtTag::Debugger,
-                StmtTag::DoWhile,
-                StmtTag::Return,
-                StmtTag::Throw,
-                StmtTag::Import,
-                StmtTag::ExportNamed,
-                StmtTag::ExportStar,
-                StmtTag::ExportDefault,
-                StmtTag::Fn,
-                StmtTag::TypeAlias,
-                StmtTag::ImportEquals,
-            ],
-            Self::check_statement,
-        );
-        on.stmts([StmtTag::For], Self::check_for);
-        on.members(Self::check_member);
     }
 }

@@ -17,44 +17,47 @@ const ENDS_WITH: Message = Message::new("", "Prefer String#endsWith over a regex
 impl Rule for PreferStringStartsEndsWith {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "prefer-string-starts-ends-with", Kind::Problem).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferStringStartsEndsWith
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if !file.mentions("test") || !file.has_exprs([ExprTag::Regex]) {
+            return None;
+        }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call) = e.as_call().filter(|it| !it.is_optional()) else {
+            return;
+        };
+        let Some(member) = get_member_expr(call.callee()) else {
+            return;
+        };
+        let ExprKind::Dot { obj, name, .. } = member.kind() else {
+            return;
+        };
+        let ExprKind::Regex(literal) = obj.kind() else {
+            return;
+        };
+        if !name.name().is("test") {
             return;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(call) = e.as_call().filter(|it| !it.is_optional()) else {
-                return;
-            };
-            let Some(member) = get_member_expr(call.callee()) else {
-                return;
-            };
-            let ExprKind::Dot { obj, name, .. } = member.kind() else {
-                return;
-            };
-            let ExprKind::Regex(literal) = obj.kind() else {
-                return;
-            };
-            if !name.name().is("test") {
-                return;
-            }
-            let Some((is_start, characters)) = check_regex(literal.pattern(), literal.flags()) else {
-                return;
-            };
-            cx.report(member, if is_start { STARTS_WITH } else { ENDS_WITH }).fix(|fixer| {
-                let target = can_replace(call)?;
-                let argument: String = characters.iter().map(|it| char::from_u32(*it)).collect::<Option<_>>()?;
-                let method: &[u8] = if is_start { b".startsWith(" } else { b".endsWith(" };
-                let mut content = [target.text(), method].concat();
-                print_string(&mut content, argument.as_bytes(), b'\'');
-                content.push(b')');
-                Some(fixer.replace(e, content))
-            });
+        let Some((is_start, characters)) = check_regex(literal.pattern(), literal.flags()) else {
+            return;
+        };
+        cx.report(member, if is_start { STARTS_WITH } else { ENDS_WITH }).fix(|fixer| {
+            let target = can_replace(call)?;
+            let argument: String = characters.iter().map(|it| char::from_u32(*it)).collect::<Option<_>>()?;
+            let method: &[u8] = if is_start { b".startsWith(" } else { b".endsWith(" };
+            let mut content = [target.text(), method].concat();
+            print_string(&mut content, argument.as_bytes(), b'\'');
+            content.push(b')');
+            Some(fixer.replace(e, content))
         });
     }
 }

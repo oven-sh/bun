@@ -72,34 +72,37 @@ impl PreferTimeoutSignal {
 
 impl Rule for PreferTimeoutSignal {
     const META: Meta = Meta::plugin(Plugin::Bun, "prefer-timeout-signal", Kind::Suggestion);
+    const ON: On = On::new().var_decls();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         PreferTimeoutSignal { factories: list_option(options, "factories", &[]) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if !file.mentions("setTimeout") || !file.mentions("abort") {
-            return;
+            return None;
         }
-        on.var_decls(|rule, declaration, cx| {
-            let Some(init) = declaration.init().filter(|it| rule.makes_controller(*it)) else {
-                return;
-            };
-            let Some(symbol) = declaration.pat().symbol() else {
-                return;
-            };
-            let (mut signals, mut timers) = (0, 0);
-            for reference in symbol.references().filter(|it| !it.is_init()) {
-                match reference.expr().map_or(Use::Other, use_of) {
-                    Use::Signal => signals += 1,
-                    Use::AbortedByTimer => timers += 1,
-                    Use::Other => return,
-                }
+        Some(())
+    }
+
+    fn var_decl<'a>(&self, declaration: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(init) = declaration.init().filter(|it| self.makes_controller(*it)) else {
+            return;
+        };
+        let Some(symbol) = declaration.pat().symbol() else {
+            return;
+        };
+        let (mut signals, mut timers) = (0, 0);
+        for reference in symbol.references().filter(|it| !it.is_init()) {
+            match reference.expr().map_or(Use::Other, use_of) {
+                Use::Signal => signals += 1,
+                Use::AbortedByTimer => timers += 1,
+                Use::Other => return,
             }
-            if signals > 0 && timers == 1 {
-                cx.report(init, ONLY_A_TIMER);
-            }
-        });
+        }
+        if signals > 0 && timers == 1 {
+            cx.report(init, ONLY_A_TIMER);
+        }
     }
 }

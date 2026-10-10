@@ -15,45 +15,48 @@ const TIMER_FUNCTION_NAMES: [&str; 2] = ["setTimeout", "setInterval"];
 
 impl Rule for ExplicitTimerDelay {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "explicit-timer-delay", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         ExplicitTimerDelay { is_never: options.str(0) == Some("never") }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions_any(&TIMER_FUNCTION_NAMES) {
+            return None;
+        }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call_expr) = e.as_call() else {
+            return;
+        };
+        let arguments = call_expr.args();
+        if arguments.len() != 1 + usize::from(self.is_never) || call_expr.is_optional() {
             return;
         }
-        on.exprs([ExprTag::Call], |rule, e, cx| {
-            let Some(call_expr) = e.as_call() else {
-                return;
-            };
-            let arguments = call_expr.args();
-            if arguments.len() != 1 + usize::from(rule.is_never) || call_expr.is_optional() {
-                return;
-            }
-            let (Some(first_argument), Some(last_argument)) = (arguments.first(), arguments.last()) else {
-                return;
-            };
-            if if rule.is_never { !is_zero_delay(last_argument) } else { first_argument.tag() == ExprTag::Spread } {
-                return;
-            }
-            let Some(name) = timer_name(call_expr).map(Name::bytes) else {
-                return;
-            };
-            let end_of_first = first_argument.outer_span().end;
-            if rule.is_never {
-                let delay = last_argument.outer_span();
-                cx.report(delay, REDUNDANT_DELAY)
-                    .data("name", name)
-                    .fix(|fixer| fixer.remove(Span::new(end_of_first, delay.end)));
-            } else {
-                cx.report(e, MISSING_DELAY)
-                    .data("name", name)
-                    .fix(|fixer| fixer.insert_after(Span::empty(end_of_first), ", 0"));
-            }
-        });
+        let (Some(first_argument), Some(last_argument)) = (arguments.first(), arguments.last()) else {
+            return;
+        };
+        if if self.is_never { !is_zero_delay(last_argument) } else { first_argument.tag() == ExprTag::Spread } {
+            return;
+        }
+        let Some(name) = timer_name(call_expr).map(Name::bytes) else {
+            return;
+        };
+        let end_of_first = first_argument.outer_span().end;
+        if self.is_never {
+            let delay = last_argument.outer_span();
+            cx.report(delay, REDUNDANT_DELAY)
+                .data("name", name)
+                .fix(|fixer| fixer.remove(Span::new(end_of_first, delay.end)));
+        } else {
+            cx.report(e, MISSING_DELAY)
+                .data("name", name)
+                .fix(|fixer| fixer.insert_after(Span::empty(end_of_first), ", 0"));
+        }
     }
 }
 

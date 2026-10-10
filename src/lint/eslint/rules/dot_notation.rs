@@ -117,7 +117,11 @@ impl DotNotation {
 
 impl Rule for DotNotation {
     const META: Meta = Meta::eslint("dot-notation", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Index, ExprTag::Dot])
+        .stmts(&[StmtTag::Interface])
+        .classes();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -128,25 +132,30 @@ impl Rule for DotNotation {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        on.exprs([ExprTag::Index], |rule, e, cx| rule.check_member_expression(e, cx));
-        if !self.checks_keywords() {
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if e.tag() == ExprTag::Dot && !self.checks_keywords() {
             return;
         }
-        on.exprs([ExprTag::Dot], |rule, e, cx| rule.check_member_expression(e, cx));
-        if !file.is_javascript() {
-            on.classes(|rule, class, cx| {
-                for ty in class.implements() {
-                    rule.check_heritage(ty, cx);
-                }
-            });
-            on.stmts([StmtTag::Interface], |rule, statement, cx| {
-                if let StmtKind::Interface(interface) = statement.kind() {
-                    for ty in interface.extends() {
-                        rule.check_heritage(ty, cx);
-                    }
-                }
-            });
+        self.check_member_expression(e, cx);
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if !self.checks_keywords() || cx.file().is_javascript() {
+            return;
+        }
+        if let StmtKind::Interface(interface) = statement.kind() {
+            for ty in interface.extends() {
+                self.check_heritage(ty, cx);
+            }
+        }
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        if !self.checks_keywords() || cx.file().is_javascript() {
+            return;
+        }
+        for ty in class.implements() {
+            self.check_heritage(ty, cx);
         }
     }
 }

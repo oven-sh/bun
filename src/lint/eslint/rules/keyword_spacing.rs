@@ -334,7 +334,88 @@ impl KeywordSpacing {
         }
     }
 
-    fn check_stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+    /// The `get`, `set` or `async` before the name of a method.
+    fn check_spacing_for_method<'a>(&self, key: Option<Key<'a>>, word: &str, cx: &Cx<'a, Self>) {
+        if let Some(key) = key {
+            let word = word_before(cx.text(), key.span(cx.file()).start, word, b"*[");
+            self.check_spacing_around_word(word, cx);
+        }
+    }
+}
+
+impl Rule for KeywordSpacing {
+    const META: Meta = Meta::eslint("keyword-spacing", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new()
+        .stmts(&[
+            StmtTag::Debugger,
+            // A `with` statement
+            StmtTag::Block,
+            StmtTag::Break,
+            StmtTag::Continue,
+            StmtTag::Return,
+            StmtTag::Throw,
+            StmtTag::Try,
+            StmtTag::If,
+            StmtTag::Switch,
+            StmtTag::DoWhile,
+            StmtTag::ForIn,
+            StmtTag::ForOf,
+            StmtTag::For,
+            StmtTag::While,
+            StmtTag::Var,
+            StmtTag::Import,
+            StmtTag::ExportNamed,
+            StmtTag::ExportStar,
+            StmtTag::ExportDefault,
+            // For the `export` before them
+            StmtTag::Fn,
+            StmtTag::Class,
+            StmtTag::Interface,
+            StmtTag::TypeAlias,
+            StmtTag::Enum,
+            StmtTag::Module,
+            StmtTag::ImportEquals,
+        ])
+        .cases()
+        .funcs()
+        .classes()
+        .exprs(&[
+            ExprTag::Await,
+            ExprTag::New,
+            ExprTag::Super,
+            ExprTag::This,
+            ExprTag::Unary,
+            ExprTag::Yield,
+        ])
+        .import_specs()
+        .export_specs()
+        .members()
+        .props();
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let options = options.object(0);
+        let default = Spacing {
+            before: options.bool_or("before", true),
+            after: options.bool_or("after", true),
+        };
+        let overrides = options.object("overrides").entries().iter().map(|(key, value)| {
+            let value = Object::of(Some(value));
+            let spacing = Spacing {
+                before: value.bool_or("before", default.before),
+                after: value.bool_or("after", default.after),
+            };
+            (key.as_slice().into(), spacing)
+        });
+        KeywordSpacing {
+            default,
+            overrides: overrides.collect(),
+        }
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let (text, start) = (cx.text(), stmt.span().start);
         let first = |word: &str| Some(Span::new(start, start + word.len() as u32));
         match stmt.kind() {
@@ -398,7 +479,13 @@ impl KeywordSpacing {
         }
     }
 
-    fn check_func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+    fn case<'a>(&self, case: Case<'a>, cx: &mut Cx<'a, Self>) {
+        let start = case.span().start;
+        let len = if case.is_default() { "default".len() } else { "case".len() };
+        self.check_spacing_around(Keyword::new(Span::new(start, start + len as u32)), cx);
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         if !matches!(func.kind(), FnKind::Decl | FnKind::Expr | FnKind::Arrow) || !func.has_body() {
             return;
         }
@@ -416,7 +503,7 @@ impl KeywordSpacing {
         }
     }
 
-    fn check_class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
         let keyword = class.keyword_span();
         // Not after a decorator, `abstract` or `declare`.
         if keyword.start == class.estree_span().start {
@@ -432,7 +519,7 @@ impl KeywordSpacing {
         }
     }
 
-    fn check_expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let (word, must_be_keyword) = match e.kind() {
             ExprKind::Await(_) => ("await", false),
             ExprKind::New(_) => ("new", false),
@@ -454,15 +541,22 @@ impl KeywordSpacing {
         self.check_spacing_before(keyword, cx);
     }
 
-    /// The `get`, `set` or `async` before the name of a method.
-    fn check_spacing_for_method<'a>(&self, key: Option<Key<'a>>, word: &str, cx: &Cx<'a, Self>) {
-        if let Some(key) = key {
-            let word = word_before(cx.text(), key.span(cx.file()).start, word, b"*[");
-            self.check_spacing_around_word(word, cx);
+    fn import_spec<'a>(&self, spec: ImportSpec<'a>, cx: &mut Cx<'a, Self>) {
+        if spec.is_renamed()
+            && let Some(word) = word_before(cx.text(), spec.local().span().start, "as", b"")
+        {
+            self.check_spacing_before(Keyword::in_module_declaration(word), cx);
         }
     }
 
-    fn check_member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+    fn export_spec<'a>(&self, spec: ExportSpec<'a>, cx: &mut Cx<'a, Self>) {
+        if spec.is_renamed() {
+            let word = word_before(cx.text(), spec.exported().span().start, "as", b"");
+            self.check_spacing_around_module_word(word, cx);
+        }
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         let kind = member.kind();
         let word = match kind {
             MemberKind::Getter => Some("get"),
@@ -488,7 +582,7 @@ impl KeywordSpacing {
         }
     }
 
-    fn check_prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
+    fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
         let word = match prop.kind() {
             PropKind::Getter => "get",
             PropKind::Setter => "set",
@@ -496,101 +590,5 @@ impl KeywordSpacing {
             _ => return,
         };
         self.check_spacing_for_method(prop.key(), word, cx);
-    }
-}
-
-impl Rule for KeywordSpacing {
-    const META: Meta = Meta::eslint("keyword-spacing", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let options = options.object(0);
-        let default = Spacing {
-            before: options.bool_or("before", true),
-            after: options.bool_or("after", true),
-        };
-        let overrides = options.object("overrides").entries().iter().map(|(key, value)| {
-            let value = Object::of(Some(value));
-            let spacing = Spacing {
-                before: value.bool_or("before", default.before),
-                after: value.bool_or("after", default.after),
-            };
-            (key.as_slice().into(), spacing)
-        });
-        KeywordSpacing {
-            default,
-            overrides: overrides.collect(),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts(
-            [
-                StmtTag::Debugger,
-                // A `with` statement
-                StmtTag::Block,
-                StmtTag::Break,
-                StmtTag::Continue,
-                StmtTag::Return,
-                StmtTag::Throw,
-                StmtTag::Try,
-                StmtTag::If,
-                StmtTag::Switch,
-                StmtTag::DoWhile,
-                StmtTag::ForIn,
-                StmtTag::ForOf,
-                StmtTag::For,
-                StmtTag::While,
-                StmtTag::Var,
-                StmtTag::Import,
-                StmtTag::ExportNamed,
-                StmtTag::ExportStar,
-                StmtTag::ExportDefault,
-                // For the `export` before them
-                StmtTag::Fn,
-                StmtTag::Class,
-                StmtTag::Interface,
-                StmtTag::TypeAlias,
-                StmtTag::Enum,
-                StmtTag::Module,
-                StmtTag::ImportEquals,
-            ],
-            Self::check_stmt,
-        );
-        on.cases(|rule, case, cx| {
-            let start = case.span().start;
-            let len = if case.is_default() { "default".len() } else { "case".len() };
-            rule.check_spacing_around(Keyword::new(Span::new(start, start + len as u32)), cx);
-        });
-        on.funcs(Self::check_func);
-        on.classes(Self::check_class);
-        on.exprs(
-            [
-                ExprTag::Await,
-                ExprTag::New,
-                ExprTag::Super,
-                ExprTag::This,
-                ExprTag::Unary,
-                ExprTag::Yield,
-            ],
-            Self::check_expr,
-        );
-        on.import_specs(|rule, spec, cx| {
-            if spec.is_renamed()
-                && let Some(word) = word_before(cx.text(), spec.local().span().start, "as", b"")
-            {
-                rule.check_spacing_before(Keyword::in_module_declaration(word), cx);
-            }
-        });
-        on.export_specs(|rule, spec, cx| {
-            if spec.is_renamed() {
-                let word = word_before(cx.text(), spec.exported().span().start, "as", b"");
-                rule.check_spacing_around_module_word(word, cx);
-            }
-        });
-        on.members(Self::check_member);
-        on.props(Self::check_prop);
     }
 }

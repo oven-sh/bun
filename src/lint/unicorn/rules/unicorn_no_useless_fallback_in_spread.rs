@@ -22,30 +22,29 @@ fn can_fix(left: Expr) -> bool {
 impl Rule for NoUselessFallbackInSpread {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "no-useless-fallback-in-spread", Kind::Problem).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().binaries(&[BinOp::Or, BinOp::Nullish]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoUselessFallbackInSpread
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.binaries([BinOp::Or, BinOp::Nullish], |_, e, cx| {
-            let ExprKind::Binary { left, right, .. } = e.kind() else {
-                return;
-            };
-            if !matches!(right.kind(), ExprKind::Object(properties) if properties.is_empty()) {
-                return;
-            }
-            let Node::Prop(spread) = e.parent() else {
-                return;
-            };
-            if spread.kind() != PropKind::Spread || spread.is_jsx_attribute() {
-                return;
-            }
-            cx.report(spread, NO_USELESS_FALLBACK).fix(|fixer| {
-                let left_text = fixer.file().slice(left.outer_span());
-                can_fix(left).then(|| fixer.replace(spread, [&b"..."[..], left_text].concat()))
-            });
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Binary { left, right, .. } = e.kind() else {
+            return;
+        };
+        if !matches!(right.kind(), ExprKind::Object(properties) if properties.is_empty()) {
+            return;
+        }
+        let Node::Prop(spread) = e.parent() else {
+            return;
+        };
+        if spread.kind() != PropKind::Spread || spread.is_jsx_attribute() {
+            return;
+        }
+        cx.report(spread, NO_USELESS_FALLBACK).fix(|fixer| {
+            let left_text = fixer.file().slice(left.outer_span());
+            can_fix(left).then(|| fixer.replace(spread, [&b"..."[..], left_text].concat()))
         });
     }
 }

@@ -50,7 +50,8 @@ impl DotLocation {
 
 impl Rule for DotLocation {
     const META: Meta = Meta::eslint("dot-location", Kind::Layout).fixable(Fixable::Code).deprecated();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Dot]).types(&[TypeTag::Ref]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         DotLocation {
@@ -58,48 +59,47 @@ impl Rule for DotLocation {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        on.exprs([ExprTag::Dot], |rule, e, cx| {
-            let ExprKind::Dot { obj, name, chain } = e.kind() else {
-                return;
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Dot { obj, name, chain } = e.kind() else {
+            return;
+        };
+        let (object_end, property) = (obj.outer_span().end, name.start());
+        if strings::contains_js_line_break(cx.slice(Span::new(object_end, property)))
+            && ast_utils::is_member_expression(e)
+        {
+            let access = Access {
+                object_end,
+                property,
+                is_optional: chain == Chain::Start,
+                is_decimal_integer: !obj.is_parenthesized() && ast_utils::is_decimal_integer(obj),
             };
-            let (object_end, property) = (obj.outer_span().end, name.start());
-            if strings::contains_js_line_break(cx.slice(Span::new(object_end, property)))
-                && ast_utils::is_member_expression(e)
-            {
-                let access = Access {
-                    object_end,
-                    property,
-                    is_optional: chain == Chain::Start,
-                    is_decimal_integer: !obj.is_parenthesized() && ast_utils::is_decimal_integer(obj),
-                };
-                rule.check_dot_location(access, cx);
-            }
-        });
-        if file.is_javascript() {
+            self.check_dot_location(access, cx);
+        }
+    }
+
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.file().is_javascript() {
             return;
         }
         // `interface I extends a.b`, `class C implements a.b`: typescript-eslint has the name as
         // a `MemberExpression`.
-        on.types([TypeTag::Ref], |rule, ty, cx| {
-            let TypeKind::Ref { name, .. } = ty.kind() else {
-                return;
+        let TypeKind::Ref { name, .. } = ty.kind() else {
+            return;
+        };
+        if name.len() < 2
+            || !strings::contains_js_line_break(cx.slice(name.span()))
+            || utils::estree_type_name(Node::Type(ty)) == "TSTypeReference"
+        {
+            return;
+        }
+        for (object, property) in name.parts().zip(name.parts().skip(1)) {
+            let access = Access {
+                object_end: object.span().end,
+                property: property.start(),
+                is_optional: false,
+                is_decimal_integer: false,
             };
-            if name.len() < 2
-                || !strings::contains_js_line_break(cx.slice(name.span()))
-                || utils::estree_type_name(Node::Type(ty)) == "TSTypeReference"
-            {
-                return;
-            }
-            for (object, property) in name.parts().zip(name.parts().skip(1)) {
-                let access = Access {
-                    object_end: object.span().end,
-                    property: property.start(),
-                    is_optional: false,
-                    is_decimal_integer: false,
-                };
-                rule.check_dot_location(access, cx);
-            }
-        });
+            self.check_dot_location(access, cx);
+        }
     }
 }

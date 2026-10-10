@@ -134,6 +134,7 @@ impl Rule for ConsistentReturn {
     const META: Meta = Meta::typescript("consistent-return", Kind::Suggestion)
         .requires_types()
         .extends_base_rule("consistent-return");
+    const ON: On = On::new().funcs().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -142,15 +143,25 @@ impl Rule for ConsistentReturn {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !is_relevant(file) {
+            return None;
+        }
+        Some(())
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.language().is_oxlint {
+            self.check_as_tsgolint(func, cx);
             return;
         }
-        if file.language().is_oxlint {
-            on.funcs(|rule, func, cx| rule.check_as_tsgolint(func, cx));
+        self.check(func.into(), cx);
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        if cx.language().is_oxlint {
             return;
         }
-        on.funcs(|rule, func, cx| rule.check(func.into(), cx));
-        on.finish(|rule, cx| rule.check(cx.file().into(), cx));
+        self.check(cx.file().into(), cx);
     }
 }

@@ -114,13 +114,14 @@ impl Config {
 
 impl Rule for MaxParams {
     const META: Meta = Meta::eslint("max-params", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().funcs();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         MaxParams(Config::new(options))
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.funcs(|rule, func, cx| rule.0.check(func, cx));
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        self.0.check(func, cx);
     }
 }

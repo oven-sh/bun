@@ -18,35 +18,37 @@ pub struct State<'a> {
 
 impl Rule for PreferTopLevelAwait {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-top-level-await", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         PreferTopLevelAwait
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(call_expr) = e.as_call() else {
-                return;
-            };
-            let callee = call_expr.callee();
-            let message = if is_promise_method(callee) {
-                OVER_PROMISE_CHAIN
-            } else if is_async_function(callee) {
-                OVER_ASYNC_IIFE
-            } else if callee.tag() == ExprTag::Ident && !callee.is_parenthesized() {
-                OVER_ASYNC_FUNCTION_CALL
-            } else {
-                return;
-            };
-            if cx.state.bodies.find(Node::Expr(e), is_body).is_some() || is_handled(e) {
-                return;
-            }
-            if callee.tag() != ExprTag::Ident || is_only_reference_to_async_function(callee) {
-                cx.report(e, message);
-            }
-        });
-        State::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call_expr) = e.as_call() else {
+            return;
+        };
+        let callee = call_expr.callee();
+        let message = if is_promise_method(callee) {
+            OVER_PROMISE_CHAIN
+        } else if is_async_function(callee) {
+            OVER_ASYNC_IIFE
+        } else if callee.tag() == ExprTag::Ident && !callee.is_parenthesized() {
+            OVER_ASYNC_FUNCTION_CALL
+        } else {
+            return;
+        };
+        if cx.state.bodies.find(Node::Expr(e), is_body).is_some() || is_handled(e) {
+            return;
+        }
+        if callee.tag() != ExprTag::Ident || is_only_reference_to_async_function(callee) {
+            cx.report(e, message);
+        }
     }
 }
 

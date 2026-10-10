@@ -45,7 +45,12 @@ impl Rule for RestSpreadSpacing {
     const META: Meta = Meta::eslint("rest-spread-spacing", Kind::Layout)
         .fixable(Fixable::Whitespace)
         .deprecated();
-    type State<'a> = ();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Spread])
+        .props()
+        .params()
+        .pats(&[PatTag::Array, PatTag::Object]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         RestSpreadSpacing {
@@ -53,49 +58,52 @@ impl Rule for RestSpreadSpacing {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Spread], |rule, e, cx| {
-            // A `JSXSpreadChild`.
-            if e.jsx_container_span().is_some() {
-                return;
-            }
-            let kind = || if utils::is_assignment_target(e) { "rest" } else { "spread" };
-            rule.check(e.span().start, &kind, cx);
-        });
-        on.props(|rule, prop, cx| {
-            if prop.kind() != PropKind::Spread {
-                return;
-            }
-            let Node::Expr(object) = prop.parent() else {
-                return;
-            };
-            // A `JSXSpreadAttribute`.
-            if object.tag() == ExprTag::Jsx {
-                return;
-            }
-            let kind = || match utils::is_assignment_target(object) {
-                true => "rest property",
-                false => "spread property",
-            };
-            rule.check(prop.span().start, &kind, cx);
-        });
-        on.params(|rule, param, cx| {
-            if param.is_rest() {
-                rule.check(param.span().start, &|| "rest", cx);
-            }
-        });
-        on.pats([PatTag::Array, PatTag::Object], |rule, pat, cx| match pat.kind() {
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        // A `JSXSpreadChild`.
+        if e.jsx_container_span().is_some() {
+            return;
+        }
+        let kind = || if utils::is_assignment_target(e) { "rest" } else { "spread" };
+        self.check(e.span().start, &kind, cx);
+    }
+
+    fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        if prop.kind() != PropKind::Spread {
+            return;
+        }
+        let Node::Expr(object) = prop.parent() else {
+            return;
+        };
+        // A `JSXSpreadAttribute`.
+        if object.tag() == ExprTag::Jsx {
+            return;
+        }
+        let kind = || match utils::is_assignment_target(object) {
+            true => "rest property",
+            false => "spread property",
+        };
+        self.check(prop.span().start, &kind, cx);
+    }
+
+    fn param<'a>(&self, param: Param<'a>, cx: &mut Cx<'a, Self>) {
+        if param.is_rest() {
+            self.check(param.span().start, &|| "rest", cx);
+        }
+    }
+
+    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        match pat.kind() {
             PatKind::Array(elements) => {
                 if let Some(rest) = elements.last().filter(|it| it.is_rest()) {
-                    rule.check(rest.span().start, &|| "rest", cx);
+                    self.check(rest.span().start, &|| "rest", cx);
                 }
             }
             PatKind::Object(props) => {
                 if let Some(rest) = props.last().filter(|it| it.is_rest()) {
-                    rule.check(rest.span().start, &|| "rest property", cx);
+                    self.check(rest.span().start, &|| "rest property", cx);
                 }
             }
             _ => {}
-        });
+        }
     }
 }

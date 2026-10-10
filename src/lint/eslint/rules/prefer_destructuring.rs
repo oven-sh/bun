@@ -222,9 +222,14 @@ impl Config {
     }
 }
 
+fn is_enabled(it: Enabled) -> bool {
+    it.array || it.object
+}
+
 impl Rule for PreferDestructuring {
     const META: Meta = Meta::eslint("prefer-destructuring", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Assign]).var_decls();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         PreferDestructuring {
@@ -235,18 +240,20 @@ impl Rule for PreferDestructuring {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        let is_enabled = |it: Enabled| it.array || it.object;
-        if is_enabled(self.config.variable_declarator) {
-            on.var_decls(|rule, declaration, cx| {
-                let has_type_annotation = cx.language().is_oxlint && declaration.ty().is_some();
-                if !has_type_annotation || rule.enforce_for_declaration_with_type_annotation {
-                    rule.config.check_variable_declarator(declaration, cx, !has_type_annotation);
-                }
-            });
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if !(is_enabled(self.config.assignment_expression) || cx.language().is_oxlint) {
+            return;
         }
-        if is_enabled(self.config.assignment_expression) || file.language().is_oxlint {
-            on.exprs([ExprTag::Assign], |rule, e, cx| rule.config.check_assignment_expression(e, cx));
+        self.config.check_assignment_expression(e, cx);
+    }
+
+    fn var_decl<'a>(&self, declaration: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        if !is_enabled(self.config.variable_declarator) {
+            return;
+        }
+        let has_type_annotation = cx.language().is_oxlint && declaration.ty().is_some();
+        if !has_type_annotation || self.enforce_for_declaration_with_type_annotation {
+            self.config.check_variable_declarator(declaration, cx, !has_type_annotation);
         }
     }
 }

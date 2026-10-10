@@ -19,16 +19,20 @@ enum TypeOptions {
 
 impl Rule for PreferNegativeIndex {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-negative-index", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferNegativeIndex
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.mentions("length") && file.mentions_any(&["slice", "at", "splice", "subarray", "toSpliced"]) {
-            on.exprs([ExprTag::Call], check);
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        (file.mentions("length") && file.mentions_any(&["slice", "at", "splice", "subarray", "toSpliced"]))
+            .then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        check(self, e, cx);
     }
 }
 

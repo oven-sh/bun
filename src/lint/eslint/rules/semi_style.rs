@@ -116,9 +116,68 @@ impl SemiStyle {
             }
         }
     }
+}
+
+/// What ESLint checks only as the `declaration` of an `ExportNamedDeclaration`.
+fn is_declaration(tag: StmtTag) -> bool {
+    matches!(tag, StmtTag::Fn | StmtTag::TypeAlias | StmtTag::Module | StmtTag::ImportEquals)
+}
+
+const STATEMENTS: [StmtTag; 12] = [
+    StmtTag::Break,
+    StmtTag::Continue,
+    StmtTag::Debugger,
+    StmtTag::DoWhile,
+    StmtTag::ExportStar,
+    StmtTag::ExportDefault,
+    StmtTag::ExportNamed,
+    StmtTag::Expr,
+    StmtTag::Import,
+    StmtTag::Return,
+    StmtTag::Throw,
+    StmtTag::Var,
+];
+const DECLARATIONS: [StmtTag; 4] = [
+    StmtTag::Fn,
+    StmtTag::TypeAlias,
+    StmtTag::Module,
+    StmtTag::ImportEquals,
+];
+
+impl Rule for SemiStyle {
+    const META: Meta = Meta::eslint("semi-style", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new()
+        .stmts(&STATEMENTS)
+        .stmts(&DECLARATIONS)
+        .stmts(&[StmtTag::For])
+        .members();
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        SemiStyle {
+            is_first: options.str(0) == Some("first"),
+        }
+    }
+
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new().stmts(&STATEMENTS);
+        if !file.is_javascript() {
+            on = on.stmts(&DECLARATIONS);
+        }
+        on.stmts(&[StmtTag::For]).members()
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match statement.tag() {
+            StmtTag::For => self.check_for(statement, cx),
+            _ => self.check_statement(statement, cx),
+        }
+    }
 
     /// ESLint's `PropertyDefinition`.
-    fn check_member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         if member.kind() != MemberKind::Property || !member.text().ends_with(b";") {
             return;
         }
@@ -132,51 +191,5 @@ impl SemiStyle {
         }
         let end = member.span().end;
         check(cx, Span::new(end - 1, end), self.is_first);
-    }
-}
-
-/// What ESLint checks only as the `declaration` of an `ExportNamedDeclaration`.
-fn is_declaration(tag: StmtTag) -> bool {
-    matches!(tag, StmtTag::Fn | StmtTag::TypeAlias | StmtTag::Module | StmtTag::ImportEquals)
-}
-
-impl Rule for SemiStyle {
-    const META: Meta = Meta::eslint("semi-style", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        SemiStyle {
-            is_first: options.str(0) == Some("first"),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        on.stmts(
-            [
-                StmtTag::Break,
-                StmtTag::Continue,
-                StmtTag::Debugger,
-                StmtTag::DoWhile,
-                StmtTag::ExportStar,
-                StmtTag::ExportDefault,
-                StmtTag::ExportNamed,
-                StmtTag::Expr,
-                StmtTag::Import,
-                StmtTag::Return,
-                StmtTag::Throw,
-                StmtTag::Var,
-            ],
-            Self::check_statement,
-        );
-        if !file.is_javascript() {
-            on.stmts(
-                [StmtTag::Fn, StmtTag::TypeAlias, StmtTag::Module, StmtTag::ImportEquals],
-                Self::check_statement,
-            );
-        }
-        on.stmts([StmtTag::For], Self::check_for);
-        on.members(Self::check_member);
     }
 }

@@ -21,8 +21,18 @@ fn line_breaks(text: &[u8]) -> i32 {
     strings::js_lines(text).count() as i32 - 1
 }
 
-impl NewlineBeforeReturn {
-    fn check<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NewlineBeforeReturn {
+    const META: Meta = Meta::eslint("newline-before-return", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new().stmts(&[StmtTag::Return]);
+    no_state!();
+
+    fn new(_: &Options) -> Self {
+        NewlineBeforeReturn
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let Some(previous) = previous_sibling(stmt) else {
             return;
         };
@@ -65,20 +75,5 @@ impl NewlineBeforeReturn {
             }
             Some(fixer.insert_before(stmt, if lines_between == 0 { "\n\n" } else { "\n" }))
         });
-    }
-}
-
-impl Rule for NewlineBeforeReturn {
-    const META: Meta = Meta::eslint("newline-before-return", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        NewlineBeforeReturn
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Return], Self::check);
     }
 }

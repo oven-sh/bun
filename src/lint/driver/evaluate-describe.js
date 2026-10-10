@@ -62,7 +62,9 @@ function locateDeep(plugin) {
 
 function search(plugin) {
   scan();
-  const found = locate(plugin);
+  // `import * as parser from "parser"` of a CommonJS module: what that exports is the `default` of what is imported.
+  const isNamespace = plugin?.[Symbol.toStringTag] === "Module" && plugin.default != null;
+  const found = locate(plugin) ?? (isNamespace ? locate(plugin.default) : null);
   if (found !== null) return found;
   const pathIn = (value, depth) => {
     if (value === plugin) return [];

@@ -31,51 +31,49 @@ fn is_left_hand_object(object: Expr<'_>) -> bool {
 
 impl Rule for PreferObjectHasOwn {
     const META: Meta = Meta::eslint("prefer-object-has-own", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferObjectHasOwn
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("hasOwnProperty") {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("hasOwnProperty").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(callee) = e.as_call().map(Call::callee) else {
+            return;
+        };
+        let Some(method) = object_of_member(callee) else {
+            return;
+        };
+        let Some(object) = object_of_member(method) else {
+            return;
+        };
+        if !is_named(callee, "call")
+            || !is_named(method, "hasOwnProperty")
+            || !is_left_hand_object(object)
+            || Node::Expr(e).scope().resolve("Object").is_some()
+            || cx.file().global(b"Object").is_none()
+        {
             return;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(callee) = e.as_call().map(Call::callee) else {
-                return;
-            };
-            let Some(method) = object_of_member(callee) else {
-                return;
-            };
-            let Some(object) = object_of_member(method) else {
-                return;
-            };
-            if !is_named(callee, "call")
-                || !is_named(method, "hasOwnProperty")
-                || !is_left_hand_object(object)
-                || Node::Expr(e).scope().resolve("Object").is_some()
-                || cx.file().global(b"Object").is_none()
-            {
-                return;
+        cx.report(e, USE_HAS_OWN).fix(|fixer| {
+            let file = fixer.file();
+            if file.comments_in(callee).next().is_some() {
+                return None;
             }
-            cx.report(e, USE_HAS_OWN).fix(|fixer| {
-                let file = fixer.file();
-                if file.comments_in(callee).next().is_some() {
-                    return None;
-                }
-                let start = callee.span().start;
-                let needs_space = match file.language().is_oxlint {
-                    // It goes by the character before.
-                    true => {
-                        start > 1 && !matches!(file.text().get(start as usize - 1), Some(b' ' | b'=' | b'/' | b'('))
-                    }
-                    false => file.tokens_before(callee).with_comments().next().is_some_and(|before| {
-                        before.end() == start && !ast_utils::can_tokens_be_adjacent(before, "Object.hasOwn")
-                    }),
-                };
-                Some(fixer.replace(callee, if needs_space { " Object.hasOwn" } else { "Object.hasOwn" }))
-            });
+            let start = callee.span().start;
+            let needs_space = match file.language().is_oxlint {
+                // It goes by the character before.
+                true => start > 1 && !matches!(file.text().get(start as usize - 1), Some(b' ' | b'=' | b'/' | b'(')),
+                false => file.tokens_before(callee).with_comments().next().is_some_and(|before| {
+                    before.end() == start && !ast_utils::can_tokens_be_adjacent(before, "Object.hasOwn")
+                }),
+            };
+            Some(fixer.replace(callee, if needs_space { " Object.hasOwn" } else { "Object.hasOwn" }))
         });
     }
 }

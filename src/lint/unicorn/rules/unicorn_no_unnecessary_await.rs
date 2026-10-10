@@ -56,24 +56,22 @@ fn is_fixable(e: Expr, argument: Expr) -> bool {
 
 impl Rule for NoUnnecessaryAwait {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-unnecessary-await", Kind::Problem).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Await]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoUnnecessaryAwait
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Await], |_, e, cx| {
-            let ExprKind::Await(argument) = e.kind() else {
-                return;
-            };
-            if !not_promise(argument) {
-                return;
-            }
-            let start = e.span().start;
-            cx.report(Span::new(start, start + 5), UNNECESSARY_AWAIT).fix(|fixer| {
-                is_fixable(e, argument).then(|| fixer.replace(e, fixer.file().slice(argument.outer_span())))
-            });
-        });
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Await(argument) = e.kind() else {
+            return;
+        };
+        if !not_promise(argument) {
+            return;
+        }
+        let start = e.span().start;
+        cx.report(Span::new(start, start + 5), UNNECESSARY_AWAIT)
+            .fix(|fixer| is_fixable(e, argument).then(|| fixer.replace(e, fixer.file().slice(argument.outer_span()))));
     }
 }

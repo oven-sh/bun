@@ -30,41 +30,41 @@ fn is_unreadable_array_destructuring(elements: impl Iterator<Item = Element>) ->
 
 impl Rule for NoUnreadableArrayDestructuring {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-unreadable-array-destructuring", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().pats(&[PatTag::Array]).exprs(&[ExprTag::Array]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoUnreadableArrayDestructuring
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.pats([PatTag::Array], |_, pat, cx| {
-            let PatKind::Array(elements) = pat.kind() else {
-                return;
-            };
-            let elements = elements.iter().map(|it| match it.pat() {
-                _ if it.is_rest() => Element::Rest,
-                Some(_) => Element::Value,
-                None => Element::Hole,
-            });
-            if is_unreadable_array_destructuring(elements) {
-                cx.report(pat, NO_UNREADABLE_ARRAY_DESTRUCTURING);
-            }
+    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        let PatKind::Array(elements) = pat.kind() else {
+            return;
+        };
+        let elements = elements.iter().map(|it| match it.pat() {
+            _ if it.is_rest() => Element::Rest,
+            Some(_) => Element::Value,
+            None => Element::Hole,
         });
-        on.exprs([ExprTag::Array], |_, e, cx| {
-            let ExprKind::Array(elements) = e.kind() else {
-                return;
-            };
-            if elements.len() < 3 || !e.is_assignment_target() {
-                return;
-            }
-            let elements = elements.iter().map(|it| match it.tag() {
-                ExprTag::Spread => Element::Rest,
-                ExprTag::Missing => Element::Hole,
-                _ => Element::Value,
-            });
-            if is_unreadable_array_destructuring(elements) {
-                cx.report(e, NO_UNREADABLE_ARRAY_DESTRUCTURING);
-            }
+        if is_unreadable_array_destructuring(elements) {
+            cx.report(pat, NO_UNREADABLE_ARRAY_DESTRUCTURING);
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Array(elements) = e.kind() else {
+            return;
+        };
+        if elements.len() < 3 || !e.is_assignment_target() {
+            return;
+        }
+        let elements = elements.iter().map(|it| match it.tag() {
+            ExprTag::Spread => Element::Rest,
+            ExprTag::Missing => Element::Hole,
+            _ => Element::Value,
         });
+        if is_unreadable_array_destructuring(elements) {
+            cx.report(e, NO_UNREADABLE_ARRAY_DESTRUCTURING);
+        }
     }
 }

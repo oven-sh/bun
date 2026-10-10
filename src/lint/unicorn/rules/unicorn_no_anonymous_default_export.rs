@@ -9,15 +9,16 @@ const NO_ANONYMOUS_DEFAULT_EXPORT: Message = Message::new("", "This {{kind}} def
 
 impl Rule for NoAnonymousDefaultExport {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-anonymous-default-export", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::ExportDefault, StmtTag::Fn, StmtTag::Class]).exprs(&[ExprTag::Assign]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoAnonymousDefaultExport
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        // `export default ..`
-        on.stmts([StmtTag::ExportDefault, StmtTag::Fn, StmtTag::Class], |_, stmt, cx| match stmt.kind() {
+    // `export default ..`
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match stmt.kind() {
             StmtKind::ExportDefault(e) => check(e, cx),
             StmtKind::Fn(func) if stmt.is_default_export() && func.name().is_none() => {
                 report(func.estree_span(), "function", cx)
@@ -26,21 +27,22 @@ impl Rule for NoAnonymousDefaultExport {
                 report(class.estree_span(), "class", cx);
             }
             _ => {}
-        });
-        if !file.mentions("exports") {
+        }
+    }
+
+    // `module.exports = ..`
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if !cx.file().mentions("exports") {
             return;
         }
-        // `module.exports = ..`
-        on.exprs([ExprTag::Assign], |_, e, cx| {
-            if let ExprKind::Assign { target, value, .. } = e.kind()
-                && matches!(get_inner_expression(value).tag(), ExprTag::Fn | ExprTag::Class)
-                && is_common_js_export(target)
-                && matches!(iter_outer_expressions(e).next(), Some(Node::Stmt(it)) if it.tag() == StmtTag::Expr)
-                && Node::Expr(e).scope().id() == cx.file().top_level_scope().id()
-            {
-                check(value, cx);
-            }
-        });
+        if let ExprKind::Assign { target, value, .. } = e.kind()
+            && matches!(get_inner_expression(value).tag(), ExprTag::Fn | ExprTag::Class)
+            && is_common_js_export(target)
+            && matches!(iter_outer_expressions(e).next(), Some(Node::Stmt(it)) if it.tag() == StmtTag::Expr)
+            && Node::Expr(e).scope().id() == cx.file().top_level_scope().id()
+        {
+            check(value, cx);
+        }
     }
 }
 

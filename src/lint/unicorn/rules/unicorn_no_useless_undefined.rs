@@ -22,6 +22,7 @@ pub struct State<'a> {
 
 impl Rule for NoUselessUndefined {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-useless-undefined", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Ident, ExprTag::Call]);
     type State<'a> = Option<State<'a>>;
 
     fn new(options: &Options) -> Self {
@@ -32,19 +33,23 @@ impl Rule for NoUselessUndefined {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if !file.mentions("undefined") {
             return None;
         }
-        on.exprs([ExprTag::Ident], Self::check_identifier);
-        if self.check_arguments {
-            on.exprs([ExprTag::Call], check_call);
-        }
-        Some(State {
+        Some(Some(State {
             undefined: file.name_of("undefined"),
             return_types: AncestorMemo::default(),
             first_optional_parameters: FxHashMap::default(),
-        })
+        }))
+    }
+
+    fn expr<'a>(&self, expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match expr.tag() {
+            ExprTag::Ident => self.check_identifier(expr, cx),
+            ExprTag::Call if self.check_arguments => check_call(self, expr, cx),
+            _ => {}
+        }
     }
 }
 

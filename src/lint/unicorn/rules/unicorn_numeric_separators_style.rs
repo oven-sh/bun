@@ -98,7 +98,8 @@ impl NumericSeparatorsStyle {
 impl Rule for NumericSeparatorsStyle {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "numeric-separators-style", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().number_literals();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -114,22 +115,20 @@ impl Rule for NumericSeparatorsStyle {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.number_literals(|rule, number, cx| {
-            let raw = number.text();
-            // Most numbers are a few digits.
-            let is_short = raw.len() <= rule.number.group_length || raw.len() < rule.number.minimum_digits;
-            if is_short && raw.iter().all(u8::is_ascii_digit) {
-                return;
-            }
-            let digits = raw.strip_suffix(b"n").unwrap_or(raw);
-            let Some(mut formatted) = rule.format(digits) else {
-                return;
-            };
-            if formatted != digits {
-                formatted.extend_from_slice(raw.get(digits.len()..).unwrap_or_default());
-                cx.report(number, NUMERIC_SEPARATORS_STYLE).fix(|fixer| fixer.replace(number, formatted));
-            }
-        });
+    fn number_literal<'a>(&self, number: Literal<'a>, cx: &mut Cx<'a, Self>) {
+        let raw = number.text();
+        // Most numbers are a few digits.
+        let is_short = raw.len() <= self.number.group_length || raw.len() < self.number.minimum_digits;
+        if is_short && raw.iter().all(u8::is_ascii_digit) {
+            return;
+        }
+        let digits = raw.strip_suffix(b"n").unwrap_or(raw);
+        let Some(mut formatted) = self.format(digits) else {
+            return;
+        };
+        if formatted != digits {
+            formatted.extend_from_slice(raw.get(digits.len()..).unwrap_or_default());
+            cx.report(number, NUMERIC_SEPARATORS_STYLE).fix(|fixer| fixer.replace(number, formatted));
+        }
     }
 }

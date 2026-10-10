@@ -43,24 +43,27 @@ fn is_simple_compare_callback_function<'a>(e: Expr<'a>) -> bool {
 
 impl Rule for PreferArrayIndexOf {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-array-index-of", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferArrayIndexOf
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions_any(&["findIndex", "findLastIndex"]) {
-            return;
+            return None;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            if let Some(call) = e.as_call()
-                && is_method_call(call, None, Some(&["findIndex", "findLastIndex"]), Some(1), Some(1))
-                && call.args().first().is_some_and(is_simple_compare_callback_function)
-            {
-                let property = as_member_expression(call.callee()).and_then(static_property_info);
-                cx.report(property.map_or_else(|| e.span(), |it| it.0), PREFER_ARRAY_INDEX_OF);
-            }
-        });
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(call) = e.as_call()
+            && is_method_call(call, None, Some(&["findIndex", "findLastIndex"]), Some(1), Some(1))
+            && call.args().first().is_some_and(is_simple_compare_callback_function)
+        {
+            let property = as_member_expression(call.callee()).and_then(static_property_info);
+            cx.report(property.map_or_else(|| e.span(), |it| it.0), PREFER_ARRAY_INDEX_OF);
+        }
     }
 }

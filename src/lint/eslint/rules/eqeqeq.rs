@@ -117,34 +117,34 @@ impl Eqeqeq {
     }
 }
 
+const OTHERS: [BinOp; 18] = [
+    BinOp::Add,
+    BinOp::Sub,
+    BinOp::Mul,
+    BinOp::Div,
+    BinOp::Rem,
+    BinOp::Pow,
+    BinOp::Shl,
+    BinOp::Shr,
+    BinOp::UShr,
+    BinOp::BitAnd,
+    BinOp::BitOr,
+    BinOp::BitXor,
+    BinOp::Lt,
+    BinOp::Le,
+    BinOp::Gt,
+    BinOp::Ge,
+    BinOp::In,
+    BinOp::Instanceof,
+];
+
 impl Rule for Eqeqeq {
     const META: Meta = Meta::eslint("eqeqeq", Kind::Suggestion)
         .fixable(Fixable::Code)
         .has_suggestions();
-    const ON: On = On::new().binaries(&[
-        BinOp::EqEq,
-        BinOp::NotEq,
-        BinOp::EqEqEq,
-        BinOp::NotEqEq,
-        BinOp::Add,
-        BinOp::Sub,
-        BinOp::Mul,
-        BinOp::Div,
-        BinOp::Rem,
-        BinOp::Pow,
-        BinOp::Shl,
-        BinOp::Shr,
-        BinOp::UShr,
-        BinOp::BitAnd,
-        BinOp::BitOr,
-        BinOp::BitXor,
-        BinOp::Lt,
-        BinOp::Le,
-        BinOp::Gt,
-        BinOp::Ge,
-        BinOp::In,
-        BinOp::Instanceof,
-    ]);
+    const ON: On = On::new()
+        .binaries(&[BinOp::EqEq, BinOp::NotEq, BinOp::EqEqEq, BinOp::NotEqEq])
+        .binaries(&OTHERS);
     no_state!();
 
     fn new(options: &Options) -> Self {
@@ -160,14 +160,18 @@ impl Rule for Eqeqeq {
         }
     }
 
-    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let is_asked = match e.kind() {
-            ExprKind::Binary { op: BinOp::EqEq | BinOp::NotEq, .. } => true,
-            ExprKind::Binary { op: BinOp::EqEqEq | BinOp::NotEqEq, .. } => self.null == Null::Never,
-            _ => self.null == Null::Never && cx.language().is_oxlint,
-        };
-        if is_asked {
-            self.check(e, cx);
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new().binaries(&[BinOp::EqEq, BinOp::NotEq]);
+        if self.null == Null::Never {
+            on = on.binaries(&[BinOp::EqEqEq, BinOp::NotEqEq]);
         }
+        if self.null == Null::Never && file.language().is_oxlint {
+            on = on.binaries(&OTHERS);
+        }
+        on
+    }
+
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(e, cx);
     }
 }

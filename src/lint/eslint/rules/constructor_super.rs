@@ -599,24 +599,26 @@ impl ConstructorSuper {
 
 impl Rule for ConstructorSuper {
     const META: Meta = Meta::eslint("constructor-super", Kind::Problem).recommended();
+    const ON: On = On::new().classes();
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         ConstructorSuper
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
-        on.classes(|rule, class, cx| {
-            let Some(super_class) = class.extends() else {
-                return;
-            };
-            let constructors = class.members().iter().filter(|it| it.kind() == MemberKind::Constructor);
-            for constructor in constructors.filter_map(Member::func).filter(|it| it.has_body()) {
-                if !(is_possible_constructor(super_class) && calls_super_plainly(constructor, cx)) {
-                    rule.check_constructor(constructor, cx);
-                }
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(super_class) = class.extends() else {
+            return;
+        };
+        let constructors = class.members().iter().filter(|it| it.kind() == MemberKind::Constructor);
+        for constructor in constructors.filter_map(Member::func).filter(|it| it.has_body()) {
+            if !(is_possible_constructor(super_class) && calls_super_plainly(constructor, cx)) {
+                self.check_constructor(constructor, cx);
             }
-        });
-        State::default()
+        }
     }
 }

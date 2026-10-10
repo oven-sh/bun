@@ -19,26 +19,25 @@ fn is_directive(rest: &[u8]) -> bool {
 impl Rule for ConsistentDirectivePrefix {
     const META: Meta =
         Meta::plugin(Plugin::Bun, "consistent-directive-prefix", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().finish();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         ConsistentDirectivePrefix { prefers_oxlint: options.object(0).str("prefix") == Some("oxlint") }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.finish(|rule, cx| {
-            let (expected, found) = if rule.prefers_oxlint { ("oxlint", "eslint") } else { ("eslint", "oxlint") };
-            for comment in cx.file().comments().filter(|it| it.kind() != TokenKind::Shebang) {
-                let value = comment.comment_value();
-                let text = value.trim_ascii_start();
-                if text.strip_prefix(found.as_bytes()).is_some_and(is_directive) {
-                    // After the `//` or the `/*`.
-                    let start = comment.start() + 2 + (value.len() - text.len()) as u32;
-                    let span = Span::new(start, start + found.len() as u32);
-                    let report = cx.report(span, OTHER_PREFIX).data("expected", expected).data("found", found);
-                    report.fix(|fixer| fixer.replace(span, expected));
-                }
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let (expected, found) = if self.prefers_oxlint { ("oxlint", "eslint") } else { ("eslint", "oxlint") };
+        for comment in cx.file().comments().filter(|it| it.kind() != TokenKind::Shebang) {
+            let value = comment.comment_value();
+            let text = value.trim_ascii_start();
+            if text.strip_prefix(found.as_bytes()).is_some_and(is_directive) {
+                // After the `//` or the `/*`.
+                let start = comment.start() + 2 + (value.len() - text.len()) as u32;
+                let span = Span::new(start, start + found.len() as u32);
+                let report = cx.report(span, OTHER_PREFIX).data("expected", expected).data("found", found);
+                report.fix(|fixer| fixer.replace(span, expected));
             }
-        });
+        }
     }
 }

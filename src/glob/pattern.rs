@@ -19,6 +19,8 @@ pub enum Syntax {
     Minimatch,
     /// picomatch 2.3.2, which micromatch 4.0.8 and fast-glob 3.3.3 call.
     Picomatch,
+    /// minimatch 3.1.5: `.*` takes `.` and `..`, `a/../b` is not folded, the pattern is trimmed.
+    Minimatch3,
     /// `makeRe(pattern).test(path)` of minimatch 3.1.5: nothing is cut at a `/`, and a `**` keeps the `/` behind it.
     Minimatch3MakeRe,
 }
@@ -53,6 +55,16 @@ impl Options {
     pub const MINIMATCH: Options = Options {
         dot: false,
         ..Options::MINIMATCH_DOT
+    };
+    /// `minimatch(path, pattern, { dot: true })` of 3.1.5: eslint-plugin-import.
+    pub const MINIMATCH_3_DOT: Options = Options {
+        syntax: Syntax::Minimatch3,
+        ..Options::MINIMATCH_DOT
+    };
+    /// `minimatch(path, pattern)` of 3.1.5: eslint-plugin-import.
+    pub const MINIMATCH_3: Options = Options {
+        dot: false,
+        ..Options::MINIMATCH_3_DOT
     };
     /// `minimatch.makeRe(pattern).test(path)`: import/no-internal-modules.
     pub const MINIMATCH_3_MAKE_RE: Options = Options {
@@ -157,15 +169,19 @@ impl Pattern {
             kind,
             is_negated: false,
         };
+        let pattern = match options.syntax {
+            Syntax::Minimatch3 => strings::trim_js_whitespace(pattern),
+            _ => pattern,
+        };
         match options.syntax {
             Syntax::Bun => bun(pattern),
             _ if pattern.len() > MAX_PATTERN_LENGTH => of(Kind::Never),
-            Syntax::Minimatch if pattern.starts_with(b"#") => of(Kind::Never),
-            Syntax::Minimatch if pattern.is_empty() => of(Kind::Empty),
-            Syntax::Minimatch => {
+            Syntax::Minimatch | Syntax::Minimatch3 if pattern.starts_with(b"#") => of(Kind::Never),
+            Syntax::Minimatch | Syntax::Minimatch3 if pattern.is_empty() => of(Kind::Empty),
+            Syntax::Minimatch | Syntax::Minimatch3 => {
                 let bangs = pattern.iter().take_while(|b| **b == b'!').count();
                 Pattern {
-                    kind: match segments::read(&pattern[bangs..], options.dot) {
+                    kind: match segments::read(&pattern[bangs..], options) {
                         Some(set) => Kind::Minimatch(set, options.dot),
                         None => Kind::Never,
                     },
@@ -221,6 +237,16 @@ impl Pattern {
     /// `path` is separated by `/`.
     pub fn matches(&self, path: &[u8]) -> bool {
         self.matches_with(path, How::default())
+    }
+
+    /// `matches` with the option `matchBase` of minimatch.
+    pub fn matches_base(&self, path: &[u8]) -> bool {
+        match &self.kind {
+            Kind::Minimatch(set, dot) => {
+                segments::matches_base(set, &Candidate::new(path), *dot) != self.is_negated
+            }
+            _ => self.matches(path),
+        }
     }
 
     pub fn matches_with(&self, path: &[u8], how: How) -> bool {

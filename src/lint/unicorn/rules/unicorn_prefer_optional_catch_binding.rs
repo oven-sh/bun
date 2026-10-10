@@ -40,28 +40,27 @@ fn is_param_referenced(pat: Pat) -> bool {
 impl Rule for PreferOptionalCatchBinding {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "prefer-optional-catch-binding", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::Try]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         PreferOptionalCatchBinding
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Try], |_, stmt, cx| {
-            let StmtKind::Try { param: Some(param), handler: Some(body), .. } = stmt.kind() else {
-                return;
-            };
-            let pat = param.pat();
-            if is_param_referenced(pat) {
-                return;
-            }
-            cx.report(pat, PREFER_OPTIONAL_CATCH_BINDING).fix(|fixer| {
-                // From the `(`, which is the first that is not white space after the `catch`, to the block.
-                let after_catch = stmt.catch_clause_span()?.start + 5;
-                let before_param = fixer.file().slice(Span::before(after_catch, pat.span()));
-                let white_space = before_param.iter().position(|it| !it.is_ascii_whitespace()).unwrap_or(0);
-                Some(fixer.remove(Span::before(after_catch + white_space as u32, body.span())))
-            });
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::Try { param: Some(param), handler: Some(body), .. } = stmt.kind() else {
+            return;
+        };
+        let pat = param.pat();
+        if is_param_referenced(pat) {
+            return;
+        }
+        cx.report(pat, PREFER_OPTIONAL_CATCH_BINDING).fix(|fixer| {
+            // From the `(`, which is the first that is not white space after the `catch`, to the block.
+            let after_catch = stmt.catch_clause_span()?.start + 5;
+            let before_param = fixer.file().slice(Span::before(after_catch, pat.span()));
+            let white_space = before_param.iter().position(|it| !it.is_ascii_whitespace()).unwrap_or(0);
+            Some(fixer.remove(Span::before(after_catch + white_space as u32, body.span())))
         });
     }
 }

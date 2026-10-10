@@ -100,70 +100,69 @@ fn is_expected_string_literal<'a>(e: Expr<'a>, expected: Name<'a>) -> bool {
 
 impl Rule for CustomErrorDefinition {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "custom-error-definition", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().classes();
+    no_state!();
 
     fn new(_: &Options) -> Self {
         CustomErrorDefinition
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.classes(|_, class, cx| {
-            if !has_valid_super_class(class) {
-                return;
-            }
-            let Some(id) = class.name() else {
-                return;
-            };
-            let name = id.name();
-            if let Some(exported) = get_export_assignment_info(class).filter(|it| it.name() != name) {
-                cx.report(exported, INVALID_EXPORT);
-            }
-            let expected_class_name = get_class_name(name.bytes());
-            if name.bytes() != expected_class_name {
-                cx.report(id, INVALID_CLASS_NAME).data("expected", expected_class_name);
-            }
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        if !has_valid_super_class(class) {
+            return;
+        }
+        let Some(id) = class.name() else {
+            return;
+        };
+        let name = id.name();
+        if let Some(exported) = get_export_assignment_info(class).filter(|it| it.name() != name) {
+            cx.report(exported, INVALID_EXPORT);
+        }
+        let expected_class_name = get_class_name(name.bytes());
+        if name.bytes() != expected_class_name {
+            cx.report(id, INVALID_CLASS_NAME).data("expected", expected_class_name);
+        }
 
-            let constructors = || class.members().iter().filter(|it| it.is_constructor());
-            let constructor_body = constructors().find_map(|it| it.func().filter(|it| it.has_body()));
-            let is_name = |key: Key| matches!(key.kind(), KeyKind::Ident(_) | KeyKind::String(_)) && key.is("name");
-            let name_property = class.members().iter().find(|it| {
-                it.kind() == MemberKind::Property
-                    && !it.flags().intersects(Flags::STATIC | Flags::ACCESSOR)
-                    && it.key().is_some_and(is_name)
-            });
-            // Where the field says what the name is, if that is not the name of the class.
-            let invalid_name_property = name_property.and_then(|property| match property.init() {
-                Some(value) => (!is_expected_string_literal(value, name)).then(|| value.outer_span()),
-                None => Some(property.span()),
-            });
-
-            let Some((constructor, body)) = constructor_body.and_then(|it| Some((it, it.body_span()?))) else {
-                if constructors().next().is_none() {
-                    let span = if name_property.is_some() { invalid_name_property } else { Some(class.estree_span()) };
-                    if let Some(span) = span {
-                        cx.report(span, INVALID_NAME_PROPERTY).data("name", name);
-                    }
-                }
-                return;
-            };
-            let statements = || constructor.body_statements().into_iter().flatten();
-            match statements().find(|it| is_super_call(*it)) {
-                None => {
-                    cx.report(body, MISSING_SUPER_CALL);
-                }
-                Some(super_call) if statements().any(|it| this_assignment(it, "message").is_some()) => {
-                    cx.report(super_call, PASS_MESSAGE_TO_SUPER);
-                }
-                Some(_) => {}
-            }
-            let invalid_name_span = match statements().find_map(|it| this_assignment(it, "name")) {
-                Some(value) => (!is_expected_string_literal(value, name)).then(|| value.outer_span()),
-                None if name_property.is_some() => invalid_name_property,
-                None => Some(body),
-            };
-            if let Some(span) = invalid_name_span {
-                cx.report(span, INVALID_NAME_PROPERTY).data("name", name);
-            }
+        let constructors = || class.members().iter().filter(|it| it.is_constructor());
+        let constructor_body = constructors().find_map(|it| it.func().filter(|it| it.has_body()));
+        let is_name = |key: Key| matches!(key.kind(), KeyKind::Ident(_) | KeyKind::String(_)) && key.is("name");
+        let name_property = class.members().iter().find(|it| {
+            it.kind() == MemberKind::Property
+                && !it.flags().intersects(Flags::STATIC | Flags::ACCESSOR)
+                && it.key().is_some_and(is_name)
         });
+        // Where the field says what the name is, if that is not the name of the class.
+        let invalid_name_property = name_property.and_then(|property| match property.init() {
+            Some(value) => (!is_expected_string_literal(value, name)).then(|| value.outer_span()),
+            None => Some(property.span()),
+        });
+
+        let Some((constructor, body)) = constructor_body.and_then(|it| Some((it, it.body_span()?))) else {
+            if constructors().next().is_none() {
+                let span = if name_property.is_some() { invalid_name_property } else { Some(class.estree_span()) };
+                if let Some(span) = span {
+                    cx.report(span, INVALID_NAME_PROPERTY).data("name", name);
+                }
+            }
+            return;
+        };
+        let statements = || constructor.body_statements().into_iter().flatten();
+        match statements().find(|it| is_super_call(*it)) {
+            None => {
+                cx.report(body, MISSING_SUPER_CALL);
+            }
+            Some(super_call) if statements().any(|it| this_assignment(it, "message").is_some()) => {
+                cx.report(super_call, PASS_MESSAGE_TO_SUPER);
+            }
+            Some(_) => {}
+        }
+        let invalid_name_span = match statements().find_map(|it| this_assignment(it, "name")) {
+            Some(value) => (!is_expected_string_literal(value, name)).then(|| value.outer_span()),
+            None if name_property.is_some() => invalid_name_property,
+            None => Some(body),
+        };
+        if let Some(span) = invalid_name_span {
+            cx.report(span, INVALID_NAME_PROPERTY).data("name", name);
+        }
     }
 }

@@ -189,8 +189,36 @@ fn define_fixer<'a>(fixer: Fixer<'a>, node: Expr<'a>, call: Call<'a>) -> Option<
     Some(fixes)
 }
 
-impl PreferObjectSpread {
-    fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
+impl Rule for PreferObjectSpread {
+    const META: Meta = Meta::eslint("prefer-object-spread", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Call]).finish();
+    /// Whether some call has the arguments that are reported for `Object.assign`.
+    type State<'a> = bool;
+
+    fn new(_: &Options) -> Self {
+        PreferObjectSpread
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<bool> {
+        file.has_exprs([ExprTag::Call]).then_some(false)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.language().is_oxlint {
+            if let Some(call) = e.as_call()
+                && let Some(message) = message_for_oxlint(call)
+            {
+                cx.report(e, message).fix(|fixer| define_fixer(fixer, e, call));
+            }
+            return;
+        }
+        cx.state = cx.state || e.as_call().and_then(message_for).is_some();
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        if cx.language().is_oxlint {
+            return;
+        }
         if !cx.state {
             return;
         }
@@ -201,33 +229,5 @@ impl PreferObjectSpread {
                 cx.report(node, message).fix(|fixer| define_fixer(fixer, node, call));
             }
         }
-    }
-}
-
-impl Rule for PreferObjectSpread {
-    const META: Meta = Meta::eslint("prefer-object-spread", Kind::Suggestion).fixable(Fixable::Code);
-    /// Whether some call has the arguments that are reported for `Object.assign`.
-    type State<'a> = bool;
-
-    fn new(_: &Options) -> Self {
-        PreferObjectSpread
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> bool {
-        if file.language().is_oxlint {
-            on.exprs([ExprTag::Call], |_, e, cx| {
-                if let Some(call) = e.as_call()
-                    && let Some(message) = message_for_oxlint(call)
-                {
-                    cx.report(e, message).fix(|fixer| define_fixer(fixer, e, call));
-                }
-            });
-            return false;
-        }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            cx.state = cx.state || e.as_call().and_then(message_for).is_some();
-        });
-        on.finish(Self::check);
-        false
     }
 }

@@ -14,17 +14,9 @@ struct Restriction {
 
 const RESTRICTED_SYNTAX: Message = Message::new("restrictedSyntax", "{{message}}");
 
-impl selector::OnNode for NoRestrictedSyntax {
-    fn on_node<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        EsNode::for_each_at(node, |it| {
-            let matching = self.restrictions.iter().enumerate().filter(|(_, restriction)| restriction.selector.matches(it));
-            cx.state.extend(matching.map(|(i, _)| (it, i)));
-        });
-    }
-}
-
 impl Rule for NoRestrictedSyntax {
     const META: Meta = Meta::eslint("no-restricted-syntax", Kind::Suggestion);
+    const ON: On = On::new().nodes(NodeTags::ALL).finish();
     /// What matches, with the index of the restriction.
     type State<'a> = Vec<(EsNode<'a>, usize)>;
 
@@ -51,20 +43,31 @@ impl Rule for NoRestrictedSyntax {
         NoRestrictedSyntax { restrictions }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
         let tags = self.restrictions.iter().fold(NodeTags::EMPTY, |tags, it| tags | it.selector.listens_to());
-        selector::listen(on, tags);
-        on.finish(|rule, cx| {
-            let mut found = std::mem::take(&mut cx.state);
-            if rule.restrictions.len() > 1 {
-                selector::sort_as_called(&mut found, |i| rule.restrictions.get(i).is_some_and(|it| it.selector.is_exit()));
-            }
-            for (node, i) in found {
-                if let Some(restriction) = rule.restrictions.get(i) {
-                    cx.report(node, RESTRICTED_SYNTAX).data("message", restriction.message.to_vec());
-                }
-            }
+        On::new().nodes(tags).finish()
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(Vec::new())
+    }
+
+    fn node<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        EsNode::for_each_at(node, |it| {
+            let matching = self.restrictions.iter().enumerate().filter(|(_, restriction)| restriction.selector.matches(it));
+            cx.state.extend(matching.map(|(i, _)| (it, i)));
         });
-        Vec::new()
+    }
+
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+        let mut found = std::mem::take(&mut cx.state);
+        if self.restrictions.len() > 1 {
+            selector::sort_as_called(&mut found, |i| self.restrictions.get(i).is_some_and(|it| it.selector.is_exit()));
+        }
+        for (node, i) in found {
+            if let Some(restriction) = self.restrictions.get(i) {
+                cx.report(node, RESTRICTED_SYNTAX).data("message", restriction.message.to_vec());
+            }
+        }
     }
 }

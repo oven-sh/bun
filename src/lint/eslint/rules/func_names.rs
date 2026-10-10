@@ -117,8 +117,23 @@ fn has_inferred_name(e: Expr) -> bool {
     }
 }
 
-impl FuncNames {
-    fn check<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for FuncNames {
+    const META: Meta = Meta::eslint("func-names", Kind::Suggestion);
+    const ON: On = On::new().funcs();
+    type State<'a> = GuessedNames<'a>;
+
+    fn new(options: &Options) -> Self {
+        FuncNames {
+            config: Config::parse(options.str(0)).unwrap_or(Config::Always),
+            generators: Config::parse(options.object(1).str("generators")),
+        }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<GuessedNames<'a>> {
+        Some(GuessedNames::default())
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         // A method has no name of its own and never needs one.
         // For oxlint `export default function (): void;` is a function like others.
         if !matches!(func.kind(), FnKind::Expr | FnKind::Decl) || !func.has_body() && !cx.language().is_oxlint {
@@ -168,22 +183,5 @@ impl FuncNames {
                 None => report.fix(|fixer| add_name(fixer, func, &mut cx.state)),
             };
         }
-    }
-}
-
-impl Rule for FuncNames {
-    const META: Meta = Meta::eslint("func-names", Kind::Suggestion);
-    type State<'a> = GuessedNames<'a>;
-
-    fn new(options: &Options) -> Self {
-        FuncNames {
-            config: Config::parse(options.str(0)).unwrap_or(Config::Always),
-            generators: Config::parse(options.object(1).str("generators")),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> GuessedNames<'a> {
-        on.funcs(Self::check);
-        GuessedNames::default()
     }
 }

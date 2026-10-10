@@ -15,16 +15,19 @@ const TIMEOUT_MUST_BE_NON_NEGATIVE: Message = Message::new("", "Timeout must not
 
 impl Rule for RequireTestTimeout {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "require-test-timeout", Kind::Suggestion);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         RequireTestTimeout
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if jest::may_have_possible_jest_call_node(file) {
-            on.finish(|_, cx| run_once(cx));
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        jest::may_have_possible_jest_call_node(file).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        run_once(cx)
     }
 }
 

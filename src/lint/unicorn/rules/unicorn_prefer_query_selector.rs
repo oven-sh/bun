@@ -13,16 +13,19 @@ const METHODS: [&str; 4] = ["getElementById", "getElementsByClassName", "getElem
 
 impl Rule for PreferQuerySelector {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-query-selector", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferQuerySelector
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.mentions_any(&METHODS) {
-            on.exprs([ExprTag::Call], check);
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions_any(&METHODS).then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        check(self, e, cx);
     }
 }
 

@@ -45,8 +45,56 @@ impl Complexity {
             *cx.state.complexities.entry(owner).or_insert(1) += by;
         }
     }
+}
 
-    fn check_expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for Complexity {
+    const META: Meta = Meta::eslint("complexity", Kind::Suggestion);
+    const ON: On = On::new()
+        .exprs(&[
+            ExprTag::Cond,
+            ExprTag::Binary,
+            ExprTag::Assign,
+            ExprTag::Dot,
+            ExprTag::Index,
+            ExprTag::Call,
+        ])
+        .stmts(&[
+            StmtTag::If,
+            StmtTag::For,
+            StmtTag::ForIn,
+            StmtTag::ForOf,
+            StmtTag::While,
+            StmtTag::DoWhile,
+            StmtTag::Try,
+            StmtTag::Switch,
+        ])
+        .pats(&[PatTag::Object, PatTag::Array])
+        .funcs()
+        .members()
+        .params()
+        .cases()
+        .finish();
+    type State<'a> = State<'a>;
+
+    fn new(options: &Options) -> Self {
+        let object = options.object(0);
+        Complexity {
+            threshold: match options.number(0) {
+                Some(n) => Some(n as usize),
+                None if object.has("maximum") || object.has("max") => {
+                    object.usize("maximum").filter(|n| *n != 0).or_else(|| object.usize("max"))
+                }
+                None => Some(THRESHOLD_DEFAULT),
+            },
+            is_modified: object.str("variant") == Some("modified"),
+        }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        self.threshold.is_some().then(State::default)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let counts = match e.kind() {
             ExprKind::Cond { .. } => true,
             ExprKind::Binary { op, .. } => matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish),
@@ -65,7 +113,68 @@ impl Complexity {
         }
     }
 
-    fn report_all<'a>(&self, cx: &mut Cx<'a, Self>) {
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match stmt.tag() {
+            StmtTag::If | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf | StmtTag::While | StmtTag::DoWhile => {
+                Self::increase(stmt, 1, cx);
+            }
+            StmtTag::Try => {
+                if matches!(stmt.kind(), StmtKind::Try { handler: Some(_), .. }) {
+                    Self::increase(stmt, 1, cx);
+                }
+            }
+            StmtTag::Switch if self.is_modified => Self::increase(stmt, 1, cx),
+            _ => {}
+        }
+    }
+
+    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        let defaults = match pat.kind() {
+            PatKind::Object(props) => props.iter().filter(|it| it.default().is_some()).count(),
+            PatKind::Array(elems) => elems.iter().filter(|it| it.default().is_some()).count(),
+            _ => 0,
+        };
+        if defaults > 0 {
+            Self::increase(pat, defaults, cx);
+        }
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if self.threshold != Some(0) {
+            return;
+        }
+        if func.has_body() {
+            cx.state.complexities.entry(Node::Func(func)).or_insert(1);
+        }
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        if self.threshold != Some(0) {
+            return;
+        }
+        if let Some(init) = member.init()
+            && is_field_initializer(member, Node::Expr(init))
+        {
+            cx.state.complexities.entry(Node::Member(member)).or_insert(1);
+        }
+    }
+
+    fn param<'a>(&self, param: Param<'a>, cx: &mut Cx<'a, Self>) {
+        if param.default().is_some() {
+            Self::increase(param, 1, cx);
+        }
+    }
+
+    fn case<'a>(&self, case: Case<'a>, cx: &mut Cx<'a, Self>) {
+        if self.is_modified {
+            return;
+        }
+        if !case.is_default() {
+            Self::increase(case, 1, cx);
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
         let Some(threshold) = self.threshold else {
             return;
         };
@@ -103,97 +212,5 @@ impl Complexity {
                 .data("complexity", complexity)
                 .data("max", threshold);
         }
-    }
-}
-
-impl Rule for Complexity {
-    const META: Meta = Meta::eslint("complexity", Kind::Suggestion);
-    type State<'a> = State<'a>;
-
-    fn new(options: &Options) -> Self {
-        let object = options.object(0);
-        Complexity {
-            threshold: match options.number(0) {
-                Some(n) => Some(n as usize),
-                None if object.has("maximum") || object.has("max") => {
-                    object.usize("maximum").filter(|n| *n != 0).or_else(|| object.usize("max"))
-                }
-                None => Some(THRESHOLD_DEFAULT),
-            },
-            is_modified: object.str("variant") == Some("modified"),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        let Some(threshold) = self.threshold else {
-            return State::default();
-        };
-        if threshold == 0 {
-            on.funcs(|_, func, cx| {
-                if func.has_body() {
-                    cx.state.complexities.entry(Node::Func(func)).or_insert(1);
-                }
-            });
-            on.members(|_, member, cx| {
-                if let Some(init) = member.init()
-                    && is_field_initializer(member, Node::Expr(init))
-                {
-                    cx.state.complexities.entry(Node::Member(member)).or_insert(1);
-                }
-            });
-        }
-        on.exprs(
-            [
-                ExprTag::Cond,
-                ExprTag::Binary,
-                ExprTag::Assign,
-                ExprTag::Dot,
-                ExprTag::Index,
-                ExprTag::Call,
-            ],
-            Self::check_expr,
-        );
-        on.stmts(
-            [
-                StmtTag::If,
-                StmtTag::For,
-                StmtTag::ForIn,
-                StmtTag::ForOf,
-                StmtTag::While,
-                StmtTag::DoWhile,
-            ],
-            |_, stmt, cx| Self::increase(stmt, 1, cx),
-        );
-        on.stmts([StmtTag::Try], |_, stmt, cx| {
-            if matches!(stmt.kind(), StmtKind::Try { handler: Some(_), .. }) {
-                Self::increase(stmt, 1, cx);
-            }
-        });
-        on.params(|_, param, cx| {
-            if param.default().is_some() {
-                Self::increase(param, 1, cx);
-            }
-        });
-        on.pats([PatTag::Object, PatTag::Array], |_, pat, cx| {
-            let defaults = match pat.kind() {
-                PatKind::Object(props) => props.iter().filter(|it| it.default().is_some()).count(),
-                PatKind::Array(elems) => elems.iter().filter(|it| it.default().is_some()).count(),
-                _ => 0,
-            };
-            if defaults > 0 {
-                Self::increase(pat, defaults, cx);
-            }
-        });
-        if self.is_modified {
-            on.stmts([StmtTag::Switch], |_, stmt, cx| Self::increase(stmt, 1, cx));
-        } else {
-            on.cases(|_, case, cx| {
-                if !case.is_default() {
-                    Self::increase(case, 1, cx);
-                }
-            });
-        }
-        on.finish(Self::report_all);
-        State::default()
     }
 }

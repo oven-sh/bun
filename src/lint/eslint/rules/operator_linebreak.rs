@@ -131,35 +131,17 @@ impl OperatorLinebreak {
             .data("operator", operator)
             .fix(|fixer| fix(fixer, style, left, token, right));
     }
-
-    fn check_expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        match e.kind() {
-            ExprKind::Binary { op, left, right } if op != BinOp::Comma => {
-                self.validate(left.outer_span().end, right, bin_op_text(op), cx);
-            }
-            ExprKind::Assign { op, target, value } => {
-                let left_end = target.outer_span().end;
-                // The default value in a pattern is not an `AssignmentExpression`.
-                if strings::contains_js_line_break(cx.slice(Span::before(left_end, value.outer_span())))
-                    && (op.is_some() || !utils::is_assignment_target(e))
-                {
-                    self.validate(left_end, value, assign_op_text(op), cx);
-                }
-            }
-            ExprKind::Cond { test, yes, no } => {
-                self.validate(test.outer_span().end, yes, "?", cx);
-                self.validate(yes.outer_span().end, no, ":", cx);
-            }
-            _ => {}
-        }
-    }
 }
 
 impl Rule for OperatorLinebreak {
     const META: Meta = Meta::eslint("operator-linebreak", Kind::Layout)
         .fixable(Fixable::Code)
         .deprecated();
-    type State<'a> = ();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Binary, ExprTag::Assign, ExprTag::Cond])
+        .members()
+        .var_decls();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let global_style = options.str(0).and_then(Style::of);
@@ -182,22 +164,42 @@ impl Rule for OperatorLinebreak {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Binary, ExprTag::Assign, ExprTag::Cond], Self::check_expr);
-        on.var_decls(|rule, declaration, cx| {
-            if let Some(init) = declaration.init() {
-                rule.validate(declaration.pat().span().end, init, "=", cx);
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.kind() {
+            ExprKind::Binary { op, left, right } if op != BinOp::Comma => {
+                self.validate(left.outer_span().end, right, bin_op_text(op), cx);
             }
-        });
-        on.members(|rule, member, cx| {
-            // A `PropertyDefinition`, not an `AccessorProperty`.
-            if member.kind() == MemberKind::Property
-                && let Some(value) = member.init()
-                && !member.flags().contains(Flags::ACCESSOR)
-                && let Some(key) = member.key()
-            {
-                rule.validate(key.span(cx.file()).end, value, "=", cx);
+            ExprKind::Assign { op, target, value } => {
+                let left_end = target.outer_span().end;
+                // The default value in a pattern is not an `AssignmentExpression`.
+                if strings::contains_js_line_break(cx.slice(Span::before(left_end, value.outer_span())))
+                    && (op.is_some() || !utils::is_assignment_target(e))
+                {
+                    self.validate(left_end, value, assign_op_text(op), cx);
+                }
             }
-        });
+            ExprKind::Cond { test, yes, no } => {
+                self.validate(test.outer_span().end, yes, "?", cx);
+                self.validate(yes.outer_span().end, no, ":", cx);
+            }
+            _ => {}
+        }
+    }
+
+    fn var_decl<'a>(&self, declaration: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(init) = declaration.init() {
+            self.validate(declaration.pat().span().end, init, "=", cx);
+        }
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        // A `PropertyDefinition`, not an `AccessorProperty`.
+        if member.kind() == MemberKind::Property
+            && let Some(value) = member.init()
+            && !member.flags().contains(Flags::ACCESSOR)
+            && let Some(key) = member.key()
+        {
+            self.validate(key.span(cx.file()).end, value, "=", cx);
+        }
     }
 }

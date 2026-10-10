@@ -9,16 +9,19 @@ const PREFER_STRICT_BOOLEAN_MATCHERS: Message = Message::new("", "Use `toBe({{va
 
 impl Rule for PreferStrictBooleanMatchers {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "prefer-strict-boolean-matchers", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferStrictBooleanMatchers
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if jest::is_test(file) && file.mentions_any(&["toBeTruthy", "toBeFalsy"]) {
-            on.finish(|_, cx| jest::iter_possible_jest_call_node(cx.file()).for_each(|node| run(node, cx)));
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        (jest::is_test(file) && file.mentions_any(&["toBeTruthy", "toBeFalsy"])).then_some(())
+    }
+
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+        jest::iter_possible_jest_call_node(cx.file()).for_each(|node| run(node, cx));
     }
 }
 

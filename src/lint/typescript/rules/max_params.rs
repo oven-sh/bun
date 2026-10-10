@@ -6,13 +6,14 @@ pub struct MaxParams(Config);
 
 impl Rule for MaxParams {
     const META: Meta = Meta::typescript("max-params", Kind::Suggestion).extends_base_rule("max-params");
-    type State<'a> = ();
+    const ON: On = On::new().funcs();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         MaxParams(Config::new_for_typescript_eslint(options))
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.funcs(|rule, func, cx| rule.0.check(func, cx));
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        self.0.check(func, cx);
     }
 }

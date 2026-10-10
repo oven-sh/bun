@@ -41,32 +41,34 @@ impl<'a> State<'a> {
 
 impl Rule for PreferRestParams {
     const META: Meta = Meta::eslint("prefer-rest-params", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Ident]);
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         PreferRestParams
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         if !file.mentions("arguments") {
-            return State::default();
+            return None;
         }
-        on.exprs([ExprTag::Ident], |_, e, cx| {
-            if !e.is_ident("arguments") || is_normal_member_access(e) {
-                return;
-            }
-            let Some(symbol) = e.reference().and_then(Reference::symbol) else {
-                return;
-            };
-            // The top level of a CommonJS file has an `arguments` too, which ESLint does not look at.
-            if !symbol.is_implicit_arguments() || !matches!(symbol.scope().node(), Node::Func(_)) {
-                return;
-            }
-            // It is several references where it is given several values at once.
-            for _ in 0..cx.state.count(symbol, e) {
-                cx.report(e, PREFER_REST_PARAMS);
-            }
-        });
-        State::default()
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if !e.is_ident("arguments") || is_normal_member_access(e) {
+            return;
+        }
+        let Some(symbol) = e.reference().and_then(Reference::symbol) else {
+            return;
+        };
+        // The top level of a CommonJS file has an `arguments` too, which ESLint does not look at.
+        if !symbol.is_implicit_arguments() || !matches!(symbol.scope().node(), Node::Func(_)) {
+            return;
+        }
+        // It is several references where it is given several values at once.
+        for _ in 0..cx.state.count(symbol, e) {
+            cx.report(e, PREFER_REST_PARAMS);
+        }
     }
 }

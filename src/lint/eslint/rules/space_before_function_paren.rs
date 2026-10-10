@@ -30,8 +30,24 @@ const UNEXPECTED_SPACE: Message =
 const MISSING_SPACE: Message =
     Message::new("missingSpace", "Missing space before function parentheses.");
 
-impl SpaceBeforeFunctionParen {
-    fn check<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for SpaceBeforeFunctionParen {
+    const META: Meta = Meta::eslint("space-before-function-paren", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new().funcs();
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let base = Config::parse(options.str(0), Config::Always);
+        let overrides = options.object(0);
+        SpaceBeforeFunctionParen {
+            anonymous: Config::parse(overrides.str("anonymous"), base),
+            named: Config::parse(overrides.str("named"), base),
+            async_arrow: Config::parse(overrides.str("asyncArrow"), base),
+        }
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         if !func.has_body() {
             return;
         }
@@ -90,26 +106,5 @@ impl SpaceBeforeFunctionParen {
             cx.report(Span::new(open, open + 1), MISSING_SPACE)
                 .fix(|fixer| fixer.insert_after(Span::empty(left_end), " "));
         }
-    }
-}
-
-impl Rule for SpaceBeforeFunctionParen {
-    const META: Meta = Meta::eslint("space-before-function-paren", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let base = Config::parse(options.str(0), Config::Always);
-        let overrides = options.object(0);
-        SpaceBeforeFunctionParen {
-            anonymous: Config::parse(overrides.str("anonymous"), base),
-            named: Config::parse(overrides.str("named"), base),
-            async_arrow: Config::parse(overrides.str("asyncArrow"), base),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.funcs(Self::check);
     }
 }

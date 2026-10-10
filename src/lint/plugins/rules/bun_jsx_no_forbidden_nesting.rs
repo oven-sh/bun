@@ -25,6 +25,7 @@ fn tag_of(node: Node<'_>) -> Option<Expr<'_>> {
 
 impl Rule for JsxNoForbiddenNesting {
     const META: Meta = Meta::plugin(Plugin::Bun, "jsx-no-forbidden-nesting", Kind::Problem);
+    const ON: On = On::new().enter(NodeTags::new().exprs(&[ExprTag::Jsx])).exit(NodeTags::new().exprs(&[ExprTag::Jsx]));
     /// For each of the pairs: how many of the outer elements the walk is in.
     type State<'a> = Vec<u32>;
 
@@ -38,35 +39,37 @@ impl Rule for JsxNoForbiddenNesting {
         JsxNoForbiddenNesting { pairs: if config.has("pairs") { written.collect() } else { html.collect() } }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Vec<u32> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Vec<u32>> {
         if !file.has_exprs([ExprTag::Jsx]) {
-            return Vec::new();
+            return None;
         }
-        on.enter(ExprTag::Jsx, |rule, node, cx| {
-            let Some(tag) = tag_of(node) else {
-                return;
-            };
-            let mut is_reported = false;
-            for (at, (outer, inner)) in rule.pairs.iter().enumerate() {
-                if !is_reported && **inner == *tag.text() && cx.state.get(at).is_some_and(|open| *open > 0) {
-                    cx.report(tag, FORBIDDEN_NESTING).data("inner", tag.text()).data("outer", outer.to_vec());
-                    is_reported = true;
-                }
-                if **outer == *tag.text()
-                    && let Some(open) = cx.state.get_mut(at)
-                {
-                    *open += 1;
-                }
+        Some(vec![0; self.pairs.len()])
+    }
+
+    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(tag) = tag_of(node) else {
+            return;
+        };
+        let mut is_reported = false;
+        for (at, (outer, inner)) in self.pairs.iter().enumerate() {
+            if !is_reported && **inner == *tag.text() && cx.state.get(at).is_some_and(|open| *open > 0) {
+                cx.report(tag, FORBIDDEN_NESTING).data("inner", tag.text()).data("outer", outer.to_vec());
+                is_reported = true;
             }
-        });
-        on.exit(ExprTag::Jsx, |rule, node, cx| {
-            let Some(tag) = tag_of(node) else {
-                return;
-            };
-            for ((outer, _), open) in rule.pairs.iter().zip(&mut cx.state) {
-                *open = open.saturating_sub(u32::from(**outer == *tag.text()));
+            if **outer == *tag.text()
+                && let Some(open) = cx.state.get_mut(at)
+            {
+                *open += 1;
             }
-        });
-        vec![0; self.pairs.len()]
+        }
+    }
+
+    fn exit<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(tag) = tag_of(node) else {
+            return;
+        };
+        for ((outer, _), open) in self.pairs.iter().zip(&mut cx.state) {
+            *open = open.saturating_sub(u32::from(**outer == *tag.text()));
+        }
     }
 }

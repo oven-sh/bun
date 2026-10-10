@@ -9,19 +9,18 @@ const EXPORTS_LAST: Message = Message::new("", "Export statements should appear 
 
 impl Rule for ExportsLast {
     const META: Meta = Meta::oxlint(Plugin::Import, "exports-last", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().finish();
+    no_state!();
 
     fn new(_: &Options) -> Self {
         ExportsLast
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.finish(|_, cx| {
-            let after_last_other = cx.file().body().iter().rev().skip_while(|it| is_exports_declaration(*it));
-            for stmt in after_last_other.filter(|it| is_exports_declaration(*it)) {
-                cx.report(export_declaration_span(stmt), EXPORTS_LAST);
-            }
-        });
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let after_last_other = cx.file().body().iter().rev().skip_while(|it| is_exports_declaration(*it));
+        for stmt in after_last_other.filter(|it| is_exports_declaration(*it)) {
+            cx.report(export_declaration_span(stmt), EXPORTS_LAST);
+        }
     }
 }
 

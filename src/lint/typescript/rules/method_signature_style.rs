@@ -206,6 +206,7 @@ impl Rule for MethodSignatureStyle {
     const META: Meta = Meta::typescript("method-signature-style", Kind::Suggestion)
         .fixable(Fixable::Code)
         .has_suggestions();
+    const ON: On = On::new().members();
     /// By the interface or the type literal.
     type State<'a> = FxHashMap<Node<'a>, Overloads<'a>>;
 
@@ -215,12 +216,15 @@ impl Rule for MethodSignatureStyle {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(FxHashMap::default())
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         if self.is_method {
-            on.members(Self::check_property);
+            self.check_property(member, cx);
         } else {
-            on.members(Self::check_method);
+            self.check_method(member, cx);
         }
-        FxHashMap::default()
     }
 }

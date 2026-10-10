@@ -8,18 +8,19 @@ pub struct PreferEach;
 
 impl Rule for PreferEach {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "prefer-each", Kind::Suggestion);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferEach
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if prefer_each::should_run(file) {
-            on.finish(|_, cx| {
-                let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
-                prefer_each::run_once(&ctx);
-            });
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        prefer_each::should_run(file).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        prefer_each::run_once(&ctx);
     }
 }

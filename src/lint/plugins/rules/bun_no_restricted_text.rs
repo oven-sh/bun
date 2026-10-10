@@ -69,6 +69,7 @@ impl NoRestrictedText {
 
 impl Rule for NoRestrictedText {
     const META: Meta = Meta::plugin(Plugin::Bun, "no-restricted-text", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Template, ExprTag::String, ExprTag::Regex]).string_literals().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -88,38 +89,56 @@ impl Rule for NoRestrictedText {
         patterns_of(options).try_for_each(|it| regex_of(&it).map(|_| ()))
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        if self.looks_at(Place::Strings) {
-            on.string_literals(|rule, literal, cx| rule.check(literal.span().shrink(1, 1), Place::Strings, cx));
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<()> {
+        (!self.patterns.is_empty()).then_some(())
+    }
+
+    fn string_literal<'a>(&self, literal: Literal<'a>, cx: &mut Cx<'a, Self>) {
+        if !self.looks_at(Place::Strings) {
+            return;
         }
-        if self.looks_at(Place::Templates) {
-            on.exprs([ExprTag::Template], |rule, e, cx| {
+        self.check(literal.span().shrink(1, 1), Place::Strings, cx)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Template => {
+                if !self.looks_at(Place::Templates) {
+                    return;
+                }
                 let ExprKind::Template(template) = e.kind() else {
                     return;
                 };
                 for at in 0..template.quasi_count() {
                     // After the backtick or the `}`.
                     let start = template.quasi_span(at).start + 1;
-                    rule.check(Span::new(start, start + template.raw(at).len() as u32), Place::Templates, cx);
+                    self.check(Span::new(start, start + template.raw(at).len() as u32), Place::Templates, cx);
                 }
-            });
-        }
-        if self.looks_at(Place::JsxText) {
-            on.exprs([ExprTag::String], |rule, e, cx| {
+            }
+            ExprTag::String => {
+                if !self.looks_at(Place::JsxText) {
+                    return;
+                }
                 if e.is_jsx_text() {
-                    rule.check(e.span(), Place::JsxText, cx);
+                    self.check(e.span(), Place::JsxText, cx);
                 }
-            });
-        }
-        if self.looks_at(Place::RegularExpressions) {
-            on.exprs([ExprTag::Regex], |rule, e, cx| rule.check(e.span(), Place::RegularExpressions, cx));
-        }
-        if self.looks_at(Place::Comments) {
-            on.finish(|rule, cx| {
-                for comment in cx.file().comments() {
-                    rule.check(comment.span(), Place::Comments, cx);
+            }
+            ExprTag::Regex => {
+                if !self.looks_at(Place::RegularExpressions) {
+                    return;
                 }
-            });
+                self.check(e.span(), Place::RegularExpressions, cx)
+            }
+            _ => {}
+        }
+    }
+
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+        if !self.looks_at(Place::Comments) {
+            return;
+        }
+        for comment in cx.file().comments() {
+            self.check(comment.span(), Place::Comments, cx);
         }
     }
 }

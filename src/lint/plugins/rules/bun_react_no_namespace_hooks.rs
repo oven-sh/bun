@@ -56,42 +56,45 @@ fn import_fix<'a>(file: &'a File<'a>, names: &[Name<'a>], fixer: Fixer<'a>) -> O
 
 impl Rule for ReactNoNamespaceHooks {
     const META: Meta = Meta::plugin(Plugin::Bun, "react-no-namespace-hooks", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         ReactNoNamespaceHooks
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("react") {
-            return;
+            return None;
         }
-        on.finish(|_, cx| {
-            let file = cx.file();
-            let hooks: Vec<_> = namespace_hooks(file).into_iter().filter_map(|it| Some((it, hook_name(it)?))).collect();
-            // What each is called where it is imported by name.
-            let specifiers = imports_of_react(file).flat_map(|it| it.1.named()).filter(|it| !it.is_type_only());
-            let imported: FxHashMap<&[u8], Name> =
-                specifiers.map(|it| (it.imported().bytes(), it.local().name())).collect();
-            let means = |name: Name<'a>, at: Expr<'a>| Node::Expr(at).scope().resolve_name(name);
-            let lacking = || hooks.iter().filter(|it| !imported.contains_key(it.1.bytes()));
-            let mut missing: Vec<Name> = lacking().map(|it| it.1).collect();
-            utils::sort::sort_unstable_by_key(&mut missing, |it| it.bytes());
-            missing.dedup();
-            // A name that means something else where it is used cannot be imported.
-            let can_import = lacking().all(|it| means(it.1, it.0).is_none());
-            for &(hook, name) in &hooks {
-                let report = cx.report(hook, NAMESPACE_HOOK).data("name", name);
-                match imported.get(name.bytes()) {
-                    Some(&local) if means(local, hook) == file.top_level_scope().get_name(local) => {
-                        report.fix(|fixer| fixer.replace(hook, local));
-                    }
-                    None if can_import => {
-                        report.fix(|fixer| Some(vec![import_fix(file, &missing, fixer)?, fixer.replace(hook, name)]));
-                    }
-                    _ => {}
+        Some(())
+    }
+
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+        let file = cx.file();
+        let hooks: Vec<_> = namespace_hooks(file).into_iter().filter_map(|it| Some((it, hook_name(it)?))).collect();
+        // What each is called where it is imported by name.
+        let specifiers = imports_of_react(file).flat_map(|it| it.1.named()).filter(|it| !it.is_type_only());
+        let imported: FxHashMap<&[u8], Name> =
+            specifiers.map(|it| (it.imported().bytes(), it.local().name())).collect();
+        let means = |name: Name<'a>, at: Expr<'a>| Node::Expr(at).scope().resolve_name(name);
+        let lacking = || hooks.iter().filter(|it| !imported.contains_key(it.1.bytes()));
+        let mut missing: Vec<Name> = lacking().map(|it| it.1).collect();
+        utils::sort::sort_unstable_by_key(&mut missing, |it| it.bytes());
+        missing.dedup();
+        // A name that means something else where it is used cannot be imported.
+        let can_import = lacking().all(|it| means(it.1, it.0).is_none());
+        for &(hook, name) in &hooks {
+            let report = cx.report(hook, NAMESPACE_HOOK).data("name", name);
+            match imported.get(name.bytes()) {
+                Some(&local) if means(local, hook) == file.top_level_scope().get_name(local) => {
+                    report.fix(|fixer| fixer.replace(hook, local));
                 }
+                None if can_import => {
+                    report.fix(|fixer| Some(vec![import_fix(file, &missing, fixer)?, fixer.replace(hook, name)]));
+                }
+                _ => {}
             }
-        });
+        }
     }
 }

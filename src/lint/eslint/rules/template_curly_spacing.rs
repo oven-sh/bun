@@ -58,7 +58,10 @@ impl Rule for TemplateCurlySpacing {
     const META: Meta = Meta::eslint("template-curly-spacing", Kind::Layout)
         .fixable(Fixable::Whitespace)
         .deprecated();
-    type State<'a> = ();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Template])
+        .types(&[TypeTag::Template]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         TemplateCurlySpacing {
@@ -66,22 +69,21 @@ impl Rule for TemplateCurlySpacing {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Template], |rule, e, cx| {
-            let ExprKind::Template(template) = e.kind() else {
-                return;
-            };
-            for (i, inner) in template.exprs().iter().enumerate() {
-                rule.check(template.quasi_span(i).end, inner.outer_span(), cx);
-            }
-        });
-        on.types([TypeTag::Template], |rule, ty, cx| {
-            let Some(template) = ty.as_template() else {
-                return;
-            };
-            for (i, inner) in template.types().iter().enumerate() {
-                rule.check(template.quasi_span(i).end, inner.outer_span(), cx);
-            }
-        });
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Template(template) = e.kind() else {
+            return;
+        };
+        for (i, inner) in template.exprs().iter().enumerate() {
+            self.check(template.quasi_span(i).end, inner.outer_span(), cx);
+        }
+    }
+
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(template) = ty.as_template() else {
+            return;
+        };
+        for (i, inner) in template.types().iter().enumerate() {
+            self.check(template.quasi_span(i).end, inner.outer_span(), cx);
+        }
     }
 }

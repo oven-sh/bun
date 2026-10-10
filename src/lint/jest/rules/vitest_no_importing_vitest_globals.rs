@@ -30,29 +30,38 @@ const VITEST_GLOBALS: [&str; 17] = [
 
 impl Rule for NoImportingVitestGlobals {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "no-importing-vitest-globals", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().stmts(&[StmtTag::Import, StmtTag::Var]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoImportingVitestGlobals
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions_any(&["vitest", "vite-plus/test", "@effect/vitest"]) {
-            return;
+            return None;
         }
-        on.stmts([StmtTag::Import], |_, node, cx| {
-            if let StmtKind::Import(import_decl) = node.kind()
-                && is_vitest_import_source(import_decl.spec().bytes())
-            {
-                check_import(node, import_decl, cx);
+        Some(())
+    }
+
+    fn stmt<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match node.tag() {
+            StmtTag::Import => {
+                if let StmtKind::Import(import_decl) = node.kind()
+                    && is_vitest_import_source(import_decl.spec().bytes())
+                {
+                    check_import(node, import_decl, cx);
+                }
             }
-        });
-        if file.mentions("require") {
-            on.stmts([StmtTag::Var], |_, node, cx| {
+            StmtTag::Var => {
+                if !cx.file().mentions("require") {
+                    return;
+                }
                 if let StmtKind::Var(declarations) = node.kind() {
                     check_variable_declaration(node, declarations, cx);
                 }
-            });
+            }
+            _ => {}
         }
     }
 }

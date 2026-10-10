@@ -37,17 +37,19 @@ pub struct State<'a> {
 
 impl Rule for PreferSetHas {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-set-has", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().var_decls();
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         PreferSetHas
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        if file.mentions("includes") {
-            on.var_decls(check);
-        }
-        State::default()
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+        file.mentions("includes").then(State::default)
+    }
+
+    fn var_decl<'a>(&self, declarator: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        check(self, declarator, cx);
     }
 }
 

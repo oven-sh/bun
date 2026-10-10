@@ -61,8 +61,24 @@ impl RequireUnicodeRegexp {
         let flag = self.require_flag.unwrap_or(UnicodeFlag::U);
         is_valid_with_unicode_flag(file.language().ecma_version, pattern, flag)
     }
+}
 
-    fn check_literal<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for RequireUnicodeRegexp {
+    const META: Meta = Meta::eslint("require-unicode-regexp", Kind::Suggestion).has_suggestions();
+    const ON: On = On::new().exprs(&[ExprTag::Regex]).finish();
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        RequireUnicodeRegexp {
+            require_flag: match options.object(0).str("requireFlag") {
+                Some("u") => Some(UnicodeFlag::U),
+                Some("v") => Some(UnicodeFlag::V),
+                _ => None,
+            },
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Regex(regex) = e.kind() else {
             return;
         };
@@ -84,7 +100,7 @@ impl RequireUnicodeRegexp {
         });
     }
 
-    fn check_calls<'a>(&self, cx: &mut Cx<'a, Self>) {
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         let scope = Some(file.scope());
         for reference in ReferenceTracker::new(file).iterate_global_references(&TRACE_MAP) {
@@ -139,25 +155,5 @@ impl RequireUnicodeRegexp {
                 Some(fixer.replace(flags_node, [body, &[replace_flag, *quote]].concat()))
             });
         }
-    }
-}
-
-impl Rule for RequireUnicodeRegexp {
-    const META: Meta = Meta::eslint("require-unicode-regexp", Kind::Suggestion).has_suggestions();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        RequireUnicodeRegexp {
-            require_flag: match options.object(0).str("requireFlag") {
-                Some("u") => Some(UnicodeFlag::U),
-                Some("v") => Some(UnicodeFlag::V),
-                _ => None,
-            },
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Regex], Self::check_literal);
-        on.finish(Self::check_calls);
     }
 }

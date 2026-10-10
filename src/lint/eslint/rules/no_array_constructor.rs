@@ -99,8 +99,25 @@ pub fn replace_as_oxlint<'a>(fixer: Fixer<'a>, e: Expr<'a>, call: Call<'a>) -> O
     Some(fixer.replace(e, [open, fixer.file().slice(written.unwrap_or_default()), b"]"].concat()))
 }
 
-impl NoArrayConstructor {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoArrayConstructor {
+    const META: Meta = Meta::eslint("no-array-constructor", Kind::Suggestion)
+        .fixable(Fixable::Code)
+        .has_suggestions();
+    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]);
+    type State<'a> = ();
+
+    fn new(_: &Options) -> Self {
+        NoArrayConstructor
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        if !file.mentions("Array") {
+            return None;
+        }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(call) = as_array_call(e) else {
             return;
         };
@@ -125,23 +142,5 @@ impl NoArrayConstructor {
             .suggest(USE_LITERAL_AFTER_SEMICOLON, |fixer| {
                 replace_with_literal(fixer, e, call, Change::Suggestion { is_after_semicolon: true })
             });
-    }
-}
-
-impl Rule for NoArrayConstructor {
-    const META: Meta = Meta::eslint("no-array-constructor", Kind::Suggestion)
-        .fixable(Fixable::Code)
-        .has_suggestions();
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        NoArrayConstructor
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("Array") {
-            return;
-        }
-        on.exprs([ExprTag::Call, ExprTag::New], Self::check);
     }
 }

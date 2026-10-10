@@ -105,8 +105,28 @@ impl SpaceUnaryOps {
                 .fix(|fixer| fixer.remove(Span::before(first_end, second)));
         }
     }
+}
 
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for SpaceUnaryOps {
+    const META: Meta = Meta::eslint("space-unary-ops", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new().exprs(&[ExprTag::Unary, ExprTag::New, ExprTag::Yield, ExprTag::Await]);
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let options = options.object(0);
+        let overrides = options.object("overrides").entries().iter();
+        SpaceUnaryOps {
+            words: options.bool_or("words", true),
+            nonwords: options.bool_or("nonwords", false),
+            overrides: overrides
+                .map(|(operator, value)| (operator.clone(), value.as_bool().unwrap_or(false)))
+                .collect(),
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.kind() {
             ExprKind::Unary { op, operand } => match op {
                 UnOp::Typeof | UnOp::Void | UnOp::Delete => self.check_word(e, un_op_text(op), cx),
@@ -121,31 +141,5 @@ impl SpaceUnaryOps {
             ExprKind::Await(_) => self.check_word(e, "await", cx),
             _ => {}
         }
-    }
-}
-
-impl Rule for SpaceUnaryOps {
-    const META: Meta = Meta::eslint("space-unary-ops", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let options = options.object(0);
-        let overrides = options.object("overrides").entries().iter();
-        SpaceUnaryOps {
-            words: options.bool_or("words", true),
-            nonwords: options.bool_or("nonwords", false),
-            overrides: overrides
-                .map(|(operator, value)| (operator.clone(), value.as_bool().unwrap_or(false)))
-                .collect(),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs(
-            [ExprTag::Unary, ExprTag::New, ExprTag::Yield, ExprTag::Await],
-            Self::check,
-        );
     }
 }

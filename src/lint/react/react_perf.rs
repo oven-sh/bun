@@ -61,15 +61,16 @@ pub(crate) trait ReactPerfRule: Rule {
     const CHECKS_FUNCTIONS: bool = false;
 }
 
-/// For [`Rule::register`].
-pub(crate) fn register<'a, R: ReactPerfRule>(on: &mut Listeners<'a, R>) {
-    on.exprs([ExprTag::Jsx], |rule, e, cx| {
-        if let Some(jsx) = as_jsx_element(e) {
-            for attr in jsx.attrs() {
-                run_react_perf_rule(rule, jsx, attr, cx);
-            }
+/// [`Rule::ON`]
+pub(crate) const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+
+/// For [`Rule::expr`].
+pub(crate) fn expr<'a, R: ReactPerfRule>(rule: &R, e: Expr<'a>, cx: &mut Cx<'a, R>) {
+    if let Some(jsx) = as_jsx_element(e) {
+        for attr in jsx.attrs() {
+            run_react_perf_rule(rule, jsx, attr, cx);
         }
-    });
+    }
 }
 
 /// `check_expression` of each of the rules: the first operand of the `||`, `&&`, `??` and `? :` that `expr` is made of which is a

@@ -535,18 +535,19 @@ impl<R: Rule> AnyRule for R {
     fn start<'r, 'a: 'r>(&'r self, start: Start<'a>) -> Option<Box<dyn Running<'a> + 'r>> {
         if !R::ON.registers() {
             let file = start.file;
-            if !has_any_of(file, R::ON) {
+            let on = R::ON.and(self.narrow(file));
+            if !has_any_of(file, on) {
                 return None;
             }
             let mut cx = Cx {
                 state: Rule::start(self, file)?,
                 base: start.base(),
             };
-            call_unordered(self, file, &mut cx);
-            if !R::ON.has_later() {
+            call_unordered(self, file, on, &mut cx);
+            if !on.has_later() {
                 return None;
             }
-            return Some(Box::new(Later { rule: self, cx }));
+            return Some(Box::new(Later { rule: self, on, cx }));
         }
         let mut on = Listeners::new(start.file);
         let state = self.register(&mut on, start.file);
@@ -591,7 +592,7 @@ fn each_bit(mut bits: u64, mut visit: impl FnMut(usize)) {
     }
 }
 
-/// Whether `file` has something that a rule with `on` is called with. `on` is a constant where this is inlined.
+/// Whether `file` has something that a rule with `on` is called with. Where this is inlined `on` is a constant, or a part of one.
 #[inline(always)]
 fn has_any_of<'a>(file: &'a File<'a>, on: On) -> bool {
     let always = On::SYMBOLS | On::STRING_LITERALS | On::NUMBER_LITERALS;
@@ -646,8 +647,7 @@ const CHAINED: [ExprTag; 3] = [ExprTag::Dot, ExprTag::Index, ExprTag::Call];
 
 /// Calls what takes the nodes in no particular order, in the order in which [`Rule`] has the methods.
 #[inline]
-fn call_unordered<'a, R: Rule>(rule: &R, file: &'a File<'a>, cx: &mut Cx<'a, R>) {
-    let on = R::ON;
+fn call_unordered<'a, R: Rule>(rule: &R, file: &'a File<'a>, on: On, cx: &mut Cx<'a, R>) {
     each_bit(on.exprs, |kind| {
         for &id in file.exprs_of(EXPR_TAGS[kind]) {
             rule.expr(Expr::from_raw(file, id), cx);
@@ -728,19 +728,21 @@ fn call_unordered<'a, R: Rule>(rule: &R, file: &'a File<'a>, cx: &mut Cx<'a, R>)
 /// Such a rule at work on a file, after `call_unordered`.
 struct Later<'r, 'a, R: Rule> {
     rule: &'r R,
+    /// A part of `R::ON`.
+    on: On,
     cx: Cx<'a, R>,
 }
 
 impl<'a, R: Rule> Running<'a> for Later<'_, 'a, R> {
     fn listeners_of_walk(&self, add: &mut dyn FnMut(WalkListener)) {
-        if !R::ON.enter.is_empty() {
-            add(WalkListener::Enter(R::ON.enter, 0));
+        if !self.on.enter.is_empty() {
+            add(WalkListener::Enter(self.on.enter, 0));
         }
-        if !R::ON.exit.is_empty() {
-            add(WalkListener::Exit(R::ON.exit, 1));
+        if !self.on.exit.is_empty() {
+            add(WalkListener::Exit(self.on.exit, 1));
         }
         for event in 0..EVENTS {
-            if R::ON.has(On::CODE_PATH_START << event) {
+            if self.on.has(On::CODE_PATH_START << event) {
                 add(WalkListener::CodePath(event, 0));
             }
         }
@@ -772,7 +774,7 @@ impl<'a, R: Rule> Running<'a> for Later<'_, 'a, R> {
     }
 
     fn finish(&mut self) {
-        if R::ON.has(On::FINISH) {
+        if self.on.has(On::FINISH) {
             self.rule.finish(&mut self.cx);
         }
     }

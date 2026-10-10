@@ -10,8 +10,20 @@ const EXPECTED: Message = Message::new("expected", "Expected a linebreak before 
 const UNEXPECTED: Message =
     Message::new("unexpected", "Expected no linebreak before this expression.");
 
-impl ImplicitArrowLinebreak {
-    fn check<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for ImplicitArrowLinebreak {
+    const META: Meta = Meta::eslint("implicit-arrow-linebreak", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new().funcs();
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        ImplicitArrowLinebreak {
+            is_below: options.str(0) == Some("below"),
+        }
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         let Some(arrow) = func.arrow_span() else {
             return;
         };
@@ -34,22 +46,5 @@ impl ImplicitArrowLinebreak {
                     .then(|| fixer.replace(arrow.between(first.span()), " "))
             });
         }
-    }
-}
-
-impl Rule for ImplicitArrowLinebreak {
-    const META: Meta = Meta::eslint("implicit-arrow-linebreak", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        ImplicitArrowLinebreak {
-            is_below: options.str(0) == Some("below"),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.funcs(Self::check);
     }
 }

@@ -41,27 +41,26 @@ impl Rule for NoCaseDeclarations {
     const META: Meta = Meta::eslint("no-case-declarations", Kind::Suggestion)
         .has_suggestions()
         .recommended();
-    type State<'a> = ();
+    const ON: On = On::new().cases();
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoCaseDeclarations
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.cases(|_, case, cx| {
-            let body = case.body();
-            for statement in body {
-                if !is_lexical_declaration(statement) {
-                    continue;
-                }
-                let place = if cx.language().is_oxlint { keyword(statement) } else { statement.span() };
-                cx.report(place, UNEXPECTED).suggest(ADD_BRACKETS, |fixer| {
-                    Some([
-                        fixer.insert_before(body.first()?, "{ "),
-                        fixer.insert_after(body.last()?, " }"),
-                    ])
-                });
+    fn case<'a>(&self, case: Case<'a>, cx: &mut Cx<'a, Self>) {
+        let body = case.body();
+        for statement in body {
+            if !is_lexical_declaration(statement) {
+                continue;
             }
-        });
+            let place = if cx.language().is_oxlint { keyword(statement) } else { statement.span() };
+            cx.report(place, UNEXPECTED).suggest(ADD_BRACKETS, |fixer| {
+                Some([
+                    fixer.insert_before(body.first()?, "{ "),
+                    fixer.insert_after(body.last()?, " }"),
+                ])
+            });
+        }
     }
 }

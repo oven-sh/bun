@@ -44,48 +44,51 @@ fn is_simple_operation(callback: Expr) -> bool {
 
 impl Rule for NoArrayReduce {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-array-reduce", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         NoArrayReduce { allow_simple_operations: options.object(0).bool_or("allowSimpleOperations", true) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions_any(&["reduce", "reduceRight"]) {
-            return;
+            return None;
         }
-        on.exprs([ExprTag::Call], |rule, e, cx| {
-            let Some(call) = e.as_call().filter(|it| !it.is_optional()) else {
-                return;
-            };
-            let Some(member) = get_member_expr(call.callee()) else {
-                return;
-            };
-            let ExprKind::Dot { obj, name, .. } = member.kind() else {
-                return;
-            };
-            let is_reported = match name.bytes() {
-                b"reduce" | b"reduceRight" => {
-                    matches!(call.args().len(), 1 | 2)
-                        && call.args().first().is_some_and(|callback| {
-                            callback.tag() != ExprTag::Spread
-                                && !(rule.allow_simple_operations && is_simple_operation(callback))
-                        })
-                }
-                // `[].reduce.call(array, callback)`, `Array.prototype.reduce.apply(array, [callback])`
-                b"call" | b"apply" => {
-                    !member.is_optional()
-                        && as_member_expression(obj).is_some_and(|it| {
-                            it.tag() == ExprTag::Dot
-                                && (is_prototype_property(it, "reduce", "Array")
-                                    || is_prototype_property(it, "reduceRight", "Array"))
-                        })
-                }
-                _ => false,
-            };
-            if is_reported {
-                cx.report(name, NO_ARRAY_REDUCE);
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call) = e.as_call().filter(|it| !it.is_optional()) else {
+            return;
+        };
+        let Some(member) = get_member_expr(call.callee()) else {
+            return;
+        };
+        let ExprKind::Dot { obj, name, .. } = member.kind() else {
+            return;
+        };
+        let is_reported = match name.bytes() {
+            b"reduce" | b"reduceRight" => {
+                matches!(call.args().len(), 1 | 2)
+                    && call.args().first().is_some_and(|callback| {
+                        callback.tag() != ExprTag::Spread
+                            && !(self.allow_simple_operations && is_simple_operation(callback))
+                    })
             }
-        });
+            // `[].reduce.call(array, callback)`, `Array.prototype.reduce.apply(array, [callback])`
+            b"call" | b"apply" => {
+                !member.is_optional()
+                    && as_member_expression(obj).is_some_and(|it| {
+                        it.tag() == ExprTag::Dot
+                            && (is_prototype_property(it, "reduce", "Array")
+                                || is_prototype_property(it, "reduceRight", "Array"))
+                    })
+            }
+            _ => false,
+        };
+        if is_reported {
+            cx.report(name, NO_ARRAY_REDUCE);
+        }
     }
 }

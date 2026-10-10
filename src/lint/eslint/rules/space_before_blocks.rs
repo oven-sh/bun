@@ -91,7 +91,11 @@ impl Rule for SpaceBeforeBlocks {
     const META: Meta = Meta::eslint("space-before-blocks", Kind::Layout)
         .fixable(Fixable::Whitespace)
         .deprecated();
-    type State<'a> = ();
+    const ON: On = On::new()
+        .funcs()
+        .classes()
+        .stmts(&[StmtTag::Block, StmtTag::Switch]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         if options.get(0).is_some_and(|it| it.as_object().is_some()) {
@@ -113,38 +117,46 @@ impl Rule for SpaceBeforeBlocks {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new();
         if self.functions != Spacing::Off {
-            on.funcs(|rule, func, cx| {
-                // What is before the body of an arrow function is its `=>`, which conflicts. A
-                // static block is not a `BlockStatement`.
-                if !func.is_arrow()
-                    && func.kind() != FnKind::StaticBlock
-                    && let Some(body) = func.body_span()
-                {
-                    check(rule.functions, body, Block::FunctionBody, cx);
-                }
-            });
+            on = on.funcs();
         }
         if self.classes != Spacing::Off {
-            on.classes(|rule, class, cx| {
-                check(rule.classes, class.body_span(), Block::ClassBody, cx);
-            });
+            on = on.classes();
         }
         if self.keywords != Spacing::Off {
-            on.stmts([StmtTag::Block, StmtTag::Switch], |rule, statement, cx| {
-                match statement.kind() {
-                    StmtKind::Block(_) => {
-                        check(rule.keywords, statement.span(), Block::Statement(statement), cx);
-                    }
-                    StmtKind::Switch { expr, .. } => {
-                        let close_paren = skip_trivia(cx.text(), expr.outer_span().end);
-                        let brace = skip_trivia(cx.text(), close_paren + 1);
-                        check(rule.keywords, Span::new(brace, brace + 1), Block::CaseBlock, cx);
-                    }
-                    _ => {}
-                }
-            });
+            on = on.stmts(&[StmtTag::Block, StmtTag::Switch]);
+        }
+        on
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        // What is before the body of an arrow function is its `=>`, which conflicts. A
+        // static block is not a `BlockStatement`.
+        if !func.is_arrow()
+            && func.kind() != FnKind::StaticBlock
+            && let Some(body) = func.body_span()
+        {
+            check(self.functions, body, Block::FunctionBody, cx);
+        }
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        check(self.classes, class.body_span(), Block::ClassBody, cx);
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match statement.kind() {
+            StmtKind::Block(_) => {
+                check(self.keywords, statement.span(), Block::Statement(statement), cx);
+            }
+            StmtKind::Switch { expr, .. } => {
+                let close_paren = skip_trivia(cx.text(), expr.outer_span().end);
+                let brace = skip_trivia(cx.text(), close_paren + 1);
+                check(self.keywords, Span::new(brace, brace + 1), Block::CaseBlock, cx);
+            }
+            _ => {}
         }
     }
 }

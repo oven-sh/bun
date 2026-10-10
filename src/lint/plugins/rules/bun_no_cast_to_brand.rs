@@ -123,7 +123,9 @@ impl NoCastToBrand {
 
 impl Rule for NoCastToBrand {
     const META: Meta = Meta::plugin(Plugin::Bun, "no-cast-to-brand", Kind::Problem);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::As]).stmts(&[StmtTag::Import, StmtTag::ExportNamed]);
+    /// Whether a cast of the file can be to a brand, and whether an import of it can be of a function that mints one.
+    type State<'a> = (bool, bool);
 
     fn new(options: &Options) -> Self {
         let list = |names: Vec<&str>| names.into_iter().map(Box::from).collect();
@@ -139,52 +141,58 @@ impl Rule for NoCastToBrand {
         NoCastToBrand { brands: brands.collect() }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if self.brands.iter().any(|it| file.mentions(&it.name) && !it.is_at(file.path())) {
-            on.exprs([ExprTag::As], |rule, e, cx| {
-                if let ExprKind::As { ty, .. } = e.kind()
-                    && let Some(brand) = rule.brand_in(ty, cx.file())
-                {
-                    cx.report(ty, CAST).data("type", brand.name.to_string()).data("module", brand.module.to_string());
-                }
-            });
-        }
-        if !self.brands.iter().any(|it| it.mint.iter().any(|name| file.mentions(name))) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<(bool, bool)> {
+        let casts = self.brands.iter().any(|it| file.mentions(&it.name) && !it.is_at(file.path()));
+        let mints = self.brands.iter().any(|it| it.mint.iter().any(|name| file.mentions(name)));
+        (casts || mints).then_some((casts, mints))
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if !cx.state.0 {
             return;
         }
-        on.stmts([StmtTag::Import, StmtTag::ExportNamed], |rule, statement, cx| {
-            let file = cx.file();
-            match statement.kind() {
-                StmtKind::Import(import) if !import.is_type_only() => {
-                    for brand in rule.guarded(import.spec(), file) {
-                        for it in import.named().iter().filter(|it| !it.is_type_only()) {
-                            if brand.mints(it.imported().name()) {
-                                brand.report_mint(it.span(), it.imported().name(), cx);
-                            }
+        if let ExprKind::As { ty, .. } = e.kind()
+            && let Some(brand) = self.brand_in(ty, cx.file())
+        {
+            cx.report(ty, CAST).data("type", brand.name.to_string()).data("module", brand.module.to_string());
+        }
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if !cx.state.1 {
+            return;
+        }
+        let file = cx.file();
+        match statement.kind() {
+            StmtKind::Import(import) if !import.is_type_only() => {
+                for brand in self.guarded(import.spec(), file) {
+                    for it in import.named().iter().filter(|it| !it.is_type_only()) {
+                        if brand.mints(it.imported().name()) {
+                            brand.report_mint(it.span(), it.imported().name(), cx);
                         }
-                        // `module.mint`
-                        let namespace = import.namespace().and_then(|it| file.top_level_scope().get_name(it.name()));
-                        let uses = namespace.into_iter().flat_map(Symbol::references).filter_map(Reference::expr);
-                        for member in uses.filter_map(|it| it.parent().as_expr()) {
-                            if let ExprKind::Dot { name, .. } = member.kind()
-                                && brand.mints(name.name())
-                            {
-                                brand.report_mint(member.span(), name.name(), cx);
-                            }
+                    }
+                    // `module.mint`
+                    let namespace = import.namespace().and_then(|it| file.top_level_scope().get_name(it.name()));
+                    let uses = namespace.into_iter().flat_map(Symbol::references).filter_map(Reference::expr);
+                    for member in uses.filter_map(|it| it.parent().as_expr()) {
+                        if let ExprKind::Dot { name, .. } = member.kind()
+                            && brand.mints(name.name())
+                        {
+                            brand.report_mint(member.span(), name.name(), cx);
                         }
                     }
                 }
-                StmtKind::ExportNamed(export) if !export.is_type_only() => {
-                    for brand in export.spec().into_iter().flat_map(|it| rule.guarded(it, file)) {
-                        for it in export.items().iter().filter(|it| !it.is_type_only()) {
-                            if brand.mints(it.local().name()) {
-                                brand.report_mint(it.span(), it.local().name(), cx);
-                            }
-                        }
-                    }
-                }
-                _ => {}
             }
-        });
+            StmtKind::ExportNamed(export) if !export.is_type_only() => {
+                for brand in export.spec().into_iter().flat_map(|it| self.guarded(it, file)) {
+                    for it in export.items().iter().filter(|it| !it.is_type_only()) {
+                        if brand.mints(it.local().name()) {
+                            brand.report_mint(it.span(), it.local().name(), cx);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 }

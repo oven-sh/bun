@@ -15,6 +15,7 @@ const CONSISTENT_VITEST_VI: Message = Message::new("", "The vitest function acce
 
 impl Rule for ConsistentVitestVi {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "consistent-vitest-vi", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Call]).stmts(&[StmtTag::Import]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -24,31 +25,34 @@ impl Rule for ConsistentVitestVi {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions(self.opposite) {
-            return;
+            return None;
         }
-        on.stmts([StmtTag::Import], |rule, statement, cx| {
-            if let StmtKind::Import(import) = statement.kind()
-                && jest::is_vitest_import_source(import.spec().bytes())
-            {
-                rule.check_import(import, cx);
-            }
-        });
-        on.exprs([ExprTag::Call], |rule, node, cx| {
-            if let Some(member_expression) = node.callee().and_then(as_member_expression)
-                && let Some(vitest_fn) = jest::parse_general_jest_fn_call(cx.file(), PossibleJestNode::new(node))
-                && vitest_fn.kind == JestFnKind::General(JestGeneralFnKind::Vitest)
-                && vitest_fn.name == rule.opposite.as_bytes()
-                && let Some(object) = member_expression.object()
-            {
-                let function = rule.function;
-                cx.report(object.outer_span(), CONSISTENT_VITEST_VI)
-                    .data("function", function)
-                    .data("opposite", rule.opposite)
-                    .fix(|fixer| fixer.replace(object.outer_span(), function));
-            }
-        });
+        Some(())
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if let StmtKind::Import(import) = statement.kind()
+            && jest::is_vitest_import_source(import.spec().bytes())
+        {
+            self.check_import(import, cx);
+        }
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(member_expression) = node.callee().and_then(as_member_expression)
+            && let Some(vitest_fn) = jest::parse_general_jest_fn_call(cx.file(), PossibleJestNode::new(node))
+            && vitest_fn.kind == JestFnKind::General(JestGeneralFnKind::Vitest)
+            && vitest_fn.name == self.opposite.as_bytes()
+            && let Some(object) = member_expression.object()
+        {
+            let function = self.function;
+            cx.report(object.outer_span(), CONSISTENT_VITEST_VI)
+                .data("function", function)
+                .data("opposite", self.opposite)
+                .fix(|fixer| fixer.replace(object.outer_span(), function));
+        }
     }
 }
 

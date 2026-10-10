@@ -64,8 +64,23 @@ impl ComputedPropertySpacing {
             self.check_brackets(brackets.start, brackets.end - 1, cx);
         }
     }
+}
 
-    fn check_member_expression<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for ComputedPropertySpacing {
+    const META: Meta = Meta::eslint("computed-property-spacing", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new().exprs(&[ExprTag::Index]).pats(&[PatTag::Object]).members().props();
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        ComputedPropertySpacing {
+            is_always: options.str(0) == Some("always"),
+            enforces_for_class_members: options.object(1).bool_or("enforceForClassMembers", true),
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Index { obj, index, chain } = e.kind() else {
             return;
         };
@@ -80,39 +95,25 @@ impl ComputedPropertySpacing {
         }
     }
 
-    fn check_class_member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        if let PatKind::Object(props) = pat.kind() {
+            for prop in props {
+                self.check_key(prop.key(), cx);
+            }
+        }
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        if !self.enforces_for_class_members {
+            return;
+        }
         // Only `MethodDefinition` and `PropertyDefinition`.
         if !member.flags().intersects(Flags::ABSTRACT | Flags::ACCESSOR) && !member.is_signature() {
             self.check_key(member.key(), cx);
         }
     }
-}
 
-impl Rule for ComputedPropertySpacing {
-    const META: Meta = Meta::eslint("computed-property-spacing", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        ComputedPropertySpacing {
-            is_always: options.str(0) == Some("always"),
-            enforces_for_class_members: options.object(1).bool_or("enforceForClassMembers", true),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Index], Self::check_member_expression);
-        on.props(|rule, prop, cx| rule.check_key(prop.key(), cx));
-        on.pats([PatTag::Object], |rule, pat, cx| {
-            if let PatKind::Object(props) = pat.kind() {
-                for prop in props {
-                    rule.check_key(prop.key(), cx);
-                }
-            }
-        });
-        if self.enforces_for_class_members {
-            on.members(Self::check_class_member);
-        }
+    fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_key(prop.key(), cx);
     }
 }

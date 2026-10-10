@@ -10,23 +10,22 @@ const NO_STATIC_ONLY_CLASS: Message = Message::new("", "Use an object instead of
 
 impl Rule for NoStaticOnlyClass {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-static-only-class", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().classes();
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoStaticOnlyClass
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.classes(|_, class, cx| {
-            if class.extends().is_some()
-                || class.members().is_empty()
-                || !class.members().iter().all(is_plain_static_member)
-                || class.decorators().next().is_some()
-            {
-                return;
-            }
-            cx.report(class.estree_span(), NO_STATIC_ONLY_CLASS).fix_dangerously(|fixer| fix(class, fixer));
-        });
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        if class.extends().is_some()
+            || class.members().is_empty()
+            || !class.members().iter().all(is_plain_static_member)
+            || class.decorators().next().is_some()
+        {
+            return;
+        }
+        cx.report(class.estree_span(), NO_STATIC_ONLY_CLASS).fix_dangerously(|fixer| fix(class, fixer));
     }
 }
 

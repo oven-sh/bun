@@ -663,6 +663,10 @@ impl NamingConvention {
         &self.validators[selector as usize]
     }
 
+    fn has(&self, selectors: &[Selector]) -> bool {
+        selectors.iter().any(|&it| !self.validator(it).configs.is_empty())
+    }
+
     /// The function that upstream's `createValidator` returns.
     fn validate<'a>(&self, cx: &Cx<'a, Self>, selector: Selector, id: Identifier<'a>, modifiers: u32) {
         let report = |message: Message| {
@@ -991,6 +995,15 @@ impl NamingConvention {
 impl Rule for NamingConvention {
     // It needs types only for the `types` of a selector, and runs without them, as upstream.
     const META: Meta = Meta::typescript("naming-convention", Kind::Suggestion);
+    const ON: On = On::new()
+        .funcs()
+        .var_decls()
+        .members()
+        .props()
+        .classes()
+        .stmts(&[StmtTag::Enum, StmtTag::Interface, StmtTag::TypeAlias, StmtTag::Import])
+        .enum_members()
+        .type_params();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -1023,15 +1036,24 @@ impl Rule for NamingConvention {
         NamingConvention { options, validators }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
-        let has = |selectors: &[Selector]| selectors.iter().any(|&it| !self.validator(it).configs.is_empty());
-        if has(&[Selector::Function, Selector::Parameter, Selector::ParameterProperty]) {
-            on.funcs(Self::check_function);
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if self.has(&[Selector::Function, Selector::Parameter, Selector::ParameterProperty]) {
+            self.check_function(func, cx);
         }
-        if has(&[Selector::Variable]) {
-            on.var_decls(Self::check_variable_declarator);
+    }
+
+    fn var_decl<'a>(&self, declarator: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        if self.has(&[Selector::Variable]) {
+            self.check_variable_declarator(declarator, cx);
         }
-        if has(&[
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        if self.has(&[
             Selector::ClassProperty,
             Selector::ClassMethod,
             Selector::ClassicAccessor,
@@ -1039,30 +1061,44 @@ impl Rule for NamingConvention {
             Selector::TypeProperty,
             Selector::TypeMethod,
         ]) {
-            on.members(Self::check_member);
+            self.check_member(member, cx);
         }
-        if has(&[Selector::ObjectLiteralProperty, Selector::ObjectLiteralMethod, Selector::ClassicAccessor]) {
-            on.props(Self::check_property);
+    }
+
+    fn prop<'a>(&self, property: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        if self.has(&[Selector::ObjectLiteralProperty, Selector::ObjectLiteralMethod, Selector::ClassicAccessor]) {
+            self.check_property(property, cx);
         }
-        if has(&[Selector::Class]) {
-            on.classes(Self::check_class);
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        if self.has(&[Selector::Class]) {
+            self.check_class(class, cx);
         }
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         for (selector, tag) in [
             (Selector::Enum, StmtTag::Enum),
             (Selector::Interface, StmtTag::Interface),
             (Selector::TypeAlias, StmtTag::TypeAlias),
             (Selector::Import, StmtTag::Import),
         ] {
-            if has(&[selector]) {
-                on.stmts([tag], Self::check_statement);
+            if statement.tag() == tag && self.has(&[selector]) {
+                self.check_statement(statement, cx);
             }
         }
-        if has(&[Selector::EnumMember]) {
-            on.enum_members(Self::check_enum_member);
+    }
+
+    fn enum_member<'a>(&self, member: EnumMember<'a>, cx: &mut Cx<'a, Self>) {
+        if self.has(&[Selector::EnumMember]) {
+            self.check_enum_member(member, cx);
         }
-        if has(&[Selector::TypeParameter]) {
-            on.type_params(Self::check_type_parameter);
+    }
+
+    fn type_param<'a>(&self, param: TypeParam<'a>, cx: &mut Cx<'a, Self>) {
+        if self.has(&[Selector::TypeParameter]) {
+            self.check_type_parameter(param, cx);
         }
-        State::default()
     }
 }

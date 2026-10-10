@@ -10,26 +10,29 @@ const PREFER_DOM_NODE_APPEND: Message =
 
 impl Rule for PreferDomNodeAppend {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-dom-node-append", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferDomNodeAppend
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("appendChild") {
-            return;
+            return None;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            if let Some(call_expr) = e.as_call()
-                && call_expr.args().len() == 1
-                && !call_expr.is_optional()
-                && let Some(ExprKind::Dot { name, .. }) = get_member_expr(call_expr.callee()).map(Expr::kind)
-                && name.name().is("appendChild")
-                && call_expr.args().first().is_some_and(|it| it.tag() != ExprTag::Spread)
-            {
-                cx.report(name, PREFER_DOM_NODE_APPEND).fix(|fixer| fixer.replace(name, "append"));
-            }
-        });
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(call_expr) = e.as_call()
+            && call_expr.args().len() == 1
+            && !call_expr.is_optional()
+            && let Some(ExprKind::Dot { name, .. }) = get_member_expr(call_expr.callee()).map(Expr::kind)
+            && name.name().is("appendChild")
+            && call_expr.args().first().is_some_and(|it| it.tag() != ExprTag::Spread)
+        {
+            cx.report(name, PREFER_DOM_NODE_APPEND).fix(|fixer| fixer.replace(name, "append"));
+        }
     }
 }

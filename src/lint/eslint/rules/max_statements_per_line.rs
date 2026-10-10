@@ -85,8 +85,26 @@ impl MaxStatementsPerLine {
                 .data("statements", if count == 1 { "statement" } else { "statements" });
         }
     }
+}
 
-    fn enter_statement<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+const STATEMENTS: NodeTags = NodeTags::new().stmts(&StmtTag::ALL);
+
+impl Rule for MaxStatementsPerLine {
+    const META: Meta = Meta::eslint("max-statements-per-line", Kind::Layout).deprecated();
+    const ON: On = On::new().enter(STATEMENTS).exit(STATEMENTS).finish();
+    type State<'a> = State;
+
+    fn new(options: &Options) -> Self {
+        MaxStatementsPerLine {
+            max: options.object(0).usize("max").unwrap_or(1),
+        }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State> {
+        Some(State::default())
+    }
+
+    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         let Some((statement, span)) = counted_span(node) else {
             return;
         };
@@ -108,7 +126,7 @@ impl MaxStatementsPerLine {
         }
     }
 
-    fn leave_statement<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+    fn exit<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         let Some((_, span)) = counted_span(node) else {
             return;
         };
@@ -121,23 +139,8 @@ impl MaxStatementsPerLine {
             cx.state.last_statement_line = line;
         }
     }
-}
 
-impl Rule for MaxStatementsPerLine {
-    const META: Meta = Meta::eslint("max-statements-per-line", Kind::Layout).deprecated();
-    type State<'a> = State;
-
-    fn new(options: &Options) -> Self {
-        MaxStatementsPerLine {
-            max: options.object(0).usize("max").unwrap_or(1),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State {
-        let statements = NodeTags::from(StmtTag::ALL);
-        on.enter(statements, Self::enter_statement);
-        on.exit(statements, Self::leave_statement);
-        on.finish(Self::report_first_extra_statement_and_clear);
-        State::default()
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        self.report_first_extra_statement_and_clear(cx);
     }
 }

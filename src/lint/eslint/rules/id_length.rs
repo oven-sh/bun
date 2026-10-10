@@ -388,28 +388,13 @@ impl IdLength {
             _ => {}
         }
     }
+}
 
-    fn register_as_oxlint<'a>(&self, on: &mut Listeners<'a, Self>) {
-        on.pats([PatTag::Ident], Self::check_binding_as_oxlint);
-        on.funcs(|rule, func, cx| {
-            if let Some(name) = func.name() {
-                rule.check_ident(name, cx);
-            }
-        });
-        on.classes(|rule, class, cx| {
-            if let Some(name) = class.name() {
-                rule.check_ident(name, cx);
-            }
-        });
-        if self.check_generic {
-            on.type_params(|rule, it, cx| rule.check_ident(it.name(), cx));
-        }
-        on.import_specs(|rule, specifier, cx| {
-            if specifier.imported().name() != specifier.local().name() {
-                rule.check_ident(specifier.local(), cx);
-            }
-        });
-        let statements = [
+impl Rule for IdLength {
+    const META: Meta = Meta::eslint("id-length", Kind::Suggestion);
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Ident, ExprTag::Dot, ExprTag::PrivateIdentifier])
+        .stmts(&[
             StmtTag::Interface,
             StmtTag::TypeAlias,
             StmtTag::Enum,
@@ -417,26 +402,22 @@ impl IdLength {
             StmtTag::ExportStar,
             StmtTag::Import,
             StmtTag::Module,
-        ];
-        on.stmts(statements, Self::check_statement_as_oxlint);
-        on.members(Self::check_member_as_oxlint);
-        on.enum_members(|rule, member, cx| rule.check_key(member.key(), cx));
-        on.exprs([ExprTag::Dot], Self::check_member_expression_as_oxlint);
-        on.exprs([ExprTag::PrivateIdentifier], |rule, e, cx| {
-            if let ExprKind::PrivateIdentifier(name) = e.kind() {
-                rule.check(cx, name, || Some(e.span()));
-            }
-        });
-        on.types([TypeTag::Tuple, TypeTag::Ref, TypeTag::Typeof, TypeTag::Predicate], Self::check_type_as_oxlint);
-        if self.properties {
-            on.pats([PatTag::Object], Self::check_keys_of_pattern);
-            on.props(Self::check_property);
-        }
-    }
-}
-
-impl Rule for IdLength {
-    const META: Meta = Meta::eslint("id-length", Kind::Suggestion);
+        ])
+        .types(&[
+            TypeTag::Import,
+            TypeTag::Tuple,
+            TypeTag::Ref,
+            TypeTag::Typeof,
+            TypeTag::Predicate,
+        ])
+        .pats(&[PatTag::Ident, PatTag::Object])
+        .funcs()
+        .classes()
+        .members()
+        .props()
+        .type_params()
+        .enum_members()
+        .import_specs();
     /// Whether the length of each name that has been seen is wrong.
     type State<'a> = ByName<bool>;
 
@@ -455,49 +436,126 @@ impl Rule for IdLength {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> ByName<bool> {
-        if file.language().is_oxlint {
-            self.register_as_oxlint(on);
-            return ByName::default();
-        }
-        on.pats([PatTag::Ident], Self::check_binding);
-        on.exprs([ExprTag::Ident], Self::check_reference);
-        on.members(Self::check_member);
-        on.funcs(|rule, func, cx| {
-            if let Some(name) = func.name() {
-                rule.check(cx, name.name(), || func.has_body().then(|| name.span()));
-            }
-        });
-        on.classes(|rule, class, cx| {
-            if let Some(name) = class.name() {
-                rule.check(cx, name.name(), || {
-                    matches!(class.owner(), Node::Stmt(_)).then(|| name.span())
-                });
-            }
-        });
-        on.stmts([StmtTag::Import], |rule, statement, cx| {
-            let StmtKind::Import(import) = statement.kind() else {
-                return;
-            };
-            for name in [import.default(), import.namespace()].into_iter().flatten() {
-                rule.check(cx, name.name(), || Some(name.span()));
-            }
-        });
-        on.import_specs(|rule, specifier, cx| {
-            let local = specifier.local();
-            if specifier.imported().name() != local.name() {
-                rule.check(cx, local.name(), || Some(local.span()));
-            }
-        });
-        if self.properties {
-            on.props(Self::check_property);
-            on.types([TypeTag::Import], Self::check_import_type);
-            on.exprs([ExprTag::Dot], |rule, e, cx| {
-                if let ExprKind::Dot { name, .. } = e.kind() {
-                    rule.check(cx, name.name(), || is_assigned_member(e).then(|| name.span()));
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<ByName<bool>> {
+        Some(ByName::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match (e.tag(), cx.language().is_oxlint) {
+            (ExprTag::Ident, false) => self.check_reference(e, cx),
+            (ExprTag::Dot, false) => {
+                if !self.properties {
+                    return;
                 }
+                if let ExprKind::Dot { name, .. } = e.kind() {
+                    self.check(cx, name.name(), || is_assigned_member(e).then(|| name.span()));
+                }
+            }
+            (ExprTag::Dot, true) => self.check_member_expression_as_oxlint(e, cx),
+            (ExprTag::PrivateIdentifier, true) => {
+                if let ExprKind::PrivateIdentifier(name) = e.kind() {
+                    self.check(cx, name, || Some(e.span()));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.language().is_oxlint {
+            return self.check_statement_as_oxlint(statement, cx);
+        }
+        let StmtKind::Import(import) = statement.kind() else {
+            return;
+        };
+        for name in [import.default(), import.namespace()].into_iter().flatten() {
+            self.check(cx, name.name(), || Some(name.span()));
+        }
+    }
+
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        match (ty.tag(), cx.language().is_oxlint) {
+            (TypeTag::Import, false) if self.properties => self.check_import_type(ty, cx),
+            (TypeTag::Tuple | TypeTag::Ref | TypeTag::Typeof | TypeTag::Predicate, true) => {
+                self.check_type_as_oxlint(ty, cx);
+            }
+            _ => {}
+        }
+    }
+
+    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        match (pat.tag(), cx.language().is_oxlint) {
+            (PatTag::Ident, false) => self.check_binding(pat, cx),
+            (PatTag::Ident, true) => self.check_binding_as_oxlint(pat, cx),
+            (PatTag::Object, true) if self.properties => self.check_keys_of_pattern(pat, cx),
+            _ => {}
+        }
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.language().is_oxlint {
+            if let Some(name) = func.name() {
+                self.check_ident(name, cx);
+            }
+            return;
+        }
+        if let Some(name) = func.name() {
+            self.check(cx, name.name(), || func.has_body().then(|| name.span()));
+        }
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.language().is_oxlint {
+            if let Some(name) = class.name() {
+                self.check_ident(name, cx);
+            }
+            return;
+        }
+        if let Some(name) = class.name() {
+            self.check(cx, name.name(), || {
+                matches!(class.owner(), Node::Stmt(_)).then(|| name.span())
             });
         }
-        ByName::default()
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.language().is_oxlint {
+            return self.check_member_as_oxlint(member, cx);
+        }
+        self.check_member(member, cx);
+    }
+
+    fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        if !self.properties {
+            return;
+        }
+        self.check_property(prop, cx);
+    }
+
+    fn type_param<'a>(&self, it: TypeParam<'a>, cx: &mut Cx<'a, Self>) {
+        if !cx.language().is_oxlint || !self.check_generic {
+            return;
+        }
+        self.check_ident(it.name(), cx);
+    }
+
+    fn enum_member<'a>(&self, member: EnumMember<'a>, cx: &mut Cx<'a, Self>) {
+        if !cx.language().is_oxlint {
+            return;
+        }
+        self.check_key(member.key(), cx);
+    }
+
+    fn import_spec<'a>(&self, specifier: ImportSpec<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.language().is_oxlint {
+            if specifier.imported().name() != specifier.local().name() {
+                self.check_ident(specifier.local(), cx);
+            }
+            return;
+        }
+        let local = specifier.local();
+        if specifier.imported().name() != local.name() {
+            self.check(cx, local.name(), || Some(local.span()));
+        }
     }
 }

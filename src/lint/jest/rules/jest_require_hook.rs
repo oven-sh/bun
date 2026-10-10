@@ -9,18 +9,19 @@ pub struct RequireHook(RequireHookConfig);
 
 impl Rule for RequireHook {
     const META: Meta = Meta::oxlint(Plugin::Jest, "require-hook", Kind::Suggestion);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         RequireHook(RequireHookConfig::new(options))
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.has_exprs([ExprTag::Call]) || file.has_stmts([StmtTag::Var]) {
-            on.finish(|rule, cx| {
-                let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
-                rule.0.run_once(&ctx);
-            });
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        (file.has_exprs([ExprTag::Call]) || file.has_stmts([StmtTag::Var])).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        self.0.run_once(&ctx);
     }
 }

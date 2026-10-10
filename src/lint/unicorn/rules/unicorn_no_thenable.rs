@@ -11,6 +11,12 @@ const CLASS: Message = Message::new("", "Do not add `then` to a class.");
 
 impl Rule for NoThenable {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-thenable", Kind::Problem);
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Call, ExprTag::Assign])
+        .stmts(&[StmtTag::Var, StmtTag::Fn, StmtTag::Class])
+        .members()
+        .props()
+        .export_specs();
     /// The name `then`.
     type State<'a> = Option<Name<'a>>;
 
@@ -18,82 +24,93 @@ impl Rule for NoThenable {
         NoThenable
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Option<Name<'a>> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Option<Name<'a>>> {
         if !file.mentions("then") {
             return None;
         }
-        on.props(|_, prop, cx| {
-            if let Some(then) = cx.state
-                && prop.kind() != PropKind::Spread
-                && !prop.is_jsx_attribute()
-                && let Some(span) = contains_then(prop.key(), then, cx.file())
-                && matches!(prop.parent(), Node::Expr(object) if !object.is_assignment_target())
-            {
-                cx.report(span, OBJECT);
-            }
-        });
-        on.members(|_, member, cx| {
-            if let Some(then) = cx.state
-                && let Some(span) = contains_then(member.key(), then, cx.file())
-                && !member.is_signature()
-                && !member.flags().contains(Flags::ACCESSOR)
-            {
-                cx.report(span, CLASS);
-            }
-        });
-        on.stmts([StmtTag::Var, StmtTag::Fn, StmtTag::Class], |_, stmt, cx| {
-            let Some(then) = cx.state.filter(|_| !stmt.modifiers().is_empty()) else {
-                return;
-            };
-            if !stmt.is_exported() || stmt.is_default_export() {
-                return;
-            }
-            let name = match stmt.kind() {
-                StmtKind::Var(declarations) => {
-                    for declaration in declarations {
-                        declaration.pat().for_each_binding(&mut |pat| {
-                            if pat.as_ident() == Some(then) {
-                                cx.report(pat, EXPORT);
-                            }
-                        });
-                    }
-                    None
+        Some(Some(file.name_of("then")))
+    }
+
+    fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(then) = cx.state
+            && prop.kind() != PropKind::Spread
+            && !prop.is_jsx_attribute()
+            && let Some(span) = contains_then(prop.key(), then, cx.file())
+            && matches!(prop.parent(), Node::Expr(object) if !object.is_assignment_target())
+        {
+            cx.report(span, OBJECT);
+        }
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(then) = cx.state
+            && let Some(span) = contains_then(member.key(), then, cx.file())
+            && !member.is_signature()
+            && !member.flags().contains(Flags::ACCESSOR)
+        {
+            cx.report(span, CLASS);
+        }
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(then) = cx.state.filter(|_| !stmt.modifiers().is_empty()) else {
+            return;
+        };
+        if !stmt.is_exported() || stmt.is_default_export() {
+            return;
+        }
+        let name = match stmt.kind() {
+            StmtKind::Var(declarations) => {
+                for declaration in declarations {
+                    declaration.pat().for_each_binding(&mut |pat| {
+                        if pat.as_ident() == Some(then) {
+                            cx.report(pat, EXPORT);
+                        }
+                    });
                 }
-                StmtKind::Fn(func) => func.name(),
-                StmtKind::Class(class) => class.name(),
-                _ => None,
-            };
-            if let Some(name) = name.filter(|it| it.name() == then) {
-                cx.report(name, EXPORT);
+                None
             }
-        });
-        on.export_specs(|_, spec, cx| {
-            if Some(spec.exported().name()) == cx.state {
-                cx.report(spec.exported(), EXPORT);
-            }
-        });
-        if file.mentions_any(&["defineProperty", "fromEntries"]) {
-            on.exprs([ExprTag::Call], |_, e, cx| {
+            StmtKind::Fn(func) => func.name(),
+            StmtKind::Class(class) => class.name(),
+            _ => None,
+        };
+        if let Some(name) = name.filter(|it| it.name() == then) {
+            cx.report(name, EXPORT);
+        }
+    }
+
+    fn export_spec<'a>(&self, spec: ExportSpec<'a>, cx: &mut Cx<'a, Self>) {
+        if Some(spec.exported().name()) == cx.state {
+            cx.report(spec.exported(), EXPORT);
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Call => {
+                if !cx.file().mentions_any(&["defineProperty", "fromEntries"]) {
+                    return;
+                }
                 if let (Some(call), Some(then)) = (e.as_call(), cx.state) {
                     check_call_expression(call, then, cx);
                 }
-            });
-        }
-        on.exprs([ExprTag::Assign], |_, e, cx| {
-            let (Some(target), Some(then)) = (e.left(), cx.state) else {
-                return;
-            };
-            let span = match target.kind() {
-                ExprKind::Dot { name, .. } => (name.name() == then).then(|| target.span()),
-                ExprKind::Index { index, .. } => check_expression(index, then),
-                _ => None,
-            };
-            // Not the default value in a pattern.
-            if let Some(span) = span.filter(|_| !e.is_assignment_target()) {
-                cx.report(span, CLASS);
             }
-        });
-        Some(file.name_of("then"))
+            ExprTag::Assign => {
+                let (Some(target), Some(then)) = (e.left(), cx.state) else {
+                    return;
+                };
+                let span = match target.kind() {
+                    ExprKind::Dot { name, .. } => (name.name() == then).then(|| target.span()),
+                    ExprKind::Index { index, .. } => check_expression(index, then),
+                    _ => None,
+                };
+                // Not the default value in a pattern.
+                if let Some(span) = span.filter(|_| !e.is_assignment_target()) {
+                    cx.report(span, CLASS);
+                }
+            }
+            _ => {}
+        }
     }
 }
 

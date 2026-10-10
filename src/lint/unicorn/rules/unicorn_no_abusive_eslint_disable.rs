@@ -12,46 +12,48 @@ const OXLINT: Message =
 
 impl Rule for NoAbusiveEslintDisable {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-abusive-eslint-disable", Kind::Suggestion);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoAbusiveEslintDisable
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if file.comments().len() == 0 {
-            return;
+            return None;
         }
-        on.finish(|_, cx| {
-            for comment in cx.file().comments() {
-                let comment_span = match comment.kind() {
-                    TokenKind::Line => comment.span().shrink(2, 0),
-                    TokenKind::Block => comment.span().shrink(2, 2),
-                    _ => continue,
-                };
-                let text = strings::trim_unicode_whitespace_start(cx.slice(comment_span));
-                let (message, rest) = match (text.strip_prefix(b"eslint-disable"), text.strip_prefix(b"oxlint-disable"))
-                {
-                    (Some(rest), _) => (ESLINT, rest),
-                    (_, Some(rest)) => (OXLINT, rest),
-                    _ => continue,
-                };
-                let rest = rest.strip_prefix(b"-next-line").or_else(|| rest.strip_prefix(b"-line")).unwrap_or(rest);
-                // `eslint-disablefoo` is nothing.
-                if !rest.is_empty() && strings::trim_unicode_whitespace_start(rest).len() == rest.len() {
-                    continue;
-                }
-                let (mut has_rule, mut invalid_rules) = (false, 0);
-                for_each_rule_name(rest, |rule_name| {
-                    has_rule = true;
-                    invalid_rules += usize::from(!is_valid_rule_name(rule_name));
-                });
-                let count = if has_rule { invalid_rules } else { 1 };
-                for _ in 0..count {
-                    cx.report(comment_span, message);
-                }
+        Some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        for comment in cx.file().comments() {
+            let comment_span = match comment.kind() {
+                TokenKind::Line => comment.span().shrink(2, 0),
+                TokenKind::Block => comment.span().shrink(2, 2),
+                _ => continue,
+            };
+            let text = strings::trim_unicode_whitespace_start(cx.slice(comment_span));
+            let (message, rest) = match (text.strip_prefix(b"eslint-disable"), text.strip_prefix(b"oxlint-disable")) {
+                (Some(rest), _) => (ESLINT, rest),
+                (_, Some(rest)) => (OXLINT, rest),
+                _ => continue,
+            };
+            let rest = rest.strip_prefix(b"-next-line").or_else(|| rest.strip_prefix(b"-line")).unwrap_or(rest);
+            // `eslint-disablefoo` is nothing.
+            if !rest.is_empty() && strings::trim_unicode_whitespace_start(rest).len() == rest.len() {
+                continue;
             }
-        });
+            let (mut has_rule, mut invalid_rules) = (false, 0);
+            for_each_rule_name(rest, |rule_name| {
+                has_rule = true;
+                invalid_rules += usize::from(!is_valid_rule_name(rule_name));
+            });
+            let count = if has_rule { invalid_rules } else { 1 };
+            for _ in 0..count {
+                cx.report(comment_span, message);
+            }
+        }
     }
 }
 

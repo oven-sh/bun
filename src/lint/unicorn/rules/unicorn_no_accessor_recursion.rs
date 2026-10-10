@@ -11,6 +11,7 @@ const NO_ACCESSOR_RECURSION: Message = Message::new("", "Disallow recursive acce
 
 impl Rule for NoAccessorRecursion {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-accessor-recursion", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::This]);
     /// The function whose `this` the `this` at a place is. `Some(None)`: that of a class.
     type State<'a> = AncestorMemo<'a, Option<Func<'a>>>;
 
@@ -18,12 +19,16 @@ impl Rule for NoAccessorRecursion {
         NoAccessorRecursion
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         let is_accessor = |it: Func| matches!(it.kind(), FnKind::Getter | FnKind::Setter);
-        if file.has_exprs([ExprTag::This]) && file.funcs().any(is_accessor) {
-            on.exprs([ExprTag::This], check);
+        if !file.funcs().any(is_accessor) {
+            return None;
         }
-        AncestorMemo::default()
+        Some(AncestorMemo::default())
+    }
+
+    fn expr<'a>(&self, this: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        check(self, this, cx);
     }
 }
 

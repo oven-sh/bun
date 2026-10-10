@@ -14,52 +14,51 @@ const SUGGESTION: Message = Message::new("", "Switch to \"||\" or \"??\" operato
 impl Rule for PreferLogicalOperatorOverTernary {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "prefer-logical-operator-over-ternary", Kind::Suggestion).has_suggestions();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Cond]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         PreferLogicalOperatorOverTernary
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Cond], |_, e, cx| {
-            let ExprKind::Cond { test, yes: consequent, no: alternate } = e.kind() else {
-                return;
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Cond { test, yes: consequent, no: alternate } = e.kind() else {
+            return;
+        };
+        // What is on the left of the `||` and what is on the right, each with whether its parentheses stay.
+        let (left, right) = if is_same_node(test, consequent, 0) {
+            // `foo ? foo : bar`
+            let preferred = if test.is_parenthesized() { consequent } else { test };
+            ((get_inner_expression(preferred), false), (alternate, true))
+        } else if let ExprKind::Unary { op: UnOp::Not, operand: argument } = test.kind()
+            && !test.is_parenthesized()
+            && is_same_node(argument, alternate, 0)
+        {
+            // `!bar ? foo : bar`. Of `!!bar ? foo : !bar` it is `bar`.
+            let preferred = match argument.kind() {
+                ExprKind::Unary { op: UnOp::Not, operand } if !argument.is_parenthesized() => operand,
+                _ => alternate,
             };
-            // What is on the left of the `||` and what is on the right, each with whether its parentheses stay.
-            let (left, right) = if is_same_node(test, consequent, 0) {
-                // `foo ? foo : bar`
-                let preferred = if test.is_parenthesized() { consequent } else { test };
-                ((get_inner_expression(preferred), false), (alternate, true))
-            } else if let ExprKind::Unary { op: UnOp::Not, operand: argument } = test.kind()
-                && !test.is_parenthesized()
-                && is_same_node(argument, alternate, 0)
-            {
-                // `!bar ? foo : bar`. Of `!!bar ? foo : !bar` it is `bar`.
-                let preferred = match argument.kind() {
-                    ExprKind::Unary { op: UnOp::Not, operand } if !argument.is_parenthesized() => operand,
-                    _ => alternate,
-                };
-                ((preferred, true), (consequent, true))
-            } else {
-                return;
-            };
-            cx.report(e, PREFER_LOGICAL_OPERATOR_OVER_TERNARY).suggest(SUGGESTION, |fixer| {
-                let mut replacement = Vec::new();
-                for (i, (expr, keeps_parentheses)) in [left, right].into_iter().enumerate() {
-                    replacement.extend_from_slice(if i == 0 { b"" } else { b" || " });
-                    let is_in_parentheses = keeps_parentheses && expr.is_parenthesized();
-                    // `a ?? b || c` is an error.
-                    let wraps = !is_in_parentheses && expr.binary_op() == Some(BinOp::Nullish);
-                    replacement.extend_from_slice(if wraps { b"(" } else { b"" });
-                    replacement.extend_from_slice(fixer.file().slice(if is_in_parentheses {
-                        expr.outer_span()
-                    } else {
-                        expr.span()
-                    }));
-                    replacement.extend_from_slice(if wraps { b")" } else { b"" });
-                }
-                fixer.replace(e, replacement)
-            });
+            ((preferred, true), (consequent, true))
+        } else {
+            return;
+        };
+        cx.report(e, PREFER_LOGICAL_OPERATOR_OVER_TERNARY).suggest(SUGGESTION, |fixer| {
+            let mut replacement = Vec::new();
+            for (i, (expr, keeps_parentheses)) in [left, right].into_iter().enumerate() {
+                replacement.extend_from_slice(if i == 0 { b"" } else { b" || " });
+                let is_in_parentheses = keeps_parentheses && expr.is_parenthesized();
+                // `a ?? b || c` is an error.
+                let wraps = !is_in_parentheses && expr.binary_op() == Some(BinOp::Nullish);
+                replacement.extend_from_slice(if wraps { b"(" } else { b"" });
+                replacement.extend_from_slice(fixer.file().slice(if is_in_parentheses {
+                    expr.outer_span()
+                } else {
+                    expr.span()
+                }));
+                replacement.extend_from_slice(if wraps { b")" } else { b"" });
+            }
+            fixer.replace(e, replacement)
         });
     }
 }

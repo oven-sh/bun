@@ -58,8 +58,27 @@ impl WrapIife {
                 .is_some_and(|name| matches!(&*name, b"call" | b"apply"));
         is_call_or_apply.then_some(obj)
     }
+}
 
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for WrapIife {
+    const META: Meta = Meta::eslint("wrap-iife", Kind::Layout)
+        .fixable(Fixable::Code)
+        .deprecated();
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        WrapIife {
+            style: match options.str(0) {
+                Some("inside") => Style::Inside,
+                Some("any") => Style::Any,
+                _ => Style::Outside,
+            },
+            includes_function_prototype_methods: options.object(1).bool_or("functionPrototypeMethods", false),
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(inner) = e.as_call().and_then(|call| self.get_function_node_from_iife(call)) else {
             return;
         };
@@ -97,27 +116,5 @@ impl WrapIife {
                 )
             });
         }
-    }
-}
-
-impl Rule for WrapIife {
-    const META: Meta = Meta::eslint("wrap-iife", Kind::Layout)
-        .fixable(Fixable::Code)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        WrapIife {
-            style: match options.str(0) {
-                Some("inside") => Style::Inside,
-                Some("any") => Style::Any,
-                _ => Style::Outside,
-            },
-            includes_function_prototype_methods: options.object(1).bool_or("functionPrototypeMethods", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Call], Self::check);
     }
 }

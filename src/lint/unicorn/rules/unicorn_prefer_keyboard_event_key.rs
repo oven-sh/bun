@@ -14,6 +14,7 @@ const DEPRECATED_PROPERTIES: [&str; 3] = ["keyCode", "charCode", "which"];
 impl Rule for PreferKeyboardEventKey {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "prefer-keyboard-event-key", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Dot]).nodes(NodeTags::PAT_PROP);
     /// `find_add_event_listener_callback`
     type State<'a> = AncestorMemo<'a, Func<'a>>;
 
@@ -21,16 +22,22 @@ impl Rule for PreferKeyboardEventKey {
         PreferKeyboardEventKey
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if file.mentions("addEventListener") && file.mentions_any(&DEPRECATED_PROPERTIES) {
-            on.exprs([ExprTag::Dot], check_static_member_expression);
-            on.nodes(NodeTags::PAT_PROP, |_, node, cx| {
-                if let Node::PatProp(prop) = node {
-                    check_binding_property(prop, cx);
-                }
-            });
+            Some(AncestorMemo::default())
+        } else {
+            None
         }
-        AncestorMemo::default()
+    }
+
+    fn expr<'a>(&self, member_expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        check_static_member_expression(self, member_expr, cx);
+    }
+
+    fn node<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        if let Node::PatProp(prop) = node {
+            check_binding_property(prop, cx);
+        }
     }
 }
 

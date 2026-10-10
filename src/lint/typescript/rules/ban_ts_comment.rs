@@ -181,6 +181,7 @@ impl Rule for BanTsComment {
         .has_suggestions()
         .presets(Presets::RECOMMENDED)
         .presets(Presets::STRICT);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -197,9 +198,13 @@ impl Rule for BanTsComment {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.comments().any(|it| strings::contains(it.text(), b"@ts-")) {
-            on.finish(Self::check);
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.comments()
+            .any(|it| strings::contains(it.text(), b"@ts-"))
+            .then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        self.check(cx);
     }
 }

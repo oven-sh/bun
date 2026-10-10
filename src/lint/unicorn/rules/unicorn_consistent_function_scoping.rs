@@ -32,17 +32,22 @@ type Outermost<'a> = SmallVec<[Symbol<'a>; 4]>;
 
 impl Rule for ConsistentFunctionScoping {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "consistent-function-scoping", Kind::Problem);
+    const ON: On = On::new().funcs();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         ConsistentFunctionScoping { check_arrow_functions: options.object(0).bool_or("checkArrowFunctions", true) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if !file.is_declaration_file() {
-            on.funcs(Self::check);
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        if file.is_declaration_file() {
+            return None;
         }
-        State::default()
+        Some(State::default())
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(func, cx);
     }
 }
 

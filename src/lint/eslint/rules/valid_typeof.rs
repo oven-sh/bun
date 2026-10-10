@@ -27,8 +27,31 @@ fn is_typeof_expression(e: Expr) -> bool {
     matches!(e.kind(), ExprKind::Unary { op: UnOp::Typeof, .. })
 }
 
-impl ValidTypeof {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+/// oxlint's `help` names the type that `value` is nearly.
+fn report_invalid_value<'a>(at: Expr<'a>, value: &[u8], cx: &Cx<'a, ValidTypeof>) {
+    let report = cx.report(at, INVALID_VALUE);
+    if cx.language().is_oxlint {
+        report.help_with(|| match best_match(value, &VALID_TYPES, 2) {
+            Some(suggestion) => format!("Did you mean `\"{suggestion}\"`?"),
+            None => String::new(),
+        });
+    }
+}
+
+impl Rule for ValidTypeof {
+    const META: Meta = Meta::eslint("valid-typeof", Kind::Problem)
+        .has_suggestions()
+        .recommended();
+    const ON: On = On::new().exprs(&[ExprTag::Unary]);
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        ValidTypeof {
+            require_string_literals: options.object(0).bool_or("requireStringLiterals", false),
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if !is_typeof_expression(e) {
             return;
         }
@@ -86,33 +109,5 @@ impl ValidTypeof {
                 }
             }
         }
-    }
-}
-
-/// oxlint's `help` names the type that `value` is nearly.
-fn report_invalid_value<'a>(at: Expr<'a>, value: &[u8], cx: &Cx<'a, ValidTypeof>) {
-    let report = cx.report(at, INVALID_VALUE);
-    if cx.language().is_oxlint {
-        report.help_with(|| match best_match(value, &VALID_TYPES, 2) {
-            Some(suggestion) => format!("Did you mean `\"{suggestion}\"`?"),
-            None => String::new(),
-        });
-    }
-}
-
-impl Rule for ValidTypeof {
-    const META: Meta = Meta::eslint("valid-typeof", Kind::Problem)
-        .has_suggestions()
-        .recommended();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        ValidTypeof {
-            require_string_literals: options.object(0).bool_or("requireStringLiterals", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Unary], Self::check);
     }
 }

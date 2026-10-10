@@ -34,24 +34,12 @@ impl HandleCallbackErr {
             ErrorArgument::Pattern(pattern) => pattern.as_ref().is_some_and(|it| it.test(name)),
         }
     }
-
-    fn check_for_error<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        if !func.has_body() || func.kind() == FnKind::StaticBlock {
-            return;
-        }
-        if let Some(parameter) = first_parameter(func)
-            && let Some(name) = parameter.as_ident()
-            && self.matches_configured_error_name(name.bytes())
-            && parameter.symbol().is_none_or(|it| it.references().next().is_none())
-        {
-            cx.report(func.estree_span(), EXPECTED);
-        }
-    }
 }
 
 impl Rule for HandleCallbackErr {
     const META: Meta = Meta::eslint("handle-callback-err", Kind::Suggestion).deprecated();
-    type State<'a> = ();
+    const ON: On = On::new().funcs();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let argument = options.str(0).filter(|it| !it.is_empty()).unwrap_or("err");
@@ -63,7 +51,16 @@ impl Rule for HandleCallbackErr {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.funcs(Self::check_for_error);
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if !func.has_body() || func.kind() == FnKind::StaticBlock {
+            return;
+        }
+        if let Some(parameter) = first_parameter(func)
+            && let Some(name) = parameter.as_ident()
+            && self.matches_configured_error_name(name.bytes())
+            && parameter.symbol().is_none_or(|it| it.references().next().is_none())
+        {
+            cx.report(func.estree_span(), EXPECTED);
+        }
     }
 }

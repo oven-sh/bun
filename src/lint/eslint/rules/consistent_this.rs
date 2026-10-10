@@ -45,9 +45,44 @@ impl ConsistentThis {
             false => is_this.then_some(UNEXPECTED_ALIAS),
         }
     }
+}
+
+impl Rule for ConsistentThis {
+    const META: Meta = Meta::eslint("consistent-this", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Assign]).var_decls().symbols();
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let aliases: Vec<Box<[u8]>> = options.all().iter().filter_map(Json::as_str).map(Box::from).collect();
+        ConsistentThis {
+            aliases: match aliases.is_empty() {
+                true => vec![Box::from(&b"that"[..])],
+                false => aliases,
+            },
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let ExprKind::Assign { op, target, value } = e.kind()
+            && let Some(name) = target.as_ident()
+            && let Some(message) = self.check_assignment(name, value, op.is_some())
+            && !(op.is_none() && utils::is_assignment_target(e))
+        {
+            cx.report(e, message).data("name", name);
+        }
+    }
+
+    fn var_decl<'a>(&self, declaration: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(init) = declaration.init()
+            && let Some(name) = declaration.pat().as_ident()
+            && let Some(message) = self.check_assignment(name, init, false)
+        {
+            cx.report(declaration, message).data("name", name);
+        }
+    }
 
     /// ESLint's `checkWasAssigned`.
-    fn check_was_assigned<'a>(&self, symbol: Symbol<'a>, cx: &mut Cx<'a, Self>) {
+    fn symbol<'a>(&self, symbol: Symbol<'a>, cx: &mut Cx<'a, Self>) {
         if !self.is_alias(symbol.name()) {
             return;
         }
@@ -74,41 +109,5 @@ impl ConsistentThis {
         for span in symbol.declarations().filter_map(span_of_definition) {
             cx.report(span, ALIAS_NOT_ASSIGNED_TO_THIS).data("name", symbol.name());
         }
-    }
-}
-
-impl Rule for ConsistentThis {
-    const META: Meta = Meta::eslint("consistent-this", Kind::Suggestion);
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let aliases: Vec<Box<[u8]>> = options.all().iter().filter_map(Json::as_str).map(Box::from).collect();
-        ConsistentThis {
-            aliases: match aliases.is_empty() {
-                true => vec![Box::from(&b"that"[..])],
-                false => aliases,
-            },
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.var_decls(|rule, declaration, cx| {
-            if let Some(init) = declaration.init()
-                && let Some(name) = declaration.pat().as_ident()
-                && let Some(message) = rule.check_assignment(name, init, false)
-            {
-                cx.report(declaration, message).data("name", name);
-            }
-        });
-        on.exprs([ExprTag::Assign], |rule, e, cx| {
-            if let ExprKind::Assign { op, target, value } = e.kind()
-                && let Some(name) = target.as_ident()
-                && let Some(message) = rule.check_assignment(name, value, op.is_some())
-                && !(op.is_none() && utils::is_assignment_target(e))
-            {
-                cx.report(e, message).data("name", name);
-            }
-        });
-        on.symbols(Self::check_was_assigned);
     }
 }

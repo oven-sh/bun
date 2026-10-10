@@ -188,8 +188,21 @@ fn fix<'a>(fixer: Fixer<'a>, node: Expr<'a>, call: Call<'a>) -> Option<Fix> {
     Some(fixer.replace(node, replacement))
 }
 
-impl PreferExponentiationOperator {
-    fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
+impl Rule for PreferExponentiationOperator {
+    const META: Meta =
+        Meta::eslint("prefer-exponentiation-operator", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().finish();
+    type State<'a> = ();
+
+    fn new(_: &Options) -> Self {
+        PreferExponentiationOperator
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.has_exprs([ExprTag::Call]).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
         for reference in ReferenceTracker::new(cx.file()).iterate_global_references(&TRACE_MAP) {
             let (Some(node), Some(call)) = (reference.expr(), reference.call()) else {
                 continue;
@@ -201,22 +214,6 @@ impl PreferExponentiationOperator {
                 continue;
             }
             cx.report(node, USE_EXPONENTIATION).fix(|fixer| fix(fixer, node, call));
-        }
-    }
-}
-
-impl Rule for PreferExponentiationOperator {
-    const META: Meta =
-        Meta::eslint("prefer-exponentiation-operator", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        PreferExponentiationOperator
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.has_exprs([ExprTag::Call]) {
-            on.finish(Self::check);
         }
     }
 }

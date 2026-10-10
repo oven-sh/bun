@@ -24,8 +24,23 @@ const EXPECTED_PARENS_BLOCK: Message = Message::new(
     "Expected parentheses around arrow function argument having a body with curly braces.",
 );
 
-impl ArrowParens {
-    fn check<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for ArrowParens {
+    const META: Meta = Meta::eslint("arrow-parens", Kind::Layout)
+        .fixable(Fixable::Code)
+        .deprecated();
+    const ON: On = On::new().funcs();
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let is_as_needed = options.str(0) == Some("as-needed");
+        ArrowParens {
+            is_as_needed,
+            requires_for_block_body: is_as_needed
+                && options.object(1).bool_or("requireForBlockBody", false),
+        }
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         if !func.is_arrow() {
             return;
         }
@@ -86,25 +101,5 @@ impl ArrowParens {
             fixes.push(fixer.remove(Span::after(name, close + 1)));
             fixes
         });
-    }
-}
-
-impl Rule for ArrowParens {
-    const META: Meta = Meta::eslint("arrow-parens", Kind::Layout)
-        .fixable(Fixable::Code)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let is_as_needed = options.str(0) == Some("as-needed");
-        ArrowParens {
-            is_as_needed,
-            requires_for_block_body: is_as_needed
-                && options.object(1).bool_or("requireForBlockBody", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.funcs(Self::check);
     }
 }

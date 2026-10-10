@@ -59,7 +59,8 @@ impl Rule for BlockSpacing {
     const META: Meta = Meta::eslint("block-spacing", Kind::Layout)
         .fixable(Fixable::Whitespace)
         .deprecated();
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::Block, StmtTag::Switch]).funcs();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         BlockSpacing {
@@ -67,20 +68,21 @@ impl Rule for BlockSpacing {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Block, StmtTag::Switch], |rule, stmt, cx| match stmt.kind() {
-            StmtKind::Block(_) => rule.check_spacing_inside_braces(stmt.span(), cx),
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match stmt.kind() {
+            StmtKind::Block(_) => self.check_spacing_inside_braces(stmt.span(), cx),
             StmtKind::Switch { expr, .. } => {
                 let close_paren = skip_trivia(cx.text(), expr.outer_span().end);
                 let open_brace = skip_trivia(cx.text(), close_paren + 1);
-                rule.check_spacing_inside_braces(Span::new(open_brace, stmt.span().end), cx);
+                self.check_spacing_inside_braces(Span::new(open_brace, stmt.span().end), cx);
             }
             _ => {}
-        });
-        on.funcs(|rule, func, cx| {
-            if let Some(body) = func.body_span() {
-                rule.check_spacing_inside_braces(body, cx);
-            }
-        });
+        }
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(body) = func.body_span() {
+            self.check_spacing_inside_braces(body, cx);
+        }
     }
 }

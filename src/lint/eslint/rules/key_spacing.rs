@@ -266,27 +266,6 @@ impl KeySpacing {
         verify_spacing(cx, key, actual, options);
     }
 
-    fn check_property<'a>(&self, property: Prop<'a>, cx: &mut Cx<'a, Self>) {
-        if let Some((key, value)) = key_value(property) {
-            self.verify_property(cx, key, value.span().start, || property.parent().span());
-        }
-    }
-
-    fn check_pattern<'a>(&self, pattern: Pat<'a>, cx: &mut Cx<'a, Self>) {
-        let PatKind::Object(properties) = pattern.kind() else {
-            return;
-        };
-        for property in properties {
-            if !property.is_rest()
-                && !property.is_shorthand()
-                && let Some(key) = property.key()
-            {
-                let value_start = property.value().span().start;
-                self.verify_property(cx, key, value_start, || utils::estree_span(pattern.into()));
-            }
-        }
-    }
-
     /// ESLint's `verifyGroupAlignment`, and what `verifyAlignment` does with a group. `properties`
     /// are those of the group that have a key and a value.
     fn verify_group<'a>(&self, cx: &Cx<'a, Self>, align: &Align, properties: &[Prop<'a>]) {
@@ -325,41 +304,17 @@ impl KeySpacing {
             report(cx, key, Side::Value, whitespace.after_colon, after, align.mode);
         }
     }
-
-    fn check_object<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let (ExprKind::Object(properties), Some(align)) = (e.kind(), &self.align) else {
-            return;
-        };
-        if properties.is_empty() || utils::is_assignment_target(e) {
-            return;
-        }
-        if is_on_one_line(cx.file(), e.span()) {
-            return verify_list_spacing(cx, properties.iter(), self.single_line);
-        }
-        let file = cx.file();
-        let mut group: SmallVec<[Prop<'a>; 16]> = SmallVec::new();
-        let mut previous: Option<Prop<'a>> = None;
-        for property in properties {
-            if let Some(previous) = previous
-                && !continues_property_group(file, previous, property)
-            {
-                self.verify_group(cx, align, &group);
-                group.clear();
-            }
-            previous = Some(property);
-            if key_value(property).is_some() {
-                group.push(property);
-            }
-        }
-        self.verify_group(cx, align, &group);
-    }
 }
 
 impl Rule for KeySpacing {
     const META: Meta = Meta::eslint("key-spacing", Kind::Layout)
         .fixable(Fixable::Whitespace)
         .deprecated();
-    type State<'a> = ();
+    const ON: bun_lint::rule::On = bun_lint::rule::On::new()
+        .exprs(&[ExprTag::Object])
+        .props()
+        .pats(&[PatTag::Object]);
+    no_state!();
 
     /// ESLint's `initOptions`
     fn new(options: &Options) -> Self {
@@ -400,12 +355,58 @@ impl Rule for KeySpacing {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let (ExprKind::Object(properties), Some(align)) = (e.kind(), &self.align) else {
+            return;
+        };
+        if properties.is_empty() || utils::is_assignment_target(e) {
+            return;
+        }
+        if is_on_one_line(cx.file(), e.span()) {
+            return verify_list_spacing(cx, properties.iter(), self.single_line);
+        }
+        let file = cx.file();
+        let mut group: SmallVec<[Prop<'a>; 16]> = SmallVec::new();
+        let mut previous: Option<Prop<'a>> = None;
+        for property in properties {
+            if let Some(previous) = previous
+                && !continues_property_group(file, previous, property)
+            {
+                self.verify_group(cx, align, &group);
+                group.clear();
+            }
+            previous = Some(property);
+            if key_value(property).is_some() {
+                group.push(property);
+            }
+        }
+        self.verify_group(cx, align, &group);
+    }
+
+    fn prop<'a>(&self, property: Prop<'a>, cx: &mut Cx<'a, Self>) {
         if self.align.is_some() {
-            on.exprs([ExprTag::Object], Self::check_object);
-        } else {
-            on.props(Self::check_property);
-            on.pats([PatTag::Object], Self::check_pattern);
+            return;
+        }
+        if let Some((key, value)) = key_value(property) {
+            self.verify_property(cx, key, value.span().start, || property.parent().span());
+        }
+    }
+
+    fn pat<'a>(&self, pattern: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        if self.align.is_some() {
+            return;
+        }
+        let PatKind::Object(properties) = pattern.kind() else {
+            return;
+        };
+        for property in properties {
+            if !property.is_rest()
+                && !property.is_shorthand()
+                && let Some(key) = property.key()
+            {
+                let value_start = property.value().span().start;
+                self.verify_property(cx, key, value_start, || utils::estree_span(pattern.into()));
+            }
         }
     }
 }

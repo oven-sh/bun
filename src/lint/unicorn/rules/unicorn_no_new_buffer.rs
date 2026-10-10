@@ -26,36 +26,39 @@ fn determine_buffer_method<'a>(args: List<'a, Expr<'a>>) -> Option<&'static str>
 
 impl Rule for NoNewBuffer {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-new-buffer", Kind::Suggestion).has_suggestions();
+    const ON: On = On::new().exprs(&[ExprTag::New]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoNewBuffer
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("Buffer") {
+            return None;
+        }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::New(new) = e.kind() else {
+            return;
+        };
+        let callee = new.callee();
+        if !callee.is_ident("Buffer") || !is_global_reference(callee) {
             return;
         }
-        on.exprs([ExprTag::New], |_, e, cx| {
-            let ExprKind::New(new) = e.kind() else {
-                return;
-            };
-            let callee = new.callee();
-            if !callee.is_ident("Buffer") || !is_global_reference(callee) {
-                return;
-            }
-            cx.report(callee, NO_NEW_BUFFER).suggest(USE_ALLOC_OR_FROM, |fixer| {
-                let method = determine_buffer_method(new.args())?;
-                let mut replacement = [&b"Buffer."[..], method.as_bytes(), b"("].concat();
-                for (i, argument) in new.args().iter().enumerate() {
-                    if i != 0 {
-                        replacement.extend_from_slice(b", ");
-                    }
-                    replacement.extend_from_slice(fixer.file().slice(argument.outer_span()));
+        cx.report(callee, NO_NEW_BUFFER).suggest(USE_ALLOC_OR_FROM, |fixer| {
+            let method = determine_buffer_method(new.args())?;
+            let mut replacement = [&b"Buffer."[..], method.as_bytes(), b"("].concat();
+            for (i, argument) in new.args().iter().enumerate() {
+                if i != 0 {
+                    replacement.extend_from_slice(b", ");
                 }
-                replacement.push(b')');
-                Some(fixer.replace(e, replacement))
-            });
+                replacement.extend_from_slice(fixer.file().slice(argument.outer_span()));
+            }
+            replacement.push(b')');
+            Some(fixer.replace(e, replacement))
         });
     }
 }

@@ -107,7 +107,7 @@ impl Rule for NoShadowRestrictedNames {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        let report_global_this = self.report_global_this.unwrap_or(file.language().eslint_major >= 10);
+        let report_global_this = self.report_global_this.unwrap_or_else(|| file.language().eslint_major >= 10);
         let last = if report_global_this { "globalThis" } else { "eval" };
         let names = ["undefined", "NaN", "Infinity", "arguments", "eval", last];
         let state = State {

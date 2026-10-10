@@ -35,6 +35,7 @@ const TYPED_ARRAYS: [&str; 12] = [
 
 impl Rule for NoUselessSpread {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-useless-spread", Kind::Problem).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Spread]).props();
     /// The array literals of which it is known that not all elements are `...[..]`.
     type State<'a> = FxHashSet<Expr<'a>>;
 
@@ -42,23 +43,25 @@ impl Rule for NoUselessSpread {
         NoUselessSpread
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> FxHashSet<Expr<'a>> {
-        on.exprs([ExprTag::Spread], |_, spread, cx| {
-            if let (ExprKind::Spread(argument), Node::Expr(list)) = (spread.kind(), spread.parent())
-                && spread.jsx_container_span().is_none()
-            {
-                check(Spread { start: spread.span().start, argument, list }, cx);
-            }
-        });
-        on.props(|_, prop, cx| {
-            if prop.kind() == PropKind::Spread
-                && !prop.is_jsx_attribute()
-                && let (Some(argument), Node::Expr(list)) = (prop.value(), prop.parent())
-            {
-                check(Spread { start: prop.span().start, argument, list }, cx);
-            }
-        });
-        FxHashSet::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<FxHashSet<Expr<'a>>> {
+        Some(FxHashSet::default())
+    }
+
+    fn expr<'a>(&self, spread: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let (ExprKind::Spread(argument), Node::Expr(list)) = (spread.kind(), spread.parent())
+            && spread.jsx_container_span().is_none()
+        {
+            check(Spread { start: spread.span().start, argument, list }, cx);
+        }
+    }
+
+    fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        if prop.kind() == PropKind::Spread
+            && !prop.is_jsx_attribute()
+            && let (Some(argument), Node::Expr(list)) = (prop.value(), prop.parent())
+        {
+            check(Spread { start: prop.span().start, argument, list }, cx);
+        }
     }
 }
 

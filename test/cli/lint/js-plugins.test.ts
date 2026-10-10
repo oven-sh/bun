@@ -1405,14 +1405,14 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   // As `eslint-plugin-import` does it to read the modules that a file imports.
-  test(
-    "a rule parses a text of its own with languageOptions.parser, which is loaded when it is called",
-    async () => {
+  test.each(["parser", "* as parser"])(
+    "a rule parses a text of its own with languageOptions.parser, which is loaded when it is called: import %s",
+    async imported => {
       const { stdout, exitCode } = await lint(
         {
           "eslint.config.mjs": `
           import own from "./plugin.mjs";
-          import parser from "./parser.cjs";
+          import ${imported} from "./parser.cjs";
           export default [
             { files: ["a.ts"], plugins: { own }, rules: { "own/parses": "error" } },
             { files: ["a.ts"], languageOptions: { parser, parserOptions: { marker: "m" } } },

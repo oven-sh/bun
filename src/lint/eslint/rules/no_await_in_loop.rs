@@ -66,6 +66,7 @@ impl NoAwaitInLoop {
 
 impl Rule for NoAwaitInLoop {
     const META: Meta = Meta::eslint("no-await-in-loop", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Await]).stmts(&[StmtTag::ForOf, StmtTag::Var]);
     /// Whether a node is in a loop.
     type State<'a> = AncestorMemo<'a, bool>;
 
@@ -73,18 +74,27 @@ impl Rule for NoAwaitInLoop {
         NoAwaitInLoop
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        on.exprs([ExprTag::Await], |rule, e, cx| rule.validate(e.into(), cx));
-        on.stmts([StmtTag::ForOf], |rule, stmt, cx| {
-            if matches!(stmt.kind(), StmtKind::ForOf { is_await: true, .. }) {
-                rule.validate(stmt.into(), cx);
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(AncestorMemo::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.validate(e.into(), cx);
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match stmt.tag() {
+            StmtTag::ForOf => {
+                if matches!(stmt.kind(), StmtKind::ForOf { is_await: true, .. }) {
+                    self.validate(stmt.into(), cx);
+                }
             }
-        });
-        on.stmts([StmtTag::Var], |rule, stmt, cx| {
-            if is_await_using(stmt) {
-                rule.validate(stmt.into(), cx);
+            StmtTag::Var => {
+                if is_await_using(stmt) {
+                    self.validate(stmt.into(), cx);
+                }
             }
-        });
-        AncestorMemo::default()
+            _ => {}
+        }
     }
 }

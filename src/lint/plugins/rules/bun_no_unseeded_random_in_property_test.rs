@@ -40,6 +40,7 @@ fn is_predicate(func: Func) -> bool {
 
 impl Rule for NoUnseededRandomInPropertyTest {
     const META: Meta = Meta::plugin(Plugin::Bun, "no-unseeded-random-in-property-test", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     /// What is known to be in a predicate.
     type State<'a> = AncestorMemo<'a, ()>;
 
@@ -47,27 +48,28 @@ impl Rule for NoUnseededRandomInPropertyTest {
         NoUnseededRandomInPropertyTest
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if !file.mentions(FAST_CHECK) {
-            return AncestorMemo::default();
+            return None;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(callee) = e.callee() else {
-                return;
-            };
-            let message = match callee.kind() {
-                ExprKind::Dot { obj, name, .. } if name.name().is("random") && obj.is_ident("Math") => {
-                    is_global_reference(obj).then_some(RANDOM)
-                }
-                _ => is_of_fast_check(callee, &["sample"]).then_some(SAMPLE),
-            };
-            let in_predicate = |_, parent| matches!(parent, Node::Func(func) if is_predicate(func)).then_some(());
-            if let Some(message) = message
-                && cx.state.find(Node::Expr(e), in_predicate).is_some()
-            {
-                cx.report(e, message);
+        Some(AncestorMemo::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(callee) = e.callee() else {
+            return;
+        };
+        let message = match callee.kind() {
+            ExprKind::Dot { obj, name, .. } if name.name().is("random") && obj.is_ident("Math") => {
+                is_global_reference(obj).then_some(RANDOM)
             }
-        });
-        AncestorMemo::default()
+            _ => is_of_fast_check(callee, &["sample"]).then_some(SAMPLE),
+        };
+        let in_predicate = |_, parent| matches!(parent, Node::Func(func) if is_predicate(func)).then_some(());
+        if let Some(message) = message
+            && cx.state.find(Node::Expr(e), in_predicate).is_some()
+        {
+            cx.report(e, message);
+        }
     }
 }

@@ -30,6 +30,7 @@ fn only_argument(call: Call<'_>) -> Option<Expr<'_>> {
 
 impl Rule for PreferStructuredClone {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-structured-clone", Kind::Suggestion).has_suggestions();
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -48,41 +49,43 @@ impl Rule for PreferStructuredClone {
         PreferStructuredClone { functions: functions.into_iter().map(split).collect() }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         let mentions = |function: &(String, Option<String>)| file.mentions(function.1.as_ref().unwrap_or(&function.0));
         if !file.mentions("stringify") && !self.functions.iter().any(mentions) {
+            return None;
+        }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call) = e.as_call() else {
+            return;
+        };
+        let Some(first_argument) = only_argument(call) else {
+            return;
+        };
+        if is_method_call(call, Some(&["JSON"]), Some(&["parse"]), Some(1), Some(1)) {
+            if let Some(inner_call) = first_argument.as_call().filter(|_| !first_argument.is_chain_root())
+                && let Some(first_argument) = only_argument(inner_call)
+                && is_method_call(inner_call, Some(&["JSON"]), Some(&["stringify"]), Some(1), Some(1))
+            {
+                report(e, first_argument, cx);
+            }
             return;
         }
-        on.exprs([ExprTag::Call], |rule, e, cx| {
-            let Some(call) = e.as_call() else {
-                return;
-            };
-            let Some(first_argument) = only_argument(call) else {
-                return;
-            };
-            if is_method_call(call, Some(&["JSON"]), Some(&["parse"]), Some(1), Some(1)) {
-                if let Some(inner_call) = first_argument.as_call().filter(|_| !first_argument.is_chain_root())
-                    && let Some(first_argument) = only_argument(inner_call)
-                    && is_method_call(inner_call, Some(&["JSON"]), Some(&["stringify"]), Some(1), Some(1))
-                {
-                    report(e, first_argument, cx);
+        for (function, method) in &self.functions {
+            let function = function.as_str();
+            let is_function = match method {
+                Some(method) => is_method_call(call, Some(&[function]), Some(&[method.as_str()]), None, None),
+                None => {
+                    is_method_call(call, None, Some(&[function]), None, None)
+                        || is_method_call(call, Some(&[function]), None, None, None)
+                        || get_inner_expression(call.callee()).is_ident(function)
                 }
-                return;
+            };
+            if is_function {
+                report(e, first_argument, cx);
             }
-            for (function, method) in &rule.functions {
-                let function = function.as_str();
-                let is_function = match method {
-                    Some(method) => is_method_call(call, Some(&[function]), Some(&[method.as_str()]), None, None),
-                    None => {
-                        is_method_call(call, None, Some(&[function]), None, None)
-                            || is_method_call(call, Some(&[function]), None, None, None)
-                            || get_inner_expression(call.callee()).is_ident(function)
-                    }
-                };
-                if is_function {
-                    report(e, first_argument, cx);
-                }
-            }
-        });
+        }
     }
 }

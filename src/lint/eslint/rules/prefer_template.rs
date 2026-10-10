@@ -328,8 +328,21 @@ impl<'a> TemplateWriter<'a> {
     }
 }
 
-impl PreferTemplate {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for PreferTemplate {
+    const META: Meta = Meta::eslint("prefer-template", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Binary]);
+    /// That a node is in a concatenation.
+    type State<'a> = AncestorMemo<'a, ()>;
+
+    fn new(_: &Options) -> Self {
+        PreferTemplate
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<AncestorMemo<'a, ()>> {
+        Some(AncestorMemo::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if as_concatenation(e).is_none()
             || matches!(e.parent(), Node::Expr(parent) if as_concatenation(parent).is_some())
             || !has_string_literal(e)
@@ -357,20 +370,5 @@ impl PreferTemplate {
             writer.write(e, b"", b"", false)?;
             Some(fixer.replace(e, writer.text))
         });
-    }
-}
-
-impl Rule for PreferTemplate {
-    const META: Meta = Meta::eslint("prefer-template", Kind::Suggestion).fixable(Fixable::Code);
-    /// That a node is in a concatenation.
-    type State<'a> = AncestorMemo<'a, ()>;
-
-    fn new(_: &Options) -> Self {
-        PreferTemplate
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> AncestorMemo<'a, ()> {
-        on.exprs([ExprTag::Binary], Self::check);
-        AncestorMemo::default()
     }
 }

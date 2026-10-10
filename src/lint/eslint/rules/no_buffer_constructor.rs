@@ -10,25 +10,28 @@ const DEPRECATED: Message = Message::new(
 
 impl Rule for NoBufferConstructor {
     const META: Meta = Meta::eslint("no-buffer-constructor", Kind::Problem).deprecated();
+    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoBufferConstructor
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if !file.mentions("Buffer") {
-            return;
+            return None;
         }
-        on.exprs([ExprTag::Call, ExprTag::New], |_, e, cx| {
-            let (call, expr) = match e.kind() {
-                ExprKind::Call(call) => (call, "Buffer()"),
-                ExprKind::New(call) => (call, "new Buffer()"),
-                _ => return,
-            };
-            if call.callee().is_ident("Buffer") {
-                cx.report(e, DEPRECATED).data("expr", expr);
-            }
-        });
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let (call, expr) = match e.kind() {
+            ExprKind::Call(call) => (call, "Buffer()"),
+            ExprKind::New(call) => (call, "new Buffer()"),
+            _ => return,
+        };
+        if call.callee().is_ident("Buffer") {
+            cx.report(e, DEPRECATED).data("expr", expr);
+        }
     }
 }

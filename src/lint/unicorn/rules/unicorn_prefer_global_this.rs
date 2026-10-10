@@ -64,37 +64,40 @@ fn is_allowed(alias: &str, ident: Expr) -> bool {
 
 impl Rule for PreferGlobalThis {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-global-this", Kind::Suggestion).has_suggestions();
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferGlobalThis
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions_any(&ALIASES) {
-            return;
+            return None;
         }
-        on.finish(|_, cx| {
-            let file = cx.file();
-            for alias in ALIASES.into_iter().filter(|it| file.mentions(it)) {
-                for reference in file.unresolved_references_to(alias.as_bytes()).filter(|it| !it.is_jsx_pragma()) {
-                    let ident = reference.expr();
-                    if ident.is_some_and(|it| is_allowed(alias, it)) {
-                        continue;
-                    }
-                    cx.report(reference.span(), PREFER_GLOBAL_THIS).suggest(REPLACE_ALIAS, |fixer| {
-                        // `typeof window` does not throw where there is no `window`.
-                        let is_typeof = ident.is_some_and(|it| {
-                            !it.is_parenthesized()
-                                && matches!(it.parent(), Node::Expr(parent) if parent.unary_op() == Some(UnOp::Typeof))
-                        });
-                        match is_typeof {
-                            true => fixer.replace(reference.span(), ["globalThis.", alias].concat()),
-                            false => fixer.replace(reference.span(), "globalThis"),
-                        }
-                    });
+        Some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let file = cx.file();
+        for alias in ALIASES.into_iter().filter(|it| file.mentions(it)) {
+            for reference in file.unresolved_references_to(alias.as_bytes()).filter(|it| !it.is_jsx_pragma()) {
+                let ident = reference.expr();
+                if ident.is_some_and(|it| is_allowed(alias, it)) {
+                    continue;
                 }
+                cx.report(reference.span(), PREFER_GLOBAL_THIS).suggest(REPLACE_ALIAS, |fixer| {
+                    // `typeof window` does not throw where there is no `window`.
+                    let is_typeof = ident.is_some_and(|it| {
+                        !it.is_parenthesized()
+                            && matches!(it.parent(), Node::Expr(parent) if parent.unary_op() == Some(UnOp::Typeof))
+                    });
+                    match is_typeof {
+                        true => fixer.replace(reference.span(), ["globalThis.", alias].concat()),
+                        false => fixer.replace(reference.span(), "globalThis"),
+                    }
+                });
             }
-        });
+        }
     }
 }

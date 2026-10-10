@@ -45,8 +45,19 @@ fn use_splice_as_tsgolint<'a>(fixer: Fixer<'a>, keyword: Span, object: Expr<'a>,
     Some([fixer.remove(keyword), fixer.replace(open, ".splice("), fixer.replace(close, ", 1)")])
 }
 
-impl NoArrayDelete {
-    fn check<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoArrayDelete {
+    const META: Meta = Meta::typescript("no-array-delete", Kind::Problem)
+        .has_suggestions()
+        .presets(Presets::RECOMMENDED_TYPE_CHECKED)
+        .requires_types();
+    const ON: On = On::new().exprs(&[ExprTag::Unary]);
+    no_state!();
+
+    fn new(_: &Options) -> Self {
+        NoArrayDelete
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Unary { op: UnOp::Delete, operand: argument } = node.kind() else {
             return;
         };
@@ -76,21 +87,5 @@ impl NoArrayDelete {
             true => report.suggest(USE_SPLICE, |fixer| use_splice_as_tsgolint(fixer, keyword, object, argument)),
             false => report.suggest(USE_SPLICE, |fixer| use_splice(fixer, node, object, key, is_sequence)),
         };
-    }
-}
-
-impl Rule for NoArrayDelete {
-    const META: Meta = Meta::typescript("no-array-delete", Kind::Problem)
-        .has_suggestions()
-        .presets(Presets::RECOMMENDED_TYPE_CHECKED)
-        .requires_types();
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        NoArrayDelete
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Unary], Self::check);
     }
 }

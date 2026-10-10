@@ -1,9 +1,9 @@
-//! `minimatch.makeRe(pattern, { dot })` of minimatch 3.1.5: one expression for the whole path, which is not what `minimatch()` asks.
+//! minimatch 3.1.5: the names of a pattern for `minimatch()`, and `makeRe`: one expression for the whole path, which answers otherwise.
 
 use crate::braces;
 use crate::node::{Node, Piece, Program, lower, nest};
 use crate::read_picomatch::{Unread, read_written};
-use crate::segments::has_braces;
+use crate::segments::{Part, has_braces};
 use crate::unit::Text;
 use bun_core::strings;
 
@@ -133,9 +133,14 @@ fn parse(pattern: &[u8], dot: bool, depth: usize) -> Option<Parsed> {
     // Where the class that is open starts, in the pattern and in the text.
     let mut class: Option<(usize, usize)> = None;
     let (mut lists, mut negative_lists): (Vec<List>, Vec<List>) = (Vec::new(), Vec::new());
-    let sub = |cs: &[u8]| match depth < MAX_DEPTH {
-        true => parse(cs, dot, depth + 1),
-        false => None,
+    let sub = |cs: &[u8]| match cs {
+        // `parse` gives `''` and `GLOBSTAR` for these. Neither has a `[0]`, and `'\\[' + undefined` is written.
+        b"" | b"**" => Some(Parsed {
+            re: b"undefined".to_vec(),
+            has_magic: false,
+        }),
+        _ if depth < MAX_DEPTH => parse(cs, dot, depth + 1),
+        _ => None,
     };
     for (i, &c) in pattern.iter().enumerate() {
         if escaping && is_re_special(c) {
@@ -299,8 +304,8 @@ fn parse(pattern: &[u8], dot: bool, depth: usize) -> Option<Parsed> {
     Some(Parsed { re, has_magic })
 }
 
-/// `regExpEscape(globUnescape(part))`, but for the `\` that change nothing.
-fn write_characters(part: &[u8], re: &mut Vec<u8>) {
+/// The bytes of `globUnescape(part)`.
+fn each_character(part: &[u8], mut take: impl FnMut(u8)) {
     let mut rest = part;
     while let [c, after @ ..] = rest {
         let (c, after) = match (c, after) {
@@ -309,16 +314,24 @@ fn write_characters(part: &[u8], re: &mut Vec<u8>) {
             }
             _ => (c, after),
         };
-        if *c == b'|' || *c != b'!' && is_re_special(*c) {
-            re.push(b'\\');
-        }
-        re.push(*c);
+        take(*c);
         rest = after;
     }
 }
 
+/// `regExpEscape(globUnescape(part))`, but for the `\` that change nothing.
+fn write_characters(part: &[u8], re: &mut Vec<u8>) {
+    each_character(part, |c| {
+        if c == b'|' || c != b'!' && is_re_special(c) {
+            re.push(b'\\');
+        }
+        re.push(c);
+    });
+}
+
 /// `None`: `makeRe` gives `false`, or it is beyond a limit.
 fn source(pattern: &[u8], dot: bool) -> Option<Vec<u8>> {
+    let pattern = strings::trim_js_whitespace(pattern);
     if pattern.len() > MAX_PATTERN_LENGTH || pattern.is_empty() || pattern.starts_with(b"#") {
         return None;
     }
@@ -367,14 +380,36 @@ fn source(pattern: &[u8], dot: bool) -> Option<Vec<u8>> {
     })
 }
 
-pub(crate) fn pattern(bytes: &[u8], dot: bool) -> Program {
-    let Some(written) = source(bytes, dot) else {
-        return Program::Never;
-    };
-    let tree = match pieces_of(&written, dot) {
+/// `None`: `RegExp` refuses it.
+fn program_of(written: &[u8], dot: bool) -> Option<Program> {
+    let tree = match pieces_of(written, dot) {
         Ok(pieces) => nest(pieces),
         Err(Unread::NotTaken) => Some(Node::Fail),
         Err(Unread::NoExpression) => None,
     };
-    tree.map_or(Program::Never, |it| lower(it, Text::UTF16))
+    tree.map(|it| lower(it, Text::UTF16))
+}
+
+pub(crate) fn pattern(bytes: &[u8], dot: bool) -> Program {
+    let program = source(bytes, dot).and_then(|it| program_of(&it, dot));
+    program.unwrap_or(Program::Never)
+}
+
+/// What `make` makes of a name, for `match`.
+pub(crate) fn part(name: &[u8], dot: bool) -> Part {
+    if name == b"**" {
+        return Part::GlobStar;
+    }
+    match parse(name, dot, 0) {
+        None => Part::Never,
+        Some(parsed) if !parsed.has_magic => {
+            let mut characters = Vec::with_capacity(name.len());
+            each_character(name, |c| characters.push(c));
+            Part::Literal(characters.into())
+        }
+        // What `RegExp` refuses is `/$./`.
+        Some(parsed) => {
+            program_of(&[b"^", &parsed.re[..], b"$"].concat(), dot).map_or(Part::Never, Part::Name)
+        }
+    }
 }

@@ -141,8 +141,29 @@ impl<'t> Utf16Cursor<'t> {
     }
 }
 
-impl PreferNamedCaptureGroup {
-    fn check_calls<'a>(&self, cx: &mut Cx<'a, Self>) {
+impl Rule for PreferNamedCaptureGroup {
+    const META: Meta = Meta::eslint("prefer-named-capture-group", Kind::Suggestion).has_suggestions();
+    const ON: On = On::new().exprs(&[ExprTag::Regex]).finish();
+    type State<'a> = ();
+
+    fn new(_: &Options) -> Self {
+        PreferNamedCaptureGroup
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.has_exprs([ExprTag::Regex, ExprTag::Call, ExprTag::New]).then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let ExprKind::Regex(literal) = e.kind() {
+            check_regex(cx, literal.pattern(), e, e, literal.flags());
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        if !cx.has_exprs([ExprTag::Call, ExprTag::New]) {
+            return;
+        }
         for reference in ReferenceTracker::new(cx.file()).iterate_global_references(&TRACE_MAP) {
             let (Some(node), Some(call)) = (reference.expr(), reference.call()) else {
                 continue;
@@ -159,26 +180,6 @@ impl PreferNamedCaptureGroup {
             };
             let flags = call.args().get(1).and_then(|it| get_string_if_constant(it, None));
             check_regex(cx, &pattern, node, regex_node, flags.as_deref().unwrap_or_default());
-        }
-    }
-}
-
-impl Rule for PreferNamedCaptureGroup {
-    const META: Meta = Meta::eslint("prefer-named-capture-group", Kind::Suggestion).has_suggestions();
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        PreferNamedCaptureGroup
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        on.exprs([ExprTag::Regex], |_, e, cx| {
-            if let ExprKind::Regex(literal) = e.kind() {
-                check_regex(cx, literal.pattern(), e, e, literal.flags());
-            }
-        });
-        if file.has_exprs([ExprTag::Call, ExprTag::New]) {
-            on.finish(Self::check_calls);
         }
     }
 }

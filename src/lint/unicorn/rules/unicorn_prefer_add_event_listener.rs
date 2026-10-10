@@ -40,28 +40,27 @@ const DOM_EVENT_TYPE_NAMES: [&str; 198] = [
 
 impl Rule for PreferAddEventListener {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-add-event-listener", Kind::Problem);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Assign]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         PreferAddEventListener
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Assign], |_, e, cx| {
-            let Some(name) = e.left().and_then(Expr::member_name) else {
-                return;
-            };
-            let Some(mut event) = name.bytes().strip_prefix(b"on") else {
-                return;
-            };
-            while let Some(rest) = event.strip_prefix(b"on") {
-                event = rest;
-            }
-            let is_event = DOM_EVENT_TYPE_NAMES.binary_search_by(|it| it.as_bytes().cmp(event)).is_ok();
-            // Not the default value in a pattern.
-            if is_event && !e.is_assignment_target() {
-                cx.report(name, PREFER_ADD_EVENT_LISTENER);
-            }
-        });
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(name) = e.left().and_then(Expr::member_name) else {
+            return;
+        };
+        let Some(mut event) = name.bytes().strip_prefix(b"on") else {
+            return;
+        };
+        while let Some(rest) = event.strip_prefix(b"on") {
+            event = rest;
+        }
+        let is_event = DOM_EVENT_TYPE_NAMES.binary_search_by(|it| it.as_bytes().cmp(event)).is_ok();
+        // Not the default value in a pattern.
+        if is_event && !e.is_assignment_target() {
+            cx.report(name, PREFER_ADD_EVENT_LISTENER);
+        }
     }
 }

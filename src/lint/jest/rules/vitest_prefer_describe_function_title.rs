@@ -13,23 +13,24 @@ const PREFER_DESCRIBE_FUNCTION_TITLE: Message =
 
 impl Rule for PreferDescribeFunctionTitle {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "prefer-describe-function-title", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferDescribeFunctionTitle
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if jest::is_test(file) && file.has_stmts([StmtTag::Import]) {
-            on.finish(|_, cx| {
-                // What is imported, and whether as more than a type.
-                let mut imported_names: FxHashMap<Name, bool> = FxHashMap::default();
-                for entry in import_entries(cx.file()) {
-                    *imported_names.entry(entry.local_name().name()).or_default() |= !entry.is_type();
-                }
-                jest::iter_possible_jest_call_node(cx.file()).for_each(|node| run(node, &imported_names, cx));
-            });
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        (jest::is_test(file) && file.has_stmts([StmtTag::Import])).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        // What is imported, and whether as more than a type.
+        let mut imported_names: FxHashMap<Name, bool> = FxHashMap::default();
+        for entry in import_entries(cx.file()) {
+            *imported_names.entry(entry.local_name().name()).or_default() |= !entry.is_type();
         }
+        jest::iter_possible_jest_call_node(cx.file()).for_each(|node| run(node, &imported_names, cx));
     }
 }
 

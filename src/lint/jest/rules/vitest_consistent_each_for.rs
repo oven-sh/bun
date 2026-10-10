@@ -15,6 +15,7 @@ const FUNCTIONS: [&str; 4] = ["describe", "it", "test", "suite"];
 
 impl Rule for ConsistentEachFor {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "consistent-each-for", Kind::Suggestion);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -28,10 +29,12 @@ impl Rule for ConsistentEachFor {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if self.not_allowed_methods.iter().flatten().any(|it| file.mentions(it)) && jest::is_test(file) {
-            on.finish(|rule, cx| jest::iter_possible_jest_call_node(cx.file()).for_each(|node| rule.run(node, cx)));
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        (self.not_allowed_methods.iter().flatten().any(|it| file.mentions(it)) && jest::is_test(file)).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        jest::iter_possible_jest_call_node(cx.file()).for_each(|node| self.run(node, cx));
     }
 }
 

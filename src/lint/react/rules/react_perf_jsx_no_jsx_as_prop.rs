@@ -1,5 +1,5 @@
 use crate::jsx::as_jsx_element;
-use crate::react_perf::{NativeAllowList, ReactPerfRule, State, react_perf_from_configuration, register};
+use crate::react_perf::{NativeAllowList, ON, ReactPerfRule, State, expr, react_perf_from_configuration};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -8,15 +8,19 @@ pub struct JsxNoJsxAsProp(NativeAllowList);
 
 impl Rule for JsxNoJsxAsProp {
     const META: Meta = Meta::oxlint(Plugin::ReactPerf, "jsx-no-jsx-as-prop", Kind::Suggestion);
+    const ON: On = ON;
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         JsxNoJsxAsProp(react_perf_from_configuration(options))
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        register(on);
-        State::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        expr(self, e, cx);
     }
 }
 

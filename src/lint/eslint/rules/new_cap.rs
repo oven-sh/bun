@@ -170,7 +170,8 @@ fn report<'a>(callee: Expr<'a>, message: Message, cx: &Cx<'a, NewCap>) {
 
 impl Rule for NewCap {
     const META: Meta = Meta::eslint("new-cap", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::New, ExprTag::Call]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -183,12 +184,11 @@ impl Rule for NewCap {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        if self.new_is_cap {
-            on.exprs([ExprTag::New], Self::check_new);
-        }
-        if self.cap_is_new {
-            on.exprs([ExprTag::Call], Self::check_call);
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::New if self.new_is_cap => self.check_new(e, cx),
+            ExprTag::Call if self.cap_is_new => self.check_call(e, cx),
+            _ => {}
         }
     }
 }

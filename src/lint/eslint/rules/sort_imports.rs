@@ -108,8 +108,55 @@ impl SortImports {
             *specifier = next;
         }
     }
+}
 
-    fn check_declaration<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for SortImports {
+    const META: Meta = Meta::eslint("sort-imports", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new()
+        .enter(NodeTags::new().stmts(&[StmtTag::Import]))
+        .stmts(&[StmtTag::Import]);
+    /// The import declaration before, and where those end that are looked at.
+    type State<'a> = (Option<Import<'a>>, u32);
+
+    fn new(options: &Options) -> Self {
+        let options = options.object(0);
+        let mut rank = [0, 1, 2, 3];
+        for (place, name) in options.strings("memberSyntaxSortOrder").into_iter().enumerate() {
+            if let Some(syntax) = Syntax::ALL.into_iter().find(|it| it.name() == name) {
+                rank[syntax as usize] = place;
+            }
+        }
+        SortImports {
+            ignore_case: options.bool_or("ignoreCase", false),
+            ignore_declaration_sort: options.bool_or("ignoreDeclarationSort", false),
+            ignore_member_sort: options.bool_or("ignoreMemberSort", false),
+            allow_separated_groups: options.bool_or("allowSeparatedGroups", false),
+            rank,
+        }
+    }
+
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new();
+        if !self.ignore_declaration_sort {
+            on = on.enter(NodeTags::new().stmts(&[StmtTag::Import]));
+        }
+        if !self.ignore_member_sort {
+            on = on.stmts(&[StmtTag::Import]);
+        }
+        on
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        // oxlint stops at the first statement that is no import declaration.
+        let first = file.body().iter().skip_while(|it| it.directive().is_some());
+        let end = match file.language().is_oxlint {
+            true => first.take_while(|it| it.tag() == StmtTag::Import).last().map_or(0, |it| it.span().end),
+            false => u32::MAX,
+        };
+        Some((None, end))
+    }
+
+    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         let Some(StmtKind::Import(import)) = node.as_stmt().map(Stmt::kind) else {
             return;
         };
@@ -143,7 +190,7 @@ impl SortImports {
         }
     }
 
-    fn check_members<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let StmtKind::Import(import) = statement.kind() else {
             return;
         };
@@ -180,44 +227,5 @@ impl SortImports {
                 }
                 Some(fixer.replace(written.first()?.span().to(written.last()?.span()), text))
             });
-    }
-}
-
-impl Rule for SortImports {
-    const META: Meta = Meta::eslint("sort-imports", Kind::Suggestion).fixable(Fixable::Code);
-    /// The import declaration before, and where those end that are looked at.
-    type State<'a> = (Option<Import<'a>>, u32);
-
-    fn new(options: &Options) -> Self {
-        let options = options.object(0);
-        let mut rank = [0, 1, 2, 3];
-        for (place, name) in options.strings("memberSyntaxSortOrder").into_iter().enumerate() {
-            if let Some(syntax) = Syntax::ALL.into_iter().find(|it| it.name() == name) {
-                rank[syntax as usize] = place;
-            }
-        }
-        SortImports {
-            ignore_case: options.bool_or("ignoreCase", false),
-            ignore_declaration_sort: options.bool_or("ignoreDeclarationSort", false),
-            ignore_member_sort: options.bool_or("ignoreMemberSort", false),
-            allow_separated_groups: options.bool_or("allowSeparatedGroups", false),
-            rank,
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if !self.ignore_declaration_sort {
-            on.enter(StmtTag::Import, Self::check_declaration);
-        }
-        if !self.ignore_member_sort {
-            on.stmts([StmtTag::Import], Self::check_members);
-        }
-        // oxlint stops at the first statement that is no import declaration.
-        let first = file.body().iter().skip_while(|it| it.directive().is_some());
-        let end = match file.language().is_oxlint {
-            true => first.take_while(|it| it.tag() == StmtTag::Import).last().map_or(0, |it| it.span().end),
-            false => u32::MAX,
-        };
-        (None, end)
     }
 }

@@ -81,6 +81,9 @@ impl PreferLocalModule {
 
 impl Rule for PreferLocalModule {
     const META: Meta = Meta::plugin(Plugin::Bun, "prefer-local-module", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new()
+        .stmts(&[StmtTag::Import, StmtTag::ExportNamed, StmtTag::ExportStar])
+        .exprs(&[ExprTag::ImportCall, ExprTag::Call]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -99,34 +102,37 @@ impl Rule for PreferLocalModule {
         PreferLocalModule { modules: modules.collect(), exempt_files: list_option(options, "exemptFiles", &[]) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if self.exempt_files.iter().any(|it| is_end_of_path(file.path(), it)) {
-            return;
+            return None;
         }
-        on.stmts([StmtTag::Import, StmtTag::ExportNamed, StmtTag::ExportStar], |rule, statement, cx| {
-            let (specifier, import) = match statement.kind() {
-                StmtKind::Import(import) => (Some(import.spec()), Some(import)),
-                StmtKind::ExportNamed(export) => (export.spec(), None),
-                StmtKind::ExportStar { spec, .. } => (spec, None),
-                _ => (None, None),
-            };
-            if let Some(wrapped) = specifier.and_then(|it| rule.wrapped(it))
-                && let Some(span) = statement.module_specifier_span()
-            {
-                wrapped.report(span, import, cx);
-            }
-        });
-        on.exprs([ExprTag::ImportCall, ExprTag::Call], |rule, e, cx| {
-            let specifier = match e.kind() {
-                ExprKind::ImportCall { args } => args.first(),
-                ExprKind::Call(call) if call.callee().is_ident("require") => call.args().first(),
-                _ => None,
-            };
-            if let Some(specifier) = specifier.filter(|it| it.tag() == ExprTag::String)
-                && let Some(wrapped) = static_string(specifier).and_then(|it| rule.wrapped(it))
-            {
-                wrapped.report(specifier.span(), None, cx);
-            }
-        });
+        Some(())
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let (specifier, import) = match statement.kind() {
+            StmtKind::Import(import) => (Some(import.spec()), Some(import)),
+            StmtKind::ExportNamed(export) => (export.spec(), None),
+            StmtKind::ExportStar { spec, .. } => (spec, None),
+            _ => (None, None),
+        };
+        if let Some(wrapped) = specifier.and_then(|it| self.wrapped(it))
+            && let Some(span) = statement.module_specifier_span()
+        {
+            wrapped.report(span, import, cx);
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let specifier = match e.kind() {
+            ExprKind::ImportCall { args } => args.first(),
+            ExprKind::Call(call) if call.callee().is_ident("require") => call.args().first(),
+            _ => None,
+        };
+        if let Some(specifier) = specifier.filter(|it| it.tag() == ExprTag::String)
+            && let Some(wrapped) = static_string(specifier).and_then(|it| self.wrapped(it))
+        {
+            wrapped.report(specifier.span(), None, cx);
+        }
     }
 }

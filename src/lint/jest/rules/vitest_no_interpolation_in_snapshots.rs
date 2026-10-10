@@ -8,18 +8,20 @@ pub struct NoInterpolationInSnapshots;
 
 impl Rule for NoInterpolationInSnapshots {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "no-interpolation-in-snapshots", Kind::Suggestion);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoInterpolationInSnapshots
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if jest::is_test(file) && file.mentions_any(&no_interpolation_in_snapshots::INLINE_SNAPSHOT_MATCHERS) {
-            on.finish(|_, cx| {
-                let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
-                jest::run_on_jest_nodes(&ctx, &no_interpolation_in_snapshots::run);
-            });
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        (jest::is_test(file) && file.mentions_any(&no_interpolation_in_snapshots::INLINE_SNAPSHOT_MATCHERS))
+            .then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        jest::run_on_jest_nodes(&ctx, &no_interpolation_in_snapshots::run);
     }
 }

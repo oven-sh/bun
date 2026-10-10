@@ -25,34 +25,37 @@ const METHODS: [&str; 12] = [
 
 impl Rule for NoArrayCallbackReference {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-array-callback-reference", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoArrayCallbackReference
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions_any(&METHODS) {
+            return None;
+        }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call_expr) = e.as_call() else {
+            return;
+        };
+        // Most callbacks are functions.
+        let Some(callback_expr) = call_expr.args().first().filter(|it| !matches!(it.tag(), ExprTag::Fn | ExprTag::Spread)) else {
+            return;
+        };
+        if !is_method_call(call_expr, None, Some(&METHODS), Some(1), Some(2)) {
             return;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(call_expr) = e.as_call() else {
-                return;
-            };
-            // Most callbacks are functions.
-            let Some(callback_expr) = call_expr.args().first().filter(|it| !matches!(it.tag(), ExprTag::Fn | ExprTag::Spread)) else {
-                return;
-            };
-            if !is_method_call(call_expr, None, Some(&METHODS), Some(1), Some(2)) {
-                return;
-            }
-            let Some(ExprKind::Dot { obj: object, .. }) = get_member_expr(call_expr.callee()).map(Expr::kind) else {
-                return;
-            };
-            if !is_ignored_object(object) && should_wrap_callback(callback_expr) {
-                cx.report(callback_expr, NO_ARRAY_CALLBACK_REFERENCE);
-            }
-        });
+        let Some(ExprKind::Dot { obj: object, .. }) = get_member_expr(call_expr.callee()).map(Expr::kind) else {
+            return;
+        };
+        if !is_ignored_object(object) && should_wrap_callback(callback_expr) {
+            cx.report(callback_expr, NO_ARRAY_CALLBACK_REFERENCE);
+        }
     }
 }
 

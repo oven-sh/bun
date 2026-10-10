@@ -15,31 +15,34 @@ fn has_valid_extension(path: &[u8]) -> bool {
 
 impl Rule for Default {
     const META: Meta = Meta::oxlint(Plugin::Import, "default", Kind::Problem).needs_modules();
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         Default
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if is_waiting_for_modules(file) || file.modules().is_none() {
-            return;
+            return None;
         }
-        on.finish(|_, cx| {
-            for entry in import_entries(cx.file()) {
-                let ImportImportName::Default(local) = entry.import_name else {
-                    continue;
-                };
-                let specifier = entry.declaration.spec().bytes();
-                if let Some(remote) = get_loaded_module(cx.file(), specifier)
-                    && remote.record.has_module_syntax
-                    && has_valid_extension(remote.path())
-                    && !remote.record.has_export_default
-                    && !remote.exports(b"default")
-                {
-                    cx.report(local, DEFAULT).data("imported_name", debug(specifier));
-                }
+        Some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        for entry in import_entries(cx.file()) {
+            let ImportImportName::Default(local) = entry.import_name else {
+                continue;
+            };
+            let specifier = entry.declaration.spec().bytes();
+            if let Some(remote) = get_loaded_module(cx.file(), specifier)
+                && remote.record.has_module_syntax
+                && has_valid_extension(remote.path())
+                && !remote.record.has_export_default
+                && !remote.exports(b"default")
+            {
+                cx.report(local, DEFAULT).data("imported_name", debug(specifier));
             }
-        });
+        }
     }
 }

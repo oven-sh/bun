@@ -125,6 +125,7 @@ impl Rule for ExplicitMemberAccessibility {
     const META: Meta = Meta::typescript("explicit-member-accessibility", Kind::Problem)
         .fixable(Fixable::Code)
         .has_suggestions();
+    const ON: On = On::new().members().params();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -149,16 +150,23 @@ impl Rule for ExplicitMemberAccessibility {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.has_classes() {
-            return;
+            return None;
         }
+        Some(())
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         let members = [self.constructors, self.accessors, self.methods, self.properties];
         if members.iter().any(|it| *it != Level::Off) {
-            on.members(Self::check_member);
+            self.check_member(member, cx);
         }
+    }
+
+    fn param<'a>(&self, param: Param<'a>, cx: &mut Cx<'a, Self>) {
         if self.parameter_properties != Level::Off {
-            on.params(Self::check_parameter);
+            self.check_parameter(param, cx);
         }
     }
 }

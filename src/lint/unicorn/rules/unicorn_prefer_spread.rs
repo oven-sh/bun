@@ -12,6 +12,7 @@ const PREFER_SPREAD: Message = Message::new("", "Prefer the spread operator (`..
 
 impl Rule for PreferSpread {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-spread", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     /// How many bytes the fixes have spread so far.
     type State<'a> = Cell<usize>;
 
@@ -19,72 +20,73 @@ impl Rule for PreferSpread {
         PreferSpread
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if !file.mentions_any(&["from", "concat", "slice", "toSpliced"]) {
-            return Cell::new(0);
+            return None;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(call_expr) = e.as_call() else {
-                return;
-            };
-            // The whole of an optional chain, which here is in parentheses, is not a member expression for oxlint.
-            let member_expr = call_expr.callee();
-            let (Some(name), Some(object)) = (static_property_name(member_expr), member_expr.object()) else {
-                return;
-            };
-            if member_expr.is_chain_root() {
-                return;
-            }
-            let args = call_expr.args();
-            let first_arg = args.first();
-            if first_arg.is_some_and(|it| it.tag() == ExprTag::Spread) && !name.is("concat") {
-                return;
-            }
-            // What is spread instead.
-            let (bad_method, spread) = match (name.bytes(), first_arg) {
-                (b"from", Some(expr)) if args.len() == 1 => {
-                    if member_expr.tag() == ExprTag::Index || expr.tag() == ExprTag::Object || !object.is_ident("Array") {
-                        return;
-                    }
-                    ("Array.from()", Some(expr))
+        Some(Cell::new(0))
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call_expr) = e.as_call() else {
+            return;
+        };
+        // The whole of an optional chain, which here is in parentheses, is not a member expression for oxlint.
+        let member_expr = call_expr.callee();
+        let (Some(name), Some(object)) = (static_property_name(member_expr), member_expr.object()) else {
+            return;
+        };
+        if member_expr.is_chain_root() {
+            return;
+        }
+        let args = call_expr.args();
+        let first_arg = args.first();
+        if first_arg.is_some_and(|it| it.tag() == ExprTag::Spread) && !name.is("concat") {
+            return;
+        }
+        // What is spread instead.
+        let (bad_method, spread) = match (name.bytes(), first_arg) {
+            (b"from", Some(expr)) if args.len() == 1 => {
+                if member_expr.tag() == ExprTag::Index || expr.tag() == ExprTag::Object || !object.is_ident("Array") {
+                    return;
                 }
-                (b"concat", _) if !is_not_array(object) => ("array.concat()", None),
-                (b"slice", _) if args.len() <= 1 => {
-                    if matches!(object.tag(), ExprTag::Array | ExprTag::This)
-                        || !first_arg.is_none_or(|it| matches!(it.kind(), ExprKind::Number(value) if value == 0.0))
-                        || object.as_ident().is_some_and(|it| it.is_any(&IGNORED_SLICE_CALLEE))
-                        || is_typed_array_or_buffer_construction(object)
-                        || is_not_array(object)
-                    {
-                        return;
-                    }
-                    ("array.slice()", Some(object))
-                }
-                (b"toSpliced", None) if object.tag() != ExprTag::Array => ("array.toSpliced()", Some(object)),
-                _ => return,
-            };
-            let report = cx.report(e, PREFER_SPREAD).data("bad_method", bad_method);
-            if let Some(expr_to_spread) = spread {
-                report.fix(|fixer| {
-                    // In `a.slice().slice() ..` each fix has all that is before it. After a megabyte only what is short is fixed.
-                    let (size, spread_so_far) = (expr_to_spread.text().len(), cx.state.get());
-                    if size > 1024 && spread_so_far > 1 << 20 {
-                        return None;
-                    }
-                    cx.state.set(spread_so_far + size);
-                    let mut codegen = Codegen::default();
-                    codegen.code.extend_from_slice(if could_be_asi_hazard(e) { ";[..." } else { "[..." }.as_bytes());
-                    // The parentheses around it are not printed.
-                    match expr_to_spread.is_parenthesized() && expr_to_spread.tag() == ExprTag::Fn {
-                        true => codegen.code.extend_from_slice(expr_to_spread.text()),
-                        false => print_expression(&mut codegen, expr_to_spread),
-                    }
-                    codegen.code.push(b']');
-                    Some(fixer.replace(e, codegen.code))
-                });
+                ("Array.from()", Some(expr))
             }
-        });
-        Cell::new(0)
+            (b"concat", _) if !is_not_array(object) => ("array.concat()", None),
+            (b"slice", _) if args.len() <= 1 => {
+                if matches!(object.tag(), ExprTag::Array | ExprTag::This)
+                    || !first_arg.is_none_or(|it| matches!(it.kind(), ExprKind::Number(value) if value == 0.0))
+                    || object.as_ident().is_some_and(|it| it.is_any(&IGNORED_SLICE_CALLEE))
+                    || is_typed_array_or_buffer_construction(object)
+                    || is_not_array(object)
+                {
+                    return;
+                }
+                ("array.slice()", Some(object))
+            }
+            (b"toSpliced", None) if object.tag() != ExprTag::Array => ("array.toSpliced()", Some(object)),
+            _ => return,
+        };
+        let report = cx.report(e, PREFER_SPREAD).data("bad_method", bad_method);
+        if let Some(expr_to_spread) = spread {
+            report.fix(|fixer| {
+                // In `a.slice().slice() ..` each fix has all that is before it. After a megabyte only what is short is fixed.
+                let (size, spread_so_far) = (expr_to_spread.text().len(), cx.state.get());
+                if size > 1024 && spread_so_far > 1 << 20 {
+                    return None;
+                }
+                cx.state.set(spread_so_far + size);
+                let mut codegen = Codegen::default();
+                codegen.code.extend_from_slice(if could_be_asi_hazard(e) { ";[..." } else { "[..." }.as_bytes());
+                // The parentheses around it are not printed.
+                match expr_to_spread.is_parenthesized() && expr_to_spread.tag() == ExprTag::Fn {
+                    true => codegen.code.extend_from_slice(expr_to_spread.text()),
+                    false => print_expression(&mut codegen, expr_to_spread),
+                }
+                codegen.code.push(b']');
+                Some(fixer.replace(e, codegen.code))
+            });
+        }
     }
 }
 

@@ -42,47 +42,48 @@ fn target_may_have_side_effects(target: Expr) -> bool {
 
 impl Rule for PreferMathTrunc {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-math-trunc", Kind::Suggestion).has_suggestions();
-    type State<'a> = ();
+    const ON: On = On::new().unaries(&[UnOp::BitNot]).binaries(&OPERATORS).exprs(&[ExprTag::Assign]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         PreferMathTrunc
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.unaries([UnOp::BitNot], |_, e, cx| {
-            if let Some(inner) = e.operand().filter(|it| !it.is_parenthesized())
-                && let Some(argument) = bitwise_not_argument(inner)
-                && (argument.is_parenthesized() || bitwise_not_argument(argument).is_none())
-            {
-                report(e, "~", argument.outer_span(), false, cx);
-            }
-        });
-        on.binaries(OPERATORS, |_, e, cx| {
-            if let ExprKind::Binary { op, left, right } = e.kind()
-                && is_number_0(right)
-            {
-                let bad_op = match op {
-                    BinOp::BitOr => "|",
-                    BinOp::Shr => ">>",
-                    BinOp::Shl => "<<",
-                    _ => "^",
-                };
-                report(e, bad_op, left.outer_span(), false, cx);
-            }
-        });
-        on.exprs([ExprTag::Assign], |_, e, cx| {
-            if let ExprKind::Assign { op: Some(op), target, value } = e.kind()
-                && is_number_0(value)
-            {
-                let bad_op = match op {
-                    BinOp::BitOr => "|=",
-                    BinOp::Shr => ">>=",
-                    BinOp::Shl => "<<=",
-                    BinOp::BitXor => "^=",
-                    _ => return,
-                };
-                report(e, bad_op, target.span(), true, cx);
-            }
-        });
+    fn unary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(inner) = e.operand().filter(|it| !it.is_parenthesized())
+            && let Some(argument) = bitwise_not_argument(inner)
+            && (argument.is_parenthesized() || bitwise_not_argument(argument).is_none())
+        {
+            report(e, "~", argument.outer_span(), false, cx);
+        }
+    }
+
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let ExprKind::Binary { op, left, right } = e.kind()
+            && is_number_0(right)
+        {
+            let bad_op = match op {
+                BinOp::BitOr => "|",
+                BinOp::Shr => ">>",
+                BinOp::Shl => "<<",
+                _ => "^",
+            };
+            report(e, bad_op, left.outer_span(), false, cx);
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let ExprKind::Assign { op: Some(op), target, value } = e.kind()
+            && is_number_0(value)
+        {
+            let bad_op = match op {
+                BinOp::BitOr => "|=",
+                BinOp::Shr => ">>=",
+                BinOp::Shl => "<<=",
+                BinOp::BitXor => "^=",
+                _ => return,
+            };
+            report(e, bad_op, target.span(), true, cx);
+        }
     }
 }

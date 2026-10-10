@@ -47,7 +47,8 @@ impl LineCommentPosition {
 
 impl Rule for LineCommentPosition {
     const META: Meta = Meta::eslint("line-comment-position", Kind::Layout).deprecated();
-    type State<'a> = ();
+    const ON: On = On::new().finish();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -62,13 +63,11 @@ impl Rule for LineCommentPosition {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.finish(|rule, cx| {
-            for comment in cx.file().comments() {
-                if comment.kind() == TokenKind::Line {
-                    rule.check(comment, cx);
-                }
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        for comment in cx.file().comments() {
+            if comment.kind() == TokenKind::Line {
+                self.check(comment, cx);
             }
-        });
+        }
     }
 }

@@ -11,27 +11,30 @@ const PREFER_ARRAY_FIND: Message = Message::new("", "Prefer `find` over filterin
 
 impl Rule for PreferArrayFind {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-array-find", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferArrayFind
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("filter") {
-            return;
+            return None;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            if let Some(call) = e.as_call()
-                && is_filter_call(call)
-                && is_only_first_or_last_used(e)
-            {
-                // The name `filter`.
-                let callee = call.callee();
-                let property = static_property_info(callee).filter(|_| !callee.is_parenthesized());
-                cx.report(property.map_or_else(|| e.span(), |it| it.0), PREFER_ARRAY_FIND);
-            }
-        });
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(call) = e.as_call()
+            && is_filter_call(call)
+            && is_only_first_or_last_used(e)
+        {
+            // The name `filter`.
+            let callee = call.callee();
+            let property = static_property_info(callee).filter(|_| !callee.is_parenthesized());
+            cx.report(property.map_or_else(|| e.span(), |it| it.0), PREFER_ARRAY_FIND);
+        }
     }
 }
 

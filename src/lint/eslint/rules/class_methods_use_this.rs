@@ -186,6 +186,7 @@ impl Checker {
 
 impl Rule for ClassMethodsUseThis {
     const META: Meta = Meta::eslint("class-methods-use-this", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::This, ExprTag::Super]).members().finish();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -200,19 +201,22 @@ impl Rule for ClassMethodsUseThis {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        if file.has_classes() {
-            on.members(|rule, member, cx| rule.checker.check_member(member, &mut cx.state));
-            on.exprs([ExprTag::This, ExprTag::Super], |rule, e, cx| {
-                rule.checker.mark_this_used(e, &mut cx.state);
-            });
-            on.finish(|_, cx| {
-                for func in cx.state.methods_without_this() {
-                    cx.report(ast_utils::get_function_head_loc(func), MISSING_THIS)
-                        .data("name", ast_utils::get_function_name_with_kind(func));
-                }
-            });
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+        file.has_classes().then(State::default)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.checker.mark_this_used(e, &mut cx.state);
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        self.checker.check_member(member, &mut cx.state);
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        for func in cx.state.methods_without_this() {
+            cx.report(ast_utils::get_function_head_loc(func), MISSING_THIS)
+                .data("name", ast_utils::get_function_name_with_kind(func));
         }
-        State::default()
     }
 }

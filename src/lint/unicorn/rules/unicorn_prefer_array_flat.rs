@@ -15,33 +15,36 @@ const PREFER_ARRAY_FLAT: Message = Message::new("", "Prefer Array#flat() over le
 
 impl Rule for PreferArrayFlat {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-array-flat", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferArrayFlat
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions_any(&["flatMap", "reduce", "concat"]) {
-            return;
+            return None;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(call) = e.as_call() else {
-                return;
-            };
-            let Some((_, method)) = get_member_expr(call.callee()).and_then(static_property_info) else {
-                return;
-            };
-            match method.bytes() {
-                b"flatMap" if is_array_flat_map_case(call) => report_with_fix(e, call, cx),
-                b"reduce" if is_array_reduce_case(call) => report_with_fix(e, call, cx),
-                b"concat" if is_array_concat_case(call) => {
-                    cx.report(e, PREFER_ARRAY_FLAT);
-                }
-                b"call" | b"apply" => check_array_prototype_concat_case(e, call, method.is("apply"), cx),
-                _ => {}
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call) = e.as_call() else {
+            return;
+        };
+        let Some((_, method)) = get_member_expr(call.callee()).and_then(static_property_info) else {
+            return;
+        };
+        match method.bytes() {
+            b"flatMap" if is_array_flat_map_case(call) => report_with_fix(e, call, cx),
+            b"reduce" if is_array_reduce_case(call) => report_with_fix(e, call, cx),
+            b"concat" if is_array_concat_case(call) => {
+                cx.report(e, PREFER_ARRAY_FLAT);
             }
-        });
+            b"call" | b"apply" => check_array_prototype_concat_case(e, call, method.is("apply"), cx),
+            _ => {}
+        }
     }
 }
 

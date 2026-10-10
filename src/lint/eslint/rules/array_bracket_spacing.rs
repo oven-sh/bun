@@ -124,8 +124,28 @@ impl ArrayBracketSpacing {
             }
         }
     }
+}
 
-    fn check_expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for ArrayBracketSpacing {
+    const META: Meta = Meta::eslint("array-bracket-spacing", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new().exprs(&[ExprTag::Array]).pats(&[PatTag::Array]);
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let spaced = options.str(0) == Some("always");
+        let exceptions = options.object(1);
+        let is_option_set = |option: &str| exceptions.bool(option) == Some(!spaced);
+        ArrayBracketSpacing {
+            spaced,
+            single_element_exception: is_option_set("singleValue"),
+            objects_in_arrays_exception: is_option_set("objectsInArrays"),
+            arrays_in_arrays_exception: is_option_set("arraysInArrays"),
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Array(elements) = e.kind() else {
             return;
         };
@@ -152,7 +172,7 @@ impl ArrayBracketSpacing {
         );
     }
 
-    fn check_pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
+    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
         let PatKind::Array(elements) = pat.kind() else {
             return;
         };
@@ -189,29 +209,5 @@ impl ArrayBracketSpacing {
             },
             cx,
         );
-    }
-}
-
-impl Rule for ArrayBracketSpacing {
-    const META: Meta = Meta::eslint("array-bracket-spacing", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let spaced = options.str(0) == Some("always");
-        let exceptions = options.object(1);
-        let is_option_set = |option: &str| exceptions.bool(option) == Some(!spaced);
-        ArrayBracketSpacing {
-            spaced,
-            single_element_exception: is_option_set("singleValue"),
-            objects_in_arrays_exception: is_option_set("objectsInArrays"),
-            arrays_in_arrays_exception: is_option_set("arraysInArrays"),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Array], Self::check_expr);
-        on.pats([PatTag::Array], Self::check_pat);
     }
 }

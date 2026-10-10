@@ -121,7 +121,8 @@ impl Rule for LinesAroundDirective {
     const META: Meta = Meta::eslint("lines-around-directive", Kind::Layout)
         .fixable(Fixable::Whitespace)
         .deprecated();
-    type State<'a> = ();
+    const ON: On = On::new().funcs().finish();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let (before, after) = match options.get(0).and_then(Json::as_object) {
@@ -137,14 +138,15 @@ impl Rule for LinesAroundDirective {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.funcs(|rule, func, cx| {
-            if func.kind() != FnKind::StaticBlock
-                && let Some(statements) = func.body_statements()
-            {
-                rule.check(statements, false, cx);
-            }
-        });
-        on.finish(|rule, cx| rule.check(cx.file().body(), true, cx));
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if func.kind() != FnKind::StaticBlock
+            && let Some(statements) = func.body_statements()
+        {
+            self.check(statements, false, cx);
+        }
+    }
+
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+        self.check(cx.file().body(), true, cx);
     }
 }

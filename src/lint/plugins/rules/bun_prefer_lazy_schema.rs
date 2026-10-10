@@ -55,6 +55,8 @@ fn is_lazy(node: Node) -> bool {
 
 impl Rule for PreferLazySchema {
     const META: Meta = Meta::plugin(Plugin::Bun, "prefer-lazy-schema", Kind::Suggestion);
+    const ON: On =
+        On::new().enter(NodeTags::new().exprs(&[ExprTag::Call])).exit(NodeTags::new().exprs(&[ExprTag::Call]));
     /// In how many calls that make a schema the walk is: what another schema is made of is not reported beside it.
     type State<'a> = (u32, RunsLater<'a>);
 
@@ -68,24 +70,26 @@ impl Rule for PreferLazySchema {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        on.enter(ExprTag::Call, |rule, node, cx| {
-            if !rule.builds_schema(node) {
-                return;
-            }
-            cx.state.0 += 1;
-            if cx.state.0 == 1 && !is_lazy(node) && runs_while_module_is_evaluated(node, &mut cx.state.1) {
-                match &rule.lazy_wrapper {
-                    Some(wrapper) => cx.report(node, EAGER_SCHEMA_WITH_WRAPPER).data("wrapper", wrapper.to_vec()),
-                    None => cx.report(node, EAGER_SCHEMA),
-                };
-            }
-        });
-        on.exit(ExprTag::Call, |rule, node, cx| {
-            if rule.builds_schema(node) {
-                cx.state.0 = cx.state.0.saturating_sub(1);
-            }
-        });
-        (0, RunsLater::default())
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some((0, RunsLater::default()))
+    }
+
+    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        if !self.builds_schema(node) {
+            return;
+        }
+        cx.state.0 += 1;
+        if cx.state.0 == 1 && !is_lazy(node) && runs_while_module_is_evaluated(node, &mut cx.state.1) {
+            match &self.lazy_wrapper {
+                Some(wrapper) => cx.report(node, EAGER_SCHEMA_WITH_WRAPPER).data("wrapper", wrapper.to_vec()),
+                None => cx.report(node, EAGER_SCHEMA),
+            };
+        }
+    }
+
+    fn exit<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        if self.builds_schema(node) {
+            cx.state.0 = cx.state.0.saturating_sub(1);
+        }
     }
 }

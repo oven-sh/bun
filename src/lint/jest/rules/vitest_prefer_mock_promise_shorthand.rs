@@ -9,18 +9,19 @@ pub struct PreferMockPromiseShorthand;
 
 impl Rule for PreferMockPromiseShorthand {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "prefer-mock-promise-shorthand", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferMockPromiseShorthand
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if prefer_mock_promise_shorthand::should_run(file) {
-            on.finish(|_, cx| {
-                let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
-                prefer_mock_promise_shorthand::run_once(&ctx);
-            });
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        prefer_mock_promise_shorthand::should_run(file).then_some(())
+    }
+
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        prefer_mock_promise_shorthand::run_once(&ctx);
     }
 }

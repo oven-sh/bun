@@ -126,6 +126,7 @@ impl ConsistentReturn {
 
 impl Rule for ConsistentReturn {
     const META: Meta = Meta::eslint("consistent-return", Kind::Suggestion);
+    const ON: On = On::new().funcs().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -134,10 +135,15 @@ impl Rule for ConsistentReturn {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if is_relevant(file) {
-            on.funcs(|rule, func, cx| rule.check(func.into(), cx));
-            on.finish(|rule, cx| rule.check(cx.file().into(), cx));
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        is_relevant(file).then_some(())
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(func.into(), cx);
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        self.check(cx.file().into(), cx);
     }
 }

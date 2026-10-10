@@ -16,6 +16,7 @@ const PREFER_TERNARY: Message = Message::new("", "Prefer ternary expressions ove
 
 impl Rule for PreferTernary {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-ternary", Kind::Suggestion);
+    const ON: On = On::new().stmts(&[StmtTag::If]);
     /// Where the line feeds of the file are.
     type State<'a> = OnceCell<Vec<u32>>;
 
@@ -23,36 +24,37 @@ impl Rule for PreferTernary {
         PreferTernary { only_single_line: options.str(0) == Some("only-single-line") }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        on.stmts([StmtTag::If], |rule, if_statement, cx| {
-            let StmtKind::If { test, yes, no: Some(no) } = if_statement.kind() else {
-                return;
-            };
-            let (consequent, alternate) = (get_node_body_statement(yes), get_node_body_statement(no));
-            if !is_mergeable(consequent, alternate) || is_ternary_expression(test) || is_else_if_branch(if_statement) {
-                return;
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(OnceCell::new())
+    }
+
+    fn stmt<'a>(&self, if_statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::If { test, yes, no: Some(no) } = if_statement.kind() else {
+            return;
+        };
+        let (consequent, alternate) = (get_node_body_statement(yes), get_node_body_statement(no));
+        if !is_mergeable(consequent, alternate) || is_ternary_expression(test) || is_else_if_branch(if_statement) {
+            return;
+        }
+        // What is long is not read: an `if` can be in a function that another `if` returns.
+        let is_single_line = |span: Span| match span.len() {
+            ..=256 => !strings::contains_char(cx.slice(span), b'\n'),
+            _ => {
+                let line_feeds = cx.state.get_or_init(|| line_feeds(cx.file().text()));
+                line_feeds.get(line_feeds.partition_point(|it| *it < span.start)).is_none_or(|it| *it >= span.end)
             }
-            // What is long is not read: an `if` can be in a function that another `if` returns.
-            let is_single_line = |span: Span| match span.len() {
-                ..=256 => !strings::contains_char(cx.slice(span), b'\n'),
-                _ => {
-                    let line_feeds = cx.state.get_or_init(|| line_feeds(cx.file().text()));
-                    line_feeds.get(line_feeds.partition_point(|it| *it < span.start)).is_none_or(|it| *it >= span.end)
-                }
-            };
-            let span_of_body = |body: BodyNode| match body {
-                BodyNode::Expression(expression) => expression.span(),
-                BodyNode::Statement(statement) => statement.span(),
-            };
-            if !rule.only_single_line
-                || is_single_line(span_of_body(consequent))
-                    && is_single_line(span_of_body(alternate))
-                    && is_single_line(get_inner_expression(test).span())
-            {
-                cx.report(if_statement, PREFER_TERNARY);
-            }
-        });
-        OnceCell::new()
+        };
+        let span_of_body = |body: BodyNode| match body {
+            BodyNode::Expression(expression) => expression.span(),
+            BodyNode::Statement(statement) => statement.span(),
+        };
+        if !self.only_single_line
+            || is_single_line(span_of_body(consequent))
+                && is_single_line(span_of_body(alternate))
+                && is_single_line(get_inner_expression(test).span())
+        {
+            cx.report(if_statement, PREFER_TERNARY);
+        }
     }
 }
 

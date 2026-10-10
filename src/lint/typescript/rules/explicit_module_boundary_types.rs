@@ -58,31 +58,6 @@ impl ExplicitModuleBoundaryTypes {
             _ => false,
         }
     }
-
-    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
-        let mut exports = std::mem::take(&mut cx.state);
-        if exports.is_empty() {
-            return;
-        }
-        // The order in which upstream leaves them.
-        utils::sort::sort_unstable_by_key(&mut exports, |statement| statement.span().end);
-        let mut checker = Checker {
-            rule: self,
-            cx,
-            visited: FxHashSet::default(),
-            followed: FxHashSet::default(),
-            pending: Vec::new(),
-            overloads: OverloadSignatures::default(),
-            checked: Vec::new(),
-            returns_known_until: 0,
-        };
-        for statement in exports {
-            checker.returns_known_until = statement.span().end;
-            checker.check_export(statement);
-        }
-        checker.returns_known_until = u32::MAX;
-        checker.check_exported_higher_order_functions();
-    }
 }
 
 /// The key, if oxlint has a name for it.
@@ -414,6 +389,16 @@ impl<'a> Checker<'a, '_> {
 
 impl Rule for ExplicitModuleBoundaryTypes {
     const META: Meta = Meta::typescript("explicit-module-boundary-types", Kind::Problem);
+    const ON: On = On::new()
+        .stmts(&[
+            StmtTag::Var,
+            StmtTag::Fn,
+            StmtTag::Class,
+            StmtTag::ExportDefault,
+            StmtTag::ExportAssign,
+            StmtTag::ExportNamed,
+        ])
+        .finish();
     /// The statements that export something of this file.
     type State<'a> = Vec<Stmt<'a>>;
 
@@ -437,21 +422,51 @@ impl Rule for ExplicitModuleBoundaryTypes {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Vec<Stmt<'a>> {
-        on.stmts([StmtTag::Var, StmtTag::Fn, StmtTag::Class], |_, statement, cx| {
-            if statement.is_exported() {
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Vec<Stmt<'a>>> {
+        Some(Vec::new())
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match statement.tag() {
+            StmtTag::Var | StmtTag::Fn | StmtTag::Class => {
+                if statement.is_exported() {
+                    cx.state.push(statement);
+                }
+            }
+            StmtTag::ExportDefault | StmtTag::ExportAssign => {
                 cx.state.push(statement);
             }
-        });
-        on.stmts([StmtTag::ExportDefault, StmtTag::ExportAssign], |_, statement, cx| {
-            cx.state.push(statement);
-        });
-        on.stmts([StmtTag::ExportNamed], |_, statement, cx| {
-            if matches!(statement.kind(), StmtKind::ExportNamed(export) if !export.has_from()) {
-                cx.state.push(statement);
+            StmtTag::ExportNamed => {
+                if matches!(statement.kind(), StmtKind::ExportNamed(export) if !export.has_from()) {
+                    cx.state.push(statement);
+                }
             }
-        });
-        on.finish(Self::finish);
-        Vec::new()
+            _ => {}
+        }
+    }
+
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+        let mut exports = std::mem::take(&mut cx.state);
+        if exports.is_empty() {
+            return;
+        }
+        // The order in which upstream leaves them.
+        utils::sort::sort_unstable_by_key(&mut exports, |statement| statement.span().end);
+        let mut checker = Checker {
+            rule: self,
+            cx,
+            visited: FxHashSet::default(),
+            followed: FxHashSet::default(),
+            pending: Vec::new(),
+            overloads: OverloadSignatures::default(),
+            checked: Vec::new(),
+            returns_known_until: 0,
+        };
+        for statement in exports {
+            checker.returns_known_until = statement.span().end;
+            checker.check_export(statement);
+        }
+        checker.returns_known_until = u32::MAX;
+        checker.check_exported_higher_order_functions();
     }
 }

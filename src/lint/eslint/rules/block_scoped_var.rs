@@ -43,8 +43,22 @@ impl BlockScopedVar {
             _ => None,
         })
     }
+}
 
-    fn check<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for BlockScopedVar {
+    const META: Meta = Meta::eslint("block-scoped-var", Kind::Suggestion);
+    const ON: On = On::new().stmts(&[StmtTag::Var]);
+    type State<'a> = State<'a>;
+
+    fn new(_: &Options) -> Self {
+        BlockScopedVar
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let StmtKind::Var(declarations) = statement.kind() else {
             return;
         };
@@ -126,19 +140,5 @@ impl BlockScopedVar {
         for declaration in declarations {
             declaration.pat().for_each_binding(&mut check_binding);
         }
-    }
-}
-
-impl Rule for BlockScopedVar {
-    const META: Meta = Meta::eslint("block-scoped-var", Kind::Suggestion);
-    type State<'a> = State<'a>;
-
-    fn new(_: &Options) -> Self {
-        BlockScopedVar
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
-        on.stmts([StmtTag::Var], Self::check);
-        State::default()
     }
 }

@@ -263,8 +263,23 @@ fn replace_with_equivalent_literal<'a>(
     Some(fixer.replace(node, get_safe_output(node, &literal)))
 }
 
-impl PreferRegexLiterals {
-    fn check_calls<'a>(&self, cx: &mut Cx<'a, Self>) {
+impl Rule for PreferRegexLiterals {
+    const META: Meta = Meta::eslint("prefer-regex-literals", Kind::Suggestion).has_suggestions();
+    const ON: On = On::new().finish();
+    type State<'a> = ();
+
+    fn new(options: &Options) -> Self {
+        PreferRegexLiterals {
+            disallow_redundant_wrapping: options.object(0).bool_or("disallowRedundantWrapping", false),
+        }
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        // Finding the calls takes resolving every name of the file.
+        file.mentions("RegExp").then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
         for reference in ReferenceTracker::new(cx.file()).iterate_global_references(&TRACE_MAP) {
             let (Some(node), Some(call)) = (reference.expr(), reference.call()) else {
                 continue;
@@ -313,24 +328,6 @@ impl PreferRegexLiterals {
                     replace_with_equivalent_literal(fixer, node, &content, &flags)
                 });
             }
-        }
-    }
-}
-
-impl Rule for PreferRegexLiterals {
-    const META: Meta = Meta::eslint("prefer-regex-literals", Kind::Suggestion).has_suggestions();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        PreferRegexLiterals {
-            disallow_redundant_wrapping: options.object(0).bool_or("disallowRedundantWrapping", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        // Finding the calls takes resolving every name of the file.
-        if file.mentions("RegExp") {
-            on.finish(Self::check_calls);
         }
     }
 }

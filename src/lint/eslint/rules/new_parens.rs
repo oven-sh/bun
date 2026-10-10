@@ -15,7 +15,8 @@ impl Rule for NewParens {
     const META: Meta = Meta::eslint("new-parens", Kind::Layout)
         .fixable(Fixable::Code)
         .deprecated();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::New]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         NewParens {
@@ -23,33 +24,31 @@ impl Rule for NewParens {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::New], |rule, e, cx| {
-            let ExprKind::New(call) = e.kind() else {
-                return;
-            };
-            if !call.args().is_empty() {
-                return;
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::New(call) = e.kind() else {
+            return;
+        };
+        if !call.args().is_empty() {
+            return;
+        }
+        match (call.close_paren(), self.always) {
+            (None, true) => {
+                cx.report(e, MISSING).fix(|fixer| fixer.insert_after(e, "()"));
             }
-            match (call.close_paren(), rule.always) {
-                (None, true) => {
-                    cx.report(e, MISSING).fix(|fixer| fixer.insert_after(e, "()"));
-                }
-                (Some(close), false) => {
-                    cx.report(e, UNNECESSARY).fix(|fixer| {
-                        let head_end = (call.type_args().angle_brackets_span())
-                            .map_or_else(|| call.callee().outer_span().end, |it| it.end);
-                        let open = skip_trivia(fixer.file().text(), head_end);
-                        [
-                            fixer.remove(Span::new(open, open + 1)),
-                            fixer.remove(Span::new(close, close + 1)),
-                            fixer.insert_before(e, "("),
-                            fixer.insert_after(e, ")"),
-                        ]
-                    });
-                }
-                _ => {}
+            (Some(close), false) => {
+                cx.report(e, UNNECESSARY).fix(|fixer| {
+                    let head_end = (call.type_args().angle_brackets_span())
+                        .map_or_else(|| call.callee().outer_span().end, |it| it.end);
+                    let open = skip_trivia(fixer.file().text(), head_end);
+                    [
+                        fixer.remove(Span::new(open, open + 1)),
+                        fixer.remove(Span::new(close, close + 1)),
+                        fixer.insert_before(e, "("),
+                        fixer.insert_after(e, ")"),
+                    ]
+                });
             }
-        });
+            _ => {}
+        }
     }
 }

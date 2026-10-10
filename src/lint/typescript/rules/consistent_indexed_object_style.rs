@@ -388,6 +388,9 @@ impl Rule for ConsistentIndexedObjectStyle {
         .fixable(Fixable::Code)
         .has_suggestions()
         .presets(Presets::STYLISTIC);
+    const ON: On = On::new()
+        .stmts(&[StmtTag::Interface])
+        .types(&[TypeTag::Ref, TypeTag::Mapped, TypeTag::Object]);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -396,33 +399,40 @@ impl Rule for ConsistentIndexedObjectStyle {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         if !self.prefers_record {
-            on.types([TypeTag::Ref], Self::check_type_reference);
-            return State::default();
+            return;
         }
-        on.stmts([StmtTag::Interface], |_, statement, cx| {
-            if let StmtKind::Interface(interface) = statement.kind() {
-                check_members(
-                    interface.members(),
-                    statement.into(),
-                    Some((statement, interface.name())),
-                    Some(interface),
-                    interface.extends().is_empty() && !statement.is_default_export(),
-                    cx,
-                );
+        if let StmtKind::Interface(interface) = statement.kind() {
+            check_members(
+                interface.members(),
+                statement.into(),
+                Some((statement, interface.name())),
+                Some(interface),
+                interface.extends().is_empty() && !statement.is_default_export(),
+                cx,
+            );
+        }
+    }
+
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        match ty.tag() {
+            TypeTag::Ref if !self.prefers_record => self.check_type_reference(ty, cx),
+            TypeTag::Mapped if self.prefers_record => self.check_mapped_type(ty, cx),
+            TypeTag::Object if self.prefers_record => {
+                if let TypeKind::Object(members) = ty.kind()
+                    && members.first().is_some_and(|it| it.kind() == MemberKind::IndexSignature)
+                    && members.len() == 1
+                {
+                    let parent = find_parent_declaration(ty).map(|alias| (alias.stmt(), alias.name()));
+                    check_members(members, ty.into(), parent, None, true, cx);
+                }
             }
-        });
-        on.types([TypeTag::Mapped], Self::check_mapped_type);
-        on.types([TypeTag::Object], |_, ty, cx| {
-            if let TypeKind::Object(members) = ty.kind()
-                && members.first().is_some_and(|it| it.kind() == MemberKind::IndexSignature)
-                && members.len() == 1
-            {
-                let parent = find_parent_declaration(ty).map(|alias| (alias.stmt(), alias.name()));
-                check_members(members, ty.into(), parent, None, true, cx);
-            }
-        });
-        State::default()
+            _ => {}
+        }
     }
 }

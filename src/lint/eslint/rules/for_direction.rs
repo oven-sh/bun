@@ -136,8 +136,16 @@ fn check_as_oxlint<'a>(test: Expr<'a>, update: Expr<'a>, cx: &Cx<'a, ForDirectio
     }
 }
 
-impl ForDirection {
-    fn check<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for ForDirection {
+    const META: Meta = Meta::eslint("for-direction", Kind::Problem).recommended();
+    const ON: On = On::new().stmts(&[StmtTag::For]);
+    no_state!();
+
+    fn new(_: &Options) -> Self {
+        ForDirection
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let StmtKind::For {
             test: Some(test),
             update: Some(update),
@@ -172,18 +180,5 @@ impl ForDirection {
                 cx.report(Span::new(stmt.span().start, close_paren + 1), INCORRECT_DIRECTION);
             }
         }
-    }
-}
-
-impl Rule for ForDirection {
-    const META: Meta = Meta::eslint("for-direction", Kind::Problem).recommended();
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        ForDirection
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::For], Self::check);
     }
 }

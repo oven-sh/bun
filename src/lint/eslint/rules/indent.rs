@@ -76,6 +76,7 @@ impl Indent {
 
 impl Rule for Indent {
     const META: Meta = Meta::eslint("indent", Kind::Layout).fixable(Fixable::Whitespace).deprecated();
+    const ON: On = On::new().nodes(NodeTags::ALL).finish();
     /// The nodes that `ignoredNodes` selects: where each starts and ends, and its type.
     type State<'a> = Vec<(u32, u32, &'static str)>;
 
@@ -127,19 +128,25 @@ impl Rule for Indent {
         Ok(())
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
         let selected = self.ignored_nodes.iter().fold(NodeTags::EMPTY, |tags, it| tags | it.listens_to());
-        if selected != NodeTags::EMPTY {
-            on.nodes(selected, |rule, node, cx| {
-                for selector in &rule.ignored_nodes {
-                    selector.for_each_match(node, |it| {
-                        cx.state.push((it.span().start, it.span().end, it.type_name()));
-                    });
-                }
+        On::new().nodes(selected).finish()
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(Vec::new())
+    }
+
+    fn node<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        for selector in &self.ignored_nodes {
+            selector.for_each_match(node, |it| {
+                cx.state.push((it.span().start, it.span().end, it.type_name()));
             });
         }
-        on.finish(Self::check);
-        Vec::new()
+    }
+
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+        self.check(cx);
     }
 }
 

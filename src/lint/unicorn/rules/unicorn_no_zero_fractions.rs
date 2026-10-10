@@ -10,40 +10,39 @@ const DANGLING_DOT: Message = Message::new("", "Don't use a dangling dot in the 
 
 impl Rule for NoZeroFractions {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-zero-fractions", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().number_literals();
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoZeroFractions
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.number_literals(|_, number_literal, cx| {
-            let raw = number_literal.text();
-            if !strings::contains_char(raw, b'.') {
-                return;
-            }
-            let Some((fmt, is_dangling_dot)) = format_raw(raw).filter(|it| it.0 != raw) else {
-                return;
+    fn number_literal<'a>(&self, number_literal: Literal<'a>, cx: &mut Cx<'a, Self>) {
+        let raw = number_literal.text();
+        if !strings::contains_char(raw, b'.') {
+            return;
+        }
+        let Some((fmt, is_dangling_dot)) = format_raw(raw).filter(|it| it.0 != raw) else {
+            return;
+        };
+        let message = if is_dangling_dot { DANGLING_DOT } else { ZERO_FRACTION };
+        cx.report(number_literal, message).data("lit", fmt.clone()).fix(|fixer| {
+            // `1.0.toString()`, `a[1.0]`
+            let is_member =
+                |node: Node| matches!(node, Node::Expr(e) if matches!(e.tag(), ExprTag::Dot | ExprTag::Index));
+            let is_member_expression =
+                matches!(number_literal.owner(), Node::Expr(e) if !e.is_parenthesized() && is_member(e.parent()));
+            let is_decimal_integer = fmt.iter().all(|it| matches!(it, b'0'..=b'9' | b'_'));
+            let (open, close): (&[u8], &[u8]) = match is_member_expression && is_decimal_integer {
+                true => (b"(", b")"),
+                false => (b"", b""),
             };
-            let message = if is_dangling_dot { DANGLING_DOT } else { ZERO_FRACTION };
-            cx.report(number_literal, message).data("lit", fmt.clone()).fix(|fixer| {
-                // `1.0.toString()`, `a[1.0]`
-                let is_member =
-                    |node: Node| matches!(node, Node::Expr(e) if matches!(e.tag(), ExprTag::Dot | ExprTag::Index));
-                let is_member_expression =
-                    matches!(number_literal.owner(), Node::Expr(e) if !e.is_parenthesized() && is_member(e.parent()));
-                let is_decimal_integer = fmt.iter().all(|it| matches!(it, b'0'..=b'9' | b'_'));
-                let (open, close): (&[u8], &[u8]) = match is_member_expression && is_decimal_integer {
-                    true => (b"(", b")"),
-                    false => (b"", b""),
-                };
-                // `case.0` is not `case0`.
-                let before = fixer.file().text().get(..number_literal.span().start as usize).unwrap_or_default();
-                let follows_name = text::last_code_point(before)
-                    .is_some_and(|c| bun_core::lexer::is_type_script_identifier_part(c as i32));
-                let space: &[u8] = if follows_name { b" " } else { b"" };
-                fixer.replace(number_literal, [space, open, &fmt, close].concat())
-            });
+            // `case.0` is not `case0`.
+            let before = fixer.file().text().get(..number_literal.span().start as usize).unwrap_or_default();
+            let follows_name = text::last_code_point(before)
+                .is_some_and(|c| bun_core::lexer::is_type_script_identifier_part(c as i32));
+            let space: &[u8] = if follows_name { b" " } else { b"" };
+            fixer.replace(number_literal, [space, open, &fmt, close].concat())
         });
     }
 }

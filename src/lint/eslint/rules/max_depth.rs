@@ -128,8 +128,45 @@ impl MaxDepth {
             cx.report(stmt, TOO_DEEPLY).data("depth", depth).data("maxDepth", max);
         }
     }
+}
 
-    fn check<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+const STATEMENTS: &[StmtTag] = &[
+    StmtTag::If,
+    StmtTag::Switch,
+    StmtTag::Try,
+    StmtTag::DoWhile,
+    StmtTag::While,
+    StmtTag::For,
+    StmtTag::ForIn,
+    StmtTag::ForOf,
+    // `with`
+    StmtTag::Block,
+];
+const WALKED: NodeTags = NodeTags::FILE.union(NodeTags::FUNC).stmts(STATEMENTS);
+
+impl Rule for MaxDepth {
+    const META: Meta = Meta::eslint("max-depth", Kind::Suggestion);
+    const ON: On = On::new().stmts(STATEMENTS).enter(WALKED).exit(WALKED);
+    type State<'a> = State<'a>;
+
+    fn new(options: &Options) -> Self {
+        let object = options.object(0);
+        MaxDepth {
+            max: match object.has("maximum") || object.has("max") {
+                true => object.usize("maximum").filter(|max| *max != 0).or_else(|| object.usize("max")),
+                false => Some(options.number(0).map_or(4, |max| max as usize)),
+            },
+        }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.language().eslint_major < 10 {
+            return;
+        }
         let (Some(max), Some(keyword)) = (self.max, keyword_of(stmt)) else {
             return;
         };
@@ -148,52 +185,32 @@ impl MaxDepth {
                 .data("maxDepth", max);
         }
     }
-}
 
-impl Rule for MaxDepth {
-    const META: Meta = Meta::eslint("max-depth", Kind::Suggestion);
-    type State<'a> = State<'a>;
-
-    fn new(options: &Options) -> Self {
-        let object = options.object(0);
-        MaxDepth {
-            max: match object.has("maximum") || object.has("max") {
-                true => object.usize("maximum").filter(|max| *max != 0).or_else(|| object.usize("max")),
-                false => Some(options.number(0).map_or(4, |max| max as usize)),
-            },
+    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.language().eslint_major >= 10 {
+            return;
+        }
+        match node {
+            Node::File(_) | Node::Func(_) => cx.state.depths.push(0),
+            _ => self.enter_before_10(node, cx),
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        let statements = [
-            StmtTag::If,
-            StmtTag::Switch,
-            StmtTag::Try,
-            StmtTag::DoWhile,
-            StmtTag::While,
-            StmtTag::For,
-            StmtTag::ForIn,
-            StmtTag::ForOf,
-            // `with`
-            StmtTag::Block,
-        ];
-        if file.language().eslint_major < 10 {
-            let functions = NodeTags::FILE | NodeTags::FUNC;
-            on.enter(functions, |_, _, cx| cx.state.depths.push(0));
-            on.exit(functions, |_, _, cx| {
+    fn exit<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.language().eslint_major >= 10 {
+            return;
+        }
+        match node {
+            Node::File(_) | Node::Func(_) => {
                 cx.state.depths.pop();
-            });
-            on.enter(statements, Self::enter_before_10);
-            on.exit(statements, |_, node, cx| {
+            }
+            _ => {
                 if ends_a_block_before_10(node)
                     && let Some(depth) = cx.state.depths.last_mut()
                 {
                     *depth -= 1;
                 }
-            });
-            return State::default();
+            }
         }
-        on.stmts(statements, Self::check);
-        State::default()
     }
 }

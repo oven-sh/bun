@@ -17,8 +17,24 @@ const UNEXPECTED_LINE_BREAK: Message =
 const MISSING_LINE_BREAK: Message =
     Message::new("missingLineBreak", "There should be a line break after this argument.");
 
-impl FunctionCallArgumentNewline {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for FunctionCallArgumentNewline {
+    const META: Meta = Meta::eslint("function-call-argument-newline", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]);
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        FunctionCallArgumentNewline {
+            mode: match options.str(0) {
+                Some("never") => Mode::Never,
+                Some("consistent") => Mode::Consistent,
+                _ => Mode::Always,
+            },
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let (ExprKind::Call(call) | ExprKind::New(call)) = e.kind() else {
             return;
         };
@@ -48,26 +64,5 @@ impl FunctionCallArgumentNewline {
             cx.report(between, message)
                 .fix(|fixer| (before.kind() != TokenKind::Line).then(|| fixer.replace(between, separator)));
         }
-    }
-}
-
-impl Rule for FunctionCallArgumentNewline {
-    const META: Meta = Meta::eslint("function-call-argument-newline", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        FunctionCallArgumentNewline {
-            mode: match options.str(0) {
-                Some("never") => Mode::Never,
-                Some("consistent") => Mode::Consistent,
-                _ => Mode::Always,
-            },
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Call, ExprTag::New], Self::check);
     }
 }

@@ -17,28 +17,32 @@ pub struct State<'a> {
 
 impl Rule for NoProcessExit {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-process-exit", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoProcessExit
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         // Not in what has a hashbang.
         if file.mentions("exit") && file.mentions("process") && !file.text().starts_with(b"#!") {
-            on.exprs([ExprTag::Call], |_, e, cx| {
-                if !e.as_call().is_some_and(|it| is_method_call(it, Some(&["process"]), Some(&["exit"]), None, None)) {
-                    return;
-                }
-                let file = cx.file();
-                if !*cx.state.is_worker_threads_imported.get_or_insert_with(|| is_worker_threads_imported(file))
-                    && cx.state.process_event_handlers.find(Node::Expr(e), is_process_event_handler).is_none()
-                {
-                    cx.report(e, NO_PROCESS_EXIT);
-                }
-            });
+            Some(State::default())
+        } else {
+            None
         }
-        State::default()
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if !e.as_call().is_some_and(|it| is_method_call(it, Some(&["process"]), Some(&["exit"]), None, None)) {
+            return;
+        }
+        let file = cx.file();
+        if !*cx.state.is_worker_threads_imported.get_or_insert_with(|| is_worker_threads_imported(file))
+            && cx.state.process_event_handlers.find(Node::Expr(e), is_process_event_handler).is_none()
+        {
+            cx.report(e, NO_PROCESS_EXIT);
+        }
     }
 }
 

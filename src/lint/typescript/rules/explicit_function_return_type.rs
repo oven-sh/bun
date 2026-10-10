@@ -218,6 +218,7 @@ fn oxlint_returns_functions(func: Func) -> bool {
 
 impl Rule for ExplicitFunctionReturnType {
     const META: Meta = Meta::typescript("explicit-function-return-type", Kind::Problem);
+    const ON: On = On::new().funcs();
     /// For oxlint: whether what is around a node has a return type.
     type State<'a> = AncestorMemo<'a, bool>;
 
@@ -243,8 +244,11 @@ impl Rule for ExplicitFunctionReturnType {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        on.funcs(Self::check);
-        AncestorMemo::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(AncestorMemo::default())
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(func, cx);
     }
 }

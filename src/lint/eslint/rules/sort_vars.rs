@@ -97,8 +97,20 @@ impl SortVars {
             });
         }
     }
+}
 
-    fn check<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for SortVars {
+    const META: Meta = Meta::eslint("sort-vars", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().stmts(&[StmtTag::Var]);
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        SortVars {
+            ignore_case: options.object(0).bool_or("ignoreCase", false),
+        }
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let StmtKind::Var(all) = statement.kind() else {
             return;
         };
@@ -127,20 +139,5 @@ impl SortVars {
             }
             is_fixed = true;
         }
-    }
-}
-
-impl Rule for SortVars {
-    const META: Meta = Meta::eslint("sort-vars", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        SortVars {
-            ignore_case: options.object(0).bool_or("ignoreCase", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Var], Self::check);
     }
 }

@@ -190,41 +190,6 @@ impl ArrayCallbackReturn {
             .data("arrayMethodName", full_method_name(array_method_name))
     }
 
-    fn check_function<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        if !matches!(func.kind(), FnKind::Expr | FnKind::Arrow) {
-            return;
-        }
-        let Some((method, callee)) = get_array_method_name(func, &mut cx.state) else {
-            return;
-        };
-        if method == "forEach" {
-            if self.check_for_each {
-                self.check_for_each_callback(func, callee, cx);
-            }
-            return;
-        }
-        if cx.language().is_oxlint {
-            return self.check_as_oxlint(func, method, cx);
-        }
-        let mut has_return = false;
-        for statement in func.returns() {
-            has_return = true;
-            if !self.allow_implicit && matches!(statement.kind(), StmtKind::Return(None)) {
-                Self::report(cx, statement, EXPECTED_RETURN_VALUE, func, method);
-            }
-        }
-        // If the end is reachable, there are paths which do not return or throw.
-        let FnBody::Block(body) = func.body() else {
-            return;
-        };
-        let ends_with_jump =
-            matches!(body.last().map(Stmt::tag), Some(StmtTag::Return | StmtTag::Throw));
-        if !ends_with_jump && func.is_end_reachable() {
-            let message = if has_return { EXPECTED_AT_END } else { EXPECTED_INSIDE };
-            Self::report(cx, ast_utils::get_function_head_loc(func), message, func, method);
-        }
-    }
-
     /// oxlint reports a callback once: at its body, or at its head if it ends with an `if` without `else` or a `switch`
     /// without `default`.
     fn check_as_oxlint<'a>(&self, func: Func<'a>, method: &str, cx: &Cx<'a, Self>) {
@@ -325,6 +290,7 @@ impl ArrayCallbackReturn {
 
 impl Rule for ArrayCallbackReturn {
     const META: Meta = Meta::eslint("array-callback-return", Kind::Problem).has_suggestions();
+    const ON: On = On::new().funcs();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -336,10 +302,45 @@ impl Rule for ArrayCallbackReturn {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        if file.has_exprs([ExprTag::Call]) {
-            on.funcs(Self::check_function);
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+        if !file.has_exprs([ExprTag::Call]) {
+            return None;
         }
-        State::default()
+        Some(State::default())
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if !matches!(func.kind(), FnKind::Expr | FnKind::Arrow) {
+            return;
+        }
+        let Some((method, callee)) = get_array_method_name(func, &mut cx.state) else {
+            return;
+        };
+        if method == "forEach" {
+            if self.check_for_each {
+                self.check_for_each_callback(func, callee, cx);
+            }
+            return;
+        }
+        if cx.language().is_oxlint {
+            return self.check_as_oxlint(func, method, cx);
+        }
+        let mut has_return = false;
+        for statement in func.returns() {
+            has_return = true;
+            if !self.allow_implicit && matches!(statement.kind(), StmtKind::Return(None)) {
+                Self::report(cx, statement, EXPECTED_RETURN_VALUE, func, method);
+            }
+        }
+        // If the end is reachable, there are paths which do not return or throw.
+        let FnBody::Block(body) = func.body() else {
+            return;
+        };
+        let ends_with_jump =
+            matches!(body.last().map(Stmt::tag), Some(StmtTag::Return | StmtTag::Throw));
+        if !ends_with_jump && func.is_end_reachable() {
+            let message = if has_return { EXPECTED_AT_END } else { EXPECTED_INSIDE };
+            Self::report(cx, ast_utils::get_function_head_loc(func), message, func, method);
+        }
     }
 }

@@ -9,18 +9,19 @@ pub struct PreferHooksOnTop;
 
 impl Rule for PreferHooksOnTop {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "prefer-hooks-on-top", Kind::Suggestion);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferHooksOnTop
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if jest::may_have_possible_jest_call_node(file) {
-            on.finish(|_, cx| {
-                let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
-                prefer_hooks_on_top::run_once(&ctx);
-            });
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        jest::may_have_possible_jest_call_node(file).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        prefer_hooks_on_top::run_once(&ctx);
     }
 }

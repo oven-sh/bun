@@ -73,7 +73,8 @@ impl Rule for ConsistentTypeDefinitions {
     const META: Meta = Meta::typescript("consistent-type-definitions", Kind::Suggestion)
         .fixable(Fixable::Code)
         .presets(Presets::STYLISTIC);
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::Interface, StmtTag::TypeAlias]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         ConsistentTypeDefinitions {
@@ -81,34 +82,28 @@ impl Rule for ConsistentTypeDefinitions {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         if self.prefers_type {
-            on.stmts([StmtTag::Interface], |_, statement, cx| {
-                let StmtKind::Interface(interface) = statement.kind() else {
-                    return;
-                };
-                let report = cx.report(place(interface.name(), "interface", cx), TYPE_OVER_INTERFACE);
-                let fix = |fixer: Fixer<'a>| fix_interface(fixer, statement, interface);
-                match is_within_declare_global(statement) {
-                    false => report.fix(fix),
-                    // For oxlint the fix is dangerous there.
-                    true if cx.language().is_oxlint => report.fix_dangerously(fix),
-                    true => report,
-                };
-                // oxlint comes to it twice: as what is exported and as the interface. The second fix is in the first.
-                if cx.language().is_oxlint && statement.is_default_export() {
-                    cx.report(place(interface.name(), "interface", cx), TYPE_OVER_INTERFACE);
-                }
-            });
-        } else {
-            on.stmts([StmtTag::TypeAlias], |_, statement, cx| {
-                if let StmtKind::TypeAlias(alias) = statement.kind()
-                    && alias.ty().tag() == TypeTag::Object
-                {
-                    cx.report(place(alias.name(), "type", cx), INTERFACE_OVER_TYPE)
-                        .fix(|fixer| fix_type_alias(fixer, statement, alias));
-                }
-            });
+            let StmtKind::Interface(interface) = statement.kind() else {
+                return;
+            };
+            let report = cx.report(place(interface.name(), "interface", cx), TYPE_OVER_INTERFACE);
+            let fix = |fixer: Fixer<'a>| fix_interface(fixer, statement, interface);
+            match is_within_declare_global(statement) {
+                false => report.fix(fix),
+                // For oxlint the fix is dangerous there.
+                true if cx.language().is_oxlint => report.fix_dangerously(fix),
+                true => report,
+            };
+            // oxlint comes to it twice: as what is exported and as the interface. The second fix is in the first.
+            if cx.language().is_oxlint && statement.is_default_export() {
+                cx.report(place(interface.name(), "interface", cx), TYPE_OVER_INTERFACE);
+            }
+        } else if let StmtKind::TypeAlias(alias) = statement.kind()
+            && alias.ty().tag() == TypeTag::Object
+        {
+            cx.report(place(alias.name(), "type", cx), INTERFACE_OVER_TYPE)
+                .fix(|fixer| fix_type_alias(fixer, statement, alias));
         }
     }
 }

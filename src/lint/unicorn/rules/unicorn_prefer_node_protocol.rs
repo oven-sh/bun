@@ -30,34 +30,41 @@ fn check_argument<'a>(e: Option<Expr<'a>>, cx: &Cx<'a, PreferNodeProtocol>) {
 
 impl Rule for PreferNodeProtocol {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-node-protocol", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::ImportCall, ExprTag::Call])
+        .stmts(&[StmtTag::Import, StmtTag::ExportNamed, StmtTag::ImportEquals]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         PreferNodeProtocol
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        on.stmts([StmtTag::Import, StmtTag::ExportNamed, StmtTag::ImportEquals], |_, stmt, cx| {
-            let module_name = match stmt.kind() {
-                StmtKind::Import(import) => Some(import.spec()),
-                StmtKind::ExportNamed(export) => export.spec(),
-                StmtKind::ImportEquals(import) => match import.target() {
-                    ImportEqualsTarget::Require(module_name) => module_name,
-                    ImportEqualsTarget::Entity(_) => None,
-                },
-                _ => None,
-            };
-            if module_name.is_some() {
-                check(module_name, stmt.module_specifier_span(), cx);
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let module_name = match stmt.kind() {
+            StmtKind::Import(import) => Some(import.spec()),
+            StmtKind::ExportNamed(export) => export.spec(),
+            StmtKind::ImportEquals(import) => match import.target() {
+                ImportEqualsTarget::Require(module_name) => module_name,
+                ImportEqualsTarget::Entity(_) => None,
+            },
+            _ => None,
+        };
+        if module_name.is_some() {
+            check(module_name, stmt.module_specifier_span(), cx);
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::ImportCall => {
+                if let ExprKind::ImportCall { args } = e.kind() {
+                    check_argument(args.first(), cx);
+                }
             }
-        });
-        on.exprs([ExprTag::ImportCall], |_, e, cx| {
-            if let ExprKind::ImportCall { args } = e.kind() {
-                check_argument(args.first(), cx);
-            }
-        });
-        if file.mentions("require") {
-            on.exprs([ExprTag::Call], |_, e, cx| {
+            ExprTag::Call => {
+                if !cx.file().mentions("require") {
+                    return;
+                }
                 if let Some(call) = e.as_call()
                     && call.args().len() == 1
                     && !call.is_optional()
@@ -65,7 +72,8 @@ impl Rule for PreferNodeProtocol {
                 {
                     check_argument(call.args().first(), cx);
                 }
-            });
+            }
+            _ => {}
         }
     }
 }

@@ -225,6 +225,36 @@ impl IdDenylist {
 
 impl Rule for IdDenylist {
     const META: Meta = Meta::eslint("id-denylist", Kind::Suggestion);
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Ident, ExprTag::Dot, ExprTag::PrivateIdentifier])
+        .pats(&[PatTag::Ident])
+        .props()
+        .members()
+        .funcs()
+        .classes()
+        .stmts(&[
+            StmtTag::Labeled,
+            StmtTag::Break,
+            StmtTag::Continue,
+            StmtTag::Import,
+            StmtTag::ExportStar,
+            StmtTag::Interface,
+            StmtTag::TypeAlias,
+            StmtTag::Enum,
+            StmtTag::Module,
+            StmtTag::ImportEquals,
+            StmtTag::ExportAsNamespace,
+        ])
+        .import_specs()
+        .export_specs()
+        .types(&[
+            TypeTag::Ref,
+            TypeTag::Import,
+            TypeTag::Predicate,
+            TypeTag::Tuple,
+        ])
+        .type_params()
+        .enum_members();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -233,87 +263,96 @@ impl Rule for IdDenylist {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<()> {
         if self.names.is_empty() {
-            return;
+            return None;
         }
-        on.exprs([ExprTag::Ident], Self::check_reference);
-        on.exprs([ExprTag::Dot], Self::check_property_name);
-        on.exprs([ExprTag::PrivateIdentifier], |rule, e, cx| {
-            if let ExprKind::PrivateIdentifier(name) = e.kind()
-                && rule.is_restricted(name)
-            {
-                report(e.span(), name.bytes(), cx);
-            }
-        });
-        on.pats([PatTag::Ident], |rule, pat, cx| {
-            if let Some(name) = pat.as_ident()
-                && rule.is_restricted(name)
-            {
-                if !cx.language().is_oxlint {
-                    return report(utils::estree_span(pat.into()), name.bytes(), cx);
-                }
-                // For oxlint the type annotation is not part of it, and the parameter of an index signature has no
-                // name.
-                let is_of_index_signature = matches!(pat.parent(), Node::Param(param)
-                    if param.func().is_some_and(|it| it.kind() == FnKind::IndexSignature));
-                if !is_of_index_signature {
-                    report(pat.span(), name.bytes(), cx);
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Ident => self.check_reference(e, cx),
+            ExprTag::Dot => self.check_property_name(e, cx),
+            ExprTag::PrivateIdentifier => {
+                if let ExprKind::PrivateIdentifier(name) = e.kind()
+                    && self.is_restricted(name)
+                {
+                    report(e.span(), name.bytes(), cx);
                 }
             }
-        });
-        on.props(Self::check_property);
-        on.members(|rule, member, cx| match member.key() {
-            Some(key) => rule.check_key(key, cx),
+            _ => {}
+        }
+    }
+
+    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(name) = pat.as_ident()
+            && self.is_restricted(name)
+        {
+            if !cx.language().is_oxlint {
+                return report(utils::estree_span(pat.into()), name.bytes(), cx);
+            }
+            // For oxlint the type annotation is not part of it, and the parameter of an index signature has no
+            // name.
+            let is_of_index_signature = matches!(pat.parent(), Node::Param(param)
+                if param.func().is_some_and(|it| it.kind() == FnKind::IndexSignature));
+            if !is_of_index_signature {
+                report(pat.span(), name.bytes(), cx);
+            }
+        }
+    }
+
+    fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_property(prop, cx);
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        match member.key() {
+            Some(key) => self.check_key(key, cx),
             None => {
                 if let Some(keyword) = member.constructor_keyword() {
-                    rule.check_name(keyword, cx);
+                    self.check_name(keyword, cx);
                 }
             }
-        });
-        on.funcs(|rule, func, cx| {
-            if let Some(name) = func.name() {
-                rule.check_name(name, cx);
-            }
-        });
-        on.classes(|rule, class, cx| {
-            if let Some(name) = class.name() {
-                rule.check_name(name, cx);
-            }
-        });
-        on.stmts(
-            [
-                StmtTag::Labeled,
-                StmtTag::Break,
-                StmtTag::Continue,
-                StmtTag::Import,
-                StmtTag::ExportStar,
-            ],
-            Self::check_statement,
-        );
-        // The name in the other module is not the user's, unless it is also the local one.
-        on.import_specs(|rule, specifier, cx| rule.check_name(specifier.local(), cx));
-        on.export_specs(Self::check_export_specifier);
-        on.stmts(
-            [
-                StmtTag::Interface,
-                StmtTag::TypeAlias,
-                StmtTag::Enum,
-                StmtTag::Module,
-                StmtTag::ImportEquals,
-                StmtTag::ExportAsNamespace,
-            ],
-            Self::check_statement,
-        );
-        on.types(
-            [TypeTag::Ref, TypeTag::Import, TypeTag::Predicate, TypeTag::Tuple],
-            Self::check_type,
-        );
-        on.type_params(|rule, param, cx| rule.check_name(param.name(), cx));
-        on.enum_members(|rule, member, cx| {
-            if let Some(key) = member.key() {
-                rule.check_key(key, cx);
-            }
-        });
+        }
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(name) = func.name() {
+            self.check_name(name, cx);
+        }
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(name) = class.name() {
+            self.check_name(name, cx);
+        }
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_statement(statement, cx);
+    }
+
+    // The name in the other module is not the user's, unless it is also the local one.
+    fn import_spec<'a>(&self, specifier: ImportSpec<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_name(specifier.local(), cx);
+    }
+
+    fn export_spec<'a>(&self, specifier: ExportSpec<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_export_specifier(specifier, cx);
+    }
+
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_type(ty, cx);
+    }
+
+    fn type_param<'a>(&self, param: TypeParam<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_name(param.name(), cx);
+    }
+
+    fn enum_member<'a>(&self, member: EnumMember<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(key) = member.key() {
+            self.check_key(key, cx);
+        }
     }
 }

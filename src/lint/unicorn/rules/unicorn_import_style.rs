@@ -31,9 +31,19 @@ pub struct ImportStyle {
 
 const IMPORT_STYLE: Message = Message::new("", "Use {{allowed_styles}} import for module `{{module_name}}`.");
 
+/// What is looked at in this file.
+pub struct State {
+    checks_require: bool,
+    checks_declarators: bool,
+}
+
 impl Rule for ImportStyle {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "import-style", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new()
+        .stmts(&[StmtTag::Import, StmtTag::ExportStar, StmtTag::ExportNamed, StmtTag::Expr])
+        .exprs(&[ExprTag::ImportCall])
+        .var_decls();
+    type State<'a> = State;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -67,77 +77,93 @@ impl Rule for ImportStyle {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if self.check_import {
-            on.stmts([StmtTag::Import], |rule, stmt, cx| {
-                if let StmtKind::Import(import_decl) = stmt.kind() {
-                    let actual_styles = || get_actual_import_declaration_styles(import_decl);
-                    rule.report_if_needed(stmt.span(), import_decl.spec().bytes(), actual_styles, false, cx);
-                }
-            });
-        }
-        if self.check_export_from {
-            on.stmts([StmtTag::ExportStar, StmtTag::ExportNamed], |rule, stmt, cx| match stmt.kind() {
-                StmtKind::ExportStar { spec: Some(source), .. } => {
-                    rule.report_if_needed(stmt.span(), source.bytes(), || NAMESPACE, false, cx);
-                }
-                StmtKind::ExportNamed(export_decl) if export_decl.has_from() => {
-                    let is_default = |it: ExportSpec| !it.exported().is_string() && it.exported().name().is("default");
-                    let style = |it: ExportSpec| if is_default(it) { DEFAULT_STYLE } else { NAMED };
-                    let actual_styles = || match export_decl.items().is_empty() {
-                        true => UNASSIGNED,
-                        false => export_decl.items().iter().fold(0, |styles, it| styles | style(it)),
-                    };
-                    if let Some(source) = export_decl.spec() {
-                        rule.report_if_needed(stmt.span(), source.bytes(), actual_styles, false, cx);
-                    }
-                }
-                _ => {}
-            });
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State> {
         let checks_require = self.check_require && file.mentions("require");
-        if self.check_dynamic_import {
-            on.exprs([ExprTag::ImportCall], |rule, e, cx| {
-                if let ExprKind::ImportCall { args } = e.kind()
-                    && !is_assigned_dynamic_import(e)
-                    && let Some(source) = args.first().and_then(get_module_name)
-                {
-                    rule.report_if_needed(e.span(), &source, || UNASSIGNED, false, cx);
-                }
-            });
+        Some(State {
+            checks_require,
+            checks_declarators: checks_require || self.check_dynamic_import && file.has_exprs([ExprTag::ImportCall]),
+        })
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match stmt.tag() {
+            StmtTag::Import if self.check_import => self.import(stmt, cx),
+            StmtTag::ExportStar | StmtTag::ExportNamed if self.check_export_from => self.export_from(stmt, cx),
+            StmtTag::Expr if cx.state.checks_require => self.unassigned_require(stmt, cx),
+            _ => {}
         }
-        if checks_require {
-            on.stmts([StmtTag::Expr], |rule, statement, cx| {
-                if let StmtKind::Expr(e) = statement.kind()
-                    && let Some(source) = plain(e).and_then(Expr::as_call).and_then(get_require_module_name)
-                {
-                    rule.report_if_needed(e.span(), &source, || UNASSIGNED, true, cx);
-                }
-            });
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if !self.check_dynamic_import {
+            return;
         }
-        if checks_require || self.check_dynamic_import && file.has_exprs([ExprTag::ImportCall]) {
-            on.var_decls(|rule, declarator, cx| {
-                let Some(init) = declarator.init().and_then(plain) else {
-                    return;
-                };
-                let (source, is_require) = match init.kind() {
-                    ExprKind::Await(argument) if rule.check_dynamic_import => match plain(argument).map(Expr::kind) {
-                        Some(ExprKind::ImportCall { args }) => (args.first().and_then(get_module_name), false),
-                        _ => return,
-                    },
-                    ExprKind::Call(call_expr) if rule.check_require => (get_require_module_name(call_expr), true),
-                    _ => return,
-                };
-                if let Some(source) = source {
-                    let actual_styles = || get_actual_assignment_target_styles(declarator.pat());
-                    rule.report_if_needed(declarator.span(), &source, actual_styles, is_require, cx);
-                }
-            });
+        if let ExprKind::ImportCall { args } = e.kind()
+            && !is_assigned_dynamic_import(e)
+            && let Some(source) = args.first().and_then(get_module_name)
+        {
+            self.report_if_needed(e.span(), &source, || UNASSIGNED, false, cx);
+        }
+    }
+
+    fn var_decl<'a>(&self, declarator: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        if !cx.state.checks_declarators {
+            return;
+        }
+        let Some(init) = declarator.init().and_then(plain) else {
+            return;
+        };
+        let (source, is_require) = match init.kind() {
+            ExprKind::Await(argument) if self.check_dynamic_import => match plain(argument).map(Expr::kind) {
+                Some(ExprKind::ImportCall { args }) => (args.first().and_then(get_module_name), false),
+                _ => return,
+            },
+            ExprKind::Call(call_expr) if self.check_require => (get_require_module_name(call_expr), true),
+            _ => return,
+        };
+        if let Some(source) = source {
+            let actual_styles = || get_actual_assignment_target_styles(declarator.pat());
+            self.report_if_needed(declarator.span(), &source, actual_styles, is_require, cx);
         }
     }
 }
 
 impl ImportStyle {
+    fn import<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if let StmtKind::Import(import_decl) = stmt.kind() {
+            let actual_styles = || get_actual_import_declaration_styles(import_decl);
+            self.report_if_needed(stmt.span(), import_decl.spec().bytes(), actual_styles, false, cx);
+        }
+    }
+
+    fn export_from<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match stmt.kind() {
+            StmtKind::ExportStar { spec: Some(source), .. } => {
+                self.report_if_needed(stmt.span(), source.bytes(), || NAMESPACE, false, cx);
+            }
+            StmtKind::ExportNamed(export_decl) if export_decl.has_from() => {
+                let is_default = |it: ExportSpec| !it.exported().is_string() && it.exported().name().is("default");
+                let style = |it: ExportSpec| if is_default(it) { DEFAULT_STYLE } else { NAMED };
+                let actual_styles = || match export_decl.items().is_empty() {
+                    true => UNASSIGNED,
+                    false => export_decl.items().iter().fold(0, |styles, it| styles | style(it)),
+                };
+                if let Some(source) = export_decl.spec() {
+                    self.report_if_needed(stmt.span(), source.bytes(), actual_styles, false, cx);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn unassigned_require<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if let StmtKind::Expr(e) = statement.kind()
+            && let Some(source) = plain(e).and_then(Expr::as_call).and_then(get_require_module_name)
+        {
+            self.report_if_needed(e.span(), &source, || UNASSIGNED, true, cx);
+        }
+    }
+
     fn report_if_needed(
         &self,
         span: Span,

@@ -80,6 +80,7 @@ impl ExplicitLengthCheck {
 
 impl Rule for ExplicitLengthCheck {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "explicit-length-check", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Dot]);
     /// See [`is_boolean_node`].
     type State<'a> = AncestorMemo<'a, bool>;
 
@@ -87,16 +88,14 @@ impl Rule for ExplicitLengthCheck {
         ExplicitLengthCheck { is_non_zero_not_equal: options.object(0).str("non-zero") == Some("not-equal") }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if file.mentions_any(&["length", "size"]) {
-            on.exprs([ExprTag::Dot], Self::check);
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        if !file.mentions_any(&["length", "size"]) {
+            return None;
         }
-        AncestorMemo::default()
+        Some(AncestorMemo::default())
     }
-}
 
-impl ExplicitLengthCheck {
-    fn check<'a>(&self, member: Expr<'a>, cx: &mut Cx<'a, Self>) {
+    fn expr<'a>(&self, member: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Dot { obj, name, chain: Chain::No } = member.kind() else {
             return;
         };

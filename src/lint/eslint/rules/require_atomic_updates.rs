@@ -578,6 +578,7 @@ impl RequireAtomicUpdates {
 
 impl Rule for RequireAtomicUpdates {
     const META: Meta = Meta::eslint("require-atomic-updates", Kind::Problem);
+    const ON: On = On::new().funcs();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -586,15 +587,17 @@ impl Rule for RequireAtomicUpdates {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         // Nothing is outdated without one of them.
-        if file.has_exprs([ExprTag::Await, ExprTag::Yield]) {
-            on.funcs(|rule, func, cx| {
-                if (func.is_async() || func.is_generator()) && func.has_body() {
-                    rule.check_function(func, cx);
-                }
-            });
+        if !file.has_exprs([ExprTag::Await, ExprTag::Yield]) {
+            return None;
         }
-        State::default()
+        Some(State::default())
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if (func.is_async() || func.is_generator()) && func.has_body() {
+            self.check_function(func, cx);
+        }
     }
 }

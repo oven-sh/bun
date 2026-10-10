@@ -36,6 +36,7 @@ fn function_of(symbol: Symbol<'_>) -> Option<Func<'_>> {
 
 impl Rule for ReactNoLocalRenderHelpers {
     const META: Meta = Meta::plugin(Plugin::Bun, "react-no-local-render-helpers", Kind::Suggestion);
+    const ON: On = On::new().symbols();
     /// The innermost JSX element around a node.
     type State<'a> = AncestorMemo<'a, Expr<'a>>;
 
@@ -50,28 +51,30 @@ impl Rule for ReactNoLocalRenderHelpers {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if file.has_exprs([ExprTag::Jsx]) {
-            on.symbols(|rule, symbol, cx| {
-                if !rule.is_render_name(symbol.name().bytes()) {
-                    return;
-                }
-                let Some(around) = function_of(symbol).and_then(Func::enclosing) else {
-                    return;
-                };
-                // It is called, or it is handed to what calls it.
-                let uses = symbol.references().filter_map(Reference::expr);
-                let mut uses = uses.filter(|it| it.parent().as_expr().is_some_and(|it| it.tag() == ExprTag::Call));
-                let element = |_, parent: Node<'a>| parent.as_expr().filter(|it| it.tag() == ExprTag::Jsx);
-                let is_in_jsx = uses.any(|it| {
-                    let found = cx.state.find(Node::Expr(it), element);
-                    found.is_some_and(|found| around.span().contains(found.span()))
-                });
-                if is_in_jsx && let Some(span) = symbol.declarations().next().and_then(Declaration::name_span) {
-                    cx.report(span, LOCAL_HELPER).data("name", symbol.name());
-                }
-            });
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        if !file.has_exprs([ExprTag::Jsx]) {
+            return None;
         }
-        AncestorMemo::default()
+        Some(AncestorMemo::default())
+    }
+
+    fn symbol<'a>(&self, symbol: Symbol<'a>, cx: &mut Cx<'a, Self>) {
+        if !self.is_render_name(symbol.name().bytes()) {
+            return;
+        }
+        let Some(around) = function_of(symbol).and_then(Func::enclosing) else {
+            return;
+        };
+        // It is called, or it is handed to what calls it.
+        let uses = symbol.references().filter_map(Reference::expr);
+        let mut uses = uses.filter(|it| it.parent().as_expr().is_some_and(|it| it.tag() == ExprTag::Call));
+        let element = |_, parent: Node<'a>| parent.as_expr().filter(|it| it.tag() == ExprTag::Jsx);
+        let is_in_jsx = uses.any(|it| {
+            let found = cx.state.find(Node::Expr(it), element);
+            found.is_some_and(|found| around.span().contains(found.span()))
+        });
+        if is_in_jsx && let Some(span) = symbol.declarations().next().and_then(Declaration::name_span) {
+            cx.report(span, LOCAL_HELPER).data("name", symbol.name());
+        }
     }
 }

@@ -367,8 +367,27 @@ impl MultilineCommentStyle {
             Style::BareBlock => self.check_bare_block(group, cx),
         }
     }
+}
 
-    fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
+impl Rule for MultilineCommentStyle {
+    const META: Meta = Meta::eslint("multiline-comment-style", Kind::Suggestion)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new().finish();
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        MultilineCommentStyle {
+            style: match options.str(0) {
+                Some("separate-lines") => Style::SeparateLines,
+                Some("bare-block") => Style::BareBlock,
+                _ => Style::StarredBlock,
+            },
+            check_jsdoc: options.object(1).bool_or("checkJSDoc", false),
+        }
+    }
+
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
         let mut group: Option<Group<'a>> = None;
         for comment in file.comments() {
@@ -404,27 +423,5 @@ impl MultilineCommentStyle {
         if let Some(finished) = group {
             self.check_group(finished, cx);
         }
-    }
-}
-
-impl Rule for MultilineCommentStyle {
-    const META: Meta = Meta::eslint("multiline-comment-style", Kind::Suggestion)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        MultilineCommentStyle {
-            style: match options.str(0) {
-                Some("separate-lines") => Style::SeparateLines,
-                Some("bare-block") => Style::BareBlock,
-                _ => Style::StarredBlock,
-            },
-            check_jsdoc: options.object(1).bool_or("checkJSDoc", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.finish(Self::check);
     }
 }

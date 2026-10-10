@@ -283,8 +283,30 @@ impl SortKeys {
         };
         order != Ordering::Greater
     }
+}
 
-    fn check<'a>(&self, object: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for SortKeys {
+    const META: Meta = Meta::eslint("sort-keys", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Object]);
+    type State<'a> = Fixes<'a>;
+
+    fn new(options: &Options) -> Self {
+        let object = options.object(1);
+        SortKeys {
+            is_descending: options.str(0) == Some("desc"),
+            is_insensitive: !object.bool_or("caseSensitive", true),
+            is_natural: object.bool_or("natural", false),
+            min_keys: object.usize("minKeys").unwrap_or(2),
+            allows_line_separated_groups: object.bool_or("allowLineSeparatedGroups", false),
+            ignores_computed_keys: object.bool_or("ignoreComputedKeys", false),
+        }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Fixes<'a>> {
+        Some(Fixes::default())
+    }
+
+    fn expr<'a>(&self, object: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Object(props) = object.kind() else {
             return;
         };
@@ -338,27 +360,5 @@ impl SortKeys {
                 }
             }
         }
-    }
-}
-
-impl Rule for SortKeys {
-    const META: Meta = Meta::eslint("sort-keys", Kind::Suggestion);
-    type State<'a> = Fixes<'a>;
-
-    fn new(options: &Options) -> Self {
-        let object = options.object(1);
-        SortKeys {
-            is_descending: options.str(0) == Some("desc"),
-            is_insensitive: !object.bool_or("caseSensitive", true),
-            is_natural: object.bool_or("natural", false),
-            min_keys: object.usize("minKeys").unwrap_or(2),
-            allows_line_separated_groups: object.bool_or("allowLineSeparatedGroups", false),
-            ignores_computed_keys: object.bool_or("ignoreComputedKeys", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Fixes<'a> {
-        on.exprs([ExprTag::Object], Self::check);
-        Fixes::default()
     }
 }

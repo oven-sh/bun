@@ -136,6 +136,7 @@ fn is_inside_declared_namespace<'a>(statement: Stmt<'a>, state: &mut State<'a>) 
 
 impl Rule for InitDeclarations {
     const META: Meta = Meta::eslint("init-declarations", Kind::Suggestion);
+    const ON: On = On::new().var_decls();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -144,18 +145,19 @@ impl Rule for InitDeclarations {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
-        on.var_decls(|rule, decl, cx| {
-            let Some(found) = rule.config.check(decl) else {
-                return;
-            };
-            if decl.flags().contains(Flags::AMBIENT)
-                && (has_declare(found.declaration) || is_inside_declared_namespace(found.declaration, &mut cx.state))
-            {
-                return;
-            }
-            cx.report(decl, found.message).data("idName", found.name);
-        });
-        State::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn var_decl<'a>(&self, decl: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(found) = self.config.check(decl) else {
+            return;
+        };
+        if decl.flags().contains(Flags::AMBIENT)
+            && (has_declare(found.declaration) || is_inside_declared_namespace(found.declaration, &mut cx.state))
+        {
+            return;
+        }
+        cx.report(decl, found.message).data("idName", found.name);
     }
 }

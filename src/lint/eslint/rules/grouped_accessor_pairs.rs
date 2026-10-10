@@ -159,7 +159,12 @@ impl GroupedAccessorPairs {
 
 impl Rule for GroupedAccessorPairs {
     const META: Meta = Meta::eslint("grouped-accessor-pairs", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Object])
+        .classes()
+        .types(&[TypeTag::Object])
+        .stmts(&[StmtTag::Interface]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         GroupedAccessorPairs {
@@ -172,38 +177,43 @@ impl Rule for GroupedAccessorPairs {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Object], |rule, e, cx| {
-            if let ExprKind::Object(props) = e.kind() {
-                rule.check_list(
-                    &mut props.iter().enumerate().filter_map(|(index, prop)| Accessor::of_prop(index, prop)),
-                    cx,
-                );
-            }
-        });
-        on.classes(|rule, class, cx| {
-            for is_static in [false, true] {
-                // An abstract accessor is not a `MethodDefinition`.
-                let mut accessors = class.members().iter().enumerate().filter_map(move |(index, member)| {
-                    let flags = member.flags();
-                    (flags.contains(Flags::STATIC) == is_static && !flags.contains(Flags::ABSTRACT))
-                        .then(|| Accessor::of_member(index, member))
-                        .flatten()
-                });
-                rule.check_list(&mut accessors, cx);
-            }
-        });
-        if self.enforce_for_ts_types {
-            on.types([TypeTag::Object], |rule, ty, cx| {
-                if let TypeKind::Object(members) = ty.kind() {
-                    rule.check_signatures(members, cx);
-                }
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let ExprKind::Object(props) = e.kind() {
+            self.check_list(
+                &mut props.iter().enumerate().filter_map(|(index, prop)| Accessor::of_prop(index, prop)),
+                cx,
+            );
+        }
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if !self.enforce_for_ts_types {
+            return;
+        }
+        if let StmtKind::Interface(interface) = statement.kind() {
+            self.check_signatures(interface.members(), cx);
+        }
+    }
+
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        if !self.enforce_for_ts_types {
+            return;
+        }
+        if let TypeKind::Object(members) = ty.kind() {
+            self.check_signatures(members, cx);
+        }
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        for is_static in [false, true] {
+            // An abstract accessor is not a `MethodDefinition`.
+            let mut accessors = class.members().iter().enumerate().filter_map(move |(index, member)| {
+                let flags = member.flags();
+                (flags.contains(Flags::STATIC) == is_static && !flags.contains(Flags::ABSTRACT))
+                    .then(|| Accessor::of_member(index, member))
+                    .flatten()
             });
-            on.stmts([StmtTag::Interface], |rule, statement, cx| {
-                if let StmtKind::Interface(interface) = statement.kind() {
-                    rule.check_signatures(interface.members(), cx);
-                }
-            });
+            self.check_list(&mut accessors, cx);
         }
     }
 }

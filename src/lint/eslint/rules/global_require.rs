@@ -31,6 +31,7 @@ fn is_shadowed(callee: Expr<'_>) -> bool {
 
 impl Rule for GlobalRequire {
     const META: Meta = Meta::eslint("global-require", Kind::Suggestion).deprecated();
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     /// What has an ancestor that is not acceptable.
     type State<'a> = AncestorMemo<'a, ()>;
 
@@ -38,21 +39,22 @@ impl Rule for GlobalRequire {
         GlobalRequire
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if !file.mentions("require") {
-            return AncestorMemo::default();
+            return None;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(call) = e.as_call() else {
-                return;
-            };
-            if call.callee().is_ident("require")
-                && cx.state.find(Node::Expr(e), |_, it| (!is_acceptable_parent(it)).then_some(())).is_some()
-                && !is_shadowed(call.callee())
-            {
-                cx.report(e, UNEXPECTED);
-            }
-        });
-        AncestorMemo::default()
+        Some(AncestorMemo::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call) = e.as_call() else {
+            return;
+        };
+        if call.callee().is_ident("require")
+            && cx.state.find(Node::Expr(e), |_, it| (!is_acceptable_parent(it)).then_some(())).is_some()
+            && !is_shadowed(call.callee())
+        {
+            cx.report(e, UNEXPECTED);
+        }
     }
 }

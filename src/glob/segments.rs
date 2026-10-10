@@ -2,7 +2,9 @@
 
 use crate::braces;
 use crate::node::Program;
+use crate::pattern::{Options, Syntax};
 use crate::read_minimatch;
+use crate::read_minimatch3;
 use crate::unit::{Subject, Text};
 use bun_collections::StringHashMap;
 use bun_collections::smallvec::SmallVec;
@@ -208,7 +210,9 @@ pub(crate) fn has_braces(pattern: &[u8]) -> bool {
 }
 
 /// Braces, split, `levelOneOptimize`, parts. `pattern`: without the `!` at its start. `None`: beyond a limit of `braces.rs`.
-pub(crate) fn read(pattern: &[u8], dot: bool) -> Option<Vec<Expansion>> {
+pub(crate) fn read(pattern: &[u8], options: Options) -> Option<Vec<Expansion>> {
+    // 3.1.5 has no `levelOneOptimize`.
+    let (is_3, dot) = (options.syntax == Syntax::Minimatch3, options.dot);
     let mut globs = match has_braces(pattern) {
         true => braces::expand(pattern)?,
         false => vec![pattern.to_vec()],
@@ -221,10 +225,11 @@ pub(crate) fn read(pattern: &[u8], dot: bool) -> Option<Vec<Expansion>> {
         let mut names: Vec<&[u8]> = Vec::new();
         for name in split_path(glob) {
             let previous = names.last().copied();
-            if name == b"**" && previous.is_some_and(|it| it == b"**") {
+            if !is_3 && name == b"**" && previous.is_some_and(|it| it == b"**") {
                 continue;
             }
-            if name == b".."
+            if !is_3
+                && name == b".."
                 && let Some(previous) = previous
                 && !previous.is_empty()
                 && !matches!(previous, b".." | b"." | b"**")
@@ -237,7 +242,10 @@ pub(crate) fn read(pattern: &[u8], dot: bool) -> Option<Vec<Expansion>> {
         if names.is_empty() {
             names.push(b"");
         }
-        let parts = names.into_iter().map(|it| read_minimatch::part(it, dot));
+        let parts = names.into_iter().map(|it| match is_3 {
+            true => read_minimatch3::part(it, dot),
+            false => read_minimatch::part(it, dot),
+        });
         Expansion::new(parts.collect())
     };
     Some(globs.iter().map(expansion).collect())
@@ -407,6 +415,16 @@ fn match_globstar(
         memo: Vec::new(),
     };
     sections.run(0, at) == Some(true)
+}
+
+/// The same with the option `matchBase`: an expansion of one name is about the last name of the path that is not empty.
+pub(crate) fn matches_base(set: &[Expansion], path: &Candidate<'_>, dot: bool) -> bool {
+    let last = path.names.iter().rfind(|it| !it.is_empty());
+    let name = Candidate::new(last.copied().unwrap_or_default());
+    set.iter().any(|it| {
+        let path = if it.parts.len() == 1 { &name } else { path };
+        path.text.is_none_or(|text| it.can_match(text)) && it.matches_names(path, false, dot)
+    })
 }
 
 /// Whether one of `set` matches. `partial`: the argument of `match`.

@@ -544,6 +544,36 @@ impl IdMatch {
 
 impl Rule for IdMatch {
     const META: Meta = Meta::eslint("id-match", Kind::Suggestion);
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Ident, ExprTag::Dot, ExprTag::PrivateIdentifier])
+        .pats(&[PatTag::Ident, PatTag::Object])
+        .props()
+        .members()
+        .funcs()
+        .stmts(&[
+            StmtTag::Import,
+            StmtTag::Labeled,
+            StmtTag::Break,
+            StmtTag::Continue,
+            StmtTag::ExportStar,
+            StmtTag::Interface,
+            StmtTag::TypeAlias,
+            StmtTag::Enum,
+            StmtTag::Module,
+            StmtTag::ImportEquals,
+            StmtTag::ExportAsNamespace,
+        ])
+        .import_specs()
+        .types(&[
+            TypeTag::Ref,
+            TypeTag::Import,
+            TypeTag::Predicate,
+            TypeTag::Tuple,
+        ])
+        .classes()
+        .export_specs()
+        .type_params()
+        .enum_members();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -559,92 +589,114 @@ impl Rule for IdMatch {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
-        if self.regex.is_none() {
-            return State::default();
-        }
-        on.exprs([ExprTag::Ident], Self::check_reference);
-        on.exprs([ExprTag::Dot], Self::check_property_name);
-        on.exprs([ExprTag::PrivateIdentifier], |rule, e, cx| {
-            if let ExprKind::PrivateIdentifier(name) = e.kind()
-                && rule.is_invalid(name, cx)
-            {
-                rule.report(e.span(), name.bytes(), cx);
-            }
-        });
-        on.pats([PatTag::Ident], Self::check_binding);
-        if !self.ignores_destructuring {
-            on.pats([PatTag::Object], Self::check_keys_of_pattern);
-        }
-        if self.checks_properties || !self.ignores_destructuring {
-            on.props(Self::check_property);
-        }
-        on.members(Self::check_member);
-        on.funcs(|rule, func, cx| {
-            if let Some(name) = func.name()
-                && (!rule.only_declarations || (func.kind() == FnKind::Decl && func.has_body()))
-            {
-                rule.check_name(name, cx);
-            }
-        });
-        on.stmts([StmtTag::Import], |rule, statement, cx| {
-            if let StmtKind::Import(import) = statement.kind() {
-                for name in [import.default(), import.namespace()].into_iter().flatten() {
-                    rule.check_name(name, cx);
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        self.regex.is_some().then(State::default)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Ident => self.check_reference(e, cx),
+            ExprTag::Dot => self.check_property_name(e, cx),
+            ExprTag::PrivateIdentifier => {
+                if let ExprKind::PrivateIdentifier(name) = e.kind()
+                    && self.is_invalid(name, cx)
+                {
+                    self.report(e.span(), name.bytes(), cx);
                 }
             }
-        });
-        on.import_specs(|rule, specifier, cx| {
-            let (imported, local) = (specifier.imported(), specifier.local());
-            rule.check_name(local, cx);
-            if specifier.is_renamed() && imported.name() == local.name() {
-                rule.check_name(imported, cx);
+            _ => {}
+        }
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match statement.tag() {
+            StmtTag::Import => {
+                if let StmtKind::Import(import) = statement.kind() {
+                    for name in [import.default(), import.namespace()].into_iter().flatten() {
+                        self.check_name(name, cx);
+                    }
+                }
             }
-        });
+            _ if self.only_declarations => {}
+            _ => self.check_statement(statement, cx),
+        }
+    }
+
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         if self.checks_properties || !self.only_declarations {
-            on.types(
-                [TypeTag::Ref, TypeTag::Import, TypeTag::Predicate, TypeTag::Tuple],
-                Self::check_type,
-            );
+            self.check_type(ty, cx);
         }
+    }
+
+    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        match pat.tag() {
+            PatTag::Ident => self.check_binding(pat, cx),
+            PatTag::Object if !self.ignores_destructuring => self.check_keys_of_pattern(pat, cx),
+            _ => {}
+        }
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(name) = func.name()
+            && (!self.only_declarations || (func.kind() == FnKind::Decl && func.has_body()))
+        {
+            self.check_name(name, cx);
+        }
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
         if self.only_declarations {
-            return State::default();
+            return;
         }
-        on.classes(|rule, class, cx| {
-            if let Some(name) = class.name() {
-                rule.check_name(name, cx);
-            }
-        });
-        on.stmts(
-            [StmtTag::Labeled, StmtTag::Break, StmtTag::Continue, StmtTag::ExportStar],
-            Self::check_statement,
-        );
-        on.export_specs(|rule, specifier, cx| {
-            match specifier.export().has_from() {
-                true => rule.check_name(specifier.local(), cx),
-                false => rule.check_referencing_name(specifier.local(), cx),
-            }
-            if specifier.is_renamed() {
-                rule.check_name(specifier.exported(), cx);
-            }
-        });
-        on.stmts(
-            [
-                StmtTag::Interface,
-                StmtTag::TypeAlias,
-                StmtTag::Enum,
-                StmtTag::Module,
-                StmtTag::ImportEquals,
-                StmtTag::ExportAsNamespace,
-            ],
-            Self::check_statement,
-        );
-        on.type_params(|rule, param, cx| rule.check_name(param.name(), cx));
-        on.enum_members(|rule, member, cx| {
-            if let Some(key) = member.key() {
-                rule.check_key(key, cx);
-            }
-        });
-        State::default()
+        if let Some(name) = class.name() {
+            self.check_name(name, cx);
+        }
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_member(member, cx);
+    }
+
+    fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        if self.checks_properties || !self.ignores_destructuring {
+            self.check_property(prop, cx);
+        }
+    }
+
+    fn type_param<'a>(&self, param: TypeParam<'a>, cx: &mut Cx<'a, Self>) {
+        if self.only_declarations {
+            return;
+        }
+        self.check_name(param.name(), cx);
+    }
+
+    fn enum_member<'a>(&self, member: EnumMember<'a>, cx: &mut Cx<'a, Self>) {
+        if self.only_declarations {
+            return;
+        }
+        if let Some(key) = member.key() {
+            self.check_key(key, cx);
+        }
+    }
+
+    fn import_spec<'a>(&self, specifier: ImportSpec<'a>, cx: &mut Cx<'a, Self>) {
+        let (imported, local) = (specifier.imported(), specifier.local());
+        self.check_name(local, cx);
+        if specifier.is_renamed() && imported.name() == local.name() {
+            self.check_name(imported, cx);
+        }
+    }
+
+    fn export_spec<'a>(&self, specifier: ExportSpec<'a>, cx: &mut Cx<'a, Self>) {
+        if self.only_declarations {
+            return;
+        }
+        match specifier.export().has_from() {
+            true => self.check_name(specifier.local(), cx),
+            false => self.check_referencing_name(specifier.local(), cx),
+        }
+        if specifier.is_renamed() {
+            self.check_name(specifier.exported(), cx);
+        }
     }
 }

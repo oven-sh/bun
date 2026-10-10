@@ -12,8 +12,30 @@ const MISSING_AFTER: Message = Message::new("missingAfter", "Missing space after
 const UNEXPECTED_BEFORE: Message = Message::new("unexpectedBefore", "Unexpected space before *.");
 const UNEXPECTED_AFTER: Message = Message::new("unexpectedAfter", "Unexpected space after *.");
 
-impl YieldStarSpacing {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for YieldStarSpacing {
+    const META: Meta = Meta::eslint("yield-star-spacing", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new().exprs(&[ExprTag::Yield]);
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let (before, after) = match options.get(0) {
+            Some(Json::Object(_)) => {
+                let object = options.object(0);
+                (object.bool("before"), object.bool("after"))
+            }
+            _ => match options.str(0) {
+                Some("before") => (Some(true), Some(false)),
+                Some("both") => (Some(true), Some(true)),
+                Some("neither") => (Some(false), Some(false)),
+                _ => (Some(false), Some(true)),
+            },
+        };
+        YieldStarSpacing { before, after }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if !matches!(e.kind(), ExprKind::Yield { star: true, .. }) {
             return;
         }
@@ -41,32 +63,5 @@ impl YieldStarSpacing {
                 false => fixer.remove(star.between(next)),
             });
         }
-    }
-}
-
-impl Rule for YieldStarSpacing {
-    const META: Meta = Meta::eslint("yield-star-spacing", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let (before, after) = match options.get(0) {
-            Some(Json::Object(_)) => {
-                let object = options.object(0);
-                (object.bool("before"), object.bool("after"))
-            }
-            _ => match options.str(0) {
-                Some("before") => (Some(true), Some(false)),
-                Some("both") => (Some(true), Some(true)),
-                Some("neither") => (Some(false), Some(false)),
-                _ => (Some(false), Some(true)),
-            },
-        };
-        YieldStarSpacing { before, after }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Yield], Self::check);
     }
 }

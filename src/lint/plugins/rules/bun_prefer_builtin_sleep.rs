@@ -62,23 +62,26 @@ fn delay_of(e: Expr<'_>) -> Option<Option<Expr<'_>>> {
 
 impl Rule for PreferBuiltinSleep {
     const META: Meta = Meta::plugin(Plugin::Bun, "prefer-builtin-sleep", Kind::Suggestion).has_suggestions();
+    const ON: On = On::new().exprs(&[ExprTag::New]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferBuiltinSleep
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if !file.mentions("setTimeout") {
-            return;
+            return None;
         }
-        on.exprs([ExprTag::New], |_, e, cx| {
-            if let Some(delay) = delay_of(e) {
-                cx.report(e, HANDMADE_SLEEP).suggest(USE_BUN_SLEEP, |fixer| {
-                    let delay = delay.map_or(&b"0"[..], |it| e.file().slice(it.outer_span()));
-                    fixer.replace(e, [b"Bun.sleep(", delay, b")"].concat())
-                });
-            }
-        });
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(delay) = delay_of(e) {
+            cx.report(e, HANDMADE_SLEEP).suggest(USE_BUN_SLEEP, |fixer| {
+                let delay = delay.map_or(&b"0"[..], |it| e.file().slice(it.outer_span()));
+                fixer.replace(e, [b"Bun.sleep(", delay, b")"].concat())
+            });
+        }
     }
 }

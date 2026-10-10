@@ -25,36 +25,35 @@ enum InitType {
 
 impl Rule for NoImmediateMutation {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-immediate-mutation", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::Expr]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoImmediateMutation
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Expr], |_, statement, cx| {
-            let StmtKind::Expr(expr) = statement.kind() else {
-                return;
-            };
-            let Some(expr) = get_inner_expression_unless_chain(expr) else {
-                return;
-            };
-            // The variable that is changed, how it has to be initialized, and what is reported then.
-            let Some(mutation) = (match expr.kind() {
-                ExprKind::Call(call) => call_mutation(call),
-                ExprKind::Assign { op: None, target, value } => property_assignment(target, value),
-                _ => None,
-            }) else {
-                return;
-            };
-            let prev_stmt = statements_around(statement).and_then(|it| it.before(statement.span().start));
-            if prev_stmt.and_then(get_prev_declaration) == Some((mutation.variable, mutation.init_type)) {
-                let report = cx.report(expr, mutation.message);
-                if let Some(method) = mutation.method {
-                    report.data("method", method);
-                }
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::Expr(expr) = statement.kind() else {
+            return;
+        };
+        let Some(expr) = get_inner_expression_unless_chain(expr) else {
+            return;
+        };
+        // The variable that is changed, how it has to be initialized, and what is reported then.
+        let Some(mutation) = (match expr.kind() {
+            ExprKind::Call(call) => call_mutation(call),
+            ExprKind::Assign { op: None, target, value } => property_assignment(target, value),
+            _ => None,
+        }) else {
+            return;
+        };
+        let prev_stmt = statements_around(statement).and_then(|it| it.before(statement.span().start));
+        if prev_stmt.and_then(get_prev_declaration) == Some((mutation.variable, mutation.init_type)) {
+            let report = cx.report(expr, mutation.message);
+            if let Some(method) = mutation.method {
+                report.data("method", method);
             }
-        });
+        }
     }
 }
 

@@ -72,27 +72,9 @@ const FOUND: Message = Message::new("found", "{{selector}} {{type}}");
 static LISTENED: AtomicU64 = AtomicU64::new(0);
 static EXAMINED: AtomicU64 = AtomicU64::new(0);
 
-impl<const COUNTS: bool> selector::OnNode for Probe<COUNTS> {
-    fn on_node<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        if COUNTS {
-            LISTENED.fetch_add(1, Relaxed);
-        }
-        EsNode::for_each_at(node, |it| {
-            if COUNTS {
-                EXAMINED.fetch_add(1, Relaxed);
-            }
-            let matching = self
-                .selectors
-                .iter()
-                .enumerate()
-                .filter(|(_, selector)| selector.1.matches(it));
-            cx.state.extend(matching.map(|(i, _)| (it, i)));
-        });
-    }
-}
-
 impl<const COUNTS: bool> Rule for Probe<COUNTS> {
     const META: Meta = Meta::eslint("probe", Kind::Problem);
+    const ON: On = On::new().nodes(NodeTags::ALL).finish();
     type State<'a> = Vec<(EsNode<'a>, usize)>;
 
     fn new(options: &Options) -> Self {
@@ -108,23 +90,42 @@ impl<const COUNTS: bool> Rule for Probe<COUNTS> {
         Probe { selectors }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        selector::listen(
-            on,
-            self.selectors
-                .iter()
-                .fold(NodeTags::EMPTY, |tags, it| tags | it.1.listens_to()),
-        );
-        on.finish(|rule, cx| {
-            let mut found = std::mem::take(&mut cx.state);
-            selector::sort_as_called(&mut found, |i| rule.selectors[i].1.is_exit());
-            for (node, i) in found {
-                cx.report(node, FOUND)
-                    .data("selector", rule.selectors[i].0)
-                    .data("type", node.type_name());
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let selectors = self.selectors.iter();
+        On::new()
+            .nodes(selectors.fold(NodeTags::EMPTY, |tags, it| tags | it.1.listens_to()))
+            .finish()
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(Vec::new())
+    }
+
+    fn node<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        if COUNTS {
+            LISTENED.fetch_add(1, Relaxed);
+        }
+        EsNode::for_each_at(node, |it| {
+            if COUNTS {
+                EXAMINED.fetch_add(1, Relaxed);
             }
+            let matching = self
+                .selectors
+                .iter()
+                .enumerate()
+                .filter(|(_, selector)| selector.1.matches(it));
+            cx.state.extend(matching.map(|(i, _)| (it, i)));
         });
-        Vec::new()
+    }
+
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+        let mut found = std::mem::take(&mut cx.state);
+        selector::sort_as_called(&mut found, |i| self.selectors[i].1.is_exit());
+        for (node, i) in found {
+            cx.report(node, FOUND)
+                .data("selector", self.selectors[i].0)
+                .data("type", node.type_name());
+        }
     }
 }
 

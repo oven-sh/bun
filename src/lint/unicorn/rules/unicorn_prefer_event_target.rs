@@ -74,17 +74,25 @@ fn check<'a>(ident: Option<Expr<'a>>, cx: &Cx<'a, PreferEventTarget>) {
 
 impl Rule for PreferEventTarget {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-event-target", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::New]).classes();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferEventTarget
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("EventEmitter") {
-            return;
+            return None;
         }
-        on.classes(|_, class, cx| check(class.extends(), cx));
-        on.exprs([ExprTag::New], |_, e, cx| check(e.callee(), cx));
+        Some(())
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        check(class.extends(), cx);
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        check(e.callee(), cx);
     }
 }

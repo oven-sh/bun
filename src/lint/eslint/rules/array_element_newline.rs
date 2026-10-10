@@ -128,7 +128,8 @@ impl Rule for ArrayElementNewline {
     const META: Meta = Meta::eslint("array-element-newline", Kind::Layout)
         .fixable(Fixable::Whitespace)
         .deprecated();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Array]).pats(&[PatTag::Array]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let by_type = options.object(0);
@@ -146,31 +147,31 @@ impl Rule for ArrayElementNewline {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Array], |rule, e, cx| {
-            let ExprKind::Array(elements) = e.kind() else {
-                return;
-            };
-            let len = elements.len();
-            if len < 2 {
-                return;
-            }
-            let is_pattern = rule.expression != rule.pattern && utils::is_assignment_target(e);
-            let config = if is_pattern { rule.pattern } else { rule.expression };
-            if let Some(config) = config {
-                check(cx, config, len, elements.iter().map(element_of_expression));
-            }
-        });
-        if self.pattern.is_some() {
-            on.pats([PatTag::Array], |rule, pat, cx| {
-                let (PatKind::Array(elements), Some(config)) = (pat.kind(), rule.pattern) else {
-                    return;
-                };
-                let len = elements.len();
-                if len >= 2 {
-                    check(cx, config, len, elements.iter().map(element_of_pattern));
-                }
-            });
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Array(elements) = e.kind() else {
+            return;
+        };
+        let len = elements.len();
+        if len < 2 {
+            return;
+        }
+        let is_pattern = self.expression != self.pattern && utils::is_assignment_target(e);
+        let config = if is_pattern { self.pattern } else { self.expression };
+        if let Some(config) = config {
+            check(cx, config, len, elements.iter().map(element_of_expression));
+        }
+    }
+
+    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        if self.pattern.is_none() {
+            return;
+        }
+        let (PatKind::Array(elements), Some(config)) = (pat.kind(), self.pattern) else {
+            return;
+        };
+        let len = elements.len();
+        if len >= 2 {
+            check(cx, config, len, elements.iter().map(element_of_pattern));
         }
     }
 }

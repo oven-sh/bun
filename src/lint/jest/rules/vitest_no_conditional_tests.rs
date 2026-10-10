@@ -11,29 +11,32 @@ const NO_CONDITIONAL_TESTS: Message = Message::new("", "Avoid having conditional
 
 impl Rule for NoConditionalTests {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "no-conditional-tests", Kind::Problem);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoConditionalTests
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !jest::is_test(file) || !file.has_stmts([StmtTag::If]) {
-            return;
+            return None;
         }
-        on.finish(|_, cx| {
-            // The innermost `if` around something.
-            let mut if_statements = AncestorMemo::default();
-            let kinds = [JestFnKind::General(JestGeneralFnKind::Describe), JestFnKind::General(JestGeneralFnKind::Test)];
-            for possible_jest_node in jest::iter_possible_jest_call_node(cx.file()) {
-                if jest::is_type_of_jest_fn_call(cx.file(), possible_jest_node, &kinds)
-                    && let Some(if_statement) = if_statements.find(Node::Expr(possible_jest_node.node), |_, parent| {
-                        parent.as_stmt().filter(|it| it.tag() == StmtTag::If)
-                    })
-                {
-                    cx.report(if_statement, NO_CONDITIONAL_TESTS);
-                }
+        Some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        // The innermost `if` around something.
+        let mut if_statements = AncestorMemo::default();
+        let kinds = [JestFnKind::General(JestGeneralFnKind::Describe), JestFnKind::General(JestGeneralFnKind::Test)];
+        for possible_jest_node in jest::iter_possible_jest_call_node(cx.file()) {
+            if jest::is_type_of_jest_fn_call(cx.file(), possible_jest_node, &kinds)
+                && let Some(if_statement) = if_statements.find(Node::Expr(possible_jest_node.node), |_, parent| {
+                    parent.as_stmt().filter(|it| it.tag() == StmtTag::If)
+                })
+            {
+                cx.report(if_statement, NO_CONDITIONAL_TESTS);
             }
-        });
+        }
     }
 }

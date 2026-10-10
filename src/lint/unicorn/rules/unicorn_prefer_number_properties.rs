@@ -16,11 +16,18 @@ const PREFER_NUMBER_PROPERTIES: Message =
 
 const FUNCTIONS: [&str; 4] = ["isNaN", "isFinite", "parseFloat", "parseInt"];
 
+pub struct State<'a> {
+    has_members: bool,
+    has_functions: bool,
+    /// The nearest unary expression around something.
+    nearest_unary: AncestorMemo<'a, Expr<'a>>,
+}
+
 impl Rule for PreferNumberProperties {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "prefer-number-properties", Kind::Suggestion).fixable(Fixable::Code);
-    /// The nearest unary expression around something.
-    type State<'a> = AncestorMemo<'a, Expr<'a>>;
+    const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index, ExprTag::Call]).finish();
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -30,19 +37,64 @@ impl Rule for PreferNumberProperties {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         let has_constants = self.check_nan && file.mentions("NaN") || self.check_infinity && file.mentions("Infinity");
         let has_functions = file.mentions_any(&FUNCTIONS);
-        if has_constants && file.mentions_any(&GLOBAL_OBJECT_NAMES) {
-            on.exprs([ExprTag::Dot, ExprTag::Index], Self::check_member);
+        (has_constants || has_functions).then(|| State {
+            has_members: has_constants && file.mentions_any(&GLOBAL_OBJECT_NAMES),
+            has_functions,
+            nearest_unary: AncestorMemo::default(),
+        })
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Dot | ExprTag::Index if cx.state.has_members => self.check_member(e, cx),
+            ExprTag::Call if cx.state.has_functions => self.check_call(e, cx),
+            _ => {}
         }
-        if has_functions {
-            on.exprs([ExprTag::Call], Self::check_call);
+    }
+
+    /// `NaN`, `Infinity`, `{ parseInt }`, `{ a: parseInt }`
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+        let file = cx.file();
+        let constants = [("NaN", self.check_nan), ("Infinity", self.check_infinity)];
+        for (name, _) in constants.into_iter().filter(|it| it.1 && file.mentions(it.0)) {
+            for reference in file.unresolved_references_to(name.as_bytes()).filter(|it| !it.is_jsx_pragma()) {
+                let span = reference.span();
+                let is_shorthand = reference.expr().and_then(is_shorthand_of_object_property) == Some(true);
+                let report = cx.report(span, PREFER_NUMBER_PROPERTIES).data("method_name", name);
+                let nearest_unary = &mut cx.state.nearest_unary;
+                report.fix(|fixer| {
+                    if name == "NaN" {
+                        return fixer.insert_before(span, if is_shorthand { "NaN: Number." } else { "Number." });
+                    }
+                    let is_unary = |_, parent: Node<'a>| parent.as_expr().filter(|it| is_unary_expression(*it));
+                    let unary = nearest_unary.find(reference.node(), is_unary);
+                    let negation = unary.filter(|it| it.unary_op() == Some(UnOp::Minus));
+                    match (negation, is_shorthand) {
+                        (Some(_), true) => fixer.insert_after(span, ": Number.NEGATIVE_INFINITY"),
+                        (None, true) => fixer.insert_after(span, ": Number.POSITIVE_INFINITY"),
+                        (Some(negation), false) => fixer.replace(negation, "Number.NEGATIVE_INFINITY"),
+                        (None, false) => fixer.replace(span, "Number.POSITIVE_INFINITY"),
+                    }
+                });
+            }
         }
-        if has_constants || has_functions {
-            on.finish(Self::check_references);
+        for name in FUNCTIONS.into_iter().filter(|it| file.mentions(it)) {
+            for reference in file.unresolved_references_to(name.as_bytes()) {
+                let Some(is_shorthand) = reference.expr().and_then(is_shorthand_of_object_property) else {
+                    continue;
+                };
+                let span = reference.span();
+                let report = cx.report(span, PREFER_NUMBER_PROPERTIES).data("method_name", name);
+                let fix = |fixer: Fixer<'a>| match is_shorthand {
+                    true => fixer.insert_before(span, [name, ": Number."].concat()),
+                    false => fixer.insert_before(span, "Number."),
+                };
+                if matches!(name, "isNaN" | "isFinite") { report.fix_dangerously(fix) } else { report.fix(fix) };
+            }
         }
-        AncestorMemo::default()
     }
 }
 
@@ -93,48 +145,6 @@ impl PreferNumberProperties {
             fixer.replace(e, [&b"Number."[..], name.bytes(), arguments].concat())
         };
         if name.is_any(&["isNaN", "isFinite"]) { report.fix_dangerously(fix) } else { report.fix(fix) };
-    }
-
-    /// `NaN`, `Infinity`, `{ parseInt }`, `{ a: parseInt }`
-    fn check_references<'a>(&self, cx: &mut Cx<'a, Self>) {
-        let file = cx.file();
-        let constants = [("NaN", self.check_nan), ("Infinity", self.check_infinity)];
-        for (name, _) in constants.into_iter().filter(|it| it.1 && file.mentions(it.0)) {
-            for reference in file.unresolved_references_to(name.as_bytes()).filter(|it| !it.is_jsx_pragma()) {
-                let span = reference.span();
-                let is_shorthand = reference.expr().and_then(is_shorthand_of_object_property) == Some(true);
-                let report = cx.report(span, PREFER_NUMBER_PROPERTIES).data("method_name", name);
-                let nearest_unary = &mut cx.state;
-                report.fix(|fixer| {
-                    if name == "NaN" {
-                        return fixer.insert_before(span, if is_shorthand { "NaN: Number." } else { "Number." });
-                    }
-                    let is_unary = |_, parent: Node<'a>| parent.as_expr().filter(|it| is_unary_expression(*it));
-                    let unary = nearest_unary.find(reference.node(), is_unary);
-                    let negation = unary.filter(|it| it.unary_op() == Some(UnOp::Minus));
-                    match (negation, is_shorthand) {
-                        (Some(_), true) => fixer.insert_after(span, ": Number.NEGATIVE_INFINITY"),
-                        (None, true) => fixer.insert_after(span, ": Number.POSITIVE_INFINITY"),
-                        (Some(negation), false) => fixer.replace(negation, "Number.NEGATIVE_INFINITY"),
-                        (None, false) => fixer.replace(span, "Number.POSITIVE_INFINITY"),
-                    }
-                });
-            }
-        }
-        for name in FUNCTIONS.into_iter().filter(|it| file.mentions(it)) {
-            for reference in file.unresolved_references_to(name.as_bytes()) {
-                let Some(is_shorthand) = reference.expr().and_then(is_shorthand_of_object_property) else {
-                    continue;
-                };
-                let span = reference.span();
-                let report = cx.report(span, PREFER_NUMBER_PROPERTIES).data("method_name", name);
-                let fix = |fixer: Fixer<'a>| match is_shorthand {
-                    true => fixer.insert_before(span, [name, ": Number."].concat()),
-                    false => fixer.insert_before(span, "Number."),
-                };
-                if matches!(name, "isNaN" | "isFinite") { report.fix_dangerously(fix) } else { report.fix(fix) };
-            }
-        }
     }
 }
 

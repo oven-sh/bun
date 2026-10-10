@@ -49,37 +49,40 @@ fn bigint_literal_from_numeric(raw: &[u8]) -> Option<Vec<u8>> {
 
 impl Rule for PreferBigintLiterals {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-bigint-literals", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferBigintLiterals
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("BigInt") {
+            return None;
+        }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call) = e.as_call().filter(|it| it.args().len() == 1 && !it.is_optional()) else {
+            return;
+        };
+        if !get_inner_expression(call.callee()).is_ident("BigInt") {
             return;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(call) = e.as_call().filter(|it| it.args().len() == 1 && !it.is_optional()) else {
-                return;
-            };
-            if !get_inner_expression(call.callee()).is_ident("BigInt") {
-                return;
-            }
-            let Some(argument) = call.args().first() else {
-                return;
-            };
-            let literal = get_inner_expression(argument);
-            let replacement = match literal.kind() {
-                ExprKind::String(value) => match bigint_literal_from_string(value.bytes()) {
-                    Some(replacement) => Some(replacement),
-                    None => return,
-                },
-                ExprKind::Number(n) if n.fract() == 0.0 => bigint_literal_from_numeric(literal.text()),
-                _ => return,
-            };
-            cx.report(argument.outer_span(), PREFER_BIGINT_LITERALS)
-                .fix(|fixer| replacement.map(|it| fixer.replace(e, it)));
-        });
+        let Some(argument) = call.args().first() else {
+            return;
+        };
+        let literal = get_inner_expression(argument);
+        let replacement = match literal.kind() {
+            ExprKind::String(value) => match bigint_literal_from_string(value.bytes()) {
+                Some(replacement) => Some(replacement),
+                None => return,
+            },
+            ExprKind::Number(n) if n.fract() == 0.0 => bigint_literal_from_numeric(literal.text()),
+            _ => return,
+        };
+        cx.report(argument.outer_span(), PREFER_BIGINT_LITERALS)
+            .fix(|fixer| replacement.map(|it| fixer.replace(e, it)));
     }
 }

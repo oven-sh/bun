@@ -11,8 +11,24 @@ pub struct DefaultCase {
 
 const MISSING_DEFAULT_CASE: Message = Message::new("missingDefaultCase", "Expected a default case.");
 
-impl DefaultCase {
-    fn check<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for DefaultCase {
+    const META: Meta = Meta::eslint("default-case", Kind::Suggestion);
+    const ON: On = On::new().stmts(&[StmtTag::Switch]);
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let options = options.object(0);
+        let pattern = |flags: &str| match options.str("commentPattern") {
+            None | Some("") => None,
+            Some(_) => options.regex("commentPattern", flags),
+        };
+        DefaultCase {
+            comment_pattern: pattern("u"),
+            oxlint_comment_pattern: pattern("iu"),
+        }
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let StmtKind::Switch { cases, .. } = stmt.kind() else {
             return;
         };
@@ -33,26 +49,5 @@ impl DefaultCase {
         if !is_excused {
             cx.report(stmt, MISSING_DEFAULT_CASE);
         }
-    }
-}
-
-impl Rule for DefaultCase {
-    const META: Meta = Meta::eslint("default-case", Kind::Suggestion);
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let options = options.object(0);
-        let pattern = |flags: &str| match options.str("commentPattern") {
-            None | Some("") => None,
-            Some(_) => options.regex("commentPattern", flags),
-        };
-        DefaultCase {
-            comment_pattern: pattern("u"),
-            oxlint_comment_pattern: pattern("iu"),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Switch], Self::check);
     }
 }

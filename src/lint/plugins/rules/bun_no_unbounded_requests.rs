@@ -105,8 +105,20 @@ fn check_request<'a>(e: Expr<'a>, method: &str, cx: &Cx<'a, NoUnboundedRequests>
     }
 }
 
-impl NoUnboundedRequests {
-    fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
+impl Rule for NoUnboundedRequests {
+    const META: Meta = Meta::plugin(Plugin::Bun, "no-unbounded-requests", Kind::Problem);
+    const ON: On = On::new().finish();
+    type State<'a> = ();
+
+    fn new(options: &Options) -> Self {
+        NoUnboundedRequests { clients: exports_option(options, "clients") }
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        (file.mentions("axios") || !self.clients.is_empty()).then_some(())
+    }
+
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
         if file.mentions("defaults") && file.exprs_of_kind(ExprTag::Assign).any(sets_default_timeout) {
             return;
@@ -117,20 +129,5 @@ impl NoUnboundedRequests {
             }
         }
         each_call_of_exports(file, &self.clients, AXIOS, &mut |e, method| check_request(e, method, cx));
-    }
-}
-
-impl Rule for NoUnboundedRequests {
-    const META: Meta = Meta::plugin(Plugin::Bun, "no-unbounded-requests", Kind::Problem);
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        NoUnboundedRequests { clients: exports_option(options, "clients") }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.mentions("axios") || !self.clients.is_empty() {
-            on.finish(Self::check);
-        }
     }
 }

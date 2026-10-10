@@ -758,7 +758,11 @@ impl MemberOrdering {
 
 impl Rule for MemberOrdering {
     const META: Meta = Meta::typescript("member-ordering", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new()
+        .classes()
+        .stmts(&[StmtTag::Interface])
+        .types(&[TypeTag::Object]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -771,29 +775,32 @@ impl Rule for MemberOrdering {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        if self.config(&self.classes).is_some() || self.config(&self.class_expressions).is_some() {
-            on.classes(|rule, class, cx| {
-                let setting = match class.owner() {
-                    Node::Expr(_) => &rule.class_expressions,
-                    _ => &rule.classes,
-                };
-                rule.validate(cx, class.members(), setting, true);
-            });
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        if self.config(&self.classes).is_none() && self.config(&self.class_expressions).is_none() {
+            return;
         }
-        if self.config(&self.interfaces).is_some() {
-            on.stmts([StmtTag::Interface], |rule, stmt, cx| {
-                if let StmtKind::Interface(interface) = stmt.kind() {
-                    rule.validate(cx, interface.members(), &rule.interfaces, false);
-                }
-            });
+        let setting = match class.owner() {
+            Node::Expr(_) => &self.class_expressions,
+            _ => &self.classes,
+        };
+        self.validate(cx, class.members(), setting, true);
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if self.config(&self.interfaces).is_none() {
+            return;
         }
-        if self.config(&self.type_literals).is_some() {
-            on.types([TypeTag::Object], |rule, ty, cx| {
-                if let TypeKind::Object(members) = ty.kind() {
-                    rule.validate(cx, members, &rule.type_literals, false);
-                }
-            });
+        if let StmtKind::Interface(interface) = stmt.kind() {
+            self.validate(cx, interface.members(), &self.interfaces, false);
+        }
+    }
+
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        if self.config(&self.type_literals).is_none() {
+            return;
+        }
+        if let TypeKind::Object(members) = ty.kind() {
+            self.validate(cx, members, &self.type_literals, false);
         }
     }
 }

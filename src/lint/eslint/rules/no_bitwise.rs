@@ -28,8 +28,26 @@ fn index_of(op: BinOp) -> Option<usize> {
     })
 }
 
-impl NoBitwise {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoBitwise {
+    const META: Meta = Meta::eslint("no-bitwise", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Binary, ExprTag::Assign, ExprTag::Unary]);
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let object = options.object(0);
+        let mut allowed = 0;
+        for operator in object.strings("allow") {
+            if let Some(index) = BITWISE_OPERATORS.iter().position(|it| *it == operator) {
+                allowed |= 1 << index;
+            }
+        }
+        NoBitwise {
+            allowed,
+            int32_hint: object.bool_or("int32Hint", false),
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let index = match e.kind() {
             ExprKind::Binary { op, right, .. } => {
                 let Some(index) = index_of(op) else {
@@ -53,28 +71,5 @@ impl NoBitwise {
         if self.allowed & (1 << index) == 0 {
             cx.report(e, UNEXPECTED).data("operator", BITWISE_OPERATORS[index]);
         }
-    }
-}
-
-impl Rule for NoBitwise {
-    const META: Meta = Meta::eslint("no-bitwise", Kind::Suggestion);
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let object = options.object(0);
-        let mut allowed = 0;
-        for operator in object.strings("allow") {
-            if let Some(index) = BITWISE_OPERATORS.iter().position(|it| *it == operator) {
-                allowed |= 1 << index;
-            }
-        }
-        NoBitwise {
-            allowed,
-            int32_hint: object.bool_or("int32Hint", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Binary, ExprTag::Assign, ExprTag::Unary], Self::check);
     }
 }

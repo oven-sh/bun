@@ -9,40 +9,43 @@ const PREFER_STRING_RAW: Message = Message::new("", "`String.raw` should be used
 
 impl Rule for PreferStringRaw {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-string-raw", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().string_literals();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferStringRaw
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if file.is_declaration_file() {
+            return None;
+        }
+        Some(())
+    }
+
+    fn string_literal<'a>(&self, string_literal: Literal<'a>, cx: &mut Cx<'a, Self>) {
+        let raw = string_literal.text();
+        if !strings::contains(raw, b"\\\\") || is_where_no_template_can_be(string_literal) {
             return;
         }
-        on.string_literals(|_, string_literal, cx| {
-            let raw = string_literal.text();
-            if !strings::contains(raw, b"\\\\") || is_where_no_template_can_be(string_literal) {
-                return;
-            }
-            let Some(([quote], trimmed)) = raw.get(..raw.len() - 1).and_then(|it| it.split_first_chunk()) else {
-                return;
-            };
-            // It is the value if there is no other escape.
-            let Some(unescaped) = unescape_backslash(trimmed, *quote) else {
-                return;
-            };
-            // A last `\` would escape the backtick.
-            if unescaped.iter().rev().take_while(|it| **it == b'\\').count() % 2 == 1
-                || strings::contains_char(&unescaped, b'`')
-                || strings::contains(&unescaped, b"${")
-            {
-                return;
-            }
-            cx.report(string_literal, PREFER_STRING_RAW).fix(|fixer| {
-                let before = fixer.file().text().get(..string_literal.span().start as usize).unwrap_or_default();
-                let space: &[u8] = if ends_with_keyword(before) { b" " } else { b"" };
-                fixer.replace(string_literal, [space, b"String.raw`", &unescaped, b"`"].concat())
-            });
+        let Some(([quote], trimmed)) = raw.get(..raw.len() - 1).and_then(|it| it.split_first_chunk()) else {
+            return;
+        };
+        // It is the value if there is no other escape.
+        let Some(unescaped) = unescape_backslash(trimmed, *quote) else {
+            return;
+        };
+        // A last `\` would escape the backtick.
+        if unescaped.iter().rev().take_while(|it| **it == b'\\').count() % 2 == 1
+            || strings::contains_char(&unescaped, b'`')
+            || strings::contains(&unescaped, b"${")
+        {
+            return;
+        }
+        cx.report(string_literal, PREFER_STRING_RAW).fix(|fixer| {
+            let before = fixer.file().text().get(..string_literal.span().start as usize).unwrap_or_default();
+            let space: &[u8] = if ends_with_keyword(before) { b" " } else { b"" };
+            fixer.replace(string_literal, [space, b"String.raw`", &unescaped, b"`"].concat())
         });
     }
 }

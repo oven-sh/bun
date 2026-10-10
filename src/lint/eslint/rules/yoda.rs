@@ -236,8 +236,21 @@ fn flipped_text<'a>(
     )
 }
 
-impl Yoda {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for Yoda {
+    const META: Meta = Meta::eslint("yoda", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Binary]);
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let object = options.object(1);
+        Yoda {
+            is_always: options.str(0) == Some("always"),
+            except_range: object.bool_or("exceptRange", false),
+            only_equality: object.bool_or("onlyEquality", false),
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Binary { op, left, right } = e.kind() else {
             return;
         };
@@ -267,23 +280,5 @@ impl Yoda {
                 let text = flipped_text(fixer.file(), e, left, right, flipped)?;
                 Some(fixer.replace(e, text))
             });
-    }
-}
-
-impl Rule for Yoda {
-    const META: Meta = Meta::eslint("yoda", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let object = options.object(1);
-        Yoda {
-            is_always: options.str(0) == Some("always"),
-            except_range: object.bool_or("exceptRange", false),
-            only_equality: object.bool_or("onlyEquality", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Binary], Self::check);
     }
 }

@@ -35,8 +35,22 @@ fn fix(fixer: Fixer<'_>, left: Span, right: Span, spacing: bool) -> Option<Fix> 
     })
 }
 
-impl SwitchColonSpacing {
-    fn check<'a>(&self, case: Case<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for SwitchColonSpacing {
+    const META: Meta = Meta::eslint("switch-colon-spacing", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new().cases();
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let options = options.object(0);
+        SwitchColonSpacing {
+            before: options.bool_or("before", false),
+            after: options.bool_or("after", true),
+        }
+    }
+
+    fn case<'a>(&self, case: Case<'a>, cx: &mut Cx<'a, Self>) {
         let text = cx.text();
         let before_token = match case.test() {
             Some(test) => test.outer_span(),
@@ -61,24 +75,5 @@ impl SwitchColonSpacing {
             cx.report(colon, if after { EXPECTED_AFTER } else { UNEXPECTED_AFTER })
                 .fix(|fixer| fix(fixer, colon, after_token, after));
         }
-    }
-}
-
-impl Rule for SwitchColonSpacing {
-    const META: Meta = Meta::eslint("switch-colon-spacing", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let options = options.object(0);
-        SwitchColonSpacing {
-            before: options.bool_or("before", false),
-            after: options.bool_or("after", true),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.cases(Self::check);
     }
 }

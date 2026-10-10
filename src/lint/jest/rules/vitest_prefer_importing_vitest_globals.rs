@@ -35,16 +35,19 @@ const VITEST_GLOBALS: [&str; 17] = [
 
 impl Rule for PreferImportingVitestGlobals {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "prefer-importing-vitest-globals", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferImportingVitestGlobals
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.mentions_any(&VITEST_GLOBALS) {
-            on.finish(|_, cx| run_once(cx));
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions_any(&VITEST_GLOBALS).then_some(())
+    }
+
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+        run_once(cx);
     }
 }
 

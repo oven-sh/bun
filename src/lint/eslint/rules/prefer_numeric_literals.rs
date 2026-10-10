@@ -29,8 +29,20 @@ fn is_same_as_literal(text: &[u8], radix: u32) -> bool {
     !digits.is_empty() && digits.iter().all(|c| char::from(*c).is_digit(radix))
 }
 
-impl PreferNumericLiterals {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for PreferNumericLiterals {
+    const META: Meta = Meta::eslint("prefer-numeric-literals", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    type State<'a> = ();
+
+    fn new(_: &Options) -> Self {
+        PreferNumericLiterals
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("parseInt").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Call(call) = e.kind() else {
             return;
         };
@@ -83,21 +95,5 @@ impl PreferNumericLiterals {
                 let space = |is_needed: bool| -> &'static [u8] { if is_needed { b" " } else { b"" } };
                 Some(fixer.replace(e, [space(needs_space_before), &replacement[..], space(needs_space_after)].concat()))
             });
-    }
-}
-
-impl Rule for PreferNumericLiterals {
-    const META: Meta = Meta::eslint("prefer-numeric-literals", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        PreferNumericLiterals
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("parseInt") {
-            return;
-        }
-        on.exprs([ExprTag::Call], Self::check);
     }
 }

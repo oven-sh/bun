@@ -123,7 +123,8 @@ impl NoUnportableCommands {
 
 impl Rule for NoUnportableCommands {
     const META: Meta = Meta::plugin(Plugin::Bun, "no-unportable-commands", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().finish();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         NoUnportableCommands {
@@ -133,7 +134,7 @@ impl Rule for NoUnportableCommands {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.finish(Self::check);
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        self.check(cx);
     }
 }

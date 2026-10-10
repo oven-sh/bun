@@ -6,8 +6,23 @@ pub struct PreferSpread;
 const PREFER_SPREAD: Message =
     Message::new("preferSpread", "Use the spread operator instead of '.apply()'.");
 
-impl PreferSpread {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for PreferSpread {
+    const META: Meta = Meta::eslint("prefer-spread", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    type State<'a> = ();
+
+    fn new(_: &Options) -> Self {
+        PreferSpread
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        if !file.mentions("apply") {
+            return None;
+        }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Call(call) = e.kind() else {
             return;
         };
@@ -32,21 +47,5 @@ impl PreferSpread {
         if is_valid_this_arg {
             cx.report(e, PREFER_SPREAD);
         }
-    }
-}
-
-impl Rule for PreferSpread {
-    const META: Meta = Meta::eslint("prefer-spread", Kind::Suggestion);
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        PreferSpread
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("apply") {
-            return;
-        }
-        on.exprs([ExprTag::Call], Self::check);
     }
 }

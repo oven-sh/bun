@@ -167,7 +167,8 @@ impl OperatorAssignment {
 
 impl Rule for OperatorAssignment {
     const META: Meta = Meta::eslint("operator-assignment", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Assign]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         OperatorAssignment {
@@ -175,11 +176,11 @@ impl Rule for OperatorAssignment {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if self.never {
-            on.exprs([ExprTag::Assign], Self::prohibit);
+            self.prohibit(e, cx);
         } else {
-            on.exprs([ExprTag::Assign], Self::verify);
+            self.verify(e, cx);
         }
     }
 }

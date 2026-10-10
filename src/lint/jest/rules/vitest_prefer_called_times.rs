@@ -13,16 +13,19 @@ const PREFER_CALLED_TIMES: Message = Message::new(
 
 impl Rule for PreferCalledTimes {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "prefer-called-times", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferCalledTimes
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if jest::is_test(file) && file.mentions_any(&["toBeCalledOnce", "toHaveBeenCalledOnce"]) {
-            on.finish(|_, cx| jest::iter_possible_jest_call_node(cx.file()).for_each(|node| run(node, cx)));
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        (jest::is_test(file) && file.mentions_any(&["toBeCalledOnce", "toHaveBeenCalledOnce"])).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        jest::iter_possible_jest_call_node(cx.file()).for_each(|node| run(node, cx));
     }
 }
 

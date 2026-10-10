@@ -26,38 +26,48 @@ fn check_call<'a>(e: Expr<'a>, specifier: Option<Expr<'a>>, cx: &mut Cx<'a, NoEa
 
 impl Rule for NoEagerNativeAddon {
     const META: Meta = Meta::plugin(Plugin::Bun, "no-eager-native-addon", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::ImportCall, ExprTag::Call]).stmts(&[
+        StmtTag::Import,
+        StmtTag::ExportNamed,
+        StmtTag::ExportStar,
+    ]);
     type State<'a> = RunsLater<'a>;
 
     fn new(_: &Options) -> Self {
         NoEagerNativeAddon
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> RunsLater<'a> {
-        on.stmts([StmtTag::Import, StmtTag::ExportNamed, StmtTag::ExportStar], |_, statement, cx| {
-            let specifier = match statement.kind() {
-                StmtKind::Import(import) if !import.is_type_only() => Some(import.spec()),
-                StmtKind::ExportNamed(export) if !export.is_type_only() => export.spec(),
-                StmtKind::ExportStar { spec, type_only: false, .. } => spec,
-                _ => None,
-            };
-            if let Some(specifier) = specifier.filter(|it| is_native_addon(*it))
-                && let Some(span) = statement.module_specifier_span()
-            {
-                cx.report(span, EAGER_ADDON).data("specifier", specifier.bytes());
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<RunsLater<'a>> {
+        Some(RunsLater::default())
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let specifier = match statement.kind() {
+            StmtKind::Import(import) if !import.is_type_only() => Some(import.spec()),
+            StmtKind::ExportNamed(export) if !export.is_type_only() => export.spec(),
+            StmtKind::ExportStar { spec, type_only: false, .. } => spec,
+            _ => None,
+        };
+        if let Some(specifier) = specifier.filter(|it| is_native_addon(*it))
+            && let Some(span) = statement.module_specifier_span()
+        {
+            cx.report(span, EAGER_ADDON).data("specifier", specifier.bytes());
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::ImportCall => {
+                if let ExprKind::ImportCall { args } = e.kind() {
+                    check_call(e, args.first(), cx);
+                }
             }
-        });
-        on.exprs([ExprTag::ImportCall], |_, e, cx| {
-            if let ExprKind::ImportCall { args } = e.kind() {
-                check_call(e, args.first(), cx);
-            }
-        });
-        if file.mentions("require") {
-            on.exprs([ExprTag::Call], |_, e, cx| {
+            ExprTag::Call if cx.file().mentions("require") => {
                 if let Some(call) = e.as_call().filter(|it| it.callee().is_ident("require")) {
                     check_call(e, call.args().first(), cx);
                 }
-            });
+            }
+            _ => {}
         }
-        RunsLater::default()
     }
 }

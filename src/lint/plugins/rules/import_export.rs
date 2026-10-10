@@ -16,48 +16,47 @@ const MULTIPLE_EXPORTS: Message = Message::new("", "Multiple exports of name '{{
 
 impl Rule for Export {
     const META: Meta = Meta::oxlint(Plugin::Import, "export", Kind::Problem).needs_modules();
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         Export
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !is_waiting_for_modules(file) {
-            on.finish(check);
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        (!is_waiting_for_modules(file)).then_some(())
     }
-}
 
-fn check<'a>(_: &Export, cx: &mut Cx<'a, Export>) {
-    let file = cx.file();
-    let module_record = ModuleRecord::new(file);
-    diagnose_duplicate_named_exports(&module_record, cx);
-    // The first `export *` that brings each name.
-    let mut all_export_names: FxHashMap<&'a [u8], Span> = FxHashMap::default();
-    let mut visited = FxHashSet::default();
-    for star_export_entry in module_record.star_export_entries.iter().filter(|it| !it.is_type) {
-        let Some(module_request) = star_export_entry.module_request else {
-            continue;
-        };
-        let Some(remote) = get_loaded_module(file, module_request.name.bytes()) else {
-            continue;
-        };
-        let export_names = walk_exported_recursive(remote, &mut visited);
-        if export_names.is_empty() {
-            cx.report(module_request.span, NO_NAMED_EXPORT).data("module_name", module_request.name);
-        } else {
-            for name in export_names {
-                all_export_names.entry(name).or_insert(star_export_entry.span);
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+        let file = cx.file();
+        let module_record = ModuleRecord::new(file);
+        diagnose_duplicate_named_exports(&module_record, cx);
+        // The first `export *` that brings each name.
+        let mut all_export_names: FxHashMap<&'a [u8], Span> = FxHashMap::default();
+        let mut visited = FxHashSet::default();
+        for star_export_entry in module_record.star_export_entries.iter().filter(|it| !it.is_type) {
+            let Some(module_request) = star_export_entry.module_request else {
+                continue;
+            };
+            let Some(remote) = get_loaded_module(file, module_request.name.bytes()) else {
+                continue;
+            };
+            let export_names = walk_exported_recursive(remote, &mut visited);
+            if export_names.is_empty() {
+                cx.report(module_request.span, NO_NAMED_EXPORT).data("module_name", module_request.name);
+            } else {
+                for name in export_names {
+                    all_export_names.entry(name).or_insert(star_export_entry.span);
+                }
             }
         }
-    }
-    if all_export_names.is_empty() {
-        return;
-    }
-    for (name, span) in &module_record.exported_bindings {
-        if let Some(first) = all_export_names.get(name.bytes()) {
-            cx.report(*first, MULTIPLE_EXPORTS).data("name", *name).label(*span, "");
+        if all_export_names.is_empty() {
+            return;
+        }
+        for (name, span) in &module_record.exported_bindings {
+            if let Some(first) = all_export_names.get(name.bytes()) {
+                cx.report(*first, MULTIPLE_EXPORTS).data("name", *name).label(*span, "");
+            }
         }
     }
 }

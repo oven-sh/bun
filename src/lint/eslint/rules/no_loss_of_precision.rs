@@ -117,46 +117,75 @@ fn check_key<'a, R: Rule>(key: Option<Key<'a>>, cx: &Cx<'a, R>) {
     }
 }
 
-/// ESTree has a `Literal` for a number in an expression, in a type and in the name of a property.
-pub fn register<R: Rule>(on: &mut Listeners<'_, R>) {
-    on.exprs([ExprTag::Number], |_, e, cx| check(e.span(), cx));
-    on.types([TypeTag::NumberLit], |_, ty, cx| {
-        let literal = ty.span();
-        match ty.text().starts_with(b"-") {
-            true => check(Span::new(skip_trivia(cx.text(), literal.start + 1), literal.end), cx),
-            false => check(literal, cx),
-        }
-    });
-    on.members(|_, member, cx| {
-        if member.flags().intersects(Flags::LITERAL_NAME | Flags::COMPUTED_NAME) {
-            check_key(member.key(), cx);
-        }
-    });
-    on.props(|_, property, cx| {
-        // A property that is not a method starts with its key.
-        let first = cx.text().get(property.span().start as usize);
-        if property.kind() != PropKind::Init || matches!(first, Some(b'0'..=b'9' | b'.' | b'[')) {
+/// ESTree has a `Literal` for a number in an expression, in a type and in the name of a property. A rule with this
+/// calls what follows, each from its method of the same name.
+pub const ON: On = On::new()
+    .exprs(&[ExprTag::Number])
+    .types(&[TypeTag::NumberLit])
+    .members()
+    .props()
+    .pats(&[PatTag::Object]);
+
+pub fn expr<'a, R: Rule>(e: Expr<'a>, cx: &mut Cx<'a, R>) {
+    check(e.span(), cx);
+}
+
+pub fn ty<'a, R: Rule>(ty: TypeNode<'a>, cx: &mut Cx<'a, R>) {
+    let literal = ty.span();
+    match ty.text().starts_with(b"-") {
+        true => check(Span::new(skip_trivia(cx.text(), literal.start + 1), literal.end), cx),
+        false => check(literal, cx),
+    }
+}
+
+pub fn member<'a, R: Rule>(member: Member<'a>, cx: &mut Cx<'a, R>) {
+    if member.flags().intersects(Flags::LITERAL_NAME | Flags::COMPUTED_NAME) {
+        check_key(member.key(), cx);
+    }
+}
+
+pub fn prop<'a, R: Rule>(property: Prop<'a>, cx: &mut Cx<'a, R>) {
+    // A property that is not a method starts with its key.
+    let first = cx.text().get(property.span().start as usize);
+    if property.kind() != PropKind::Init || matches!(first, Some(b'0'..=b'9' | b'.' | b'[')) {
+        check_key(property.key(), cx);
+    }
+}
+
+pub fn pat<'a, R: Rule>(pattern: Pat<'a>, cx: &mut Cx<'a, R>) {
+    if let PatKind::Object(properties) = pattern.kind() {
+        for property in properties {
             check_key(property.key(), cx);
         }
-    });
-    on.pats([PatTag::Object], |_, pattern, cx| {
-        if let PatKind::Object(properties) = pattern.kind() {
-            for property in properties {
-                check_key(property.key(), cx);
-            }
-        }
-    });
+    }
 }
 
 impl Rule for NoLossOfPrecision {
     const META: Meta = Meta::eslint("no-loss-of-precision", Kind::Problem).recommended();
-    type State<'a> = ();
+    const ON: On = ON;
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoLossOfPrecision
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        register(on);
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        expr(e, cx);
+    }
+
+    fn ty<'a>(&self, it: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        ty(it, cx);
+    }
+
+    fn pat<'a>(&self, pattern: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        pat(pattern, cx);
+    }
+
+    fn member<'a>(&self, it: Member<'a>, cx: &mut Cx<'a, Self>) {
+        member(it, cx);
+    }
+
+    fn prop<'a>(&self, property: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        prop(property, cx);
     }
 }

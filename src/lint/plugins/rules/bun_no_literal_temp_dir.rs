@@ -33,23 +33,22 @@ impl NoLiteralTempDir {
 
 impl Rule for NoLiteralTempDir {
     const META: Meta = Meta::plugin(Plugin::Bun, "no-literal-temp-dir", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::String, ExprTag::Template]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         NoLiteralTempDir { directories: list_option(options, "directories", &["/tmp", "/var/tmp"]) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::String, ExprTag::Template], |rule, e, cx| {
-            let found = match e.kind() {
-                // In JSX a text is prose, and `a=".."` is more often a URL than a path.
-                ExprKind::String(_) if e.is_jsx_text() || e.is_jsx_tag_name() => None,
-                ExprKind::String(_) if is_jsx_attribute_string(e) => None,
-                _ => written_start(e).and_then(|(path, is_whole)| rule.directory_of(path, is_whole)),
-            };
-            if let Some(directory) = found {
-                cx.report(e, LITERAL_DIRECTORY).data("directory", directory.to_vec());
-            }
-        });
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let found = match e.kind() {
+            // In JSX a text is prose, and `a=".."` is more often a URL than a path.
+            ExprKind::String(_) if e.is_jsx_text() || e.is_jsx_tag_name() => None,
+            ExprKind::String(_) if is_jsx_attribute_string(e) => None,
+            _ => written_start(e).and_then(|(path, is_whole)| self.directory_of(path, is_whole)),
+        };
+        if let Some(directory) = found {
+            cx.report(e, LITERAL_DIRECTORY).data("directory", directory.to_vec());
+        }
     }
 }

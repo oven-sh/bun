@@ -62,27 +62,27 @@ fn can_be_negative(count: Expr) -> bool {
 
 impl Rule for NoNegativeRepeatCount {
     const META: Meta = Meta::plugin(Plugin::Bun, "no-negative-repeat-count", Kind::Problem).has_suggestions();
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoNegativeRepeatCount
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("repeat") {
-            return;
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("repeat").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(call) = e.as_call()
+            && call.args().len() == 1
+            && ast_utils::is_specific_member_access(call.callee(), None, Some("repeat"))
+            && let Some(count) = call.args().first().filter(|it| can_be_negative(*it))
+        {
+            let span = count.outer_span();
+            cx.report(count, UNBOUNDED_COUNT).suggest(CLAMP, |fixer| {
+                [fixer.insert_before(span, "Math.max(0, "), fixer.insert_after(span, ")")]
+            });
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            if let Some(call) = e.as_call()
-                && call.args().len() == 1
-                && ast_utils::is_specific_member_access(call.callee(), None, Some("repeat"))
-                && let Some(count) = call.args().first().filter(|it| can_be_negative(*it))
-            {
-                let span = count.outer_span();
-                cx.report(count, UNBOUNDED_COUNT).suggest(CLAMP, |fixer| {
-                    [fixer.insert_before(span, "Math.max(0, "), fixer.insert_after(span, ")")]
-                });
-            }
-        });
     }
 }

@@ -172,7 +172,8 @@ impl CapitalizedComments {
 
 impl Rule for CapitalizedComments {
     const META: Meta = Meta::eslint("capitalized-comments", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().finish();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let raw = options.object(1);
@@ -183,11 +184,9 @@ impl Rule for CapitalizedComments {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.finish(|rule, cx| {
-            for comment in cx.file().comments() {
-                rule.process_comment(comment, cx);
-            }
-        });
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        for comment in cx.file().comments() {
+            self.process_comment(comment, cx);
+        }
     }
 }

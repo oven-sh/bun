@@ -17,27 +17,29 @@ pub struct State<'a> {
 
 impl Rule for MaxNestedCalls {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "max-nested-calls", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         MaxNestedCalls { max: options.object(0).number("max").map_or(3, |it| it as u32) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        on.exprs([ExprTag::Call, ExprTag::New], |rule, e, cx| {
-            // No further than it takes to know.
-            let (mut depth, mut at) = (1, e);
-            while depth <= rule.max
-                && let Some(Some(call)) = cx.state.enclosing_calls.find(Node::Expr(at), enclosing_call)
-            {
-                depth += 1;
-                at = call;
-            }
-            if depth > rule.max {
-                cx.report(e, MAX_NESTED_CALLS).data("max", rule.max.to_string());
-            }
-        });
-        State::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        // No further than it takes to know.
+        let (mut depth, mut at) = (1, e);
+        while depth <= self.max
+            && let Some(Some(call)) = cx.state.enclosing_calls.find(Node::Expr(at), enclosing_call)
+        {
+            depth += 1;
+            at = call;
+        }
+        if depth > self.max {
+            cx.report(e, MAX_NESTED_CALLS).data("max", self.max.to_string());
+        }
     }
 }
 

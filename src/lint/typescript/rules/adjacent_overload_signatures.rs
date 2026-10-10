@@ -158,38 +158,57 @@ fn check_members<'a>(members: List<'a, Member<'a>>, is_in_class: bool, cx: &Cx<'
 impl Rule for AdjacentOverloadSignatures {
     const META: Meta = Meta::typescript("adjacent-overload-signatures", Kind::Suggestion)
         .presets(Presets::STYLISTIC);
-    type State<'a> = ();
+    const ON: On = On::new()
+        .stmts(&[StmtTag::Block, StmtTag::Module, StmtTag::Interface])
+        .types(&[TypeTag::Object])
+        .funcs()
+        .classes()
+        .finish();
+    /// Whether the file has a function declaration.
+    type State<'a> = bool;
 
     fn new(_: &Options) -> Self {
         AdjacentOverloadSignatures
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.has_stmts([StmtTag::Fn]) {
-            on.stmts([StmtTag::Block, StmtTag::Module], |_, statement, cx| match statement.kind() {
-                StmtKind::Block(body) => check_statements(body, cx),
-                StmtKind::Module(module) => check_statements(module.body(), cx),
-                _ => {}
-            });
-            on.funcs(|_, func, cx| {
-                if func.kind() != FnKind::StaticBlock
-                    && let Some(body) = func.body_statements()
-                {
-                    check_statements(body, cx);
-                }
-            });
-            on.finish(|_, cx| check_statements(cx.file().body(), cx));
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<bool> {
+        Some(file.has_stmts([StmtTag::Fn]))
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match statement.kind() {
+            StmtKind::Block(body) if cx.state => check_statements(body, cx),
+            StmtKind::Module(module) if cx.state => check_statements(module.body(), cx),
+            StmtKind::Interface(interface) => check_members(interface.members(), false, cx),
+            _ => {}
         }
-        on.classes(|_, class, cx| check_members(class.members(), true, cx));
-        on.stmts([StmtTag::Interface], |_, statement, cx| {
-            if let StmtKind::Interface(interface) = statement.kind() {
-                check_members(interface.members(), false, cx);
-            }
-        });
-        on.types([TypeTag::Object], |_, ty, cx| {
-            if let TypeKind::Object(members) = ty.kind() {
-                check_members(members, false, cx);
-            }
-        });
+    }
+
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        if let TypeKind::Object(members) = ty.kind() {
+            check_members(members, false, cx);
+        }
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if !cx.state {
+            return;
+        }
+        if func.kind() != FnKind::StaticBlock
+            && let Some(body) = func.body_statements()
+        {
+            check_statements(body, cx);
+        }
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        check_members(class.members(), true, cx);
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        if !cx.state {
+            return;
+        }
+        check_statements(cx.file().body(), cx);
     }
 }

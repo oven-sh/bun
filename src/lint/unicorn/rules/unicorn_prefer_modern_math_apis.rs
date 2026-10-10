@@ -13,45 +13,52 @@ const PREFER_MATH_LOG_N: Message = Message::new("", "Prefer `Math.{{good_method}
 
 impl Rule for PreferModernMathApis {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-modern-math-apis", Kind::Suggestion);
+    const ON: On = On::new().binaries(&[BinOp::Mul, BinOp::Div]).exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferModernMathApis
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("Math") {
+            return None;
+        }
+        Some(())
+    }
+
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let file = cx.file();
+        if !(file.mentions("log") && file.mentions_any(&["LN10", "LN2", "LOG10E", "LOG2E"])) {
             return;
         }
-        if file.mentions("log") && file.mentions_any(&["LN10", "LN2", "LOG10E", "LOG2E"]) {
-            on.binaries([BinOp::Mul, BinOp::Div], |_, e, cx| {
-                let ExprKind::Binary { op, left, right } = e.kind() else {
-                    return;
-                };
-                check_prefer_log(e, left, right, cx);
-                if op == BinOp::Mul {
-                    check_prefer_log(e, right, left, cx);
-                }
-            });
+        let ExprKind::Binary { op, left, right } = e.kind() else {
+            return;
+        };
+        check_prefer_log(e, left, right, cx);
+        if op == BinOp::Mul {
+            check_prefer_log(e, right, left, cx);
         }
-        if file.mentions("sqrt") {
-            on.exprs([ExprTag::Call], |_, e, cx| {
-                let Some(arg) = e.as_call().and_then(|it| argument_of_math_method(it, "sqrt")) else {
-                    return;
-                };
-                // `a * a + b ** 2 + ..`
-                let mut count = 0;
-                let mut pending: SmallVec<[Expr; 8]> = smallvec![arg];
-                while let Some(expression) = pending.pop() {
-                    match expression.kind() {
-                        ExprKind::Binary { op: BinOp::Add, left, right } => pending.extend([left, right]),
-                        _ if is_pow_2_expression(expression) => count += 1,
-                        _ => return,
-                    }
-                }
-                cx.report(e, if count == 1 { PREFER_MATH_ABS } else { PREFER_MATH_HYPOT });
-            });
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if !cx.file().mentions("sqrt") {
+            return;
         }
+        let Some(arg) = e.as_call().and_then(|it| argument_of_math_method(it, "sqrt")) else {
+            return;
+        };
+        // `a * a + b ** 2 + ..`
+        let mut count = 0;
+        let mut pending: SmallVec<[Expr; 8]> = smallvec![arg];
+        while let Some(expression) = pending.pop() {
+            match expression.kind() {
+                ExprKind::Binary { op: BinOp::Add, left, right } => pending.extend([left, right]),
+                _ if is_pow_2_expression(expression) => count += 1,
+                _ => return,
+            }
+        }
+        cx.report(e, if count == 1 { PREFER_MATH_ABS } else { PREFER_MATH_HYPOT });
     }
 }
 

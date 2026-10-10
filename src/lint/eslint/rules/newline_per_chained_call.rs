@@ -15,8 +15,21 @@ fn object_of(member: Expr<'_>) -> Option<Expr<'_>> {
     }
 }
 
-impl NewlinePerChainedCall {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NewlinePerChainedCall {
+    const META: Meta = Meta::eslint("newline-per-chained-call", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let depth = options.object(0).usize("ignoreChainWithDepth");
+        NewlinePerChainedCall {
+            ignore_chain_with_depth: depth.filter(|it| *it != 0).unwrap_or(2),
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(call) = e.as_call() else {
             return;
         };
@@ -61,23 +74,5 @@ impl NewlinePerChainedCall {
         cx.report(Span::new(after_object, callee.span().end), EXPECTED)
             .data("callee", name)
             .fix(|fixer| fixer.insert_before(Span::empty(after_object), "\n"));
-    }
-}
-
-impl Rule for NewlinePerChainedCall {
-    const META: Meta = Meta::eslint("newline-per-chained-call", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let depth = options.object(0).usize("ignoreChainWithDepth");
-        NewlinePerChainedCall {
-            ignore_chain_with_depth: depth.filter(|it| *it != 0).unwrap_or(2),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Call], Self::check);
     }
 }

@@ -21,8 +21,22 @@ fn is_gap(next_to_arrow: Option<&u8>) -> Option<bool> {
     }
 }
 
-impl ArrowSpacing {
-    fn check<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for ArrowSpacing {
+    const META: Meta = Meta::eslint("arrow-spacing", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new().funcs();
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let object = options.object(0);
+        ArrowSpacing {
+            before: object.bool_or("before", true),
+            after: object.bool_or("after", true),
+        }
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         let Some(arrow) = func.arrow_span() else {
             return;
         };
@@ -51,24 +65,5 @@ impl ArrowSpacing {
                     .fix(|fixer| fixer.remove(arrow.between(after.span())));
             }
         }
-    }
-}
-
-impl Rule for ArrowSpacing {
-    const META: Meta = Meta::eslint("arrow-spacing", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let object = options.object(0);
-        ArrowSpacing {
-            before: object.bool_or("before", true),
-            after: object.bool_or("after", true),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.funcs(Self::check);
     }
 }

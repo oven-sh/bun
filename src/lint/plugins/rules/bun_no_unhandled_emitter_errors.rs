@@ -112,8 +112,20 @@ fn is_taken_care_of(mut e: Expr, mut known: Option<&mut Known>) -> bool {
     }
 }
 
-impl NoUnhandledEmitterErrors {
-    fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
+impl Rule for NoUnhandledEmitterErrors {
+    const META: Meta = Meta::plugin(Plugin::Bun, "no-unhandled-emitter-errors", Kind::Problem);
+    const ON: On = On::new().finish();
+    type State<'a> = ();
+
+    fn new(options: &Options) -> Self {
+        NoUnhandledEmitterErrors { factories: exports_option(options, "factories") }
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        (!self.factories.is_empty() || NODE.members.iter().any(|it| file.mentions(it.0))).then_some(())
+    }
+
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
         let mut known = Known::default();
         let mut check = |e: Expr<'a>, name: &str| {
@@ -129,20 +141,5 @@ impl NoUnhandledEmitterErrors {
             }
         }
         each_call_of_exports(file, &self.factories, CALLED, &mut check);
-    }
-}
-
-impl Rule for NoUnhandledEmitterErrors {
-    const META: Meta = Meta::plugin(Plugin::Bun, "no-unhandled-emitter-errors", Kind::Problem);
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        NoUnhandledEmitterErrors { factories: exports_option(options, "factories") }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !self.factories.is_empty() || NODE.members.iter().any(|it| file.mentions(it.0)) {
-            on.finish(Self::check);
-        }
     }
 }

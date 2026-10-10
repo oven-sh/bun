@@ -215,25 +215,12 @@ impl MaxLen {
         }
         cx.report(measured, message).data("lineLength", line_length).data(limit_name, limit);
     }
-
-    fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
-        let file = cx.file();
-        // No line that is not longer is reported.
-        let limit = self.max_comment_length.map_or(self.max_length, |it| it.min(self.max_length));
-        for number in 1..=file.line_count() {
-            let line = file.line_span(number);
-            let text = file.slice(line);
-            let is_short = text.len() <= limit && (self.tab_width <= 1 || !strings::contains_char(text, b'\t'));
-            if !is_short && compute_line_length(text, self.tab_width) > limit {
-                self.check_long_line(line, cx);
-            }
-        }
-    }
 }
 
 impl Rule for MaxLen {
     const META: Meta = Meta::eslint("max-len", Kind::Layout).deprecated();
-    type State<'a> = ();
+    const ON: On = On::new().finish();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         // The object is the last option. The first two can be the length and the tab width.
@@ -257,7 +244,17 @@ impl Rule for MaxLen {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.finish(Self::check);
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let file = cx.file();
+        // No line that is not longer is reported.
+        let limit = self.max_comment_length.map_or(self.max_length, |it| it.min(self.max_length));
+        for number in 1..=file.line_count() {
+            let line = file.line_span(number);
+            let text = file.slice(line);
+            let is_short = text.len() <= limit && (self.tab_width <= 1 || !strings::contains_char(text, b'\t'));
+            if !is_short && compute_line_length(text, self.tab_width) > limit {
+                self.check_long_line(line, cx);
+            }
+        }
     }
 }

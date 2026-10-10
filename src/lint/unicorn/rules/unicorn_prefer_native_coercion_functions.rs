@@ -74,48 +74,47 @@ fn is_array_callback(arrow: Expr) -> bool {
 
 impl Rule for PreferNativeCoercionFunctions {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-native-coercion-functions", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().funcs();
+    no_state!();
 
     fn new(_: &Options) -> Self {
         PreferNativeCoercionFunctions
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.funcs(|_, func, cx| {
-            if func.is_async()
-                || func.is_generator()
-                || !func.has_body()
-                || func.params().first().is_none_or(|it| it.is_rest())
-                || func.return_type().is_some_and(|it| it.tag() == TypeTag::Predicate && !it.is_parenthesized())
-            {
-                return;
-            }
-            let owner = func.owner();
-            if !func.is_arrow() {
-                // Not what is directly in a property of an object: a method, or a value.
-                let is_in_object_property =
-                    matches!(owner, Node::Expr(e) if !e.is_parenthesized() && matches!(e.parent(), Node::Prop(_)));
-                if !is_in_object_property && let Some(called_fn) = check_function(func) {
-                    cx.report(func.estree_span(), FUNCTION).data("called_fn", called_fn);
-                }
-                return;
-            }
-            let (called_fn, returned_ident) = match func.body() {
-                FnBody::Expr(body) => (
-                    get_first_parameter_name(func).and_then(|it| is_matching_native_coercion_function_call(body, it)),
-                    get_inner_expression(body).as_ident(),
-                ),
-                _ => (check_function(func), statements(func).next().and_then(get_returned_ident)),
-            };
-            if let Some(called_fn) = called_fn {
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if func.is_async()
+            || func.is_generator()
+            || !func.has_body()
+            || func.params().first().is_none_or(|it| it.is_rest())
+            || func.return_type().is_some_and(|it| it.tag() == TypeTag::Predicate && !it.is_parenthesized())
+        {
+            return;
+        }
+        let owner = func.owner();
+        if !func.is_arrow() {
+            // Not what is directly in a property of an object: a method, or a value.
+            let is_in_object_property =
+                matches!(owner, Node::Expr(e) if !e.is_parenthesized() && matches!(e.parent(), Node::Prop(_)));
+            if !is_in_object_property && let Some(called_fn) = check_function(func) {
                 cx.report(func.estree_span(), FUNCTION).data("called_fn", called_fn);
             }
-            if returned_ident.is_some()
-                && returned_ident == get_first_parameter_name(func)
-                && matches!(owner, Node::Expr(arrow) if is_array_callback(arrow))
-            {
-                cx.report(func.estree_span(), ARRAY_CALLBACK);
-            }
-        });
+            return;
+        }
+        let (called_fn, returned_ident) = match func.body() {
+            FnBody::Expr(body) => (
+                get_first_parameter_name(func).and_then(|it| is_matching_native_coercion_function_call(body, it)),
+                get_inner_expression(body).as_ident(),
+            ),
+            _ => (check_function(func), statements(func).next().and_then(get_returned_ident)),
+        };
+        if let Some(called_fn) = called_fn {
+            cx.report(func.estree_span(), FUNCTION).data("called_fn", called_fn);
+        }
+        if returned_ident.is_some()
+            && returned_ident == get_first_parameter_name(func)
+            && matches!(owner, Node::Expr(arrow) if is_array_callback(arrow))
+        {
+            cx.report(func.estree_span(), ARRAY_CALLBACK);
+        }
     }
 }

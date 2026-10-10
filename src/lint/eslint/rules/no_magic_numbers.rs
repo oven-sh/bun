@@ -174,11 +174,6 @@ pub struct Checker {
     is_typescript_eslint: bool,
 }
 
-/// A rule that is a [`Checker`].
-pub trait Checks: Rule {
-    fn checker(&self) -> &Checker;
-}
-
 impl Checker {
     pub fn new(options: &Options, is_typescript_eslint: bool) -> Self {
         let object = options.object(0);
@@ -214,30 +209,58 @@ impl Checker {
     }
 
     /// ESTree has a `Literal` for a number in an expression, in a type and in the name of a
-    /// property. Here only the first is an expression.
-    pub fn register<R: Checks>(&self, on: &mut Listeners<'_, R>) {
-        on.exprs([ExprTag::Number, ExprTag::BigInt], |rule, e, cx| rule.checker().check_expr(e, cx));
-        on.types([TypeTag::NumberLit, TypeTag::BigIntLit], |rule, ty, cx| rule.checker().check_type(ty, cx));
-        on.members(|rule, member, cx| {
-            if member.flags().intersects(Flags::LITERAL_NAME | Flags::COMPUTED_NAME) {
-                rule.checker().check_key(member.key(), place_of_member(member, false), cx);
-            }
-        });
-        on.enum_members(|rule, member, cx| rule.checker().check_key(member.key(), Place::EnumMember, cx));
+    /// property. Here only the first is an expression. A rule with this calls what follows, each from its
+    /// method of the same name.
+    pub const ON: On = On::new()
+        .exprs(&[ExprTag::Number, ExprTag::BigInt])
+        .types(&[TypeTag::NumberLit, TypeTag::BigIntLit])
+        .members()
+        .enum_members()
+        .props()
+        .pats(&[PatTag::Object]);
+
+    pub fn narrow(&self) -> On {
+        let mut on = On::new()
+            .exprs(&[ExprTag::Number, ExprTag::BigInt])
+            .types(&[TypeTag::NumberLit, TypeTag::BigIntLit])
+            .members()
+            .enum_members();
         // Nothing is reported in a `Property` otherwise.
         if self.detect_objects {
-            on.props(|rule, property, cx| {
-                if !property.is_jsx_attribute() {
-                    rule.checker().check_key(property.key(), Place::Property, cx);
-                }
-            });
-            on.pats([PatTag::Object], |rule, pattern, cx| {
-                if let PatKind::Object(properties) = pattern.kind() {
-                    for property in properties {
-                        rule.checker().check_key(property.key(), Place::Property, cx);
-                    }
-                }
-            });
+            on = on.props().pats(&[PatTag::Object]);
+        }
+        on
+    }
+
+    pub fn expr<'a, R: Rule>(&self, e: Expr<'a>, cx: &mut Cx<'a, R>) {
+        self.check_expr(e, cx);
+    }
+
+    pub fn ty<'a, R: Rule>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, R>) {
+        self.check_type(ty, cx);
+    }
+
+    pub fn member<'a, R: Rule>(&self, member: Member<'a>, cx: &mut Cx<'a, R>) {
+        if member.flags().intersects(Flags::LITERAL_NAME | Flags::COMPUTED_NAME) {
+            self.check_key(member.key(), place_of_member(member, false), cx);
+        }
+    }
+
+    pub fn enum_member<'a, R: Rule>(&self, member: EnumMember<'a>, cx: &mut Cx<'a, R>) {
+        self.check_key(member.key(), Place::EnumMember, cx);
+    }
+
+    pub fn prop<'a, R: Rule>(&self, property: Prop<'a>, cx: &mut Cx<'a, R>) {
+        if !property.is_jsx_attribute() {
+            self.check_key(property.key(), Place::Property, cx);
+        }
+    }
+
+    pub fn pat<'a, R: Rule>(&self, pattern: Pat<'a>, cx: &mut Cx<'a, R>) {
+        if let PatKind::Object(properties) = pattern.kind() {
+            for property in properties {
+                self.check_key(property.key(), Place::Property, cx);
+            }
         }
     }
 
@@ -395,21 +418,40 @@ fn report_magic<R: Rule>(at: Span, sign: Option<u8>, unsigned: Span, cx: &Cx<'_,
     };
 }
 
-impl Checks for NoMagicNumbers {
-    fn checker(&self) -> &Checker {
-        &self.0
-    }
-}
-
 impl Rule for NoMagicNumbers {
     const META: Meta = Meta::eslint("no-magic-numbers", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = Checker::ON;
+    no_state!();
 
     fn new(options: &Options) -> Self {
         NoMagicNumbers(Checker::new(options, false))
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        self.0.register(on);
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        self.0.narrow()
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.0.expr(e, cx);
+    }
+
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        self.0.ty(ty, cx);
+    }
+
+    fn pat<'a>(&self, pattern: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        self.0.pat(pattern, cx);
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        self.0.member(member, cx);
+    }
+
+    fn prop<'a>(&self, property: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        self.0.prop(property, cx);
+    }
+
+    fn enum_member<'a>(&self, member: EnumMember<'a>, cx: &mut Cx<'a, Self>) {
+        self.0.enum_member(member, cx);
     }
 }

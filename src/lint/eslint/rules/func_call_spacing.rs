@@ -149,7 +149,8 @@ impl FuncCallSpacing {
 
 impl Rule for FuncCallSpacing {
     const META: Meta = Meta::eslint("func-call-spacing", Kind::Layout).fixable(Fixable::Whitespace).deprecated();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New, ExprTag::ImportCall]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let is_never = options.str(0) != Some("always");
@@ -159,8 +160,11 @@ impl Rule for FuncCallSpacing {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Call, ExprTag::New], Self::check_call);
-        on.exprs([ExprTag::ImportCall], Self::check_import);
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Call | ExprTag::New => self.check_call(e, cx),
+            ExprTag::ImportCall => self.check_import(e, cx),
+            _ => {}
+        }
     }
 }

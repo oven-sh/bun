@@ -41,49 +41,52 @@ fn binds_tighter_than_addition(e: Expr) -> bool {
 
 impl Rule for NoArrayJustToCount {
     const META: Meta = Meta::plugin(Plugin::Bun, "no-array-just-to-count", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Dot]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         NoArrayJustToCount { count_function: options.object(0).str("countFunction").map(|it| it.as_bytes().into()) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("split") {
+            return None;
+        }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Dot { obj, name, .. } = e.kind() else {
+            return;
+        };
+        if !name.name().is("length") {
             return;
         }
-        on.exprs([ExprTag::Dot], |rule, e, cx| {
-            let ExprKind::Dot { obj, name, .. } = e.kind() else {
-                return;
-            };
-            if !name.name().is("length") {
-                return;
-            }
-            let Some((string, separator)) = split_by_character(obj) else {
-                return;
-            };
-            // `.length - 1` is the number of separators itself.
-            let minus_one = e.parent().as_expr().filter(|parent| {
-                matches!(parent.kind(), ExprKind::Binary { op: BinOp::Sub, left, right }
-                    if left == e && !e.is_parenthesized() && matches!(right.kind(), ExprKind::Number(it) if it == 1.0))
-            });
-            let reported = minus_one.unwrap_or(e);
-            let report = cx.report(reported, ARRAY_TO_COUNT);
-            // The function has to be in scope, and `a?.split(..)` can be `undefined`.
-            if let Some(function) = rule.count_function.as_deref()
-                && !e.is_in_optional_chain()
-                && string.binary_op() != Some(BinOp::Comma)
-                && Node::Expr(e).scope().resolve_bytes(function).is_some()
-            {
-                report.fix(|fixer| {
-                    let call = [function, b"(", string.text(), b", ", separator.text(), b")"].concat();
-                    let text = match (minus_one, binds_tighter_than_addition(e)) {
-                        (Some(_), _) => call,
-                        (None, true) => [b"(", &call[..], b" + 1)"].concat(),
-                        (None, false) => [&call[..], b" + 1"].concat(),
-                    };
-                    fixer.replace(reported, text)
-                });
-            }
+        let Some((string, separator)) = split_by_character(obj) else {
+            return;
+        };
+        // `.length - 1` is the number of separators itself.
+        let minus_one = e.parent().as_expr().filter(|parent| {
+            matches!(parent.kind(), ExprKind::Binary { op: BinOp::Sub, left, right }
+                if left == e && !e.is_parenthesized() && matches!(right.kind(), ExprKind::Number(it) if it == 1.0))
         });
+        let reported = minus_one.unwrap_or(e);
+        let report = cx.report(reported, ARRAY_TO_COUNT);
+        // The function has to be in scope, and `a?.split(..)` can be `undefined`.
+        if let Some(function) = self.count_function.as_deref()
+            && !e.is_in_optional_chain()
+            && string.binary_op() != Some(BinOp::Comma)
+            && Node::Expr(e).scope().resolve_bytes(function).is_some()
+        {
+            report.fix(|fixer| {
+                let call = [function, b"(", string.text(), b", ", separator.text(), b")"].concat();
+                let text = match (minus_one, binds_tighter_than_addition(e)) {
+                    (Some(_), _) => call,
+                    (None, true) => [b"(", &call[..], b" + 1)"].concat(),
+                    (None, false) => [&call[..], b" + 1"].concat(),
+                };
+                fixer.replace(reported, text)
+            });
+        }
     }
 }

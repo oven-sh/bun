@@ -62,37 +62,35 @@ impl NoEnvAtModuleScope {
     }
 }
 
-fn check<'a>(rule: &NoEnvAtModuleScope, e: Expr<'a>, cx: &mut Cx<'a, NoEnvAtModuleScope>) {
-    // Not what a type has after `typeof`.
-    if !ast_utils::is_member_expression(e) {
-        return;
-    }
-    if e.object().is_some_and(is_environment) {
-        let is_allowed = || ast_utils::get_static_property_name(e).is_some_and(|name| rule.allows(&name));
-        if !is_written(e) && !is_allowed() && runs_while_module_is_evaluated(Node::Expr(e), &mut cx.state) {
-            cx.report(e, VARIABLE).data("text", e.text());
-        }
-    } else if is_environment(e)
-        && !matches!(e.parent(), Node::Expr(member) if member.object() == Some(e))
-        && !rule.allows_all_of(e)
-        && runs_while_module_is_evaluated(Node::Expr(e), &mut cx.state)
-    {
-        cx.report(e, ENVIRONMENT);
-    }
-}
-
 impl Rule for NoEnvAtModuleScope {
     const META: Meta = Meta::plugin(Plugin::Bun, "no-env-at-module-scope", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]);
     type State<'a> = RunsLater<'a>;
 
     fn new(options: &Options) -> Self {
         NoEnvAtModuleScope { allow: list_option(options, "allow", &["NODE_ENV"]) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> RunsLater<'a> {
-        if file.mentions("env") {
-            on.exprs([ExprTag::Dot, ExprTag::Index], check);
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<RunsLater<'a>> {
+        file.mentions("env").then(RunsLater::default)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        // Not what a type has after `typeof`.
+        if !ast_utils::is_member_expression(e) {
+            return;
         }
-        RunsLater::default()
+        if e.object().is_some_and(is_environment) {
+            let is_allowed = || ast_utils::get_static_property_name(e).is_some_and(|name| self.allows(&name));
+            if !is_written(e) && !is_allowed() && runs_while_module_is_evaluated(Node::Expr(e), &mut cx.state) {
+                cx.report(e, VARIABLE).data("text", e.text());
+            }
+        } else if is_environment(e)
+            && !matches!(e.parent(), Node::Expr(member) if member.object() == Some(e))
+            && !self.allows_all_of(e)
+            && runs_while_module_is_evaluated(Node::Expr(e), &mut cx.state)
+        {
+            cx.report(e, ENVIRONMENT);
+        }
     }
 }

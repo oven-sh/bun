@@ -145,8 +145,24 @@ impl GetterReturn {
             cx.report(func.estree_span(), EXPECTED).data("name", ast_utils::get_function_name_with_kind(func));
         }
     }
+}
 
-    fn check_function<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for GetterReturn {
+    const META: Meta = Meta::eslint("getter-return", Kind::Problem).recommended();
+    const ON: On = On::new().funcs();
+    type State<'a> = ();
+
+    fn new(options: &Options) -> Self {
+        GetterReturn {
+            allows_implicit: options.object(0).bool_or("allowImplicit", false),
+        }
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        (file.has_classes() || file.has_exprs([ExprTag::Object])).then_some(())
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         if cx.language().is_oxlint {
             if is_getter_for_oxlint(func) {
                 self.check_as_oxlint(func, cx);
@@ -171,23 +187,6 @@ impl GetterReturn {
                 if has_return { EXPECTED_ALWAYS } else { EXPECTED },
             )
             .data("name", ast_utils::get_function_name_with_kind(func));
-        }
-    }
-}
-
-impl Rule for GetterReturn {
-    const META: Meta = Meta::eslint("getter-return", Kind::Problem).recommended();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        GetterReturn {
-            allows_implicit: options.object(0).bool_or("allowImplicit", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.has_classes() || file.has_exprs([ExprTag::Object]) {
-            on.funcs(Self::check_function);
         }
     }
 }

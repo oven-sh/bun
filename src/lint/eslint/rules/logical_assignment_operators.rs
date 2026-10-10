@@ -407,6 +407,9 @@ impl Rule for LogicalAssignmentOperators {
     const META: Meta = Meta::eslint("logical-assignment-operators", Kind::Suggestion)
         .fixable(Fixable::Code)
         .has_suggestions();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Assign, ExprTag::Binary])
+        .stmts(&[StmtTag::If]);
     type State<'a> = WithBlocks<'a>;
 
     fn new(options: &Options) -> Self {
@@ -417,16 +420,23 @@ impl Rule for LogicalAssignmentOperators {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> WithBlocks<'a> {
-        if self.is_never {
-            on.exprs([ExprTag::Assign], Self::check_logical_assignment);
-            return WithBlocks::default();
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<WithBlocks<'a>> {
+        Some(WithBlocks::default())
+    }
+
+    fn expr<'a>(&self, expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match expr.tag() {
+            ExprTag::Assign if self.is_never => self.check_logical_assignment(expr, cx),
+            ExprTag::Assign => self.check_assignment(expr, cx),
+            ExprTag::Binary if !self.is_never => self.check_logical(expr, cx),
+            _ => {}
         }
-        on.exprs([ExprTag::Assign], Self::check_assignment);
-        on.exprs([ExprTag::Binary], Self::check_logical);
-        if self.check_if {
-            on.stmts([StmtTag::If], Self::check_if_statement);
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if !self.check_if {
+            return;
         }
-        WithBlocks::default()
+        self.check_if_statement(stmt, cx);
     }
 }

@@ -12,38 +12,42 @@ const USE_DEFAULT_PARAMETER: Message = Message::new("", "Prefer default paramete
 
 impl Rule for PreferDefaultParameters {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-default-parameters", Kind::Suggestion).has_suggestions();
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::Expr, StmtTag::Var]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         PreferDefaultParameters
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         // Only a statement directly in the body of a function is ever reported.
-        on.stmts([StmtTag::Expr], |_, statement, cx| {
-            if let StmtKind::Expr(e) = statement.kind()
-                && let ExprKind::Assign { op, target, value } = e.kind()
-                && let Some(left_name) = target.as_ident()
-                && !e.is_parenthesized()
-            {
-                match op {
-                    None => check_expression(statement, left_name, value, Some(e), cx),
-                    Some(BinOp::Or | BinOp::Nullish) if is_literal(value) => {
-                        check_parameter_default(statement, left_name, left_name, value, target, Reassignment::Logical(e), cx);
+        match statement.tag() {
+            StmtTag::Expr => {
+                if let StmtKind::Expr(e) = statement.kind()
+                    && let ExprKind::Assign { op, target, value } = e.kind()
+                    && let Some(left_name) = target.as_ident()
+                    && !e.is_parenthesized()
+                {
+                    match op {
+                        None => check_expression(statement, left_name, value, Some(e), cx),
+                        Some(BinOp::Or | BinOp::Nullish) if is_literal(value) => {
+                            check_parameter_default(statement, left_name, left_name, value, target, Reassignment::Logical(e), cx);
+                        }
+                        Some(_) => {}
                     }
-                    Some(_) => {}
                 }
             }
-        });
-        on.stmts([StmtTag::Var], |_, statement, cx| {
-            if let StmtKind::Var(declarations) = statement.kind()
-                && declarations.len() == 1
-                && let Some(declarator) = declarations.first()
-                && let (Some(left_name), Some(init)) = (declarator.pat().as_ident(), declarator.init())
-            {
-                check_expression(statement, left_name, init, None, cx);
+            StmtTag::Var => {
+                if let StmtKind::Var(declarations) = statement.kind()
+                    && declarations.len() == 1
+                    && let Some(declarator) = declarations.first()
+                    && let (Some(left_name), Some(init)) = (declarator.pat().as_ident(), declarator.init())
+                {
+                    check_expression(statement, left_name, init, None, cx);
+                }
             }
-        });
+            _ => {}
+        }
     }
 }
 

@@ -78,7 +78,8 @@ impl Rule for ArrayBracketNewline {
     const META: Meta = Meta::eslint("array-bracket-newline", Kind::Layout)
         .fixable(Fixable::Whitespace)
         .deprecated();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Array]).pats(&[PatTag::Array]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -99,16 +100,15 @@ impl Rule for ArrayBracketNewline {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Array], |rule, e, cx| {
-            if let ExprKind::Array(elements) = e.kind() {
-                rule.check(e.span(), elements.len(), cx);
-            }
-        });
-        on.pats([PatTag::Array], |rule, pat, cx| {
-            if let PatKind::Array(elements) = pat.kind() {
-                rule.check(utils::estree_span(pat.into()), elements.len(), cx);
-            }
-        });
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let ExprKind::Array(elements) = e.kind() {
+            self.check(e.span(), elements.len(), cx);
+        }
+    }
+
+    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        if let PatKind::Array(elements) = pat.kind() {
+            self.check(utils::estree_span(pat.into()), elements.len(), cx);
+        }
     }
 }

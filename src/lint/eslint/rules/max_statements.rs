@@ -105,8 +105,29 @@ impl MaxStatements {
             .data("count", count)
             .data("max", max);
     }
+}
 
-    fn check<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for MaxStatements {
+    const META: Meta = Meta::eslint("max-statements", Kind::Suggestion);
+    const ON: On = On::new().funcs().finish();
+    type State<'a> = TopLevelFunctions<'a>;
+
+    fn new(options: &Options) -> Self {
+        let object = options.object(0);
+        MaxStatements {
+            max: match object.has("maximum") || object.has("max") {
+                true => object.usize("maximum").filter(|&max| max != 0).or_else(|| object.usize("max")),
+                false => Some(options.number(0).map_or(10, |max| max as usize)),
+            },
+            ignore_top_level_functions: options.object(1).bool_or("ignoreTopLevelFunctions", false),
+        }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<TopLevelFunctions<'a>> {
+        Some(TopLevelFunctions::default())
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         if !ast_utils::is_function_with_body(func) {
             return;
         }
@@ -129,7 +150,10 @@ impl MaxStatements {
     }
 
     /// A single top level function is taken for the wrapper of a module.
-    fn check_top_level_functions<'a>(&self, cx: &mut Cx<'a, Self>) {
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        if !self.ignore_top_level_functions {
+            return;
+        }
         let Some(max) = self.max else {
             return;
         };
@@ -139,29 +163,5 @@ impl MaxStatements {
         for (func, count) in std::mem::take(&mut cx.state.exceeding) {
             Self::report(func, count, max, cx);
         }
-    }
-}
-
-impl Rule for MaxStatements {
-    const META: Meta = Meta::eslint("max-statements", Kind::Suggestion);
-    type State<'a> = TopLevelFunctions<'a>;
-
-    fn new(options: &Options) -> Self {
-        let object = options.object(0);
-        MaxStatements {
-            max: match object.has("maximum") || object.has("max") {
-                true => object.usize("maximum").filter(|&max| max != 0).or_else(|| object.usize("max")),
-                false => Some(options.number(0).map_or(10, |max| max as usize)),
-            },
-            ignore_top_level_functions: options.object(1).bool_or("ignoreTopLevelFunctions", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> TopLevelFunctions<'a> {
-        on.funcs(Self::check);
-        if self.ignore_top_level_functions {
-            on.finish(Self::check_top_level_functions);
-        }
-        TopLevelFunctions::default()
     }
 }

@@ -419,6 +419,18 @@ impl OneVar {
     }
 }
 
+/// What opens a scope for ESLint.
+const SCOPES: NodeTags = NodeTags::new()
+    .stmts(&[
+        StmtTag::Block,
+        StmtTag::For,
+        StmtTag::ForIn,
+        StmtTag::ForOf,
+        StmtTag::Switch,
+    ])
+    .union(NodeTags::FILE)
+    .union(NodeTags::FUNC);
+
 /// Whether ESLint's `startFunction` is called for it: the file, a function, a static block.
 fn starts_function(node: Node<'_>) -> bool {
     match node {
@@ -429,6 +441,10 @@ fn starts_function(node: Node<'_>) -> bool {
 
 impl Rule for OneVar {
     const META: Meta = Meta::eslint("one-var", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new()
+        .stmts(&[StmtTag::Var])
+        .enter(SCOPES.stmts(&[StmtTag::Module, StmtTag::Var]))
+        .exit(SCOPES.stmts(&[StmtTag::Module]));
     type State<'a> = State;
 
     fn new(options: &Options) -> Self {
@@ -456,54 +472,67 @@ impl Rule for OneVar {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         // Only what has to be declared together depends on what has been declared before.
         if !self.kinds.iter().any(|it| it.has(Mode::Always)) {
-            on.stmts([StmtTag::Var], Self::check_variable_declaration);
-            return State::default();
+            return On::new().stmts(&[StmtTag::Var]);
         }
-        // The block that is the body of a function is not a node: one scope stands for ESLint's
-        // two, of which the outer is empty.
-        let functions = NodeTags::FILE | NodeTags::FUNC;
-        on.enter(functions, |_, node, cx| {
-            if starts_function(node) {
-                cx.state.functions.push(Seen::default());
-                cx.state.blocks.push(Default::default());
-            }
-        });
-        on.exit(functions, |_, node, cx| {
-            if starts_function(node) {
-                cx.state.functions.pop();
-                cx.state.blocks.pop();
-            }
-        });
-        let blocks = [
-            StmtTag::Block,
-            StmtTag::For,
-            StmtTag::ForIn,
-            StmtTag::ForOf,
-            StmtTag::Switch,
-        ];
-        on.enter(blocks, |_, _, cx| cx.state.blocks.push(Default::default()));
-        on.exit(blocks, |_, _, cx| {
-            cx.state.blocks.pop();
-        });
         // ESLint does not know namespaces. For oxlint what is declared in one is apart, `var` too.
-        if file.language().is_oxlint {
-            on.enter(StmtTag::Module, |_, _, cx| {
+        let scopes = match file.language().is_oxlint {
+            true => SCOPES.stmts(&[StmtTag::Module]),
+            false => SCOPES,
+        };
+        On::new().enter(scopes.stmts(&[StmtTag::Var])).exit(scopes)
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State> {
+        Some(State::default())
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_variable_declaration(statement, cx);
+    }
+
+    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        match node {
+            // The block that is the body of a function is not a node: one scope stands for ESLint's
+            // two, of which the outer is empty.
+            Node::File(_) | Node::Func(_) if starts_function(node) => {
                 cx.state.functions.push(Seen::default());
                 cx.state.blocks.push(Default::default());
-            });
-            on.exit(StmtTag::Module, |_, _, cx| {
+            }
+            Node::Stmt(statement) => match statement.tag() {
+                StmtTag::Module => {
+                    cx.state.functions.push(Seen::default());
+                    cx.state.blocks.push(Default::default());
+                }
+                StmtTag::Var => self.check_variable_declaration(statement, cx),
+                StmtTag::Block | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf | StmtTag::Switch => {
+                    cx.state.blocks.push(Default::default())
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+
+    fn exit<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        match node {
+            Node::File(_) | Node::Func(_) if starts_function(node) => {
                 cx.state.functions.pop();
                 cx.state.blocks.pop();
-            });
-        }
-        on.enter(StmtTag::Var, |rule, node, cx| {
-            if let Node::Stmt(statement) = node {
-                rule.check_variable_declaration(statement, cx);
             }
-        });
-        State::default()
+            Node::Stmt(statement) => match statement.tag() {
+                StmtTag::Module => {
+                    cx.state.functions.pop();
+                    cx.state.blocks.pop();
+                }
+                StmtTag::Block | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf | StmtTag::Switch => {
+                    cx.state.blocks.pop();
+                }
+                _ => {}
+            },
+            _ => {}
+        }
     }
 }

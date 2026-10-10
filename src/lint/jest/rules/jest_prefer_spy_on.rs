@@ -9,18 +9,19 @@ pub struct PreferSpyOn;
 
 impl Rule for PreferSpyOn {
     const META: Meta = Meta::oxlint(Plugin::Jest, "prefer-spy-on", Kind::Suggestion).has_suggestions();
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferSpyOn
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if prefer_spy_on::should_run(file) {
-            on.finish(|_, cx| {
-                let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
-                prefer_spy_on::run_once(&ctx);
-            });
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        prefer_spy_on::should_run(file).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        prefer_spy_on::run_once(&ctx);
     }
 }

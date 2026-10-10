@@ -8,18 +8,19 @@ pub struct NoLargeSnapshots(NoLargeSnapshotsConfig);
 
 impl Rule for NoLargeSnapshots {
     const META: Meta = Meta::oxlint(Plugin::Vitest, "no-large-snapshots", Kind::Suggestion);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         NoLargeSnapshots(NoLargeSnapshotsConfig::new(options))
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if may_have_snapshot(file) {
-            on.finish(|rule, cx| {
-                let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
-                rule.0.run_once(&ctx);
-            });
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        may_have_snapshot(file).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        self.0.run_once(&ctx);
     }
 }

@@ -22,17 +22,23 @@ pub struct State<'a> {
 impl Rule for NoUselessPromiseResolveReject {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "no-useless-promise-resolve-reject", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         NoUselessPromiseResolveReject { allow_reject: options.object(0).bool_or("allowReject", false) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         if file.mentions("Promise") && file.mentions_any(&["resolve", "reject"]) {
-            on.exprs([ExprTag::Call], Self::check);
+            Some(State::default())
+        } else {
+            None
         }
-        State::default()
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(e, cx);
     }
 }
 

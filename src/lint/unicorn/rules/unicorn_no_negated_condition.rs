@@ -9,28 +9,28 @@ const NO_NEGATED_CONDITION: Message = Message::new("", "Unexpected negated condi
 
 impl Rule for NoNegatedCondition {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-negated-condition", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::If]).exprs(&[ExprTag::Cond]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoNegatedCondition
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::If], |_, if_stmt, cx| {
-            if let StmtKind::If { test, yes: consequent, no: Some(alternate) } = if_stmt.kind()
-                && alternate.tag() != StmtTag::If
-                && is_negated_expression(test)
-            {
-                cx.report(test, NO_NEGATED_CONDITION).fix(|fixer| fix_if_statement(fixer, test, consequent, alternate));
-            }
-        });
-        on.exprs([ExprTag::Cond], |_, e, cx| {
-            if let ExprKind::Cond { test, yes, no } = e.kind()
-                && is_negated_expression(test)
-            {
-                cx.report(test, NO_NEGATED_CONDITION).fix(|fixer| fix_conditional_expression(fixer, e, test, yes, no));
-            }
-        });
+    fn stmt<'a>(&self, if_stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if let StmtKind::If { test, yes: consequent, no: Some(alternate) } = if_stmt.kind()
+            && alternate.tag() != StmtTag::If
+            && is_negated_expression(test)
+        {
+            cx.report(test, NO_NEGATED_CONDITION).fix(|fixer| fix_if_statement(fixer, test, consequent, alternate));
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let ExprKind::Cond { test, yes, no } = e.kind()
+            && is_negated_expression(test)
+        {
+            cx.report(test, NO_NEGATED_CONDITION).fix(|fixer| fix_conditional_expression(fixer, e, test, yes, no));
+        }
     }
 }
 

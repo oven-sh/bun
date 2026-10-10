@@ -807,6 +807,30 @@ impl Rule for IndentLegacy {
     const META: Meta = Meta::eslint("indent-legacy", Kind::Layout)
         .fixable(Fixable::Whitespace)
         .deprecated();
+    const ON: On = On::new()
+        .exprs(&[
+            ExprTag::Object,
+            ExprTag::Array,
+            ExprTag::Call,
+            ExprTag::Dot,
+            ExprTag::Index,
+        ])
+        .stmts(&[
+            StmtTag::Block,
+            StmtTag::While,
+            StmtTag::For,
+            StmtTag::ForIn,
+            StmtTag::ForOf,
+            StmtTag::DoWhile,
+            StmtTag::If,
+            StmtTag::Var,
+            StmtTag::Switch,
+        ])
+        .funcs()
+        .classes()
+        .enter(NodeTags::new().stmts(&[StmtTag::Return]))
+        .exit(NodeTags::CASE)
+        .finish();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -834,39 +858,50 @@ impl Rule for IndentLegacy {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
-        on.finish(|rule, cx| {
-            // Root nodes should have no indent.
-            let needed = rule.good_char_at(cx.file(), cx.program_span().start);
-            rule.check_statements_indent(cx, cx.file().body(), needed);
-        });
-        on.classes(|rule, class, cx| rule.check_class_body(cx, class));
-        on.funcs(|rule, func, cx| rule.check_function(cx, func));
-        on.stmts(
-            [
-                StmtTag::Block,
-                StmtTag::While,
-                StmtTag::For,
-                StmtTag::ForIn,
-                StmtTag::ForOf,
-                StmtTag::DoWhile,
-                StmtTag::If,
-                StmtTag::Var,
-                StmtTag::Switch,
-                StmtTag::Return,
-            ],
-            |rule, statement, cx| rule.check_statement(cx, statement),
-        );
-        on.cases(|rule, case, cx| rule.check_switch_case(cx, case));
-        on.exprs([ExprTag::Object, ExprTag::Array], |rule, e, cx| {
-            rule.check_indent_in_array_or_object_block(cx, e);
-        });
-        if self.call_arguments.is_some() {
-            on.exprs([ExprTag::Call], |rule, e, cx| rule.check_call_expression(cx, e));
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Object | ExprTag::Array => self.check_indent_in_array_or_object_block(cx, e),
+            ExprTag::Call if self.call_arguments.is_some() => self.check_call_expression(cx, e),
+            ExprTag::Dot | ExprTag::Index if self.member_expression.is_some() => {
+                self.check_member_expression(cx, e);
+            }
+            _ => {}
         }
-        if self.member_expression.is_some() {
-            on.exprs([ExprTag::Dot, ExprTag::Index], |rule, e, cx| rule.check_member_expression(cx, e));
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_statement(cx, statement);
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_function(cx, func);
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_class_body(cx, class);
+    }
+
+    // Two reports about one `return`, from here and from what it is a statement of, stay in the order they are made in: that
+    // of a function, a block, a loop or an `if` is first, that of a `case` or of the file is second.
+    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        if let Node::Stmt(statement) = node {
+            self.check_statement(cx, statement);
         }
-        State::default()
+    }
+
+    fn exit<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        if let Node::Case(case) = node {
+            self.check_switch_case(cx, case);
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        // Root nodes should have no indent.
+        let needed = self.good_char_at(cx.file(), cx.program_span().start);
+        self.check_statements_indent(cx, cx.file().body(), needed);
     }
 }

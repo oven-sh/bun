@@ -73,8 +73,8 @@ pub(crate) fn dump_order(this: &Execution) -> JsResult<()> {
 
     for (group_index, group_value) in this.groups.iter().enumerate() {
         let _guard = group::begin_msg(format_args!(
-            "{} ConcurrentGroup ({}-{})",
-            group_index, group_value.sequence_start, group_value.sequence_end,
+            "{} ConcurrentGroup ({}-{}, failure_skip_to={})",
+            group_index, group_value.sequence_start, group_value.sequence_end, group_value.failure_skip_to,
         ));
 
         for (sequence_index, sequence) in group_value.sequences_const(this).iter().enumerate() {

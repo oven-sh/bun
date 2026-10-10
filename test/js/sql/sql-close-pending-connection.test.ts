@@ -75,7 +75,7 @@ async function silentAfterFirstMessageTlsServer(name: keyof typeof startTls) {
   const { port, server } = await listeningServer(client => {
     client.on("error", () => {});
     if (greeting) client.write(greeting);
-    client.once("data", chunk => {
+    client.once("data", (chunk: Buffer) => {
       if (answer) client.write(answer);
       const upstream = net.connect((terminator.address() as net.AddressInfo).port, "127.0.0.1");
       upstream.on("error", () => {});
@@ -106,7 +106,7 @@ for (const [name, scheme, closedCode, timeoutCode] of drivers) {
       // the server holds the connection open without ever completing the
       // handshake, so the pool connection stays mid-handshake from here on
       await accepted;
-      await sql.close({ timeout: "0" });
+      await sql.close({ timeout: "0" as any });
       expect((await queryError).code).toBe(closedCode);
     } finally {
       server.close();
@@ -133,7 +133,7 @@ for (const [name, scheme, closedCode, timeoutCode] of drivers) {
       });
       const queryError = sql`SELECT 1`.catch(e => e);
       await accepted;
-      await sql.close({ timeout: "0" });
+      await sql.close({ timeout: "0" as any });
       expect((await queryError).code).toBe(closedCode);
       expect(onconnect).not.toHaveBeenCalled();
       expect(onclose).not.toHaveBeenCalled();
@@ -149,7 +149,7 @@ for (const [name, scheme, closedCode, timeoutCode] of drivers) {
       const connectError = sql.connect().catch(e => e);
       // close in the same tick: the pool slot exists but its native handle
       // has not been assigned yet
-      await sql.close({ timeout: "0" });
+      await sql.close({ timeout: "0" as any });
       expect((await connectError).code).toBe(closedCode);
     } finally {
       server.close();
@@ -272,7 +272,7 @@ test("postgres: close() mid-reconnect does not fire onclose for the unfinished c
     // a new query redials the closed slot, then close() lands mid-handshake
     const queryError = sql`SELECT 1`.catch(e => e);
     await secondAccepted.promise;
-    await sql.close({ timeout: "0" });
+    await sql.close({ timeout: "0" as any });
     expect((await queryError).code).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
     expect(onconnect).toHaveBeenCalledTimes(1);
     expect(onclose).toHaveBeenCalledTimes(1);
@@ -322,7 +322,7 @@ test("pool scans tolerate unassigned connection slots during pool start", async 
     expect(errors).toEqual([]);
   } finally {
     // force an immediate close even with waiters queued
-    await sql.close({ timeout: "0" });
+    await sql.close({ timeout: "0" as any });
     server.close();
   }
 });

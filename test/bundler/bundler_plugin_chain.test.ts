@@ -45,7 +45,7 @@ describe("bundler", () => {
               builder.onResolve({ filter: /\.magic$/ }, args => {
                 callOrder.push("plugin3-resolve");
                 // Return empty object - should continue to next plugin
-                return {};
+                return {} as Bun.OnResolveResult;
               });
             },
           },
@@ -165,7 +165,7 @@ describe("bundler", () => {
                 expect(args.kind).toBe("entry-point-build");
                 callOrder.push("plugin2-entry");
                 // Return empty object - continue to next
-                return {};
+                return {} as Bun.OnResolveResult;
               });
             },
           },

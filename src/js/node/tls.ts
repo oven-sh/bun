@@ -5,6 +5,7 @@ const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const setListenerSecureContext = $newRustFunction("Listener.rs", "jsSetSecureContext", 2);
+const firstFlightBeforeFin = $newRustFunction("runtime/socket/socket.rs", "jsFirstFlightBeforeFin", 1);
 const { throwNotImplemented } = require("internal/shared");
 const { idnaToASCII } = require("internal/url");
 const {
@@ -1670,7 +1671,14 @@ function connect(...args) {
   if (timeout) {
     tlssock.setTimeout(timeout);
   }
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1795
+  if (!options.socket) tlssock.once("connect", onConnectStart);
   return tlssock.connect(normal);
+}
+
+// The engine sends the ClientHello when the listeners of 'connect' have run. An end() of theirs must not get ahead of it.
+function onConnectStart() {
+  firstFlightBeforeFin(this._handle);
 }
 
 function getCiphers() {

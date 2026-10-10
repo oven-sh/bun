@@ -1254,8 +1254,13 @@ impl BlobExt for Blob {
     }
 
     fn get_exists_sync(&self) -> JSValue {
-        if self.size.get() == MAX_SIZE {
-            self.resolve_size();
+        match self.store.get() {
+            _ if self.size.get() == MAX_SIZE => self.resolve_size(),
+            // A failed stat is not an answer to keep: the file may exist by now.
+            Some(store) if matches!(&store.data, store::Data::File(file) if file.seekable.is_none()) => {
+                resolve_file_stat(store)
+            }
+            _ => {}
         }
 
         // If there's no store that means it's empty and we just return true
@@ -1562,12 +1567,12 @@ impl BlobExt for Blob {
         // `pipe_stream` takes its own refs; init's +1 drops with `file_sink` on return.
         let mut readable_stream = readable_stream;
         // SAFETY: sole owner so far; `&mut` scoped to the call.
-        let result =
-            unsafe { (*file_sink.as_ptr()).pipe_stream(&mut readable_stream, cx.global()) };
-        if let Some(err) = result.to_error() {
-            return Ok(JSPromise::rejected_promise(cx.global(), err).to_js());
+        match unsafe { (*file_sink.as_ptr()).pipe_stream(&mut readable_stream, cx.global()) } {
+            Ok(promise) => Ok(promise),
+            Err(err) => {
+                Ok(JSPromise::rejected_promise_with_caught_exception(cx.global(), err)?.to_js())
+            }
         }
-        Ok(result)
     }
 
     fn get_writer(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -1996,7 +2001,8 @@ impl BlobExt for Blob {
     }
 
     fn get_size_for_bindings(&self) -> u64 {
-        if self.size.get() == MAX_SIZE {
+        let has_size = self.size.get() != MAX_SIZE;
+        if !has_size {
             self.resolve_size();
         }
 
@@ -2004,7 +2010,17 @@ impl BlobExt for Blob {
         // signal that the size is unknown.
         if let Some(store) = self.store.get() {
             if let store::Data::File(file) = &store.data {
-                if !file.seekable.unwrap_or(false) {
+                // A slice has its size without a stat, and `clone()` learns the mode without filling `seekable`.
+                let mode_seen_by_clone = file.mode_seen_by_clone.filter(|_| has_size);
+                if !file
+                    .seekable
+                    .or_else(|| mode_seen_by_clone.map(bun_sys::S::ISREG))
+                    .unwrap_or(false)
+                {
+                    // Printing is not to leave the 0 of a failed stat behind: the body would read as empty.
+                    if !has_size && file.seekable.is_none() {
+                        self.size.set(MAX_SIZE);
+                    }
                     return u64::MAX;
                 }
             }
@@ -5836,6 +5852,34 @@ pub(crate) fn store_reads_repeatably(store: &RefPtr<Store>) -> bool {
     }
 }
 
+/// Whether two Blobs over `store` would compete for its bytes (an fd, a pipe, a terminal). A directory or a closed fd has none: each Blob fails when read.
+pub(crate) fn store_yields_bytes_once(store: &RefPtr<Store>) -> bool {
+    if !matches!(store.data, store::Data::File(_)) {
+        return false;
+    }
+    let is_fd = Store::data_mut(store).as_file().pathlike.is_fd();
+    // What the tee of an fd does next, so this costs no extra `fstat`.
+    if is_fd && Store::data_mut(store).as_file().seekable.is_none() {
+        resolve_file_stat(store);
+    }
+    let file = Store::data_mut(store).as_file_mut();
+    let mode = if file.seekable.is_some() {
+        Some(file.mode)
+    } else if let PathOrFileDescriptor::Path(path) = &file.pathlike {
+        // Not `resolve_file_stat`: the `Bun.file()` sharing `store` answers from what that caches.
+        if file.mode_seen_by_clone.is_none() {
+            let mut buffer = bun_paths::path_buffer_pool::get();
+            if let bun_sys::Result::Ok(stat) = bun_sys::stat(path.slice_z(&mut buffer)) {
+                file.mode_seen_by_clone = Some(stat.st_mode as bun_sys::Mode);
+            }
+        }
+        file.mode_seen_by_clone
+    } else {
+        None
+    };
+    mode.is_some_and(|mode| !bun_sys::S::ISDIR(mode) && (is_fd || !bun_sys::S::ISREG(mode)))
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // toStringWithBytes / toString / toJSON / toFormData / toArrayBuffer{View}
 // ──────────────────────────────────────────────────────────────────────────
@@ -5951,7 +5995,7 @@ impl read_file::ReadFileToJs for ToFormDataWithBytesFn {
 pub enum Any {
     Blob(Blob),
     InternalBlob(Internal),
-    WTFStringImpl(bun_core::WTFStringImpl),
+    WTFStringImpl(bun_core::WTFString),
 }
 
 impl Any {
@@ -5983,8 +6027,7 @@ impl Any {
     pub(crate) fn memory_cost(&self) -> usize {
         match self {
             Any::Blob(blob) => blob.store().map(|s| s.memory_cost()).unwrap_or(0),
-            Any::WTFStringImpl(str) => {
-                let s = super::body::wtf_impl(str);
+            Any::WTFStringImpl(s) => {
                 if s.ref_count() == 1 {
                     s.memory_cost()
                 } else {
@@ -6006,7 +6049,7 @@ impl Any {
     pub(crate) fn fast_size(&self) -> SizeType {
         match self {
             Any::Blob(b) => b.size.get(),
-            Any::WTFStringImpl(s) => super::body::wtf_impl(s).byte_length() as SizeType,
+            Any::WTFStringImpl(s) => s.byte_length() as SizeType,
             Any::InternalBlob(_) => self.slice().len() as SizeType,
         }
     }
@@ -6015,7 +6058,7 @@ impl Any {
     pub(crate) fn size(&self) -> SizeType {
         match self {
             Any::Blob(b) => b.size.get(),
-            Any::WTFStringImpl(s) => super::body::wtf_impl(s).utf8_byte_length() as SizeType,
+            Any::WTFStringImpl(s) => s.utf8_byte_length() as SizeType,
             _ => self.slice().len() as SizeType,
         }
     }
@@ -6031,6 +6074,14 @@ impl Any {
 // ─── Any: JSC-integration (to_js/from_js paths) ──────────────────────────────
 
 impl Any {
+    /// Moves the string out of the `WTFStringImpl` arm and leaves an empty `Blob`.
+    fn take_string(&mut self) -> BunString {
+        match core::mem::replace(self, Any::Blob(Blob::default())) {
+            Any::WTFStringImpl(string) => BunString::adopt_wtf_impl(string.into_raw()),
+            _ => unreachable!("Any::take_string on a variant that is not a string"),
+        }
+    }
+
     fn to_internal_blob_if_possible(&mut self) {
         let Any::Blob(blob) = self else {
             return;
@@ -6139,10 +6190,8 @@ impl Any {
                 *self = Any::Blob(Blob::default());
                 str
             }
-            Any::WTFStringImpl(impl_) => {
-                let str =
-                    BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
-                *self = Any::Blob(Blob::default());
+            Any::WTFStringImpl(_) => {
+                let str = self.take_string();
                 if str.length() == 0 {
                     return Ok(JSValue::NULL);
                 }
@@ -6184,9 +6233,7 @@ impl Any {
 
         if let Any::WTFStringImpl(_) = self {
             let blob = Blob::create(self.slice(), global, true);
-            // `Blob::create(.., true)` copied the bytes; `Any` still owns the
-            // +1 WTF ref. `detach()` releases it and resets `*self` (the bare
-            // `*self = Any::Blob(default)` here previously leaked that ref).
+            // `Blob::create(.., true)` copied the bytes, so release the string.
             self.detach();
             return blob;
         }
@@ -6214,12 +6261,7 @@ impl Any {
                 *self = Any::Blob(Blob::default());
                 Ok(owned)
             }
-            Any::WTFStringImpl(impl_) => {
-                let str =
-                    BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
-                *self = Any::Blob(Blob::default());
-                str.into_js(cx.global())
-            }
+            Any::WTFStringImpl(_) => self.take_string().into_js(cx.global()),
         }
     }
 
@@ -6252,10 +6294,8 @@ impl Any {
                 *self = Any::Blob(Blob::default());
                 jsc::ArrayBuffer::from_default_allocator(cx.global(), TYPED_ARRAY_VIEW, bytes)
             }
-            Any::WTFStringImpl(impl_) => {
-                let str =
-                    BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
-                *self = Any::Blob(Blob::default());
+            Any::WTFStringImpl(_) => {
+                let str = self.take_string();
 
                 let out_bytes = str.to_utf8();
                 if out_bytes.is_owned() {
@@ -6275,7 +6315,7 @@ impl Any {
         match self {
             Any::Blob(blob) => blob.is_detached(),
             Any::InternalBlob(ib) => ib.bytes.is_empty(),
-            Any::WTFStringImpl(s) => super::body::wtf_impl(s).length() == 0,
+            Any::WTFStringImpl(s) => s.length() == 0,
         }
     }
 }
@@ -6310,7 +6350,7 @@ impl Any {
     pub(crate) fn slice(&self) -> &[u8] {
         match self {
             Any::Blob(b) => b.shared_view(),
-            Any::WTFStringImpl(s) => super::body::wtf_impl(s).utf8_slice(),
+            Any::WTFStringImpl(s) => s.utf8_slice(),
             Any::InternalBlob(ib) => ib.slice_const(),
         }
     }
@@ -6340,9 +6380,7 @@ impl Any {
                 ib.bytes.shrink_to_fit();
                 *self = Any::Blob(Blob::default());
             }
-            Any::WTFStringImpl(s) => {
-                // `Any` owns one ref on the WTFStringImpl pointee.
-                super::body::wtf_impl(s).deref();
+            Any::WTFStringImpl(_) => {
                 *self = Any::Blob(Blob::default());
             }
         }

@@ -668,8 +668,7 @@ JSValue fetchCommonJSModule(
     RETURN_IF_EXCEPTION(scope, {});
 
     if (Bun::isDataOrBlobURL(specifierWtfString)) [[unlikely]] {
-        Bun::throwIfMayNotMakeScriptFromStrings(globalObject, scope);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_MAY_NOT_MAKE_SCRIPT_FROM_STRINGS(globalObject, scope, {});
     }
 
     BunString specifier = Bun::toString(specifierWtfString);
@@ -843,8 +842,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
     JSC::JSModuleLoader* loader = Bun::moduleLoaderOf(globalObject, scope, target->moduleGraph());
     RETURN_IF_EXCEPTION(scope, {});
     if (Bun::isDataOrBlobURL(specifierWtfString)) [[unlikely]] {
-        Bun::throwIfMayNotMakeScriptFromStrings(globalObject, scope);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_MAY_NOT_MAKE_SCRIPT_FROM_STRINGS(globalObject, scope, {});
     }
     Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, !isExtension, forceLoaderType);
     if (res->success && res->result.value.isCommonJSModule) {
@@ -923,6 +921,19 @@ JSValue fetchCommonJSModuleNonBuiltin(
     }
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, jsNumber(-1));
+}
+
+extern "C" JSC::JSPromise* JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(JSC::JSGlobalObject* globalObject, const BunString* specifier)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto key = globalObject->moduleLoader()->resolve(globalObject, JSC::Identifier::fromString(vm, specifier->toWTFString()), {}, nullptr, /* useImportMap */ true);
+    if (scope.exception()) [[unlikely]]
+        return nullptr;
+
+    auto* promise = JSC::loadAndEvaluateModule(globalObject, key.string(), nullptr, nullptr);
+    EXCEPTION_ASSERT(!!promise == !scope.exception());
+    return promise;
 }
 
 // Explicit instantiations of fetchCommonJSModuleNonBuiltin

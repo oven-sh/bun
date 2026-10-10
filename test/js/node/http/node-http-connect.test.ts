@@ -219,7 +219,7 @@ describe("HTTP server CONNECT", () => {
     let timeoutFired = false;
 
     proxyServer.on("connect", (req, socket, head) => {
-      socket.setTimeout(100);
+      (socket as net.Socket).setTimeout(100);
       socket.on("timeout", () => {
         timeoutFired = true;
         socket.write("HTTP/1.1 408 Request Timeout\r\n\r\n");
@@ -283,8 +283,8 @@ describe("HTTP server CONNECT", () => {
       async function listen(onTunnel: (socket: net.Socket) => void, onRequest?: http.RequestListener) {
         const server = secure ? https.createServer({ key: tlsCert.key, cert: tlsCert.cert }) : http.createServer();
         server.on(kind === "CONNECT" ? "connect" : "upgrade", (req, socket) => {
-          sockets.push(socket);
-          onTunnel(socket);
+          sockets.push(socket as net.Socket);
+          onTunnel(socket as net.Socket);
         });
         server.on("request", onRequest ?? ((req, res) => res.end("ok")));
         await once(server.listen(0, "127.0.0.1"), "listening");
@@ -400,7 +400,7 @@ describe("HTTP server CONNECT", () => {
       const chunks: Buffer[] = [];
       let received = 0;
       const { promise: receivedAll, resolve: onReceivedAll } = Promise.withResolvers<void>();
-      tunnel.on("data", chunk => {
+      tunnel.on("data", (chunk: Buffer) => {
         chunks.push(chunk);
         received += chunk.length;
         if (received >= total) onReceivedAll();
@@ -426,7 +426,7 @@ describe("HTTP server CONNECT", () => {
       await using server = await t.listen(socket => {
         socket.write(accept);
         socket.on("drain", () => drains++);
-        socket.on("data", chunk => {
+        socket.on("data", (chunk: Buffer) => {
           chunks.push(chunk);
           const before = received;
           received += chunk.length;
@@ -524,8 +524,8 @@ describe("HTTP server CONNECT", () => {
       // The client takes the response. It ends with the last chunk of the chunked encoding.
       const { promise: responseRead, resolve: onResponseRead } = Promise.withResolvers<void>();
       const lastChunk = Buffer.from("\r\n0\r\n\r\n");
-      let tail = Buffer.alloc(0);
-      client.on("data", chunk => {
+      let tail: Buffer = Buffer.alloc(0);
+      client.on("data", (chunk: Buffer) => {
         tail = (chunk.length < lastChunk.length ? Buffer.concat([tail, chunk]) : chunk).subarray(-lastChunk.length);
         if (tail.equals(lastChunk)) onResponseRead();
       });
@@ -556,7 +556,7 @@ describe("HTTP server CONNECT", () => {
       // The socket stays paused with these listeners: pause() was explicit.
       const events: string[] = [];
       const chunks: Buffer[] = [];
-      tunnel.on("data", chunk => chunks.push(chunk));
+      tunnel.on("data", (chunk: Buffer) => chunks.push(chunk));
       tunnel.on("end", () => events.push("end"));
       const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
       tunnel.on("close", () => onClosed());
@@ -580,7 +580,7 @@ describe("HTTP server CONNECT", () => {
     const upgradeSocket = Promise.withResolvers<net.Socket>();
     const proceed = Promise.withResolvers<void>();
     server.on("upgrade", async (req, socket, head) => {
-      upgradeSocket.resolve(socket);
+      upgradeSocket.resolve(socket as net.Socket);
       await proceed.promise;
       wss.handleUpgrade(req, socket, head, ws => ws.on("message", data => ws.send(String(data))));
     });
@@ -607,7 +607,7 @@ describe("HTTP server CONNECT", () => {
     echoed.promise.catch(() => {});
     client.on("error", fail);
     client.on("close", () => fail(new Error("the connection closed before the echo")));
-    client.on("data", chunk => {
+    client.on("data", (chunk: Buffer) => {
       received.push(chunk);
       if (Buffer.concat(received).includes(echo)) echoed.resolve();
     });
@@ -1291,7 +1291,7 @@ describe("CONNECT pipelined behind a pending response", () => {
     });
     server.on("clientError", onFailure);
     server.on("connect", (req, socket, head) => {
-      events.push(`connect ${req.url} upgrade=${req.upgrade}`);
+      events.push(`connect ${req.url} upgrade=${(req as any).upgrade}`);
       let tunneled = head.toString();
       socket.on("data", chunk => (tunneled += chunk));
       socket.on("end", () => socket.end(`${ESTABLISHED}tunneled:${tunneled}`));
@@ -1302,7 +1302,7 @@ describe("CONNECT pipelined behind a pending response", () => {
     const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
     try {
       const received: Buffer[] = [];
-      client.on("data", chunk => received.push(chunk));
+      client.on("data", (chunk: Buffer) => received.push(chunk));
       client.on("error", onFailure);
       client.on("close", () => onFailure(new Error(`closed before the first response finished: ${events}`)));
       client.write(options.written);
@@ -1396,7 +1396,7 @@ describe("CONNECT pipelined behind a pending response", () => {
     });
     server.on("connect", (req, socket) => {
       first!.end("first");
-      onHandoff(socket);
+      onHandoff(socket as net.Socket);
     });
     await once(server.listen(0, "127.0.0.1"), "listening");
     const { port } = server.address() as AddressInfo;
@@ -1705,7 +1705,7 @@ describe("Should be compatible with node.js", () => {
     const server = http.createServer();
     let serverSocket: net.Socket;
     server.on("connect", (req, socket) => {
-      serverSocket = socket;
+      serverSocket = socket as net.Socket;
       socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
     });
     server.listen(0, "127.0.0.1");
@@ -1726,7 +1726,7 @@ describe("Should be compatible with node.js", () => {
 
   test("tests should run on node.js", async () => {
     const process = Bun.spawn({
-      cmd: [nodeExe(), "--test", join(import.meta.dir, "node-http-connect.node.mts")],
+      cmd: [nodeExe()!, "--test", join(import.meta.dir, "node-http-connect.node.mts")],
       stdout: "inherit",
       stderr: "inherit",
       stdin: "ignore",
@@ -1838,7 +1838,7 @@ test("server.close(cb) still waits for a tunnel that is half-open after the peer
   const tunnel = Promise.withResolvers<net.Socket>();
   server.on("connect", (req, socket) => {
     socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-    tunnel.resolve(socket);
+    tunnel.resolve(socket as net.Socket);
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
   const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
@@ -2182,7 +2182,7 @@ describe("a CONNECT tunnel pipelined behind a response that still drains", () =>
       await handedOff.promise;
 
       const chunks: Buffer[] = [];
-      client.on("data", chunk => chunks.push(chunk));
+      client.on("data", (chunk: Buffer) => chunks.push(chunk));
       const closed = once(client, "close");
       client.resume();
       await closed;
@@ -2235,7 +2235,7 @@ describe("a CONNECT tunnel pipelined behind a response that still drains", () =>
     try {
       await once(client, "connect");
       const chunks: Buffer[] = [];
-      client.on("data", chunk => chunks.push(chunk));
+      client.on("data", (chunk: Buffer) => chunks.push(chunk));
       client.on("error", () => {});
       const closed = once(client, "close");
       client.write(

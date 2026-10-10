@@ -38,7 +38,7 @@ export function createConnectProxy(options: ConnectProxyOptions = {}): net.Serve
     let tunnelEstablished = false;
     let targetSocket: net.Socket | null = null;
 
-    clientSocket.on("data", data => {
+    clientSocket.on("data", (data: Buffer) => {
       // If tunnel is already established, forward data directly
       if (tunnelEstablished && targetSocket) {
         targetSocket.write(data);
@@ -112,7 +112,7 @@ export function createConnectProxy(options: ConnectProxyOptions = {}): net.Serve
         const forward = (bytes: Buffer) => {
           clientSocket.write(bytes);
         };
-        targetSocket!.on("data", chunk => {
+        targetSocket!.on("data", (chunk: Buffer) => {
           if (options.onTargetData) {
             options.onTargetData(chunk, forward);
           } else {

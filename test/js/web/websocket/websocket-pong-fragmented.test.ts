@@ -9,7 +9,7 @@ function doHandshake(
   socket: any,
   handshakeBuffer: Uint8Array,
   data: Uint8Array,
-): { buffer: Uint8Array; done: boolean } {
+): { buffer: Uint8Array<ArrayBuffer>; done: boolean } {
   const newBuffer = new Uint8Array(handshakeBuffer.length + data.length);
   newBuffer.set(handshakeBuffer);
   newBuffer.set(data, handshakeBuffer.length);

@@ -5,7 +5,7 @@ import { parseArgs } from "node:util";
 // before validateBoolean, so an explicit null is the same as an absent key.
 describe("parseArgs: null top-level boolean config flags fall back to defaults", () => {
   test.each([null, undefined])("%p acts like the key being absent for all four flags", absent => {
-    const base = { values: { __proto__: null }, positionals: [] };
+    const base = { values: { __proto__: null } as {}, positionals: [] };
     expect(parseArgs({ args: [], options: {}, strict: absent } as any)).toEqual(base);
     expect(parseArgs({ args: [], options: {}, tokens: absent } as any)).toEqual(base);
     expect(parseArgs({ args: [], options: {}, allowPositionals: absent } as any)).toEqual(base);
@@ -35,7 +35,7 @@ describe("parseArgs: null top-level boolean config flags fall back to defaults",
       expect.objectContaining({ code: "ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL" }),
     );
     expect(parseArgs({ args: ["pos"], options: {}, strict: false, allowPositionals: null } as any)).toEqual({
-      values: { __proto__: null },
+      values: { __proto__: null } as {},
       positionals: ["pos"],
     });
   });

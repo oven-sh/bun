@@ -2784,6 +2784,222 @@ describe.concurrent("bun lint", () => {
       expect(names.map(name => fixed.files[name])).toEqual(rows.map(([code, written]) => (written ?? code) + "\n"));
     });
 
+    // As ESLint 9.39.5 with eslint-plugin-react 7.37.5. ESLint sorts by line and column alone, so what starts at one place stays in the
+    // order in which the listeners were called, and of two fixes that overlap only the first is applied. A node is entered before what
+    // is in it and left after it, whatever its listener reports; on one node a selector that says more than a kind comes later. The
+    // place of a rule in the configuration counts after all that.
+    test("rules of eslint-plugin-react that report at one place", async () => {
+      const rows: [rules: Record<string, unknown>, code: string, reports: string[], written: string][] = [
+        [
+          {
+            "react/jsx-indent": "error",
+            "react/jsx-one-expression-per-line": "error",
+            "react/jsx-closing-tag-location": "error",
+          },
+          "<div>\n  bar {foo}\n  bar </div>\n",
+          [
+            "1:6 react/jsx-indent",
+            "2:7 react/jsx-one-expression-per-line",
+            "2:12 react/jsx-one-expression-per-line",
+            "2:12 react/jsx-indent",
+            "3:7 react/jsx-closing-tag-location",
+          ],
+          "<div>\n    bar \n    {' '}\n    {foo}\n    bar\n    {' '}\n</div>\n",
+        ],
+        [
+          { "react/jsx-curly-brace-presence": "error", "react/jsx-one-expression-per-line": "error" },
+          '<a>b{"c"}</a>;\n',
+          [
+            "1:4 react/jsx-one-expression-per-line",
+            "1:5 react/jsx-one-expression-per-line",
+            "1:5 react/jsx-curly-brace-presence",
+          ],
+          "<a>\nb\nc\n</a>;\n",
+        ],
+        [
+          { "react/jsx-no-useless-fragment": "error", "react/jsx-one-expression-per-line": "error" },
+          "<a>b<><c /></></a>;\n",
+          [
+            "1:4 react/jsx-one-expression-per-line",
+            "1:5 react/jsx-one-expression-per-line",
+            "1:5 react/jsx-no-useless-fragment",
+            "1:5 react/jsx-no-useless-fragment",
+            "1:7 react/jsx-one-expression-per-line",
+          ],
+          "<a>\nb\n<c />\n</a>;\n",
+        ],
+        [
+          { "react/jsx-no-useless-fragment": "error", "react/jsx-wrap-multilines": "error" },
+          "const a = <>\n  <b />\n</>;\n",
+          ["1:11 react/jsx-wrap-multilines", "1:11 react/jsx-no-useless-fragment"],
+          "const a = (<b />);\n",
+        ],
+        [
+          { "react/jsx-no-useless-fragment": "error", "react/jsx-wrap-multilines": "error" },
+          "function f() {\n  return <>\n    <b />\n  </>\n}\n",
+          ["2:10 react/jsx-wrap-multilines", "2:10 react/jsx-no-useless-fragment"],
+          "function f() {\n  return (<b />)\n}\n",
+        ],
+        [
+          { "react/jsx-no-useless-fragment": "error", "react/jsx-wrap-multilines": "error" },
+          "const f = () => <>\n  <b />\n</>;\n",
+          ["1:17 react/jsx-no-useless-fragment", "1:17 react/jsx-wrap-multilines"],
+          "const f = () => <b />;\n",
+        ],
+        [
+          { "react/jsx-no-useless-fragment": "error", "react/jsx-wrap-multilines": ["error", { "logical": "parens" }] },
+          "a = b && <>\n  <c />\n</>;\n",
+          ["1:10 react/jsx-wrap-multilines", "1:10 react/jsx-no-useless-fragment"],
+          "a = b && (<c />);\n",
+        ],
+        [
+          { "react/jsx-boolean-value": "error", "react/jsx-sort-props": "error" },
+          "<a c b={true} />;\n",
+          ["1:6 react/jsx-sort-props", "1:6 react/jsx-boolean-value"],
+          "<a b c />;\n",
+        ],
+        [
+          { "react/jsx-boolean-value": "error", "react/jsx-max-props-per-line": "error" },
+          "<a b c={true} />;\n",
+          ["1:6 react/jsx-max-props-per-line", "1:6 react/jsx-boolean-value"],
+          "<a b\nc />;\n",
+        ],
+        [
+          { "react/jsx-boolean-value": "error", "react/jsx-indent-props": "error" },
+          "<a\n  b\n c={true}\n/>;\n",
+          ["2:3 react/jsx-indent-props", "3:2 react/jsx-indent-props", "3:2 react/jsx-boolean-value"],
+          "<a\n    b\n    c\n/>;\n",
+        ],
+        [
+          { "react/no-unknown-property": "error", "react/jsx-props-no-multi-spaces": "error" },
+          '<a  class="b" />;\n',
+          ["1:5 react/jsx-props-no-multi-spaces", "1:5 react/no-unknown-property"],
+          '<a className="b" />;\n',
+        ],
+        [
+          {
+            "react/jsx-sort-props": "error",
+            "react/jsx-props-no-multi-spaces": "error",
+            "react/jsx-no-duplicate-props": "error",
+            "react/jsx-max-props-per-line": "error",
+            "react/jsx-indent-props": "error",
+            "react/jsx-boolean-value": "error",
+          },
+          "<a\n  c  b={true} b />;\n",
+          [
+            "2:3 react/jsx-indent-props",
+            "2:6 react/jsx-sort-props",
+            "2:6 react/jsx-props-no-multi-spaces",
+            "2:6 react/jsx-max-props-per-line",
+            "2:6 react/jsx-boolean-value",
+            "2:15 react/jsx-sort-props",
+            "2:15 react/jsx-no-duplicate-props",
+          ],
+          "<a\n    b\n    b\n    c />;\n",
+        ],
+        [
+          { "react/jsx-boolean-value": "error", "react/jsx-first-prop-new-line": "error" },
+          "<a b={true}\n  c />;\n",
+          ["1:4 react/jsx-first-prop-new-line", "1:4 react/jsx-boolean-value"],
+          "<a\nb\n  c />;\n",
+        ],
+        [
+          { "react/jsx-curly-spacing": "error", "react/jsx-props-no-spreading": "error" },
+          "<a { ...b} />;\n",
+          ["1:4 react/jsx-curly-spacing", "1:4 react/jsx-props-no-spreading"],
+          "<a {...b} />;\n",
+        ],
+        [
+          { "react/jsx-curly-spacing": "error", "react/jsx-curly-brace-presence": "error" },
+          '<a b={ "c"} />;\n',
+          ["1:6 react/jsx-curly-spacing", "1:6 react/jsx-curly-brace-presence"],
+          '<a b="c" />;\n',
+        ],
+        [
+          { "react/jsx-props-no-spreading": "error", "react/jsx-props-no-spread-multi": "error" },
+          "<a {...b} {...b} />;\n",
+          [
+            "1:4 react/jsx-props-no-spreading",
+            "1:11 react/jsx-props-no-spread-multi",
+            "1:11 react/jsx-props-no-spreading",
+          ],
+          "<a {...b} {...b} />;\n",
+        ],
+        [
+          { "react/jsx-indent": "error", "react/jsx-child-element-spacing": "error" },
+          "<p>\n  b\n <a>c</a>\n</p>;\n",
+          ["1:4 react/jsx-indent", "3:2 react/jsx-child-element-spacing", "3:2 react/jsx-indent"],
+          "<p>\n    b\n    <a>c</a>\n</p>;\n",
+        ],
+        [
+          { "react/no-deprecated": "error", "react/no-render-return-value": "error" },
+          "const a = ReactDOM.render(<b />, c);\n",
+          ["1:11 react/no-render-return-value", "1:11 react/no-deprecated"],
+          "const a = ReactDOM.render(<b />, c);\n",
+        ],
+        [
+          { "react/no-deprecated": "error", "react/no-find-dom-node": "error" },
+          "React.findDOMNode(a);\n",
+          ["1:1 react/no-find-dom-node", "1:1 react/no-deprecated"],
+          "React.findDOMNode(a);\n",
+        ],
+        [
+          { "react/jsx-curly-brace-presence": ["error", { "children": "always" }], "react/jsx-indent": "error" },
+          "<a>\n b\n</a>;\n",
+          ["1:4 react/jsx-indent", "1:4 react/jsx-curly-brace-presence"],
+          '<a>\n    {"b"}\n</a>;\n',
+        ],
+        [
+          { "react/jsx-curly-brace-presence": ["error", { "props": "always" }], "jsx-quotes": "error" },
+          "<a b='c' />;\n",
+          ["1:6 jsx-quotes", "1:6 react/jsx-curly-brace-presence"],
+          '<a b={"c"} />;\n',
+        ],
+        [
+          { "react/iframe-missing-sandbox": "error", "react/react-in-jsx-scope": "error" },
+          "<iframe />;\n",
+          ["1:1 react/react-in-jsx-scope", "1:1 react/iframe-missing-sandbox"],
+          "<iframe />;\n",
+        ],
+        [
+          {
+            "react/jsx-curly-brace-presence": ["error", { "children": "always" }],
+            "react/jsx-indent": "error",
+            "react/jsx-one-expression-per-line": "error",
+          },
+          "<App>\n  &lt;b&gt;\n  &nbsp;<c />&nbsp;\n  &nbsp;\n</App>;\n",
+          [
+            "1:6 react/jsx-indent",
+            "1:6 react/jsx-curly-brace-presence",
+            "3:9 react/jsx-one-expression-per-line",
+            "3:9 react/jsx-indent",
+            "3:14 react/jsx-one-expression-per-line",
+          ],
+          '<App>\n    &lt;\n    {"b"}\n    &gt;\n    &nbsp;\n    <c />\n&nbsp;\n  &nbsp;\n</App>;\n',
+        ],
+      ];
+      const names = rows.map((_, at) => `r${at}.jsx`);
+      const files = {
+        "eslint.config.mjs": `export default [
+          {
+            files: ["**/*.jsx"],
+            languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
+            plugins: { react: { meta: { name: "eslint-plugin-react" }, rules: {} } },
+            settings: { react: { version: "18.3.1" } },
+          },
+          ...${JSON.stringify(rows.map(([rules], at) => ({ files: [names[at]], rules })))},
+        ];`,
+        ...Object.fromEntries(rows.map(([, code], at) => [names[at], code])),
+      };
+      type Result = { filePath: string; messages: { line: number; column: number; ruleId: string }[] };
+      const results: Result[] = JSON.parse((await lint(files, ["-f", "json", ...names])).raw);
+      const reports = (name: string) => results.find(it => basename(it.filePath) === name)?.messages;
+      const places = names.map(name => reports(name)?.map(it => `${it.line}:${it.column} ${it.ruleId}`));
+      expect(places).toEqual(rows.map(row => row[2]));
+      const fixed = await lint(files, ["--fix", ...names], { reads: names });
+      expect(names.map(name => fixed.files[name])).toEqual(rows.map(row => row[3]));
+    });
+
     describe("fixes after which the text cannot be parsed are not written", () => {
       const warning = (rules: string, file: string) =>
         `warn: Fixes of ${rules} would leave ${file} with a syntax error. They are not applied.`;

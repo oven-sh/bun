@@ -851,9 +851,13 @@ impl RunCommand {
             }
         }
 
-        // DirInfo walk / npm_package_* seeding is performed by the T6 impl
-        // (`bun_runtime::cli::RunCommand::configure_env_for_run`); install
-        // callers discard the return value.
+        // Overwrite like npm: an outer `bun run` in another project may have left a stale value.
+        env_loader.map.put(
+            b"npm_config_local_prefix",
+            bun_fs::FileSystem::instance().top_level_dir(),
+        )?;
+
+        // `npm_package_*` is per package; see `spawn_package_lifecycle_scripts`.
         Ok(core::ptr::null_mut())
     }
 }

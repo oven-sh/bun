@@ -180,24 +180,27 @@ impl JsxIndent {
         if !is_first_in_line(file, node) {
             return;
         }
-        let Some(prev_token) = file.token_before(node) else { return };
-        let prev = match prev_token.kind() {
-            TokenKind::JsxText => element.parent().span().start,
-            TokenKind::Punctuator if prev_token.is(",") => {
+        let (parent, parentheses) = (element.parent(), element.parens().next());
+        let is_child = matches!(parent, Node::Expr(it) if it.tag() == ExprTag::Jsx);
+        // The token before a child is text here, and that in parentheses a `(`: the tokens are not looked at.
+        let prev = if is_child && element.jsx_container_span().is_none() {
+            parent.span().start
+        } else if let Some(parentheses) = parentheses {
+            parentheses.start
+        } else {
+            let Some(prev_token) = file.token_before(node) else { return };
+            if prev_token.is_punctuator(",") {
                 estree_span(get_node_by_range_index(file, prev_token.start())).start
-            }
-            TokenKind::Punctuator if prev_token.is(":") => {
+            } else if prev_token.is_punctuator(":") {
                 let mut tokens = file.tokens_before(prev_token);
                 let Some(token) = tokens.find(|it| it.kind() != TokenKind::Punctuator || it.is("/")) else { return };
                 start_in_conditional_expression(file, token.start())
+            } else {
+                prev_token.start()
             }
-            _ => prev_token.start(),
         };
-        let is_alternate_in_conditional_exp = !prev_token.is("(")
-            && matches!(element.parent(), Node::Expr(parent) if matches!(
-                parent.kind(),
-                ExprKind::Cond { no, .. } if no == element
-            ));
+        let is_alternate_in_conditional_exp = parentheses.is_none()
+            && matches!(parent, Node::Expr(it) if matches!(it.kind(), ExprKind::Cond { no, .. } if no == element));
         let is_indented = !is_alternate_in_conditional_exp && !self.is_right_in_logical_exp(element);
         let indent = if is_indented { self.indent_size } else { 0 };
         self.check_nodes_indent(node, self.get_node_indent(file, prev) + indent, Some(element), cx);

@@ -104,8 +104,6 @@ pub struct Flags<'a> {
     pub extract: bool,
     /// `--in-order`: a case fails whose messages are the recorded ones in another order.
     pub in_order: bool,
-    /// `--schemas`: a case fails whose options the schema of the rule refuses.
-    pub schemas: bool,
 }
 
 impl<'a> Flags<'a> {
@@ -135,7 +133,6 @@ impl<'a> Flags<'a> {
             projects: flag(b"projects"),
             extract: has(b"extract"),
             in_order: has(b"in-order"),
-            schemas: has(b"schemas"),
         }
     }
 }
@@ -369,8 +366,7 @@ fn run_case(
         None => config_of(host.registry(), entry, case),
     };
     // A configuration with these options would end the run.
-    if flags.schemas
-        && let Some(error) = &config.error
+    if let Some(error) = &config.error
         && !has_null(case.get(b"options"))
     {
         return Ok(Some(Problem {

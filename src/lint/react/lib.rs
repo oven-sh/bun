@@ -177,6 +177,7 @@ bun_lint::rules! {
     react_jsx_no_target_blank::JsxNoTargetBlank,
     react_jsx_no_undef::JsxNoUndef,
     react_jsx_no_useless_fragment::JsxNoUselessFragment,
+    react_jsx_one_expression_per_line::JsxOneExpressionPerLine,
     react_jsx_pascal_case::JsxPascalCase,
     react_jsx_props_no_spread_multi::JsxPropsNoSpreadMulti,
     react_jsx_props_no_spreading::JsxPropsNoSpreading,

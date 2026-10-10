@@ -91,6 +91,9 @@ nodes, and the recordings have that order: a case whose messages are the recorde
 line of each of the three files (there with all cases run, also all with types), and they may not become more. `--in-order` makes
 such a case fail, as `the order differs`.
 
+The options of a case go through the schema of the rule, as those of a configuration do: a case fails, as `the options are refused`,
+if a configuration with them would end the run. Not where the recorded options have a `null`, which is what JSON makes of `Infinity`.
+
 ## Layout
 
 - `eslint/<rule>.json`, `typescript-eslint/<rule>.json`, `react-hooks/`, `import/`, `n/`, `oxc/`: one file per rule.

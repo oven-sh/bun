@@ -29,14 +29,14 @@ impl Rule for JsxEqualsSpacing {
         let file = cx.file();
         for attr_node in jsx.attrs() {
             // `hasEqual`
-            let (Some(name), Some(value)) = (attr_node.key(), attr_node.value()) else {
+            let Some(name) = attr_node.key().filter(|_| attr_node.value().is_some()) else {
                 continue;
             };
             let name = name.span(file);
-            let value = value.jsx_container_span().unwrap_or_else(|| value.span());
             let at = skip_trivia(file.text(), name.end);
             let equal_token = Span::new(at, at + 1);
-            let spaced_before = is_spaced(file, name, equal_token);
+            let value = skip_trivia(file.text(), equal_token.end);
+            let spaced_before = is_spaced(file, name, at);
             let spaced_after = is_spaced(file, equal_token, value);
             if self.always {
                 if !spaced_before {
@@ -50,18 +50,18 @@ impl Rule for JsxEqualsSpacing {
                     cx.report_at(at, NO_SPACE_BEFORE).fix(|fixer| fixer.remove(name.between(equal_token)));
                 }
                 if spaced_after {
-                    cx.report_at(at, NO_SPACE_AFTER).fix(|fixer| fixer.remove(equal_token.between(value)));
+                    cx.report_at(at, NO_SPACE_AFTER).fix(|fixer| fixer.remove(Span::after(equal_token, value)));
                 }
             }
         }
     }
 }
 
-/// `isSpaceBetweenTokens` for two with nothing but blanks and comments between them.
-fn is_spaced<'a>(file: &'a File<'a>, first: Span, second: Span) -> bool {
-    match file.slice(first.between(second)).first() {
+/// `isSpaceBetweenTokens` of `first` and the token that starts at `second`, the next one.
+fn is_spaced<'a>(file: &'a File<'a>, first: Span, second: u32) -> bool {
+    match file.slice(Span::after(first, second)).first() {
         None => false,
-        Some(b'/') => is_space_between_tokens(file, first, second),
+        Some(b'/') => file.token_at(second).is_some_and(|it| is_space_between_tokens(file, first, it.span())),
         Some(_) => true,
     }
 }

@@ -34,7 +34,14 @@ impl Rule for DefaultPropsMatchPropTypes {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let mut components = Components::new(cx.file()).with(declared(&[])).with(defaults());
+        let default_props = defaults();
+        // Most files that have the name have it for something else.
+        let mut has_declaration = false;
+        default_props.nodes(cx.file(), &mut |_, _| has_declaration = true);
+        if !has_declaration {
+            return;
+        }
+        let mut components = Components::new(cx.file()).with(declared(&[])).with(default_props);
         components.finish();
         for id in components.list() {
             let component = components.component(id);

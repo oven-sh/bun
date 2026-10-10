@@ -69,6 +69,19 @@ pub enum InferGlobals {
     Besides,
     /// They, and of the configuration what `globals` itself has. For a file that is in no program: the configuration.
     Instead,
+    /// The same for JavaScript. For TypeScript: the configuration.
+    InsteadForJavaScript,
+}
+
+impl InferGlobals {
+    /// Whether they are inferred for a file that is JavaScript, or is not.
+    pub fn is_for(self, is_javascript: bool) -> bool {
+        match self {
+            InferGlobals::No => false,
+            InferGlobals::Besides | InferGlobals::Instead => true,
+            InferGlobals::InsteadForJavaScript => is_javascript,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

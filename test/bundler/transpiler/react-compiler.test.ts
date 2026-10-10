@@ -916,6 +916,84 @@ describe("bundler", () => {
     },
   });
 
+  // The scope around each loop has the variable as an output and as a dependency. Upstream gives the variable to a scope
+  // in the loop alone, and prunes the one around it.
+  itBundled("react-compiler/LoopThatAssignsWhatItReads", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function Max(props) {
+          let max = 0;
+          for (const line of props.lines) {
+            for (const d of props.data) {
+              const value = [d, line].reduce((a, b) => a + b, 0);
+              if (value > max) max = value;
+            }
+          }
+          return <div>{max}</div>;
+        }
+        function Sum(props) {
+          let exact = true;
+          let sum = props.start;
+          for (const id of [...props.lines].filter(it => it > 1)) {
+            const found = props.data.find(it => it > id);
+            if (!found) exact = false;
+            else sum = sum + found;
+          }
+          return <div>{sum + " " + exact}</div>;
+        }
+        function Freshest(props) {
+          let freshest = null;
+          for (const a of props.lines) {
+            for (const b of props.data) {
+              const at = { t: a * b };
+              if (!freshest || at.t > freshest.t) freshest = at;
+            }
+          }
+          return <div>{freshest ? freshest.t : "none"}</div>;
+        }
+        const lines = [1, 2, 3], data = [3, 4], more = [5, 1], none = [];
+        const renders = [
+          { lines, data, start: 0 },
+          { lines, data, start: 0 },
+          { lines, data: more, start: 0 },
+          { lines, data, start: 0 },
+          { lines, data, start: 7 },
+          { lines: none, data, start: 7 },
+          { lines, data, start: 0 },
+        ];
+        for (const component of [Max, Sum, Freshest]) {
+          globalThis.rendering = component;
+          const rendered = renders.map(props => component(props));
+          console.log(rendered.map(it => it.p.children).join(", "), rendered[0] === rendered[1]);
+        }
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `
+        const caches = new Map();
+        exports.c = n => {
+          if (!caches.has(globalThis.rendering))
+            caches.set(globalThis.rendering, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+          return caches.get(globalThis.rendering);
+        };
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: [
+        "7, 7, 8, 7, 7, 0, 7 true",
+        "7 true, 7 true, 10 true, 7 true, 14 true, 7 true, 7 true true",
+        "12, 12, 15, 12, 12, none, 12 true",
+      ].join("\n"),
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
   // Sibling of the above: `WAS_ORIGINALLY_TYPEOF_IDENTIFIER` was also dropped,
   // so the printer wrapped `typeof undeclared` as `typeof (0, undeclared)`,
   // which throws ReferenceError instead of returning "undefined" — breaking

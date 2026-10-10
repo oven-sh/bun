@@ -131,7 +131,16 @@ fn find_jsx_element_or_fragment(start_node: Expr<'_>) -> Option<Jsx<'_>> {
     let (mut seen, mut steps, mut limit) = (name, 0u32, 1u32);
     loop {
         let last_write = match get_variable_from_context(Node::Expr(start_node), name) {
-            Some(variable) => variable.references().rfind(|it| it.is_write()),
+            Some(variable) => {
+                // For upstream the name of a class declaration is a second variable inside the class.
+                let class = variable.declarations().find_map(|it| match it {
+                    Declaration::Class(class) => class.scope(),
+                    _ => None,
+                });
+                let is_in_class = |scope| class.is_some_and(|it| it.contains(scope));
+                let is_inner = is_in_class(Node::Expr(start_node).scope());
+                variable.references().rfind(|it| it.is_write() && is_in_class(it.scope()) == is_inner)
+            }
             // What the configuration defines is a variable for upstream.
             None => {
                 file.global_named(name)?;

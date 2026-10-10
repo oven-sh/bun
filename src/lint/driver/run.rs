@@ -15,8 +15,9 @@ use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::formats::Reason;
 use bun_lint::js_plugin::{Engine, HEAVY, Host, Loading, Route};
-use bun_lint::language::{InferGlobals, Parser};
+use bun_lint::language::Parser;
 use bun_lint::linter::{FileConfig, LintMessage, Registry, RuleId, is_parse_error};
+use bun_sema::resolve::ScriptKind;
 use bun_sema::util::FxHashSet;
 use bun_threading::Guarded;
 use std::io::Write;
@@ -521,7 +522,9 @@ impl Run<'_> {
                 listed: None,
             });
         }
-        let infers = name.is_some() && config.language.infers_globals != InferGlobals::No;
+        let is_javascript =
+            ScriptKind::from_file_name(&path).is_some_and(ScriptKind::is_javascript);
+        let infers = name.is_some() && config.language.infers_globals.is_for(is_javascript);
         if let Some(inferred) = context.inferred.filter(|_| infers) {
             inferred.files(vec![path.clone()]);
         }
@@ -668,7 +671,11 @@ impl Run<'_> {
         let mut results = Vec::with_capacity(supported.len());
         if let Some(inferred) = context.inferred {
             let asking = supported.iter().filter(|it| match &it.status {
-                Status::Matched(config) => config.language.infers_globals != InferGlobals::No,
+                Status::Matched(config) => {
+                    let kind = ScriptKind::from_file_name(&it.path);
+                    (config.language.infers_globals)
+                        .is_for(kind.is_some_and(ScriptKind::is_javascript))
+                }
                 _ => false,
             });
             inferred.files(asking.map(|it| it.path.clone()).collect());

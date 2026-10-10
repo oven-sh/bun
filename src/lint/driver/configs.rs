@@ -864,9 +864,11 @@ impl<'l> Loader<'l> {
         let text = strings::replace_owned(BUILT_IN, b"TYPESCRIPT", preset);
         // Every file is in it, on whatever drive.
         let mut config = self.flat(b"/", bun_lint::json::parse(&text).unwrap_or(Json::Null))?;
-        if self.options.infer_globals != Some(false) {
-            config.infer_globals(InferGlobals::Instead);
-        }
+        config.infer_globals(match self.options.infer_globals {
+            Some(true) => InferGlobals::Instead,
+            Some(false) => InferGlobals::No,
+            None => InferGlobals::InsteadForJavaScript,
+        });
         Ok(Arc::new(Loaded {
             config,
             flavor: Flavor::BuiltIn,

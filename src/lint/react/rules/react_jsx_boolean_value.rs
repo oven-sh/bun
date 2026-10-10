@@ -1,4 +1,3 @@
-use crate::jsx::get_prop_value;
 use crate::react::is_jsx;
 use bun_core::strings;
 use bun_lint::prelude::*;
@@ -48,11 +47,11 @@ impl Rule for JsxBooleanValue {
         };
         let is_oxlint = cx.language().is_oxlint;
         for attribute in jsx.attrs().iter().filter(|it| it.kind() != PropKind::Spread) {
-            let value = get_prop_value(attribute);
-            let boolean = match value.map(|it| it.as_expression().map(Expr::tag)) {
+            // A `true` or a `false` after the `=` is in braces.
+            let boolean = match attribute.value().map(Expr::tag) {
                 None => None,
-                Some(Some(ExprTag::True)) => Some(true),
-                Some(Some(ExprTag::False)) if self.assume_undefined_is_false => Some(false),
+                Some(ExprTag::True) => Some(true),
+                Some(ExprTag::False) if self.assume_undefined_is_false => Some(false),
                 _ => continue,
             };
             let Some((key, name)) = attribute.key().and_then(|key| Some((key, key.name()?.bytes()))) else {

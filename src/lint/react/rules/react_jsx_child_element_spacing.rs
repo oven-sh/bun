@@ -31,6 +31,10 @@ impl Rule for JsxChildElementSpacing {
         let ExprKind::Jsx(jsx) = e.kind() else {
             return;
         };
+        // Nothing is said but beside an inline element, and few elements have one.
+        if !jsx.children().iter().any(|it| inline_element(JsxChild::Expr(it)).is_some()) {
+            return;
+        }
         let (mut last_child, mut child): (Option<JsxChild<'a>>, Option<JsxChild<'a>>) = (None, None);
         for next_child in jsx.children_with_whitespace().map(Some).chain([None]) {
             if let Some(value) = child.and_then(|it| value_of_text(it, cx.file())) {
@@ -55,11 +59,11 @@ fn inline_element(child: JsxChild<'_>) -> Option<(Expr<'_>, Name<'_>)> {
     let JsxChild::Expr(e) = child else {
         return None;
     };
-    let ExprKind::Jsx(jsx) = e.kind() else {
+    let ExprKind::Jsx(jsx) = (e.tag() == ExprTag::Jsx).then(|| e.kind())? else {
         return None;
     };
-    let name = jsx.tag().filter(|_| e.jsx_container_span().is_none())?.as_ident()?;
-    name.is_any(&INLINE_ELEMENTS).then_some((e, name))
+    let name = jsx.tag()?.as_ident()?;
+    (name.is_any(&INLINE_ELEMENTS) && e.jsx_container_span().is_none()).then_some((e, name))
 }
 
 /// The `value` of a `JSXText`.

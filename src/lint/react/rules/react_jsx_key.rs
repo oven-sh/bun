@@ -359,10 +359,11 @@ impl<'a> State<'a> {
         let Some(object) = call.callee().filter(|it| is_member_called(*it, "toArray")).and_then(Expr::object) else {
             return false;
         };
+        // What has no name is called `undefined` for esquery.
+        let name_of = |it: Expr<'a>| it.as_ident().map_or(&b"undefined"[..], Name::bytes);
         object.is_ident("Children")
             || (is_member_called(object, "Children")
-                && (object.object().and_then(Expr::as_ident))
-                    .is_some_and(|name| name.bytes() == self.pragma(call.file())))
+                && object.object().is_some_and(|it| name_of(it) == self.pragma(call.file())))
     }
 
     /// Upstream's `isWithinChildrenToArray` when ESLint enters `node`: it is set where such a call is entered, and

@@ -2,7 +2,6 @@
 //! `declare global`, its scripts.
 
 use crate::ast::File;
-use crate::language::InferGlobals;
 
 /// The globals of the programs that the files of a run belong to.
 pub trait InferredGlobals: Sync {
@@ -25,7 +24,7 @@ impl<'a> File<'a> {
     /// What the program of the file declares as global, sorted by name. `None`: nothing is inferred for the file, or it is in no
     /// program. The first call asks.
     pub(crate) fn inferred_globals(&self) -> Option<&'a [InferredGlobal]> {
-        if self.language().infers_globals == InferGlobals::No {
+        if !(self.language().infers_globals).is_for(self.is_javascript()) {
             return None;
         }
         let ask = || self.inferred_from.get()?.of(self.path());

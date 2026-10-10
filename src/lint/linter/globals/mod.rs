@@ -401,7 +401,7 @@ impl<'a> File<'a> {
     pub fn global(&'a self, name: &[u8]) -> Option<GlobalVariable<'a>> {
         let config = self.language().config_globals();
         // The libraries of the program are in the place of the tables.
-        let only_written = self.language().infers_globals == InferGlobals::Instead
+        let only_written = self.language().infers_globals != InferGlobals::Besides
             && self.inferred_globals().is_some();
         // TypeScript knows these in JavaScript without a declaration.
         let is_of_commonjs = || {

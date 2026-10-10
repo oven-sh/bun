@@ -24,17 +24,17 @@ const WRONG_INDENT: Message =
 /// A longer string JavaScript does not make.
 const MAX_STRING_LENGTH: usize = (1 << 29) - 24;
 
-/// `line`: it is not reset from one element to the next.
-#[derive(Default)]
-pub struct State {
+/// `line`. Upstream keeps it from one element to the next, whose own `<` resets it.
+#[derive(Copy, Clone, Default)]
+struct Line {
     is_using_operator: bool,
     current_operator: bool,
 }
 
 impl Rule for JsxIndentProps {
     const META: Meta = Meta::plugin(Plugin::React, "jsx-indent-props", Kind::Layout).fixable(Fixable::Code);
-    const ON: On = On::new().enter(NodeTags::new().exprs(&[ExprTag::Jsx]));
-    type State<'a> = State;
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let config = options.object(0);
@@ -50,25 +50,24 @@ impl Rule for JsxIndentProps {
         }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<State> {
-        file.has_exprs([ExprTag::Jsx]).then(State::default)
-    }
-
-    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        let Node::Expr(e) = node else {
-            return;
-        };
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Jsx(jsx) = e.kind() else {
             return;
         };
-        let Some(first_prop_node) = jsx.attrs().first() else {
+        let (Some(first_prop_node), Some(last_prop_node)) = (jsx.attrs().first(), jsx.attrs().last()) else {
             return;
         };
+        // Only a prop that is the first in its line is reported.
+        let file = cx.file();
+        if !strings::contains_js_line_break(file.slice(Span::before(e.span().start, last_prop_node.span()))) {
+            return;
+        }
+        let mut line = Line::default();
         let prop_indent = match self.indent.size() {
-            None => i64::from(cx.file().position(first_prop_node.span().start).column),
-            Some(size) => self.get_node_indent(jsx.opening_span(), cx).saturating_add(size),
+            None => i64::from(file.position(first_prop_node.span().start).column),
+            Some(size) => self.get_node_indent(jsx.opening_span(), &mut line, file).saturating_add(size),
         };
-        self.check_nodes_indent(jsx.attrs(), prop_indent, cx);
+        self.check_nodes_indent(jsx.attrs(), prop_indent, line, cx);
     }
 }
 
@@ -93,30 +92,30 @@ fn start_of_line(file: &File, offset: u32) -> u32 {
 
 impl JsxIndentProps {
     /// `getNodeIndent`
-    fn get_node_indent(&self, node: Span, cx: &mut Cx<'_, Self>) -> i64 {
-        let src = cx.file().slice(Span::new(start_of_line(cx.file(), node.start), node.end));
+    fn get_node_indent(&self, node: Span, line: &mut Line, file: &File) -> i64 {
+        let src = file.slice(Span::new(start_of_line(file, node.start), node.end));
         let src = strings::index_of_char_usize(src, b'\n').and_then(|at| src.get(..at)).unwrap_or(src);
-        cx.state.current_operator = matches!(strings::trim_left(src, b" \t").first(), Some(b':' | b'?'));
-        if cx.state.current_operator {
-            cx.state.is_using_operator = true;
+        line.current_operator = matches!(strings::trim_left(src, b" \t").first(), Some(b':' | b'?'));
+        if line.current_operator {
+            line.is_using_operator = true;
         } else if strings::contains_char(src, b'<') {
-            cx.state.is_using_operator = false;
+            line.is_using_operator = false;
         }
         strings::index_of_not_char(src, self.indent.character()).map_or_else(|| src.len() as i64, i64::from)
     }
 
     /// `checkNodesIndent`
-    fn check_nodes_indent<'a>(&self, nodes: List<'a, Prop<'a>>, indent: i64, cx: &mut Cx<'a, Self>) {
+    fn check_nodes_indent<'a>(&self, nodes: List<'a, Prop<'a>>, indent: i64, mut line: Line, cx: &Cx<'a, Self>) {
         let mut nested_indent = indent;
         for node in nodes {
-            let node_indent = self.get_node_indent(node.span(), cx);
-            if cx.state.is_using_operator
-                && !cx.state.current_operator
+            let node_indent = self.get_node_indent(node.span(), &mut line, cx.file());
+            if line.is_using_operator
+                && !line.current_operator
                 && !self.ignore_ternary_operator
                 && let Some(size) = self.indent.size()
             {
                 nested_indent = nested_indent.saturating_add(size);
-                cx.state.is_using_operator = false;
+                line.is_using_operator = false;
             }
             if node_indent != nested_indent && is_node_first_in_line(cx.file(), node.span()) {
                 self.report(node.span(), nested_indent, node_indent, cx);

@@ -39,7 +39,7 @@ struct Check<'a> {
     /// What is reported.
     importer: Span,
     is_require: bool,
-    /// `import(..)`, or a call of something else than `require`.
+    /// `import()`. The only other call that is an importer is one of `require`: of AMD it is the string.
     is_dynamic: bool,
 }
 
@@ -321,13 +321,7 @@ impl NoCycle {
             specifier: it.specifier,
             importer: it.importer.span(),
             is_require: it.is_require,
-            is_dynamic: match it.importer {
-                Node::Expr(e) => match e.kind() {
-                    ExprKind::Call(call) => !call.callee().is_ident("require"),
-                    _ => true,
-                },
-                _ => false,
-            },
+            is_dynamic: matches!(it.importer, Node::Expr(e) if e.tag() == ExprTag::ImportCall),
         });
         checks.collect()
     }

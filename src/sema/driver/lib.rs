@@ -3307,36 +3307,36 @@ pub fn check_project(
     )
 }
 
-/// Whether what the project at `config` depends on is not installed: its `package.json` names packages, and there is no
-/// `node_modules`. Then the types of Node, of the test runner and so on are not there to be asked.
+/// Whether what the project at `config` depends on is not installed: its `package.json` names packages, and none of
+/// them is in a `node_modules`. Then the types of Node, of the test runner and so on are not there to be asked.
 fn lacks_its_packages(host: &dyn Host, config: &[u8]) -> bool {
     let above = || ancestors(dirname::<Posix>(config));
-    if above().any(|it| host.is_dir(&inside(it, b"node_modules"))) {
-        return false;
-    }
     let mut manifests = above().map(|it| inside(it, b"package.json"));
-    let text = manifests
-        .find(|it| host.is_file(it))
-        .and_then(|it| host.read(&it));
+    let manifest = manifests.find(|it| host.is_file(it));
+    let text = manifest.and_then(|it| host.read(&it));
     let fields = text.and_then(|it| host.parse_package_json(Session::new().arena(), &it));
-    let names_packages = |field: &[u8]| {
-        let packages = fields.as_ref()?.get(field)?.as_object()?;
-        (!packages.is_empty()).then_some(())
-    };
-    [
+    let packages_in = |field: &[u8]| fields.as_ref()?.get(field)?.as_object();
+    let fields = [
         &b"dependencies"[..],
         b"devDependencies",
         b"peerDependencies",
-    ]
-    .into_iter()
-    .any(|field| names_packages(field).is_some())
+    ];
+    let mut names = (fields.into_iter().filter_map(packages_in).flatten()).map(|it| &it.0);
+    let is_installed = |name: &Vec<u8>| {
+        let package = [b"node_modules/", &name[..]].concat();
+        above().any(|it| host.is_dir(&inside(it, &package)))
+    };
+    let Some(first) = names.next() else {
+        return false;
+    };
+    !is_installed(first) && !names.any(is_installed)
 }
 
 /// Whether the root file at `path` can add to the globals of its program: it is a declaration file; or a script, which
-/// has neither `import` nor `export`, nor `require` in JavaScript; or it has `declare global`. By the words in its text: one
-/// that is kept for nothing costs its parse. A script that has such a word in a comment is not seen, nor a comment between
-/// `declare` and `global`. `imports`: called with each name of a package that it imports for its effects, which can be
-/// to declare globals.
+/// has neither `import` nor `export`, nor `require` in JavaScript; or it has `declare global` or a `/// <reference`. By
+/// its text: one that is kept for nothing costs its parse. A script that has such a word in a comment is not seen, nor
+/// a comment between `declare` and `global`. `imports`: called with each name of a package that it imports for its
+/// effects, which can be to declare globals.
 fn may_declare_a_global(
     host: &dyn Host,
     path: &[u8],
@@ -3353,6 +3353,10 @@ fn may_declare_a_global(
         return false;
     };
     let has = |word: &[u8]| strings::contains(&text, word);
+    // `/// <reference lib="webworker" />`
+    if has(b"<reference ") {
+        return true;
+    }
     let mut from = 0;
     while let Some(found) = strings::index_of(&text[from..], b"global") {
         let before = text[..from + found].trim_ascii_end();

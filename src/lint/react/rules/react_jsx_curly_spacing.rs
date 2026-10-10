@@ -1,4 +1,4 @@
-use bun_core::strings;
+use bun_core::{lexer, strings};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -91,10 +91,20 @@ impl Config {
     fn validate_brace_spacing(self, node: Span, cx: &mut Cx<'_, JsxCurlySpacing>) {
         let file = cx.file();
         let inside = node.shrink(1, 1);
-        let from_second = strings::trim_js_whitespace_start(file.slice(inside));
-        let second = inside.end - from_second.len() as u32;
-        let penultimate_end = inside.start + strings::trim_js_whitespace_end(file.slice(inside)).len() as u32;
-        let is_object_literal = match from_second.first() {
+        let between = file.slice(inside);
+        // What a parser skips: for TypeScript's that is U+0085 and U+200B too, which are no `\s`.
+        let second = lexer::end_of_run(between, 0, lexer::is_white_space_like);
+        let mut penultimate_end = between.len();
+        loop {
+            let (last_char, start) = lexer::last_char(&between[..penultimate_end]);
+            if !lexer::is_white_space_like(last_char) {
+                break;
+            }
+            penultimate_end = start;
+        }
+        let (second_byte, second) = (between.get(second), inside.start + second as u32);
+        let penultimate_end = inside.start + penultimate_end as u32;
+        let is_object_literal = match second_byte {
             Some(b'{') => true,
             // The value of the comment `/*{*/` is that of the brace too.
             Some(b'/' | b'<') => file.comment_around(second).is_some_and(|it| it.value() == b"{"),

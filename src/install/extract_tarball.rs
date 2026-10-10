@@ -53,33 +53,35 @@ impl ExtractTarball {
                     None,
                     bun_ast::Loc::EMPTY,
                     format_args!(
-                        "Integrity check failed for tarball: {}",
+                        "Integrity check failed for tarball: {}{}",
                         bun_fmt::s(self.name.slice()),
+                        self.integrity_mismatch_hint(),
                     ),
                 );
                 return Err(crate::Error::IntegrityCheckFailed);
             }
         }
-        let mut result = self.extract(log, bytes)?;
-
         // Compute and store SHA-512 integrity hash for GitHub / URL / local tarballs
         // so the lockfile can pin the exact tarball content. On subsequent installs
         // the hash stored in the lockfile is forwarded via this.integrity and verified
         // above, preventing a compromised server from silently swapping the tarball.
-        match self.resolution.tag {
+        let integrity = match self.resolution.tag {
             ResolutionTag::Github | ResolutionTag::RemoteTarball | ResolutionTag::LocalTarball => {
-                if self.integrity.tag.is_supported() {
+                if self.integrity.tag.is_supported() && !self.skip_verify {
                     // Re-installing with an existing lockfile: integrity was already
                     // verified above, propagate the known value to ExtractData so that
                     // the lockfile keeps it on re-serialisation.
-                    result.integrity = self.integrity;
+                    self.integrity
                 } else {
-                    // First install (no integrity in the lockfile yet): compute it.
-                    result.integrity = Integrity::for_bytes(bytes);
+                    // First install (no integrity in the lockfile yet), or the
+                    // pin was not checked: hash the bytes that were extracted.
+                    Integrity::for_bytes(bytes)
                 }
             }
-            _ => {}
-        }
+            _ => Integrity::default(),
+        };
+        let mut result = self.extract(log, bytes, &integrity)?;
+        result.integrity = integrity;
 
         Ok(result)
     }
@@ -228,7 +230,12 @@ impl ExtractTarball {
         (name, basename)
     }
 
-    fn extract(&self, log: &mut bun_ast::Log, tgz_bytes: &[u8]) -> Result<ExtractData, Error> {
+    fn extract(
+        &self,
+        log: &mut bun_ast::Log,
+        tgz_bytes: &[u8],
+        integrity: &Integrity,
+    ) -> Result<ExtractData, Error> {
         let _tracer = bun_core::perf::trace("ExtractTarball.extract");
 
         let tmpdir = Dir::borrow(&self.temp_dir);
@@ -450,12 +457,22 @@ impl ExtractTarball {
             }
         }
 
-        self.move_to_cache_directory(log, tmpname, name, basename, resolved)
+        self.move_to_cache_directory(log, tmpname, name, basename, resolved, integrity)
     }
 
     /// Rename the freshly-extracted temp directory into the cache, read
     /// `package.json` if required, and build the `ExtractData` result. Shared
     /// between the buffered and streaming extraction paths.
+    /// A URL/local tarball is pinned by `bun.lock`, and the same URL can serve
+    /// new bytes on purpose. Name the way to accept them.
+    pub(crate) fn integrity_mismatch_hint(&self) -> &'static str {
+        if self.resolution.tag.is_tarball_cache_keyed_by_url() {
+            "\n  The bytes no longer match the hash pinned in bun.lock. If the tarball was republished on purpose, run `bun install --force` to pin the new bytes."
+        } else {
+            ""
+        }
+    }
+
     pub(crate) fn move_to_cache_directory(
         &self,
         log: &mut bun_ast::Log,
@@ -463,6 +480,7 @@ impl ExtractTarball {
         name: &[u8],
         basename: &[u8],
         resolved: &[u8],
+        integrity: &Integrity,
     ) -> Result<ExtractData, Error> {
         let package_manager = self.package_manager.get();
 
@@ -529,6 +547,13 @@ impl ExtractTarball {
             // e.g. @next
             // if it's a namespace package, we need to make sure the @name folder exists
             let create_subdir = basename.len() != name.len() && !self.resolution.tag.is_git();
+
+            // The tag must never describe bytes it was not computed from: drop
+            // the old one before the folder swap, write the new one after.
+            let writes_tarball_tag = self.resolution.tag.is_tarball_cache_keyed_by_url();
+            if writes_tarball_tag {
+                directories::remove_tarball_integrity_tag(cache_dir.fd(), folder_name);
+            }
 
             // Now that we've extracted the archive, we rename.
             #[cfg(windows)]
@@ -697,6 +722,14 @@ impl ExtractTarball {
                     );
                     return Err(crate::Error::InstallFailed);
                 }
+                // When the cache folder already existed the rename exchanged the
+                // two trees, so the previous extraction now sits under `tmpname`.
+                if sys::directory_exists_at(tmpdir.fd(), tmpname).unwrap_or(false) {
+                    package_manager
+                        .displaced_cache_trees
+                        .lock()
+                        .push(Box::from(tmpname.as_bytes()));
+                }
             }
 
             // We return a resolved absolute absolute file path to the cache dir.
@@ -719,6 +752,22 @@ impl ExtractTarball {
                     return Err(crate::Error::InstallFailed);
                 }
             };
+            if writes_tarball_tag {
+                if let Err(err) =
+                    directories::write_tarball_integrity_tag(cache_dir.fd(), folder_name, integrity)
+                {
+                    log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "failed to record the integrity of \"{}\" in the cache: {}",
+                            bun_fmt::s(name),
+                            err,
+                        ),
+                    );
+                    return Err(crate::Error::InstallFailed);
+                }
+            }
             let final_path = match sys::get_fd_path_z(final_dir.fd(), &mut bufs.final_path_buf) {
                 Ok(p) => p,
                 Err(err) => {

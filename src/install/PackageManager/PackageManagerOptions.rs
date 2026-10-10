@@ -1060,6 +1060,10 @@ impl Do {
         self.contains(Do::UPDATE_TO_LATEST)
     }
     #[inline]
+    pub(crate) fn verify_integrity(self) -> bool {
+        self.contains(Do::VERIFY_INTEGRITY)
+    }
+    #[inline]
     pub fn recursive(self) -> bool {
         self.contains(Do::RECURSIVE)
     }

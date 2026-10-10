@@ -1164,8 +1164,9 @@ impl TarballStream {
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
-                            "Integrity check failed for tarball: {}",
+                            "Integrity check failed for tarball: {}{}",
                             bstr::BStr::new(tarball.name.slice()),
+                            tarball.integrity_mismatch_hint(),
                         ),
                     );
                     (*task).err = Some(crate::Error::IntegrityCheckFailed);
@@ -1173,6 +1174,19 @@ impl TarballStream {
                     return;
                 }
             }
+
+            let integrity = match tarball.resolution.tag {
+                ResolutionTag::Github
+                | ResolutionTag::RemoteTarball
+                | ResolutionTag::LocalTarball => {
+                    if tarball.integrity.tag.is_supported() && !tarball.skip_verify {
+                        tarball.integrity
+                    } else {
+                        self.hasher.final_()
+                    }
+                }
+                _ => Integrity::default(),
+            };
 
             if tarball.resolution.tag == ResolutionTag::Github {
                 'insert_tag: {
@@ -1209,6 +1223,7 @@ impl TarballStream {
                 name,
                 basename,
                 self.resolved_github_dirname,
+                &integrity,
             ) {
                 Ok(r) => r,
                 Err(err) => {
@@ -1218,18 +1233,7 @@ impl TarballStream {
                 }
             };
 
-            match tarball.resolution.tag {
-                ResolutionTag::Github
-                | ResolutionTag::RemoteTarball
-                | ResolutionTag::LocalTarball => {
-                    if tarball.integrity.tag.is_supported() {
-                        result.integrity = tarball.integrity;
-                    } else {
-                        result.integrity = self.hasher.final_();
-                    }
-                }
-                _ => {}
-            }
+            result.integrity = integrity;
 
             if PackageManager::verbose_install() {
                 bun_core::pretty_errorln!(

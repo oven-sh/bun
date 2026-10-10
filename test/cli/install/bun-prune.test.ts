@@ -325,7 +325,7 @@ test.concurrent("prunes nested node_modules folders the tree installs into", asy
   expect(existsSync(join(nested, "package.json"))).toBeTrue();
 });
 
-test.concurrent.each([["--production"], ["--prod"], ["--omit=dev"]])(
+test.concurrent.each([["--production"], ["--prod"], ["--omit=dev"]] as string[][])(
   "%s removes packages only reachable through devDependencies",
   async (...flags: string[]) => {
     const dir = await setup({

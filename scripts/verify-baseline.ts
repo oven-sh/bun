@@ -11,8 +11,7 @@
 
 import { readdirSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-// @ts-ignore — utils.mjs has JSDoc types but no .d.ts
-import { markBuildkiteStepReported } from "./utils.mjs";
+import { markBuildkiteStepReported } from "./buildkite.ts";
 
 const { parseArgs } = require("node:util");
 
@@ -86,7 +85,7 @@ const config = isWindows
         cwd: undefined,
       };
 
-function isInstructionViolation(signalCode: NodeJS.Signals | null, output: string): boolean {
+function isInstructionViolation(signalCode: NodeJS.Signals | number | null, output: string): boolean {
   if (isWindows) return SDE_VIOLATION_PATTERN.test(output);
   // qemu-user re-raises the guest's fatal signal on the host, so the process is WIFSIGNALED:
   // `proc.exitCode` is null and only `proc.signalCode` carries the verdict.

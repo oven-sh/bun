@@ -963,13 +963,6 @@ fn value_init<SemverInt: VersionInt>(field: TaggedValue<SemverInt>) -> Value<Sem
 #[derive(Clone, Copy, PartialEq, Eq, Debug, core::marker::ConstParamTy)]
 pub struct Tag(pub u8);
 
-impl Default for Tag {
-    #[inline]
-    fn default() -> Self {
-        Tag::Uninitialized
-    }
-}
-
 #[allow(non_upper_case_globals)]
 impl Tag {
     pub(crate) const Uninitialized: Tag = Tag(0);

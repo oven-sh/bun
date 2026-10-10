@@ -33,15 +33,22 @@ expect.extend({
   toBeWorkspaceLink,
   toBeValidBin,
   toHaveBins,
-  toHaveWorkspaceLink: function (package_dir: string, [link, real]: [string, string]) {
+  toHaveWorkspaceLink: function (package_dir: any, [link, real]: [string, string]) {
     const target = readlinkSync(join(package_dir, "node_modules", link));
     return toBeWorkspaceLink(target, isWindows ? join(package_dir, real) : join("..", real));
   },
-  toHaveWorkspaceLink2: function (package_dir: string, [link, realPosix, realWin]: [string, string, string]) {
+  toHaveWorkspaceLink2: function (package_dir: any, [link, realPosix, realWin]: [string, string, string]) {
     const target = readlinkSync(join(package_dir, "node_modules", link));
     return toBeWorkspaceLink(target, isWindows ? join(package_dir, realWin) : join("..", realPosix));
   },
 });
+
+declare module "bun:test" {
+  interface Matchers<T> {
+    toHaveWorkspaceLink(expected: [link: string, real: string]): void;
+    toHaveWorkspaceLink2(expected: [link: string, realPosix: string, realWin: string]): void;
+  }
+}
 
 setDefaultTimeout(1000 * 60 * 5);
 
@@ -927,8 +934,8 @@ describe.concurrent("bun-install", () => {
 
     type Received = { url: string; authorization: string | null };
 
-    function recording(received: Received[], handler: (req: Request, server: { port: number }) => Response) {
-      return (req: Request, server: { port: number }) => {
+    function recording(received: Received[], handler: (req: Request, server: { port?: number }) => Response) {
+      return (req: Request, server: { port?: number }) => {
         received.push({ url: req.url, authorization: req.headers.get("authorization") });
         return handler(req, server);
       };
@@ -7506,7 +7513,7 @@ describe.concurrent("bun-install", () => {
       }
 
       const lockfile = await install();
-      const packages = Bun.JSONC.parse(lockfile).packages as Record<string, [string, ...unknown[]]>;
+      const packages = (Bun.JSONC.parse(lockfile) as any).packages as Record<string, [string, ...unknown[]]>;
       expect(Object.fromEntries(Object.entries(packages).map(([name, [resolution]]) => [name, resolution]))).toEqual(
         expected,
       );
@@ -8450,11 +8457,11 @@ describe.concurrent("bun-install", () => {
 
   it.todo("should handle installing workspaces with absolute glob patterns", async () => {
     await using package_dir = tempDir("absolute-glob", {
-      "package.json": base =>
+      "package.json": ({ root }) =>
         JSON.stringify({
           name: "package3",
           version: "0.0.1",
-          workspaces: [join(base, "packages/**/*")],
+          workspaces: [join(root, "packages/**/*")],
         }),
       "packages": {
         "frontend": {
@@ -9754,40 +9761,42 @@ describe.concurrent("bun-install", () => {
     // manifest magic. I doubt it'd ever fail, but having a dedicated
     // test would be nice.
     test.todo("shouldn't fail joining invalid registry and package URLs for peer dependencies", async () => {
-      const regURL = "asdfghjklqwertyuiop";
+      await withContext(defaultOpts, async ctx => {
+        const regURL = "asdfghjklqwertyuiop";
 
-      await writeFile(
-        join(ctx.package_dir, "bunfig.toml"),
-        Bun.TOML.stringify({ install: { cache: false, registry: regURL } }),
-      );
+        await writeFile(
+          join(ctx.package_dir, "bunfig.toml"),
+          Bun.TOML.stringify({ install: { cache: false, registry: regURL } }),
+        );
 
-      await writeFile(
-        join(ctx.package_dir, "package.json"),
-        JSON.stringify({
-          name: "foo",
-          version: "0.0.1",
-          peerDependencies: {
-            notapackage: "0.0.2",
-          },
-        }),
-      );
+        await writeFile(
+          join(ctx.package_dir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+            version: "0.0.1",
+            peerDependencies: {
+              notapackage: "0.0.2",
+            },
+          }),
+        );
 
-      const { stdout, stderr, exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: ctx.package_dir,
-        stdout: "pipe",
-        stdin: "pipe",
-        stderr: "pipe",
-        env,
+        const { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: ctx.package_dir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        expect(await stdout.text()).not.toBeEmpty();
+
+        const err = await stderr.text();
+
+        expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
+        expect(err).toContain("warn: InvalidURL");
+
+        expect(await exited).toBe(0);
       });
-      expect(await stdout.text()).not.toBeEmpty();
-
-      const err = await stderr.text();
-
-      expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
-      expect(err).toContain("warn: InvalidURL");
-
-      expect(await exited).toBe(0);
     });
 
     // The manifest URL is built from the registry URL by the WHATWG parser,

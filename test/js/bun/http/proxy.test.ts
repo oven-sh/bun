@@ -10,7 +10,7 @@ import net from "node:net";
 import tls from "node:tls";
 import { createAdversarialProxy, deadPort, proxyFreeEnv } from "./proxy-stress-helpers";
 async function createProxyServer(is_tls: boolean) {
-  const serverArgs = [];
+  const serverArgs: any[] = [];
   if (is_tls) {
     serverArgs.push({
       ...tlsCert,
@@ -132,13 +132,13 @@ async function createProxyServer(is_tls: boolean) {
 
   server.listen(0);
   await once(server, "listening");
-  const port = server.address().port;
+  const port = (server.address() as net.AddressInfo).port;
   const url = `http${is_tls ? "s" : ""}://localhost:${port}`;
   return { server, url, log: log };
 }
 
-let httpServer: Server;
-let httpsServer: Server;
+let httpServer: Server<undefined>;
+let httpsServer: Server<undefined>;
 let httpProxyServer: { server: net.Server; url: string; log: string[] };
 let httpsProxyServer: { server: net.Server; url: string; log: string[] };
 
@@ -685,7 +685,7 @@ describe("proxy Basic auth uses standard base64 (#31780)", () => {
         if (!req.startsWith("CONNECT")) return clientSocket.end();
         const authMatch = req.match(/Proxy-Authorization: (.+)\r\n/i);
         if (authMatch) capturedAuths.push(authMatch[1]);
-        const serverSocket = net.connect(target.port, "localhost", () => {
+        const serverSocket = net.connect(target.port!, "localhost", () => {
           clientSocket.write("HTTP/1.1 200 OK\r\n\r\n");
           clientSocket.pipe(serverSocket);
           serverSocket.pipe(clientSocket);
@@ -874,6 +874,35 @@ test("HTTPS proxy tunnel keeps a caller-supplied Host header out of SNI and cert
   }
 });
 
+// As on a direct connection, only an IP address in the strict form of net.isIP
+// gets no SNI inside the tunnel. ares_inet_pton also reads "127.1" (as
+// 127.1.0.0), "10" and a trailing "/bits" as an address.
+test("HTTPS proxy tunnel sends a tls.serverName that is IP shorthand as SNI", async () => {
+  const seen: (string | null)[] = [];
+  const target = tls.createServer(tlsCert, socket => {
+    socket.on("error", () => {});
+    seen.push(socket.servername || null);
+    socket.once("data", () => socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"));
+  });
+  target.listen(0);
+  await once(target, "listening");
+  try {
+    const port = (target.address() as net.AddressInfo).port;
+    const serverNames = ["127.1", "10", "0x7f000001", "1.2.3.4/8", "127.0.0.1", "::1"];
+    for (const serverName of serverNames) {
+      const res = await fetch(`https://localhost:${port}/`, {
+        proxy: httpProxyServer.url,
+        keepalive: false,
+        tls: { serverName, rejectUnauthorized: false },
+      });
+      expect(`${res.status} ${await res.text()}`).toBe("200 ok");
+    }
+    expect(seen).toEqual(["127.1", "10", "0x7f000001", "1.2.3.4/8", null, null]);
+  } finally {
+    target.close();
+  }
+});
+
 test("HTTPS proxy tunnel keep-alive does not share tunnel across different credentials", async () => {
   using target = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("ok") });
 
@@ -889,7 +918,7 @@ test("HTTPS proxy tunnel keep-alive does not share tunnel across different crede
       connectCount++;
       const authMatch = req.match(/Proxy-Authorization: (.+)\r\n/i);
       authPerConnect.push(authMatch ? authMatch[1] : "<none>");
-      const serverSocket = net.connect(target.port, "localhost", () => {
+      const serverSocket = net.connect(target.port!, "localhost", () => {
         clientSocket.write("HTTP/1.1 200 OK\r\n\r\n");
         clientSocket.pipe(serverSocket);
         serverSocket.pipe(clientSocket);
@@ -996,7 +1025,7 @@ test("HTTPS target through proxy with rejecting checkServerIdentity transmits no
   const target = tls.createServer({ key: tlsCert.key, cert: tlsCert.cert }, socket => {
     const chunks: Buffer[] = [];
     receivedPerConnection.push(chunks);
-    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("data", (chunk: Buffer) => chunks.push(chunk));
     socket.on("error", () => {});
   });
   // Track teardown on the raw TCP connection rather than the TLS socket: the
@@ -1399,6 +1428,41 @@ for (const scheme of ["http", "https"] as const) {
   }, 15000);
 }
 
+// A fatal SSL_read inside a proxy tunnel whose data callback writes back freed
+// the HTTPClient under its own caller. The origin's 101 and a record that
+// cannot be decrypted arrive together: the 101 arm of handle_on_data_headers
+// flushes the request body into the now-fatal SSL, SSLWrapper::write_data
+// closed the wrapper, ProxyTunnel::on_close freed the client, and the 101 arm
+// kept reading it (ASAN: heap-use-after-free in handle_response_metadata).
+test("a bad record delivered with a 101 through a proxy tunnel does not free the client mid-dispatch", async () => {
+  const iterations = 2;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), require.resolve("./proxy-upgrade-fatal-record-fixture.ts"), String(iterations)],
+    env: {
+      ...bunEnv,
+      // Same reason as the fixture above: the per-request proxy must not be
+      // bypassed by ambient proxy configuration (see PROXY_ENV_KEYS).
+      NO_PROXY: undefined,
+      no_proxy: undefined,
+      HTTP_PROXY: undefined,
+      http_proxy: undefined,
+      HTTPS_PROXY: undefined,
+      https_proxy: undefined,
+    },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0) console.error("stderr:", stderr);
+  // The request itself may resolve with the 101 or fail on the bad record;
+  // either is fine. What must hold is that every iteration really received the
+  // bad record, that the process survived it, and that it still serves a fresh
+  // request.
+  expect(stdout.trim().split("\n")).toHaveLength(iterations + 2);
+  expect(stdout).toContain(`injected: ${iterations}\n`);
+  expect(stdout).toEndWith("probe: probe-ok\n");
+  expect(exitCode).toBe(0);
+});
+
 describe.concurrent("proxy object format with headers", () => {
   test("proxy object with url string works same as string proxy", async () => {
     const response = await fetch(httpServer.url, {
@@ -1429,7 +1493,7 @@ describe.concurrent("proxy object format with headers", () => {
     await expect(
       fetch(httpServer.url, {
         method: "GET",
-        proxy: { url: {} },
+        proxy: { url: {} as any },
         keepalive: false,
       }),
     ).rejects.toThrow("fetch() proxy URL is invalid");
@@ -1884,7 +1948,7 @@ describe.concurrent("NO_PROXY with explicit proxy option", () => {
   // connections is used so that if NO_PROXY doesn't work, the fetch fails
   // with a connection error.
   let deadProxyPort: number;
-  let deadProxy: ReturnType<typeof Bun.listen>;
+  let deadProxy: Bun.TCPSocketListener<undefined>;
 
   beforeAll(() => {
     deadProxy = Bun.listen({
@@ -2148,7 +2212,7 @@ describe.concurrent("a CONNECT tunnel", () => {
     "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Encoding: gzip\r\nContent-Length: 10\r\nTransfer-Encoding: chunked\r\n\r\n",
   ])("is established by any 2xx reply, whatever its header fields: %j", async reply => {
     using origin = Bun.serve({ port: 0, tls: tlsCert, fetch: () => new Response("through") });
-    using proxy = await tunnelingProxy(origin.port, reply);
+    using proxy = await tunnelingProxy(origin.port!, reply);
     using session = new Bun.FetchSession({ proxy: proxy.url, tls: { ca: tlsCert.cert } });
     for (let i = 0; i < 2; i++) {
       const response = await fetch(`https://localhost:${origin.port}/`, { session });
@@ -2556,6 +2620,65 @@ describe.concurrent("proxy environment", () => {
     return parsed;
   }
 
+  // The host of an https:// proxy from the environment reaches TLS as typed,
+  // not through a URL parser. In IP shorthand it is a name: it goes out as
+  // SNI, and it is not the address in the certificate of the proxy. The
+  // Windows resolver does not read the shorthand, so a proxy at such a host
+  // needs a lookup there.
+  test.each([
+    ["127.0.0.1", "proxy", null],
+    ...(isWindows
+      ? []
+      : ["0x7f000001", "127.000.000.001"].map(host => [host, "ERR_TLS_CERT_ALTNAME_INVALID", host] as const)),
+  ])("an https:// proxy at %j", async (host, result, sni) => {
+    let name = null as string | null;
+    const proxy = tls.createServer(
+      {
+        ...tlsCert,
+        SNICallback(servername, cb) {
+          name = servername;
+          cb(null, tls.createSecureContext(tlsCert));
+        },
+      },
+      socket => {
+        socket.on("error", () => {});
+        socket.once("data", () => socket.end("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nproxy"));
+      },
+    );
+    proxy.listen(0, "127.0.0.1");
+    await once(proxy, "listening");
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const tls = { ca: process.env.PROXY_CA };
+          const result = await fetch("http://example.invalid/", { keepalive: false, tls }).then(
+            r => r.text(),
+            e => e.code,
+          );
+          console.log(JSON.stringify(result));
+          `,
+        ],
+        env: {
+          ...bunEnv,
+          ...proxyFreeEnv,
+          HTTP_PROXY: `https://${host}:${(proxy.address() as net.AddressInfo).port}`,
+          PROXY_CA: tlsCert.cert,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect({ result: JSON.parse(stdout), sni: name }).toEqual({ result, sni });
+      expect(exitCode).toBe(0);
+    } finally {
+      proxy.close();
+    }
+  });
+
   test("NO_PROXY grammar", async () => {
     // The full grammar is in "proxy resolution" above; this is the path from
     // the variable to a connection.
@@ -2805,11 +2928,11 @@ describe("http_proxy/NO_PROXY re-evaluated per redirect hop", () => {
   // decision against the post-redirect URL. Previously Bun resolved it once
   // from the original URL, so a redirect into a NO_PROXY host still went via
   // the proxy (and a redirect out of one bypassed it).
-  let originA: Server;
-  let originB: Server;
+  let originA: Server<undefined>;
+  let originB: Server<undefined>;
   let proxyLog: string[];
   let proxyAuth: (string | null)[];
-  let proxy: ReturnType<typeof Bun.listen>;
+  let proxy: Bun.TCPSocketListener<undefined>;
 
   beforeAll(() => {
     originB = Bun.serve({
@@ -3104,7 +3227,7 @@ test("a proxy's own reply to CONNECT never resolves as the https origin's respon
     // Not a tunnel, and not an upgrade anyone asked for.
     "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
   ];
-  const outcomes = [];
+  const outcomes: unknown[] = [];
   for (const reply of replies) {
     const connects: string[] = [];
     const proxy = net.createServer(socket => {

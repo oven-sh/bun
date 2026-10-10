@@ -47,7 +47,7 @@ for (const dir of ["dir", "©️"]) {
         stdin: "ignore",
       });
 
-      for await (const line of watchee.stdout) {
+      for await (const line of watchee.stdout as ReadableStream<Uint8Array>) {
         if (i == 10) break;
         var str = new TextDecoder().decode(line);
         expect(str).toContain(`${i} ${cwd}`);
@@ -68,7 +68,7 @@ afterEach(async () => {
   if (watchee) {
     watchee.kill("SIGKILL");
     await watchee.exited;
-    watchee = undefined;
+    watchee = undefined!;
   }
 });
 
@@ -105,7 +105,7 @@ setInterval(() => {}, 1000);
       // buffer, so no start can be missed. Lines are reassembled across chunk
       // boundaries before matching.
       let buffered = "";
-      for await (const chunk of watchee.stdout) {
+      for await (const chunk of watchee.stdout as ReadableStream<Uint8Array>) {
         buffered += decoder.decode(chunk);
         let newline;
         while ((newline = buffered.indexOf("\n")) !== -1) {
@@ -359,7 +359,7 @@ it("--watch forced restart clears the terminal when colors are enabled", async (
     `,
   });
 
-  const env = { ...bunEnv, FORCE_COLOR: "1" };
+  const env: typeof bunEnv = { ...bunEnv, FORCE_COLOR: "1" };
   delete env.NO_COLOR;
   // stderr is piped, not inherited: the clear sequence below would otherwise
   // wipe the terminal running the test suite.

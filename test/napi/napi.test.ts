@@ -487,6 +487,23 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       );
     });
 
+    // The JS thread parks without heap access during an idle collection, so its end phase runs on the collector thread.
+    it.skipIf(isWindows)(
+      "an idle collection on the collector thread runs the finalizers on the JS thread",
+      async () => {
+        const result = await runOn(bunExe(), "test_external_buffer_finalized_by_idle_collection", [], {
+          BUN_IDLE_GC_SECONDS: "1",
+          BUN_GC_TIMER_DISABLE: undefined,
+          BUN_GC_TIMER_INTERVAL: undefined,
+          BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS: "0",
+        } as any);
+        expect(result).toStartWith(
+          "experimental: finalized=true finalizedOffThread=0\ndeferred: finalized=true finalizedOffThread=0\n",
+        );
+      },
+      30_000,
+    );
+
     it("a worker's buffers reach the parent as copies and are finalized by the worker's env teardown", async () => {
       const result = await checkSameOutput("test_external_buffer_worker_exit", []);
       const message = JSON.stringify({
@@ -1230,6 +1247,46 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         `synchronously threw ReferenceError: message "shouldNotExist is not defined", code undefined`,
       );
     });
+
+    // main.js reads its arguments with eval(), which the flag refuses, so these load the addon themselves.
+    async function runScriptWith(executable: string, flag: string) {
+      using dir = tempDir("napi-run-script-code-generation", {
+        "fixture.cjs": `
+          const { test_napi_run_script } = require(process.argv[2]);
+          let evaluated, ran;
+          try { evaluated = eval("1 + 1"); } catch (e) { evaluated = e.name; }
+          try { ran = test_napi_run_script(() => {}, "5 * (1 + 2)"); } catch (e) { ran = e.name + ": " + e.message; }
+          console.log(JSON.stringify({ evaluated, ran }));
+        `,
+      });
+      await using proc = spawn({
+        cmd: [executable, flag, "fixture.cjs", join(__dirname, "napi-app/build/Debug/napitests.node")],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    }
+    it("is not affected by --disallow-code-generation-from-strings, as in Node.js", async () => {
+      const [node, bun] = await Promise.all([
+        runScriptWith(await nodeExeMatchingAbi(), "--disallow-code-generation-from-strings"),
+        runScriptWith(bunExe(), "--disallow-code-generation-from-strings"),
+      ]);
+      expect(bun).toEqual({ stdout: JSON.stringify({ evaluated: "EvalError", ran: 15 }), stderr: "", exitCode: 0 });
+      expect(bun).toEqual(node);
+    });
+    it("throws with --disallow-code-generation-from-strings=strict", async () => {
+      expect(await runScriptWith(bunExe(), "--disallow-code-generation-from-strings=strict")).toEqual({
+        stdout: JSON.stringify({
+          evaluated: "EvalError",
+          ran: "EvalError: Code generation from strings disallowed for this context",
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
   });
 
   describe("napi_get_named_property", () => {
@@ -1849,6 +1906,87 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     expect(bun).toEqual(node);
     expect(bun).toEqual({ stdout: ["create_error_status=0", "worker exited with 1"], stderr: "", exitCode: 0 });
   });
+
+  // Bun.spawnSync waits on a loop of its own. The ref that queued work takes on the event loop used to land on
+  // whichever loop was being waited on, and the one its completion released was always the thread's: that loop ended
+  // up short of a ref per work item, and the process exited without waiting for this child.
+  // BUN_JSC_slowPathAllocsBetweenGCs collects every few slow-path allocations. maxBuffer is the last option
+  // Bun.spawnSync reads, so the collection that follows the drop runs once it is past them. Bun.gc() leaves every free
+  // list empty, so what it allocates from there on takes the slow path, whatever ran before.
+  it.skipIf(isWindows)("async work queued by a finalizer during Bun.spawnSync keeps the event loop alive", async () => {
+    const code = `
+      const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/test_queue_async_work_in_finalizer_experimental.node"))});
+      // In a frame of its own: an object left in a register of this one would outlive the drop.
+      (() => { globalThis.held = Array.from({ length: 8 }, () => addon.make()); })();
+      let finalizedBeforeDrop;
+      Bun.spawnSync({
+        cmd: ["true"],
+        stdout: "pipe",
+        stderr: "pipe",
+        get maxBuffer() {
+          Bun.gc(true);
+          finalizedBeforeDrop = addon.finalized();
+          globalThis.held = null;
+        },
+      });
+      const finalizedDuringCall = addon.finalized();
+      const child = Bun.spawn({ cmd: ["cat"], stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+      child.exited.then(() => console.log(JSON.stringify({ finalizedBeforeDrop, finalizedDuringCall })));
+      const timer = setInterval(() => {
+        if (addon.completed() < 8) return;
+        clearInterval(timer);
+        child.stdin.end();
+      }, 1);
+    `;
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", code],
+      env: { ...bunEnv, BUN_JSC_slowPathAllocsBetweenGCs: "3" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ finalizedBeforeDrop: 0, finalizedDuringCall: 8 }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The other way around: the ref a finalizer gave up was taken off the loop being waited on, so the thread's loop
+  // kept it and the process never exited.
+  it.skipIf(isWindows)(
+    "a threadsafe function unref'd by a finalizer during Bun.spawnSync lets go of the event loop",
+    async () => {
+      const code = `
+      const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/test_queue_async_work_in_finalizer_experimental.node"))});
+      (() => { globalThis.held = Array.from({ length: 3 }, () => addon.makeThreadsafeFunction()); })();
+      let finalizedBeforeDrop;
+      Bun.spawnSync({
+        cmd: ["true"],
+        stdout: "pipe",
+        stderr: "pipe",
+        get maxBuffer() {
+          Bun.gc(true);
+          finalizedBeforeDrop = addon.finalized();
+          globalThis.held = null;
+        },
+      });
+      console.log(JSON.stringify({ finalizedBeforeDrop, finalizedDuringCall: addon.finalized() }));
+    `;
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", code],
+        env: { ...bunEnv, BUN_JSC_slowPathAllocsBetweenGCs: "3" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({ finalizedBeforeDrop: 0, finalizedDuringCall: 3 }),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 
   it("napi_reference_unref can be called from finalizers in regular modules", async () => {
     // This test ensures that napi_reference_unref can be called during GC

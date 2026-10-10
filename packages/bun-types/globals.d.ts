@@ -152,6 +152,10 @@ declare var ReadableStream: Bun.__internal.UseLibDomIfAvailable<
     prototype: ReadableStream;
     new <R = any>(underlyingSource?: Bun.UnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
     new <R = any>(underlyingSource?: Bun.DirectUnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
+    new <R extends Uint8Array = Uint8Array<ArrayBuffer>>(
+      underlyingSource: import("node:stream/web").UnderlyingByteSource,
+      strategy?: { highWaterMark?: number },
+    ): ReadableStream<R>;
   }
 >;
 
@@ -1198,10 +1202,19 @@ interface Console {
    * console.write("hello world!", "\n"); // "hello world!\n"
    * ```
    *
+   * When stdout cannot take the data right away (a pipe whose reader is slow),
+   * the data is buffered and a Promise is returned instead of a number. Await it
+   * to wait until the data has been written; it rejects if the write fails, for
+   * example with `EPIPE` when the reader has closed the pipe.
+   *
+   * ```ts
+   * await console.write(largeOutput);
+   * ```
+   *
    * @param data - The data to write
-   * @returns The number of bytes written
+   * @returns The number of bytes written, or a Promise of it when stdout is backed up
    */
-  write(...data: Array<string | ArrayBufferView | ArrayBuffer>): number;
+  write(...data: Array<string | ArrayBufferView | ArrayBuffer>): number | Promise<number>;
 
   /**
    * Clear the console
@@ -1494,6 +1507,16 @@ interface Blob {
   readonly type: string;
 
   /**
+   * Returns a new `Blob` with the bytes from `start` up to but not including
+   * `end`. Negative indices count from the end.
+   *
+   * @param start byte offset to start at. Defaults to 0.
+   * @param end byte offset to stop at. Defaults to `size`.
+   * @param contentType the `type` of the new `Blob`.
+   */
+  slice(start?: number, end?: number, contentType?: string): Blob;
+
+  /**
    * Read the data from the blob as a JSON object.
    *
    * This first decodes the data from UTF-8, then parses it as JSON.
@@ -1773,7 +1796,11 @@ declare var PerformanceMeasure: Bun.__internal.UseLibDomIfAvailable<
 interface PerformanceObserver extends Bun.__internal.LibEmptyOrPerformanceObserver {}
 declare var PerformanceObserver: Bun.__internal.UseLibDomIfAvailable<
   "PerformanceObserver",
-  { prototype: PerformanceObserver; new (): PerformanceObserver }
+  {
+    prototype: PerformanceObserver;
+    new (callback: import("node:perf_hooks").PerformanceObserverCallback): PerformanceObserver;
+    readonly supportedEntryTypes: readonly string[];
+  }
 >;
 
 interface PerformanceObserverEntryList extends Bun.__internal.LibEmptyOrPerformanceObserverEntryList {}
@@ -1809,7 +1836,10 @@ declare var ReadableStreamBYOBRequest: Bun.__internal.UseLibDomIfAvailable<
 interface TextDecoderStream extends Bun.__internal.LibEmptyOrNodeStreamWebTextDecoderStream {}
 declare var TextDecoderStream: Bun.__internal.UseLibDomIfAvailable<
   "TextDecoderStream",
-  { prototype: TextDecoderStream; new (): TextDecoderStream }
+  {
+    prototype: TextDecoderStream;
+    new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextDecoderStream;
+  }
 >;
 
 interface TextEncoderStream extends Bun.__internal.LibEmptyOrNodeStreamWebTextEncoderStream {}
@@ -1952,7 +1982,11 @@ interface BunFetchRequestInitTLS extends Bun.TLSOptions {
    *
    * @param hostname - The hostname of the server
    * @param cert - The certificate of the server
-   * @returns An error if the server is unauthorized, otherwise undefined
+   * @returns An error if the server is unauthorized, otherwise undefined. Any
+   * other truthy value also fails the request, and a `Promise` is one: the
+   * function cannot be `async`. Every falsy value approves the certificate, as
+   * in Node, so `false` does not reject it. For that reason the type allows
+   * only `undefined` and `Error`.
    */
   checkServerIdentity?: NonNullable<import("node:tls").ConnectionOptions["checkServerIdentity"]>;
 }

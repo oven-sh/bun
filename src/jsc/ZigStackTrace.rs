@@ -147,7 +147,6 @@ impl<'a> SourceLineIterator<'a> {
         self.next()
     }
 
-    #[allow(clippy::should_implement_trait)]
     pub(crate) fn next(&mut self) -> Option<SourceLine<'a>> {
         if self.i < 0 {
             return None;

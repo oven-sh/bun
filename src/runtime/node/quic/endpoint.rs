@@ -28,7 +28,7 @@ bun_core::declare_scope!(quic, hidden);
 
 /// Mirrors Node's `Endpoint::State`.
 #[repr(C)]
-pub struct EndpointState {
+pub(crate) struct EndpointState {
     pub bound: u8,
     pub(crate) receiving: u8,
     pub(crate) listening: u8,
@@ -183,7 +183,7 @@ impl Default for BindConfig {
 /// `#[repr(C)]` so `vtable_ptr` is at offset 0 — the C shim reads it via
 /// `*(us_nq_vtable**)peer_ctx`. Without it Rust may reorder fields.
 #[repr(C)]
-pub struct QuicEndpoint {
+pub(crate) struct QuicEndpoint {
     /// MUST stay the first field — `ea_get_ssl_ctx`'s `peer_ctx` is the
     /// QuicEndpoint pointer, and the C shim's thunk reads
     /// `*(us_nq_vtable**)peer_ctx` to recover the vtable.

@@ -714,6 +714,17 @@ it("serialize(name) rejects a db closed during name toString()", async () => {
   });
 });
 
+it("Database.deserialize accepts an ArrayBuffer", () => {
+  const db = Database.open(":memory:");
+  db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
+  db.exec('INSERT INTO test (name) VALUES ("Hello")');
+  const serialized = db.serialize();
+  const arrayBuffer = serialized.buffer.slice(serialized.byteOffset, serialized.byteOffset + serialized.byteLength);
+
+  const db2 = Database.deserialize(arrayBuffer);
+  expect(db2.prepare("SELECT * FROM test").all()).toEqual([{ id: 1, name: "Hello" }]);
+});
+
 it("Database.deserialize should support strict mode", () => {
   const db1 = new Database(":memory:");
   db1.run("CREATE TABLE test (name TEXT)");

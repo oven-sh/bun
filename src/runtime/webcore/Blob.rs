@@ -29,20 +29,20 @@ use crate::webcore::{self, Lifetime, ReadableStream, Request, Response, streams}
 bun_core::define_scoped_log!(debug, Blob, visible);
 
 #[path = "blob/Store.rs"]
-pub mod store;
+pub(crate) mod store;
 use crate::node::types::{PathLikeExt as _, PathOrFdExt as _};
-pub use store::Store;
+pub(crate) use store::Store;
 use store::{BytesExt as _, FileExt as _, S3Ext as _, StoreExt as _};
 
 #[path = "blob/copy_file.rs"]
-pub mod copy_file;
+pub(crate) mod copy_file;
 #[cfg(not(windows))]
 #[path = "blob/io_parking.rs"]
 pub(crate) mod io_parking;
 #[path = "blob/read_file.rs"]
-pub mod read_file;
+pub(crate) mod read_file;
 #[path = "blob/write_file.rs"]
-pub mod write_file;
+pub(crate) mod write_file;
 
 /// Deallocator for `ArrayBuffer`s backed by a `Blob::Store` ref. Passed as a C
 /// callback to `ArrayBuffer::to_js_with_context`; the `ctx` is a raw `Store*`
@@ -75,7 +75,7 @@ pub(crate) fn is_valid_blob_type(slice: &[u8]) -> bool {
 }
 
 /// Result delivered to `ReadBytesHandler::on_read_bytes`.
-pub enum ReadBytesResult {
+pub(crate) enum ReadBytesResult {
     /// global-allocator-owned by the callback.
     Ok(Vec<u8>),
     Err(Box<bun_jsc::SystemError>),
@@ -83,7 +83,7 @@ pub enum ReadBytesResult {
 
 /// Handler trait for `read_bytes_to_handler` — the body only requires
 /// `on_read_bytes`.
-pub trait ReadBytesHandler {
+pub(crate) trait ReadBytesHandler {
     /// Invoked exactly once, on the JS thread, with the `ctx` given to
     /// `read_bytes_to_handler`; ownership of `*this` comes back to the handler
     /// here, and a heap-allocated one reclaims itself (`heap::take(this)`).
@@ -104,7 +104,7 @@ pub trait ReadBytesHandler {
 // This crate layers behaviour via the `BlobExt` extension trait below.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_jsc::webcore_types::{Blob, BlobContentType, ClosingState, MAX_SIZE, SizeType};
+pub(crate) use bun_jsc::webcore_types::{Blob, BlobContentType, ClosingState, MAX_SIZE, SizeType};
 
 /// 1: Initial
 /// 2: Added byte for whether it's a dom file, length and bytes for `stored_name`,
@@ -114,7 +114,7 @@ pub use bun_jsc::webcore_types::{Blob, BlobContentType, ClosingState, MAX_SIZE, 
 ///    keeps its window's end across structuredClone/postMessage
 const SERIALIZATION_VERSION: u8 = 4;
 
-pub use bun_jsc::generated::JSBlob as js;
+pub(crate) use bun_jsc::generated::JSBlob as js;
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -128,8 +128,7 @@ pub use bun_jsc::generated::JSBlob as js;
 // loop / S3 / fs / `VirtualMachine` is here.
 // ──────────────────────────────────────────────────────────────────────────
 
-#[allow(non_snake_case, clippy::too_many_arguments)]
-pub trait BlobExt {
+pub(crate) trait BlobExt {
     fn get_form_data_encoding(&self) -> Option<Box<bun_core::form_data::AsyncFormData>>;
     // `has_content_type_from_user`/`content_type_or_mime_type`/`is_s3`/
     // `needs_to_read_file`/`get_file_name`: data-only predicates, hoisted to
@@ -391,7 +390,6 @@ pub(crate) unsafe extern "C" fn Bun__Blob__sharedView(
     view.as_ptr()
 }
 
-#[allow(non_snake_case, clippy::too_many_arguments)]
 impl BlobExt for Blob {
     fn get_form_data_encoding(&self) -> Option<Box<bun_core::form_data::AsyncFormData>> {
         let content_type_slice = self.get_content_type()?;
@@ -786,9 +784,6 @@ impl BlobExt for Blob {
         let _ = self._on_structured_clone_serialize(&mut writer);
     }
 
-    // C++ codegen calls this with a live `*mut *mut u8` cursor and end pointer; the
-    // trait signature is fixed, so the deref is documented with the SAFETY comment below.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn on_structured_clone_deserialize(
         global_this: &JSGlobalObject,
         ptr: *mut *mut u8,
@@ -1259,8 +1254,13 @@ impl BlobExt for Blob {
     }
 
     fn get_exists_sync(&self) -> JSValue {
-        if self.size.get() == MAX_SIZE {
-            self.resolve_size();
+        match self.store.get() {
+            _ if self.size.get() == MAX_SIZE => self.resolve_size(),
+            // A failed stat is not an answer to keep: the file may exist by now.
+            Some(store) if matches!(&store.data, store::Data::File(file) if file.seekable.is_none()) => {
+                resolve_file_stat(store)
+            }
+            _ => {}
         }
 
         // If there's no store that means it's empty and we just return true
@@ -1508,7 +1508,6 @@ impl BlobExt for Blob {
                 sink.writer
                     .with_mut(|w| w.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)));
 
-                #[cfg(windows)]
                 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
                 let started = sink.writer.with_mut(|w| {
                     if is_stdout_or_stderr {
@@ -1568,12 +1567,12 @@ impl BlobExt for Blob {
         // `pipe_stream` takes its own refs; init's +1 drops with `file_sink` on return.
         let mut readable_stream = readable_stream;
         // SAFETY: sole owner so far; `&mut` scoped to the call.
-        let result =
-            unsafe { (*file_sink.as_ptr()).pipe_stream(&mut readable_stream, cx.global()) };
-        if let Some(err) = result.to_error() {
-            return Ok(JSPromise::rejected_promise(cx.global(), err).to_js());
+        match unsafe { (*file_sink.as_ptr()).pipe_stream(&mut readable_stream, cx.global()) } {
+            Ok(promise) => Ok(promise),
+            Err(err) => {
+                Ok(JSPromise::rejected_promise_with_caught_exception(cx.global(), err)?.to_js())
+            }
         }
-        Ok(result)
     }
 
     fn get_writer(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -2002,7 +2001,8 @@ impl BlobExt for Blob {
     }
 
     fn get_size_for_bindings(&self) -> u64 {
-        if self.size.get() == MAX_SIZE {
+        let has_size = self.size.get() != MAX_SIZE;
+        if !has_size {
             self.resolve_size();
         }
 
@@ -2010,7 +2010,17 @@ impl BlobExt for Blob {
         // signal that the size is unknown.
         if let Some(store) = self.store.get() {
             if let store::Data::File(file) = &store.data {
-                if !file.seekable.unwrap_or(false) {
+                // A slice has its size without a stat, and `clone()` learns the mode without filling `seekable`.
+                let mode_seen_by_clone = file.mode_seen_by_clone.filter(|_| has_size);
+                if !file
+                    .seekable
+                    .or_else(|| mode_seen_by_clone.map(bun_sys::S::ISREG))
+                    .unwrap_or(false)
+                {
+                    // Printing is not to leave the 0 of a failed stat behind: the body would read as empty.
+                    if !has_size && file.seekable.is_none() {
+                        self.size.set(MAX_SIZE);
+                    }
                     return u64::MAX;
                 }
             }
@@ -2048,6 +2058,7 @@ impl BlobExt for Blob {
                             binding,
                             crate::node::fs::args::Stat::owned(path_like.slice().to_vec()),
                             vm,
+                            None,
                         ))
                     }
                     PathOrFileDescriptor::Fd(fd) => {
@@ -2062,6 +2073,7 @@ impl BlobExt for Blob {
                             binding,
                             crate::node::fs::args::Fstat::for_fd(*fd),
                             vm,
+                            None,
                         ))
                     }
                 }
@@ -3484,7 +3496,7 @@ pub(crate) enum FormDataEntry<'a> {
 /// Carries `Function(ctx, bytes)` at the type level —
 /// a trait impl so `run` can be taken as a
 /// plain `fn(*mut c_void, ReadFileResultType)` thunk, monomorphized per `(C, F)`.
-pub trait InternalReadFileFn<C> {
+pub(crate) trait InternalReadFileFn<C> {
     fn call(ctx: *mut C, bytes: read_file::ReadFileResultType) -> JsResult<()>;
     /// The read will never complete (its VM stopped first): do with `ctx` what its owner needs.
     fn cancel(ctx: *mut C);
@@ -4027,7 +4039,8 @@ pub(crate) fn write_format_for_size<W: core::fmt::Write, const ENABLE_ANSI_COLOR
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum Retry {
+#[cfg(not(windows))]
+pub(crate) enum Retry {
     Continue,
     Fail,
     No,
@@ -4054,6 +4067,7 @@ pub(crate) fn mkdirp_parent(path: &[u8]) -> bun_sys::Result<()> {
 
 // TODO: move this to bun_sys?
 #[inline(never)]
+#[cfg(not(windows))]
 pub(crate) fn mkdir_if_not_exists<T: MkdirpTarget>(
     this: &mut T,
     err: &bun_sys::Error,
@@ -4094,7 +4108,8 @@ fn sys_error_with_path_like(
 
 /// Receiver trait for `mkdir_if_not_exists`; impls optionally
 /// write `errno` / `opened_fd` via the defaulted setters.
-pub trait MkdirpTarget {
+#[cfg(not(windows))]
+pub(crate) trait MkdirpTarget {
     fn mkdirp_if_not_exists(&self) -> bool;
     fn set_mkdirp_if_not_exists(&mut self, v: bool);
     fn set_system_error(&mut self, e: bun_sys::SystemError);
@@ -4116,7 +4131,7 @@ fn body_used_rejection(global: &JSGlobalObject) -> JSValue {
 }
 
 #[derive(Default, Clone, Copy)]
-pub struct WriteFileOptions {
+pub(crate) struct WriteFileOptions {
     pub(crate) mkdirp_if_not_exists: Option<bool>,
     pub(crate) extra_options: Option<JSValue>,
     pub(crate) mode: Option<bun_sys::Mode>,
@@ -4807,8 +4822,8 @@ pub(crate) fn write_file_internal(
             // SAFETY: scoped shared read of the variant tag.
             let tag = match unsafe { &*body_value } {
                 BodyValue::Error(_) => BodyTag::Error,
-                BodyValue::Locked(_) => BodyTag::Locked,
-                BodyValue::Used => {
+                BodyValue::Locked(locked) if !locked.has_consumer() => BodyTag::Locked,
+                BodyValue::Locked(_) | BodyValue::Used => {
                     destination_blob.detach();
                     return Ok(ControlFlow::Break(body_used_rejection(cx.global())));
                 }
@@ -5223,7 +5238,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     global_this: &JSGlobalObject,
     pathlike: &PathOrFileDescriptor,
     bytes: &[u8],
-    _needs_async: &mut bool,
+    needs_async: &mut bool,
 ) -> JSValue {
     let fd: Fd = if !NEEDS_OPEN {
         pathlike.fd()
@@ -5241,9 +5256,8 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
         ) {
             bun_sys::Result::Ok(result) => result,
             bun_sys::Result::Err(err) => {
-                #[cfg(not(windows))]
                 if err.get_errno() == bun_sys::E::ENOENT {
-                    *_needs_async = true;
+                    *needs_async = true;
                     return JSValue::ZERO;
                 }
                 return JSPromise::rejected_promise(
@@ -5272,9 +5286,8 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
                 }
             }
             bun_sys::Result::Err(err) => {
-                #[cfg(not(windows))]
                 if err.get_errno() == bun_sys::E::EAGAIN {
-                    *_needs_async = true;
+                    *needs_async = true;
                     return JSValue::ZERO;
                 }
                 let err_js = if !NEEDS_OPEN {
@@ -5288,12 +5301,6 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     }
 
     if truncate {
-        #[cfg(windows)]
-        // SAFETY: fd is a valid open handle on this code path; FFI call.
-        unsafe {
-            bun_sys::windows::kernel32::SetEndOfFile(fd.native())
-        };
-        #[cfg(not(windows))]
         let _ = bun_sys::ftruncate(fd, i64::try_from(written).expect("int cast"));
     }
 
@@ -5845,6 +5852,34 @@ pub(crate) fn store_reads_repeatably(store: &RefPtr<Store>) -> bool {
     }
 }
 
+/// Whether two Blobs over `store` would compete for its bytes (an fd, a pipe, a terminal). A directory or a closed fd has none: each Blob fails when read.
+pub(crate) fn store_yields_bytes_once(store: &RefPtr<Store>) -> bool {
+    if !matches!(store.data, store::Data::File(_)) {
+        return false;
+    }
+    let is_fd = Store::data_mut(store).as_file().pathlike.is_fd();
+    // What the tee of an fd does next, so this costs no extra `fstat`.
+    if is_fd && Store::data_mut(store).as_file().seekable.is_none() {
+        resolve_file_stat(store);
+    }
+    let file = Store::data_mut(store).as_file_mut();
+    let mode = if file.seekable.is_some() {
+        Some(file.mode)
+    } else if let PathOrFileDescriptor::Path(path) = &file.pathlike {
+        // Not `resolve_file_stat`: the `Bun.file()` sharing `store` answers from what that caches.
+        if file.mode_seen_by_clone.is_none() {
+            let mut buffer = bun_paths::path_buffer_pool::get();
+            if let bun_sys::Result::Ok(stat) = bun_sys::stat(path.slice_z(&mut buffer)) {
+                file.mode_seen_by_clone = Some(stat.st_mode as bun_sys::Mode);
+            }
+        }
+        file.mode_seen_by_clone
+    } else {
+        None
+    };
+    mode.is_some_and(|mode| !bun_sys::S::ISDIR(mode) && (is_fd || !bun_sys::S::ISREG(mode)))
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // toStringWithBytes / toString / toJSON / toFormData / toArrayBuffer{View}
 // ──────────────────────────────────────────────────────────────────────────
@@ -5873,9 +5908,6 @@ pub(crate) struct ToArrayBufferWithBytesFn;
 pub(crate) struct ToUint8ArrayWithBytesFn;
 pub(crate) struct ToFormDataWithBytesFn;
 
-// `ReadFileToJs::call`'s `by: *mut [u8]` is fixed by the trait; each impl forwards
-// it to the matching unsafe `*_with_bytes` body, so the deref is documented there.
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl read_file::ReadFileToJs for ToStringWithBytesFn {
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: `by` upholds the `ReadFileToJs::call` contract — a leaked
@@ -5890,7 +5922,6 @@ impl read_file::ReadFileToJs for ToStringWithBytesFn {
         }
     }
 }
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl read_file::ReadFileToJs for ToJsonWithBytesFn {
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: see `ToStringWithBytesFn::call`.
@@ -5904,7 +5935,6 @@ impl read_file::ReadFileToJs for ToJsonWithBytesFn {
         }
     }
 }
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl read_file::ReadFileToJs for ToArrayBufferWithBytesFn {
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: see `ToStringWithBytesFn::call`.
@@ -5920,7 +5950,6 @@ impl read_file::ReadFileToJs for ToArrayBufferWithBytesFn {
         }
     }
 }
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl read_file::ReadFileToJs for ToUint8ArrayWithBytesFn {
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         // SAFETY: see `ToStringWithBytesFn::call`.
@@ -5936,7 +5965,6 @@ impl read_file::ReadFileToJs for ToUint8ArrayWithBytesFn {
         }
     }
 }
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl read_file::ReadFileToJs for ToFormDataWithBytesFn {
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
         let _ = l; // FormData ignores lifetime — bytes are read-only.
@@ -5967,7 +5995,7 @@ impl read_file::ReadFileToJs for ToFormDataWithBytesFn {
 pub enum Any {
     Blob(Blob),
     InternalBlob(Internal),
-    WTFStringImpl(bun_core::WTFStringImpl),
+    WTFStringImpl(bun_core::WTFString),
 }
 
 impl Any {
@@ -5999,8 +6027,7 @@ impl Any {
     pub(crate) fn memory_cost(&self) -> usize {
         match self {
             Any::Blob(blob) => blob.store().map(|s| s.memory_cost()).unwrap_or(0),
-            Any::WTFStringImpl(str) => {
-                let s = super::body::wtf_impl(str);
+            Any::WTFStringImpl(s) => {
                 if s.ref_count() == 1 {
                     s.memory_cost()
                 } else {
@@ -6022,7 +6049,7 @@ impl Any {
     pub(crate) fn fast_size(&self) -> SizeType {
         match self {
             Any::Blob(b) => b.size.get(),
-            Any::WTFStringImpl(s) => super::body::wtf_impl(s).byte_length() as SizeType,
+            Any::WTFStringImpl(s) => s.byte_length() as SizeType,
             Any::InternalBlob(_) => self.slice().len() as SizeType,
         }
     }
@@ -6031,7 +6058,7 @@ impl Any {
     pub(crate) fn size(&self) -> SizeType {
         match self {
             Any::Blob(b) => b.size.get(),
-            Any::WTFStringImpl(s) => super::body::wtf_impl(s).utf8_byte_length() as SizeType,
+            Any::WTFStringImpl(s) => s.utf8_byte_length() as SizeType,
             _ => self.slice().len() as SizeType,
         }
     }
@@ -6047,16 +6074,31 @@ impl Any {
 // ─── Any: JSC-integration (to_js/from_js paths) ──────────────────────────────
 
 impl Any {
-    fn to_internal_blob_if_possible(&mut self) {
-        if let Any::Blob(blob) = self {
-            if let Some(s) = blob.store.get() {
-                if matches!(s.data, store::Data::Bytes(_)) && s.has_one_ref() {
-                    let internal = Store::data_mut(s).as_bytes_mut().to_internal_blob();
-                    *self = Any::InternalBlob(internal);
-                    return;
-                }
-            }
+    /// Moves the string out of the `WTFStringImpl` arm and leaves an empty `Blob`.
+    fn take_string(&mut self) -> BunString {
+        match core::mem::replace(self, Any::Blob(Blob::default())) {
+            Any::WTFStringImpl(string) => BunString::adopt_wtf_impl(string.into_raw()),
+            _ => unreachable!("Any::take_string on a variant that is not a string"),
         }
+    }
+
+    fn to_internal_blob_if_possible(&mut self) {
+        let Any::Blob(blob) = self else {
+            return;
+        };
+        let Some(s) = blob.store.get() else {
+            return;
+        };
+        let store::Data::Bytes(bytes) = &s.data else {
+            return;
+        };
+        // A slice can hold the last reference to its parent's store.
+        let views_whole_store = blob.offset.get() == 0 && blob.size.get() >= bytes.len();
+        if !s.has_one_ref() || !views_whole_store {
+            return;
+        }
+        let internal = Store::data_mut(s).as_bytes_mut().to_internal_blob();
+        *self = Any::InternalBlob(internal);
     }
 
     pub(crate) fn to_action_value(
@@ -6148,10 +6190,8 @@ impl Any {
                 *self = Any::Blob(Blob::default());
                 str
             }
-            Any::WTFStringImpl(impl_) => {
-                let str =
-                    BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
-                *self = Any::Blob(Blob::default());
+            Any::WTFStringImpl(_) => {
+                let str = self.take_string();
                 if str.length() == 0 {
                     return Ok(JSValue::NULL);
                 }
@@ -6193,9 +6233,7 @@ impl Any {
 
         if let Any::WTFStringImpl(_) = self {
             let blob = Blob::create(self.slice(), global, true);
-            // `Blob::create(.., true)` copied the bytes; `Any` still owns the
-            // +1 WTF ref. `detach()` releases it and resets `*self` (the bare
-            // `*self = Any::Blob(default)` here previously leaked that ref).
+            // `Blob::create(.., true)` copied the bytes, so release the string.
             self.detach();
             return blob;
         }
@@ -6223,12 +6261,7 @@ impl Any {
                 *self = Any::Blob(Blob::default());
                 Ok(owned)
             }
-            Any::WTFStringImpl(impl_) => {
-                let str =
-                    BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
-                *self = Any::Blob(Blob::default());
-                str.into_js(cx.global())
-            }
+            Any::WTFStringImpl(_) => self.take_string().into_js(cx.global()),
         }
     }
 
@@ -6261,10 +6294,8 @@ impl Any {
                 *self = Any::Blob(Blob::default());
                 jsc::ArrayBuffer::from_default_allocator(cx.global(), TYPED_ARRAY_VIEW, bytes)
             }
-            Any::WTFStringImpl(impl_) => {
-                let str =
-                    BunString::adopt_wtf_impl(core::mem::replace(impl_, core::ptr::null_mut()));
-                *self = Any::Blob(Blob::default());
+            Any::WTFStringImpl(_) => {
+                let str = self.take_string();
 
                 let out_bytes = str.to_utf8();
                 if out_bytes.is_owned() {
@@ -6284,7 +6315,7 @@ impl Any {
         match self {
             Any::Blob(blob) => blob.is_detached(),
             Any::InternalBlob(ib) => ib.bytes.is_empty(),
-            Any::WTFStringImpl(s) => super::body::wtf_impl(s).length() == 0,
+            Any::WTFStringImpl(s) => s.length() == 0,
         }
     }
 }
@@ -6319,7 +6350,7 @@ impl Any {
     pub(crate) fn slice(&self) -> &[u8] {
         match self {
             Any::Blob(b) => b.shared_view(),
-            Any::WTFStringImpl(s) => super::body::wtf_impl(s).utf8_slice(),
+            Any::WTFStringImpl(s) => s.utf8_slice(),
             Any::InternalBlob(ib) => ib.slice_const(),
         }
     }
@@ -6349,9 +6380,7 @@ impl Any {
                 ib.bytes.shrink_to_fit();
                 *self = Any::Blob(Blob::default());
             }
-            Any::WTFStringImpl(s) => {
-                // `Any` owns one ref on the WTFStringImpl pointee.
-                super::body::wtf_impl(s).deref();
+            Any::WTFStringImpl(_) => {
                 *self = Any::Blob(Blob::default());
             }
         }
@@ -6449,7 +6478,7 @@ bun_jsc::jsc_host_abi! {
 // TODO: move to bun_sys?
 /// Generic file-open helper used by ReadFile/WriteFile/CopyFile state machines,
 /// modeled as a trait the target implements.
-pub trait FileOpener: Sized {
+pub(crate) trait FileOpener: Sized {
     /// Override if you need different open flags; defaults to RDONLY.
     const OPEN_FLAGS: i32 = bun_sys::O::RDONLY;
     const OPENER_FLAGS: i32 = bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC;
@@ -6464,6 +6493,7 @@ pub trait FileOpener: Sized {
     /// `CopyFile`) override this to call [`mkdir_if_not_exists`]; everyone else
     /// (e.g. `ReadFile`) keeps the default `Retry::No`, so the open path falls
     /// straight through to the error branch.
+    #[cfg(not(windows))]
     fn try_mkdirp(
         &mut self,
         _err: bun_sys::Error,
@@ -6633,7 +6663,7 @@ pub trait FileOpener: Sized {
 pub(crate) use io_parking::IoParking;
 
 // TODO: move to bun_sys?
-pub trait FileCloser: Sized {
+pub(crate) trait FileCloser: Sized {
     const IO_TAG: bun_io::Tag;
 
     fn opened_fd(&self) -> Fd;

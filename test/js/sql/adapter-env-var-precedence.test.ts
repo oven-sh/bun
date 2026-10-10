@@ -405,7 +405,7 @@ describe("SQL adapter environment variable precedence", () => {
         expect(fromEnv.options.tls).toBeUndefined();
 
         const fromUrl = new SQL("postgres://u@h:5432/db?sslmode=verify-full&ssl=true", tlsOptions);
-        expect(fromUrl.options.query).toBe("");
+        expect((fromUrl.options as any).query).toBe("");
         expect(fromUrl.options.sslMode).toBe(0);
         expect(fromUrl.options.tls).toBeUndefined();
       },
@@ -440,7 +440,7 @@ describe("SQL adapter environment variable precedence", () => {
     ] as const)("%s selects sslMode %d", (url, expectedMode, expectedTls) => {
       const options = new SQL(url);
       expect(options.options.hostname).toBe("h");
-      expect(options.options.query).toBe("");
+      expect((options.options as any).query).toBe("");
       expect(options.options.sslMode).toBe(expectedMode);
       expect(options.options.tls).toEqual(expectedTls);
     });
@@ -449,7 +449,7 @@ describe("SQL adapter environment variable precedence", () => {
       "%s requires an encrypted connection",
       url => {
         const options = new SQL(url);
-        expect(options.options.query).toBe("");
+        expect((options.options as any).query).toBe("");
         expect(options.options.sslMode).toBe(2);
         expect(options.options.tls).toEqual({ serverName: "h" });
 
@@ -463,7 +463,7 @@ describe("SQL adapter environment variable precedence", () => {
       "%s leaves TLS disabled and is not forwarded as a startup parameter",
       url => {
         const options = new SQL(url);
-        expect(options.options.query).toBe("");
+        expect((options.options as any).query).toBe("");
         expect(options.options.sslMode).toBe(0);
         expect(options.options.tls).toBeUndefined();
       },
@@ -475,7 +475,7 @@ describe("SQL adapter environment variable precedence", () => {
         process.env.PGSSLMODE = "verify-full";
 
         const options = new SQL(url);
-        expect(options.options.query).toBe("");
+        expect((options.options as any).query).toBe("");
         expect(options.options.sslMode).toBe(0);
         expect(options.options.tls).toBeUndefined();
       },
@@ -485,7 +485,7 @@ describe("SQL adapter environment variable precedence", () => {
       process.env.PGSSLMODE = "require";
 
       const options = new SQL("postgres://u@h:5432/db?tls=");
-      expect(options.options.query).toBe("");
+      expect((options.options as any).query).toBe("");
       expect(options.options.sslMode).toBe(2);
       expect(options.options.tls).toEqual({ serverName: "h" });
     });
@@ -566,6 +566,31 @@ describe("SQL adapter environment variable precedence", () => {
       const fromUrl = new SQL("postgres://u@h:5432/db?sslmode=verify-ca", { tls: { caFile } });
       expect(fromUrl.options.sslMode).toBe(3);
       expect(fromUrl.options.tls).toEqual({ caFile, serverName: "h" });
+    });
+  });
+
+  describe("tls given as a BunFile", () => {
+    test("tls: Bun.file(path) is the CA to verify the server against, like tls: { ca }", () => {
+      using dir = tempDir("sql-tls-bunfile", { "ca.pem": "" });
+      const ca = Bun.file(`${dir}/ca.pem`);
+
+      for (const key of ["tls", "ssl"] as const) {
+        const options = new SQL({ adapter: "postgres", hostname: "h", [key]: ca });
+        expect(options.options.sslMode).toBe(4); // SSLMode.verify_full
+        expect(options.options.tls).toEqual({ ca, serverName: "h" });
+        expect((options.options.tls as Bun.TLSOptions).ca).toBe(ca);
+      }
+
+      const mysqlOptions = new SQL("mysql://u:p@h/db", { tls: ca });
+      expect(mysqlOptions.options.adapter).toBe("mysql");
+      expect(mysqlOptions.options.sslMode).toBe(4);
+      expect((mysqlOptions.options.tls as Bun.TLSOptions).ca).toBe(ca);
+
+      // An sslmode that already verifies the chain is kept; the file is still the CA.
+      const fromUrl = new SQL("postgres://u@h:5432/db?sslmode=verify-ca", { tls: ca });
+      expect(fromUrl.options.sslMode).toBe(3);
+      expect(fromUrl.options.tls).toEqual({ ca, serverName: "h" });
+      expect((fromUrl.options.tls as Bun.TLSOptions).ca).toBe(ca);
     });
   });
 

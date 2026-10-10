@@ -28,9 +28,9 @@ type ByteListPoolNode = bun_collections::pool::Node<Vec<u8>>;
 // NetworkSink stores a borrowed `*MultiPartUpload`. Now that `webcore::s3` is
 // wired, alias the module to the real type so `bun_s3::MultiPartUpload` resolves
 // for callers that still spell it that way.
-pub mod bun_s3 {
-    pub use crate::webcore::s3::MultiPartUpload;
-    pub use crate::webcore::s3::multipart::UploadBackpressure;
+pub(crate) mod bun_s3 {
+    pub(crate) use crate::webcore::s3::MultiPartUpload;
+    pub(crate) use crate::webcore::s3::multipart::UploadBackpressure;
 }
 
 /// `Blob.SizeType` is `u64` (see `webcore::blob::SizeType`).
@@ -50,9 +50,9 @@ fn high_water_mark_from_js(value: JSValue, min: BlobSizeType) -> BlobSizeType {
 }
 
 // Compat: `webcore::SinkHandle` and Body refer to `streams::Result` / `streams::result::StreamError`.
-pub use StreamResult as Result;
-pub mod result {
-    pub use super::{StreamError, Writable};
+pub(crate) use StreamResult as Result;
+pub(crate) mod result {
+    pub(crate) use super::{StreamError, Writable};
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -60,7 +60,7 @@ pub mod result {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Options payload for the `Start::FileSink` variant.
-pub type FileSinkOptions = crate::webcore::file_sink::Options;
+pub(crate) type FileSinkOptions = crate::webcore::file_sink::Options;
 
 pub enum Start {
     Empty,
@@ -78,7 +78,7 @@ pub enum Start {
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, core::marker::ConstParamTy)]
-pub enum StartTag {
+pub(crate) enum StartTag {
     ArrayBufferSink,
     FileSink,
     HTTPSResponseSink,
@@ -384,7 +384,7 @@ impl Default for WritablePending {
 // `WritablePending` / `WritableFuture` only own the JSPromiseStrong field —
 // JSPromiseStrong implements Drop, so no explicit Drop impl is needed here.
 
-pub enum WritableFuture {
+pub(crate) enum WritableFuture {
     None,
     Promise {
         strong: JSPromiseStrong,
@@ -558,9 +558,6 @@ impl Pending {
     /// # Safety
     /// `this` must be a valid, uniquely-owned pointer previously produced by
     /// `bun_core::heap::into_raw` (via `Task::from_boxed` in `run_on_next_tick`).
-    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn run_from_js_thread(this: *mut Pending) {
         // SAFETY: this was heap-allocated in run_on_next_tick
         let mut boxed = unsafe { bun_core::heap::take(this) };
@@ -594,7 +591,7 @@ impl bun_event_loop::Taskable for Pending {
     }
 }
 
-pub enum PendingFuture {
+pub(crate) enum PendingFuture {
     Promise {
         // JSC_BORROW: raw `*mut JSPromise`, GC-rooted via protect/unprotect (protected when
         // stored, unprotected when the future is fulfilled or deinitialized).
@@ -607,7 +604,7 @@ pub enum PendingFuture {
     Handler(PendingHandler),
 }
 
-pub struct PendingHandler {
+pub(crate) struct PendingHandler {
     pub ctx: *mut c_void,
     pub(crate) handler: PendingHandlerFn,
 }
@@ -616,7 +613,7 @@ type PendingHandlerFn = fn(ctx: *mut c_void, result: StreamResult);
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum PendingState {
+pub(crate) enum PendingState {
     None,
     Pending,
     Used,
@@ -1274,7 +1271,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
 
 /// Per-monomorphization JSSink wrapper alias. Mirrors
 /// `pub const JSSink = Sink.JSSink(@This(), name)`.
-pub type HTTPServerWritableJSSink<const SSL: bool> =
+pub(crate) type HTTPServerWritableJSSink<const SSL: bool> =
     crate::webcore::sink::JSSink<HTTPServerWritable<SSL>>;
 
 // `HTTPServerWritable` is exposed to JS via `Sink.JSSink(@This(), name)` where
@@ -2072,9 +2069,6 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     /// # Safety
     /// `this` must be a valid, uniquely-owned heap pointer to `Self` produced
     /// by `bun_core::heap::into_raw`; the caller transfers ownership.
-    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn destroy(this: *mut Self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "destroy()");
         // SAFETY: this was heap-allocated; destroy takes sole ownership. Reclaim
@@ -2255,8 +2249,8 @@ impl<const SSL: bool> crate::webcore::sink::JsSinkType for HTTPServerWritable<SS
     }
 }
 
-pub type HTTPSResponseSink = HTTPServerWritable<true>;
-pub type HTTPResponseSink = HTTPServerWritable<false>;
+pub(crate) type HTTPSResponseSink = HTTPServerWritable<true>;
+pub(crate) type HTTPResponseSink = HTTPServerWritable<false>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // NetworkSink
@@ -2331,13 +2325,6 @@ impl NetworkSink {
         Box::new(init)
     }
 
-    pub fn path(&self) -> Option<&[u8]> {
-        if let Some(task) = self.task_ref() {
-            return Some(&task.path);
-        }
-        None
-    }
-
     pub(crate) fn start(&mut self, _stream_start: &Start) -> bun_sys::Result<()> {
         if self.ended {
             return bun_sys::Result::Ok(());
@@ -2373,6 +2360,18 @@ impl NetworkSink {
         self.task = None;
     }
 
+    /// The `writer()` wrapper was collected before `end()`: nothing can finish the upload, so fail it.
+    fn abort_on_collect(&mut self) {
+        if self.ended || self.writer_holders.get() == 0 {
+            return;
+        }
+        self.ended = true;
+        self.done = true;
+        if let Some(task) = self.task_ref() {
+            task.fail_writer_collected();
+        }
+    }
+
     /// The S3 upload drained: settle the flush/write promises (terminal, like
     /// `flush_promise`) and wake the source.
     pub(crate) fn on_writable(
@@ -2386,7 +2385,6 @@ impl NetworkSink {
             flushed,
             task.state.get() as u8
         );
-        let _ = task;
         // SAFETY: `this` is the live sink; each access is scoped and ends
         // before the re-entrant wake below.
         let mut source = unsafe {
@@ -2555,7 +2553,6 @@ impl NetworkSink {
     ///
     /// Raw `*mut Self`: `task.fail()` synchronously fires
     /// `S3UploadStreamWrapper::resolve`, which re-borrows this sink.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn fail_from_js_pump(this: *mut Self, global: &JSGlobalObject, reason: JSValue) {
         // SAFETY: `this` is the live Box<NetworkSink> the wrapper owns; the
         // borrow ends before `fail` re-enters.
@@ -2589,7 +2586,6 @@ impl NetworkSink {
     /// Raw `*mut Self` because `task.fail()`/`write_bytes(EOF)` synchronously
     /// fire `S3UploadStreamWrapper::resolve`, which re-borrows this sink, and
     /// the terminal `deref_` may drop rc→0 and free `*this` via `detach_sink`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn end_from_stream(this: *mut Self, err: Option<StreamError>) {
         // SAFETY: `this` is the live Box<NetworkSink> the wrapper owns; short
         // reborrows below do not span the re-entrant `fail`/`write_bytes` calls.
@@ -2691,6 +2687,7 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
     unsafe fn finalize(this: *mut Self) {
         // SAFETY: trait contract — `this` is live and not used after this call.
         unsafe {
+            (*this).abort_on_collect();
             (*this).finalize();
             Self::release_writer_holder(this);
         }
@@ -2721,7 +2718,7 @@ pub(crate) type NetworkSinkJSSink = crate::webcore::sink::JSSink<NetworkSink>;
 // No caller pattern-matches on the variant — they only read `.tag()` or forward to the
 // promise.
 
-pub struct BufferAction {
+pub(crate) struct BufferAction {
     tag: BufferActionTag,
     promise: JSPromiseStrong,
     /// The context whose script asked (as `PendingFuture::Promise`).
@@ -2771,7 +2768,7 @@ impl BufferAction {
         crate::dispatch::fold(settled);
     }
 
-    pub fn value(&self) -> JSValue {
+    pub(crate) fn value(&self) -> JSValue {
         self.promise.value()
     }
 

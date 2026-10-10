@@ -194,7 +194,7 @@ for (const [path, file] of files) {
 
 Each `File` object includes:
 
-- `name` - The file path within the archive (always uses forward slashes `/` as separators)
+- `name` - The name of the entry, decoded as UTF-8 and not normalized
 - `size` - File size in bytes
 - `lastModified` - Modification timestamp
 - Standard `Blob` methods such as `text()`, `arrayBuffer()`, and `stream()`
@@ -234,26 +234,28 @@ Common error scenarios:
 - **Disk full** - `extract()` throws if there's insufficient space
 - **Invalid paths** - Operations throw for malformed file paths
 
-For additional security with untrusted archives, you can enumerate and validate paths before extraction:
+With a `glob`, `extract()` rejects when a system call refuses a file, a directory, or a symlink of the archive. The error has the `code`, `syscall`, and `path` of that call.
+
+For additional security with untrusted archives, you can validate paths before extraction. A glob pattern sees the path that `extract()` writes, so check with patterns and not with the keys of `files()`:
 
 ```ts
 const archive = new Bun.Archive(untrustedData);
-const files = await archive.files();
 
-// Optional: Custom validation for additional checks
-for (const [path] of files) {
-  // Example: Reject hidden files
-  if (path.startsWith(".") || path.includes("/.")) {
-    throw new Error(`Hidden file rejected: ${path}`);
-  }
-  // Example: Whitelist specific directories
-  if (!path.startsWith("src/") && !path.startsWith("lib/")) {
-    throw new Error(`Unexpected path: ${path}`);
-  }
+// Example: Reject hidden files
+const hidden = await archive.files(["**/.*", "**/.*/**"]);
+if (hidden.size > 0) {
+  throw new Error(`Hidden file rejected: ${[...hidden.keys()][0]}`);
+}
+// Example: Whitelist specific directories
+const unexpected = await archive.files(["!src/**", "!lib/**"]);
+if (unexpected.size > 0) {
+  throw new Error(`Unexpected path: ${[...unexpected.keys()][0]}`);
 }
 
-// Extract to a controlled destination
-await archive.extract("./safe-output");
+// files() returns regular files only, so limit the entries of extract() too
+await archive.extract("./safe-output", {
+  glob: ["src/**", "lib/**", "!**/.*", "!**/.*/**"],
+});
 ```
 
 When called with a glob pattern, `files()` returns an empty `Map` if no files match:
@@ -267,7 +269,7 @@ if (matches.size === 0) {
 
 ### Filtering with Glob Patterns
 
-Pass a glob pattern to filter which files are returned:
+Pass a glob pattern to filter which files are returned. Bun matches a pattern against the path that `extract()` writes for the entry: forward slashes, no leading `./`. A leading `./` in a pattern is ignored. The keys of the `Map` are the entry names, which are not normalized:
 
 ```ts
 // Get only TypeScript files

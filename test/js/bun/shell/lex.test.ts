@@ -451,6 +451,112 @@ describe("lex shell", () => {
     expect(JSON.parse(result)).toEqual(expected);
   });
 
+  describe("where a word ends", () => {
+    const tokens = (script: string) => JSON.parse(lex`${{ raw: script }}`);
+    const text = (s: string) => ({ Text: s });
+    const delimit = { Delimit: {} };
+    const eof = { Eof: {} };
+    const stdin = { Redirect: redirect({ stdin: true }) };
+    const stdout = { Redirect: redirect({ stdout: true }) };
+    const stderr = { Redirect: redirect({ stderr: true }) };
+    const echo = [text("echo"), delimit];
+    const toFile = [text("f"), delimit, eof];
+    const echoZ = [...echo, { CmdSubstBegin: {} }, ...echo, text("z"), delimit, { CmdSubstEnd: {} }];
+
+    // https://github.com/oven-sh/bun/issues/12602
+    test.each([
+      [
+        "cp a b2>log",
+        [text("cp"), delimit, text("a"), delimit, text("b2"), delimit, stdout, text("log"), delimit, eof],
+      ],
+      ["./script1<file", [text("./script1"), delimit, stdin, text("file"), delimit, eof]],
+      ["./script0<file", [text("./script0"), delimit, stdin, text("file"), delimit, eof]],
+      ["echo z0>f", [...echo, text("z0"), delimit, stdout, ...toFile]],
+      ["echo z1>>f", [...echo, text("z1"), delimit, { Redirect: redirect({ stdout: true, append: true }) }, ...toFile]],
+      ["echo a\\ 2>f", [...echo, text("a 2"), delimit, stdout, ...toFile]],
+      ['echo "a"2>f', [...echo, { DoubleQuotedText: "a" }, text("2"), delimit, stdout, ...toFile]],
+      ["echo 'a'2>f", [...echo, { SingleQuotedText: "a" }, text("2"), delimit, stdout, ...toFile]],
+      ['echo ""2>f', [...echo, { DoubleQuotedText: "" }, text("2"), delimit, stdout, ...toFile]],
+      ["echo $12>f", [...echo, { VarArgv: 1 }, text("2"), delimit, stdout, ...toFile]],
+      ["echo $(echo z)1>f", [...echoZ, text("1"), delimit, stdout, ...toFile]],
+      [
+        "echo {a,b}1>f",
+        [
+          ...echo,
+          { BraceBegin: {} },
+          text("a"),
+          { Comma: {} },
+          text("b"),
+          { BraceEnd: {} },
+          text("1"),
+          delimit,
+          stdout,
+          ...toFile,
+        ],
+      ],
+      ["echo *2>f", [...echo, { Asterisk: {} }, text("2"), delimit, stdout, ...toFile]],
+      ["echo **2>f", [...echo, { DoubleAsterisk: {} }, text("2"), delimit, stdout, ...toFile]],
+      // Bun Shell has no fd numbers above 2. bash reads `12>` as fd 12.
+      ["echo 12>f", [...echo, text("12"), delimit, stdout, ...toFile]],
+    ])("%s: a digit inside a word stays in the word", (script, expected) => {
+      expect(tokens(script)).toEqual(expected);
+    });
+
+    test("a digit after an interpolated string stays in the word", () => {
+      expect(JSON.parse(lex`echo ${"a b"}2>f`)).toEqual([...echo, text("a b2"), delimit, stdout, ...toFile]);
+    });
+
+    test("echo file2>&1: the digit stays in the word", () => {
+      // `>&1` with no fd number is not supported, so only the word is compared.
+      expect(tokens("echo file2>&1").slice(0, 4)).toEqual([...echo, text("file2"), delimit]);
+    });
+
+    test.each([
+      ["2>f", [stderr, ...toFile]],
+      ["echo z 2>f", [...echo, text("z"), delimit, stderr, ...toFile]],
+      ["echo a;2>f", [...echo, text("a"), delimit, { Semicolon: {} }, stderr, ...toFile]],
+      ["echo a|2>f", [...echo, text("a"), delimit, { Pipe: {} }, stderr, ...toFile]],
+      ['echo "a" 2>f', [...echo, { DoubleQuotedText: "a" }, delimit, stderr, ...toFile]],
+      ["echo $X 2>f", [...echo, { Var: "X" }, delimit, stderr, ...toFile]],
+      ["echo $(echo z) 2>f", [...echoZ, delimit, stderr, ...toFile]],
+      ["echo * 2>f", [...echo, { Asterisk: {} }, delimit, stderr, ...toFile]],
+      ["echo ** 2>f", [...echo, { DoubleAsterisk: {} }, delimit, stderr, ...toFile]],
+      [
+        "echo z 2>&1",
+        [...echo, text("z"), delimit, { Redirect: redirect({ stdout: true, duplicate_out: true }) }, eof],
+      ],
+      [
+        "echo z 1>&2",
+        [...echo, text("z"), delimit, { Redirect: redirect({ stderr: true, duplicate_out: true }) }, eof],
+      ],
+    ])("%s: a digit that is a word of its own is an fd number", (script, expected) => {
+      expect(tokens(script)).toEqual(expected);
+    });
+
+    // Bun Shell reads a file only into fd 0. bash opens `f` for reading on fd 1 or 2.
+    test.each([
+      ["cat 0<f", [text("cat"), delimit, stdin, ...toFile]],
+      ["echo z 1<f", [...echo, text("z"), delimit, text("1"), delimit, stdin, ...toFile]],
+      ["echo z 2<f", [...echo, text("z"), delimit, text("2"), delimit, stdin, ...toFile]],
+    ])("%s: only 0 is an fd number before `<`", (script, expected) => {
+      expect(tokens(script)).toEqual(expected);
+    });
+
+    test.each([
+      ["echo ** c", [...echo, { DoubleAsterisk: {} }, delimit, text("c"), delimit, eof]],
+      ["echo **|cat", [...echo, { DoubleAsterisk: {} }, delimit, { Pipe: {} }, text("cat"), delimit, eof]],
+      [
+        "echo ** && echo c",
+        [...echo, { DoubleAsterisk: {} }, delimit, { DoubleAmpersand: {} }, ...echo, text("c"), delimit, eof],
+      ],
+      ["echo **>f", [...echo, { DoubleAsterisk: {} }, delimit, stdout, ...toFile]],
+      ["echo **/x", [...echo, { DoubleAsterisk: {} }, text("/x"), delimit, eof]],
+      ["echo **", [...echo, { DoubleAsterisk: {} }, eof]],
+    ])("%s: whitespace or an operator ends the word that `**` is in", (script, expected) => {
+      expect(tokens(script)).toEqual(expected);
+    });
+  });
+
   test("obj_ref", () => {
     const expected = [
       {

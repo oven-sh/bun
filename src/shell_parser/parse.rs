@@ -2723,12 +2723,12 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             return Ok(());
                         }
                         c if (u32::from(b'0')..=u32::from(b'9')).contains(&c) => {
-                            if self.chars.state != CharState::Normal {
+                            // An fd number is a word of its own: in `a2>f` the `2` belongs to `a2`.
+                            if self.chars.state != CharState::Normal || self.word_is_open() {
                                 break 'escaped;
                             }
                             let snapshot = self.make_snapshot();
                             if let Some(redirect) = self.eat_redirect(input) {
-                                self.break_word(AddDelimiter::AfterText)?;
                                 self.tokens.push(Token::Redirect(redirect));
                                 fell_through = true;
                                 break 'escaped;
@@ -2949,6 +2949,41 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     .is_some_and(|p| !p.escaped && p.char == u32::from(b'\'')))
     }
 
+    /// Whether a word is open: text is pending, or no `Delimit` follows the last part of a word.
+    fn word_is_open(&self) -> bool {
+        self.word_start != self.j
+            || self.tokens.last().is_some_and(|tok| match tok.tag() {
+                TokenTag::Var
+                | TokenTag::VarArgv
+                | TokenTag::Text
+                | TokenTag::SingleQuotedText
+                | TokenTag::DoubleQuotedText
+                | TokenTag::BraceBegin
+                | TokenTag::Comma
+                | TokenTag::BraceEnd
+                | TokenTag::CmdSubstEnd
+                | TokenTag::Asterisk
+                | TokenTag::DoubleAsterisk => true,
+
+                TokenTag::Pipe
+                | TokenTag::DoublePipe
+                | TokenTag::Ampersand
+                | TokenTag::DoubleAmpersand
+                | TokenTag::Redirect
+                | TokenTag::Semicolon
+                | TokenTag::Newline
+                | TokenTag::CmdSubstBegin
+                | TokenTag::CmdSubstQuoted
+                | TokenTag::OpenParen
+                | TokenTag::CloseParen
+                | TokenTag::JSObjRef
+                | TokenTag::DoubleBracketOpen
+                | TokenTag::DoubleBracketClose
+                | TokenTag::Delimit
+                | TokenTag::Eof => false,
+            })
+    }
+
     fn break_word(&mut self, add_delimiter: AddDelimiter) -> Result<(), LexerError> {
         let start: u32 = self.word_start;
         let end: u32 = self.j;
@@ -2962,39 +2997,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             if add_delimiter != AddDelimiter::No {
                 self.tokens.push(Token::Delimit);
             }
-        } else if add_delimiter == AddDelimiter::AfterWord
-            && !self.tokens.is_empty()
-            && match self.tokens[self.tokens.len() - 1].tag() {
-                TokenTag::Var
-                | TokenTag::VarArgv
-                | TokenTag::Text
-                | TokenTag::SingleQuotedText
-                | TokenTag::DoubleQuotedText
-                | TokenTag::BraceBegin
-                | TokenTag::Comma
-                | TokenTag::BraceEnd
-                | TokenTag::CmdSubstEnd
-                | TokenTag::Asterisk => true,
-
-                TokenTag::Pipe
-                | TokenTag::DoublePipe
-                | TokenTag::Ampersand
-                | TokenTag::DoubleAmpersand
-                | TokenTag::Redirect
-                | TokenTag::DoubleAsterisk
-                | TokenTag::Semicolon
-                | TokenTag::Newline
-                | TokenTag::CmdSubstBegin
-                | TokenTag::CmdSubstQuoted
-                | TokenTag::OpenParen
-                | TokenTag::CloseParen
-                | TokenTag::JSObjRef
-                | TokenTag::DoubleBracketOpen
-                | TokenTag::DoubleBracketClose
-                | TokenTag::Delimit
-                | TokenTag::Eof => false,
-            }
-        {
+        } else if add_delimiter == AddDelimiter::AfterWord && self.word_is_open() {
             self.tokens.push(Token::Delimit);
             self.delimit_quote = false;
         }
@@ -3100,10 +3103,11 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     Some(flags)
                 }
                 c if c == u32::from(b'<') => {
-                    let is_double = self.eat_simple_redirect_operator(RedirectDirection::In);
-                    if is_double {
-                        flags |= ast::RedirectFlags::APPEND;
+                    // Only fd 0 can be read from a file: in `1<f` the `1` is a word.
+                    if !flags.stdin() {
+                        return None;
                     }
+                    let _ = self.eat();
                     Some(flags)
                 }
                 _ => None,

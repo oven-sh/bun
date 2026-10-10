@@ -58,9 +58,14 @@ bool isValidHTTPHeaderValue(const StringView& value)
             }
         }
     } else {
+        // Match the 8-bit branch: header values are byte sequences, so any
+        // char that fits in a byte (0x80-0xFF included, per obs-text) is
+        // valid regardless of the string's internal representation. A 16-bit
+        // string here usually comes from normalize()/JSON parsing of network
+        // responses, not from characters outside latin-1.
         for (unsigned i = 0; i < value.length(); ++i) {
             c = value[i];
-            if (c == 0x00 || c == 0x0A || c == 0x0D || c > 0x7F)
+            if (c == 0x00 || c == 0x0A || c == 0x0D || c > 0xFF)
                 return false;
         }
     }

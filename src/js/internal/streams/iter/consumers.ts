@@ -49,7 +49,7 @@ function isMergeOptions(value) {
 function collectSync(source, limit) {
   // Normalize source via fromSync() - accepts strings, ArrayBuffers, protocols, etc.
   const normalized = fromSync(source);
-  const chunks = [];
+  const chunks: Uint8Array[] = [];
   let totalBytes = 0;
 
   for (const batch of normalized) {
@@ -80,7 +80,7 @@ async function collectAsync(source, signal, limit) {
 
   // Normalize source via from() - accepts strings, ArrayBuffers, protocols, etc.
   const normalized = from(source);
-  const chunks = [];
+  const chunks: Uint8Array[] = [];
 
   // Fast path: no signal and no limit
   if (!signal && limit === undefined) {
@@ -173,7 +173,14 @@ function validateSyncConsumerOptions(options) {
 // Sync Consumers
 // =============================================================================
 
-const kNullPrototype = { __proto__: null };
+interface ConsumerOptions {
+  __proto__?: null;
+  limit?: number;
+  encoding?: string;
+  signal?: AbortSignal;
+}
+
+const kNullPrototype: ConsumerOptions = { __proto__: null };
 
 /**
  * Collect all bytes from a sync source.
@@ -340,6 +347,13 @@ function ondrain(drainable) {
  * @param {...(AsyncIterable<Uint8Array[]>|object)} args
  * @returns {AsyncIterable<Uint8Array[]>}
  */
+interface MergeFailure {
+  __proto__?: null;
+  error: unknown;
+}
+
+type MergeReadyItem = (Uint8Array[] & { error?: undefined }) | MergeFailure;
+
 function merge(...args) {
   let sources;
   let options;
@@ -380,9 +394,9 @@ function merge(...args) {
       // between consumer pulls are drained synchronously without an extra
       // async tick per batch. Each source has at most one pending .next()
       // at a time. Every batch from every source is preserved.
-      const ready = [];
+      const ready: MergeReadyItem[] = [];
       let activeCount = normalized.length;
-      let waitResolve = null;
+      let waitResolve: (() => void) | null = null;
 
       // Called when a source's .next() settles. Pushes the result into
       // the ready queue and wakes the consumer if it's waiting.
@@ -411,7 +425,7 @@ function merge(...args) {
       };
 
       // Start one .next() per source
-      const iterators = [];
+      const iterators: AsyncIterator<Uint8Array[]>[] = [];
       for (let i = 0; i < normalized.length; i++) {
         const iterator = normalized[i][SymbolAsyncIterator]();
         iterators.push(iterator);
@@ -442,7 +456,7 @@ function merge(...args) {
 
           // If sources are still active, wait for the next settlement
           if (activeCount > 0) {
-            await new Promise(resolve => {
+            await new Promise<void>(resolve => {
               waitResolve = resolve;
             });
           }

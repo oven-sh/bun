@@ -1,14 +1,15 @@
-// Bun.serve returning `Bun.file(path).slice(0, n)` where a read() on the file
-// fails after the first read has already returned more than `n` bytes. Before
-// the fix, FileResponseStream::on_read_chunk enqueued a deferred eof task
-// without holding a ref on the stream, and the read-error path
-// (on_reader_error) consumed the in-flight read ref and finished the stream,
-// so the stream was freed before the queued task ran (heap-use-after-free
-// under ASAN).
+// Bun.serve returning `Bun.file(path).slice(0, n)` of a larger file: the
+// response's reader asks the kernel for exactly `n` bytes and ends there, so
+// each request costs one read() of the served file and an error from the file
+// can only fail the response it belongs to. (The reader used to pull in the
+// whole read buffer and cut the chunk down afterwards, so every request took
+// two read()s, a 4 KiB one and the EOF probe, and the response had to end
+// itself from a queued task. That task was once freed out from under the
+// read-error path: heap-use-after-free under ASAN.)
 //
-// A small ptrace supervisor injects EIO on the second read() of the served
-// file. Bun issues read() as a raw syscall on Linux (rustix linux_raw
-// backend), so LD_PRELOAD cannot intercept it.
+// A small ptrace supervisor counts the read() calls on the served file and
+// injects EIO into the second one. Bun issues read() as a raw syscall on Linux
+// (rustix linux_raw backend), so LD_PRELOAD cannot intercept it.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { join } from "node:path";
@@ -184,8 +185,9 @@ int main(int argc, char **argv) {
 `;
 
 // The file is 4 KiB; slicing to 2 KiB keeps us on the BufferedReader path
-// (below the 1 MiB sendfile threshold) and makes read #1 (4096 bytes) exceed
-// max_size=2048 so on_read_chunk enqueues the eof task with state==Progress.
+// (below the 1 MiB sendfile threshold) while leaving bytes past the slice that
+// a read sized by the buffer instead of the slice would pick up. The slice
+// starts at 0 so the reader uses read(), which is what the supervisor counts.
 const FIXTURE_JS = /* js */ `
 const path = process.argv[2];
 const server = Bun.serve({
@@ -196,7 +198,10 @@ const server = Bun.serve({
 let okBodies = 0;
 for (let i = 0; i < 3; i++) {
   try {
-    const r = await fetch(\`http://127.0.0.1:\${server.port}/\`);
+    // A fresh connection per request: a request that fails on a reused
+    // keep-alive connection before any response bytes would be retried
+    // (and then succeed) instead of being reported.
+    const r = await fetch(\`http://127.0.0.1:\${server.port}/\`, { headers: { connection: "close" } });
     const b = await r.arrayBuffer();
     if (b.byteLength === 2048) okBodies++;
   } catch {}
@@ -236,7 +241,7 @@ afterAll(() => {
 });
 
 test.skipIf(!isLinux || !cc)(
-  "Bun.serve Bun.file().slice() survives a read() error after the slice is satisfied",
+  "Bun.serve Bun.file().slice() reads the file once per response, so a read() error fails only its own response",
   async () => {
     expect(supervisorBin).toBeDefined();
 
@@ -253,16 +258,14 @@ test.skipIf(!isLinux || !cc)(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // Three requests; one injected EIO on request #1's second read. The slice
-    // was already satisfied by read #1, so all three responses carry the full
-    // 2048 bytes.
-    expect({ stdout: stdout.trim(), stderr }).toEqual({
-      stdout: "DONE 3",
-      stderr: expect.stringContaining("matched read() calls on target:"),
-    });
-    // Injection sanity: each request does two read()s on the served file.
-    const m = stderr.match(/matched read\(\) calls on target:\s*(\d+)/);
-    expect(Number(m?.[1])).toBeGreaterThanOrEqual(2);
+    // Three requests, one read() each, so the injected EIO lands on request
+    // #2's only read: that response fails and the other two carry their 2048
+    // bytes. A reader that over-reads takes two read()s per request (6 in
+    // total) and the EIO lands on request #1's EOF probe, after the slice has
+    // already been satisfied, so all three responses succeed.
+    expect(stderr).toContain("matched read() calls on target:");
+    const reads = Number(stderr.match(/matched read\(\) calls on target:\s*(\d+)/)![1]);
+    expect({ stdout: stdout.trim(), reads }).toEqual({ stdout: "DONE 2", reads: 3 });
     expect(exitCode).toBe(0);
   },
 );

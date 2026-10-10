@@ -42,8 +42,8 @@ test("a failed connect evicts the host's DNS cache entry", async () => {
 
 describe("dns.prefetch", () => {
   it("should prefetch", async () => {
-    // A local server keeps the test off the external network. "localhost" is a
-    // real DNS lookup, so prefetch and fetch share the same cache entry.
+    // A local server keeps the test off the external network. "localhost" gets a
+    // cache entry like any other name, which prefetch and fetch share.
     await using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
     const url = `http://localhost:${server.port}/`;
 

@@ -14,7 +14,7 @@ test("mock.module throws TypeError for non-string first argument", () => {
 
 test("mock.module still works with valid string argument", async () => {
   mock.module("mock-module-non-string-test-fixture", () => ({ default: 42 }));
-  const m = await import("mock-module-non-string-test-fixture");
+  const m = await import("mock-module-non-string-test-fixture" as string);
   expect(m.default).toBe(42);
 });
 

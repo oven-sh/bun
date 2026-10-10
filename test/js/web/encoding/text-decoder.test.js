@@ -297,10 +297,24 @@ describe("TextDecoder", () => {
     expect(decoder.ignoreBOM).toBe(false);
   });
 
-  it("should throw on invalid input", () => {
-    expect(() => {
-      const decoder = new TextDecoder("utf-8", { fatal: 10, ignoreBOM: {} });
-    }).toThrow();
+  // WebIDL boolean conversion is ToBoolean: any value is valid.
+  // Minifiers emit `{ignoreBOM: 1}` for `{ignoreBOM: true}`. https://github.com/oven-sh/bun/issues/40758
+  it("constructor coerces fatal and ignoreBOM with ToBoolean", () => {
+    const truthy = new TextDecoder("utf-8", { fatal: 10, ignoreBOM: {} });
+    expect({ fatal: truthy.fatal, ignoreBOM: truthy.ignoreBOM }).toEqual({ fatal: true, ignoreBOM: true });
+
+    const falsy = new TextDecoder("utf-8", { fatal: 0, ignoreBOM: "" });
+    expect({ fatal: falsy.fatal, ignoreBOM: falsy.ignoreBOM }).toEqual({ fatal: false, ignoreBOM: false });
+  });
+
+  it.each([
+    [1, true],
+    [0, false],
+  ])("ignoreBOM: %p coerces to %p and controls BOM stripping", (value, expected) => {
+    const decoder = new TextDecoder("utf-8", { ignoreBOM: value });
+    expect(decoder.ignoreBOM).toBe(expected);
+    const withBOM = new Uint8Array([0xef, 0xbb, 0xbf, 0x61, 0x62, 0x63]);
+    expect(decoder.decode(withBOM)).toBe(expected ? "\uFEFFabc" : "abc");
   });
 
   it("should support undifined", () => {

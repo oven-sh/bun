@@ -101,7 +101,10 @@ impl Class {
                 return false;
             }
 
-            if property.kind == PropertyKind::Normal && f.contains(flags::Property::IsStatic) {
+            if (property.kind == PropertyKind::Normal
+                || property.kind == PropertyKind::AutoAccessor)
+                && f.contains(flags::Property::IsStatic)
+            {
                 for val in [property.value, property.initializer].into_iter().flatten() {
                     match val.data {
                         ExprData::EArrow(..) | ExprData::EFunction(..) => {}
@@ -128,15 +131,6 @@ pub struct Comment {
 pub struct ClassStaticBlock {
     pub stmts: Vec<Stmt, bun_alloc::AstAlloc>,
     pub loc: crate::Loc,
-}
-
-impl Default for ClassStaticBlock {
-    fn default() -> Self {
-        Self {
-            stmts: bun_alloc::AstAlloc::vec(),
-            loc: crate::Loc::default(),
-        }
-    }
 }
 
 pub struct Property {

@@ -8,7 +8,7 @@ use crate::jsc::{
 };
 use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_jsc::JsCell;
-use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
+use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
 use bun_sql::postgres::command_tag::CommandTag;
@@ -37,7 +37,6 @@ bun_core::define_scoped_log!(debug, MySQLQuery);
 // shim still emits `this: &mut JSMySQLQuery` — `&mut T` auto-derefs to `&T`
 // so the impls below compile against either.
 #[derive(bun_ptr::CellRefCounted)]
-#[ref_count(destroy = Self::deinit)]
 pub struct JSMySQLQuery {
     this_value: JsCell<JsRef>,
     // unfortunately we cannot use #ref_count here
@@ -48,20 +47,12 @@ pub struct JSMySQLQuery {
     query: JsCell<MySQLQuery>,
 }
 
-// Intrusive refcount (bun.ptr.RefCount): `ref_()`/`deref()` provided by
-// `#[derive(CellRefCounted)]`; `destroy` routes to `Self::deinit` via the
-// struct-level `#[ref_count(destroy = …)]` attribute.
-
 impl JSMySQLQuery {
-    /// RAII `ref()`/`deref()` bracket around `self`. One audited
-    /// `ScopedRef::new` here replaces N per-site
-    /// `unsafe { ScopedRef::new(self.as_ctx_ptr()) }` — `&self` is the live
-    /// m_ctx payload by construction, so the [`ScopedRef::new`] precondition
-    /// (live, non-null) is always satisfied.
+    /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
     #[inline]
-    pub(crate) fn ref_guard(&self) -> bun_ptr::ScopedRef<Self> {
-        // SAFETY: `&self` ⇒ the allocation is live and non-null.
-        unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) }
+    pub(crate) fn ref_guard(&self) -> RefPtr<Self> {
+        // SAFETY: `self` is the live heap allocation.
+        unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
     }
 
     pub fn estimated_size(&self) -> usize {
@@ -77,18 +68,9 @@ impl JSMySQLQuery {
             .throw_invalid_arguments(format_args!("MySQLQuery cannot be constructed directly")))
     }
 
-    fn deinit(this: *mut Self) {
-        // SAFETY: routed only through `CellRefCounted::destroy` (refcount==0);
-        // `this` is the sole live owner of its `heap::alloc` allocation.
-        unsafe {
-            (*this).query.with_mut(|q| q.cleanup());
-            drop(bun_core::heap::take(this));
-        }
-    }
-
-    pub fn finalize(self: Box<Self>) {
+    pub fn finalize(&self) {
         debug!("MySQLQuery finalize");
-        bun_ptr::finalize_js_box(self, |this| this.this_value.with_mut(|v| v.finalize()));
+        self.this_value.with_mut(|v| v.finalize());
     }
 
     // Reached from JS via `put_host_functions!` in `mysql.rs`.
@@ -163,8 +145,20 @@ impl JSMySQLQuery {
         if !target.is_object() {
             return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));
         }
+        // A connection that failed or closed answers nothing: a query queued on it would hold the
+        // event loop for ever. The pool hears of a close through `onclose` and stops handing the
+        // connection out, except a disposed `Bun.ModuleGraph`'s, which is told nothing.
+        if !connection.is_active() {
+            return Err(global_object.throw_value(mysql_error_to_js(
+                global_object,
+                "Connection closed",
+                AnyMySQLError::Error::ConnectionClosed,
+            )));
+        }
         this.set_target(target);
         if let Err(err) = this.run(connection) {
+            // Nothing else completes this request: it never reaches the queue.
+            this.mark_as_failed();
             if !global_object.has_exception() {
                 return Err(global_object.throw_value(mysql_error_to_js(
                     global_object,
@@ -174,7 +168,7 @@ impl JSMySQLQuery {
             }
             return Err(jsc::JsError::Thrown);
         }
-        connection.enqueue_request(this.as_ctx_ptr());
+        connection.enqueue_request(this.ref_guard());
         Ok(JSValue::UNDEFINED)
     }
 
@@ -283,6 +277,7 @@ impl JSMySQLQuery {
         let event_loop = self.event_loop();
 
         event_loop.run_callback(
+            bun_event_loop::ContextId::NONE,
             function,
             self.global_object(),
             this_value,
@@ -314,16 +309,42 @@ impl JSMySQLQuery {
     }
 
     pub(crate) fn reject(&self, queries_array: JSValue, err: AnyMySQLError::Error) {
-        if let Some(err_) = self.global_object().try_take_exception() {
-            self.reject_with_js_value(queries_array, err_);
-        } else {
-            let instance = mysql_error_to_js(self.global_object(), "Failed to bind query", err);
-            instance.ensure_still_alive();
-            self.reject_with_js_value(queries_array, instance);
-        }
+        self.reject_with_js_value(queries_array, self.error_to_js(err));
+    }
+
+    /// The client cannot decode a row of this query's result. Reject the query
+    /// now, but leave it in flight (`MySQLQuery::discard_response`): the
+    /// connection keeps it at the queue head and skips the rest of its
+    /// response.
+    pub(crate) fn reject_undecodable_row(&self, queries_array: JSValue, err: AnyMySQLError::Error) {
+        self.reject_when(
+            MySQLQuery::discard_response,
+            queries_array,
+            self.error_to_js(err),
+        );
     }
 
     pub(crate) fn reject_with_js_value(&self, queries_array: JSValue, err: JSValue) {
+        self.reject_when(MySQLQuery::fail, queries_array, err);
+    }
+
+    fn error_to_js(&self, err: AnyMySQLError::Error) -> JSValue {
+        if let Some(err_) = self.global_object().try_take_exception() {
+            return err_;
+        }
+        let instance = mysql_error_to_js(self.global_object(), "Failed to bind query", err);
+        instance.ensure_still_alive();
+        instance
+    }
+
+    /// `transition` moves the query to its rejected state, and returns whether
+    /// a rejection is still to be delivered to JS.
+    fn reject_when(
+        &self,
+        transition: fn(&mut MySQLQuery) -> bool,
+        queries_array: JSValue,
+        err: JSValue,
+    ) {
         // `ref_guard` brackets re-entry; drops *after* `_downgrade` so the
         // allocation outlives the closure body.
         let _guard = self.ref_guard();
@@ -335,7 +356,7 @@ impl JSMySQLQuery {
             }
         });
 
-        if !self.query.with_mut(|q| q.fail()) {
+        if !self.query.with_mut(transition) {
             return;
         }
 
@@ -374,6 +395,7 @@ impl JSMySQLQuery {
             return;
         };
         event_loop.run_callback(
+            bun_event_loop::ContextId::NONE,
             function,
             self.global_object(),
             this_value,
@@ -397,7 +419,6 @@ impl JSMySQLQuery {
         // success path below.
         let errguard = scopeguard::guard(self, |s| {
             s.this_value.with_mut(|v| v.downgrade());
-            let _ = s.query.with_mut(|q| q.fail());
         });
 
         let columns_value = self.get_columns().unwrap_or(JSValue::UNDEFINED);
@@ -450,6 +471,10 @@ impl JSMySQLQuery {
     #[inline]
     pub(crate) fn is_pipelined(&self) -> bool {
         self.query.get().is_pipelined()
+    }
+    #[inline]
+    pub(crate) fn is_discarding_response(&self) -> bool {
+        self.query.get().is_discarding_response()
     }
     #[inline]
     pub(crate) fn is_simple(&self) -> bool {

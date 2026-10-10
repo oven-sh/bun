@@ -22,9 +22,9 @@
 
 import { quote } from "../shell.ts";
 import type { Dependency, DirectBuild } from "../source.ts";
-import { depSourceDir } from "../source.ts";
+import { LIBC_ALLOCATION_SYMBOLS, depSourceDir } from "../source.ts";
 
-const BORINGSSL_COMMIT = "1a41b9025c2c0a37edd07ff10f6944f03e028522";
+const BORINGSSL_COMMIT = "41bf9b59c2ebf277a7aa427e1ecad5cc80dd4d4f";
 
 export const boringssl: Dependency = {
   name: "boringssl",
@@ -35,11 +35,6 @@ export const boringssl: Dependency = {
     repo: "oven-sh/boringssl",
     commit: BORINGSSL_COMMIT,
   }),
-
-  // Upstream mem.cc gates OPENSSL_memory_* weak-symbol overrides on __ELF__;
-  // on Mach-O/COFF the hooks compile to static nullptr and OPENSSL_malloc goes
-  // straight to libc. Declare them as plain externs so lib.rs binds everywhere.
-  patches: ["patches/boringssl/require-memory-hooks.patch"],
 
   build: cfg => {
     // win-x64 uses NASM-syntax .asm; everything else (including win-aarch64)
@@ -53,9 +48,17 @@ export const boringssl: Dependency = {
       includes: ["include"],
       defines: {
         BORINGSSL_IMPLEMENTATION: true,
-        // See `patches:` above. Off under ASAN so BoringSSL allocs stay on the
-        // intercepted libc heap on Mach-O/COFF instead of routing to mimalloc.
+        // The fork (oven-sh/boringssl#11) binds OPENSSL_memory_* as plain externs
+        // on every object format, not just as ELF weak symbols, and routes the
+        // sites upstream keeps on libc malloc (TLS record buffers, error queue,
+        // thread-local tables) through OPENSSL_system_*; src/boringssl/lib.rs
+        // defines all of them. Off under ASAN so BoringSSL stays on the
+        // intercepted libc heap instead of mimalloc.
         ...(!cfg.asan && { BORINGSSL_REQUIRE_MEMORY_HOOKS: true }),
+        // Certificates/CRLs/public keys in PEM decode through simdutf
+        // (src/simdutf_sys/bun-simdutf.cpp) instead of the constant-time path
+        // that private keys keep.
+        BORINGSSL_PEM_FAST_PUBLIC_BASE64: true,
         ...(cfg.windows && {
           _HAS_EXCEPTIONS: 0,
           WIN32_LEAN_AND_MEAN: true,
@@ -85,6 +88,10 @@ export const boringssl: Dependency = {
         "-gcv8",
         `-I${quote(depSourceDir(cfg, "boringssl") + "/gen/", cfg.host.os === "windows")}`,
       ],
+      // With the hooks on, nothing in BoringSSL may allocate from libc any
+      // more (mem.cc's fallback is dead code the compiler drops); under ASAN
+      // the fallbacks are live and libc is the point.
+      ...(!cfg.asan && { forbidUndefined: { symbols: LIBC_ALLOCATION_SYMBOLS } }),
     };
     return spec;
   },
@@ -141,7 +148,7 @@ const CRYPTO_SRCS = [
   "crypto/evp/p_hkdf.cc", "crypto/evp/p_mldsa.cc", "crypto/evp/p_mlkem.cc", "crypto/evp/p_rsa.cc",
   "crypto/evp/p_x25519.cc", "crypto/evp/p_xwing.cc", "crypto/evp/pbkdf.cc", "crypto/evp/print.cc", "crypto/evp/scrypt.cc",
   "crypto/evp/sign.cc", "crypto/ex_data.cc", "crypto/fipsmodule/fips_shared_support.cc",
-  "crypto/fuzzer_mode.cc", "crypto/hpke/hpke.cc", "crypto/hrss/hrss.cc", "crypto/kyber/kyber.cc",
+  "crypto/fuzzer_mode.cc", "crypto/hpke/hpke.cc", "crypto/hrss/hrss.cc",
   "crypto/lhash/lhash.cc", "crypto/md4/md4.cc", "crypto/md5/md5.cc", "crypto/mem.cc",
   "crypto/mldsa/mldsa.cc", "crypto/mlkem/mlkem.cc", "crypto/obj/obj.cc", "crypto/obj/obj_xref.cc",
   "crypto/pem/pem_all.cc", "crypto/pem/pem_info.cc", "crypto/pem/pem_lib.cc",
@@ -174,7 +181,7 @@ const CRYPTO_SRCS = [
   "crypto/x509/v3_purp.cc", "crypto/x509/v3_skey.cc", "crypto/x509/v3_utl.cc",
   "crypto/x509/x509.cc", "crypto/x509/x509_att.cc", "crypto/x509/x509_cmp.cc",
   "crypto/x509/x509_d2.cc", "crypto/x509/x509_def.cc", "crypto/x509/x509_ext.cc",
-  "crypto/x509/x509_lu.cc", "crypto/x509/x509_obj.cc", "crypto/x509/x509_req.cc",
+  "crypto/x509/x509_lu.cc", "crypto/x509/x509_mtc.cc", "crypto/x509/x509_obj.cc", "crypto/x509/x509_req.cc",
   "crypto/x509/x509_set.cc", "crypto/x509/x509_trs.cc", "crypto/x509/x509_txt.cc",
   "crypto/x509/x509_v3.cc", "crypto/x509/x509_vfy.cc", "crypto/x509/x509_vpm.cc",
   "crypto/x509/x509cset.cc", "crypto/x509/x509name.cc", "crypto/x509/x509rset.cc",

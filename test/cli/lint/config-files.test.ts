@@ -3143,23 +3143,6 @@ describe.concurrent("what the configuration asks for and cannot be done", () => 
     expect((await lint({ ...files, "a.js": "let x = 1;\nx;\n" }, ["--allow-unsupported", "."])).exitCode).toBe(0);
   });
 
-  test("a rule that only a comment turns on, of a plugin that is not loaded", async () => {
-    const files = {
-      "eslint.config.mjs": `export default [{
-        plugins: { p: { rules: { r: { create: context => ({ Program: node => context.report({ node, message: "m" }) }) } } } },
-        rules: { "no-var": "error" },
-      }];`,
-      "a.js": `/* eslint p/r: "error" */\n${code}`,
-      "b.js": `/* eslint p/r: "off" */\n// eslint-disable-next-line p/r\n${code}`,
-    };
-    const { problems, stderr, exitCode } = await lint(files, ["a.js", "b.js"]);
-    expect(problems).toEqual(["a.js:2:1 no-var", "b.js:3:1 no-var"]);
-    expect(stderr).toContain("1 rule that a comment turns on did not run");
-    expect(stderr).toContain(": p/r\n");
-    expect(exitCode).toBe(2);
-    expect((await lint(files, ["b.js"])).exitCode).toBe(1);
-  });
-
   test("files in a language that is not read here", async () => {
     const files = {
       "eslint.config.mjs": `export default [
@@ -3181,6 +3164,34 @@ describe.concurrent("what the configuration asks for and cannot be done", () => 
     expect((await lint(files, ["--allow-unsupported", "."])).exitCode).toBe(1);
   });
 });
+
+// As ESLint 10.12. What is in a plugin of the configuration is known, whether or not a rule of it is on.
+test.concurrent(
+  "a rule that only a comment names, of a plugin of which the configuration turns no rule on",
+  async () => {
+    const files = {
+      "eslint.config.mjs": `export default [{
+      plugins: { p: { rules: { r: { create: context => ({ Program: node => context.report({ node, message: "m" }) }) } } } },
+      rules: { "no-var": "error" },
+    }];`,
+      "a.js": `/* eslint p/r: "error" */\n${code}`,
+      "b.js": `/* eslint p/r: "off" */\n// eslint-disable-next-line p/r\n${code}`,
+      "c.js": `// eslint-disable-next-line p/nope\n${code}`,
+    };
+    const { problems, stderr, exitCode } = await lint(files, ["a.js", "b.js", "c.js"]);
+    // In b.js the directive is unused.
+    expect(problems).toEqual([
+      "a.js:1:1 p/r",
+      "a.js:2:1 no-var",
+      "b.js:2:1 -",
+      "b.js:3:1 no-var",
+      "c.js:1:1 p/nope",
+      "c.js:2:1 no-var",
+    ]);
+    expect(stderr).not.toContain("did not run");
+    expect(exitCode).toBe(1);
+  },
+);
 
 // ───────────── paths, as each system writes and compares them ─────────────
 

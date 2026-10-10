@@ -191,6 +191,43 @@ describe("ws package through HTTP CONNECT proxy", () => {
     });
     gc();
   });
+
+  // Every way to name a proxy reaches the native WebSocket, which sends the octets that the
+  // userinfo of the proxy URL encodes: `%ff` is the byte 0xFF, and `:pass` has an empty user.
+  // On Node, `ws` has no `proxy` option, and https-proxy-agent decodes with decodeURIComponent:
+  // it throws `URIError: URI malformed` for the `%ff` rows.
+  describe("Proxy-Authorization from the proxy URL userinfo", () => {
+    type Row = [userinfo: string, sent: string | null];
+    const rows: Row[] = [
+      ["user:pa%ffss", "user:pa\xffss"],
+      ["us%ffer:pass", "us\xffer:pass"],
+      [":pass", ":pass"],
+      ["user:pass", "user:pass"],
+    ];
+    const forms: [name: string, options: (proxyUrl: string) => object][] = [
+      ["the proxy option", proxyUrl => ({ proxy: proxyUrl })],
+      ["an HttpsProxyAgent", proxyUrl => ({ agent: new HttpsProxyAgent(proxyUrl) })],
+      ["an agent whose proxy is a string", proxyUrl => ({ agent: { proxy: proxyUrl } })],
+      ["an agent with connectOpts.proxy", proxyUrl => ({ agent: { connectOpts: { proxy: proxyUrl } } })],
+    ];
+
+    test.concurrent.each(forms)("%s", async (_, options) => {
+      // Each proxy records the CONNECT request and answers it with 403.
+      const sent = await Promise.all(
+        rows.map(async ([userinfo]): Promise<Row> => {
+          using recorded = await startRecordingProxy({ requireAuth: true });
+          const proxyUrl = `http://${userinfo}@127.0.0.1:${recorded.port}`;
+          await wsFailingSession(new WebSocket(`ws://127.0.0.1:${wsPort}`, options(proxyUrl) as ClientOptions));
+          const value = recorded.requests[0]?.headers["proxy-authorization"];
+          return [
+            userinfo,
+            value === undefined ? null : Buffer.from(value.replace("Basic ", ""), "base64").toString("latin1"),
+          ];
+        }),
+      );
+      expect(sent).toEqual(rows);
+    });
+  });
 });
 
 describe("ws package wss:// through HTTP proxy (TLS tunnel)", () => {

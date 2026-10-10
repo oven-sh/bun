@@ -46,6 +46,7 @@
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/ArrayBufferView.h>
 #include <JavaScriptCore/ScriptCallStack.h>
+#include <wtf/ASCIICType.h>
 #include <wtf/HashSet.h>
 #include <wtf/HexNumber.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -168,6 +169,39 @@ static unsigned saturateAdd(unsigned a, unsigned b)
     return a + b;
 }
 
+// https://url.spec.whatwg.org/#percent-decode: the octets that the userinfo names. URL::user() and
+// URL::password() decode them as UTF-8 text and return a null String when they are not UTF-8.
+static void appendPercentDecoded(Vector<uint8_t, 128>& bytes, StringView encoded)
+{
+    ASSERT(encoded.containsOnlyASCII());
+    unsigned length = encoded.length();
+    for (unsigned i = 0; i < length;) {
+        char16_t character = encoded[i];
+        if (character == '%' && i + 3 <= length && isASCIIHexDigit(encoded[i + 1]) && isASCIIHexDigit(encoded[i + 2])) {
+            bytes.append(toASCIIHexValue(encoded[i + 1], encoded[i + 2]));
+            i += 3;
+        } else {
+            bytes.append(static_cast<uint8_t>(character));
+            ++i;
+        }
+    }
+}
+
+static String basicAuthorization(const URL& url)
+{
+    if (!url.hasCredentials())
+        return {};
+
+    auto user = url.encodedUser();
+    auto password = url.encodedPassword();
+    Vector<uint8_t, 128> bytes;
+    bytes.reserveInitialCapacity(user.length() + 1 + password.length());
+    appendPercentDecoded(bytes, user);
+    bytes.append(':');
+    appendPercentDecoded(bytes, password);
+    return makeString("Basic "_s, base64Encoded(bytes.span()));
+}
+
 ASCIILiteral WebSocket::subprotocolSeparator()
 {
     return ", "_s;
@@ -229,13 +263,7 @@ static ExceptionOr<std::optional<ProxyConfig>> setupProxy(const String& proxyUrl
     config.isHTTPS = url.protocolIs("https"_s);
     config.port = url.port().value_or(config.isHTTPS ? 443 : 80);
 
-    // Compute Basic auth from proxy URL credentials
-    if (!url.user().isEmpty()) {
-        auto credentials = makeString(url.user(), ':', url.password());
-        auto utf8 = credentials.utf8();
-        auto encoded = base64EncodeToString(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length()));
-        config.authorization = makeString("Basic "_s, encoded);
-    }
+    config.authorization = basicAuthorization(url);
 
     // Store proxy headers
     if (proxyHeaders) {
@@ -601,14 +629,7 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
         }
     }
 
-    // Compute Basic auth from target URL credentials (for WebSocket upgrade request)
-    String targetAuthorization;
-    if (!m_url.user().isEmpty()) {
-        auto credentials = makeString(m_url.user(), ':', m_url.password());
-        auto utf8 = credentials.utf8();
-        auto encoded = base64EncodeToString(std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(utf8.data()), utf8.length()));
-        targetAuthorization = makeString("Basic "_s, encoded);
-    }
+    String targetAuthorization = basicAuthorization(m_url);
     BunString targetAuth = Bun::toString(targetAuthorization);
 
     // Pass SSLConfig pointer to the upgrade client (ownership transferred - it is freed when the connection closes)

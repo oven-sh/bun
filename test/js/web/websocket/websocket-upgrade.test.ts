@@ -1,6 +1,8 @@
+import { jscDescribe } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tls } from "harness";
 import { createHash } from "node:crypto";
+import { type ClientOptions, WebSocket as WS } from "ws";
 
 // harness's isIPv6() looks for IPv6 interface addresses and is hardcoded false
 // on BuildKite Linux; all the IPv6 test below needs is a loopback bind.
@@ -184,5 +186,151 @@ describe("WebSocket upgrade", () => {
     expect(b8.size).toBeGreaterThan(1);
     // E[uuidShaped] = N/64 = 1 for uniform bytes; equals N under the bug.
     expect(uuidShaped).toBeLessThan(N);
+  });
+
+  // `ws://user:pass@host` sends the userinfo as Basic credentials. A percent-escape in it is one
+  // octet, UTF-8 or not, as in fetch() and curl. The client used to decode the userinfo as UTF-8
+  // text: `user:pa%ffss` sent `user:` and `us%ffer:pass` sent no header.
+  describe("Authorization from the URL userinfo", () => {
+    /** `sent`: the octets of the Basic credentials, one char each. `null`: no Authorization header. */
+    type Row = [userinfo: string, sent: string | string[] | null];
+    /** What this client and the client of the `ws` package both have. */
+    type Client = { onerror: ((event: any) => void) | null; onclose: ((event: any) => void) | null };
+    type Connect = (url: string) => Client;
+
+    /**
+     * Opens one client per row against a server that records the upgrade request and refuses
+     * it. Gives the rows back with what each client sent. A value that is not Basic stays as it is.
+     */
+    async function authorizationSent(rows: Row[], connect: Connect, secure = false): Promise<Row[]> {
+      const requests = new Map<string, string[]>();
+      using server = Bun.listen<{ head: string }>({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: secure ? tls : undefined,
+        socket: {
+          open(socket) {
+            socket.data = { head: "" };
+          },
+          data(socket, chunk) {
+            socket.data.head += chunk.toString("latin1");
+            const end = socket.data.head.indexOf("\r\n\r\n");
+            if (end === -1) return;
+            const [requestLine, ...headers] = socket.data.head.slice(0, end).split("\r\n");
+            const values = headers.filter(line => /^authorization:/i.test(line)).map(line => line.split(": ")[1]);
+            requests.set(requestLine.split(" ")[1], values);
+            socket.end("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+          },
+        },
+      });
+
+      await Promise.all(
+        rows.map(([userinfo], row) => {
+          const closed = Promise.withResolvers<void>();
+          const authority = `${userinfo}${userinfo ? "@" : ""}127.0.0.1:${server.port}`;
+          const ws = connect(`${secure ? "wss" : "ws"}://${authority}/${row}`);
+          ws.onerror = () => {};
+          ws.onclose = () => closed.resolve();
+          return closed.promise;
+        }),
+      );
+
+      const octets = (value: string) =>
+        value.startsWith("Basic ") ? Buffer.from(value.slice("Basic ".length), "base64").toString("latin1") : value;
+      return rows.map(([userinfo], row) => {
+        const values = (requests.get(`/${row}`) ?? ["(no request)"]).map(octets);
+        return [userinfo, values.length > 1 ? values : (values[0] ?? null)];
+      });
+    }
+
+    const user100 = Buffer.alloc(100, "u").toString();
+    const rows: Row[] = [
+      // An escape that is not UTF-8.
+      ["user:pa%ffss", "user:pa\xffss"],
+      ["us%ffer:pass", "us\xffer:pass"],
+      ["%ff:%ff", "\xff:\xff"],
+      ["user:p%E9ss", "user:p\xe9ss"],
+      ["user:p%C3ss", "user:p\xc3ss"],
+      // A password with no user (RFC 7617 allows an empty user-id).
+      [":pass", ":pass"],
+      [":pa%ffss", ":pa\xffss"],
+      // Plain text, and escapes that are UTF-8.
+      ["user:pass", "user:pass"],
+      ["user", "user:"],
+      ["user:", "user:"],
+      ["user:p%C3%A9ss", "user:p\xc3\xa9ss"],
+      ["us\u00e9r:p\u2603ss", "us\xc3\xa9r:p\xe2\x98\x83ss"],
+      ["us%3Aer:pass", "us:er:pass"],
+      ["user:pa%25ss", "user:pa%ss"],
+      ["user:pa%00ss", "user:pa\x00ss"],
+      ["user%40example.com:p%40ss%3Aword", "user@example.com:p@ss:word"],
+      // A `%` that is not an escape stays as it is, and so do hex digits with no `%`.
+      ["user:pa%zzss", "user:pa%zzss"],
+      ["user:pa%fzss", "user:pa%fzss"],
+      ["user:pa%zfss", "user:pa%zfss"],
+      ["user:pa%f", "user:pa%f"],
+      ["user:pa%", "user:pa%"],
+      ["cafe12:beef34", "cafe12:beef34"],
+      // More than the 128 octets that fit the decoder's inline buffer.
+      [
+        `${user100}:${Buffer.alloc(360, "%C3%A9").toString()}`,
+        `${user100}:${Buffer.alloc(120, "\xc3\xa9", "latin1").toString("latin1")}`,
+      ],
+      ["", null],
+    ];
+
+    test.concurrent("sends the octets that the userinfo encodes", async () => {
+      expect(await authorizationSent(rows, url => new WebSocket(url))).toEqual(rows);
+    });
+
+    // Every form of the constructor, and both the plain and the TLS upgrade client.
+    const someRows: Row[] = [
+      ["user:pa%ffss", "user:pa\xffss"],
+      ["us%ffer:pass", "us\xffer:pass"],
+      [":pass", ":pass"],
+      ["user:pass", "user:pass"],
+    ];
+    // The URL parser keeps a canonical input string as it is, so the userinfo stays 16-bit.
+    const twoByte = (text: string) => {
+      const wide = new TextDecoder("utf-16le").decode(Buffer.from(text, "utf16le"));
+      expect(jscDescribe(wide)).toContain("8Bit:(0)");
+      return wide;
+    };
+    const finishRequest = (request: { end(): void }) => request.end();
+    const forms: [name: string, connect: Connect, secure: boolean][] = [
+      ["a URL object", url => new WebSocket(new URL(url)), false],
+      ["a URL in a 16-bit string", url => new WebSocket(twoByte(url)), false],
+      ["a protocol string", url => new WebSocket(url, "chat"), false],
+      ["a protocol list", url => new WebSocket(url, ["chat"]), false],
+      ["an options object", url => new WebSocket(url, { headers: { "X-Other": "1" } }), false],
+      ["a wss:// URL", url => new WebSocket(url, { tls: { rejectUnauthorized: false } }), true],
+      // Bun's `ws` hands the URL to this client. npm `ws` on Node does not decode the userinfo:
+      // it sends `user:pa%ffss` as written.
+      ["the ws package", url => new WS(url), false],
+      ["the ws package with finishRequest", url => new WS(url, [], { finishRequest } as ClientOptions), false],
+    ];
+    test.concurrent.each(forms)("sends them for %s", async (_, connect, secure) => {
+      expect(await authorizationSent(someRows, connect, secure)).toEqual(someRows);
+    });
+
+    test.concurrent("an Authorization header from the caller wins over the userinfo", async () => {
+      const header = { Authorization: "Bearer from-headers" };
+      const setHeader = (request: { setHeader(name: string, value: string): void; end(): void }) => {
+        request.setHeader("authorization", header.Authorization);
+        request.end();
+      };
+      expect({
+        headers: await authorizationSent(someRows, url => new WebSocket(url, { headers: header })),
+        finishRequest: await authorizationSent(
+          someRows,
+          url => new WS(url, [], { finishRequest: setHeader } as ClientOptions),
+        ),
+        noHeader: await authorizationSent(someRows, url => new WebSocket(url, { headers: {} })),
+      }).toEqual({
+        headers: someRows.map(([userinfo]) => [userinfo, header.Authorization]),
+        finishRequest: someRows.map(([userinfo]) => [userinfo, header.Authorization]),
+        noHeader: someRows,
+      });
+    });
   });
 });

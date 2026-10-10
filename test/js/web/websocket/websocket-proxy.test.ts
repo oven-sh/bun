@@ -272,6 +272,97 @@ describe("WebSocket through HTTP CONNECT proxy", () => {
     });
     gc();
   });
+
+  // The userinfo of the proxy URL goes on the CONNECT request as Basic credentials. A
+  // percent-escape in it is one octet, UTF-8 or not, as in fetch() and curl. The client used to
+  // decode the userinfo as UTF-8 text: `user:pa%ffss` sent `user:` and `us%ffer:pass` sent no header.
+  describe("Proxy-Authorization from the proxy URL userinfo", () => {
+    /** `sent`: the octets of the Basic credentials, one char each. `null`: no Proxy-Authorization header. */
+    type Row = [userinfo: string, sent: string | null];
+    type Connect = (proxyUrl: string) => WebSocket;
+
+    /**
+     * Dials through one auth proxy per row. Each proxy records the CONNECT request and refuses
+     * it. Gives the rows back with what each client sent. A value that is not Basic stays as it is.
+     */
+    function proxyAuthorizationSent(rows: Row[], connect: Connect, scheme = "http"): Promise<Row[]> {
+      return Promise.all(
+        rows.map(async ([userinfo]): Promise<Row> => {
+          using recorded = await startRecordingProxy({ requireAuth: true, tls: scheme === "https" });
+          await failingSession(connect(`${scheme}://${userinfo}${userinfo ? "@" : ""}127.0.0.1:${recorded.port}`));
+          if (recorded.requests.length !== 1) return [userinfo, `${recorded.requests.length} CONNECT requests`];
+          const value = recorded.requests[0].headers["proxy-authorization"];
+          if (value === undefined) return [userinfo, null];
+          if (!value.startsWith("Basic ")) return [userinfo, value];
+          return [userinfo, Buffer.from(value.slice("Basic ".length), "base64").toString("latin1")];
+        }),
+      );
+    }
+
+    const rows: Row[] = [
+      // An escape that is not UTF-8.
+      ["user:pa%ffss", "user:pa\xffss"],
+      ["us%ffer:pass", "us\xffer:pass"],
+      ["%ff:%ff", "\xff:\xff"],
+      ["user:p%E9ss", "user:p\xe9ss"],
+      // A password with no user (RFC 7617 allows an empty user-id).
+      [":pass", ":pass"],
+      [":pa%ffss", ":pa\xffss"],
+      // Plain text, and escapes that are UTF-8.
+      ["user:pass", "user:pass"],
+      ["user", "user:"],
+      ["user:p%C3%A9ss", "user:p\xc3\xa9ss"],
+      ["user:pa%25ss", "user:pa%ss"],
+      // A `%` that is not an escape stays as it is.
+      ["user:pa%zzss", "user:pa%zzss"],
+      ["", null],
+    ];
+
+    test.concurrent("sends the octets that the userinfo encodes", async () => {
+      const connect: Connect = proxyUrl => new WebSocket(`ws://127.0.0.1:${wsPort}`, { proxy: proxyUrl });
+      expect(await proxyAuthorizationSent(rows, connect)).toEqual(rows);
+    });
+
+    // Every form of the proxy option, and both the plain and the TLS upgrade client.
+    const someRows: Row[] = [
+      ["user:pa%ffss", "user:pa\xffss"],
+      ["us%ffer:pass", "us\xffer:pass"],
+      [":pass", ":pass"],
+      ["user:pass", "user:pass"],
+    ];
+    const insecure = { rejectUnauthorized: false };
+    const forms: [name: string, connect: Connect, scheme: string][] = [
+      ["a URL object", proxyUrl => new WebSocket(`ws://127.0.0.1:${wsPort}`, { proxy: new URL(proxyUrl) }), "http"],
+      [
+        "an object with url and headers",
+        proxyUrl =>
+          new WebSocket(`ws://127.0.0.1:${wsPort}`, { proxy: { url: proxyUrl, headers: { "X-Other": "1" } } }),
+        "http",
+      ],
+      [
+        "a wss:// target",
+        proxyUrl => new WebSocket(`wss://127.0.0.1:${wssPort}`, { proxy: proxyUrl, tls: insecure }),
+        "http",
+      ],
+      [
+        "an https:// proxy",
+        proxyUrl => new WebSocket(`ws://127.0.0.1:${wsPort}`, { proxy: proxyUrl, tls: insecure }),
+        "https",
+      ],
+    ];
+    test.concurrent.each(forms)("sends them for %s", async (_, connect, scheme) => {
+      expect(await proxyAuthorizationSent(someRows, connect, scheme)).toEqual(someRows);
+    });
+
+    // The opposite of fetch(), where a Proxy-Authorization in `proxy.headers` wins.
+    test.concurrent("the userinfo wins over a Proxy-Authorization in proxy.headers", async () => {
+      const headers = { "Proxy-Authorization": "Bearer from-headers" };
+      const connect: Connect = proxyUrl =>
+        new WebSocket(`ws://127.0.0.1:${wsPort}`, { proxy: { url: proxyUrl, headers } });
+      const withHeader: Row[] = [...someRows, ["", "Bearer from-headers"]];
+      expect(await proxyAuthorizationSent(withHeader, connect)).toEqual(withHeader);
+    });
+  });
 });
 
 describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
@@ -1050,8 +1141,8 @@ describe.concurrent("WebSocket NO_PROXY bypass", () => {
   // credentials for. When NO_PROXY applies, the proxy never sees a connection
   // and the echo server greets the child. When it does not apply, the proxy
   // answers the CONNECT with 407 and the child reports the failure.
-  const childScript = (proxyPort: number) => `
-    const ws = new WebSocket("ws://127.0.0.1:${wsPort}", { proxy: "http://127.0.0.1:${proxyPort}" });
+  const childScript = (proxyPort: number, target = `127.0.0.1:${wsPort}`, proxyUserinfo = "") => `
+    const ws = new WebSocket("ws://${target}", { proxy: "http://${proxyUserinfo}127.0.0.1:${proxyPort}" });
     ws.onmessage = event => { console.log("message:", event.data); ws.close(1000); };
     ws.onerror = event => console.log("error:", event.message);
     ws.onclose = event => console.log("close:", event.code, JSON.stringify(event.reason));
@@ -1086,5 +1177,39 @@ describe.concurrent("WebSocket NO_PROXY bypass", () => {
             proxyConnections: 1,
           },
     );
+  });
+
+  // The credentials of a bypassed proxy go nowhere. The target still gets the octets of its own
+  // userinfo: the server below answers each client with the Authorization header it sent.
+  test("a bypassed proxy does not change the credentials the target URL sends", async () => {
+    using recorded = await startRecordingProxy({ requireAuth: true });
+    using target = Bun.serve<{ authorization: string | null }>({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(request, server) {
+        if (server.upgrade(request, { data: { authorization: request.headers.get("authorization") } })) return;
+        return new Response("Expected WebSocket", { status: 400 });
+      },
+      websocket: {
+        open(ws) {
+          ws.send(String(ws.data.authorization));
+        },
+        message() {},
+      },
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", childScript(recorded.port, `us%ffer:pass@127.0.0.1:${target.port}`, "us%ffer:pass@")],
+      env: { ...bunEnv, NO_PROXY: "127.0.0.1", no_proxy: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode, proxyConnections: recorded.connections }).toEqual({
+      stdout: `message: Basic ${Buffer.from("us\xffer:pass", "latin1").toString("base64")}\nclose: 1000 ""\n`,
+      stderr: "",
+      exitCode: 0,
+      proxyConnections: 0,
+    });
   });
 });

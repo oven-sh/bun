@@ -2685,6 +2685,105 @@ describe.concurrent("bun lint", () => {
       },
     );
 
+    // What oxlint 1.87.0 reports and writes. Its rule is no port of ESLint's: a `bigint`, which `Number()` would change, a unary `+` or `-`
+    // and `*`, `/`, `%`, `-`, `**` are numbers already, `a * 1` in such an operation is left, and parentheses are a node.
+    test("no-implicit-coercion beside an .oxlintrc.json: what is a number already", async () => {
+      const rows: [code: string, written: string, reports: [column: number, length: number][]][] = [
+        ["typeof -(-1n)", "typeof -(-1n)", []],
+        ["-(-1n)", "-(-1n)", []],
+        ["+1n", "+1n", []],
+        ["1n*1", "1n*1", []],
+        ["1*1n", "1*1n", []],
+        ["1n-0", "1n-0", []],
+        ["(-y)*1", "(-y)*1", []],
+        ["1*-y", "1*-y", []],
+        ["+-y", "+-y", []],
+        ["- - -y", "- Number(y)", [[7, 4]]],
+        ["(+y)-0", "(Number(y))-0", [[6, 2]]],
+        ["(a*b)-0", "(a*b)-0", []],
+        ["(a%b)*1", "(a%b)*1", []],
+        ["a**b-0", "a**b-0", []],
+        ["y*1*2", "y*1*2", []],
+        ["2*y*1", "2*y*1", []],
+        ["y*1/2", "y*1/2", []],
+        ["2/y*1", "2/y*1", []],
+        ["y*1-0", "y*1-0", []],
+        ["(y*1)*2", "(Number(y))*2", [[6, 3]]],
+        ["y*1+2", "Number(y)+2", [[5, 3]]],
+        ["1*y/2", "Number(y)/2", [[5, 3]]],
+        ["1*y*1", "Number(y)*1", [[5, 3]]],
+        ["y-(0)", "y-(0)", []],
+        ["y*(1)", "Number(y)", [[5, 5]]],
+        ["(1)*y", "Number(y)", [[5, 5]]],
+        ["y*1.0", "Number(y)", [[5, 5]]],
+        ["(a+b)*1", "Number(a+b)", [[5, 7]]],
+        ["1*(a&b)", "Number(a&b)", [[5, 7]]],
+        ["((a+b))*1", "Number(a+b)", [[5, 9]]],
+        ["Number(y)*1", "Number(y)*1", []],
+        ["o.Number(y)*1", "Number(o.Number(y))", [[5, 13]]],
+        ["+parseInt(y)", "+parseInt(y)", []],
+        ["+y", "Number(y)", [[5, 2]]],
+        ["+(y)", "Number(y)", [[5, 4]]],
+        ["- -y", "Number(y)", [[5, 4]]],
+        ["-(-(y))", "Number(y)", [[5, 7]]],
+        ["y-0", "Number(y)", [[5, 3]]],
+        ["y*1", "Number(y)", [[5, 3]]],
+        ["1*y", "Number(y)", [[5, 3]]],
+      ];
+      const files = {
+        ".oxlintrc.json": JSON.stringify({
+          categories: { correctness: "off" },
+          rules: { "no-implicit-coercion": "error" },
+        }),
+        "a.mjs": rows.map(([code]) => `x = ${code};\n`).join(""),
+      };
+      const [reported, fixed] = await Promise.all([
+        lint(files, ["-f", "json", "a.mjs"]),
+        lint(files, ["--fix", "a.mjs"], { reads: ["a.mjs"] }),
+      ]);
+      const places: [number, number][][] = rows.map(() => []);
+      for (const { labels } of JSON.parse(reported.raw).diagnostics) {
+        const { line, column, length } = labels[0].span;
+        places[line - 1].push([column, length]);
+      }
+      const written = fixed.files["a.mjs"].split("\n");
+      expect(rows.map(([code], at) => [code, written[at].slice("x = ".length, -1), places[at]])).toEqual(rows);
+    });
+
+    // The same. For it a parameter and a `var` of its name are one variable, and what the declaration is in is the body of the function.
+    // In the last three it writes what cannot be parsed.
+    test("no-var beside an .oxlintrc.json: a variable that the default value of a parameter refers to", async () => {
+      const rows: [code: string, written: string | null][] = [
+        ["function f(a = 1, g = () => a) { var a; return [a, g()]; }", null],
+        ["function f(a = 1, g = function () { return a; }) { var a; a = 2; return [a, g()]; }", null],
+        ["function f(a, b = a) { var a; return a + b; }", null],
+        ["function f({ a }, b = a) { var a; return a + b; }", null],
+        ["function f(b = () => a, a) { var a; return b; }", null],
+        ["function f(a = 1, g = () => a) { var b = 1, a; return [b, g]; }", null],
+        ["const f = (a = 1, g = () => a) => { var a; return g; };", null],
+        ["class K { m(a = 1, g = () => a) { var a; return g; } }", null],
+        ["function f(a = 1, g = () => a) { { var a; } return g; }", null],
+        [
+          "function f(a = 1, g = () => a) { var b = 1; return [b, g]; }",
+          "function f(a = 1, g = () => a) { const b = 1; return [b, g]; }",
+        ],
+        [
+          "function f(a = 1, g = () => a) { function h() { var a; return a; } return [h, g]; }",
+          "function f(a = 1, g = () => a) { function h() { let a; return a; } return [h, g]; }",
+        ],
+        ["function f(a) { var a; return a; }", "function f(a) { let a; return a; }"],
+        ["function f(a = 1) { var a; return a; }", "function f(a = 1) { let a; return a; }"],
+        ["function f(a) { var a = 1; return a; }", "function f(a) { const a = 1; return a; }"],
+      ];
+      const names = rows.map((_, at) => `r${at}.cjs`);
+      const files = {
+        ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, rules: { "no-var": "error" } }),
+        ...Object.fromEntries(rows.map(([code], at) => [names[at], code + "\n"])),
+      };
+      const fixed = await lint(files, ["--fix"], { reads: names });
+      expect(names.map(name => fixed.files[name])).toEqual(rows.map(([code, written]) => (written ?? code) + "\n"));
+    });
+
     describe("fixes after which the text cannot be parsed are not written", () => {
       const warning = (rules: string, file: string) =>
         `warn: Fixes of ${rules} would leave ${file} with a syntax error. They are not applied.`;
@@ -5282,15 +5381,22 @@ describe.concurrent("a lint script in package.json", () => {
   );
 
   // git keeps a link to `/dev/zero` as it is. `bun run` stops at such a file, and finds no script in it.
-  test.skipIf(isWindows)("a package.json that is a link to a device has no script, and the one above is not asked", async () => {
-    using dir = tempDir("bun-lint-name", { ...files, "sub/eslint.config.js": files["eslint.config.js"], "sub/b.js": "debugger;\n" });
-    symlinkSync("/dev/null", join(String(dir), "sub/package.json"));
-    const cmd = [bunExe(), "lint", "-f", "unix"];
-    await using proc = spawn({ cmd, env, cwd: join(String(dir), "sub"), stdout: "pipe", stderr: "pipe" });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toContain("b.js:1:1: ");
-    expect(exitCode).toBe(1);
-  });
+  test.skipIf(isWindows)(
+    "a package.json that is a link to a device has no script, and the one above is not asked",
+    async () => {
+      using dir = tempDir("bun-lint-name", {
+        ...files,
+        "sub/eslint.config.js": files["eslint.config.js"],
+        "sub/b.js": "debugger;\n",
+      });
+      symlinkSync("/dev/null", join(String(dir), "sub/package.json"));
+      const cmd = [bunExe(), "lint", "-f", "unix"];
+      await using proc = spawn({ cmd, env, cwd: join(String(dir), "sub"), stdout: "pipe", stderr: "pipe" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toContain("b.js:1:1: ");
+      expect(exitCode).toBe(1);
+    },
+  );
 
   test("--cwd lint lint: the first is a directory", async () => {
     const { "package.json": __, ...rest } = files;
@@ -6596,16 +6702,19 @@ describe.concurrent("[lint] in bunfig.toml", () => {
   });
 
   // 288 bytes for each: 19 GB, and more than there is to address.
-  test.each(["67108864", "9007199254740991", "9223372036854775808"])("%s threads are as many as there can be", async count => {
-    const [byKey, byFlag, few] = await Promise.all([
-      run({ ...eslint, "bunfig.toml": `[lint]\nthreads = ${count}\n` }, ["a.js"]),
-      run(eslint, [`--threads=${count}`, "a.js"]),
-      run(eslint, ["--threads=1", "a.js"]),
-    ]);
-    // Beyond 2^53 - 1 the file is refused before anybody asks for the key.
-    if (Number.isSafeInteger(Number(count))) expect(byKey).toEqual(few);
-    expect(byFlag).toEqual(few);
-  });
+  test.each(["67108864", "9007199254740991", "9223372036854775808"])(
+    "%s threads are as many as there can be",
+    async count => {
+      const [byKey, byFlag, few] = await Promise.all([
+        run({ ...eslint, "bunfig.toml": `[lint]\nthreads = ${count}\n` }, ["a.js"]),
+        run(eslint, [`--threads=${count}`, "a.js"]),
+        run(eslint, ["--threads=1", "a.js"]),
+      ]);
+      // Beyond 2^53 - 1 the file is refused before anybody asks for the key.
+      if (Number.isSafeInteger(Number(count))) expect(byKey).toEqual(few);
+      expect(byFlag).toEqual(few);
+    },
+  );
 
   // ESLint refuses the flag in a run that fixes nothing.
   test("fixType waits for a run that fixes", async () => {

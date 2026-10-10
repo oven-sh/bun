@@ -15,10 +15,12 @@
     clippy::missing_safety_doc
 )]
 
-use core::cell::{Cell, UnsafeCell};
+use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_ushort, c_void};
 use core::mem::MaybeUninit;
+use core::time::Duration;
 use core::{fmt, mem, ptr};
+use std::time::Instant;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Debug log scope (`bun.Output.scoped(.uv, .hidden)`). This crate is leaf
@@ -362,23 +364,11 @@ pub struct Loop {
 }
 pub type uv_loop_t = Loop;
 
-// `Loop::get()` escapes a raw pointer into this TLS slot out of the
-// `LocalKey::with` closure and hands it to libuv for the thread lifetime.
-// That is sound only because the slot has NO destructor: with no `Drop`, std
-// registers no TLS dtor, so the `LocalKey` storage outlives every per-thread
-// caller and the escaped address stays valid until thread exit. Guard the
-// no-Drop invariant at compile time so adding `impl Drop for Loop` (or
-// wrapping the cell) fails loudly here rather than becoming silent UB.
-const _: () = assert!(!core::mem::needs_drop::<Loop>());
-const _: () = assert!(!core::mem::needs_drop::<UnsafeCell<MaybeUninit<Loop>>>());
-
 thread_local! {
-    /// Static TLS storage (zero-alloc). `MaybeUninit` because the slot is
-    /// only valid after `uv_loop_init`.
-    static THREADLOCAL_LOOP_DATA: UnsafeCell<MaybeUninit<Loop>> =
-        const { UnsafeCell::new(MaybeUninit::uninit()) };
-    /// `threadlocal var threadlocal_loop: ?*Loop = null` — null until `get()`
-    /// initializes `THREADLOCAL_LOOP_DATA`.
+    /// This thread's loop, heap-allocated by `get()` and freed by
+    /// `close_thread_loop` once `uv_loop_close` succeeds. Until then libuv's
+    /// loop registry points at it (`uv__wake_all_loops` walks that registry
+    /// on system resume), so its storage must not be tied to the thread.
     static THREADLOCAL_LOOP: Cell<*mut Loop> = const { Cell::new(ptr::null_mut()) };
 }
 
@@ -411,13 +401,10 @@ impl Loop {
             if !existing.is_null() {
                 return existing;
             }
-            // SAFETY: TLS slot is per-thread; no aliasing. `uv_loop_init`
-            // accepts uninitialized storage (it zero-fills internally).
-            // Escaping the pointer past `.with()` is intentional: the slot is
-            // const-initialized POD with no TLS destructor (static-asserted
-            // above), so its address is stable for the thread lifetime.
-            let ptr_ = THREADLOCAL_LOOP_DATA.with(|data| unsafe { (*data.get()).as_mut_ptr() });
-            // SAFETY: `ptr_` is `sizeof(Loop)` TLS storage owned by this thread.
+            // `uv_loop_init` accepts uninitialized storage (it zero-fills
+            // internally).
+            let ptr_ = bun_core::heap::into_raw(Box::<Loop>::new_uninit()).cast::<Loop>();
+            // SAFETY: `ptr_` is `sizeof(Loop)` heap storage owned by this thread.
             if let Some(err) = unsafe { uv_loop_init(ptr_) }.raw_errno() {
                 panic!("Failed to initialize libuv loop: errno {err}");
             }
@@ -461,13 +448,17 @@ impl Loop {
     /// pre/check/async/timer, closed by us_loop_free and freed by their close
     /// callbacks when the loop next turns.
     pub fn close_thread_loop() {
+        /// Bound on a handle whose close never completes; `terminate()` and
+        /// process exit wait on this. A healthy teardown takes milliseconds.
+        const CLOSE_THREAD_LOOP_DEADLINE: Duration = Duration::from_secs(10);
         THREADLOCAL_LOOP.with(|slot| {
             let loop_ = slot.get();
             if loop_.is_null() {
                 return;
             }
             // SAFETY: `loop_` is the live per-thread loop initialized in `get()`.
-            if let Some(err) = unsafe { uv_loop_close(loop_) }.raw_errno() {
+            let mut rc = unsafe { uv_loop_close(loop_) };
+            if let Some(err) = rc.raw_errno() {
                 // Only EBUSY means handles are still linked; walk + close any not
                 // already closing, run to flush close callbacks and endgames, then
                 // close again (must succeed). `uv_loop_close` documents no other
@@ -479,29 +470,48 @@ impl Loop {
                     // (owners are freed only after this returns).
                     unsafe { uv_walk(loop_, Some(log_unclosed_cb), ptr::null_mut()) };
                     unsafe { uv_walk(loop_, Some(close_walk_cb), ptr::null_mut()) };
-                    // Everything is closing now; only close callbacks / endgames
-                    // remain. Turn the loop without blocking until they have run —
-                    // RunMode::Default would also wait on ref'd-but-idle state
-                    // (Bun's virtual keep-alive count lives in active_handles) and
-                    // never return.
-                    let mut rc = ReturnCode::ZERO;
-                    for _ in 0..64 {
+                    // Everything is closing now. A closing uv_poll_t is unlinked
+                    // only once the kernel posts the completion of its cancelled
+                    // AFD poll to the IOCP, and one NoWait turn dequeues at most
+                    // 128 completions. RunMode::Default would also wait on
+                    // ref'd-but-idle state (Bun's virtual keep-alive count lives
+                    // in active_handles) and never return.
+                    let started = Instant::now();
+                    loop {
                         // SAFETY: this thread's initialised loop; nothing else drives it.
                         let _ = unsafe { uv_run(loop_, RunMode::NoWait) };
                         // SAFETY: as above.
                         rc = unsafe { uv_loop_close(loop_) };
-                        if rc == ReturnCode::ZERO {
+                        if rc == ReturnCode::ZERO || started.elapsed() >= CLOSE_THREAD_LOOP_DEADLINE
+                        {
                             break;
                         }
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    if rc != ReturnCode::ZERO {
+                        log!(
+                            "close_thread_loop: loop still busy after {:?}, abandoning it",
+                            started.elapsed()
+                        );
+                        // SAFETY: as above; the walk only reads handle headers.
+                        unsafe { uv_walk(loop_, Some(log_walk_cb), ptr::null_mut()) };
                     }
                     debug_assert_eq!(
                         rc,
                         ReturnCode::ZERO,
-                        "uv loop still busy after closing every handle"
+                        "uv loop still busy {:?} after closing every handle",
+                        CLOSE_THREAD_LOOP_DEADLINE
                     );
                 }
             }
             slot.set(ptr::null_mut());
+            if rc == ReturnCode::ZERO {
+                // SAFETY: `get()` allocated it; `uv_loop_close` unregistered it
+                // and nothing references it any more.
+                unsafe { bun_core::heap::destroy(loop_.cast::<MaybeUninit<Loop>>()) };
+            }
+            // Otherwise the loop stays registered with libuv and keeps its
+            // storage: a leak, not a dangling registry entry.
         });
     }
 
@@ -550,6 +560,7 @@ impl Loop {
 unsafe extern "C" fn log_unclosed_cb(handle: *mut uv_handle_t, data: *mut c_void) {
     // SAFETY: libuv passes live handles.
     if unsafe { uv_is_closing(handle) } == 0 {
+        log!("handle left open by its owner:");
         // SAFETY: as above.
         unsafe { log_walk_cb(handle, data) };
     }
@@ -573,7 +584,7 @@ unsafe extern "C" fn log_walk_cb(handle: *mut uv_handle_t, _data: *mut c_void) {
     // SAFETY: libuv passes a live handle; these calls only read its header.
     unsafe {
         log!(
-            "handle left open by its owner: {} @{:p} active={} closing={} ref={} data={:p}",
+            "handle still linked: {} @{:p} active={} closing={} ref={} data={:p}",
             handle_type_name(handle),
             handle,
             uv_is_active(handle),

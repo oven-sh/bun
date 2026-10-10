@@ -1532,8 +1532,12 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
     bool hasValue = object->getPropertySlot(globalObject, propertyKey, slot);
     RETURN_IF_EXCEPTION(scope, {});
 
+    // A setter-less CustomValue (process.env keys, util.inspect) is a data property to JS; one with a setter is not.
+    bool isCustomValue = hasValue && slot.isCustom() && (slot.attributes() & PropertyAttribute::CustomValue) && !slot.customSetter();
+    unsigned slotAttributes = hasValue ? (slot.attributes() & ~static_cast<unsigned>(PropertyAttribute::CustomValue)) : 0;
+
     // easymode: regular property or missing property
-    if (!hasValue || slot.isValue()) {
+    if (!hasValue || slot.isValue() || isCustomValue) {
         JSValue value = jsUndefined();
         if (hasValue) {
             if (slot.isTaintedByOpaqueObject()) [[unlikely]] {
@@ -1553,12 +1557,12 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
         auto* mock = JSMockFunction::create(vm, globalObject, globalObject->mockModule.mockFunctionStructure.getInitializedOnMainThread(globalObject), CallbackKind::GetterSetter);
         mock->spyTarget = JSC::Weak<JSObject>(object, &weakValueHandleOwner(), nullptr);
         mock->spyIdentifier = propertyKey.isSymbol() ? Identifier::fromUid(vm, propertyKey.uid()) : Identifier::fromString(vm, propertyKey.publicName());
-        mock->spyAttributes = hasValue ? slot.attributes() : 0;
+        mock->spyAttributes = slotAttributes;
         unsigned attributes = 0;
 
         if (hasValue && ((slot.attributes() & PropertyAttribute::Function) != 0 || (value.isCell() && value.isCallable()))) {
             if (hasValue)
-                attributes = slot.attributes();
+                attributes = slotAttributes;
 
             mock->copyNameAndLength(vm, globalObject, value);
             RETURN_IF_EXCEPTION(scope, {});
@@ -1585,7 +1589,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
             }
 
             if (hasValue)
-                attributes = slot.attributes();
+                attributes = slotAttributes;
 
             attributes |= PropertyAttribute::Accessor;
 

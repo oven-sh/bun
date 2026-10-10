@@ -41,7 +41,7 @@ test("table-driven ERR_* codes keep their exact messages", () => {
   expect(capture(() => child_process.fork("x", { stdio: ["pipe", "pipe", "pipe"] }))).toBe(
     "ERR_CHILD_PROCESS_IPC_REQUIRED | Error | Forked processes must have an IPC channel, missing value 'ipc' in options.stdio",
   );
-  expect(capture(() => Readable.prototype._read.call(new Readable()))).toBe(
+  expect(capture(() => (Readable.prototype._read as Function).call(new Readable()))).toBe(
     "ERR_METHOD_NOT_IMPLEMENTED | Error | The _read() method is not implemented",
   );
 });

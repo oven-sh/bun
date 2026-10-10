@@ -70,7 +70,7 @@ function oneRequest(): Promise<void> {
   // client is draining, so explicitly pause(); the server side destroys the
   // socket once handleRejectStream has run.
   return new Promise(resolve => {
-    const socket = connect({ port: server.port, host: "127.0.0.1" }, () => {
+    const socket = connect({ port: server.port!, host: "127.0.0.1" }, () => {
       socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
       socket.pause();
     });

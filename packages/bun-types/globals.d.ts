@@ -152,6 +152,10 @@ declare var ReadableStream: Bun.__internal.UseLibDomIfAvailable<
     prototype: ReadableStream;
     new <R = any>(underlyingSource?: Bun.UnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
     new <R = any>(underlyingSource?: Bun.DirectUnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
+    new <R extends Uint8Array = Uint8Array<ArrayBuffer>>(
+      underlyingSource: import("node:stream/web").UnderlyingByteSource,
+      strategy?: { highWaterMark?: number },
+    ): ReadableStream<R>;
   }
 >;
 
@@ -1503,6 +1507,16 @@ interface Blob {
   readonly type: string;
 
   /**
+   * Returns a new `Blob` with the bytes from `start` up to but not including
+   * `end`. Negative indices count from the end.
+   *
+   * @param start byte offset to start at. Defaults to 0.
+   * @param end byte offset to stop at. Defaults to `size`.
+   * @param contentType the `type` of the new `Blob`.
+   */
+  slice(start?: number, end?: number, contentType?: string): Blob;
+
+  /**
    * Read the data from the blob as a JSON object.
    *
    * This first decodes the data from UTF-8, then parses it as JSON.
@@ -1822,7 +1836,10 @@ declare var ReadableStreamBYOBRequest: Bun.__internal.UseLibDomIfAvailable<
 interface TextDecoderStream extends Bun.__internal.LibEmptyOrNodeStreamWebTextDecoderStream {}
 declare var TextDecoderStream: Bun.__internal.UseLibDomIfAvailable<
   "TextDecoderStream",
-  { prototype: TextDecoderStream; new (): TextDecoderStream }
+  {
+    prototype: TextDecoderStream;
+    new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextDecoderStream;
+  }
 >;
 
 interface TextEncoderStream extends Bun.__internal.LibEmptyOrNodeStreamWebTextEncoderStream {}

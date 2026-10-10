@@ -8,22 +8,22 @@ describe("Bun.Transpiler with a UTF-16 loader string", () => {
 
   test("scan", () => {
     const t = new Bun.Transpiler();
-    expect(() => t.scan("", utf16)).toThrow(TypeError);
+    expect(() => (t as any).scan("", utf16)).toThrow(TypeError);
   });
 
   test("scanImports", () => {
     const t = new Bun.Transpiler();
-    expect(() => t.scanImports("", utf16)).toThrow(TypeError);
+    expect(() => (t as any).scanImports("", utf16)).toThrow(TypeError);
   });
 
   test("transformSync", () => {
     const t = new Bun.Transpiler();
-    expect(() => t.transformSync("", utf16)).toThrow(TypeError);
+    expect(() => t.transformSync("", utf16 as any)).toThrow(TypeError);
   });
 
   test("transform", () => {
     const t = new Bun.Transpiler();
-    expect(() => t.transform("", utf16)).toThrow(TypeError);
+    expect(() => t.transform("", utf16 as any)).toThrow(TypeError);
   });
 
   test("constructor", () => {

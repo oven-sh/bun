@@ -6,7 +6,7 @@
 import { expect, test } from "bun:test";
 import { once } from "node:events";
 import tls from "node:tls";
-// @ts-expect-error - debug-only export
+// debug-only export
 import { sslCtxLiveCount } from "bun:internal-for-testing";
 import { tempDir, tls as tlsCerts } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -49,7 +49,7 @@ test("Bun.connect with servername-only tls reuses one SSL_CTX", async () => {
     const sock = await Bun.connect({
       hostname: "127.0.0.1",
       port,
-      tls: { servername: "localhost", rejectUnauthorized: false },
+      tls: { servername: "localhost", rejectUnauthorized: false } as Bun.TLSOptions,
       socket: {
         // With a `handshake` handler present, `open` fires on TCP-connect
         // (pre-handshake). Calling `s.end()` there leaves the libuv-backed
@@ -89,7 +89,7 @@ test("createSecureContext owns its native handle exclusively (identical configs 
   // addCACert on one context can never affect another.
   expect(a.context).not.toBe(b.context);
   // Different config → different handle.
-  const c = tls.createSecureContext({ rejectUnauthorized: false });
+  const c = tls.createSecureContext({ rejectUnauthorized: false } as tls.SecureContextOptions);
   expect(c.context).not.toBe(a.context);
 });
 
@@ -228,7 +228,7 @@ test("addCACert on a digest-interned context throws instead of poisoning the cac
   const a = NativeSecureContext.intern({ ca: tlsCerts.cert });
   const b = NativeSecureContext.intern({ ca: tlsCerts.cert });
   expect(a).toBe(b);
-  expect(() => a.addCACert(tlsCerts.ca)).toThrow("cannot mutate a shared SecureContext");
+  expect(() => a.addCACert((tlsCerts as any).ca)).toThrow("cannot mutate a shared SecureContext");
 });
 
 // The exported constructor is user-facing too: it must never hand out the

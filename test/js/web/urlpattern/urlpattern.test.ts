@@ -113,7 +113,7 @@ describe("URLPattern", () => {
         const exec_result = pattern.exec(...(entry.inputs ?? []));
 
         if (!entry.expected_match || typeof entry.expected_match !== "object") {
-          expect(exec_result).toBe(entry.expected_match);
+          expect(exec_result).toBe<null | undefined>(entry.expected_match);
           return;
         }
 

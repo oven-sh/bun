@@ -3,7 +3,7 @@ import { expectMaxObjectTypeCount, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 test("blob.write() throws for data-backed blob", () => {
-  const blob = new Blob(["Hello, world!"]);
+  const blob = new Blob(["Hello, world!"]) as any;
   expect(() => blob.write("test.txt")).toThrowErrorMatchingInlineSnapshot(
     `"Cannot write to a Blob backed by bytes, which are always read-only"`,
   );
@@ -23,19 +23,19 @@ test("Bun.write() throws for a data-backed blob destination", () => {
 
 test("Bun.file(path).write() does not throw", async () => {
   const file = Bun.file(path.join(tempDirWithFiles("bun-write", { a: "Hello, world!" }), "a"));
-  expect(() => file.write(new Blob(["Hello, world!!"]))).not.toThrow();
+  expect(() => file.write(new Blob(["Hello, world!!"]) as any)).not.toThrow();
   expect(await file.text()).toBe("Hello, world!!");
 });
 
 test("blob.unlink() throws for data-backed blob", () => {
-  const blob = new Blob(["Hello, world!"]);
+  const blob = new Blob(["Hello, world!"]) as any;
   expect(() => blob.unlink()).toThrowErrorMatchingInlineSnapshot(
     `"Cannot write to a Blob backed by bytes, which are always read-only"`,
   );
 });
 
 test("blob.delete() throws for data-backed blob", () => {
-  const blob = new Blob(["Hello, world!"]);
+  const blob = new Blob(["Hello, world!"]) as any;
   expect(() => blob.delete()).toThrowErrorMatchingInlineSnapshot(
     `"Cannot write to a Blob backed by bytes, which are always read-only"`,
   );
@@ -56,7 +56,7 @@ test("Bun.file(path).delete() does not throw", async () => {
 });
 
 test("blob.writer() throws for data-backed blob", () => {
-  const blob = new Blob(["Hello, world!"]);
+  const blob = new Blob(["Hello, world!"]) as any;
   expect(() => blob.writer()).toThrowErrorMatchingInlineSnapshot(
     `"Cannot write to a Blob backed by bytes, which are always read-only"`,
   );
@@ -84,7 +84,7 @@ test("Bun.file(path).writer() does not throw", async () => {
 });
 
 test("blob.stat() returns undefined for data-backed blob", async () => {
-  const blob = new Blob(["Hello, world!"]);
+  const blob = new Blob(["Hello, world!"]) as any;
   const stat = await blob.stat();
   expect(stat).toBeUndefined();
 });
@@ -105,7 +105,7 @@ test("Bun.file(path).write() rejects a non-string options.type", async () => {
   const file = Bun.file(path.join(dir, "a.txt"));
   let err: any;
   try {
-    await file.write("x", { type: 123 as any });
+    await file.write("x", { type: 123 } as any);
   } catch (e) {
     err = e;
   }
@@ -118,21 +118,21 @@ test("Bun.file(path).write() rejects a non-string options.type", async () => {
 test("Bun.file(path).write() lowercases and applies a valid options.type", async () => {
   const dir = tempDirWithFiles("blob-write-type", { "a.txt": "hello" });
   const file = Bun.file(path.join(dir, "a.txt"));
-  await file.write("x", { type: "TEXT/PLAIN; CHARSET=UTF-8" });
+  await file.write("x", { type: "TEXT/PLAIN; CHARSET=UTF-8" } as any);
   expect(file.type).toBe("text/plain; charset=utf-8");
 });
 
 test("Bun.file(path).write() resolves a known options.type through the mime table", async () => {
   const dir = tempDirWithFiles("blob-write-type", { "a.txt": "hello" });
   const file = Bun.file(path.join(dir, "a.txt"));
-  await file.write("x", { type: "APPLICATION/JSON" });
+  await file.write("x", { type: "APPLICATION/JSON" } as any);
   expect(file.type).toBe("application/json");
 });
 
 test("Bun.file(path).write() silently ignores an invalid options.type", async () => {
   const dir = tempDirWithFiles("blob-write-type", { "a.txt": "hello" });
   const file = Bun.file(path.join(dir, "a.txt"));
-  await file.write("x", { type: "bad\r\ntype" });
+  await file.write("x", { type: "bad\r\ntype" } as any);
   // the .txt default is kept
   expect(file.type).toBe("text/plain;charset=utf-8");
 });

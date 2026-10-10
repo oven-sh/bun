@@ -16,6 +16,9 @@ const { HttpsProxyAgent } = require("https-proxy-agent") as {
   HttpsProxyAgent: typeof HttpsProxyAgentType;
 };
 
+// Bun's `ws` also takes the `proxy` and `tls` options of Bun's own WebSocket.
+type ClientOptions = WebSocket.ClientOptions & Bun.WebSocketOptionsProxy & Bun.WebSocketOptionsTLS;
+
 // The tests below pass an explicit `proxy:` option for 127.0.0.1 and assert on
 // the CONNECT request the proxy receives. NO_PROXY applies to explicit proxies
 // too, so an ambient NO_PROXY=localhost,127.0.0.1,... must not bypass them.
@@ -33,9 +36,9 @@ let wssPort: number;
 
 beforeAll(() => {
   wsServer = startEchoServer();
-  wsPort = wsServer.port;
+  wsPort = wsServer.port!;
   wssServer = startEchoServer({ tls: true });
-  wssPort = wssServer.port;
+  wssPort = wssServer.port!;
 });
 
 afterAll(() => {
@@ -88,7 +91,7 @@ describe("ws package proxy API", () => {
   test("accepts proxy option as string (HTTP proxy)", () => {
     const ws = new WebSocket("ws://example.com", {
       proxy: `http://127.0.0.1:${proxyPort}`,
-    });
+    } as ClientOptions);
     expect(ws.readyState).toBe(WebSocket.CONNECTING);
     ws.close();
   });
@@ -97,7 +100,7 @@ describe("ws package proxy API", () => {
     const ws = new WebSocket("ws://example.com", {
       proxy: `https://127.0.0.1:${proxyPort}`,
       tls: { rejectUnauthorized: false },
-    });
+    } as ClientOptions);
     expect(ws.readyState).toBe(WebSocket.CONNECTING);
     ws.close();
   });
@@ -105,7 +108,7 @@ describe("ws package proxy API", () => {
   test("accepts proxy option with object containing url", () => {
     const ws = new WebSocket("ws://example.com", {
       proxy: { url: `http://127.0.0.1:${proxyPort}` },
-    });
+    } as ClientOptions);
     expect(ws.readyState).toBe(WebSocket.CONNECTING);
     ws.close();
   });
@@ -113,7 +116,7 @@ describe("ws package proxy API", () => {
   test("accepts proxy URL with credentials", () => {
     const ws = new WebSocket("ws://example.com", {
       proxy: `http://user:pass@127.0.0.1:${proxyPort}`,
-    });
+    } as ClientOptions);
     expect(ws.readyState).toBe(WebSocket.CONNECTING);
     ws.close();
   });
@@ -122,7 +125,7 @@ describe("ws package proxy API", () => {
     const ws = new WebSocket("ws://example.com", ["graphql-ws"], {
       proxy: `http://127.0.0.1:${proxyPort}`,
       headers: { Authorization: "Bearer token" },
-    });
+    } as ClientOptions);
     expect(ws.readyState).toBe(WebSocket.CONNECTING);
     ws.close();
   });
@@ -131,7 +134,7 @@ describe("ws package proxy API", () => {
     expect(() => {
       new WebSocket("ws://example.com", {
         proxy: "not-a-valid-url",
-      });
+      } as ClientOptions);
     }).toThrow(expect.objectContaining({ name: "SyntaxError", message: "Invalid proxy URL: not-a-valid-url" }));
   });
 });
@@ -141,7 +144,7 @@ describe("ws package through HTTP CONNECT proxy", () => {
     using recorded = await startRecordingProxy();
     const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
       proxy: `http://127.0.0.1:${recorded.port}`,
-    });
+    } as ClientOptions);
     expect({ events: await wsEchoSession(ws, "hello from ws client"), requests: recorded.requests }).toEqual({
       events: echoed("hello from ws client"),
       requests: [connectRequest(wsPort)],
@@ -153,7 +156,7 @@ describe("ws package through HTTP CONNECT proxy", () => {
     using recorded = await startRecordingProxy({ requireAuth: true });
     const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
       proxy: `http://proxy_user:proxy_pass@127.0.0.1:${recorded.port}`,
-    });
+    } as ClientOptions);
     expect({ events: await wsEchoSession(ws, "hello with auth via ws"), requests: recorded.requests }).toEqual({
       events: echoed("hello with auth via ws"),
       requests: [connectRequest(wsPort, { "proxy-authorization": `Basic ${btoa("proxy_user:proxy_pass")}` })],
@@ -166,7 +169,7 @@ describe("ws package through HTTP CONNECT proxy", () => {
     const url = `ws://127.0.0.1:${wsPort}`;
     const ws = new WebSocket(url, {
       proxy: `http://127.0.0.1:${recorded.port}`, // No auth provided
-    });
+    } as ClientOptions);
     // The proxy answered 407 to a CONNECT without credentials.
     expect({ events: await wsFailingSession(ws), requests: recorded.requests }).toEqual({
       events: failed(url, "Proxy connection failed", 1006),
@@ -180,7 +183,7 @@ describe("ws package through HTTP CONNECT proxy", () => {
     const url = `ws://127.0.0.1:${wsPort}`;
     const ws = new WebSocket(url, {
       proxy: `http://wrong_user:wrong_pass@127.0.0.1:${recorded.port}`,
-    });
+    } as ClientOptions);
     // The credentials were sent, and the proxy answered 403.
     expect({ events: await wsFailingSession(ws), requests: recorded.requests }).toEqual({
       events: failed(url, "Proxy connection failed", 1006),
@@ -196,7 +199,7 @@ describe("ws package wss:// through HTTP proxy (TLS tunnel)", () => {
     const ws = new WebSocket(`wss://127.0.0.1:${wssPort}`, {
       proxy: `http://127.0.0.1:${recorded.port}`,
       tls: { rejectUnauthorized: false }, // Trust self-signed cert
-    });
+    } as ClientOptions);
     expect({ events: await wsEchoSession(ws, "hello via tls tunnel from ws"), requests: recorded.requests }).toEqual({
       events: echoed("hello via tls tunnel from ws"),
       requests: [connectRequest(wssPort)],
@@ -211,7 +214,7 @@ describe("ws package through HTTPS proxy (TLS proxy)", () => {
     const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
       proxy: `https://127.0.0.1:${recorded.port}`,
       tls: { ca: tlsCerts.cert }, // Trust self-signed proxy cert
-    });
+    } as ClientOptions);
     expect({ events: await wsEchoSession(ws, "hello via https proxy from ws"), requests: recorded.requests }).toEqual({
       events: echoed("hello via https proxy from ws"),
       requests: [connectRequest(wsPort)],
@@ -224,7 +227,7 @@ describe("ws package through HTTPS proxy (TLS proxy)", () => {
     const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
       proxy: `https://127.0.0.1:${recorded.port}`,
       tls: { rejectUnauthorized: false }, // Skip TLS verification for proxy
-    });
+    } as ClientOptions);
     expect({
       events: await wsEchoSession(ws, "hello via https proxy no verify from ws"),
       requests: recorded.requests,
@@ -241,7 +244,7 @@ describe("ws package through HTTPS proxy (TLS proxy)", () => {
     const ws = new WebSocket(url, {
       proxy: `https://127.0.0.1:${recorded.port}`,
       // No CA certificate: the proxy's self-signed certificate is not trusted.
-    });
+    } as ClientOptions);
     // The client reached the proxy and gave up inside the TLS handshake, before any CONNECT.
     expect({
       events: await wsFailingSession(ws),
@@ -275,7 +278,7 @@ describe("ws package with HttpsProxyAgent", () => {
     using recorded = await startRecordingProxy();
     const agent = new HttpsProxyAgent(`http://127.0.0.1:${recorded.port}`, {
       rejectUnauthorized: false,
-    });
+    } as any);
     const ws = new WebSocket(`wss://127.0.0.1:${wssPort}`, { agent });
     expect({
       events: await wsEchoSession(ws, "hello from wss via HttpsProxyAgent"),
@@ -325,7 +328,7 @@ describe("ws package with HttpsProxyAgent", () => {
     const ws = new WebSocket(`ws://127.0.0.1:${wsPort}`, {
       agent,
       proxy: `http://127.0.0.1:${explicitProxy.port}`, // This should take precedence
-    });
+    } as ClientOptions);
     expect({
       events: await wsEchoSession(ws, "explicit proxy wins"),
       explicitRequests: explicitProxy.requests,

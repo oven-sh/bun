@@ -15,7 +15,7 @@ test.skipIf(!isPosix)("Bun.serve static file route does not leak fds on 304 / HE
     fetch() {
       return new Response("fallback");
     },
-  });
+  } as Bun.Serve.Options<undefined>);
 
   const url = `http://localhost:${server.port}/test`;
 
@@ -75,7 +75,7 @@ test("Bun.serve static file route: graceful stop resolves after 304 / HEAD", asy
     fetch() {
       return new Response("fallback");
     },
-  });
+  } as Bun.Serve.Options<undefined>);
 
   const url = `http://localhost:${server.port}/test`;
 

@@ -116,7 +116,7 @@ async function withRawH2Server(
     };
     let buf = Buffer.alloc(0);
     let prefaceSeen = false;
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buf = Buffer.concat([buf, chunk]);
       if (!prefaceSeen) {
         if (buf.length < 24) return;
@@ -159,7 +159,7 @@ async function withRawH2Server(
 const slotLimit = isASAN ? 4 : 20;
 let live = 0;
 const waiters: Array<() => void> = [];
-async function spawnCapped(options: Parameters<typeof Bun.spawn>[0]) {
+async function spawnCapped(options: Bun.SpawnOptions.SpawnOptions<"ignore", "pipe", "pipe"> & { cmd: string[] }) {
   if (live >= slotLimit) {
     await new Promise<void>(r => waiters.push(r)); // slot handed off to us, `live` already counts it
   } else {
@@ -308,7 +308,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     const held: [http2.ServerHttp2Stream, string][] = [];
     const server = makeH2Server();
     server.on("session", () => sessions++);
-    server.on("stream", (stream, headers) => {
+    server.on("stream", (stream: http2.ServerHttp2Stream, headers: http2.IncomingHttpHeaders) => {
       const path = String(headers[":path"]);
       if (path === "/warmup") {
         stream.respond({ ":status": 200 });
@@ -473,9 +473,9 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     let sessions = 0;
     const server = makeH2Server();
     server.on("session", () => sessions++);
-    server.on("stream", stream => {
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
       const chunks: Buffer[] = [];
-      stream.on("data", c => chunks.push(c));
+      stream.on("data", (c: Buffer) => chunks.push(c));
       stream.on("end", () => {
         stream.respond({ ":status": 200 });
         stream.end(Buffer.concat(chunks));
@@ -573,7 +573,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
       let buf = Buffer.alloc(0);
       let prefaceSeen = false;
       socket.on("error", () => {});
-      socket.on("data", chunk => {
+      socket.on("data", (chunk: Buffer) => {
         buf = Buffer.concat([buf, chunk]);
         if (!prefaceSeen) {
           if (buf.length < 24) return;
@@ -631,7 +631,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     let sessions = 0;
     const server = makeH2Server();
     server.on("session", () => sessions++);
-    server.on("stream", (stream, headers) => {
+    server.on("stream", (stream: http2.ServerHttp2Stream, headers: http2.IncomingHttpHeaders) => {
       stream.respond({ ":status": 200 });
       stream.end(String(headers[":path"]));
     });
@@ -663,7 +663,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     const { promise: slowClosed, resolve: resolveSlowClosed } = Promise.withResolvers<number>();
     const server = makeH2Server();
     server.on("session", () => sessions++);
-    server.on("stream", (stream, headers) => {
+    server.on("stream", (stream: http2.ServerHttp2Stream, headers: http2.IncomingHttpHeaders) => {
       if (headers[":path"] === "/slow") {
         stream.on("close", () => resolveSlowClosed(stream.rstCode));
         // never respond; client will abort
@@ -751,8 +751,8 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     const seen: number[] = [];
     const server = makeH2Server();
     server.on("session", () => sessions++);
-    server.on("stream", (stream, headers) => {
-      seen.push(stream.id);
+    server.on("stream", (stream: http2.ServerHttp2Stream, headers: http2.IncomingHttpHeaders) => {
+      seen.push(stream.id!);
       stream.respond({ ":status": 200, "content-type": "text/plain" });
       stream.end(`req=${headers[":path"]}`);
     });
@@ -784,7 +784,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     let sessions = 0;
     const server = makeH2Server();
     server.on("session", () => sessions++);
-    server.on("stream", (stream, headers) => {
+    server.on("stream", (stream: http2.ServerHttp2Stream, headers: http2.IncomingHttpHeaders) => {
       const session = stream.session!;
       stream.respond({ ":status": 200 });
       stream.end("ok");
@@ -839,7 +839,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
 
   test("response trailers are consumed without breaking the body", async () => {
     const server = makeH2Server();
-    server.on("stream", stream => {
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
       stream.respond({ ":status": 200, "content-type": "text/plain" }, { waitForTrailers: true });
       stream.on("wantTrailers", () => stream.sendTrailers({ "x-trailer": "hello" }));
       stream.end("body-text");
@@ -868,7 +868,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     let sessions = 0;
     const server = makeH2Server();
     server.on("session", () => sessions++);
-    server.on("stream", (stream, headers) => {
+    server.on("stream", (stream: http2.ServerHttp2Stream, headers: http2.IncomingHttpHeaders) => {
       stream.on("error", () => {});
       if (headers[":path"] === "/bad") {
         stream.close(http2.constants.NGHTTP2_PROTOCOL_ERROR);
@@ -905,7 +905,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
   test("connection-specific request headers are stripped before HPACK", async () => {
     let seen: string[] = [];
     const server = makeH2Server();
-    server.on("stream", (stream, headers) => {
+    server.on("stream", (stream: http2.ServerHttp2Stream, headers: http2.IncomingHttpHeaders) => {
       seen = Object.keys(headers).filter(k => !k.startsWith(":"));
       stream.respond({ ":status": 200 });
       stream.end();
@@ -942,7 +942,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
 
   test("multiple Set-Cookie response headers survive HPACK decode", async () => {
     const server = makeH2Server();
-    server.on("stream", stream => {
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
       stream.respond({ ":status": 200, "set-cookie": ["a=b", "c=d", "e=f"] });
       stream.end();
     });
@@ -965,7 +965,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
 
   test("a 204, a 205 and the response to a HEAD request have a null body", async () => {
     const server = makeH2Server();
-    server.on("stream", (stream, headers) => {
+    server.on("stream", (stream: http2.ServerHttp2Stream, headers: http2.IncomingHttpHeaders) => {
       stream.on("error", () => {});
       if (headers[":method"] === "HEAD") {
         stream.respond({ ":status": 200, "content-length": "5" }, { endStream: true });
@@ -1266,7 +1266,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
         let buf = Buffer.alloc(0);
         let prefaceSeen = false;
         let sent100 = false;
-        socket.on("data", chunk => {
+        socket.on("data", (chunk: Buffer) => {
           buf = Buffer.concat([buf, chunk]);
           if (!prefaceSeen) {
             if (buf.length < 24) return;
@@ -1330,7 +1330,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
           // Reject immediately without 100; client should half-close with
           // an empty DATA+END_STREAM rather than uploading the body.
           conn.headers(id, hpackStatus(404), { endStream: true });
-          conn.socket.on("data", chunk => {
+          conn.socket.on("data", (chunk: Buffer) => {
             // crude: count any DATA frame payloads on this socket after reject
             let b = chunk;
             while (b.length >= 9) {
@@ -1758,7 +1758,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
   });
 
   test("flag off: ALPN does not offer h2", async () => {
-    let alpn: string | false | null = null;
+    let alpn = null as string | false | null;
     const server = nodetls.createServer({ ...tls, ALPNProtocols: ["h2", "http/1.1"] }, sock => {
       alpn = sock.alpnProtocol;
       sock.end("HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok");
@@ -1922,7 +1922,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     let sessions = 0;
     const server = makeH2Server({}, (req, res) => {
       const chunks: Buffer[] = [];
-      req.on("data", c => chunks.push(c));
+      req.on("data", (c: Buffer) => chunks.push(c));
       req.on("end", () => res.end(String(Buffer.concat(chunks).length)));
     });
     server.on("session", () => sessions++);
@@ -1968,7 +1968,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     await withH2Server(
       (req, res) => {
         const chunks: Buffer[] = [];
-        req.on("data", c => chunks.push(c));
+        req.on("data", (c: Buffer) => chunks.push(c));
         req.on("end", () => {
           const raw = Buffer.concat(chunks);
           res.writeHead(200, {
@@ -2339,7 +2339,7 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
 test("await fetch() over HTTP/2 resolves on headers, before a content-length body is fully received", async () => {
   let heldStream: http2.ServerHttp2Stream | undefined;
   const server = makeH2Server();
-  server.on("stream", stream => {
+  server.on("stream", (stream: http2.ServerHttp2Stream) => {
     stream.on("error", () => {});
     stream.respond({ ":status": 200, "content-length": "262144" });
     stream.write(Buffer.alloc(64 * 1024));
@@ -2507,7 +2507,7 @@ describe.skipIf(!isASAN)("request whose custom TLS context was evicted from the 
     if (protocol === "http2") {
       server = makeH2Server();
       server.on("sessionError", () => {});
-      server.on("stream", (stream, headers) => {
+      server.on("stream", (stream: http2.ServerHttp2Stream, headers: http2.IncomingHttpHeaders) => {
         stream.on("error", () => {});
         stream.respond({ ":status": 200 });
         if (headers[":path"] === "/hold") {

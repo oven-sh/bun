@@ -675,6 +675,11 @@ static bool canPerformFastPropertyEnumerationForIterationBun(Structure* s)
     return true;
 }
 
+static bool mayBeAsymmetricMatcher(JSValue value)
+{
+    return value.isCell() && !value.isEmpty() && value.asCell()->type() == JSC::JSType(JSDOMWrapperType);
+}
+
 JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, uint64_t i)
 {
     if (obj->canGetIndexQuickly(i)) {
@@ -821,7 +826,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     // need to check this before primitives, asymmetric matchers
     // can match against any type of value.
     if constexpr (enableAsymmetricMatchers) {
-        if (v2.isCell() && !v2.isEmpty() && v2.asCell()->type() == JSC::JSType(JSDOMWrapperType)) {
+        if (mayBeAsymmetricMatcher(v2)) {
             switch (matchAsymmetricMatcher(globalObject, v2, v1, scope)) {
             case AsymmetricMatcherResult::FAIL:
                 return false;
@@ -832,7 +837,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 RETURN_IF_EXCEPTION(scope, false);
                 break;
             }
-        } else if (v1.isCell() && !v1.isEmpty() && v1.asCell()->type() == JSC::JSType(JSDOMWrapperType)) {
+        } else if (mayBeAsymmetricMatcher(v1)) {
             switch (matchAsymmetricMatcher(globalObject, v1, v2, scope)) {
             case AsymmetricMatcherResult::FAIL:
                 return false;
@@ -1004,6 +1009,17 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             if constexpr (!isStrict) {
                 if (((left.isEmpty() || right.isEmpty()) && (left.isUndefined() || right.isUndefined()))) {
                     continue;
+                }
+            }
+
+            if constexpr (enableAsymmetricMatchers) {
+                // A matcher gets what reading the element gives: the value of a getter, undefined for a hole or past the end.
+                if (left.isEmpty() && mayBeAsymmetricMatcher(right)) {
+                    left = o1->getIndex(globalObject, static_cast<unsigned>(i));
+                    RETURN_IF_EXCEPTION(scope, false);
+                } else if (right.isEmpty() && mayBeAsymmetricMatcher(left)) {
+                    right = o2->getIndex(globalObject, static_cast<unsigned>(i));
+                    RETURN_IF_EXCEPTION(scope, false);
                 }
             }
 
@@ -3419,40 +3435,6 @@ extern "C" JSC::JSPromise* JSModuleLoader__import(JSC::JSGlobalObject* globalObj
 
     EXCEPTION_ASSERT(!!scope.exception() == !promise);
     return promise;
-}
-
-JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* globalObject, const unsigned char* arg1,
-    size_t arg2, const unsigned char* originUrlPtr, size_t originURLLen, const unsigned char* referrerUrlPtr, size_t referrerUrlLen,
-    JSC::EncodedJSValue JSValue5, JSC::EncodedJSValue* arg6)
-{
-    WTF::String src = WTF::String::fromUTF8(std::span { arg1, arg2 }).isolatedCopy();
-    WTF::URL origin = WTF::URL::fileURLWithFileSystemPath(WTF::String::fromUTF8(std::span { originUrlPtr, originURLLen })).isolatedCopy();
-    WTF::URL referrer = WTF::URL::fileURLWithFileSystemPath(WTF::String::fromUTF8(std::span { referrerUrlPtr, referrerUrlLen })).isolatedCopy();
-
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSC::SourceCode sourceCode = JSC::makeSource(
-        src, JSC::SourceOrigin { origin }, JSC::SourceTaintedOrigin::Untainted, origin.fileSystemPath(),
-        WTF::TextPosition(), JSC::SourceProviderSourceType::Module);
-    globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, origin.fileSystemPath()), JSC::ScriptFetchParameters::Type::JavaScript, WTF::move(sourceCode));
-    RETURN_IF_EXCEPTION(scope, {});
-    auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, origin.fileSystemPath()), JSC::Identifier::fromString(vm, referrer.fileSystemPath()), nullptr, nullptr);
-
-    if (scope.exception()) [[unlikely]] {
-        promise->rejectWithCaughtException(vm, scope);
-    }
-
-    auto status = promise->status();
-
-    if (status == JSC::JSPromise::Status::Fulfilled) {
-        return JSC::JSValue::encode(promise->result());
-    } else if (status == JSC::JSPromise::Status::Rejected) {
-        *arg6 = JSC::JSValue::encode(promise->result());
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    } else {
-        return JSC::JSValue::encode(promise);
-    }
 }
 
 JSC::EncodedJSValue JSC__JSValue__fromEntries(JSC::JSGlobalObject* globalObject, EncodedSlice* keys,

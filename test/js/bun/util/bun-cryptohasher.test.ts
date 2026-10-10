@@ -48,7 +48,7 @@ test("CryptoHasher.update(str, 'hex') rejects odd-length hex like node:crypto", 
   }
 
   // Error message echoes the encoding argument as passed.
-  expect(() => new Bun.CryptoHasher("sha1").update("abc", "HEX")).toThrow(
+  expect(() => new Bun.CryptoHasher("sha1").update("abc", "HEX" as any)).toThrow(
     expect.objectContaining({
       code: "ERR_INVALID_ARG_VALUE",
       message: "The argument 'encoding' is invalid for data of length 3. Received 'HEX'",
@@ -306,12 +306,12 @@ describe("HMAC", () => {
 
   for (let key of ["key", Buffer.from("key"), Buffer.from("key").buffer]) {
     test.each(Object.entries(hashes))("%s (key: " + key.constructor.name + ")", (algorithm, expected) => {
-      const hmac = new Bun.CryptoHasher(algorithm, key);
+      const hmac = new Bun.CryptoHasher(algorithm as Bun.SupportedCryptoAlgorithms, key as string | Buffer);
       hmac.update("data\n");
       const copied = hmac.copy();
       expect(copied.copy()).toBeInstanceOf(Bun.CryptoHasher);
 
-      const state = { algorithm, byteLength: expected.length / 2, digest: expected };
+      const state: any = { algorithm, byteLength: expected.length / 2, digest: expected };
       expect({ algorithm: hmac.algorithm, byteLength: hmac.byteLength, digest: hmac.digest("hex") }).toEqual(state);
       // The copy is still usable after the original was digested.
       expect({ algorithm: copied.algorithm, byteLength: copied.byteLength, digest: copied.digest("hex") }).toEqual(
@@ -426,16 +426,16 @@ describe("Hash matches reference digests", () => {
             const bytes = Buffer.from(digests[algorithm][i % sourceInputs.length], "hex");
             return encoding === undefined ? bytes : bytes.toString(encoding);
           });
-          const results = {
+          const results: Record<string, unknown[]> = {
             instance: inputs.map(input => {
               const hasher = new Bun.CryptoHasher(algorithm);
               // The input encoding argument has no effect on a Buffer or Blob input.
               expect(hasher.update(input, encoding)).toBe(hasher);
-              return hasher.digest(encoding);
+              return hasher.digest(encoding as any);
             }),
-            static: inputs.map(input => Bun.CryptoHasher.hash(algorithm, input, encoding)),
-            classInstance: inputs.map(input => new Class().update(input).digest(encoding)),
-            classStatic: inputs.map(input => Class.hash(input, encoding)),
+            static: inputs.map(input => Bun.CryptoHasher.hash(algorithm, input, encoding as any)),
+            classInstance: inputs.map(input => new Class().update(input).digest(encoding as any)),
+            classStatic: inputs.map(input => Class.hash(input, encoding as any)),
           };
           expect(results).toEqual({
             instance: expected,
@@ -491,7 +491,7 @@ describe("CryptoHasher", () => {
   };
 
   // The algorithm getter reports the canonical name of an alias.
-  const canonical: Record<string, string> = {
+  const canonical: Record<string, Bun.SupportedCryptoAlgorithms> = {
     "rmd160": "ripemd160",
     "sha128": "sha1",
     "sha-1": "sha1",
@@ -509,7 +509,7 @@ describe("CryptoHasher", () => {
 
   const encodings = ["hex", "base64", "base64url", "buffer", undefined] as const;
 
-  test.each(Object.entries(hello))("%s", (algorithm, hex) => {
+  test.each(Object.entries(hello) as [Bun.SupportedCryptoAlgorithms, string][])("%s", (algorithm, hex) => {
     const bytes = Buffer.from(hex, "hex");
     // "buffer" and no encoding both return the raw bytes.
     const expected = {
@@ -529,8 +529,8 @@ describe("CryptoHasher", () => {
       byteLength: bytes.length,
     });
     expect({
-      instance: collect(encoding => new Bun.CryptoHasher(algorithm).update("hello").digest(encoding)),
-      static: collect(encoding => Bun.CryptoHasher.hash(algorithm, "hello", encoding)),
+      instance: collect(encoding => new Bun.CryptoHasher(algorithm).update("hello").digest(encoding as any)),
+      static: collect(encoding => Bun.CryptoHasher.hash(algorithm, "hello", encoding as any)),
     }).toEqual({ instance: expected, static: expected });
   });
 });

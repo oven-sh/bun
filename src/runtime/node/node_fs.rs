@@ -7733,7 +7733,15 @@ impl NodeFS {
             #[cfg(not(windows))]
             let resolved = args.path.slice();
             if let Err(err) = zig_delete_tree(&sys::Dir::cwd(), resolved, sys::FileKind::File) {
-                if matches!(err, crate::Error::FileNotFound) {
+                let missing = match err {
+                    crate::Error::FileNotFound => true,
+                    #[cfg(not(windows))]
+                    crate::Error::NotDir => {
+                        rm_enotdir_path_is_missing(args.path.slice_z(&mut self.sync_error_buf))
+                    }
+                    _ => false,
+                };
+                if missing {
                     if args.force {
                         return Ok(());
                     }
@@ -7755,7 +7763,11 @@ impl NodeFS {
         let dest = args.path.slice_z(&mut self.sync_error_buf);
         if let Err(err1) = sys::unlink(dest) {
             let e1 = err1.get_errno();
-            if e1 == E::ENOENT {
+            #[cfg(not(windows))]
+            let missing = e1 == E::ENOENT || (e1 == E::ENOTDIR && rm_enotdir_path_is_missing(dest));
+            #[cfg(windows)]
+            let missing = e1 == E::ENOENT;
+            if missing {
                 if args.force {
                     return Ok(());
                 }
@@ -9504,6 +9516,17 @@ fn map_rm_errno_narrow(e: E) -> E {
         E::ELOOP | E::ENAMETOOLONG | E::ENOMEM | E::EROFS | E::EBUSY | E::ENOENT => e,
         _ => E::EFAULT,
     }
+}
+
+// unlink(2) of a missing path written with a trailing slash ("out/") reports
+// ENOTDIR instead of ENOENT on some filesystems (gVisor: google/gvisor#15303).
+// Node lstat()s the path before removing anything, so it sees the ENOENT and
+// `force` ignores it. When removal fails with ENOTDIR, ask lstat the same
+// question. A path that exists, or whose lstat fails any other way (a regular
+// file used as a directory: "file.txt/x"), keeps the original error.
+#[cfg(not(windows))]
+fn rm_enotdir_path_is_missing(path: &ZStr) -> bool {
+    matches!(Syscall::lstat(path), Err(e) if e.get_errno() == E::ENOENT)
 }
 
 /// # Safety

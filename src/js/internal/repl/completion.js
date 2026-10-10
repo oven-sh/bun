@@ -71,10 +71,20 @@ fixReplRequire(__node_module__);
 
 const { BuiltinModule } = require("internal/repl/node-shims");
 
-const nodeSchemeBuiltinLibs = ArrayPrototypeMap(getReplBuiltinLibs(), lib => `node:${lib}`);
-ArrayPrototypeForEach(BuiltinModule.getSchemeOnlyModuleNames(), lib =>
-  ArrayPrototypePush(nodeSchemeBuiltinLibs, `node:${lib}`),
+function toNodeSchemeId(lib) {
+  return `node:${lib}`;
+}
+function isNodeNamespaceLib(lib) {
+  return lib !== "bun" && !StringPrototypeStartsWith(lib, "bun:") && lib !== "undici" && lib !== "ws";
+}
+const nodeSchemeBuiltinLibs = ArrayPrototypeMap(
+  ArrayPrototypeFilter(getReplBuiltinLibs(), isNodeNamespaceLib),
+  toNodeSchemeId,
 );
+function pushSchemeOnlyId(lib) {
+  ArrayPrototypePush(nodeSchemeBuiltinLibs, `node:${lib}`);
+}
+ArrayPrototypeForEach(BuiltinModule.getSchemeOnlyModuleNames(), pushSchemeOnlyId);
 
 function isIdentifier(str) {
   if (str === "") {
@@ -216,18 +226,9 @@ function completeFSFunctions(match) {
   return [[completions], baseName];
 }
 
-// Provide a list of completions for the given leading text. This is
-// given to the readline interface for handling tab completion.
-//
-// Example:
-//  complete('let foo = util.')
-//    -> [['util.print', 'util.debug', 'util.log', 'util.inspect'],
-//        'util.' ]
-//
-// Warning: This evals code like "foo.bar.baz", so it could run property
-// getter code. To avoid potential triggering side-effects with getters the completion
-// logic is skipped when getters or proxies are involved in the expression.
-// (see: https://github.com/nodejs/node/issues/57829).
+// Provide tab-completion for the given leading text (evals property chains; skipped when
+// getters/proxies are involved — https://github.com/nodejs/node/issues/57829).
+// https://github.com/nodejs/node/blob/main/lib/repl.js
 function complete(line, callback) {
   // List of completion lists, one for each inheritance "level"
   let completionGroups = [];
@@ -426,10 +427,8 @@ function complete(line, callback) {
       return completionGroupsLoaded();
     }
 
-    // Destructuring keeps the "eval" property name out of member-access
-    // position: JSC's assertion-enabled builtin parser rejects `x.eval` /
-    // `x["eval"]` inside builtin sources, and minify-syntax would fold a
-    // bracket access back into dot form.
+    // Destructuring avoids `x.eval`/`x["eval"]` member-access form, which JSC's
+    // assertion-enabled builtin parser rejects inside builtin sources.
     const { eval: evalFn } = this;
 
     return includesProxiesOrGetters(
@@ -473,10 +472,8 @@ function complete(line, callback) {
                 p = ObjectGetPrototypeOf(p);
               }
             } catch {
-              // Maybe a Proxy object without `getOwnPropertyNames` trap.
-              // We simply ignore it here, as we don't want to break the
-              // autocompletion. Fixes the bug
-              // https://github.com/nodejs/node/issues/2119
+              // Maybe a Proxy without `getOwnPropertyNames` trap; ignore so autocompletion
+              // doesn't break (https://github.com/nodejs/node/issues/2119).
             }
 
             if (memberGroups.length) {
@@ -574,10 +571,6 @@ function findExpressionCompleteTarget(code) {
 
   if (code.at(-1) === ".") {
     if (code.at(-2) === "?") {
-      // The code ends with the optional chaining operator (`?.`),
-      // such code can't generate a valid AST so we need to strip
-      // the suffix, run this function's logic and add back the
-      // optional chaining operator to the result if present
       const result = findExpressionCompleteTarget(code.slice(0, -2));
       return !result ? result : `${result}?.`;
     }
@@ -596,12 +589,7 @@ function findExpressionCompleteTarget(code) {
     const keywords = code.split(" ");
 
     if (keywords.length > 1) {
-      // Something went wrong with the parsing, however this can be due to incomplete code
-      // (that is for example missing a closing bracket, as for example `{ a: obj.te`), in
-      // this case we take the last code keyword and try again
-      // upstream-todo(dario-piotrowicz): make this more robust, right now we only split by spaces
-      //                         but that's not always enough, for example it doesn't handle
-      //                         this code: `{ a: obj['hello world'].te`
+      // upstream-todo(dario-piotrowicz): space-split misses `{ a: obj['hello world'].te`.
       return findExpressionCompleteTarget(keywords.at(-1));
     }
 
@@ -781,11 +769,8 @@ function includesProxiesOrGetters(expr, exprStr, evalFn, ctx, callback) {
     }
 
     return evalFn(
-      // Note: this eval runs the property expression, which might be side-effectful, for example
-      //       the user could be running `obj[getKey()].` where `getKey()` has some side effects.
-      //       Arguably this behavior should not be too surprising, but if it turns out that it is,
-      //       then we can revisit this behavior and add logic to analyze the property expression
-      //       and eval it only if we can confidently say that it can't have any side effects
+      // Note: evals the property expression (e.g. `obj[getKey()].`), which may be side-effectful.
+      // https://github.com/nodejs/node/blob/main/lib/repl.js
       `try { ${exprStr.slice(astProp.start, astProp.end)} } catch {} `,
       ctx,
       getREPLResourceName(),

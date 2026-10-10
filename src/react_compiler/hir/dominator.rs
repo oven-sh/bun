@@ -161,7 +161,7 @@ fn build_reverse_graph(
     let mut node_index = IdMap::default();
     for (idx, id) in postorder.into_iter().enumerate() {
         // `remove` keeps the order of the other entries: it shifts them and
-        // rebuilds the map's index, in the arena, on every call.
+        // rebuilds the map's index on every call.
         let mut node = raw_nodes.swap_remove(id).unwrap();
         node.index = idx;
         node_index.insert(id, idx);

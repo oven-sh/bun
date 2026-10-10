@@ -13,8 +13,9 @@ use crate::{
 /// ParsedSourceMap can be acquired by different threads via the thread-safe
 /// source map store (SavedSourceMap), so the reference count must be thread-safe.
 pub struct ParsedSourceMap {
-    pub input_line_count: usize,
     pub mappings: mapping::List,
+    /// Bytes in the longest `sourcesContent` entry, for a map from JSON in which every source has one.
+    pub(crate) longest_source_text: Option<u32>,
     /// Set when this map's mappings are backed by an InternalSourceMap blob
     /// instead of a materialized `Mapping.List`. The blob is *owned* (freed in
     /// `Drop`) unless [`Self::is_standalone_module_graph`] — in that case the
@@ -63,8 +64,8 @@ impl Drop for ParsedSourceMap {
 impl Default for ParsedSourceMap {
     fn default() -> Self {
         Self {
-            input_line_count: 0,
             mappings: mapping::List::default(),
+            longest_source_text: None,
             internal: None,
             external_source_names: Vec::new(),
             underlying_provider: SourceContentPtr::NONE,
@@ -227,8 +228,8 @@ impl ParsedSourceMap {
     /// [`Self::is_standalone_module_graph`].
     pub fn from_internal(internal: InternalSourceMap) -> Self {
         Self {
-            input_line_count: internal.input_line_count(),
             mappings: mapping::List::default(),
+            longest_source_text: None,
             internal: Some(internal),
             external_source_names: Vec::new(),
             underlying_provider: SourceContentPtr::NONE,
@@ -249,6 +250,25 @@ impl ParsedSourceMap {
 
     pub fn internal_cursor(&self) -> Option<crate::internal_source_map::Cursor> {
         self.internal.as_ref().map(|ism| ism.cursor())
+    }
+
+    /// How many lines to make room for when indexing by the original line of a mapping.
+    pub fn original_line_bound(&self) -> u32 {
+        if let Some(internal) = &self.internal {
+            return (internal.input_line_count() as u32).saturating_add(1);
+        }
+        let named = self
+            .mappings
+            .original()
+            .iter()
+            .map(|at| at.lines.zero_based())
+            .max()
+            .map_or(0, |line| line.max(0) as u32 + 1);
+        match self.longest_source_text {
+            // A text of `n` bytes has at most `n + 1` lines.
+            Some(len) => named.min(len.saturating_add(1)),
+            None => named,
+        }
     }
 
     pub(crate) fn standalone_module_graph_data(&self) -> *mut crate::SerializedSourceMap::Loaded {

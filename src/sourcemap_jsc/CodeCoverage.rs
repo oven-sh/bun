@@ -840,7 +840,7 @@ impl ByteRangeMapping {
                 functions.push(ByteRange::of(min, max));
             }
         } else if let Some(parsed_mapping) = parsed_mappings_.as_deref() {
-            line_count = (parsed_mapping.input_line_count as u32) + 1;
+            line_count = parsed_mapping.original_line_bound();
             executable_lines = Bitset::init_empty(line_count as usize)?;
             lines_which_have_executed = Bitset::init_empty(line_count as usize)?;
             line_hits = vec![0u32; line_count as usize];

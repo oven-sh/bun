@@ -639,12 +639,14 @@ impl PatchTask {
                     );
                     return None;
                 }
-                bun_ast::add_warning_pretty!(
-                    log,
+                log.add_error_fmt(
                     None,
                     Loc::EMPTY,
-                    "patchfile <b>{}<r> is empty, please restore or delete it.",
-                    BStr::new(absolute_patchfile_path.as_bytes()),
+                    format_args!(
+                        "failed to stat patch file: {} ({})",
+                        e,
+                        BStr::new(absolute_patchfile_path.as_bytes())
+                    ),
                 );
                 return None;
             }

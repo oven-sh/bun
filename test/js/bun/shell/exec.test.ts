@@ -42,6 +42,11 @@ describe("bun exec", () => {
     )
     .runAsTest("write a lot of data");
 
+  TestBuilder.command`${BUN} exec ${`echo "$(echo -e 'a\\0b')"`}`
+    .env(bunEnv)
+    .stdout("ab\n")
+    .runAsTest("command substitution drops NUL bytes from the output");
+
   describe("--help works", () => {
     // prettier-ignore
     const programs = [

@@ -46,11 +46,21 @@ struct Components<'a> {
     component_wrapper_functions: &'a [Json],
 }
 
-pub struct State<'a> {
-    /// `None`: upstream's, which are detected in `finish`.
-    components: Option<Components<'a>>,
-    /// What upstream listens for.
+/// What tells upstream a component.
+struct Upstream<'a> {
+    detected: Detected<'a>,
+    /// What it listens for, but for what cannot be reported.
     queue: Queue<'a>,
+    /// The file has one of [`RELATED`].
+    has_related: bool,
+    /// The settings have `componentWrapperFunctions`.
+    has_wrapper_functions: bool,
+}
+
+pub struct State<'a> {
+    components: Option<Components<'a>>,
+    /// `None`: it is oxlint's flavour.
+    upstream: Option<Upstream<'a>>,
     in_jsx_attribute_expression: AncestorMemo<'a, bool>,
     inside_create_element_props_object: AncestorMemo<'a, bool>,
     nearest_create_element_call: AncestorMemo<'a, Expr<'a>>,
@@ -84,7 +94,7 @@ impl Rule for NoUnstableNestedComponents {
         let has_jsx = file.has_exprs([ExprTag::Jsx]) || file.mentions("createElement");
         let has_wrapper_functions = match is_oxlint {
             true => !component_wrapper_functions(file).is_empty(),
-            false => file.settings().get(b"componentWrapperFunctions").is_some(),
+            false => has_wrapper_functions(file),
         };
         let mut on = On::new().classes();
         if has_jsx || has_related {
@@ -110,9 +120,15 @@ impl Rule for NoUnstableNestedComponents {
             let component_wrapper_functions = component_wrapper_functions(file);
             Components { functions_with_jsx: FunctionsWithJsx::new(file), component_wrapper_functions }
         });
+        let upstream = (!is_oxlint).then(|| Upstream {
+            detected: Detected::new(file),
+            queue: Queue::default(),
+            has_related: file.mentions_any(&RELATED),
+            has_wrapper_functions: has_wrapper_functions(file),
+        });
         Some(State {
             components,
-            queue: Queue::default(),
+            upstream,
             in_jsx_attribute_expression: AncestorMemo::default(),
             inside_create_element_props_object: AncestorMemo::default(),
             nearest_create_element_call: AncestorMemo::default(),
@@ -128,21 +144,18 @@ impl Rule for NoUnstableNestedComponents {
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        if cx.language().is_oxlint || ast_utils::is_function_with_body(func) {
-            self.listen(Node::Func(func), cx);
-        }
+        self.listen(Node::Func(func), cx);
     }
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
-        // upstream listens for declarations only.
-        if cx.language().is_oxlint || matches!(class.owner(), Node::Stmt(_)) {
-            self.listen(Node::Class(class), cx);
-        }
+        self.listen(Node::Class(class), cx);
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let mut detected = Detected::new(cx.file());
-        while let Some(event) = cx.state.queue.pop_until(At::END) {
+        let Some(Upstream { mut detected, mut queue, .. }) = cx.state.upstream.take() else {
+            return;
+        };
+        while let Some(event) = queue.pop_until(At::END) {
             detected.advance(event.at);
             check(self, event.node, Some(&mut detected), cx);
         }
@@ -151,10 +164,53 @@ impl Rule for NoUnstableNestedComponents {
 
 impl NoUnstableNestedComponents {
     fn listen<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        match cx.language().is_oxlint {
-            true => check(self, node, None, cx),
-            false => cx.state.queue.push(At::enter(node), 0, node),
+        let Some(upstream) = &mut cx.state.upstream else {
+            return check(self, node, None, cx);
+        };
+        if upstream.can_report(node) {
+            upstream.queue.push(At::enter(node), 0, node);
         }
+    }
+}
+
+/// `context.settings.componentWrapperFunctions`
+fn has_wrapper_functions(file: &File) -> bool {
+    file.settings().get(b"componentWrapperFunctions").is_some()
+}
+
+impl<'a> Upstream<'a> {
+    /// Whether it listens for `node`, which then returns JSX or can be in the list of components. `false` is certain.
+    fn can_report(&self, node: Node<'a>) -> bool {
+        match node {
+            Node::Func(func) => {
+                ast_utils::is_function_with_body(func)
+                    && (self.detected.is_returning_jsx_or_null(node, Branches::Any) || self.can_be_related(node))
+            }
+            Node::Class(class) => matches!(class.owner(), Node::Stmt(_)),
+            Node::Expr(call) => {
+                let is_called = |name: &str| {
+                    call.callee().is_some_and(|callee| callee.is_ident(name) || is_member_called(callee, name))
+                };
+                self.has_wrapper_functions || is_called("memo") || is_called("forwardRef") || self.can_be_related(node)
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether `getRelatedComponent` can find `node`: a declaration, or the `init`, the `right` or the `value` of its
+    /// parent.
+    fn can_be_related(&self, node: Node<'a>) -> bool {
+        self.has_related
+            && match node.as_written() {
+                Node::Stmt(_) => true,
+                Node::Expr(e) => match e.parent() {
+                    Node::VarDecl(_) | Node::Prop(_) => true,
+                    Node::Expr(parent) => matches!(parent.tag(), ExprTag::Assign | ExprTag::Binary),
+                    Node::Stmt(parent) => matches!(parent.tag(), StmtTag::ForIn | StmtTag::ForOf),
+                    _ => false,
+                },
+                _ => false,
+            }
     }
 }
 
@@ -169,7 +225,12 @@ fn check<'a>(
     let is_oxlint = detected.is_none();
     // What takes no walk comes first. oxlint goes by the JSX in a function and by names.
     let (is_component, is_returning_jsx) = match (detected.as_deref(), &state.components) {
-        (Some(detected), _) => (detected.get(node).is_some(), detected.is_returning_jsx(node, Branches::Any)),
+        (Some(detected), _) => {
+            // The first is known of every function.
+            let is_returning_jsx = detected.is_returning_jsx_or_null(node, Branches::Any)
+                && detected.is_returning_jsx(node, Branches::Any);
+            (detected.get(node).is_some(), is_returning_jsx)
+        }
         (None, Some(components)) => match components.name_of_candidate(node) {
             Some(name) => {
                 (matches!(node, Node::Expr(_)) || name.is_some_and(|name| is_react_component_name(name.bytes())), true)

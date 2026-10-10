@@ -248,9 +248,10 @@ fn refuse_unknown_fields(key: &[u8], setting: &Json) -> Result<(), ConfigError> 
         let Some((unknown, _)) = properties.iter().find(|it| !has_word(known, &it.0)) else {
             continue;
         };
-        let names: Vec<Vec<u8>> = (known.split(' ').filter(|it| !it.is_empty()))
-            .map(|it| [b"`", it.as_bytes(), b"`"].concat())
-            .collect();
+        let names: Vec<Vec<u8>> = (strings::split(known.as_bytes(), b" ")
+            .filter(|it| !it.is_empty()))
+        .map(|it| [b"`", it, b"`"].concat())
+        .collect();
         let expected = match &names[..] {
             [] => b"there are no fields".to_vec(),
             [one] => [b"expected ", &one[..]].concat(),

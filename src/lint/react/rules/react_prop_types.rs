@@ -40,6 +40,14 @@ impl Rule for PropTypes {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
+        // The stages look at every function, and few files without JSX have a component.
+        if !file.has_exprs([ExprTag::Jsx]) {
+            let mut detection = Components::new(file);
+            detection.finish();
+            if detection.length() == 0 {
+                return;
+            }
+        }
         let mut components = Components::new(file).with(declared(&self.custom_validators)).with(used(file));
         components.finish();
         let nothing = DeclaredPropTypes::default();

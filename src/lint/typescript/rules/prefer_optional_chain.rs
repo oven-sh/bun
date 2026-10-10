@@ -285,7 +285,11 @@ fn chain_length(node: Compared) -> u32 {
 /// `compareNodes`
 pub struct Comparer {
     stack: bun_core::StackCheck,
+    /// In how many JSX elements the node is. Counted for tsgolint only.
+    jsx_depth: u32,
 }
+
+const JSX: NodeTags = NodeTags::new().exprs(&[ExprTag::Jsx]);
 
 impl Comparer {
     /// Whether `a` is equal to or a subset of `b`.
@@ -1804,7 +1808,7 @@ impl Rule for PreferOptionalChain {
         .has_suggestions()
         .presets(Presets::STYLISTIC_TYPE_CHECKED)
         .requires_types();
-    const ON: On = On::new().exprs(&[ExprTag::Binary]);
+    const ON: On = On::new().exprs(&[ExprTag::Binary]).enter(JSX.exprs(&[ExprTag::Binary])).exit(JSX);
     type State<'a> = Comparer;
 
     fn new(options: &Options) -> Self {
@@ -1835,14 +1839,38 @@ impl Rule for PreferOptionalChain {
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Comparer> {
         Some(Comparer {
             stack: bun_core::StackCheck::init(),
+            jsx_depth: 0,
         })
+    }
+
+    // tsgolint leaves alone what is in JSX, where `a && a.b` can be `false` or `null`. That takes the order of the
+    // source.
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        match file.language().is_oxlint && file.has_exprs([ExprTag::Jsx]) {
+            true => On::new().enter(JSX.exprs(&[ExprTag::Binary])).exit(JSX),
+            false => On::new().exprs(&[ExprTag::Binary]),
+        }
+    }
+
+    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        match node {
+            Node::Expr(node) if node.tag() == ExprTag::Jsx => {
+                cx.state.jsx_depth = cx.state.jsx_depth.saturating_add(1);
+            }
+            Node::Expr(node) => self.expr(node, cx),
+            _ => {}
+        }
+    }
+
+    fn exit<'a>(&self, _: Node<'a>, cx: &mut Cx<'a, Self>) {
+        cx.state.jsx_depth = cx.state.jsx_depth.saturating_sub(1);
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Binary { op, left, right } = node.kind() else {
             return;
         };
-        if matches!(op, BinOp::And | BinOp::Or) {
+        if matches!(op, BinOp::And | BinOp::Or) && cx.state.jsx_depth == 0 {
             self.check_logical_chain(node, op, left, right, cx);
         }
         if matches!(op, BinOp::Or | BinOp::Nullish) {

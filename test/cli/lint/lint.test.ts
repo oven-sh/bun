@@ -4104,6 +4104,172 @@ describe.concurrent("bun lint", () => {
           with5: ["2:14 no-unsafe-assignment", "2:28 no-unsafe-member-access"],
           with6: ["1:14 no-unsafe-assignment", "1:26 no-unsafe-member-access"],
         },
+        // What TypeScript 7.0 has removed means what it meant as long as a TypeScript before it is installed.
+        // `baseUrl`: what is neither relative nor a package
+        "explicit-base-url": {
+          options: {
+            "strict": true,
+            "noEmit": true,
+            "types": [],
+            "lib": ["es2022"],
+            "target": "es2022",
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "baseUrl": "./src",
+          },
+          files: {
+            "a.ts": 'import { v } from "lib/v";\nexport const x1 = v.a;\n',
+            "src/lib/v.ts": "export const v = { a: 1 };\n",
+          },
+          with5: [],
+          with6: [],
+        },
+        // `paths` are relative to `baseUrl`
+        "explicit-base-url-paths": {
+          options: {
+            "strict": true,
+            "noEmit": true,
+            "types": [],
+            "lib": ["es2022"],
+            "target": "es2022",
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "baseUrl": "./src",
+            "paths": { "@lib/*": ["lib/*"] },
+          },
+          files: {
+            "a.ts": 'import { v } from "@lib/v";\nexport const x1 = v.a;\n',
+            "src/lib/v.ts": "export const v = { a: 1 };\n",
+          },
+          with5: [],
+          with6: [],
+        },
+        // An inherited `baseUrl` counts from the file that has it
+        "explicit-base-url-extends": {
+          options: {},
+          files: {
+            "a.ts":
+              'import { v } from "lib/v";\nimport { w } from "lib/w";\nexport const x1 = v.a;\nexport const x2 = w.a;\n',
+            "config/base.json":
+              '{ "compilerOptions": { "strict": true, "noEmit": true, "types": [], "lib": ["es2022"], "target": "es2022", "module": "esnext", "moduleResolution": "bundler", "baseUrl": "./src" } }\n',
+            "config/src/lib/v.ts": "export const v = { a: 1 };\n",
+            "src/lib/w.ts": "export const w = { a: 1 };\n",
+            "tsconfig.json": '{"extends": "./config/base.json", "include": ["*.ts"]}',
+          },
+          with5: ["4:14 no-unsafe-assignment", "4:21 no-unsafe-member-access"],
+          with6: ["4:14 no-unsafe-assignment", "4:21 no-unsafe-member-access"],
+        },
+        // `moduleResolution: node10` does not know `exports`
+        "explicit-node10-exports": {
+          options: {
+            "strict": true,
+            "noEmit": true,
+            "types": [],
+            "lib": ["es2022"],
+            "target": "es2022",
+            "module": "esnext",
+            "moduleResolution": "node10",
+          },
+          files: {
+            "a.ts": 'import { v } from "pkg/sub";\nexport const x1 = v.a;\n',
+            "node_modules/pkg/lib/s.d.ts": "export declare const v: { a: number };\n",
+            "node_modules/pkg/package.json":
+              '{ "name": "pkg", "version": "1.0.0", "exports": { "./sub": { "types": "./lib/s.d.ts" } } }\n',
+          },
+          with5: ["2:14 no-unsafe-assignment", "2:21 no-unsafe-member-access"],
+          with6: ["2:14 no-unsafe-assignment", "2:21 no-unsafe-member-access"],
+        },
+        // nor the name of the package itself
+        "explicit-node-self-name": {
+          options: {
+            "strict": true,
+            "noEmit": true,
+            "types": [],
+            "target": "es2022",
+            "lib": ["es2022"],
+            "module": "esnext",
+            "moduleResolution": "node",
+          },
+          files: {
+            "a.ts": 'import { x } from "p/x";\nexport const x1 = x.a;\n',
+            "package.json": '{ "name": "p", "version": "1.0.0", "exports": { "./x": "./src/x.ts" } }\n',
+            "src/x.ts": "export const x = { a: 1 };\n",
+          },
+          with5: ["2:14 no-unsafe-assignment", "2:21 no-unsafe-member-access"],
+          with6: ["2:14 no-unsafe-assignment", "2:21 no-unsafe-member-access"],
+        },
+        // `moduleResolution: classic` does not look into node_modules
+        "explicit-classic": {
+          options: {
+            "strict": true,
+            "noEmit": true,
+            "types": [],
+            "lib": ["es2022"],
+            "target": "es2022",
+            "module": "esnext",
+            "moduleResolution": "classic",
+          },
+          files: {
+            "a.ts": 'import { v } from "pkg";\nexport const x1 = v.a;\n',
+            "node_modules/pkg/index.d.ts": "export declare const v: { a: number };\n",
+            "node_modules/pkg/package.json": '{ "name": "pkg", "version": "1.0.0", "types": "index.d.ts" }\n',
+          },
+          with5: ["2:14 no-unsafe-assignment", "2:21 no-unsafe-member-access"],
+          with6: ["2:14 no-unsafe-assignment", "2:21 no-unsafe-member-access"],
+        },
+        // `module: amd` stands for it
+        "explicit-module-amd": {
+          options: {
+            "strict": true,
+            "noEmit": true,
+            "types": [],
+            "lib": ["es2022"],
+            "target": "es2022",
+            "module": "amd",
+          },
+          files: {
+            "a.ts": 'import { v } from "pkg";\nexport const x1 = v.a;\n',
+            "node_modules/pkg/index.d.ts": "export declare const v: { a: number };\n",
+            "node_modules/pkg/package.json": '{ "name": "pkg", "version": "1.0.0", "types": "index.d.ts" }\n',
+          },
+          with5: ["2:14 no-unsafe-assignment", "2:21 no-unsafe-member-access"],
+          with6: ["2:14 no-unsafe-assignment", "2:21 no-unsafe-member-access"],
+        },
+        // `esModuleInterop: false`: no default import of `export =`
+        "explicit-interop-false": {
+          options: {
+            "strict": true,
+            "noEmit": true,
+            "types": [],
+            "lib": ["es2022"],
+            "target": "es2022",
+            "module": "commonjs",
+            "moduleResolution": "node10",
+            "esModuleInterop": false,
+            "allowSyntheticDefaultImports": false,
+          },
+          files: {
+            "a.ts": 'import f from "cjs";\nexport const x1 = f();\n',
+            "node_modules/cjs/index.d.ts": "declare function f(): number;\nexport = f;\n",
+            "node_modules/cjs/package.json": '{ "name": "cjs", "version": "1.0.0", "types": "index.d.ts" }\n',
+          },
+          with5: ["2:14 no-unsafe-assignment", "2:19 no-unsafe-call"],
+          with6: ["2:14 no-unsafe-assignment", "2:19 no-unsafe-call"],
+        },
+        // `target: es5`, and with it the library
+        "explicit-target-es5": {
+          options: {
+            "strict": true,
+            "noEmit": true,
+            "types": [],
+            "target": "es5",
+            "module": "esnext",
+            "moduleResolution": "bundler",
+          },
+          files: { "a.ts": "export const x1 = [1].includes(1);\n" },
+          with5: ["1:14 no-unsafe-assignment", "1:19 no-unsafe-call"],
+          with6: ["1:14 no-unsafe-assignment", "1:19 no-unsafe-call"],
+        },
       };
       const projects = Object.entries(probes).flatMap(([name, probe]) => [
         [`${name}/tsconfig.json`, JSON.stringify({ compilerOptions: probe.options, include: ["*.ts"] })],

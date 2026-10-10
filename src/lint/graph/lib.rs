@@ -314,29 +314,27 @@ impl<'h> Graph<'h> {
 
     fn load_project(&self, config: &[u8], directory: &[u8]) -> Project {
         let flag = |name: &[u8]| (name.to_vec(), Json::Bool(true));
-        // Whatever the project says: what is linted is also JavaScript.
+        let word = |name: &[u8], word: &[u8]| (name.to_vec(), Json::String(word.to_vec()));
+        // Whatever the project says: what is linted is also JavaScript, and the resolvers that are followed here do not
+        // read how TypeScript is to resolve.
         let over = || {
             vec![
                 flag(b"allowJs"),
                 flag(b"resolveJsonModule"),
                 flag(b"allowImportingTsExtensions"),
+                word(b"module", b"esnext"),
+                word(b"moduleResolution", b"bundler"),
             ]
         };
         let (disk, session) = (self.store.disk(), &self.store.session);
         let loaded = (!config.is_empty())
             .then(|| load_overriding(&WithoutListings(disk), session, config, &|_| over()).ok());
         loaded.flatten().unwrap_or_else(|| {
-            let mut options = over();
-            options.push((b"module".to_vec(), Json::String(b"esnext".to_vec())));
-            options.push((
-                b"moduleResolution".to_vec(),
-                Json::String(b"bundler".to_vec()),
-            ));
             // With a file, so that the directory is not searched for files.
             without_config(
                 &WithoutListings(disk),
                 directory,
-                Json::Object(options),
+                Json::Object(over()),
                 vec![b"index.ts".to_vec()],
             )
         })

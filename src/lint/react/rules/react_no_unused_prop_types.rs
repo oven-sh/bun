@@ -49,6 +49,14 @@ impl Rule for NoUnusedPropTypes {
         if !has_declaration {
             return;
         }
+        // Few files without JSX have a component, which the detection alone finds out at a fourth of the price.
+        if !file.has_exprs([ExprTag::Jsx]) {
+            let mut detection = Components::new(file);
+            detection.finish();
+            if detection.list().is_empty() {
+                return;
+            }
+        }
         let mut components = Components::new(file).with(prop_types).with(used(file));
         components.finish();
         for id in components.list() {

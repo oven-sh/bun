@@ -1285,7 +1285,8 @@ pub struct AsRequire<'a> {
     pub module_directories: &'a [&'a [u8]],
     /// Absolute. Where a package is looked for after these.
     pub paths: &'a [&'a [u8]],
-    /// `compilerOptions.paths` are asked before any of these.
+    /// `compilerOptions.paths` are asked before any of these, and `exports` of a package counts: as
+    /// eslint-import-resolver-typescript has it.
     pub through_paths: bool,
 }
 
@@ -2705,7 +2706,7 @@ impl<'h> Resolver<'h> {
             // Nor is anything looked for in `@types`.
             typescript: false,
             declarations: false,
-            ignores_exports: true,
+            ignores_exports: !how.through_paths,
             as_require: true,
             ..self.look(ResolutionMode::Require, true, &outcome)
         };

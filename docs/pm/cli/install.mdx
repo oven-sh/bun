@@ -382,6 +382,8 @@ Bun stores installed packages from npm in `~/.bun/install/cache/${name}@${versio
 
 When the `node_modules` folder exists, Bun decides whether to install a package by checking that the `"name"` and `"version"` in its `package.json` at the expected `node_modules` location match the expected name and version. It uses a custom JSON parser which stops parsing as soon as it finds `"name"` and `"version"`.
 
+A package with an entry in `"patchedDependencies"` is also checked for its patch. Bun writes the hash of the patch file as the first key, `"_bunPatchHash"`, of the `package.json` of the patched copy. It installs the package again when that hash is not the hash of the wanted patch, and when the copy has a hash but no patch is wanted.
+
 When a `bun.lock` doesn’t exist or `package.json` has changed dependencies, Bun downloads and extracts tarballs eagerly while resolving.
 
 When a `bun.lock` exists and `package.json` hasn’t changed, Bun downloads missing dependencies lazily. If the package with a matching `name` and `version` already exists in the expected location within `node_modules`, Bun doesn’t attempt to download the tarball.

@@ -81,7 +81,8 @@ pub(crate) fn field_type_from_js(
         }
     }
 
-    if value.is_any_int() {
+    // Not is_any_int(): JSC's Int52 test rejects 2^51 and up. -0 stays DOUBLE to keep its sign.
+    if value.is_safe_integer() && !value.is_negative_zero() {
         let int = value.to_int64();
 
         if int >= 0 {

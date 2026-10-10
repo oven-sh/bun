@@ -4,6 +4,228 @@ import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { totalmem } from "node:os";
 const origPrepareStackTrace = Error.prepareStackTrace;
+
+const columnCaptureFixture = String.raw`
+const assert = require("node:assert/strict");
+globalThis.rows = [];
+globalThis.capture = function capture(label) {
+  const previous = Error.prepareStackTrace;
+  try {
+    Error.prepareStackTrace = (_, frames) => frames;
+    const structured = {};
+    Error.captureStackTrace(structured, capture);
+    const frame = structured.stack[0];
+    const position = [frame.getLineNumber(), frame.getColumnNumber()];
+    const textPosition = text => /:(\d+):(\d+)\)?$/.exec(text)?.slice(1).map(Number);
+    assert.deepEqual(position, textPosition(frame.toString()), label);
+    assert.ok(position[0] >= 1 && position[1] >= 1, label);
+    assert.ok(position[1] - 1 >= 0, "source-map consumers subtract one");
+    assert.equal(frame.isNative(), false);
+    const json = frame.toJSON();
+    assert.deepEqual([json.lineNumber, json.columnNumber], position);
+    assert.equal(json.sourceURL, frame.getFileName());
+    Error.prepareStackTrace = undefined;
+    const textual = {};
+    Error.captureStackTrace(textual, capture);
+    assert.deepEqual(textPosition(textual.stack.split("\n")[1]), position, label);
+    rows.push({ label, position, eval: frame.isEval(), async: frame.isAsync(), file: frame.getFileName() });
+  } finally {
+    Error.prepareStackTrace = previous;
+  }
+};
+`;
+
+for (const extension of ["mjs", "ts"]) {
+  test.concurrent(`CallSite columns and stack columns are one-based (${extension})`, async () => {
+    using dir = tempDir("callsite-columns", {
+      "capture.cjs": columnCaptureFixture,
+      [`entry.${extension}`]: [
+        'import "./capture.cjs";',
+        'capture("first");',
+        'const value = capture("expression");',
+        'new capture("constructor");',
+        "const object = { capture };",
+        'object.capture("method");',
+        "async function asyncCase() {",
+        "  await Promise.resolve();",
+        'capture("async");',
+        "}",
+        "await asyncCase();",
+        `eval("capture('eval')");`,
+        "const factory = () => capture;",
+        'factory()("chain");',
+        "factory()",
+        '("multiline-chain");',
+        '(capture)("parenthesized");',
+        'object["capture"]("computed");',
+        extension === "ts" ? 'const typed: number = 1; capture("typed");' : 'const typed = 1; capture("typed");',
+        "console.log(JSON.stringify(rows));",
+      ].join("\n"),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), `entry.${extension}`],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const rows = JSON.parse(stdout);
+    expect(rows.map(row => row.label)).toEqual([
+      "first",
+      "expression",
+      "constructor",
+      "method",
+      "async",
+      "eval",
+      "chain",
+      "multiline-chain",
+      "parenthesized",
+      "computed",
+      "typed",
+    ]);
+    expect(rows.slice(0, 5).map(row => row.position)).toEqual([
+      [2, 1],
+      [3, 15],
+      [4, 1],
+      [6, 8],
+      [9, 1],
+    ]);
+    expect(rows.map(row => row.eval)).toEqual([
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+    ]);
+    expect(rows.map(row => row.async)).toEqual(Array(11).fill(false));
+    for (const row of rows) expect(row.file.endsWith(`entry.${extension}`)).toBe(true);
+    expect(rows[10].position).toEqual([19, extension === "ts" ? 26 : 18]);
+    expect(exitCode).toBe(0);
+  });
+}
+
+for (const mapKind of ["inline", "external"]) {
+  test.concurrent(`CallSite columns preserve ${mapKind} source-map positions`, async () => {
+    const map = JSON.stringify({
+      version: 3,
+      sources: ["original.ts"],
+      sourcesContent: ['capture("mapped-first");\n        capture("mapped-indented");\n'],
+      names: [],
+      mappings: ";;AAAA;AACQ",
+    });
+    using dir = tempDir("callsite-mapped-columns", {
+      "capture.cjs": columnCaptureFixture,
+      "entry.mjs": [
+        "// @bun",
+        'import "./capture.cjs";',
+        '    capture("mapped-first");',
+        '    capture("mapped-indented");',
+        "console.log(JSON.stringify(rows));",
+        `//# sourceMappingURL=${mapKind === "external" ? "entry.mjs.map" : `data:application/json;base64,${Buffer.from(map).toString("base64")}`}`,
+      ].join("\n"),
+      "entry.mjs.map": map,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const rows = JSON.parse(stdout);
+    expect(rows.map(row => [row.label, row.position, row.eval, row.async])).toEqual([
+      ["mapped-first", [1, 1], false, false],
+      ["mapped-indented", [2, 9], false, false],
+    ]);
+    for (const row of rows) expect(row.file.endsWith("original.ts")).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+}
+
+test.concurrent("CallSite constructor columns across source lines", async () => {
+  const source = String.raw`
+const assert = require("node:assert/strict");
+const bodies = ["    new\nError()", "new\nError()", "\n    new\nError()", "    new\r\nError()", "/*😀*/ new\nError()"];
+const expected = [[1, 5], [1, 1], [2, 5], [1, 5], [1, 8]];
+for (const mode of ["frames", "text"]) {
+  Error.prepareStackTrace = mode === "frames" ? (_, frames) => frames : undefined;
+  for (let i = 0; i < bodies.length; i++) {
+    const stack = eval(bodies[i]).stack;
+    const position = mode === "frames" ? [stack[0].getLineNumber(), stack[0].getColumnNumber()] : /:(\d+):(\d+)\)?$/.exec(stack.split("\n")[1])?.slice(1).map(Number);
+    assert.deepEqual(position, expected[i], mode + ": " + bodies[i]);
+  }
+}
+console.log("constructor positions passed");
+`;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "constructor positions passed\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("CallSite columns preserve async continuation metadata", async () => {
+  using dir = tempDir("callsite-async-columns", {
+    "entry.mjs": [
+      "async function leaf() {",
+      "await Promise.resolve();",
+      "const error = {};",
+      "Error.captureStackTrace(error);",
+      "return error;",
+      "}",
+      "async function parent() {",
+      "return await leaf();",
+      "}",
+      "Error.prepareStackTrace = (_, frames) => frames;",
+      "const error = await parent();",
+      "console.log(JSON.stringify(error.stack.slice(0, 2).map(frame => ({",
+      "  position: [frame.getLineNumber(), frame.getColumnNumber()],",
+      "  textPosition: /:(\\d+):(\\d+)\\)?$/.exec(frame.toString()).slice(1).map(Number),",
+      "  async: frame.isAsync(), eval: frame.isEval(), native: frame.isNative(),",
+      '  file: frame.getFileName().endsWith("entry.mjs"),',
+      "}))));",
+    ].join("\n"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual([
+    { position: [4, 7], textPosition: [4, 7], async: false, eval: false, native: false, file: true },
+    // JSC selects the awaited call; V8 selects `await`. Preserve the location while fixing its units.
+    { position: [8, 14], textPosition: [8, 14], async: true, eval: false, native: false, file: true },
+  ]);
+  expect(exitCode).toBe(0);
+});
+
+test("CallSite native positions are null", () => {
+  Error.prepareStackTrace = (_, frames) => frames;
+  let frames;
+  nativeFrameForTesting(() => {
+    frames = new Error().stack;
+    return 0;
+  });
+  const native = frames[1];
+  expect(native.isNative()).toBe(true);
+  expect([native.getLineNumber(), native.getColumnNumber()]).toEqual([null, null]);
+  expect([native.toJSON().lineNumber, native.toJSON().columnNumber]).toEqual([null, null]);
+  expect(native.toString()).toEndWith("(native)");
+});
+
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
 });

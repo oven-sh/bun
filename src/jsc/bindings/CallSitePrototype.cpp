@@ -135,15 +135,20 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetFileName, (JSGlobalObject * globalO
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetLineNumber, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
-    // https://github.com/mozilla/source-map/blob/60adcb064bf033702d954d6d3f9bc3635dcb744b/lib/source-map-consumer.js#L484-L486
-    return JSC::JSValue::encode(jsNumber(std::max(callSite->lineNumber().oneBasedInt(), 1)));
+    auto line = callSite->lineNumber();
+    if (line == OrdinalNumber::beforeFirst())
+        return JSC::JSValue::encode(JSC::jsNull());
+    return JSC::JSValue::encode(jsNumber(line.oneBasedInt()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetColumnNumber, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
-    // https://github.com/mozilla/source-map/blob/60adcb064bf033702d954d6d3f9bc3635dcb744b/lib/source-map-consumer.js#L488-L489
-    return JSC::JSValue::encode(jsNumber(std::max(callSite->columnNumber().zeroBasedInt(), 0)));
+    // V8 CallSite positions are one-based; source-map-support subtracts one.
+    auto column = callSite->columnNumber();
+    if (column == OrdinalNumber::beforeFirst())
+        return JSC::JSValue::encode(JSC::jsNull());
+    return JSC::JSValue::encode(jsNumber(column.oneBasedInt()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetScriptId, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -248,9 +253,11 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncToJSON, (JSGlobalObject * globalObject
 {
     ENTER_PROTO_FUNC();
     JSObject* obj = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
+    auto line = callSite->lineNumber();
+    auto column = callSite->columnNumber();
     Bun::putDirectNamed(vm, obj, "sourceURL"_s, callSite->sourceURL());
-    Bun::putDirectNamed(vm, obj, "lineNumber"_s, jsNumber(callSite->lineNumber().oneBasedInt()));
-    Bun::putDirectNamed(vm, obj, "columnNumber"_s, jsNumber(callSite->columnNumber().zeroBasedInt()));
+    Bun::putDirectNamed(vm, obj, "lineNumber"_s, line == OrdinalNumber::beforeFirst() ? JSC::jsNull() : jsNumber(line.oneBasedInt()));
+    Bun::putDirectNamed(vm, obj, "columnNumber"_s, column == OrdinalNumber::beforeFirst() ? JSC::jsNull() : jsNumber(column.oneBasedInt()));
     Bun::putDirectNamed(vm, obj, "functionName"_s, callSite->functionName());
     return JSC::JSValue::encode(obj);
 }

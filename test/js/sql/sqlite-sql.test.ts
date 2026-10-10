@@ -915,6 +915,102 @@ describe("Query Execution", () => {
     expect(result2).toHaveLength(1);
     expect(result2[0].id).toBe(2);
   });
+
+  // These tests `await` the cancelled query directly. A pending promise inside
+  // `expect().rejects` does not trip the test timeout, so a hang would stall the file.
+  function settle(promise: Promise<unknown>) {
+    return promise.then(
+      () => "resolved",
+      (error: Error & { code?: string }) => ({ code: error.code, message: error.message }),
+    );
+  }
+
+  test("cancel() before the query runs rejects when awaited", async () => {
+    const query = sql`SELECT 1 AS x`;
+    query.cancel();
+    expect(query.cancelled).toBe(true);
+
+    expect(await settle(query)).toEqual({ code: "ERR_SQLITE_QUERY_CANCELLED", message: "Query cancelled" });
+    // The connection stays usable.
+    expect(await sql`SELECT 2 AS x`).toEqual([{ x: 2 }]);
+  });
+
+  test("cancel() before the query runs settles a Promise.all batch", async () => {
+    const cancelled = sql`SELECT 1 AS x`;
+    cancelled.cancel();
+    const live = sql`SELECT 2 AS x`;
+
+    expect(await settle(Promise.all([cancelled, live]))).toEqual({
+      code: "ERR_SQLITE_QUERY_CANCELLED",
+      message: "Query cancelled",
+    });
+    expect(await live).toEqual([{ x: 2 }]);
+  });
+
+  test("cancel() before execute() rejects instead of running", async () => {
+    await sql`CREATE TABLE cancel_before_execute (id INTEGER)`;
+    const query = sql`INSERT INTO cancel_before_execute VALUES (1)`;
+    query.cancel();
+    query.execute();
+    // execute() settles the query in the call. The await below would start it as well.
+    expect(Bun.peek.status(query)).toBe("rejected");
+
+    expect(await settle(query)).toEqual({ code: "ERR_SQLITE_QUERY_CANCELLED", message: "Query cancelled" });
+    expect(await sql`SELECT count(*) AS n FROM cancel_before_execute`).toEqual([{ n: 0 }]);
+  });
+
+  // A query that never runs opens no connection, so the server does not need to exist.
+  test.each([
+    ["postgres://u:p@127.0.0.1:9/db", "ERR_POSTGRES_QUERY_CANCELLED"],
+    ["mysql://u:p@127.0.0.1:9/db", "ERR_MYSQL_QUERY_CANCELLED"],
+  ])("cancel() before the query runs rejects for %s", async (url, code) => {
+    await using remote = new SQL(url);
+    const query = remote`SELECT 1 AS x`;
+    query.cancel();
+
+    expect(await settle(query)).toEqual({ code, message: "Query cancelled" });
+  });
+
+  // Transaction queries use their own Query handler. Each test owns its database,
+  // because a transaction that hangs keeps its connection.
+  test("cancel() before the query runs rejects inside a transaction", async () => {
+    await using db = new SQL(":memory:");
+    const result = await db.begin(async tx => {
+      const query = tx`SELECT 1 AS x`;
+      query.cancel();
+      const outcome = await settle(query);
+      // The transaction stays usable.
+      return [outcome, await tx`SELECT 2 AS x`];
+    });
+
+    expect(result).toEqual([{ code: "ERR_SQLITE_QUERY_CANCELLED", message: "Query cancelled" }, [{ x: 2 }]]);
+  });
+
+  test("a transaction that returns a query cancelled before it runs rolls back", async () => {
+    await using db = new SQL(":memory:");
+    await db`CREATE TABLE cancel_in_transaction (id INTEGER)`;
+    const transaction = db.begin(tx => {
+      const cancelled = tx`SELECT 1 AS x`;
+      cancelled.cancel();
+      return [tx`INSERT INTO cancel_in_transaction VALUES (1)`, cancelled];
+    });
+
+    expect(await settle(transaction)).toEqual({ code: "ERR_SQLITE_QUERY_CANCELLED", message: "Query cancelled" });
+    expect(await db`SELECT count(*) AS n FROM cancel_in_transaction`).toEqual([{ n: 0 }]);
+  });
+
+  test("a query that tx.close() cancels before it runs rejects when awaited", async () => {
+    await using db = new SQL(":memory:");
+    let lazy: Promise<unknown> | undefined;
+    await settle(
+      db.begin(async tx => {
+        lazy = tx`SELECT 1 AS x`; // created, not awaited: close() cancels it
+        await tx.close();
+      }),
+    );
+
+    expect(await settle(lazy!)).toEqual({ code: "ERR_SQLITE_QUERY_CANCELLED", message: "Query cancelled" });
+  });
 });
 
 // Bun's bundled SQLite allows 250000 parameters. A system libsqlite3 (macOS) can stop at 32766.
@@ -1253,6 +1349,152 @@ describe("Transactions", () => {
 
     const accounts = await sql`SELECT * FROM accounts WHERE id = 1`;
     expect(accounts[0].balance).toBe(1002);
+  });
+
+  // The callback ends the transaction by hand, so the ROLLBACK of close() fails. The
+  // transaction is closing all the same: begin() sends ROLLBACK again and never COMMIT.
+  test("a transaction whose close() failed is rolled back again, not committed", async () => {
+    let closeError: unknown;
+    const outcome = await sql
+      .begin(async tx => {
+        await tx`UPDATE accounts SET balance = 0 WHERE id = 1`;
+        await tx.unsafe("ROLLBACK");
+        closeError = await tx.close().then(
+          () => null,
+          error => error.message,
+        );
+      })
+      .then(
+        () => "committed",
+        error => error.message,
+      );
+
+    expect({ closeError, outcome }).toEqual({
+      closeError: "cannot rollback - no transaction is active",
+      outcome: "cannot rollback - no transaction is active",
+    });
+    expect(await sql`SELECT balance FROM accounts WHERE id = 1`).toEqual([{ balance: 1000 }]);
+  });
+
+  // Here the callback returns while close({ timeout }) still waits, so begin() sends the
+  // ROLLBACK that fails and reports it. bun:test fails this test if close() reports the same
+  // failure a second time, as an unhandled rejection.
+  test("a ROLLBACK that fails for begin() is not reported again by a close({ timeout }) that still waits", async () => {
+    const outcome = await sql
+      .begin(async tx => {
+        await tx`UPDATE accounts SET balance = 0 WHERE id = 1`;
+        await tx.unsafe("ROLLBACK");
+        tx`SELECT 1 AS x`;
+        tx.close({ timeout: 60 });
+      })
+      .then(
+        () => "committed",
+        error => error.message,
+      );
+
+    expect(outcome).toBe("cannot rollback - no transaction is active");
+  });
+});
+
+// Inside sql.begin() a row is inserted and the callback closes the transaction. close() with
+// a timeout first waits, for at most the timeout, for the queries that are pending on the
+// transaction. The timeout here is far longer than the test, so only those queries can end
+// the wait. However the callback calls close(), the row must not be committed.
+//
+// The row count comes from a second connection, which sees committed rows only. bun:test
+// also fails these tests if close() leaves a rejection unhandled.
+describe("tx.close() rolls the transaction back", () => {
+  const connectionClosed = "ERR_SQLITE_CONNECTION_CLOSED";
+  type Order = [name: string, close: (tx: Bun.TransactionSQL) => Promise<void>, expected: string];
+  const orders: Order[] = [
+    [
+      "close({ timeout }) with no second query",
+      async tx => {
+        await tx.close({ timeout: 60 });
+      },
+      connectionClosed,
+    ],
+    [
+      "close({ timeout }) after a second query that nothing awaits",
+      async tx => {
+        tx`SELECT 1 AS x`;
+        await tx.close({ timeout: 60 });
+      },
+      connectionClosed,
+    ],
+    [
+      "close({ timeout }) after a second query that is cancelled before it runs",
+      async tx => {
+        tx`SELECT 1 AS x`.cancel();
+        await tx.close({ timeout: 60 });
+      },
+      connectionClosed,
+    ],
+    [
+      "close({ timeout }) after a cancelled second query that the callback awaited",
+      async tx => {
+        await tx`SELECT 1 AS x`.cancel().catch(() => {});
+        await tx.close({ timeout: 60 });
+      },
+      connectionClosed,
+    ],
+    [
+      "close({ timeout }) that the callback does not await",
+      async tx => {
+        tx`SELECT 1 AS x`;
+        tx.close({ timeout: 60 });
+      },
+      connectionClosed,
+    ],
+    // Each then() moves the callback one microtask later against the wait of close().
+    ...[0, 1, 2, 3].map(
+      (hops): Order => [
+        `close({ timeout }) that the callback does not await, while it awaits the second query behind ${hops} then() calls`,
+        async tx => {
+          let second: Promise<unknown> = tx`SELECT 1 AS x`;
+          for (let hop = 0; hop < hops; hop++) second = second.then(rows => rows);
+          tx.close({ timeout: 60 });
+          await second;
+        },
+        connectionClosed,
+      ],
+    ),
+    [
+      "close() that the callback does not await",
+      async tx => {
+        tx.close();
+      },
+      connectionClosed,
+    ],
+    [
+      "close({ timeout }) that still waits when the callback throws",
+      async tx => {
+        tx`SELECT 1 AS x`;
+        tx.close({ timeout: 60 });
+        throw new Error("callback error");
+      },
+      "callback error",
+    ],
+  ];
+
+  test.each(orders)("%s", async (_, close, expected) => {
+    await using dir = tempDir("sqlite-tx-close", {});
+    const url = `sqlite://${join(String(dir), "db.sqlite")}`;
+    await using db = new SQL(url);
+    await db`CREATE TABLE t (v INTEGER)`;
+    const begin = await db
+      .begin(async tx => {
+        await tx`INSERT INTO t VALUES (1)`;
+        await close(tx);
+      })
+      .then(
+        () => "committed",
+        error => error.code ?? error.message,
+      );
+
+    await using reader = new SQL(url);
+    const [{ rows }] = await reader`SELECT count(*) AS rows FROM t`;
+    expect({ begin, rows }).toEqual({ begin: expected, rows: 0 });
   });
 });
 

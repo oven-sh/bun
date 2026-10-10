@@ -477,6 +477,8 @@ setTimeout(() => query.cancel(), 100);
 await query;
 ```
 
+A query that you cancel before it starts never runs. It rejects with the adapter's `QUERY_CANCELLED` error, for example `ERR_POSTGRES_QUERY_CANCELLED`, when you await it or call `.execute()`.
+
 ---
 
 ## Database Environment Variables

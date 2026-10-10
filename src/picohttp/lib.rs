@@ -4,6 +4,7 @@ use core::fmt;
 
 use bstr::BStr;
 
+use bun_core::fmt::shell_word;
 use bun_core::output::enable_ansi_colors_stderr;
 use bun_core::pretty_fmt;
 
@@ -205,12 +206,11 @@ impl fmt::Display for HeaderCurlFormatter<'_> {
         if header.value_len > 0 {
             write!(
                 f,
-                "-H \"{}: {}\"",
-                BStr::new(header.name()),
-                BStr::new(header.value())
+                "-H {}",
+                shell_word(&[header.name(), b": ", header.value()])
             )
         } else {
-            write!(f, "-H \"{}\"", BStr::new(header.name()))
+            write!(f, "-H {}", shell_word(&[header.name()]))
         }
     }
 }
@@ -330,8 +330,9 @@ pub struct RequestCurlFormatter<'a> {
 }
 
 impl<'a> RequestCurlFormatter<'a> {
-    fn is_printable_body(content_type: &[u8]) -> bool {
-        if content_type.is_empty() {
+    fn is_printable_body(content_type: &[u8], body: &[u8]) -> bool {
+        // No argument of a command can hold a NUL.
+        if content_type.is_empty() || body.is_empty() || strings::contains_char(body, 0) {
             return false;
         }
 
@@ -345,20 +346,27 @@ impl<'a> RequestCurlFormatter<'a> {
 impl fmt::Display for RequestCurlFormatter<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let request = self.request;
+        let url = [request.path];
+        let url = shell_word(&url);
         if enable_ansi_colors_stderr() {
             f.write_str(pretty_fmt!("<r><d>[fetch] $<r> ", true))?;
 
             write!(
                 f,
-                pretty_fmt!("<b><cyan>curl<r> <d>--http1.1<r> <b>\"{}\"<r>", true),
-                BStr::new(request.path),
+                pretty_fmt!("<b><cyan>curl<r> <d>--http1.1<r> <b>{}<r>", true),
+                url,
             )?;
         } else {
-            write!(f, "curl --http1.1 \"{}\"", BStr::new(request.path))?;
+            write!(f, "curl --http1.1 {}", url)?;
+        }
+
+        // curl expands `[1-3]` and `{a,b}` in a URL unless globbing is off.
+        if strings::index_of_any(request.path, b"[]{}").is_some() {
+            f.write_str(" --globoff")?;
         }
 
         if request.method != b"GET" {
-            write!(f, " -X {}", BStr::new(request.method))?;
+            write!(f, " -X {}", shell_word(&[request.method]))?;
         }
 
         if self.ignore_insecure {
@@ -382,13 +390,8 @@ impl fmt::Display for RequestCurlFormatter<'_> {
             }
         }
 
-        if !self.body.is_empty() && Self::is_printable_body(content_type) {
-            f.write_str(" --data-raw ")?;
-            bun_core::js_printer::write_json_string(
-                self.body,
-                f,
-                bun_core::strings::Encoding::Utf8,
-            )?;
+        if Self::is_printable_body(content_type, self.body) {
+            write!(f, " --data-raw {}", shell_word(&[self.body]))?;
         }
 
         Ok(())

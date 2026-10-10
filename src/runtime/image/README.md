@@ -12,9 +12,16 @@ off the JS thread.
 | `codecs.rs`                           | thin `extern fn` wrappers over libjpeg-turbo / libspng / libwebp + the `Format` sniffer + the pixel-limit guard | bumping a codec, adding a format         |
 | `exif.rs`                             | JPEG APP1/TIFF Orientation reader (tag 0x0112 only)                                                             | extending EXIF coverage                  |
 | `quantize.rs`                         | median-cut RGBA → palette for `png({palette})`                                                                  | dithering, perceptual weighting          |
+| `codec_heif.rs`                       | HEIC/HEIF decode on Linux via dlopen'd system libheif                                                           | HEIC behaviour on Linux                  |
 | `backend_coregraphics.rs`             | macOS ImageIO/CoreGraphics, lazy `dlopen`                                                                       | macOS-specific behaviour                 |
 | `backend_wic.rs`                      | Windows WIC, COM                                                                                                | Windows-specific behaviour               |
 | `../bun.js/bindings/image_resize.cpp` | highway resize/rotate/flip/modulate kernels (`bun_image_*` C ABI)                                               | new filter, perf work                    |
+
+`heif` in `codecs.rs` is the same shape for one format: a `#[cfg(target_os = "linux")]`
+re-export of `codec_heif`, tried when the system backend is absent or declines.
+Nothing links against libheif — it is resolved with `dlsym` at first use, so a
+host without `libheif.so.1` keeps returning `UnsupportedOnPlatform` for HEIC, as Linux
+does today. Decode only: HEIC output needs an HEVC encoder, which Bun does not ship.
 
 `system_backend` in `codecs.rs` is a cfg-gated module re-export — absent on Linux (callers gate on `HAS_SYSTEM_BACKEND`), so the dispatch
 compiles away. On macOS/Windows the backend is tried first; it returns

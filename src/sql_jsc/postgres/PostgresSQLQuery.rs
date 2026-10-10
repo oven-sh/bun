@@ -80,6 +80,8 @@ pub struct Flags {
     pub(crate) simple: bool,
     /// Rejected while the server still answers it: its response is skipped until `ReadyForQuery`.
     pub(crate) discard_response: bool,
+    /// Its Parse is on the wire while `status` is still `Pending`: it is no longer unsent.
+    pub(crate) prepare_sent: bool,
     /// Which connection counter this request's dispatch incremented; reset to
     /// `None` when `finish_request` consumes that contribution, so the
     /// decrement is idempotent across its call sites.
@@ -104,6 +106,7 @@ impl Default for Flags {
             bigint: false,
             simple: false,
             discard_response: false,
+            prepare_sent: false,
             counter: RequestCounter::None,
             result_mode: PostgresSQLQueryResultMode::Objects,
         }
@@ -154,6 +157,12 @@ impl PostgresSQLQuery {
     #[inline]
     pub(crate) fn release_statement(&self) {
         self.statement.set(None);
+    }
+
+    /// No byte of this request was written, so the server cannot have seen it.
+    #[inline]
+    pub(crate) fn is_unsent(&self) -> bool {
+        self.status.get() == Status::Pending && !self.flags.get().prepare_sent
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -273,6 +282,38 @@ impl PostgresSQLQuery {
             return;
         };
         self.on_js_error(e, global_object);
+    }
+
+    /// The connection closed with this request unsent: JS runs it elsewhere or rejects it with `reason`.
+    pub(crate) fn requeue(&self, reason: JSValue, global_object: &JSGlobalObject) {
+        let _guard = self.ref_guard();
+        debug_assert!(self.is_unsent());
+        self.release_statement();
+        let Some(this_value) = self.this_value.get().try_get() else {
+            return;
+        };
+        let Some(target_value) = self.get_target(global_object, true) else {
+            return;
+        };
+        // The next `run()` upgrades it again, and that can be inside the callback.
+        self.this_value.with_mut(|r| r.downgrade());
+
+        // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
+        let vm = crate::jsc::VirtualMachine::get().as_mut();
+        let function = vm
+            .sql_state()
+            .postgresql_context
+            .on_query_requeue_fn
+            .get()
+            .unwrap();
+        let event_loop = vm.event_loop_mut();
+        event_loop.run_callback(
+            bun_event_loop::ContextId::NONE,
+            function,
+            global_object,
+            this_value,
+            &[target_value, reason.to_error().unwrap_or(reason)],
+        );
     }
 
     pub(crate) fn allow_gc(this_value: JSValue, global_object: &JSGlobalObject) {
@@ -772,6 +813,7 @@ impl PostgresSQLQuery {
                         f.set(ConnectionFlags::WAITING_TO_PREPARE, true);
                         connection.flags.set(f);
                     }
+                    this.update_flags(|f| f.prepare_sent = true);
                     did_write = true;
                 }
                 // Unnamed prepared statements with params: skip writeQuery+Sync here.

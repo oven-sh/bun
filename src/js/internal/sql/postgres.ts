@@ -16,7 +16,7 @@ const {
 } = require("internal/sql/shared");
 const {
   SQLQueryFlags,
-  symbols: { _results, _handle },
+  symbols: { _results, _handle, _requeue },
 } = require("internal/sql/query");
 function isTypedArray(value: any) {
   // Buffer should be treated as a normal object
@@ -311,6 +311,15 @@ initPostgres(
       query.reject(reject as Error);
     } catch {}
   },
+
+  // The connection closed with this query still unsent: the server never saw it.
+  function onRequeuePostgresQuery(
+    query: Query<any, any>,
+    reason: Error | (PostgresErrorOptions & { message: string }),
+  ) {
+    if ($isObject(reason)) reason = wrapPostgresError(reason);
+    query[_requeue](reason as Error);
+  },
 );
 
 export interface PostgresDotZig {
@@ -324,6 +333,7 @@ export interface PostgresDotZig {
       is_last: boolean,
     ) => void,
     onRejectQuery: (query: Query<any, any>, err: Error, queries) => void,
+    onRequeueQuery: (query: Query<any, any>, err: Error) => void,
   ) => void;
   createConnection: (
     hostname: string | undefined,
@@ -629,7 +639,7 @@ function invoke<T>(callback: (arg?: T) => void, arg?: T) {
   }
 }
 
-// The members onResolvePostgresQuery/onRejectPostgresQuery read off a query.
+// The members onResolvePostgresQuery/onRejectPostgresQuery/onRequeuePostgresQuery read off a query.
 class ListenQuery {
   resolve!: () => void;
   reject!: (err: unknown) => void;
@@ -638,6 +648,11 @@ class ListenQuery {
 
   constructor(handle: $ZigGeneratedClasses.PostgresSQLQuery) {
     this[_handle] = handle;
+  }
+
+  // Bound to one connection; after a drop #sweep() issues LISTEN again anyway.
+  [_requeue](err: unknown) {
+    this.reject(err);
   }
 
   static run(conn: ListenHandle, sql: string): Promise<void> {

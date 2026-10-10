@@ -10,6 +10,8 @@ const _values = Symbol("values");
 const _flags = Symbol("flags");
 const _results = Symbol("results");
 const _adapter = Symbol("adapter");
+const _requeue = Symbol("requeue");
+const _slot = Symbol("slot");
 
 const PublicPromise = Promise;
 
@@ -31,6 +33,8 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   public [_strings]: QueryStrings;
   public [_values]: any[];
   public [_flags]: SQLQueryFlags;
+  /** The pool connection that counts this query as its own; the pool sets and clears it. */
+  public [_slot]: { unbindQuery(query: Query<any, any>): void } | null;
 
   public readonly [_adapter]: DatabaseAdapter<any, any, Handle>;
 
@@ -94,6 +98,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     this[_strings] = strings;
     this[_values] = values;
     this[_flags] = flags;
+    this[_slot] = null;
 
     this[_results] = null;
   }
@@ -209,6 +214,29 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     }
 
     return this[_reject](x);
+  }
+
+  // The connection this query was queued on closed before sending it, so the
+  // server never saw it. A pool query goes back to the pool and runs on
+  // another connection. A query bound to that one connection (transaction,
+  // reserved) fails with the close error.
+  [_requeue](err: Error) {
+    this[_slot]?.unbindQuery(this);
+    const status = this[_queryStatus];
+    if (status & (SQLQueryStatus.error | SQLQueryStatus.invalidHandle)) {
+      return;
+    }
+    if (status & SQLQueryStatus.cancelled) {
+      return this.reject(this[_adapter].queryCancelledError());
+    }
+    if (!(this[_flags] & SQLQueryFlags.pooled)) {
+      return this.reject(err);
+    }
+    try {
+      this[_handler](this, this[_handle]!);
+    } catch (err) {
+      this.reject(err as Error);
+    }
   }
 
   cancel() {
@@ -340,6 +368,8 @@ enum SQLQueryFlags {
   bigint = 1 << 2,
   simple = 1 << 3,
   notTagged = 1 << 4,
+  /** dispatched by the pool to any free connection, so it can move to another one */
+  pooled = 1 << 5,
 }
 
 const enum SQLQueryStatus {
@@ -361,5 +391,7 @@ export default {
     _strings,
     _values,
     _results,
+    _requeue,
+    _slot,
   },
 };

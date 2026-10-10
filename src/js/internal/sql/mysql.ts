@@ -13,7 +13,7 @@ const {
 } = require("internal/sql/shared");
 const {
   SQLQueryFlags,
-  symbols: { _results, _handle },
+  symbols: { _results, _handle, _requeue },
 } = require("internal/sql/query");
 const { MySQLError } = require("internal/sql/errors");
 
@@ -85,6 +85,12 @@ initMySQL(
       query.reject(reject as Error);
     } catch {}
   },
+
+  // The connection closed with this query still unsent: the server never saw it.
+  function onRequeueMySQLQuery(query: Query<any, any>, reason: Error | (MySQLErrorOptions & { message: string })) {
+    if ($isObject(reason)) reason = wrapError(reason);
+    query[_requeue](reason as Error);
+  },
 );
 
 export interface MySQLDotZig {
@@ -100,6 +106,7 @@ export interface MySQLDotZig {
       affected_rows: number,
     ) => void,
     onRejectQuery: (query: Query<any, any>, err: Error, queries) => void,
+    onRequeueQuery: (query: Query<any, any>, err: Error) => void,
   ) => void;
   createConnection: (
     hostname: string | undefined,

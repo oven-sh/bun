@@ -17,6 +17,11 @@ impl Rule for NoAnonymousDefaultExport {
     }
 
     // `export default ..`
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new().stmts(&[StmtTag::ExportDefault, StmtTag::Fn, StmtTag::Class]);
+        if file.mentions("exports") { on.exprs(&[ExprTag::Assign]) } else { on }
+    }
+
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         match stmt.kind() {
             StmtKind::ExportDefault(e) => check(e, cx),
@@ -32,9 +37,6 @@ impl Rule for NoAnonymousDefaultExport {
 
     // `module.exports = ..`
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if !cx.file().mentions("exports") {
-            return;
-        }
         if let ExprKind::Assign { target, value, .. } = e.kind()
             && matches!(get_inner_expression(value).tag(), ExprTag::Fn | ExprTag::Class)
             && is_common_js_export(target)

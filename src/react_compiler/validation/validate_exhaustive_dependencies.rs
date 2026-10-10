@@ -802,10 +802,10 @@ fn collect_dependencies(
                         // onFinishMemoize — mirrors TS behavior
                         let sm = cb.start_memo.take();
                         if let Some(sm) = sm {
-                            assert_eq!(
-                                sm.manual_memo_id, *manual_memo_id,
-                                "Found FinishMemoize without corresponding StartMemoize"
-                            );
+                            crate::diagnostics::invariant(
+                                sm.manual_memo_id == *manual_memo_id,
+                                "Found FinishMemoize without corresponding StartMemoize",
+                            )?;
 
                             if cb.validate_memo {
                                 // Visit the decl to add it as a dependency candidate

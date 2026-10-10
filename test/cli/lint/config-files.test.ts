@@ -782,6 +782,132 @@ describe.concurrent("every run evaluates an eslint.config.js", () => {
   );
 });
 
+describe.concurrent("what is built in is not loaded to evaluate an eslint.config.js", () => {
+  const timeout = isDebug || isASAN ? 120_000 : 30_000;
+  // The parts of typescript-eslint that count, in the shape that TypeScript gives them. Each large module notes that it is loaded.
+  const notes = (directory: string) =>
+    `require("node:fs").appendFileSync(__dirname + "/${"../".repeat(directory.split("/").length)}loaded.txt", "${directory}\\n");\n`;
+  const interop = `var __importDefault = mod => (mod && mod.__esModule ? mod : { default: mod });\n`;
+  const esModule = `Object.defineProperty(exports, "__esModule", { value: true });\n`;
+  const reports = (message: string) =>
+    `{ meta: { schema: [] }, create: context => ({ Program(node) { context.report({ node, message: "${message}" }); } }) }`;
+  const [typescript, estree, rules] = [
+    "node_modules/typescript/lib",
+    "node_modules/@typescript-eslint/typescript-estree/dist",
+    "node_modules/@typescript-eslint/eslint-plugin/dist/rules",
+  ];
+  const description = (version: string, main: string) => JSON.stringify({ version, main });
+  const packages = (version: string) => ({
+    "node_modules/typescript/package.json": description("5.9.3", "lib/typescript.js"),
+    [`${typescript}/typescript.js`]: `${notes(typescript)}module.exports = { version: "5.9.3" };`,
+    "node_modules/@typescript-eslint/typescript-estree/package.json": description(version, "dist/index.js"),
+    [`${estree}/index.js`]: `${notes(estree)}${esModule}${interop}
+      const typescript_1 = __importDefault(require("typescript"));
+      exports.roots = [];
+      exports.addCandidateTSConfigRootDir = root => ({ count: exports.roots.push(root) });
+      exports.version = typescript_1.default.version;`,
+    "node_modules/@typescript-eslint/eslint-plugin/package.json": description(version, "dist/index.js"),
+    "node_modules/@typescript-eslint/eslint-plugin/dist/index.js": `${interop}
+      const rules_1 = __importDefault(require("./rules"));
+      const typescript_estree_1 = require("@typescript-eslint/typescript-estree");
+      const plugin = { meta: { name: "@typescript-eslint/eslint-plugin", version: "${version}" }, rules: rules_1.default };
+      module.exports = {
+        plugin,
+        estree: typescript_estree_1,
+        configs: {
+          get recommended() {
+            const noted = (0, typescript_estree_1.addCandidateTSConfigRootDir)("here");
+            // Nobody knows what another version makes of it.
+            if (${!version.startsWith("8.")} && noted.count !== 1) throw new Error("not noted");
+            return { plugins: { "@typescript-eslint": plugin }, rules: { "@typescript-eslint/no-explicit-any": "error" } };
+          },
+        },
+      };`,
+    [`${rules}/index.js`]: `${notes(rules)}${esModule}
+      exports.default = { "no-explicit-any": ${reports("the package's")}, "not-built-in": ${reports("not built in")} };`,
+    "a.ts": "export const a: any = 1;\n",
+  });
+
+  /** What is reported, and the large modules that were loaded. */
+  async function run(config: string, version = "8.71.1") {
+    using dir = tempDir("bun-lint-config-stand-ins", {
+      ...packages(version),
+      "eslint.config.mjs": `import all from "@typescript-eslint/eslint-plugin";\n${config}`,
+    });
+    await using proc = spawn({
+      cmd: [...command, "--threads", "2", "-f", "unix", "a.ts"],
+      env,
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const file = join(String(dir), "loaded.txt");
+    const loaded = existsSync(file) ? readFileSync(file, "utf8").split("\n").filter(Boolean) : [];
+    const reported = [...stdout.matchAll(/a\.ts:(\d+:\d+): (.+) \[Error\/.+\]\r?$/gm)].map(it => `${it[1]} ${it[2]}`);
+    return { reported, loaded: [...new Set(loaded)].sort(), failure: /^error: .*/m.exec(stderr)?.[0] };
+  }
+  const builtIn = "1:17 Unexpected any. Specify a different type.";
+  const recommended = `export default [{ files: ["**/*.ts"], ...all.configs.recommended }];`;
+
+  test(
+    "a configuration that only names rules loads none",
+    async () => {
+      expect(await run(recommended)).toEqual({ reported: [builtIn], loaded: [], failure: undefined });
+    },
+    timeout,
+  );
+
+  test(
+    "a rule that is not built in is the package's",
+    async () => {
+      const config = `export default [{ files: ["**/*.ts"], ...all.configs.recommended, rules: { "@typescript-eslint/not-built-in": "error" } }];`;
+      expect(await run(config)).toMatchObject({ reported: ["1:1 not built in"], failure: undefined });
+      const unknown = `export default [{ files: ["**/*.ts"], ...all.configs.recommended, rules: { "@typescript-eslint/nowhere": "error" } }];`;
+      expect((await run(unknown)).failure).toContain(`Could not find "nowhere" in plugin "@typescript-eslint".`);
+    },
+    timeout,
+  );
+
+  test(
+    "who touches a module gets the module",
+    async () => {
+      const expected = {
+        names: ["no-explicit-any", "not-built-in"],
+        has: [true, false],
+        kind: "function",
+        version: "5.9.3",
+        roots: ["here"],
+      };
+      const config = `all.configs.recommended;
+      const { rules } = all.plugin;
+      const found = { names: Object.keys(rules), has: ["not-built-in" in rules, "nowhere" in rules] };
+      Object.assign(found, { kind: typeof rules["not-built-in"].create, version: all.estree.version, roots: all.estree.roots });
+      if (JSON.stringify(found) !== ${JSON.stringify(JSON.stringify(expected))}) throw new Error(JSON.stringify(found));
+      export default [{ files: ["**/*.ts"], plugins: { "@typescript-eslint": all.plugin }, rules: { "@typescript-eslint/no-explicit-any": "error" } }];`;
+      expect(await run(config)).toEqual({
+        reported: [builtIn],
+        loaded: [rules, estree, typescript].sort(),
+        failure: undefined,
+      });
+    },
+    timeout,
+  );
+
+  test(
+    "another major version of the package is loaded as it is",
+    async () => {
+      expect(await run(recommended, "9.0.0")).toEqual({
+        reported: [builtIn],
+        loaded: [rules, estree, typescript].sort(),
+        failure: undefined,
+      });
+    },
+    timeout,
+  );
+});
+
 describe.concurrent("an .oxlintrc.json", () => {
   test.each([
     [{ node: true }, [4, 5, 6, 7, 8]],

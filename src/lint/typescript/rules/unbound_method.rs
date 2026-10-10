@@ -410,7 +410,10 @@ impl UnboundMethod {
                 if cx.language().is_oxlint {
                     let symbol = node.ts_symbol();
                     if let Some(message) = symbol.and_then(|it| message_of(it, self.ignore_static, cx.language().is_oxlint)) {
-                        cx.report(name.span(), message).comments_apply_at(node);
+                        cx.report(name.span(), message).comments_apply_at(node).labels_with(|labels| {
+                            labels.first("This reference may be unbound and lose `this` context");
+                            labels.push(node, "");
+                        });
                     }
                     return;
                 }

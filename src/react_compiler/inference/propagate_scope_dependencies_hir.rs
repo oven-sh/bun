@@ -18,6 +18,7 @@ use std::collections::BTreeSet;
 
 use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
 
+use crate::diagnostics::CompilerDiagnostic;
 use crate::hir::environment::Environment;
 use crate::hir::visitors::{ScopeBlockInfo, ScopeBlockTraversal};
 use crate::hir::{
@@ -34,8 +35,11 @@ use crate::optimization::dead_code_elimination::find_semantic_only_caught_instru
 
 /// Main entry point: propagate scope dependencies through the HIR.
 /// Corresponds to TS `propagateScopeDependenciesHIR(fn)`.
-pub(crate) fn propagate_scope_dependencies_hir(func: &mut HirFunction, env: &mut Environment) {
-    let used_outside_declaring_scope = find_temporaries_used_outside_declaring_scope(func, env);
+pub(crate) fn propagate_scope_dependencies_hir(
+    func: &mut HirFunction,
+    env: &mut Environment,
+) -> Result<(), CompilerDiagnostic> {
+    let used_outside_declaring_scope = find_temporaries_used_outside_declaring_scope(func, env)?;
     let temporaries = collect_temporaries_sidemap(func, env, &used_outside_declaring_scope);
 
     let OptionalChainSidemap {
@@ -75,7 +79,7 @@ pub(crate) fn propagate_scope_dependencies_hir(func: &mut HirFunction, env: &mut
         env,
         &merged_temporaries,
         &processed_instrs_in_optional,
-    );
+    )?;
 
     // Derive the minimal set of hoistable dependencies for each scope.
     let mut trees: HashMap<&NodeSet, ReactiveScopeDependencyTreeHIR> = HashMap::default();
@@ -115,6 +119,7 @@ pub(crate) fn propagate_scope_dependencies_hir(func: &mut HirFunction, env: &mut
             }
         }
     }
+    Ok(())
 }
 
 fn are_equal_paths(a: &[DependencyPathEntry], b: &[DependencyPathEntry]) -> bool {
@@ -132,7 +137,7 @@ fn are_equal_paths(a: &[DependencyPathEntry], b: &[DependencyPathEntry]) -> bool
 fn find_temporaries_used_outside_declaring_scope(
     func: &HirFunction,
     env: &Environment,
-) -> HashSet<DeclarationId> {
+) -> Result<HashSet<DeclarationId>, CompilerDiagnostic> {
     let mut declarations: IdMap<DeclarationId, ScopeId> = IdMap::new();
     let mut pruned_scopes: HashSet<ScopeId> = HashSet::default();
     let mut traversal = ScopeBlockTraversal::new();
@@ -156,7 +161,7 @@ fn find_temporaries_used_outside_declaring_scope(
 
     for (block_id, block) in &func.body.blocks {
         // recordScopes
-        traversal.record_scopes(block);
+        traversal.record_scopes(block)?;
 
         let scope_start_info = traversal.block_infos.get(block_id);
         if let Some(ScopeBlockInfo::Begin {
@@ -220,7 +225,7 @@ fn find_temporaries_used_outside_declaring_scope(
         }
     }
 
-    used_outside_declaring_scope
+    Ok(used_outside_declaring_scope)
 }
 
 // =============================================================================
@@ -2263,7 +2268,7 @@ fn collect_dependencies(
     env: &mut Environment,
     temporaries: &IdMap<IdentifierId, ReactiveScopeDependency>,
     processed_instrs_in_optional: &HashSet<ProcessedInstr>,
-) -> IndexMap<ScopeId, Vec<ReactiveScopeDependency>> {
+) -> Result<IndexMap<ScopeId, Vec<ReactiveScopeDependency>>, CompilerDiagnostic> {
     let semantic_only = find_semantic_only_caught_instructions(func, env);
     let mut ctx = DependencyCollectionContext::new(temporaries, processed_instrs_in_optional);
 
@@ -2301,9 +2306,9 @@ fn collect_dependencies(
         semantic_only.as_deref(),
         &mut ctx,
         &mut traversal,
-    );
+    )?;
 
-    ctx.deps
+    Ok(ctx.deps)
 }
 
 fn handle_function_deps(
@@ -2312,10 +2317,10 @@ fn handle_function_deps(
     semantic_only: Option<&[bool]>,
     ctx: &mut DependencyCollectionContext,
     traversal: &mut ScopeBlockTraversal,
-) {
+) -> Result<(), CompilerDiagnostic> {
     for (block_id, block) in &func.body.blocks {
         // Record scopes
-        traversal.record_scopes(block);
+        traversal.record_scopes(block)?;
 
         let scope_block_info = traversal.block_infos.get(block_id).cloned();
         match &scope_block_info {
@@ -2378,4 +2383,5 @@ fn handle_function_deps(
             }
         }
     }
+    Ok(())
 }

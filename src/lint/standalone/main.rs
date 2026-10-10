@@ -34,20 +34,20 @@ mod utils_tsscope_cmd;
 use bun_lint::context::Severity;
 use bun_lint::language::LanguageOptions;
 use bun_lint::options::{Json, Options};
-use bun_lint::runner::{Enabled, RuleEntry};
+use bun_lint::rule::Meta;
+use bun_lint::rule_set::RuleSet;
+use bun_lint::runner::{Enabled, Starts};
+use bun_lint_driver::rules::Rules;
 
 pub(crate) use bun_sema_standalone::host;
 pub(crate) use conformance_cmd::lint;
 use host::{output_line, text};
 
-fn all_rules() -> impl Iterator<Item = &'static RuleEntry> {
-    bun_lint_eslint::RULES
-        .iter()
-        .chain(bun_lint_typescript::RULES)
-        .chain(bun_lint_plugins::RULES)
-        .chain(bun_lint_unicorn::RULES)
-        .chain(bun_lint_react::RULES)
-        .chain(bun_lint_jest::RULES)
+/// Each with its number.
+fn all_rules() -> impl Iterator<Item = (u16, &'static Meta)> {
+    (0..)
+        .zip(Rules::METAS)
+        .filter_map(|(number, meta)| Some((number, (*meta)?)))
 }
 
 pub(crate) use linter_cmd::with_file;
@@ -127,17 +127,14 @@ fn bench(args: &[String]) {
         .collect();
     let bytes: usize = files.iter().map(|it| it.1.len()).sum();
     let built: Vec<_> = all_rules()
-        .filter(|it| {
-            !it.meta.requires_types
-                && only
-                    .as_ref()
-                    .is_none_or(|only| only.contains(&it.meta.name))
+        .filter(|(_, meta)| {
+            !meta.requires_types && only.as_ref().is_none_or(|only| only.contains(&meta.name))
         })
-        .map(|it| (it.build)(&Options::default()))
+        .filter_map(|it| Rules::build(it.0, &Options::default()))
         .collect();
     let rules: Vec<_> = (built.iter())
         .map(|rule| Enabled {
-            rule: &**rule,
+            rule,
             severity: Severity::Error,
         })
         .collect();

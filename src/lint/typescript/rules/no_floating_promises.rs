@@ -103,6 +103,19 @@ fn add_await(fixer: Fixer, node: Span, expression: Expr) -> Vec<Fix> {
     add_operator(fixer, "await", node, expression)
 }
 
+/// The rejection handler of `promise`, or of what its `.finally()` is called on.
+fn rejection_handler_of(mut promise: Expr<'_>) -> Option<Expr<'_>> {
+    loop {
+        if let Some(call) = parse_catch_call(promise) {
+            return call.on_rejected;
+        }
+        if let Some(call) = parse_then_call(promise) {
+            return call.on_rejected;
+        }
+        promise = parse_finally_call(promise)?.object;
+    }
+}
+
 impl NoFloatingPromises {
     /// `node`: the range of the statement, or of the expression if it is the body of an arrow
     /// function.
@@ -123,6 +136,21 @@ impl NoFloatingPromises {
         };
         // oxlint points at the promise.
         let mut report = cx.report(if cx.language().is_oxlint { promise.span() } else { node }, message);
+        report = report.labels_with(|labels| {
+            let what = match unhandled {
+                Unhandled::PromiseArray => "This array contains Promises and",
+                _ => "This unhandled promise-like value",
+            };
+            labels.first(format!("{what} has type `{}`.", bstr::BStr::new(&promise.ty().to_text())));
+            if unhandled == Unhandled::NonFunctionHandler
+                && let Some(handler) = rejection_handler_of(promise)
+            {
+                let (at, ty) = (handler.outer_span(), handler.ty().to_text());
+                let ty = bstr::BStr::new(&ty);
+                labels.push(at, format!("This rejection handler has type `{ty}`, which is not callable."));
+            }
+            labels.push(promise, "");
+        });
         if unhandled == Unhandled::PromiseArray {
             return;
         }

@@ -93,10 +93,10 @@ impl<T: Clone + PartialEq> CharMap<T> {
     }
 
     /// The first and the last of the items that have a character of `range`.
-    fn index_in_range(&self, range: CharRange) -> Option<(usize, usize)> {
+    fn index_in_range(&self, range: CharRange) -> Option<std::ops::RangeInclusive<usize>> {
         let start = self.index_of_or_right(range.min)?;
         let stop = self.index_of_or_left(range.max)?;
-        (start <= stop).then_some((start, stop))
+        (start <= stop).then_some(start..=stop)
     }
 
     /// No character of `range` is in the map.
@@ -167,10 +167,10 @@ impl<T: Clone + PartialEq> CharMap<T> {
 
     /// As upstream: only gaps BETWEEN the items that `chars` meets are seen, none at its ends.
     pub(crate) fn has_every(&self, chars: CharRange) -> bool {
-        let Some((start, stop)) = self.index_in_range(chars) else {
+        let Some(met) = self.index_in_range(chars) else {
             return false;
         };
-        let items = self.array.get(start..=stop).unwrap_or_default();
+        let items = self.array.get(met).unwrap_or_default();
         items
             .iter()
             .zip(items.iter().skip(1))
@@ -241,9 +241,10 @@ impl<T: Clone + PartialEq> CharMap<T> {
     }
 
     pub(crate) fn delete_range(&mut self, range: CharRange) {
-        let Some((mut start, mut stop)) = self.index_in_range(range) else {
+        let Some(met) = self.index_in_range(range) else {
             return;
         };
+        let (mut start, mut stop) = (*met.start(), *met.end());
 
         if start == stop {
             let Some(item) = self.array.get_mut(start) else {

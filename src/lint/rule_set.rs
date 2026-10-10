@@ -6,7 +6,7 @@
 //! [`RuleSet`].
 
 use crate::options::Options;
-use crate::rule::{Meta, On};
+use crate::rule::{Meta, On, Rule};
 use crate::runner::Starts;
 
 /// A set of rules, by their numbers.
@@ -178,15 +178,22 @@ pub const fn offset_of(counts: &[usize], at: usize) -> usize {
     offset
 }
 
+/// For [`rules!`](crate::rules). Not inlined: what calls it for each of some hundred rules has room for none of them.
+#[doc(hidden)]
+#[inline(never)]
+pub fn boxed<R: Rule>(options: &Options) -> Box<R> {
+    Box::new(R::new(options))
+}
+
 /// What [`rules!`](crate::rules) writes besides the modules.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! rules_as_a_set {
     ($($module:ident::$rule:ident,)*) => {
         /// An instance of one of the rules of this crate. They have the names of their modules.
-        #[allow(non_camel_case_types, clippy::large_enum_variant, clippy::enum_variant_names)]
+        #[allow(non_camel_case_types, clippy::enum_variant_names)]
         pub enum Rules {
-            $($module(rules::$module::$rule),)*
+            $($module(Box<rules::$module::$rule>),)*
         }
 
         /// One of them at work on a file.
@@ -214,7 +221,7 @@ macro_rules! rules_as_a_set {
             #[inline]
             pub fn build(place: u16, options: &$crate::options::Options) -> Option<Rules> {
                 $(if place == Place::$module as u16 {
-                    return Some(Rules::$module($crate::rule::Rule::new(options)));
+                    return Some(Rules::$module($crate::rule_set::boxed(options)));
                 })*
                 None
             }
@@ -251,7 +258,9 @@ macro_rules! rules_as_a_set {
                 start: $crate::runner::Start<'a>,
             ) -> Option<Runs<'r, 'a>> {
                 match self {
-                    $(Rules::$module(rule) => $crate::runner::start(rule, start).map(Runs::$module),)*
+                    $(Rules::$module(rule) => {
+                        $crate::runner::start::<rules::$module::$rule>(rule, start).map(Runs::$module)
+                    })*
                 }
             }
         }
@@ -294,7 +303,7 @@ macro_rules! rules_as_a_set {
 macro_rules! rule_sets {
     ($visibility:vis enum $rules:ident / $runs:ident { $($name:ident: $from:ident,)* }) => {
         /// An instance of a rule.
-        #[allow(non_camel_case_types, clippy::large_enum_variant)]
+        #[allow(non_camel_case_types)]
         $visibility enum $rules {
             $($name($from::Rules),)*
         }

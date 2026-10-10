@@ -109,6 +109,7 @@ impl Settings {
                 options: self.options.as_ref(),
                 uses_configuration: self.uses_configuration,
                 file_info_options: self.file_info_options.as_ref(),
+                package_module: file.package_module(),
             }),
             None => Formatted::NotNative(Reason::NoFormatter),
         };

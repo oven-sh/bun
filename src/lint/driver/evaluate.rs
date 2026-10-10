@@ -12,9 +12,15 @@ const MARKER: &[u8] = b"\x1e--bun-lint-configuration--\x1e";
 /// What every script begins with.
 pub(crate) const START: &str = include_str!("evaluate-start.js");
 const DESCRIBE: &str = include_str!("evaluate-describe.js");
+const STAND_INS: &str = include_str!("evaluate-stand-ins.js");
 
 /// For `eslint.config.*` and `oxlint.config.ts`.
-pub(crate) const ESLINT: Source = &[START, DESCRIBE, include_str!("evaluate-eslint.js")];
+pub(crate) const ESLINT: Source = &[
+    START,
+    DESCRIBE,
+    STAND_INS,
+    include_str!("evaluate-eslint.js"),
+];
 /// For what the configuration files of ESLint 8 name.
 pub(crate) const ESLINTRC: Source = &[START, DESCRIBE, include_str!("evaluate-eslintrc.js")];
 /// For the configuration files of Prettier.

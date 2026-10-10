@@ -915,7 +915,10 @@ impl ScopeBlockTraversal {
 
     /// Record scope information for a block's terminal.
     /// Equivalent to TS `recordScopes`.
-    pub fn record_scopes(&mut self, block: &BasicBlock) {
+    pub fn record_scopes(
+        &mut self,
+        block: &BasicBlock,
+    ) -> Result<(), crate::diagnostics::CompilerDiagnostic> {
         if let Some(block_info) = self.block_infos.get(&block.id) {
             match block_info {
                 ScopeBlockInfo::Begin { scope, .. } => {
@@ -923,11 +926,10 @@ impl ScopeBlockTraversal {
                 }
                 ScopeBlockInfo::End { scope, .. } => {
                     let top = self.active_scopes.last();
-                    assert_eq!(
-                        Some(scope),
-                        top,
-                        "Expected traversed block fallthrough to match top-most active scope"
-                    );
+                    crate::diagnostics::invariant(
+                        Some(scope) == top,
+                        "Expected traversed block fallthrough to match top-most active scope",
+                    )?;
                     self.active_scopes.pop();
                 }
             }
@@ -940,11 +942,11 @@ impl ScopeBlockTraversal {
                 scope,
                 ..
             } => {
-                assert!(
+                crate::diagnostics::invariant(
                     !self.block_infos.contains_key(scope_block)
                         && !self.block_infos.contains_key(fallthrough),
-                    "Expected unique scope blocks and fallthroughs"
-                );
+                    "Expected unique scope blocks and fallthroughs",
+                )?;
                 self.block_infos.insert(
                     *scope_block,
                     ScopeBlockInfo::Begin {
@@ -967,11 +969,11 @@ impl ScopeBlockTraversal {
                 scope,
                 ..
             } => {
-                assert!(
+                crate::diagnostics::invariant(
                     !self.block_infos.contains_key(scope_block)
                         && !self.block_infos.contains_key(fallthrough),
-                    "Expected unique scope blocks and fallthroughs"
-                );
+                    "Expected unique scope blocks and fallthroughs",
+                )?;
                 self.block_infos.insert(
                     *scope_block,
                     ScopeBlockInfo::Begin {
@@ -990,6 +992,7 @@ impl ScopeBlockTraversal {
             }
             _ => {}
         }
+        Ok(())
     }
 
     /// Returns true if the given scope is currently 'active', i.e. if the scope start

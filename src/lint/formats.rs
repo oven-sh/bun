@@ -9,6 +9,7 @@
 
 use crate::ast::File;
 use crate::options::Json;
+use std::sync::Arc;
 
 /// Whose text is wanted.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -34,6 +35,8 @@ pub struct Request<'r> {
     pub uses_configuration: bool,
     /// `fileInfoOptions`: options for `prettier.getFileInfo()`.
     pub file_info_options: Option<&'r Json>,
+    /// [`File::package_module`]
+    pub package_module: Option<&'r [u8]>,
 }
 
 /// Why the text would not be that of the package.
@@ -125,5 +128,17 @@ impl<'a> File<'a> {
 
     pub fn handed_back(&self) -> Option<Reason> {
         self.handed_back.get()
+    }
+
+    /// The file of the module that the configuration has loaded the plugin of the package from, if that is known. It is that
+    /// copy whose version counts, and the `prettier` that is found from there: a package manager can keep both out of reach
+    /// of the working directory.
+    pub fn package_module(&self) -> Option<&[u8]> {
+        self.package_module.get().map(|it| &**it)
+    }
+
+    /// The first time counts.
+    pub fn set_package_module(&self, module: Arc<[u8]>) {
+        let _ = self.package_module.set(module);
     }
 }

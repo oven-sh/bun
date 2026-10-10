@@ -151,11 +151,19 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             return;
         }
         let from = self.full_start();
+        let before = self.token();
         // What was read as a comment is text.
         let kept = self.lx.comments.partition_point(|it| it.0 < from);
         self.lx.comments.truncate(kept);
         self.lx.end = from;
         self.lx.next_jsx_child();
+        // `parseJsxChildren` of the native parser asks the scanner and leaves `p.token` as it was: a `<<` or a `<=`.
+        if self.token() == T::LessThan
+            && before != T::LessThan
+            && self.options.dialect == Default::default()
+        {
+            self.jsx_child_after_other_token = self.pos();
+        }
     }
 
     /// `parseJsxElementOrSelfClosingElementOrFragment`, at the `<`. `parent`: the name of
@@ -170,7 +178,14 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             true => self.full_start(),
             false => start,
         };
-        self.next();
+        match self.recovers() && !is_in_expression && self.jsx_child_after_other_token == start {
+            // `parseExpected(KindLessThanToken)` fails, and `scanJsxIdentifier` finds the `<`: type arguments start there.
+            true => {
+                self.jsx_child_after_other_token = u32::MAX;
+                self.error_at_token(1005, &[b"<"]);
+            }
+            false => self.next(),
+        }
         let mut jsx = Jsx {
             tag: ExprId::NONE,
             close_tag: ExprId::NONE,

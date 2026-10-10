@@ -55,6 +55,14 @@ impl NoUnsafeTypeAssertion {
             true => Span::new(node.span().start, skip_trivia(cx.text(), annotation.end) + 1),
             false => Span::new(skip_trivia(cx.text(), operand.end), annotation.end),
         };
+        // tsgolint says which the two types are, and marks the assertion.
+        let type_label = |ty: Type| if is_intrinsic_error_type(ty) { b"error".to_vec() } else { ty.to_text() };
+        let labels = |labels: &mut Details| {
+            let (original, asserted) = (type_label(expression_type), type_label(asserted_type));
+            labels.first(format!("Original expression has type `{}`.", bstr::BStr::new(&original)));
+            labels.push(annotation, format!("Asserted type is `{}`.", bstr::BStr::new(&asserted)));
+            labels.push(assertion, "");
+        };
 
         if expression_type == asserted_type
             || expression_type.is_unresolved()
@@ -65,21 +73,26 @@ impl NoUnsafeTypeAssertion {
 
         // Asserting unknown ==> any.
         if is_type_any_type(asserted_type) && is_type_unknown_type(expression_type) {
-            cx.report(place, UNSAFE_TO_ANY_TYPE_ASSERTION).comments_apply_at(assertion).data("type", "`any`");
+            cx.report(place, UNSAFE_TO_ANY_TYPE_ASSERTION)
+                .comments_apply_at(assertion)
+                .data("type", "`any`")
+                .labels_with(labels);
             return;
         }
 
         if let Some(unsafe_expression_any) = is_unsafe_assignment(expression_type, asserted_type, expression) {
             cx.report(place, UNSAFE_OF_ANY_TYPE_ASSERTION)
                 .comments_apply_at(assertion)
-                .data("type", get_any_type_name(unsafe_expression_any.sender));
+                .data("type", get_any_type_name(unsafe_expression_any.sender))
+                .labels_with(labels);
             return;
         }
 
         if let Some(unsafe_asserted_any) = is_unsafe_assignment(asserted_type, expression_type, None::<Expr<'a>>) {
             cx.report(place, UNSAFE_TO_ANY_TYPE_ASSERTION)
                 .comments_apply_at(assertion)
-                .data("type", get_any_type_name(unsafe_asserted_any.sender));
+                .data("type", get_any_type_name(unsafe_asserted_any.sender))
+                .labels_with(labels);
             return;
         }
 
@@ -102,7 +115,10 @@ impl NoUnsafeTypeAssertion {
                 Some(_) => {}
             }
         }
-        cx.report(place, message).comments_apply_at(assertion).data("type", asserted_type.to_text());
+        cx.report(place, message)
+            .comments_apply_at(assertion)
+            .data("type", asserted_type.to_text())
+            .labels_with(labels);
     }
 }
 

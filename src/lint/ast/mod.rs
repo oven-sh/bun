@@ -226,6 +226,7 @@ pub struct File<'a> {
     pub(crate) modules: std::cell::Cell<Option<&'a dyn crate::modules::Modules>>,
     pub(crate) formatter: std::cell::Cell<Option<crate::formats::Formatter<'a>>>,
     pub(crate) handed_back: std::cell::Cell<Option<crate::formats::Reason>>,
+    pub(crate) package_module: std::cell::OnceCell<std::sync::Arc<[u8]>>,
     vue_script: std::cell::Cell<VueScript>,
     language: &'a LanguageOptions,
     body: hir::IdList<hir::StmtId>,
@@ -268,6 +269,7 @@ impl<'a> File<'a> {
             modules: std::cell::Cell::new(None),
             formatter: std::cell::Cell::new(None),
             handed_back: std::cell::Cell::new(None),
+            package_module: std::cell::OnceCell::new(),
             vue_script: std::cell::Cell::default(),
             path,
         }

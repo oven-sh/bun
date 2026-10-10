@@ -11,7 +11,7 @@ use crate::host::{self, output_line};
 use bun_lint::ast::walk::{Visitor, walk};
 use bun_lint::context::Severity;
 use bun_lint::prelude::*;
-use bun_lint::runner::{Enabled, RuleEntry};
+use bun_lint::runner::Enabled;
 use bun_lint::utils::estree_compat::{estree_parent, estree_span};
 use bun_lint::utils::ts_utils::{self, MemberAccessValue, OperatorPrecedence, WrappingFixerParams};
 use std::fmt::Write as _;
@@ -446,7 +446,7 @@ impl Rule for Probe {
     }
 }
 
-fn dump(case: Object<'_>, rules: &[Enabled]) -> String {
+fn dump(case: Object<'_>, rules: &[Enabled<Probe>]) -> String {
     let id = case.number("id").unwrap_or(-1.0);
     let language = LanguageOptions {
         source_type: match case.str("sourceType") {
@@ -598,9 +598,8 @@ pub(crate) fn run(args: &[String]) {
         }
         return;
     }
-    let rule = (RuleEntry::of::<Probe>().build)(&Options::new(&[]));
     let rules = [Enabled {
-        rule: &*rule,
+        rule: &Probe,
         severity: Severity::Error,
     }];
     for line in bun_core::strings::split(&input, b"\n").filter(|line| !line.is_empty()) {

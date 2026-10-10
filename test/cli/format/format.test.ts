@@ -2746,6 +2746,28 @@ try {
         expect(result.exitCode).toBe(0);
       });
 
+      // globset with its default options, on the path from the directory of the file: a name is one file, `*` and `?` cross `/`.
+      test.each([
+        ["a name", "a.js", "a.js", "    "],
+        ["a name, for a file further down", "a.js", "deep/a.js", "  "],
+        ["a name in braces, for a file further down", "{a.js,*.ts}", "deep/a.js", "  "],
+        ["a star, for a file further down", "*.js", "deep/a.js", "    "],
+        ["a star behind a directory, for a file further down", "deep/*.js", "deep/er/a.js", "    "],
+        ["a question mark for a slash", "deep?a.js", "deep/a.js", "    "],
+        ["a slash in front", "/a.js", "a.js", "  "],
+        ["a range of numbers", "{1..3}.js", "2.js", "  "],
+        ["braces that are not closed", "{a.js", "a.js", "  "],
+      ])("by oxfmt: a section is for %s", async (_, section, at, indent) => {
+        const files = {
+          "sub/.oxfmtrc.json": '{ "useTabs": false }',
+          "sub/.editorconfig": `[${section}]\nindent_size = 4\n`,
+          [`sub/${at}`]: project["sub/a.js"],
+        };
+        const result = await format(files, [at], { cwd: "sub", reads: [`sub/${at}`] });
+        expect(result.files[`sub/${at}`]).toBe(printed(indent, '"'));
+        expect(result.exitCode).toBe(0);
+      });
+
       test.each([
         ["tabWidth", { tabWidth: 25 }, "", "Invalid tabWidth: The indent width should be between 0 and 24", 1],
         ["tab_width", {}, "[*]\ntab_width = 25\n", "Invalid tabWidth: The indent width should be between 0 and 24", 1],

@@ -12,7 +12,7 @@
 use crate::host::{self, error_line, output};
 use bun_lint::context::Severity;
 use bun_lint::prelude::*;
-use bun_lint::runner::{Enabled, RuleEntry};
+use bun_lint::runner::Enabled;
 use bun_lint::utils::char_source::{CharInfo, parse_string_literal, parse_template_token};
 use bun_lint::utils::estree_compat::estree_span;
 use bun_lint::utils::fix_tracker::FixTracker;
@@ -95,9 +95,8 @@ impl Rule for Probe {
 }
 
 fn fix_tracker(cases: &[u8]) {
-    let rule = (RuleEntry::of::<Probe>().build)(&Options::new(&[]));
     let rules = [Enabled {
-        rule: &*rule,
+        rule: &Probe,
         severity: Severity::Error,
     }];
     let mut out = Vec::new();

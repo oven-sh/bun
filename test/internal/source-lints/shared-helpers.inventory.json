@@ -19,12 +19,14 @@
     "code_point_width",
     "code_points",
     "code_points_of",
+    "coerce",
     "collate_base_numeric",
     "collation_element",
     "collation_key",
     "collator_compare",
     "combine_surrogate_pair",
     "compare",
+    "compare_versions",
     "contains",
     "count",
     "count_line_breaks",
@@ -173,6 +175,7 @@
     "locale_compare",
     "lowercase",
     "min_edit_distance",
+    "min_version",
     "multibyte_at",
     "natord",
     "natural_compare",
@@ -190,6 +193,8 @@
     "parse_int",
     "parse_integer",
     "parse_number",
+    "parse_range",
+    "parse_version",
     "pascal_case",
     "percent_decode",
     "percent_encode",
@@ -211,6 +216,7 @@
     "replace_all",
     "resolve",
     "round_digits",
+    "satisfies",
     "skip_blanks",
     "skip_newline",
     "skip_newline_backwards",
@@ -272,6 +278,7 @@
     "utf16_offset_to_byte",
     "utf8_len",
     "utf8_length",
+    "valid_range",
     "visible_width",
     "white_space_len",
     "white_space_len_back",
@@ -569,6 +576,9 @@
     },
     "src/lint/react/util_ast.rs": {
       "without_hash": 1
+    },
+    "src/lint/react/util_version.rs": {
+      "coerce": 1
     },
     "src/lint/regex/validator.rs": {
       "combine_surrogate_pair": 1,

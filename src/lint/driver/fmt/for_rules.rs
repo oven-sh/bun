@@ -161,10 +161,10 @@ impl<'e> ForRules<'e> {
     fn set_for(&self, request: &Request) -> Arc<Set<'e>> {
         let mut sets = self.sets.lock();
         if let Some(set) = sets.iter().find(|it| it.is_for(request)) {
-            return set.clone();
+            return Arc::clone(set);
         }
         let set = Arc::new(Set::new(request, self.environment));
-        sets.push(set.clone());
+        sets.push(Arc::clone(&set));
         set
     }
 

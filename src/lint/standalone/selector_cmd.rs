@@ -13,7 +13,7 @@ use bun_core::strings::Utf16OffsetTable;
 use bun_lint::context::Severity;
 use bun_lint::language::{LanguageOptions, Parser, SourceType};
 use bun_lint::prelude::*;
-use bun_lint::runner::{Enabled, RuleEntry};
+use bun_lint::runner::Enabled;
 use bun_lint::selector::{self, EsNode, Selector};
 use std::io::Write as _;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
@@ -129,9 +129,6 @@ impl<const COUNTS: bool> Rule for Probe<COUNTS> {
     }
 }
 
-const PROBE: RuleEntry = RuleEntry::of::<Probe<false>>();
-const COUNTING_PROBE: RuleEntry = RuleEntry::of::<Probe<true>>();
-
 // ───────────────────────────── match ─────────────────────────────
 
 fn language_of(parser: Option<&[u8]>, source_type: Option<&[u8]>) -> LanguageOptions {
@@ -177,13 +174,13 @@ fn match_cases(path: &str) {
             if let Some(error) = invalid {
                 return Err(error.to_string());
             }
-            let rule = (PROBE.build)(&Options::new(selectors));
+            let rule = Probe::<false>::new(&Options::new(selectors));
             crate::with_file(&host::text(filename), code, &language, |file| {
                 if file.has_parse_errors() {
                     return Err("parse".to_owned());
                 }
                 let enabled = Enabled {
-                    rule: &*rule,
+                    rule: &rule,
                     severity: Severity::Error,
                 };
                 let offsets = Utf16OffsetTable::without_bom(code);
@@ -247,8 +244,8 @@ fn bench(path: &str, rest: &[String]) {
         .map(|it| {
             let options = [Json::String(it.as_bytes().to_vec())];
             (
-                (PROBE.build)(&Options::new(&options)),
-                (COUNTING_PROBE.build)(&Options::new(&options)),
+                Probe::<false>::new(&Options::new(&options)),
+                Probe::<true>::new(&Options::new(&options)),
             )
         })
         .collect();
@@ -261,15 +258,15 @@ fn bench(path: &str, rest: &[String]) {
                 return;
             }
             for (i, (rule, counting)) in rules.iter().enumerate() {
-                let enabled = |rule| Enabled {
-                    rule,
-                    severity: Severity::Error,
+                let severity = Severity::Error;
+                let counting = Enabled {
+                    rule: counting,
+                    severity,
                 };
                 // The first run computes what the file keeps.
                 let (listened, examined) = (LISTENED.load(Relaxed), EXAMINED.load(Relaxed));
-                counts[i].2 +=
-                    bun_lint::runner::run(file, &[enabled(&**counting)], false).len() as u64;
-                let enabled = enabled(&**rule);
+                counts[i].2 += bun_lint::runner::run(file, &[counting], false).len() as u64;
+                let enabled = Enabled { rule, severity };
                 counts[i].0 += LISTENED.load(Relaxed) - listened;
                 counts[i].1 += EXAMINED.load(Relaxed) - examined;
                 let before = cpu_nanos(started);

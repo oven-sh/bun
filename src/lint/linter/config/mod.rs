@@ -976,6 +976,11 @@ impl Config {
             }
             let or_else = match js.flatten().filter(|_| entry.meta.hands_back) {
                 Some(rule) => {
+                    let location = self.js_locations.iter().find(|it| *it.0 == *prefix);
+                    let module = location.and_then(|it| it.1.get(b"module")?.as_str());
+                    if setting.severity != Severity::Off && config.package_module.is_none() {
+                        config.package_module = module.map(Arc::from);
+                    }
                     Some(self.js_rule(&mut config, rule, setting.severity, Arc::clone(&options)))
                 }
                 None => None,

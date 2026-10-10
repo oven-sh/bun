@@ -255,6 +255,41 @@ impl Rule for IdBlacklist {
         }
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new()
+            .exprs(&[ExprTag::Ident, ExprTag::Dot, ExprTag::ImportMeta, ExprTag::NewTarget])
+            .pats(&[PatTag::Ident])
+            .props()
+            .members()
+            .funcs()
+            .classes()
+            .stmts(&[
+                StmtTag::Labeled,
+                StmtTag::Break,
+                StmtTag::Continue,
+                StmtTag::Import,
+                StmtTag::ExportNamed,
+                StmtTag::ExportStar,
+            ])
+            .import_specs()
+            .export_specs();
+        if file.is_javascript() {
+            return on;
+        }
+        on.stmts(&[
+            StmtTag::Interface,
+            StmtTag::TypeAlias,
+            StmtTag::Enum,
+            StmtTag::Module,
+            StmtTag::ImportEquals,
+            StmtTag::ExportAsNamespace,
+        ])
+        .types(&[TypeTag::Ref, TypeTag::Import, TypeTag::Predicate, TypeTag::Tuple])
+        .type_params()
+        .enum_members()
+        .exprs(&[ExprTag::AsConst])
+    }
+
     fn start<'a>(&self, _: &'a File<'a>) -> Option<()> {
         if self.names.is_empty() {
             return None;
@@ -273,9 +308,6 @@ impl Rule for IdBlacklist {
                 }
             }
             ExprTag::AsConst => {
-                if cx.file().is_javascript() {
-                    return;
-                }
                 if let Some(keyword) = e.const_keyword_span() {
                     self.check_keyword(keyword, cx);
                 }
@@ -285,26 +317,10 @@ impl Rule for IdBlacklist {
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if cx.file().is_javascript()
-            && matches!(
-                statement.tag(),
-                StmtTag::Interface
-                    | StmtTag::TypeAlias
-                    | StmtTag::Enum
-                    | StmtTag::Module
-                    | StmtTag::ImportEquals
-                    | StmtTag::ExportAsNamespace
-            )
-        {
-            return;
-        }
         self.check_statement(statement, cx);
     }
 
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
-        if cx.file().is_javascript() {
-            return;
-        }
         self.check_type(ty, cx);
     }
 
@@ -344,16 +360,10 @@ impl Rule for IdBlacklist {
     }
 
     fn type_param<'a>(&self, param: TypeParam<'a>, cx: &mut Cx<'a, Self>) {
-        if cx.file().is_javascript() {
-            return;
-        }
         self.check_name(param.name(), cx);
     }
 
     fn enum_member<'a>(&self, member: EnumMember<'a>, cx: &mut Cx<'a, Self>) {
-        if cx.file().is_javascript() {
-            return;
-        }
         if let Some(key) = member.key() {
             self.check_key(key, cx);
         }

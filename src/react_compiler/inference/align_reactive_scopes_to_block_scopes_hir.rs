@@ -91,7 +91,7 @@ struct BlockFallthroughRange {
 pub(crate) fn align_reactive_scopes_to_block_scopes_hir(
     func: &mut HirFunction,
     env: &mut Environment,
-) {
+) -> Result<(), crate::diagnostics::CompilerDiagnostic> {
     // Save original scope ranges BEFORE this pass modifies them.
     // In TS, identifier.mutableRange and scope.range may or may not be the same
     // JS object. Only identifiers whose mutableRange IS the scope's range object
@@ -208,10 +208,10 @@ pub(crate) fn align_reactive_scopes_to_block_scopes_hir(
                     range: env.new_mutable_range(terminal_eval_order, next_id),
                 });
 
-                assert!(
+                crate::diagnostics::invariant(
                     !value_block_nodes.contains_key(ft),
-                    "Expect hir blocks to have unique fallthroughs"
-                );
+                    "Expect hir blocks to have unique fallthroughs",
+                )?;
                 if let Some(n) = &node {
                     value_block_nodes.insert(ft, n.clone());
                 }
@@ -294,6 +294,7 @@ pub(crate) fn align_reactive_scopes_to_block_scopes_hir(
             }
         }
     }
+    Ok(())
 }
 
 /// Records a place's scope as active and adjusts scope ranges for value blocks.

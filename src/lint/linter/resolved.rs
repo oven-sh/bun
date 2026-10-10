@@ -171,6 +171,9 @@ pub struct ResolvedConfig {
     pub(super) rules: Vec<ConfiguredRule>,
     /// One of them has a [name](ConfiguredRule::name).
     pub has_named_rules: bool,
+    /// The file that the plugin was loaded from whose rule one of them [stands in for](ConfiguredRule::or_else), if it is on and
+    /// the plugin is from a file of its own.
+    pub(super) package_module: Option<Arc<[u8]>>,
     /// `settings["import/resolver"]` names a resolver that the rules here do not do the same as.
     pub has_unknown_resolver: bool,
     /// Those of JavaScript plugins, also the ones that are off. They run if [`LintOptions::js_plugins`](super::LintOptions) is

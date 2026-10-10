@@ -96,8 +96,6 @@ struct How<'h> {
     without_rules: bool,
     /// [`Context::with_help`]
     with_help: bool,
-    /// There is somebody else to read what [may be misread](may_be_misread) here: no rule runs on it, and the result says so.
-    falls_back: bool,
 }
 
 fn only_errors(_: &RuleId, severity: Severity) -> bool {
@@ -322,7 +320,6 @@ impl Context<'_, '_> {
         let how = How {
             without_fixes,
             physical_path_len: Some(physical_path_len),
-            falls_back: true,
             ..How::default()
         };
         Some(self.verify_as(path, text, config, &how)).filter(|it| !it.is_unread)
@@ -436,7 +433,8 @@ impl Context<'_, '_> {
                     };
                 }
                 let file = File::new(path, &hir, bound, atoms, &config.language, None);
-                if as_what.falls_back && may_be_misread(&file) {
+                // Whoever says what the file on the disk is sees to what is not read here.
+                if as_what.physical_path_len.is_some() && may_be_misread(&file) {
                     return LintResult {
                         is_unread: true,
                         ..LintResult::default()

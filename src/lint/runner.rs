@@ -562,16 +562,7 @@ impl<'a> File<'a> {
     }
 }
 
-// ───────────────────────────── a rule, whatever its type ─────────────────────────────
-
-/// A [`Rule`] with its options, whatever its type.
-pub trait AnyRule: Send + Sync + 'static {
-    fn meta(&self) -> &'static Meta;
-
-    /// Calls the listeners that take the nodes in no particular order. `None`: it has no others.
-    #[doc(hidden)]
-    fn start<'r, 'a: 'r>(&'r self, start: Start<'a>) -> Option<Box<dyn Running<'a> + 'r>>;
-}
+// ───────────────────────────── a rule on a file ─────────────────────────────
 
 /// What a rule is given to start on a file.
 #[doc(hidden)]
@@ -595,17 +586,6 @@ impl<'a> Start<'a> {
             reports: std::cell::Cell::new(0),
             is_capped: std::cell::Cell::new(false),
         }
-    }
-}
-
-impl<R: Rule> AnyRule for R {
-    fn meta(&self) -> &'static Meta {
-        &R::META
-    }
-
-    fn start<'r, 'a: 'r>(&'r self, start: Start<'a>) -> Option<Box<dyn Running<'a> + 'r>> {
-        let run: Box<dyn Running<'a> + 'r> = started(self, start)?;
-        Some(run)
     }
 }
 
@@ -637,21 +617,7 @@ impl<R: Rule> Starts for R {
     }
 }
 
-impl Starts for dyn AnyRule {
-    type Run<'r, 'a: 'r> = Box<dyn Running<'a> + 'r>;
-
-    #[inline]
-    fn meta(&self) -> &'static Meta {
-        AnyRule::meta(self)
-    }
-
-    #[inline]
-    fn start<'r, 'a: 'r>(&'r self, start: Start<'a>) -> Option<Box<dyn Running<'a> + 'r>> {
-        AnyRule::start(self, start)
-    }
-}
-
-impl<'a, T: ?Sized + Running<'a>> Running<'a> for Box<T> {
+impl<'a, T: Running<'a>> Running<'a> for Box<T> {
     #[inline]
     fn walks(&self) -> (NodeTags, NodeTags) {
         (**self).walks()
@@ -860,11 +826,10 @@ impl<'a, R: Rule> Running<'a> for Later<'_, 'a, R> {
     }
 }
 
-/// How a rule is found by its name and made from its options.
+/// How a rule is found by its name.
 #[derive(Copy, Clone)]
 pub struct RuleEntry {
     pub meta: &'static Meta,
-    pub build: fn(&Options) -> Box<dyn AnyRule>,
     /// [`Rule::validate`]
     pub validate: fn(&Options) -> Result<(), Vec<u8>>,
 }
@@ -873,7 +838,6 @@ impl RuleEntry {
     pub const fn of<R: Rule>() -> RuleEntry {
         RuleEntry {
             meta: &R::META,
-            build: |options| Box::new(R::new(options)),
             validate: R::validate,
         }
     }
@@ -1090,24 +1054,24 @@ pub(crate) const EXPR_TAGS: [ExprTag; ExprTag::COUNT] = {
 // ───────────────────────────── a file ─────────────────────────────
 
 /// A rule that is enabled for a file.
-pub struct Enabled<'r, S: ?Sized + Starts = dyn AnyRule> {
+pub struct Enabled<'r, S: Starts> {
     pub rule: &'r S,
     pub severity: Severity,
 }
 
-impl<S: ?Sized + Starts> Clone for Enabled<'_, S> {
+impl<S: Starts> Clone for Enabled<'_, S> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<S: ?Sized + Starts> Copy for Enabled<'_, S> {}
+impl<S: Starts> Copy for Enabled<'_, S> {}
 
 /// Runs `rules` on `file`. What they report is sorted by position. `Diagnostic::rule` is an index
 /// into `rules`.
 ///
 /// `wants_fixes`: whether the fixes and suggestions are going to be read.
-pub fn run<'a, S: ?Sized + Starts>(
+pub fn run<'a, S: Starts>(
     file: &'a File<'a>,
     rules: &[Enabled<'_, S>],
     wants_fixes: bool,
@@ -1186,7 +1150,7 @@ pub fn listening<'a, S: RuleSet>(file: &'a File<'a>, enabled: &RuleBits) -> Rule
     enabled.and(&all)
 }
 
-fn run_rules<'r, 'a: 'r, S: ?Sized + Starts>(file: &'a File<'a>, rules: &'r [Enabled<'r, S>]) {
+fn run_rules<'r, 'a: 'r, S: Starts>(file: &'a File<'a>, rules: &'r [Enabled<'r, S>]) {
     let has_types = file.types.is_some();
     let mut running: Vec<S::Run<'r, 'a>> = Vec::with_capacity(rules.len());
     for (i, enabled) in rules.iter().enumerate() {

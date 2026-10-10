@@ -599,10 +599,10 @@ impl<'h> HirBuilder<'h> {
                 continue_block: c,
                 break_block: b,
             } => {
-                assert!(
+                crate::diagnostics::invariant(
                     *l == label && *c == continue_block && *b == break_block,
-                    "Mismatched loop scope"
-                );
+                    "Mismatched loop scope",
+                )?;
             }
             _ => {
                 return Err(CompilerDiagnostic::new(
@@ -636,7 +636,10 @@ impl<'h> HirBuilder<'h> {
                 label: l,
                 break_block: b,
             } => {
-                assert!(*l == label && *b == break_block, "Mismatched label scope");
+                crate::diagnostics::invariant(
+                    *l == label && *b == break_block,
+                    "Mismatched label scope",
+                )?;
             }
             _ => {
                 return Err(CompilerDiagnostic::new(
@@ -670,7 +673,10 @@ impl<'h> HirBuilder<'h> {
                 label: l,
                 break_block: b,
             } => {
-                assert!(*l == label && *b == break_block, "Mismatched switch scope");
+                crate::diagnostics::invariant(
+                    *l == label && *b == break_block,
+                    "Mismatched switch scope",
+                )?;
             }
             _ => {
                 return Err(CompilerDiagnostic::new(
@@ -763,7 +769,7 @@ impl<'h> HirBuilder<'h> {
 
         let mut instructions = AstAlloc::take(&mut self.instruction_table);
 
-        let rpo_blocks = get_reverse_postordered_blocks(&hir, &instructions);
+        let rpo_blocks = get_reverse_postordered_blocks(&hir, &instructions)?;
 
         for (id, block) in &hir.blocks {
             if !rpo_blocks.contains_key(id) {

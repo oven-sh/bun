@@ -1640,10 +1640,10 @@ fn apply_effect(
             value: kind,
             reason,
         } => {
-            assert!(
+            crate::diagnostics::invariant(
                 !initialized.contains(&into.identifier),
-                "[InferMutationAliasingEffects] Cannot re-initialize variable within an instruction"
-            );
+                "[InferMutationAliasingEffects] Cannot re-initialize variable within an instruction",
+            )?;
             initialized.insert(into.identifier);
             let value_id = context.get_or_create_value_id(&effect);
             state.initialize(
@@ -1668,10 +1668,10 @@ fn apply_effect(
             }
         }
         AliasingEffect::CreateFrom { ref from, ref into } => {
-            assert!(
+            crate::diagnostics::invariant(
                 !initialized.contains(&into.identifier),
-                "[InferMutationAliasingEffects] Cannot re-initialize variable within an instruction"
-            );
+                "[InferMutationAliasingEffects] Cannot re-initialize variable within an instruction",
+            )?;
             initialized.insert(into.identifier);
             let from_value = state.kind(from.identifier);
             let value_id = context.get_or_create_value_id(&effect);
@@ -1722,10 +1722,10 @@ fn apply_effect(
             function_id,
             ref into,
         } => {
-            assert!(
+            crate::diagnostics::invariant(
                 !initialized.contains(&into.identifier),
-                "[InferMutationAliasingEffects] Cannot re-initialize variable within an instruction"
-            );
+                "[InferMutationAliasingEffects] Cannot re-initialize variable within an instruction",
+            )?;
             initialized.insert(into.identifier);
             effects.push(effect.clone());
 
@@ -1822,10 +1822,10 @@ fn apply_effect(
             let is_capture = matches!(effect, AliasingEffect::Capture { .. });
             let is_maybe_alias = matches!(effect, AliasingEffect::MaybeAlias { .. });
             // For Alias, destination must already be initialized (Capture/MaybeAlias are exempt)
-            assert!(
+            crate::diagnostics::invariant(
                 is_capture || is_maybe_alias || initialized.contains(&into.identifier),
-                "[InferMutationAliasingEffects] Expected destination to already be initialized within this instruction"
-            );
+                "[InferMutationAliasingEffects] Expected destination to already be initialized within this instruction",
+            )?;
 
             // Check destination kind
             let into_kind = state.kind_with_loc(into.identifier, into.loc).kind;
@@ -1878,10 +1878,10 @@ fn apply_effect(
             }
         }
         AliasingEffect::Assign { ref from, ref into } => {
-            assert!(
+            crate::diagnostics::invariant(
                 !initialized.contains(&into.identifier),
-                "[InferMutationAliasingEffects] Cannot re-initialize variable within an instruction"
-            );
+                "[InferMutationAliasingEffects] Cannot re-initialize variable within an instruction",
+            )?;
             initialized.insert(into.identifier);
             let from_value = state.kind_with_loc(from.identifier, from.loc);
             match from_value.kind {

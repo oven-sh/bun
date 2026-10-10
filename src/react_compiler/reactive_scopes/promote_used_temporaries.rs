@@ -42,6 +42,8 @@ struct State {
     tags: HashSet<DeclarationId>,
     promoted: HashSet<DeclarationId>,
     pruned: IdMap<DeclarationId, PrunedInfo>,
+    /// `promote_identifier` was asked for one that has a name.
+    has_promoted_a_variable: bool,
 }
 
 struct PrunedInfo {
@@ -59,11 +61,12 @@ pub(crate) fn promote_used_temporaries(
     func: &mut ReactiveFunction,
     env: &mut Environment,
     inline_macro_operands: &HashSet<IdentifierId>,
-) {
+) -> Result<(), crate::diagnostics::CompilerDiagnostic> {
     let mut state = State {
         tags: HashSet::new(),
         promoted: HashSet::new(),
         pruned: IdMap::new(),
+        has_promoted_a_variable: false,
     };
 
     // Phase 1: collect promotable temporaries (jsx tags, pruned scope usage)
@@ -108,6 +111,10 @@ pub(crate) fn promote_used_temporaries(
     // Phase 4: promote all instances of promoted declaration IDs
     promote_all_instances_params(func, &mut state, env);
     promote_all_instances_block(&func.body, &mut state, env);
+    crate::diagnostics::invariant(
+        !state.has_promoted_a_variable,
+        "promoteTemporary: Expected to be called only for temporary variables",
+    )
 }
 
 // =============================================================================
@@ -1408,10 +1415,10 @@ fn promote_all_instances_terminal(
 
 fn promote_identifier(identifier_id: IdentifierId, state: &mut State, env: &mut Environment) {
     let identifier = &env.identifiers[identifier_id.0 as usize];
-    assert!(
-        identifier.name.is_none(),
-        "promoteTemporary: Expected to be called only for temporary variables"
-    );
+    if identifier.name.is_some() {
+        state.has_promoted_a_variable = true;
+        return;
+    }
     let decl_id = identifier.declaration_id;
     if state.tags.contains(&decl_id) {
         env.promote_temporary_jsx_tag(identifier_id);

@@ -393,7 +393,7 @@ fn parse_code(
             then(&Parsed {
                 file,
                 end: text.len() as u32,
-                first_error: error.or(first_error.map(|it| it.start)),
+                first_error: error.or_else(|| first_error.map(|it| it.start)),
             })
         })
     };

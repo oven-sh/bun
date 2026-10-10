@@ -14,7 +14,9 @@ use bun_lint::context::Severity;
 use bun_lint::language::LanguageOptions;
 use bun_lint::options::{Json, Options};
 use bun_lint::rule::Plugin;
-use bun_lint::runner::{Enabled, run};
+use bun_lint::rule_set::RuleSet;
+use bun_lint::runner::{Enabled, Starts, run};
+use bun_lint_driver::rules::Rules;
 use bun_sema::atom::Interner;
 use bun_sema::bind::{BindOptions, Recycled, bind_for_lint_in};
 use bun_sema::session::Session;
@@ -42,7 +44,7 @@ fn rules_of_config(path: &str) -> Vec<(Plugin, String)> {
 }
 
 /// How long `rules` take on `file`, and how much they report.
-fn nanos_of<'a>(file: &'a File<'a>, rules: &[Enabled]) -> (u64, u64) {
+fn nanos_of<'a>(file: &'a File<'a>, rules: &[Enabled<Rules>]) -> (u64, u64) {
     let started = Instant::now();
     let found = run(file, rules, false).len() as u64;
     (started.elapsed().as_nanos() as u64, found)
@@ -67,23 +69,20 @@ fn rules(args: &[String]) {
         .filter_map(|path| Some((path.to_string_lossy().into_owned(), host::read(path).ok()?)))
         .collect();
     let built: Vec<_> = crate::all_rules()
-        .filter(|it| !it.meta.requires_types)
-        .filter(|it| {
-            only.as_ref()
-                .is_none_or(|only| only.contains(&it.meta.name))
-        })
-        .filter(|it| {
+        .filter(|(_, meta)| !meta.requires_types)
+        .filter(|(_, meta)| only.as_ref().is_none_or(|only| only.contains(&meta.name)))
+        .filter(|(_, meta)| {
             (of_config.as_ref()).is_none_or(|all| {
                 all.iter()
-                    .any(|(plugin, name)| *plugin == it.meta.plugin && name == it.meta.name)
+                    .any(|(plugin, name)| *plugin == meta.plugin && name == meta.name)
             })
         })
-        .map(|it| (it.build)(&Options::default()))
+        .filter_map(|it| Rules::build(it.0, &Options::default()))
         .collect();
-    let enabled: Vec<Enabled> = built
+    let enabled: Vec<Enabled<Rules>> = built
         .iter()
         .map(|rule| Enabled {
-            rule: &**rule,
+            rule,
             severity: Severity::Error,
         })
         .collect();
@@ -132,7 +131,7 @@ fn rules(args: &[String]) {
             count.fetch_add(len as u64, Relaxed);
         }
         // On a file of which nothing is computed yet, then once more: how long each takes, and how much is reported.
-        let measure = |rules: &[Enabled]| {
+        let measure = |rules: &[Enabled<Rules>]| {
             let file = File::new(path.as_bytes(), &hir, bound, &atoms, &language, None);
             let (cold, found) = nanos_of(&file, rules);
             (cold, nanos_of(&file, rules).0, found)

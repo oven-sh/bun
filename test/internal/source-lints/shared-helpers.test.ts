@@ -36,6 +36,7 @@ const SHARED = [
   "src/bun_alloc/",
   "src/node_path/",
   "src/text_diff/",
+  "src/semver/",
   // `bun_node_path` for the paths of the linter and the formatter, which have `/` on every system.
   "src/lint/paths.rs",
 ];
@@ -105,6 +106,12 @@ const FAMILIES: [family: string, names: string, use: string, note?: string][] = 
     "base64_encode base64_decode hex_encode hex_decode percent_encode percent_decode url_decode url_encode decode_uri_component encode_uri decode_uri encode_uri_component",
     "bun_core::strings::{decode_hex_to_bytes, percent_encode_write}",
     "and bun_base64",
+  ],
+  [
+    "versions",
+    "coerce parse_version compare_versions parse_range valid_range min_version satisfies",
+    "bun_semver::{parse, satisfies, intersects, is_subset_of}",
+    "the semver of `bun install`; what node-semver has and it lacks goes there",
   ],
   [
     "edit distance",

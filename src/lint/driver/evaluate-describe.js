@@ -2,6 +2,19 @@
 
 const unserializable = what => ({ $unserializable: what });
 
+// `evaluate-stand-ins.js`: the objects that stand for a module that is not loaded, and that nobody has touched.
+const untouched = new Set();
+// Who only looks for an object that the configuration has got hold of finds none in what is not loaded.
+let isLooking = false;
+function look(find) {
+  isLooking = true;
+  try {
+    return find();
+  } finally {
+    isLooking = false;
+  }
+}
+
 // `name@version` of a parser, a plugin or a processor: ESLint's `getObjectId`.
 function objectId(object) {
   const name = object.name ?? object.meta?.name;
@@ -17,6 +30,8 @@ const located = new Map();
 const scanned = new Set();
 // What the module that is the configuration file can be called: its path as the system writes it, and that without links.
 let ownNames;
+// Of the modules that export an object the one counts that exports nothing else, in whatever order they were loaded.
+const order = ({ module, export: path }) => `${path.filter(key => key !== "default").length}${path.length}${module}`;
 // Looks at those that were loaded since the last time: a plugin can load its rules when it is asked for them.
 function scan() {
   if (ownNames === undefined) {
@@ -29,11 +44,12 @@ function scan() {
   }
   for (const [module, { exports }] of Object.entries(require.cache)) {
     // What only the configuration file has is not to be had without running it.
-    if (scanned.has(module) || ownNames.includes(module)) continue;
+    if (scanned.has(module) || ownNames.includes(module) || untouched.has(exports)) continue;
     scanned.add(module);
     const note = (value, path) => {
-      if (value !== null && typeof value === "object" && !located.has(value))
-        located.set(value, { module, export: path });
+      if (value === null || typeof value !== "object") return;
+      const [before, found] = [located.get(value), { module, export: path }];
+      if (before === undefined || order(found) < order(before)) located.set(value, found);
     };
     try {
       note(exports, []);
@@ -41,7 +57,8 @@ function scan() {
       if (typeof exports === "function" && !located.has(exports)) located.set(exports, { module, export: [] });
       for (const [name, value] of Object.entries(exports ?? {})) {
         note(value, [name]);
-        if (name === "default") for (const [inner, it] of Object.entries(value ?? {})) note(it, [name, inner]);
+        if (name === "default" && !untouched.has(value))
+          for (const [inner, it] of Object.entries(value ?? {})) note(it, [name, inner]);
       }
     } catch {}
   }
@@ -60,7 +77,9 @@ function locateDeep(plugin) {
   return locatedDeep.get(plugin);
 }
 
-function search(plugin) {
+const search = plugin => look(() => searchIn(plugin));
+
+function searchIn(plugin) {
   scan();
   // `import * as parser from "parser"` of a CommonJS module: what that exports is the `default` of what is imported.
   const isNamespace = plugin?.[Symbol.toStringTag] === "Module" && plugin.default != null;
@@ -68,7 +87,7 @@ function search(plugin) {
   if (found !== null) return found;
   const pathIn = (value, depth) => {
     if (value === plugin) return [];
-    if (depth === 0 || value === null || typeof value !== "object") return null;
+    if (depth === 0 || value === null || typeof value !== "object" || untouched.has(value)) return null;
     const prototype = Object.getPrototypeOf(value);
     if (prototype !== Object.prototype && prototype !== null && !Array.isArray(value)) return null;
     for (const key of Object.keys(value)) {
@@ -94,11 +113,12 @@ let fixupPluginRules = null;
 // Where the plugin is that `fixupPluginRules` has made `plugin` of. What it adds to a rule is for an ESLint without the methods
 // of ESLint 8, and the workers have these: the plugin runs as it is, and the configuration file need not be run to get at it.
 function locateWrapped(plugin) {
-  if (fixupPluginRules === null || !plugin?.rules) return null;
+  if (fixupPluginRules === null || !plugin?.rules || untouched.has(plugin.rules)) return null;
   const names = Object.keys(plugin.rules).join();
   for (const [candidate, where] of located) {
     // It answers with what it has made of a plugin before.
-    if (candidate.rules && Object.keys(candidate.rules).join() === names && fixupPluginRules(candidate) === plugin) {
+    if (!candidate.rules || untouched.has(candidate.rules)) continue;
+    if (Object.keys(candidate.rules).join() === names && fixupPluginRules(candidate) === plugin) {
       wrapped.set(plugin, candidate);
       return where;
     }
@@ -137,7 +157,7 @@ function stringify(value) {
 function describe(name, plugin) {
   const names = Object.keys(plugin.rules ?? {}).sort();
   locateDeep(plugin);
-  scan();
+  look(scan);
   const original = wrapped.get(plugin) ?? plugin;
   const rules = names.map(ruleName => {
     const meta = plugin.rules[ruleName]?.meta;

@@ -95,7 +95,10 @@ impl Rule for RestrictTemplateExpressions {
             let expression_type = get_constrained_type_at_location(expression);
             let is_allowed = || self.recursively_check_type(expression_type, 0);
             if !*cx.state.entry(expression_type).or_insert_with(is_allowed) {
-                cx.report(expression, INVALID_TYPE).data("type", expression_type.to_text());
+                cx.report(expression, INVALID_TYPE).data("type", expression_type.to_text()).labels_with(|labels| {
+                    labels.first(format!("Type: {}", bstr::BStr::new(&expression_type.to_text())));
+                    labels.push(expression, "");
+                });
             }
         }
     }

@@ -5172,7 +5172,7 @@ foo(b)
       const driver = join(import.meta.dir, "..", "..", "..", "src", "lint", "driver");
       const read = (...names: string[]) => names.map(name => readFileSync(join(driver, name), "utf8")).join("");
       const scripts = {
-        eslint: read("evaluate-start.js", "evaluate-describe.js", "evaluate-eslint.js"),
+        eslint: read("evaluate-start.js", "evaluate-describe.js", "evaluate-stand-ins.js", "evaluate-eslint.js"),
         prettier: read("evaluate-start.js", join("fmt", "evaluate-prettier.js")),
         tailwind: read("evaluate-start.js", join("fmt", "tailwind.js")),
       };

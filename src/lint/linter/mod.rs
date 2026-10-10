@@ -73,7 +73,7 @@ use crate::context::{Diagnostic, Severity};
 use crate::js_plugin;
 use crate::options::{Json, Options};
 use crate::rule::Meta;
-use crate::rule_set::RuleSet;
+use crate::rule_set::{RuleBits, RuleSet};
 use crate::runner::{Enabled, RuleEntry};
 use crate::span::Span;
 use directives::{ConfigComment, Label};
@@ -589,7 +589,10 @@ impl<S: RuleSet> Linter<S> {
                 break;
             }
         }
-        let enabled: Vec<Enabled<S>> = (running.iter())
+        if let Some(module) = &config.package_module {
+            file.set_package_module(Arc::clone(module));
+        }
+        let mut enabled: Vec<Enabled<S>> = (running.iter())
             .map(|it| Enabled {
                 rule: match &it.rule {
                     RuleRef::Shared(rule) => *rule,
@@ -598,6 +601,18 @@ impl<S: RuleSet> Linter<S> {
                 severity: it.severity,
             })
             .collect();
+        // A rule for which the file has nothing is not started.
+        let mut on = RuleBits::EMPTY;
+        for it in enabled.iter().filter(|it| it.severity != Severity::Off) {
+            let number = it.rule.number();
+            on.0[number as usize / 64] |= 1 << (number % 64);
+        }
+        let listening = crate::runner::listening::<S>(file, &on);
+        for it in &mut enabled {
+            if !listening.has(it.rule.number()) {
+                it.severity = Severity::Off;
+            }
+        }
         let of_js = problems.len() - before_js;
         file.sink.wants_help.set(options.wants_help);
         let diagnostics = crate::runner::run(file, &enabled, options.wants_fixes);

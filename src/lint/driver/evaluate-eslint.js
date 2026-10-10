@@ -50,7 +50,8 @@ function describeParser(parser) {
 // Many objects have the same plugins: only the first says what is in one.
 const described = new Set();
 function describedOnce(prefix, plugin) {
-  if (described.has(prefix)) return undefined;
+  // A worker says what is in it, if a rule of it is on that is not built in.
+  if (described.has(prefix) || untouched.has(plugin.rules)) return undefined;
   described.add(prefix);
   return describe(prefix, plugin);
 }
@@ -65,6 +66,7 @@ function probe(matcher) {
   const seen = { testers: [], configs: [] };
   const undo = [];
   for (const { exports } of Object.values(require.cache)) {
+    if (untouched.has(exports)) continue;
     let legacy;
     try {
       legacy = exports?.Legacy;
@@ -153,7 +155,10 @@ function serializeConfigObject(given, index) {
     const ids = Object.entries(plugins).map(([prefix, plugin]) => [prefix, (plugin && objectId(plugin)) ?? null]);
     out.plugins = Array.isArray(plugins) ? serialize(plugins) : Object.fromEntries(ids);
     const withRules = Object.entries(plugins).filter(
-      ([, plugin]) => Object.keys(plugin?.rules ?? {}).length > 0 || Object.keys(plugin?.languages ?? {}).length > 0,
+      ([, plugin]) =>
+        untouched.has(plugin?.rules) ||
+        Object.keys(plugin?.rules ?? {}).length > 0 ||
+        Object.keys(plugin?.languages ?? {}).length > 0,
     );
     // eslint-plugin-html has nothing in it: to load it changes the `Linter`, which then finds the scripts in a file.
     const changesLinter = plugin => /[\\/]eslint-plugin-html[\\/]/.test(locateDeep(plugin)?.module ?? "");

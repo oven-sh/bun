@@ -205,6 +205,8 @@ pub(crate) struct Parser<'a, const GENERAL: bool> {
     pub(crate) reparses_rest_of_file: bool,
     /// Where the statement before started, from then on.
     pub(crate) reparsed_at: u32,
+    /// Where the `<` of a JSX child is for which the parser has another token: see `rescan_jsx_child`.
+    pub(crate) jsx_child_after_other_token: u32,
     /// The `?` of the last parameter that has one.
     pub(crate) question_of_parameter: u32,
     /// See `private_name_before_in`: where the last one is.
@@ -416,6 +418,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             was_await_refused: false,
             reparses_rest_of_file: false,
             reparsed_at: u32::MAX,
+            jsx_child_after_other_token: u32::MAX,
             question_of_parameter: 0,
             private_name_before_in: u32::MAX,
             not_arrows: Vec::new(),

@@ -76,6 +76,11 @@ fn report<'a>(cx: &Context<'a>, conversion: &Conversion<'a>) {
         .comments_apply_at(loc)
         .data("type", type_string)
         .data("violation", violation)
+        .labels_with(|labels| {
+            let ty = type_of_operand(inner_node).to_text();
+            labels.first(format!("This expression already has type '{}'.", bstr::BStr::new(&ty)));
+            labels.push(loc, "");
+        })
         .suggest(SUGGEST_REMOVE, |fixer| match statement {
             Some(statement) => fixer.remove(statement),
             None => get_wrapping_fixer_without_wrap(fixer, node, &[inner_node]),

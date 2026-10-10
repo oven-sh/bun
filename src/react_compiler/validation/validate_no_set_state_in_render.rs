@@ -93,17 +93,17 @@ fn validate_impl(
                     }
                 }
                 InstructionValue::StartMemoize { manual_memo_id, .. } => {
-                    assert!(
+                    crate::diagnostics::invariant(
                         active_manual_memo_id.is_none(),
-                        "Unexpected nested StartMemoize instructions"
-                    );
+                        "Unexpected nested StartMemoize instructions",
+                    )?;
                     active_manual_memo_id = Some(*manual_memo_id);
                 }
                 InstructionValue::FinishMemoize { manual_memo_id, .. } => {
-                    assert!(
+                    crate::diagnostics::invariant(
                         active_manual_memo_id == Some(*manual_memo_id),
-                        "Expected FinishMemoize to align with previous StartMemoize instruction"
-                    );
+                        "Expected FinishMemoize to align with previous StartMemoize instruction",
+                    )?;
                     active_manual_memo_id = None;
                 }
                 InstructionValue::CallExpression { callee, .. } => {

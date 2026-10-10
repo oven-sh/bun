@@ -59,6 +59,11 @@ impl Rule for DotLocation {
         }
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new().exprs(&[ExprTag::Dot]);
+        if file.is_javascript() { on } else { on.types(&[TypeTag::Ref]) }
+    }
+
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Dot { obj, name, chain } = e.kind() else {
             return;
@@ -78,9 +83,6 @@ impl Rule for DotLocation {
     }
 
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
-        if cx.file().is_javascript() {
-            return;
-        }
         // `interface I extends a.b`, `class C implements a.b`: typescript-eslint has the name as
         // a `MemberExpression`.
         let TypeKind::Ref { name, .. } = ty.kind() else {

@@ -334,10 +334,10 @@ pub fn compute_unconditional_blocks(
         if block_id == exit {
             break;
         }
-        assert!(
+        crate::diagnostics::invariant(
             !unconditional.contains(&block_id),
-            "Internal error: non-terminating loop in ComputeUnconditionalBlocks"
-        );
+            "Internal error: non-terminating loop in ComputeUnconditionalBlocks",
+        )?;
         unconditional.insert(block_id);
         current = dominators.get(block_id);
     }

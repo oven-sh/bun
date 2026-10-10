@@ -28,17 +28,16 @@ enum Value {
 /// `[*.js]` and what follows it.
 struct Section {
     name: Vec<u8>,
-    /// For an absolute path.
-    glob: Pattern,
+    /// For Prettier for an absolute path, for oxfmt for one from the directory of the file. `None`: it is for no file.
+    glob: Option<Pattern>,
     properties: Vec<(Vec<u8>, Value)>,
 }
 
 impl Section {
-    fn new(directory: &[u8], name: &[u8]) -> Section {
+    fn new(name: &[u8], glob: Option<Pattern>) -> Section {
         Section {
             name: name.to_vec(),
-            // `new Minimatch(glob, { matchBase: true, dot: true })`. It has a slash, so `matchBase` says nothing.
-            glob: Pattern::new(&full_glob(directory, name), Options::MINIMATCH_DOT),
+            glob,
             properties: Vec::new(),
         }
     }
@@ -235,7 +234,12 @@ impl File {
                 [b'[', name @ .., b']'] => {
                     let known = file.sections.iter().position(|it| it.name == name);
                     at = Some(known.unwrap_or_else(|| {
-                        file.sections.push(Section::new(directory, name));
+                        // `new Minimatch(glob, { matchBase: true, dot: true })`. It has a slash, so `matchBase` says
+                        // nothing. A section without a name has no pattern.
+                        let glob =
+                            || Pattern::new(&full_glob(directory, name), Options::MINIMATCH_DOT);
+                        let glob = (!name.is_empty()).then(glob);
+                        file.sections.push(Section::new(name, glob));
                         file.sections.len() - 1
                     }));
                 }
@@ -266,7 +270,8 @@ impl File {
                 continue;
             }
             if let [b'[', name @ .., b']'] = line {
-                file.sections.push(Section::new(directory, name));
+                file.sections
+                    .push(Section::new(name, Pattern::of_globset(name)));
             }
             // What follows a section that is not closed is of the one before.
             if let Some(section) = file.sections.last_mut()
@@ -293,20 +298,6 @@ impl File {
         let text = fs::read(&paths::join(directory, b".editorconfig")).ok()?;
         Some(File::parse_as_oxfmt(directory, &text))
     }
-
-    /// The sections that are for `candidate`, which is the file at `path`.
-    fn sections_for<'f>(
-        &'f self,
-        path: &[u8],
-        candidate: &'f Candidate<'_>,
-    ) -> impl Iterator<Item = &'f Section> {
-        let is_inside = paths::inside(&self.directory, path).is_some();
-        let sections = self.sections.iter().filter(move |_| is_inside);
-        // A section without a name has no pattern.
-        sections.filter(move |it| {
-            !it.name.is_empty() && it.glob.matches_candidate(candidate, How::default())
-        })
-    }
 }
 
 type Found = Vec<(&'static [u8], Vec<u8>)>;
@@ -324,8 +315,12 @@ pub(crate) fn options_for<'f>(files: impl Iterator<Item = &'f File>, path: &[u8]
     // `combine`. `unset` is a value like any other: Prettier does not ask for anything else.
     let candidate = Candidate::new(path);
     let mut properties: Vec<(&[u8], &Value)> = Vec::new();
-    for file in files {
-        for section in file.sections_for(path, &candidate) {
+    for file in files.filter(|it| paths::inside(&it.directory, path).is_some()) {
+        let is_for_it = |it: &&Section| {
+            let glob = it.glob.as_ref();
+            glob.is_some_and(|it| it.matches_candidate(&candidate, How::default()))
+        };
+        for section in file.sections.iter().filter(is_for_it) {
             for (key, value) in &section.properties {
                 properties.retain(|it| it.0 != &key[..]);
                 properties.push((key, value));
@@ -418,9 +413,11 @@ fn apply_as_oxfmt<'v>(get: impl Fn(&[u8]) -> Option<&'v Value>, use_tabs: Option
 
 /// The options of oxfmt that `file` has for the file at `path`: `EditorConfig::resolve`.
 pub(crate) fn options_for_oxfmt(file: &File, path: &[u8], use_tabs: Option<bool>) -> Found {
-    let candidate = Candidate::new(path);
+    // `path.strip_prefix(cwd).unwrap_or(path)`
+    let relative = paths::inside(&file.directory, path).unwrap_or(path);
+    let is_for_it = |it: &&Section| it.glob.as_ref().is_some_and(|it| it.matches(relative));
     let mut properties: Vec<(&[u8], &Value)> = Vec::new();
-    for section in file.sections_for(path, &candidate) {
+    for section in file.sections.iter().filter(is_for_it) {
         for (key, value) in &section.properties {
             if *value != Value::Nothing {
                 properties.retain(|it| it.0 != &key[..]);

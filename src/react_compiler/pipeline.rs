@@ -611,12 +611,12 @@ pub(crate) fn run_reactive_scope_passes(
     timed!(
         "PruneUnusedLabelsHIR",
         crate::optimization::prune_unused_labels_hir(hir)
-    );
+    )?;
 
     timed!(
         "AlignReactiveScopesToBlockScopesHIR",
         crate::inference::align_reactive_scopes_to_block_scopes_hir(hir, env)
-    );
+    )?;
     timed!(
         "MergeOverlappingReactiveScopesHIR",
         crate::inference::merge_overlapping_reactive_scopes_hir(hir, env)
@@ -625,7 +625,7 @@ pub(crate) fn run_reactive_scope_passes(
     timed!(
         "BuildReactiveScopeTerminalsHIR",
         crate::inference::build_reactive_scope_terminals_hir(hir, env)
-    );
+    )?;
 
     timed!(
         "FlattenReactiveLoopsHIR",
@@ -639,7 +639,7 @@ pub(crate) fn run_reactive_scope_passes(
     timed!(
         "PropagateScopeDependenciesHIR",
         crate::inference::propagate_scope_dependencies_hir(hir, env)
-    );
+    )?;
 
     let mut reactive_fn = timed!(
         "BuildReactiveFunction",
@@ -649,7 +649,7 @@ pub(crate) fn run_reactive_scope_passes(
     timed!(
         "AssertWellFormedBreakTargets",
         crate::reactive_scopes::assert_well_formed_break_targets(&reactive_fn, env)
-    );
+    )?;
 
     timed!(
         "PruneUnusedLabels",
@@ -699,7 +699,7 @@ pub(crate) fn run_reactive_scope_passes(
             env,
             &fbt_operands.inline
         )
-    );
+    )?;
     timed!(
         "ExtractScopeDeclarationsFromDestructuring",
         crate::reactive_scopes::extract_scope_declarations_from_destructuring(

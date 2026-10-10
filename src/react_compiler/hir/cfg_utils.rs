@@ -26,7 +26,7 @@ use super::{
 pub fn get_reverse_postordered_blocks(
     hir: &HIR,
     _instructions: &[Instruction],
-) -> IndexMap<BlockId, BasicBlock> {
+) -> Result<IndexMap<BlockId, BasicBlock>, crate::diagnostics::CompilerDiagnostic> {
     let mut visited: IndexSet<BlockId> = IndexSet::new();
     let mut used: IndexSet<BlockId> = IndexSet::new();
     let mut used_fallthroughs: IndexSet<BlockId> = IndexSet::new();
@@ -59,10 +59,14 @@ pub fn get_reverse_postordered_blocks(
             stack.push(Step::Exit(block_id));
         }
 
-        let block = hir
-            .blocks
-            .get(&block_id)
-            .unwrap_or_else(|| panic!("[HIRBuilder] expected block {:?} to exist", block_id));
+        let Some(block) = hir.blocks.get(&block_id) else {
+            return Err(crate::diagnostics::cold_invariant(
+                "[HIRBuilder] Unexpected null block",
+                Some(format!("expected block bb{} to exist", block_id.0)),
+                None,
+            )
+            .into());
+        };
 
         // Visit successors in reverse order so that when we reverse the
         // postorder list, sibling edges come out in program order.
@@ -104,7 +108,7 @@ pub fn get_reverse_postordered_blocks(
         // otherwise this block is unreachable and is dropped
     }
 
-    blocks
+    Ok(blocks)
 }
 
 /// For each block with a `For` terminal whose update block is not in the

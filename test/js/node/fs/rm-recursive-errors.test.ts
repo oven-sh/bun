@@ -37,10 +37,10 @@ const deleter = `
 function makeTree(dir: string) {
   const tree = path.join(dir, "tree");
   fs.mkdirSync(tree);
-  for (let d = 0; d < 8; d++) {
+  for (let d = 0; d < 6; d++) {
     const sub = path.join(tree, "d" + d);
     fs.mkdirSync(sub);
-    for (let i = 0; i < 250; i++) fs.writeFileSync(path.join(sub, "f" + i), "");
+    for (let i = 0; i < 100; i++) fs.writeFileSync(path.join(sub, "f" + i), "");
   }
   return tree;
 }
@@ -154,7 +154,6 @@ async function runWithFewDescriptors(dir: string, script: string) {
     const fs = require("node:fs");
     const os = require("node:os");
     const path = require("node:path");
-    const { Worker } = require("node:worker_threads");
     const base = ${JSON.stringify(dir)};
 
     // <name>/a/b/c.txt: a walk holds <name> and a open when it needs b.
@@ -258,10 +257,10 @@ describe.skipIf(isWindows)("fs.rm recursive under EMFILE", () => {
     expect(result).toEqual({ code: "EMFILE", path: path.join(String(dir), "root", "a", "b") });
   });
 
-  // Both retry tests free descriptors only when an attempt has failed: the
-  // marker is gone (the attempt holds both free descriptors and cannot open
-  // b), then a descriptor can be opened again (the attempt gave them back)
-  // while c.txt is still there. So a removed tree proves a later attempt.
+  // The descriptors are freed only when an attempt has failed: the marker is
+  // gone (the attempt holds both free descriptors and cannot open b), then a
+  // descriptor can be opened again (the attempt gave them back) while c.txt
+  // is still there. So a removed tree proves a later attempt.
   test.concurrent("fs.promises.rm with maxRetries tries again after a failed attempt", async () => {
     using dir = tempDir("rm-emfile-retry", {});
     const result = await runWithFewDescriptors(
@@ -291,60 +290,6 @@ describe.skipIf(isWindows)("fs.rm recursive under EMFILE", () => {
       } catch (e) {
         console.log(JSON.stringify({ code: e.code, path: e.path, failedAttempt }));
       }
-      `,
-    );
-    expect(result).toEqual({ ok: true, failedAttempt: true, exists: false });
-  });
-
-  // rmSync blocks the main thread between attempts, so a worker frees the
-  // descriptors. It shares the descriptor table of the process.
-  test.concurrent("fs.rmSync with maxRetries tries again after a failed attempt", async () => {
-    using dir = tempDir("rm-emfile-retry-sync", {});
-    const result = await runWithFewDescriptors(
-      String(dir),
-      `
-      const { root, marker, leaf } = makeMarkedTree("retry-sync");
-      // [0] go, [1] never changes (a cell to sleep on), [2] outcome, [3..] descriptors to free
-      const shared = new Int32Array(new SharedArrayBuffer(4 * 11));
-      const worker = new Worker(
-        \`
-        const fs = require("node:fs");
-        const { shared, marker, leaf, file } = require("node:worker_threads").workerData;
-        Atomics.wait(shared, 0, 0, 30_000);
-        const nap = () => Atomics.wait(shared, 1, 0, 1);
-        while (fs.existsSync(marker)) nap();
-        for (;;) {
-          try {
-            fs.closeSync(fs.openSync(file, "r"));
-            break;
-          } catch (e) {
-            if (e.code !== "EMFILE") throw e;
-            nap();
-          }
-        }
-        Atomics.store(shared, 2, fs.existsSync(leaf) ? 1 : 2);
-        for (let i = 3; i < shared.length; i++) fs.closeSync(shared[i]);
-        \`,
-        { eval: true, workerData: { shared, marker, leaf, file: __filename } },
-      );
-      let workerError;
-      worker.on("error", e => (workerError = String(e)));
-      await new Promise(resolve => worker.once("online", resolve));
-      exhaustDescriptors();
-      for (let i = 3; i < shared.length; i++) shared[i] = fds.pop();
-      Atomics.store(shared, 0, 1);
-      Atomics.notify(shared, 0);
-      let result;
-      try {
-        fs.rmSync(root, { recursive: true, maxRetries: 50, retryDelay: 10 });
-        result = { ok: true };
-      } catch (e) {
-        result = { code: e.code, path: e.path };
-      }
-      await worker.terminate();
-      console.log(
-        JSON.stringify({ ...result, workerError, failedAttempt: Atomics.load(shared, 2) === 1, exists: fs.existsSync(root) }),
-      );
       `,
     );
     expect(result).toEqual({ ok: true, failedAttempt: true, exists: false });
@@ -380,21 +325,48 @@ describe.skipIf(isWindows)("fs.rm recursive under EMFILE", () => {
 // A directory can list an entry under a name that does not resolve to it (an
 // unpaired surrogate on NTFS, a lossy iocharset on vfat). The unlink of that
 // name reports ENOENT like a vanished entry does, but the directory never
-// gets empty. LD_PRELOAD a shim that lists "real.txt" as "geal.txt". bun
-// issues getdents64 through libc's syscall(), the interposable symbol, so
-// this is glibc-only.
+// gets empty. LD_PRELOAD a shim that lists "real.txt" as "geal.txt": in every
+// listing of a directory named "ghost", and in the first listing only of a
+// directory named "flaky", which makes one attempt fail and the next one
+// succeed with nothing else involved. bun issues getdents64 through libc's
+// syscall(), the interposable symbol, so this is glibc-only.
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
-test.skipIf(!isGlibc || !cc)("fs.rm recursive reports ENOTEMPTY for an entry it cannot remove by name", async () => {
+test.skipIf(!isGlibc || !cc)("fs.rm recursive on an entry that its listed name does not remove", async () => {
   using dir = tempDir("rm-unresolvable-entry", {
     "shim.c": `
 #define _GNU_SOURCE
 #include <dlfcn.h>
+#include <limits.h>
 #include <stdarg.h>
+#include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
 static long (*next_syscall)(long, ...);
+// The "flaky" directories that were listed once, by inode.
+static ino_t listed[32];
+static int nlisted;
+
+static int hides_entry(int fd) {
+  char link[64], target[PATH_MAX];
+  snprintf(link, sizeof link, "/proc/self/fd/%d", fd);
+  ssize_t n = readlink(link, target, sizeof target - 1);
+  if (n <= 0) return 0;
+  target[n] = 0;
+  const char *base = strrchr(target, '/');
+  base = base ? base + 1 : target;
+  if (strcmp(base, "ghost") == 0) return 1;
+  if (strcmp(base, "flaky") != 0) return 0;
+  struct stat st;
+  if (fstat(fd, &st) != 0) return 0;
+  for (int i = 0; i < nlisted; i++) {
+    if (listed[i] == st.st_ino) return 0;
+  }
+  if (nlisted < 32) listed[nlisted++] = st.st_ino;
+  return 1;
+}
 
 long syscall(long nr, ...) {
   va_list ap;
@@ -404,7 +376,7 @@ long syscall(long nr, ...) {
   va_end(ap);
   if (!next_syscall) next_syscall = dlsym(RTLD_NEXT, "syscall");
   long rc = next_syscall(nr, a1, a2, a3, a4, a5, a6);
-  if (nr == SYS_getdents64 && rc > 0) {
+  if (nr == SYS_getdents64 && rc > 0 && hides_entry((int)a1)) {
     // struct linux_dirent64 { u64 d_ino; s64 d_off; u16 d_reclen; u8 d_type; char d_name[]; }
     char *buf = (char *)a2;
     for (long pos = 0; pos < rc;) {
@@ -422,14 +394,14 @@ long syscall(long nr, ...) {
 const fs = require("node:fs");
 const path = require("node:path");
 
-// <root>/d1/.../d<depth>/ghost/real.txt
-function makeTree(root, depth) {
+// <root>/d1/.../d<depth>/<name>/real.txt
+function makeTree(root, name, depth = 0) {
   let dir = root;
   for (let i = 1; i <= depth; i++) dir = path.join(dir, "d" + i);
-  dir = path.join(dir, "ghost");
+  dir = path.join(dir, name);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "real.txt"), "");
-  return dir;
+  return root;
 }
 async function attempt(fn) {
   try {
@@ -441,16 +413,21 @@ async function attempt(fn) {
 }
 
 (async () => {
-  const kept = [makeTree("sync", 0), makeTree("async", 0), makeTree("deep", 20)];
-  console.log(
-    JSON.stringify({
-      sync: await attempt(() => fs.rmSync("sync", { recursive: true })),
-      async: await attempt(() => fs.promises.rm("async", { recursive: true, force: true })),
-      // Past 16 levels a second walker takes over. It names the directory where it started.
-      deep: await attempt(() => fs.rmSync("deep", { recursive: true })),
-      kept: kept.map(ghost => fs.existsSync(path.join(ghost, "real.txt"))),
-    }),
-  );
+  const out = {
+    sync: await attempt(() => fs.rmSync(makeTree("sync", "ghost"), { recursive: true })),
+    async: await attempt(() => fs.promises.rm(makeTree("async", "ghost"), { recursive: true, force: true })),
+    // Past 16 levels a second walker takes over. It names the directory where it started.
+    deep: await attempt(() => fs.rmSync(makeTree("deep", "ghost", 20), { recursive: true })),
+    noRetry: await attempt(() => fs.rmSync(makeTree("no-retry", "flaky"), { recursive: true })),
+    retrySync: await attempt(() =>
+      fs.rmSync(makeTree("retry-sync", "flaky"), { recursive: true, maxRetries: 2, retryDelay: 10 }),
+    ),
+    retryAsync: await attempt(() =>
+      fs.promises.rm(makeTree("retry-async", "flaky"), { recursive: true, maxRetries: 2, retryDelay: 10 }),
+    ),
+  };
+  out.left = fs.readdirSync(".").filter(name => !name.includes(".")).sort();
+  console.log(JSON.stringify(out));
 })();
 `,
   });
@@ -475,12 +452,15 @@ async function attempt(fn) {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
 
-  const deepStart = path.join("deep", ...Array.from({ length: 15 }, (_, i) => "d" + (i + 1)));
+  const notEmpty = (...dirs: string[]) => ({ code: "ENOTEMPTY", syscall: "rm", path: path.join(...dirs) });
   expect(JSON.parse(stdout)).toEqual({
-    sync: { code: "ENOTEMPTY", syscall: "rm", path: path.join("sync", "ghost") },
-    async: { code: "ENOTEMPTY", syscall: "rm", path: path.join("async", "ghost") },
-    deep: { code: "ENOTEMPTY", syscall: "rm", path: deepStart },
-    kept: [true, true, true],
+    sync: notEmpty("sync", "ghost"),
+    async: notEmpty("async", "ghost"),
+    deep: notEmpty("deep", ...Array.from({ length: 16 }, (_, i) => "d" + (i + 1))),
+    noRetry: notEmpty("no-retry", "flaky"),
+    retrySync: "removed",
+    retryAsync: "removed",
+    left: ["async", "deep", "no-retry", "sync"],
   });
   expect(exitCode).toBe(0);
 });

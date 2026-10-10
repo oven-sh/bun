@@ -1677,6 +1677,67 @@ describe("TLS write() that ends short while another TLS socket is stalled", () =
   });
 });
 
+// After its close_notify a socket reads on until the peer's. A close ahead of that, over unread input, is a reset,
+// and the kernel drops what it had not sent yet.
+it.each([
+  ["that the kernel took at once", 1024 * 1024],
+  ["that waited for the kernel", 4 * 1024 * 1024],
+])("TLS end() while the peer is still sending delivers a write %s", async (_name, size) => {
+  const upload = 8 * 1024 * 1024;
+  const payload = Buffer.alloc(upload, "a");
+  type Side = { total: number; reported: number; received: number; events: string[] };
+  const done = Promise.withResolvers<void>();
+  const sides: Side[] = [];
+  const handlers = (total: number, finished: (socket: Socket, side: Side) => void) => {
+    const side: Side = { total, reported: 0, received: 0, events: [] };
+    sides.push(side);
+    const pump = (socket: Socket) => {
+      if (side.reported === total) return;
+      while (side.reported < total) {
+        const wrote = socket.write(payload.subarray(side.reported, total));
+        if (wrote <= 0) return;
+        side.reported += wrote;
+      }
+      finished(socket, side);
+    };
+    return {
+      open: pump,
+      drain: pump,
+      data: (_socket: Socket, chunk: Buffer) => void (side.received += chunk.length),
+      end(socket: Socket) {
+        side.events.push("end");
+        if (side.reported === total) socket.end();
+      },
+      close(_socket: Socket, error?: Error) {
+        side.events.push(error ? `close: ${(error as NodeJS.ErrnoException).code}` : "close");
+        if (sides.every(({ events }) => events.at(-1)?.startsWith("close"))) done.resolve();
+      },
+    };
+  };
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls,
+    socket: handlers(size, socket => socket.end()),
+  });
+  await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    tls: { ca: tls.cert },
+    allowHalfOpen: true,
+    socket: handlers(upload, (socket, side) => void (side.events.includes("end") && socket.end())),
+  });
+  await done.promise;
+  const [accepted, client] = sides;
+  expect({
+    client: { received: client.received, events: client.events },
+    server: { received: accepted.received, events: accepted.events },
+  }).toEqual({
+    client: { received: size, events: ["end", "close"] },
+    server: { received: upload, events: ["end", "close"] },
+  });
+});
+
 // A close must not cut off ciphertext that write() already reported, so it waits for the kernel to take
 // it. The owner has let go by then: only the deadline (10 s on a 4 s tick) ends the wait for such a peer.
 it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", async () => {

@@ -2354,6 +2354,8 @@ static struct us_socket_t *ssl_on_writable(struct us_socket_t *s);
 static struct us_socket_t *ssl_retry_parked_write(struct us_socket_t *s) {
   if (!s->ssl_write_wants_read || s->ssl_spilled) return s;
   s->ssl_write_wants_read = 0;
+  /* Behind the close_notify there is no write to retry, and the owner would take the event for the end of its flush and close again. */
+  if (SSL_get_shutdown(s_ssl(s)) & SSL_SENT_SHUTDOWN) return s;
   return ssl_on_writable(s);
 }
 
@@ -2477,6 +2479,8 @@ static struct us_socket_t *ssl_on_writable(struct us_socket_t *s) {
 
   if (s->ssl_handshake_state != HANDSHAKE_PENDING) {
     s->ssl_write_parked = 0;
+    /* This is the retry that ssl_retry_parked_write owes. Kept, it would come behind the owner's end(), as a second close. */
+    s->ssl_write_wants_read = 0;
     /* loop.c drops the writable interest of a shut-down socket after this dispatch. */
     s = ssl_close_if_fatal(us_dispatch_writable(s));
   }

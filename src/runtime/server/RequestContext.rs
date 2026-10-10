@@ -3877,7 +3877,9 @@ where
                     if !strings::contains_any(truncated, b"\r\n\0\"") {
                         let header_value = {
                             let mut w = &mut filename_buf[..];
-                            if write!(w, "filename=\"{}\"", bstr::BStr::new(truncated)).is_ok() {
+                            if write!(w, "attachment; filename=\"{}\"", bstr::BStr::new(truncated))
+                                .is_ok()
+                            {
                                 let written = 1024 - w.len();
                                 &filename_buf[..written]
                             } else {

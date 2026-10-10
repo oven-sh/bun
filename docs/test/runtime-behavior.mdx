@@ -127,11 +127,12 @@ test("test 1", () => {
 Promise.reject(new Error("Unhandled rejection"));
 ```
 
-### Custom Error Handling
+### Process Error Listeners
 
-You can set up custom error handlers in your test setup:
+`bun test` handles uncaught exceptions and unhandled promise rejections itself. Under `bun test`, Bun does not call `process.on("uncaughtException")` or `process.on("unhandledRejection")` listeners, whether a test file or a [`--preload` script](/test/lifecycle#global-setup-and-teardown) registers them:
 
 ```ts title="test-setup.ts" icon="/icons/typescript.svg"
+// bun test does not call these listeners
 process.on("uncaughtException", error => {
   console.error("Uncaught Exception:", error);
   process.exit(1);
@@ -142,6 +143,10 @@ process.on("unhandledRejection", (reason, promise) => {
   process.exit(1);
 });
 ```
+
+The test runner reports the error as a failure of the test that is running, or as an "Unhandled error between tests". A listener cannot change that result, so an error handler in the code you test cannot hide an error or end the run early. Bun also does not call `uncaughtExceptionMonitor` listeners or a `process.setUncaughtExceptionCaptureCallback()` callback.
+
+To test code that throws or rejects, catch the error inside the test, for example with `expect(fn).toThrow()` or `await expect(promise).rejects.toThrow()`.
 
 ## CLI Flags Integration
 
